@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Campaign 项目｜BrandAI</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+<div class="app">
+
+<aside class="sidebar">
+  <div class="logo">
+    <div class="logo-mark">B</div>
+    <div class="logo-text"><strong>BrandAI</strong><span>Visual Workspace</span></div>
+  </div>
+  <nav class="nav">
+    <a href="index.html" class=""><span class="ico">⌂</span>首页</a>
+    <a href="campaigns.html" class="active"><span class="ico">▦</span>Campaign 项目</a>
+    <a href="brand-knowledge.html" class=""><span class="ico">◈</span>品牌知识库</a>
+    <a href="assets.html" class=""><span class="ico">▣</span>素材库</a>
+    <a href="#" class=""><span class="ico">▤</span>模板库</a>
+    <a href="workspace.html" class=""><span class="ico">✦</span>工作台</a>
+  </nav>
+  <div class="sidebar-user">
+    <div class="avatar">张</div>
+    <div class="user-meta"><strong>张晓宁</strong><span>Market Director</span></div>
+  </div>
+</aside>
+
+<main class="main">
+
+<div class="page-head">
+  <div class="page-title"><h1>Campaign 项目</h1><p>管理所有品牌营销项目，AI 驱动高效协作与持续优化。</p></div>
+  <button class="send" data-modal="创建新 Campaign" data-body="输入项目 brief，AI 将自动解析项目目标、渠道、周期与交付物。" data-textarea="true">创建新 Campaign</button>
+</div>
+<div class="search-row">
+  <input class="search" placeholder="搜索项目名称或品牌" />
+  <button class="filter">全部阶段</button><button class="filter">全部品牌</button><button class="filter">时间范围</button><button class="filter">最新创建</button>
+</div>
+<div class="two-col">
+  <div class="project-list">
+    <div class="card project-card active" data-title="夏季新品上市 Campaign" data-summary="该项目聚焦夏季新品精华水的上市传播，目前处于传播策略细化阶段。建议优化社媒种草与 KOL 合作节奏，强化产品功效与清爽质地的卖点表达。"><div class="thumb"></div><div class="project-main"><span class="badge">进行中</span><h3>夏季新品上市 Campaign</h3><p>围绕夏季新品精华水的上市传播，建立产品认知并驱动首发转化。</p><div class="tags"><span class="tag">新品上市</span><span class="tag">产品认知</span><span class="tag">全渠道</span></div><div class="progress"><span style="width:40%"></span></div><div class="meta"><span>LUMINA</span><span>2025.05.01 - 2025.06.30</span></div></div></div>
+    <div class="card project-card" data-title="品牌形象升级 Campaign" data-summary="项目仍处于草稿阶段，建议先明确品牌升级前后的视觉差异与核心传播主张，并补充新版品牌关键词和视觉参考图。"><div class="thumb"></div><div class="project-main"><span class="badge amber">草稿</span><h3>品牌形象升级 Campaign</h3><p>焕新品牌视觉与叙事体系，强化高端天然护肤的品牌心智。</p><div class="tags"><span class="tag">品牌升级</span><span class="tag">视觉焕新</span></div><div class="progress"><span style="width:15%"></span></div><div class="meta"><span>LUMINA</span><span>2025.04.10 - 2025.07.15</span></div></div></div>
+    <div class="card project-card" data-title="会员日促销 Campaign" data-summary="项目已完成，素材可作为后续会员日活动模板参考。建议沉淀为促销类模板，复用主视觉和详情页结构。"><div class="thumb"></div><div class="project-main"><span class="badge green">已完成</span><h3>会员日促销 Campaign</h3><p>会员日专属促销活动，提升复购与会员活跃度。</p><div class="tags"><span class="tag">促销活动</span><span class="tag">会员运营</span></div><div class="progress"><span style="width:100%"></span></div><div class="meta"><span>LUMINA</span><span>2025.03.01 - 2025.03.31</span></div></div></div>
+  </div>
+  <aside class="card ai-panel">
+    <span class="badge">AI 摘要</span>
+    <h3>AI 项目摘要 · 夏季新品上市 Campaign</h3>
+    <p>该项目聚焦夏季新品精华水的上市传播，目前处于传播策略细化阶段。建议优化社媒种草与 KOL 合作节奏，强化产品功效与清爽质地的卖点表达。</p>
+    <div class="action-list">
+      <a href="workspace.html"><button>继续创作</button></a>
+      <button data-modal="补充需求" data-body="请输入需要补充的 Campaign brief，AI 会自动整理为项目要求。" data-textarea="true">补充需求</button>
+      <button data-modal="项目规范" data-body="当前项目已绑定 LUMINA 品牌知识库，应用品牌紫、字体规范、Logo 安全空间与高端清透视觉约束。">查看项目规范</button>
+      <button data-modal="提交终审" data-body="将当前项目候选图提交给最终确认人进行审核。">提交终审</button>
+      <button data-modal="归档项目" data-body="确认归档后，该项目将移出活跃列表。">归档项目</button>
+    </div>
+  </aside>
+</div>
+
+</main>
+</div>
+
+<div class="modal-mask">
+  <div class="modal">
+    <h3>模拟弹窗</h3>
+    <div class="modal-content"><p>该操作为 HTML 静态原型中的模拟交互。</p></div>
+    <div class="modal-actions">
+      <button class="secondary-btn" data-close>取消</button>
+      <button class="small-primary" data-close>确认</button>
+    </div>
+  </div>
+</div>
+<script src="js/prototype.js"></script>
+
+</body>
+</html>

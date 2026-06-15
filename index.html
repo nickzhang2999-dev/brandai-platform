@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>首页｜BrandAI</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+<div class="app">
+
+<aside class="sidebar">
+  <div class="logo">
+    <div class="logo-mark">B</div>
+    <div class="logo-text"><strong>BrandAI</strong><span>Visual Workspace</span></div>
+  </div>
+  <nav class="nav">
+    <a href="index.html" class="active"><span class="ico">⌂</span>首页</a>
+    <a href="campaigns.html" class=""><span class="ico">▦</span>Campaign 项目</a>
+    <a href="brand-knowledge.html" class=""><span class="ico">◈</span>品牌知识库</a>
+    <a href="assets.html" class=""><span class="ico">▣</span>素材库</a>
+    <a href="#" class=""><span class="ico">▤</span>模板库</a>
+    <a href="workspace.html" class=""><span class="ico">✦</span>工作台</a>
+  </nav>
+  <div class="sidebar-user">
+    <div class="avatar">张</div>
+    <div class="user-meta"><strong>张晓宁</strong><span>Market Director</span></div>
+  </div>
+</aside>
+
+<main class="main">
+<div class="topbar"><button class="icon-btn">⌕</button><button class="icon-btn">◌</button></div>
+<section class="hero">
+  <h1 class="hello">你好，晓宁</h1>
+  <p class="sub">AI 驱动品牌广告设计，让每一次传播都更出色。</p>
+  <div class="ai-input">
+    <div class="plus">＋</div>
+    <input placeholder="告诉 AI，你想创建什么样的广告物料" />
+    <button class="icon-btn">🎙</button>
+    <button class="send" data-modal="AI 建议" data-body="已收到你的创作需求。建议先创建 Campaign，并选择 LUMINA 品牌知识库作为约束。">发送</button>
+  </div>
+</section>
+<section class="section grid-4">
+  <div class="card quick-card hover-card" data-modal="创建新 Campaign" data-body="粘贴 Campaign brief，AI 将自动解析项目名称、目标人群、渠道与交付物。" data-textarea="true">
+    <div class="quick-ico">✦</div><h3>创建新 Campaign</h3><p>从 brief 开始，AI 自动生成项目结构。</p>
+  </div>
+  <a class="card quick-card hover-card" href="brand-knowledge.html">
+    <div class="quick-ico">↥</div><h3>导入品牌知识库</h3><p>上传 LOGO、图片、文案与品牌手册。</p>
+  </a>
+  <a class="card quick-card hover-card" href="workspace.html">
+    <div class="quick-ico">▧</div><h3>生成广告视觉</h3><p>调用品牌约束与素材，生成创意方案。</p>
+  </a>
+  <a class="card quick-card hover-card" href="workspace.html">
+    <div class="quick-ico">✧</div><h3>优化现有设计</h3><p>上传旧图并通过 AI 提升视觉表现。</p>
+  </a>
+</section>
+<section class="section">
+  <div class="section-head"><div><h2>近期 Campaign</h2><p>横向查看最近创建和更新的营销项目。</p></div><a class="badge" href="campaigns.html">查看全部</a></div>
+  <div class="h-scroll">
+    <a class="card campaign-card hover-card" href="workspace.html"><div class="thumb"></div><span class="badge">进行中</span><h3>夏季新品上市 Campaign</h3><p>围绕精华水上市传播，建立产品认知并驱动转化。</p><div class="progress"><span style="width:40%"></span></div></a>
+    <a class="card campaign-card hover-card" href="campaigns.html"><div class="thumb"></div><span class="badge amber">草稿</span><h3>品牌形象升级 Campaign</h3><p>焕新品牌视觉与叙事体系，强化高端心智。</p><div class="progress"><span style="width:15%"></span></div></a>
+    <a class="card campaign-card hover-card" href="campaigns.html"><div class="thumb"></div><span class="badge green">已完成</span><h3>会员日促销 Campaign</h3><p>会员日专属促销活动，提升复购与会员活跃度。</p><div class="progress"><span style="width:100%"></span></div></a>
+    <a class="card campaign-card hover-card" href="campaigns.html"><div class="thumb"></div><span class="badge">进行中</span><h3>春季焕肤推广 Campaign</h3><p>突出成分功效与使用场景，提升互动与转化。</p><div class="progress"><span style="width:60%"></span></div></a>
+  </div>
+</section>
+<section class="section">
+  <div class="section-head"><div><h2>推荐品牌</h2><p>灵感来自高端美妆与生活方式品牌视觉体系。</p></div></div>
+  <div class="masonry">
+    <div class="card brand-card hover-card"><div class="brand-img"></div><h3>LUMINA</h3><p>光感净护品牌，专注科学护肤与通透光泽。</p><div class="tags"><span class="tag">护肤</span><span class="tag">光感</span><span class="tag">高端</span></div></div>
+    <div class="card brand-card hover-card"><div class="brand-img"></div><h3>AURORA</h3><p>植物能量护肤，以自然活性萃取平衡肌肤之美。</p><div class="tags"><span class="tag">植物</span><span class="tag">自然</span></div></div>
+    <div class="card brand-card hover-card"><div class="brand-img"></div><h3>ÉCLAT</h3><p>高端抗衰品牌，强调金色、紧致与年轻光采。</p><div class="tags"><span class="tag">抗衰</span><span class="tag">奢华</span></div></div>
+    <div class="card brand-card hover-card"><div class="brand-img"></div><h3>NOVAE</h3><p>肌底修护品牌，聚焦科技、维稳与肌肤健康力。</p><div class="tags"><span class="tag">修护</span><span class="tag">科技</span></div></div>
+    <div class="card brand-card hover-card"><div class="brand-img"></div><h3>PUREORA</h3><p>纯净成分护肤，极简配方，专为敏感肌打造。</p><div class="tags"><span class="tag">纯净</span><span class="tag">极简</span></div></div>
+  </div>
+</section>
+
+</main>
+</div>
+
+<div class="modal-mask">
+  <div class="modal">
+    <h3>模拟弹窗</h3>
+    <div class="modal-content"><p>该操作为 HTML 静态原型中的模拟交互。</p></div>
+    <div class="modal-actions">
+      <button class="secondary-btn" data-close>取消</button>
+      <button class="small-primary" data-close>确认</button>
+    </div>
+  </div>
+</div>
+<script src="js/prototype.js"></script>
+
+</body>
+</html>
