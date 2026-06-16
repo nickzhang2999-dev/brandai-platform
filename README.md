@@ -39,3 +39,7 @@ brandai-platform
 - HTML 静态原型：打开 `prototype-html/index.html`。
 - GitHub Pages 预览：访问 `https://nickzhang2999-dev.github.io/brandai-platform/`。
 - 原始交付压缩包：查看 `archive/`。
+
+## 发布说明
+
+GitHub Pages 使用 `gh-pages` 分支托管，线上站点根目录对应 `prototype-html/` 的内容。
