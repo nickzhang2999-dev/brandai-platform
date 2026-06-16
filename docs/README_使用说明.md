@@ -14,7 +14,7 @@
 
 ## 使用方法
 
-直接双击 `index.html`，或用浏览器打开任意 HTML 文件即可查看。
+直接双击 `prototype-html/index.html`，或用浏览器打开 `prototype-html/` 下任意 HTML 文件即可查看。
 
 ## 已包含基础交互
 
