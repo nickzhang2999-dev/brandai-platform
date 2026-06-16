@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>工作台｜BrandAI</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+<div class="app">
+
+<aside class="sidebar">
+  <div class="logo">
+    <div class="logo-mark">B</div>
+    <div class="logo-text"><strong>BrandAI</strong><span>Visual Workspace</span></div>
+  </div>
+  <nav class="nav">
+    <a href="index.html" class=""><span class="ico">⌂</span>首页</a>
+    <a href="campaigns.html" class=""><span class="ico">▦</span>Campaign 项目</a>
+    <a href="brand-knowledge.html" class=""><span class="ico">◈</span>品牌知识库</a>
+    <a href="assets.html" class=""><span class="ico">▣</span>素材库</a>
+    <a href="#" class=""><span class="ico">▤</span>模板库</a>
+    <a href="workspace.html" class="active"><span class="ico">✦</span>工作台</a>
+  </nav>
+  <div class="sidebar-user">
+    <div class="avatar">张</div>
+    <div class="user-meta"><strong>张晓宁</strong><span>Market Director</span></div>
+  </div>
+</aside>
+
+<main class="main">
+
+<div class="workspace">
+  <section class="canvas-wrap">
+    <div class="card canvas-top"><strong>夏季新品上市 Campaign / 社交广告图</strong><div><button class="icon-btn">↶</button><button class="icon-btn">↷</button><button class="filter">100%</button></div></div>
+    <div class="canvas">
+      <div class="ad-art">
+        <h1>初夏焕亮</h1>
+        <p>LUMINA 光透焕亮精华水，以清透水光感唤醒肌肤自然光泽。</p>
+        <div class="bottle"></div>
+      </div>
+    </div>
+    <div class="variant-strip">
+      <div class="variant active" data-title="初夏焕亮"></div>
+      <div class="variant" data-title="清透水光"></div>
+      <div class="variant" data-title="紫色花卉"></div>
+      <div class="variant" data-title="自然光影"></div>
+    </div>
+  </section>
+  <aside class="card prompt-panel">
+    <h3>AI 提示词编辑</h3>
+    <textarea>为 LUMINA 夏季新品 Campaign 生成一张高端、清透、具有自然光感的社交媒体广告图，突出产品瓶身与品牌紫色情调，整体氛围清新、柔和、充满水光感。</textarea>
+    <p class="note">当前 86 / 500 字</p>
+    <div class="panel-block">
+      <h4>风格关键词</h4>
+      <div class="tags"><span class="tag">高端</span><span class="tag">清透</span><span class="tag">水光感</span><span class="tag">柔和</span><span class="tag">自然光</span></div>
+    </div>
+    <div class="panel-block">
+      <h4>品牌约束</h4>
+      <div class="card" style="padding:14px;background:var(--lavender-light)"><strong>LUMINA 品牌规范</strong><p class="note">已应用品牌色、字体、Logo 安全空间与高端清透视觉规则。</p></div>
+    </div>
+    <div class="panel-block">
+      <h4>参考素材</h4>
+      <div class="ref-list"><div class="ref"></div><div class="ref"></div><div class="ref"></div><button class="icon-btn" data-modal="上传参考素材" data-body="上传新的参考图，用于控制构图、色彩或产品展示方向。">＋</button></div>
+    </div>
+    <button class="primary-btn" data-generate>提交制作</button>
+    <p class="note">今日剩余额度：18/20 次<br>内容由 AI 生成，请注意核对准确性。</p>
+  </aside>
+</div>
+
+</main>
+</div>
+
+<div class="modal-mask">
+  <div class="modal">
+    <h3>模拟弹窗</h3>
+    <div class="modal-content"><p>该操作为 HTML 静态原型中的模拟交互。</p></div>
+    <div class="modal-actions">
+      <button class="secondary-btn" data-close>取消</button>
+      <button class="small-primary" data-close>确认</button>
+    </div>
+  </div>
+</div>
+<script src="js/prototype.js"></script>
+
+</body>
+</html>
