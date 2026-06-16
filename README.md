@@ -37,4 +37,5 @@ brandai-platform
 
 - 产品与工程文档：查看 `docs/`。
 - HTML 静态原型：打开 `prototype-html/index.html`。
+- GitHub Pages 预览：访问 `https://nickzhang2999-dev.github.io/brandai-platform/`。
 - 原始交付压缩包：查看 `archive/`。
