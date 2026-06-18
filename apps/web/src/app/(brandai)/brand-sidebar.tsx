@@ -1,0 +1,74 @@
+"use client";
+
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { currentUser, navItems } from "@/lib/brandai-mock";
+
+/**
+ * BrandAI 左侧导航壳（docs/04 §布局：侧栏 236px，logo mark + 主导航 + 底部
+ * 用户卡）。紫色设计语言：选中项用 lavender 底 + violet 文字。
+ */
+export function BrandSidebar({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname() ?? "/";
+
+  const isActive = (href: string) =>
+    href === "/" ? pathname === "/" : pathname.startsWith(href);
+
+  return (
+    <div className="flex min-h-screen bg-background text-foreground">
+      <aside className="sticky top-0 flex h-screen w-[236px] shrink-0 flex-col border-r border-border bg-card px-4 py-6">
+        {/* Logo */}
+        <Link href="/" className="mb-8 flex items-center gap-3 px-2">
+          <span className="flex h-9 w-9 items-center justify-center rounded-2xl bg-gradient-to-br from-primary to-accent text-base font-semibold text-primary-foreground shadow-[0_10px_24px_rgba(124,92,255,0.25)]">
+            B
+          </span>
+          <span className="text-lg font-semibold tracking-tight">BrandAI</span>
+        </Link>
+
+        {/* Nav */}
+        <nav className="flex flex-1 flex-col gap-1.5">
+          {navItems.map((item) => {
+            const active = isActive(item.href);
+            return (
+              <Link
+                key={item.key}
+                href={item.href}
+                className={[
+                  "flex items-center gap-3 rounded-2xl px-3 py-2.5 text-sm transition-colors",
+                  active
+                    ? "bg-accent-soft font-medium text-primary"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                ].join(" ")}
+              >
+                <span className="w-5 text-center text-base">{item.icon}</span>
+                {item.label}
+              </Link>
+            );
+          })}
+        </nav>
+
+        {/* Settings + user */}
+        <div className="mt-4 flex flex-col gap-2">
+          <Link
+            href="/admin/settings"
+            className="flex items-center gap-3 rounded-2xl px-3 py-2.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          >
+            <span className="w-5 text-center text-base">⚙</span>
+            设置
+          </Link>
+          <div className="flex items-center gap-3 rounded-2xl bg-muted px-3 py-3">
+            <span className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-primary to-accent text-sm font-semibold text-primary-foreground">
+              {currentUser.initial}
+            </span>
+            <div className="min-w-0">
+              <div className="truncate text-sm font-medium">{currentUser.name}</div>
+              <div className="truncate text-xs text-muted-foreground">{currentUser.role}</div>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <main className="min-w-0 flex-1">{children}</main>
+    </div>
+  );
+}
