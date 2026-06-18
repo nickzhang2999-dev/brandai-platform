@@ -1,18 +1,17 @@
 /**
- * Shared Tailwind preset — OpenVisual editorial design language.
+ * Shared Tailwind preset — BrandAI design language.
  *
- * P1.0: Dual theme.
- *   - editorial-light (default, UI v0.1 §7): Off White base + Burgundy accent.
- *   - editorial-dark (legacy, opt-in via `<html class="dark">`): kept for fallback.
+ * Single brand color = violet #7C5CFF, soft lavender surfaces, near-white
+ * neutral page, Inter as the only type family (docs/04_UI视觉规范文档.md).
  *
  * Token strategy: all palette tokens are CSS variables (RGB triplet, alpha-aware
  * via Tailwind `<alpha-value>`). Variables are defined in
- * packages/ui/src/styles.css under `:root` (light) and `.dark` (dark).
- *
- * Concrete palette literals are kept under their hue names for places that need
- * the raw color (charts, hand-drawn classNames). The semantic tokens
- * (background, foreground, primary, …) always go through the CSS variable so a
+ * packages/ui/src/styles.css under `:root` (light) and `.dark` (dark), so a
  * single `<html class="dark">` toggle flips the whole UI.
+ *
+ * The raw color literals below are kept under their legacy hue names so the
+ * components migrated from the old codebase keep compiling; their values are
+ * remapped to the BrandAI violet/neutral family (no more warm tan surfaces).
  */
 const v = (name) => `rgb(var(${name}) / <alpha-value>)`;
 
@@ -41,55 +40,62 @@ module.exports = {
         success: v("--success"),
         warning: v("--warning"),
 
-        // ── Legacy dark palette (kept for editorial-dark + back-compat) ──
+        // ── Legacy raw palette names, remapped to the BrandAI family ──
+        // (kept defined so components migrated from the old codebase compile;
+        //  warm tans → violet/neutral so nothing renders "sticky-note" warm.)
         ink: {
-          DEFAULT: "#16130f",
-          soft: "#1f1b16",
-          muted: "#2a251e",
-          black: "#101010",
+          DEFAULT: "#1F1F2A",
+          soft: "#2A2A38",
+          muted: "#3A3A4A",
+          black: "#111117",
         },
         cream: {
-          DEFAULT: "#f4efe6",
-          soft: "#ebe4d6",
-          dim: "#d8cfbc",
+          DEFAULT: "#FFFFFF",
+          soft: "#FAFAFC",
+          dim: "#F6F5FA",
         },
+        "off-white": "#FAFAFC",
+        "warm-sand": "#F4F0FF",
+        stone: "#ECECF3",
+        graphite: "#1F1F2A",
+        burgundy: "#7C5CFF",
+        olive: "#34A853",
+        "muted-gold": "#8B6CFF",
+        "muted-gold-deep": "#5B3FE0",
+        clay: "#8B6CFF",
+        "soft-blue-gray": "#6B6B7A",
 
-        // ── Editorial-light raw palette (UI v0.1 §7) ──
-        "off-white": "#F7F4EF",
-        "warm-sand": "#E8DFD2",
-        stone: "#D8D2C8",
-        graphite: "#1D1D1F",
-        burgundy: "#6E1F2B",
-        olive: "#3E4A36",
-        "muted-gold": "#B89B5E",
-        "muted-gold-deep": "#8A7340",
-        clay: "#B86F52",
-        "soft-blue-gray": "#7C8A93",
+        // ── BrandAI named palette (designer spec) ──
+        violet: "#7C5CFF",
+        "violet-bright": "#8B6CFF",
+        "violet-deep": "#5B3FE0",
+        lavender: "#F4F0FF",
+        "lavender-light": "#FAF8FF",
       },
       borderRadius: {
-        // shadcn/ui radius scale (was 1/1.5/2rem — those mega-rounds gave the
-        // "bouncy warehouse" look). shadcn uses --radius: 0.5rem with sm/md/lg
-        // derived from it. We keep names but bring them to shadcn values so the
-        // app's existing rounded-lg/xl/2xl render like shadcn cards/inputs.
-        sm: "0.25rem",
-        md: "0.375rem",
-        lg: "0.5rem",
-        xl: "0.75rem",
-        "2xl": "0.75rem",
+        // BrandAI uses softer, rounder corners than shadcn defaults: cards
+        // 20-24px, inputs ~34px (rounded-3xl/full), buttons ~18px, chips full.
+        sm: "0.5rem",     /* 8px  */
+        md: "0.75rem",    /* 12px */
+        lg: "1rem",       /* 16px */
+        xl: "1.25rem",    /* 20px */
+        "2xl": "1.5rem",  /* 24px */
+        "3xl": "2rem",    /* 32px (modals / hero input) */
       },
       fontFamily: {
-        serif: ['"Noto Serif SC"', "Georgia", "serif"],
+        // Single type family. `serif` is aliased to Inter so the ~80 legacy
+        // `font-serif` heading usages render in Inter without per-file edits.
+        serif: ['"Inter"', '"PingFang SC"', "system-ui", "sans-serif"],
         sans: ['"Inter"', '"PingFang SC"', "system-ui", "sans-serif"],
       },
       boxShadow: {
-        // shadcn elevation scale — subtle, layered, neutral. Replaces the
-        // single near-invisible "hairline" drop.
-        hairline: "0 1px 0 0 rgb(0 0 0 / 0.04)",
-        sm: "0 1px 2px 0 rgb(0 0 0 / 0.05)",
-        DEFAULT:
-          "0 1px 3px 0 rgb(0 0 0 / 0.08), 0 1px 2px -1px rgb(0 0 0 / 0.08)",
-        md: "0 4px 6px -1px rgb(0 0 0 / 0.08), 0 2px 4px -2px rgb(0 0 0 / 0.06)",
-        lg: "0 10px 15px -3px rgb(0 0 0 / 0.08), 0 4px 6px -4px rgb(0 0 0 / 0.06)",
+        // BrandAI elevation: soft, violet-tinted, layered (docs §阴影系统).
+        hairline: "0 1px 0 0 rgb(30 30 60 / 0.04)",
+        sm: "0 4px 12px -2px rgb(30 30 60 / 0.05)",
+        DEFAULT: "0 8px 24px rgb(30 30 60 / 0.06)",
+        md: "0 12px 32px -4px rgb(30 30 60 / 0.08)",
+        lg: "0 20px 60px -8px rgb(30 30 60 / 0.12)",
+        focus: "0 0 0 4px rgb(124 92 255 / 0.08)",
       },
     },
   },
