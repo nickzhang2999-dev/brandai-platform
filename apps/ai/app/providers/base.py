@@ -1,0 +1,81 @@
+"""Provider adapter contracts. Business code depends only on these ABCs."""
+from abc import ABC, abstractmethod
+from typing import Any
+
+
+class ProviderCheck:
+    """Result of a cheap reachability/auth self-check. `ok` plus a short,
+    operator-readable `detail` (status + body snippet, or exception name)."""
+
+    def __init__(self, ok: bool, detail: str):
+        self.ok = ok
+        self.detail = detail
+
+
+class ImageProvider(ABC):
+    @abstractmethod
+    async def generate(
+        self,
+        prompt: str,
+        *,
+        width: int,
+        height: int,
+        n: int,
+        negative: list[str] | None = None,
+        extra: dict[str, Any] | None = None,
+    ) -> list[str]:
+        """Return n image URLs.
+
+        P1.2 additive args: `negative` (joined into the provider's
+        ``negative_prompt`` field where supported) and `extra` (machine-rule
+        knobs such as ``aspect_ratio`` / ``cfg`` / ``seed``). Both default
+        ``None`` so pre-P1.2 callers and provider impls stay binary-compatible.
+        """
+
+    @abstractmethod
+    async def edit(
+        self, image_url: str, op: str, payload: dict[str, Any]
+    ) -> str:
+        """Return edited image URL."""
+
+    @abstractmethod
+    async def check(self) -> "ProviderCheck":
+        """Cheap auth + reachability probe (never raises). See ProviderCheck."""
+
+
+class VLMProvider(ABC):
+    @abstractmethod
+    async def analyze_assets(
+        self, assets: list[dict[str, str]]
+    ) -> dict[str, Any]:
+        """Return recognized brand rules + color system."""
+
+    @abstractmethod
+    async def parse_manual(self, text: str) -> dict[str, Any]:
+        """Return recognized brand rules (+ color system) from manual text."""
+
+    @abstractmethod
+    async def check_visual_compliance(
+        self,
+        image_url: str,
+        brand_rules: list[dict[str, Any]],
+        references: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Return ``{"results": [...], "score": int|None}``.
+
+        ``results`` is the categorical PASS/RISK/FORBIDDEN list; ``score`` is a
+        0–100 brand-consistency score for the whole image (``None`` when the
+        model omits it or no image was inspected).
+
+        D5 additive arg: ``references`` is the list of positive/negative example
+        assets (``{url, polarity, source, note?}``) to compare the image
+        against. ``None`` keeps the pre-D5 behaviour.
+        """
+
+    @abstractmethod
+    async def scrape_website(self, url: str) -> dict[str, Any]:
+        """Return images / copies / selling points from a site."""
+
+    @abstractmethod
+    async def check(self) -> "ProviderCheck":
+        """Cheap auth + reachability probe (never raises). See ProviderCheck."""

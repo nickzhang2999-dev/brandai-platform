@@ -1,0 +1,194 @@
+# CDS Compose — OpenVisual 全栈
+# 手工编写（cdscli scan 仅能从 docker-compose.yml 解析出 infra，
+# 应用服务 web/ai/worker 不在 docker-compose 中，故在此补全）。
+# 提交前必须 `cdscli verify` exit 0。
+#
+# 2026-05-28 改动批次(经用户授权,docs/INFRA-AUDIT.md 详细):
+#   1. 删除 minio + createbuckets service 与 miniodata 卷 ——
+#      生产已迁 Cloudflare R2(凭据落 AppSetting 加密存,见
+#      /admin/settings/storage);本地 MinIO 容器频繁重启 + 不可被
+#      浏览器/网关解析,徒增运维成本。
+#   2. ai 服务去掉 `pip install --no-cache-dir`,加 PIP_CACHE_DIR
+#      落到 bind 内;首次冷装后每次容器重启 pip 都走缓存。
+#   3. 新增 pnpm_store / pip_cache 两个 named volume,跨 deploy 持久。
+#      cold start 依然冷,但同一 deploy 内的容器重启完全免下载。
+#   4. web/worker 的 S3_* env 全部去掉(保持空) —— 仅靠 AppSetting
+#      做存储凭据来源,UI 改完即时生效,无需重启。
+
+x-cds-project:
+  name: brandai
+  description: "品牌视觉 AI 商业图片生成 (Next.js BFF + FastAPI AI + BullMQ worker)"
+  repo: "https://github.com/inernoro/brandai.git"
+
+# 项目级共享环境变量 — CDS 注入本项目所有容器；密码由 CDS 随机生成
+x-cds-env:
+  CDS_POSTGRES_USER: "${CDS_POSTGRES_USER:-}"
+  CDS_POSTGRES_PASSWORD: "${CDS_POSTGRES_PASSWORD:-}"
+  CDS_POSTGRES_DB: "${CDS_POSTGRES_DB:-}"
+  CDS_DATABASE_URL: "${CDS_DATABASE_URL:-}"
+  CDS_REDIS_PASSWORD: "${CDS_REDIS_PASSWORD:-}"
+  CDS_REDIS_URL: "${CDS_REDIS_URL:-}"
+  CDS_JWT_SECRET: "${CDS_JWT_SECRET:-}"
+
+x-cds-env-meta:
+  CDS_POSTGRES_PASSWORD: { kind: auto, hint: "cdscli 自动生成强密码" }
+  CDS_REDIS_PASSWORD: { kind: auto, hint: "cdscli 自动生成强密码" }
+  CDS_DATABASE_URL: { kind: infra-derived, hint: "由 CDS 据基础设施推导" }
+  CDS_REDIS_URL: { kind: infra-derived, hint: "由 CDS 据基础设施推导" }
+  CDS_JWT_SECRET: { kind: auto, hint: "Auth.js 签名密钥，改了所有会话失效" }
+
+services:
+  # ---------- 基础设施（无相对挂载 + 有 ports）----------
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "5432"
+    environment:
+      POSTGRES_USER: "${CDS_POSTGRES_USER}"
+      POSTGRES_PASSWORD: "${CDS_POSTGRES_PASSWORD}"
+      POSTGRES_DB: "${CDS_POSTGRES_DB}"
+    volumes:
+      - "pgdata:/var/lib/postgresql/data"
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379"
+    command: redis-server --requirepass ${CDS_REDIS_PASSWORD}
+
+  # ---------- 应用服务（相对挂载 .:/app）----------
+  ai:
+    image: python:3.12-slim
+    working_dir: /app
+    volumes:
+      - "./apps/ai:/app"
+      # Cross-deploy persistent pip wheel cache. PIP_CACHE_DIR below
+      # points pip here, so every container restart hits warm wheels —
+      # ~50s saved per cold start of the ai container.
+      - "pip_cache:/app/.pip-cache"
+    ports:
+      - "8000"
+    environment:
+      # AppSetting (admin UI, encrypted with SETTINGS_ENC_KEY) wins;
+      # these env entries are *only* fallbacks for first-boot before
+      # any admin has configured providers from /admin/settings/ai.
+      # Leaving them empty (or omitting) is fine — provider resolves
+      # to "mock" + zero-key, which is correct for an unconfigured
+      # deploy. Operators configure via UI, not env.
+      IMAGE_PROVIDER: "${IMAGE_PROVIDER:-}"
+      VLM_PROVIDER: "${VLM_PROVIDER:-}"
+      IMAGE_PROVIDER_API_KEY: "${IMAGE_PROVIDER_API_KEY:-}"
+      VLM_PROVIDER_API_KEY: "${VLM_PROVIDER_API_KEY:-}"
+      IMAGE_PROVIDER_BASE_URL: "${IMAGE_PROVIDER_BASE_URL:-}"
+      VLM_PROVIDER_BASE_URL: "${VLM_PROVIDER_BASE_URL:-}"
+      IMAGE_MODEL: "${IMAGE_MODEL:-}"
+      VLM_MODEL: "${VLM_MODEL:-}"
+      AI_HTTP_TIMEOUT_SECONDS: "240"
+      AI_MAX_RETRIES: "1"
+      PIP_CACHE_DIR: "/app/.pip-cache"
+    command: >
+      /bin/sh -c "pip install -r requirements.txt &&
+      uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    labels:
+      cds.path-prefix: "/ai/"
+
+  web:
+    image: node:20-slim
+    working_dir: /app
+    volumes:
+      - ".:/app"
+      # Cross-deploy persistent pnpm content-addressable store. The
+      # .npmrc at repo root sets store-dir=.pnpm-store, which points
+      # here — every container restart reuses ~933MB of packages
+      # instead of re-downloading.
+      - "pnpm_store:/app/.pnpm-store"
+    ports:
+      - "3000"
+    depends_on:
+      - postgres
+      - redis
+      - ai
+    environment:
+      DATABASE_URL: "${CDS_DATABASE_URL}"
+      REDIS_URL: "${CDS_REDIS_URL}"
+      AUTH_SECRET: "${CDS_JWT_SECRET}"
+      AUTH_URL: "https://plan-frontend-architecture-axy7a-claude-brandai.miduo.org"
+      AUTH_TRUST_HOST: "true"
+      # ADMIN_EMAILS (allowlist for /admin/settings) comes from CDS _global env
+      # via auto-injection — intentionally NOT declared here so the admin email
+      # stays out of this public repo. Do not add an "${ADMIN_EMAILS}" line: an
+      # empty interpolation would override the injected value.
+      # Encrypts admin-supplied AI keys at rest. Dedicated key = the project JWT
+      # secret (stable); the app also falls back to AUTH_SECRET if this is empty.
+      SETTINGS_ENC_KEY: "${CDS_JWT_SECRET}"
+      AI_SERVICE_URL: "http://ai:8000"
+      NODE_ENV: "production"
+      CI: "true"
+      # scripts/web-startup.sh listens on $PORT.
+      PORT: "3000"
+      # Storage: configured at runtime via /admin/settings/storage UI →
+      # AppSetting.storage* (encrypted). No S3_* env injection here —
+      # an empty interpolation would silently override the DB value.
+      # First boot before configuration: getEffectiveStorage() returns
+      # configured=false and callers (generate.worker) keep the inline
+      # data: URL for the image instead of trying to upload.
+    # BullMQ worker 已拆到独立的 worker 服务(见下)，不再与 web 同容器，
+    # 避免 tsx worker 与 next 服务抢 CPU/内存导致 OOM 崩溃重启 →
+    # 触发 next build 重建 → 整站间歇假死(卡顿)。
+    #
+    # 2026-05-28 — startup wrapped by scripts/web-startup.sh. The script
+    # opens a Node HTTP placeholder on $PORT that returns 200 immediately
+    # so CDS's 215s readiness probe passes during the ~240s cold-build
+    # (pnpm install + prisma migrate + next build). Once the build chain
+    # finishes the placeholder is killed and `next start` execs into the
+    # same port. Subsequent restarts see .next/BUILD_ID and skip the
+    # build entirely, exec'ing next start directly. Without this script,
+    # every cold deploy fails the probe by ~25 seconds even though the
+    # container would have been healthy moments later.
+    command: ["/bin/sh", "scripts/web-startup.sh"]
+    labels:
+      cds.path-prefix: "/"
+
+  # BullMQ worker — 独立容器，与 web 隔离资源。不跑 next build(worker 不需要)
+  # 故启动快、内存占用低；不跑 migrate deploy(由 web 统一执行，避免并发迁移)。
+  # 声明 3001 端口仅为满足 CDS「app 服务须有端口」要求(health-only，无 path-prefix
+  # → 不对外路由)。env 与 web 保持一致(worker 经 AI_SERVICE_URL 调 ai 服务)。
+  worker:
+    image: node:20-slim
+    working_dir: /app
+    volumes:
+      - ".:/app"
+      - "pnpm_store:/app/.pnpm-store"
+    ports:
+      - "3001"
+    depends_on:
+      - postgres
+      - redis
+      - ai
+    environment:
+      DATABASE_URL: "${CDS_DATABASE_URL}"
+      REDIS_URL: "${CDS_REDIS_URL}"
+      AUTH_SECRET: "${CDS_JWT_SECRET}"
+      SETTINGS_ENC_KEY: "${CDS_JWT_SECRET}"
+      AI_SERVICE_URL: "http://ai:8000"
+      WORKER_HEALTH_PORT: "3001"
+      NODE_ENV: "production"
+      CI: "true"
+      # Storage: AppSetting only, same as web (see comment there).
+    # 2026-05-28 — wrapped by scripts/worker-startup.sh (parallel to
+    # scripts/web-startup.sh): a Node placeholder server binds
+    # $WORKER_HEALTH_PORT immediately so the 215s readiness probe passes
+    # while pnpm install + prisma generate (~230s cold) finish, then exec's
+    # into tsx workers. Without this, every cold deploy fails the worker
+    # readiness probe → branch goes to "error" → /api/health 503 across the
+    # whole stack. See docs/INFRA-AUDIT.md.
+    command: ["/bin/sh", "scripts/worker-startup.sh"]
+
+volumes:
+  pgdata:
+  # 2026-05-28: pnpm_store + pip_cache are mounted into web/worker/ai
+  # bind paths so first-time cold install populates them; every
+  # subsequent container restart skips ~50s of pip downloads and
+  # ~30s of pnpm fetch, ~950MB of network on each restart.
+  pnpm_store:
+  pip_cache:

@@ -1,0 +1,135 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Noto+Serif+SC:wght@500;700&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Semantic token definitions for the editorial theme system.
+ *
+ * Values are RGB triplets (no `rgb(...)` wrapper) so Tailwind can compose them
+ * with `<alpha-value>` (see packages/config/tailwind-preset.js).
+ *
+ * Theme blocks all share the SAME 16 token names — flipping the class on <html>
+ * repaints the entire UI without component edits:
+ *
+ *   :root        → editorial-light  (default, UI v0.1 §7)
+ *   .dark        → editorial-dark   (legacy P0 palette, opt-in)
+ *   .theme-mono  → mono-graphite    (zero-saturation, editorial print)
+ *   .theme-tech  → tech-indigo      (cool, product/tech feel)
+ *
+ * Token set (16):
+ *   bg fg card card-fg muted muted-fg primary primary-fg
+ *   accent accent-soft accent-deep destructive border ring
+ *   success warning
+ */
+@layer base {
+  :root {
+    color-scheme: light;
+
+    /* shadcn/ui-style neutral system (2026-05-29). Replaces the warm "tan
+     * sticky-note" editorial palette per product direction. Clean WHITE card
+     * surfaces lifting off a near-white neutral page via a defined neutral
+     * hairline — shadcn's default light look. The one brand color (burgundy)
+     * stays as `primary`/`accent`; everything else is neutral grays.
+     * Serif display face (h1-h3) is kept as the single brand flourish. */
+    --bg: 250 250 249;            /* neutral-50 page        #FAFAF9 */
+    --fg: 23 23 23;               /* neutral-900 ink        #171717 */
+    --card: 255 255 255;          /* white surface (lifts)  #FFFFFF */
+    --card-fg: 23 23 23;
+    --muted: 245 245 244;         /* neutral-100 inset/chip #F5F5F4 */
+    --muted-fg: 115 113 108;      /* neutral-500            */
+    --primary: 110 31 43;         /* burgundy brand         #6E1F2B */
+    --primary-fg: 250 250 249;
+    --accent: 110 31 43;          /* burgundy = the one accent */
+    --accent-soft: 245 245 244;   /* neutral-100 */
+    --accent-deep: 88 24 34;      /* darker burgundy        #581822 */
+    --destructive: 190 38 45;     /* clean red              #BE262D */
+    --border: 228 228 225;        /* neutral-200 hairline   #E4E4E1 */
+    --ring: 110 31 43;            /* burgundy */
+    --success: 21 101 52;         /* green-800              #156534 */
+    --warning: 180 83 9;          /* amber-700              #B45309 */
+  }
+
+  .dark {
+    color-scheme: dark;
+
+    /* shadcn-style neutral dark: near-black page, neutral-900 cards, neutral
+     * hairlines, a lifted burgundy/rose primary visible on dark. */
+    --bg: 10 10 10;               /* neutral-950 page    #0A0A0A */
+    --fg: 250 250 250;            /* neutral-50          #FAFAFA */
+    --card: 23 23 23;             /* neutral-900 surface #171717 */
+    --card-fg: 250 250 250;
+    --muted: 38 38 38;            /* neutral-800 inset   #262626 */
+    --muted-fg: 163 163 163;      /* neutral-400 */
+    --primary: 200 92 106;        /* lifted burgundy/rose #C85C6A */
+    --primary-fg: 23 23 23;
+    --accent: 200 92 106;
+    --accent-soft: 64 28 34;      /* deep burgundy inset */
+    --accent-deep: 220 130 142;
+    --destructive: 220 70 70;     /* red on dark */
+    --border: 38 38 38;           /* neutral-800 hairline */
+    --ring: 200 92 106;
+    --success: 74 222 128;        /* green-400 */
+    --warning: 250 204 21;        /* amber-400 */
+  }
+
+  /*
+   * .theme-mono — zero-saturation editorial.
+   * Paper / ink / graphite, single accent. Same family as :root, no warm tint.
+   */
+  .theme-mono {
+    color-scheme: light;
+
+    --bg: 245 245 244;            /* paper       #F5F5F4 */
+    --fg: 23 23 23;               /* near-black  #171717 */
+    --card: 250 250 249;          /* paper-soft  #FAFAF9 */
+    --card-fg: 23 23 23;
+    --muted: 229 229 228;         /* stone-200   #E7E5E4 */
+    --muted-fg: 87 83 78;         /* stone-600   #57534E */
+    --primary: 23 23 23;          /* ink         */
+    --primary-fg: 250 250 249;
+    --accent: 87 83 78;           /* stone-600   */
+    --accent-soft: 229 229 228;
+    --accent-deep: 23 23 23;
+    --destructive: 120 53 53;     /* desaturated red */
+    --border: 214 211 209;
+    --ring: 23 23 23;
+    --success: 64 80 60;          /* desaturated olive */
+    --warning: 122 100 56;
+  }
+
+  /*
+   * .theme-tech — cool indigo/slate. Product/SaaS feel without leaving the
+   * editorial typographic system.
+   */
+  .theme-tech {
+    color-scheme: light;
+
+    --bg: 248 250 252;            /* slate-50    */
+    --fg: 15 23 42;               /* slate-900   */
+    --card: 255 255 255;          /* white       */
+    --card-fg: 15 23 42;
+    --muted: 226 232 240;         /* slate-200   */
+    --muted-fg: 71 85 105;        /* slate-600   */
+    --primary: 67 56 202;         /* indigo-700  */
+    --primary-fg: 248 250 252;
+    --accent: 14 116 144;         /* cyan-700    */
+    --accent-soft: 224 231 255;   /* indigo-100  */
+    --accent-deep: 49 46 129;     /* indigo-900  */
+    --destructive: 190 18 60;     /* rose-700    */
+    --border: 226 232 240;        /* slate-200   */
+    --ring: 79 70 229;            /* indigo-600  */
+    --success: 21 128 61;         /* green-700   */
+    --warning: 161 98 7;          /* amber-700   */
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+  }
+  h1,
+  h2,
+  h3 {
+    @apply font-serif;
+  }
+}

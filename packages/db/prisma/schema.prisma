@@ -1,0 +1,478 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum AssetCategory {
+  LOGO
+  PRODUCT
+  PACKAGING
+  KV
+  ECOM
+  SOCIAL
+  VI_DOC
+  OTHER
+}
+
+enum AssetSource {
+  UPLOAD
+  WEBSITE
+}
+
+enum RuleType {
+  color
+  font
+  layout
+  imagery
+  graphic
+  copy
+  logo
+}
+
+enum RuleStrength {
+  STRONG
+  WEAK
+  FORBIDDEN
+}
+
+enum RuleStatus {
+  DRAFT
+  CONFIRMED
+  REJECTED
+}
+
+enum ComplianceTermType {
+  FORBIDDEN
+  CAUTION
+}
+
+enum SceneType {
+  ECOM_MAIN
+  SCENE
+  SOCIAL_POSTER
+  CAMPAIGN_KV
+  SELLING_POINT
+}
+
+enum JobStatus {
+  PENDING
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+
+enum ProhibitionSeverity {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum ProhibitionStatus {
+  ACTIVE
+  INACTIVE
+  PENDING
+}
+
+// M-D — subscription tiers (SaaS I5–I8). KA service packages (I1–I4) are a
+// sales-catalog concern, not a metered runtime subscription, so they live
+// outside this enum.
+enum PlanTier {
+  STARTER
+  PRO
+  TEAM
+  ENTERPRISE
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  CANCELED
+  PAST_DUE
+}
+
+// G6 — version approval workflow. A version is PENDING until an EDITOR submits
+// it (SUBMITTED); a REVIEWER/OWNER then APPROVED/REJECTED it. Marking final
+// requires the actor be OWNER or the version be APPROVED.
+enum ReviewStatus {
+  PENDING
+  SUBMITTED
+  APPROVED
+  REJECTED
+}
+
+model User {
+  id            String           @id @default(cuid())
+  email         String           @unique
+  name          String?
+  image         String?
+  // M-B — email/password auth. Null for OAuth-only or legacy demo users.
+  passwordHash  String?
+  emailVerified DateTime?
+  // Platform admin (access to /admin/settings). The first user to register
+  // becomes admin (bootstrap in the register route) unless ADMIN_EMAILS is set,
+  // in which case that env allowlist is authoritative (see lib/admin.ts).
+  isAdmin       Boolean          @default(false)
+  // Account enabled flag (admin user-management, /admin/users). A disabled user
+  // cannot sign in (auth.ts authorize) and is bounced from the app shell.
+  isActive      Boolean          @default(true)
+  createdAt     DateTime         @default(now())
+  workspaces    BrandWorkspace[]
+  subscription  Subscription?
+  accounts      Account[]
+  sessions      Session[]
+  memberships   Membership[]
+}
+
+// M-B — Auth.js Prisma adapter tables. Used when OAuth providers are
+// configured (the adapter persists provider account links); the demo and
+// password Credentials paths stay on JWT sessions and don't write these.
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expires      DateTime
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// M-B — multi-tenant seam. Not wired into authorization yet (workspace
+// ownership remains the gate); reserved so orgs/teams can land without a
+// second migration.
+model Membership {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspaceId String
+  role        String   @default("OWNER")
+  createdAt   DateTime @default(now())
+
+  @@unique([userId, workspaceId])
+  @@index([workspaceId])
+}
+
+model BrandWorkspace {
+  id           String            @id @default(cuid())
+  ownerId      String
+  owner        User              @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name         String
+  industry     String?
+  websiteUrl   String?
+  createdAt    DateTime          @default(now())
+  assets       Asset[]
+  rules        BrandRule[]
+  ruleSnapshots RuleSnapshot[]
+  terms        ComplianceTerm[]
+  prohibitions ProhibitionRule[]
+  projects     Project[]
+
+  @@index([ownerId])
+}
+
+model Asset {
+  id                     String            @id @default(cuid())
+  workspaceId            String
+  workspace              BrandWorkspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  category               AssetCategory
+  fileName               String
+  storageKey             String
+  url                    String
+  mimeType               String
+  sizeBytes              Int               @default(0)
+  source                 AssetSource       @default(UPLOAD)
+  // P1.3 — asset availability lifecycle.
+  availableForGeneration Boolean           @default(true)
+  deprecatedAt           DateTime?
+  replacementAssetId     String?
+  replacementAsset       Asset?            @relation("AssetReplacement", fields: [replacementAssetId], references: [id], onDelete: SetNull)
+  replacedBy             Asset[]           @relation("AssetReplacement")
+  prohibitionPositiveFor ProhibitionRule[] @relation("ProhibitionPositiveExample")
+  prohibitionNegativeFor ProhibitionRule[] @relation("ProhibitionNegativeExample")
+  createdAt              DateTime          @default(now())
+
+  @@index([workspaceId, category])
+  @@index([workspaceId, availableForGeneration])
+}
+
+model BrandRule {
+  id          String         @id @default(cuid())
+  workspaceId String
+  workspace   BrandWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  type        RuleType
+  strength    RuleStrength   @default(WEAK)
+  status      RuleStatus     @default(DRAFT)
+  summary     String
+  value       Json
+  // P1.1 — strong-typed VI module payload indexed by module name. The legacy
+  // `value` column remains as fallback to avoid breaking existing readers.
+  structured  Json?
+  evidence    Json           @default("[]")
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@index([workspaceId, status])
+}
+
+model ProhibitionRule {
+  id                     String              @id @default(cuid())
+  workspaceId            String
+  workspace              BrandWorkspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  severity               ProhibitionSeverity
+  affectsGeneration      Boolean             @default(true)
+  affectsValidation      Boolean             @default(true)
+  description            String
+  scope                  String[]            @default([])
+  positiveExampleAssetId String?
+  positiveExampleAsset   Asset?              @relation("ProhibitionPositiveExample", fields: [positiveExampleAssetId], references: [id], onDelete: SetNull)
+  negativeExampleAssetId String?
+  negativeExampleAsset   Asset?              @relation("ProhibitionNegativeExample", fields: [negativeExampleAssetId], references: [id], onDelete: SetNull)
+  alternativeSuggestion  String?
+  applicableChannels     String[]            @default([])
+  status                 ProhibitionStatus   @default(ACTIVE)
+  createdAt              DateTime            @default(now())
+  updatedAt              DateTime            @updatedAt
+
+  @@index([workspaceId, status])
+}
+
+// C8 — rule version management. An immutable snapshot of the workspace's
+// CONFIRMED BrandRule set at a point in time. `rules` holds the serialized
+// rule array (lib/rules.ts#serializeRule shape) so a restore can rebuild the
+// library exactly, independent of later edits/deletes. Restore is reversible:
+// it auto-captures a backup snapshot of the current set first.
+model RuleSnapshot {
+  id          String         @id @default(cuid())
+  workspaceId String
+  workspace   BrandWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  label       String
+  note        String?
+  createdById String?
+  ruleCount   Int            @default(0)
+  rules       Json           @default("[]")
+  createdAt   DateTime       @default(now())
+
+  @@index([workspaceId, createdAt])
+}
+
+model ComplianceTerm {
+  id          String             @id @default(cuid())
+  workspaceId String
+  workspace   BrandWorkspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  type        ComplianceTermType
+  term        String
+  reason      String
+  replacement String?
+  createdAt   DateTime           @default(now())
+
+  @@index([workspaceId, type])
+}
+
+model Project {
+  id          String         @id @default(cuid())
+  workspaceId String
+  workspace   BrandWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name        String
+  campaign    String?
+  product     String?
+  channel     String?
+  createdAt   DateTime       @default(now())
+  generations Generation[]
+
+  @@index([workspaceId])
+}
+
+model Generation {
+  id           String              @id @default(cuid())
+  projectId    String
+  project      Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  workspaceId  String
+  sceneType    SceneType
+  sellingPoint String
+  scene        String
+  status       JobStatus           @default(PENDING)
+  error        String?
+  createdAt    DateTime            @default(now())
+  // Wall-clock timing set by the worker. Used by the queue widget and the
+  // activity log: createdAt = enqueue, startedAt = worker picked it up,
+  // finishedAt = terminal. durationMs is denormalized = finishedAt - startedAt
+  // so the widget shows accurate duration without client-side date math
+  // (and survives multi-size where there's no single AI latency to use).
+  startedAt    DateTime?
+  finishedAt   DateTime?
+  durationMs   Int?
+  versions     GenerationVersion[]
+
+  @@index([projectId])
+  // M-D — per-user/period quota counts generations across the owner's
+  // workspaces in a time window; this index keeps that scan cheap.
+  @@index([workspaceId, createdAt])
+}
+
+model GenerationVersion {
+  id               String     @id @default(cuid())
+  generationId     String
+  generation       Generation @relation(fields: [generationId], references: [id], onDelete: Cascade)
+  index            Int        @default(0)
+  imageUrl         String
+  width            Int        @default(1024)
+  height           Int        @default(1024)
+  params           Json       @default("{}")
+  complianceReport Json?
+  parentVersionId  String?
+  isFinal          Boolean    @default(false)
+  // G6 — approval workflow. Default PENDING preserves the solo flow (owner can
+  // still mark final without a review round); collaborators submit → review.
+  reviewStatus     ReviewStatus @default(PENDING)
+  reviewedById     String?
+  reviewedAt       DateTime?
+  reviewNote       String?
+  createdAt        DateTime   @default(now())
+
+  @@index([generationId])
+}
+
+// H-async — server-authoritative async task row so recognize / parse-manual /
+// edit are refresh-resumable (mirrors the generate `?gen=` pattern) with a real
+// progress %. `refId` holds the produced resource id (e.g. an edited version);
+// recognize/parse-manual record a rule count in `refCount`.
+model AsyncTask {
+  id          String    @id @default(cuid())
+  workspaceId String
+  kind        String // "RECOGNIZE" | "PARSE_MANUAL" | "EDIT"
+  status      JobStatus @default(PENDING)
+  progress    Int       @default(0)
+  jobId       String?
+  refId       String?
+  refCount    Int       @default(0)
+  error       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([workspaceId, kind, createdAt])
+}
+
+// M-D — subscription plan definitions (D5). Quotas use -1 to mean unlimited.
+// `dailyGenerationLimit` is the per-user/day rate limit (D4); the monthly
+// quota caps cumulative generations within the current billing period.
+model Plan {
+  id                     String         @id @default(cuid())
+  tier                   PlanTier       @unique
+  name                   String
+  priceCentsMonthly      Int            @default(0)
+  monthlyGenerationQuota Int            @default(-1)
+  dailyGenerationLimit   Int            @default(-1)
+  maxWorkspaces          Int            @default(-1)
+  createdAt              DateTime       @default(now())
+  subscriptions          Subscription[]
+}
+
+// M-D — one active subscription per user. A user with no row is treated as
+// the STARTER free tier (resolved lazily in lib/quota.ts), so quota
+// enforcement works before any billing integration exists.
+model Subscription {
+  id                 String             @id @default(cuid())
+  userId             String             @unique
+  user               User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  planId             String
+  plan               Plan               @relation(fields: [planId], references: [id])
+  status             SubscriptionStatus @default(ACTIVE)
+  currentPeriodStart DateTime           @default(now())
+  currentPeriodEnd   DateTime?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  @@index([planId])
+}
+
+// T-conn-b — append-only usage/cost log for the admin usage dashboard. One row
+// per generate call (success or failure). Intentionally NO foreign keys: cost
+// history must survive workspace/user deletion (audit), and the log is never
+// joined back. Mock/unpriced calls carry null costUsd.
+model UsageLog {
+  id          String   @id @default(cuid())
+  workspaceId String
+  userId      String?
+  kind        String   // "GENERATE" (reserved: EDIT/RECOGNIZE…)
+  status      String   // "SUCCEEDED" | "FAILED"
+  provider    String?
+  model       String?
+  size        String?
+  imageCount  Int      @default(0)
+  costUsd     Float?
+  latencyMs   Int?
+  // §activity-log v2 (2026-05-29):
+  //  - totalTokens: best-effort from the provider's usage.total_tokens
+  //    (gpt-image-* is token-priced). Null when the provider doesn't report it.
+  //  - generationId: SOFT reference (no FK — keeps the audit-survives-deletion
+  //    invariant above). The activity log looks up a thumbnail by it on read;
+  //    a deleted generation just yields no thumbnail.
+  totalTokens  Int?
+  generationId String?
+  createdAt   DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([workspaceId, createdAt])
+}
+
+// Admin-managed runtime config (singleton row, id="singleton"). Lets an admin
+// set the platform AI provider/key/model from a settings page instead of
+// redeploying with env. apiKey columns hold AES-256-GCM ciphertext (lib/crypto);
+// empty fields fall back to the corresponding env var (lib/settings).
+model AppSetting {
+  id            String   @id @default("singleton")
+  imageProvider String?
+  imageApiKey   String?
+  imageBaseUrl  String?
+  imageModel    String?
+  vlmProvider   String?
+  vlmApiKey     String?
+  vlmBaseUrl    String?
+  vlmModel      String?
+  // Generated-image object storage (S3-compatible: Tencent COS / Cloudflare R2 /
+  // internal MinIO). storageSecretKey holds AES ciphertext like imageApiKey;
+  // storageForcePathStyle is stored as text "true"/"false" to keep the
+  // DB-value || env merge pattern uniform. Empty fields fall back to S3_* env.
+  storageEndpoint       String?
+  storageRegion         String?
+  storageBucket         String?
+  storageAccessKey      String?
+  storageSecretKey      String?
+  storagePublicUrl      String?
+  storageForcePathStyle String?
+  // Self-serve registration switch. Default CLOSED — only a platform admin can
+  // open it (auth register route gates on this; bootstrap/ADMIN_EMAILS are
+  // always allowed so a fresh deploy / admin is never locked out).
+  registrationOpen      Boolean  @default(false)
+  updatedAt     DateTime @updatedAt
+  updatedById   String?
+}
