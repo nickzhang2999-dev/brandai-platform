@@ -65,6 +65,13 @@ enum JobStatus {
   FAILED
 }
 
+// BrandAI — Campaign 生命周期（草稿 / 进行中 / 已完成）。
+enum CampaignStatus {
+  DRAFT
+  IN_PROGRESS
+  COMPLETED
+}
+
 enum ProhibitionSeverity {
   HIGH
   MEDIUM
@@ -189,6 +196,15 @@ model BrandWorkspace {
   industry     String?
   websiteUrl   String?
   createdAt    DateTime          @default(now())
+  // BrandAI Brand 展示/调性属性（frozen-additive）
+  subtitle       String?
+  description    String?
+  coverImage     String?
+  tags           String[]        @default([])
+  isVerified     Boolean         @default(false)
+  positioning    String?
+  targetAudience String?
+  slogan         String?
   assets       Asset[]
   rules        BrandRule[]
   ruleSnapshots RuleSnapshot[]
@@ -219,6 +235,12 @@ model Asset {
   prohibitionPositiveFor ProhibitionRule[] @relation("ProhibitionPositiveExample")
   prohibitionNegativeFor ProhibitionRule[] @relation("ProhibitionNegativeExample")
   createdAt              DateTime          @default(now())
+  // BrandAI 素材库智能字段（frozen-additive）：识别 worker 自动打标 / AI 描述 /
+  // 收藏 / 分辨率展示串。
+  aiTags                 String[]          @default([])
+  aiDescription          String?
+  isFavorite             Boolean           @default(false)
+  resolution             String?
 
   @@index([workspaceId, category])
   @@index([workspaceId, availableForGeneration])
@@ -297,6 +319,8 @@ model ComplianceTerm {
   @@index([workspaceId, type])
 }
 
+// Project = BrandAI **Campaign** 的物理底座（保留表名以零成本复用迁移过来的
+// 路由/worker/lib）。下列 BrandAI 业务字段 frozen-additive。
 model Project {
   id          String         @id @default(cuid())
   workspaceId String
@@ -306,9 +330,20 @@ model Project {
   product     String?
   channel     String?
   createdAt   DateTime       @default(now())
+  // BrandAI Campaign 业务字段
+  status      CampaignStatus @default(DRAFT)
+  progress    Int            @default(0)
+  description String?
+  coverImage  String?
+  tags        String[]       @default([])
+  channels    String[]       @default([])
+  startDate   DateTime?
+  endDate     DateTime?
+  aiSummary   String?
   generations Generation[]
 
   @@index([workspaceId])
+  @@index([workspaceId, status])
 }
 
 model Generation {

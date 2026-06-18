@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   AssetCategory,
+  CampaignStatus,
   ComplianceLevel,
   ComplianceTermType,
   ReviewStatus,
@@ -29,6 +30,13 @@ export const Asset = z.object({
   sizeBytes: z.number().int().nonnegative(),
   source: z.enum(["UPLOAD", "WEBSITE"]).default("UPLOAD"),
   createdAt: z.string(),
+  // BrandAI 素材库智能字段（frozen-additive：全部 optional——省略而非 null，
+  // 旧读端/旧序列化器零改动）。aiTags = 识别 worker 自动打标；
+  // aiDescription = AI 生成描述；isFavorite = 收藏；resolution = 展示串。
+  aiTags: z.array(z.string()).optional(),
+  aiDescription: z.string().optional(),
+  isFavorite: z.boolean().optional(),
+  resolution: z.string().optional(),
 });
 export type Asset = z.infer<typeof Asset>;
 
@@ -133,6 +141,8 @@ export const Generation = z.object({
 });
 export type Generation = z.infer<typeof Generation>;
 
+// Project 是 BrandAI **Campaign** 的物理底座（保留 openvisual 表名以零成本
+// 复用迁移过来的路由/worker/lib）。下列 BrandAI 字段全部 frozen-additive。
 export const Project = z.object({
   id: z.string(),
   workspaceId: z.string(),
@@ -141,9 +151,20 @@ export const Project = z.object({
   product: z.string().optional(),
   channel: z.string().optional(),
   createdAt: z.string(),
+  // BrandAI Campaign 业务字段（frozen-additive：optional，旧读端零改动）
+  status: CampaignStatus.optional(),
+  progress: z.number().int().min(0).max(100).optional(),
+  description: z.string().optional(),
+  coverImage: z.string().optional(),
+  tags: z.array(z.string()).optional(),
+  channels: z.array(z.string()).optional(),
+  startDate: z.string().optional(),
+  endDate: z.string().optional(),
+  aiSummary: z.string().optional(),
 });
 export type Project = z.infer<typeof Project>;
 
+// BrandWorkspace 是 BrandAI **Brand** 的物理底座。下列字段 frozen-additive。
 export const BrandWorkspace = z.object({
   id: z.string(),
   ownerId: z.string(),
@@ -151,5 +172,14 @@ export const BrandWorkspace = z.object({
   industry: z.string().optional(),
   websiteUrl: z.string().optional(),
   createdAt: z.string(),
+  // BrandAI Brand 展示/调性属性（frozen-additive：optional，旧读端零改动）
+  subtitle: z.string().optional(),
+  description: z.string().optional(),
+  coverImage: z.string().optional(),
+  tags: z.array(z.string()).optional(),
+  isVerified: z.boolean().optional(),
+  positioning: z.string().optional(),
+  targetAudience: z.string().optional(),
+  slogan: z.string().optional(),
 });
 export type BrandWorkspace = z.infer<typeof BrandWorkspace>;

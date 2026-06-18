@@ -52,6 +52,15 @@ export const JobStatus = z.enum([
 ]);
 export type JobStatus = z.infer<typeof JobStatus>;
 
+// BrandAI — Campaign 生命周期状态（草稿 / 进行中 / 已完成）。映射自旧
+// `Project`，是 Campaign 卡片状态徽章 + 列表筛选的事实源。
+export const CampaignStatus = z.enum([
+  "DRAFT",
+  "IN_PROGRESS",
+  "COMPLETED",
+]);
+export type CampaignStatus = z.infer<typeof CampaignStatus>;
+
 // G6 — workspace member roles (rank: OWNER > EDITOR > REVIEWER > VIEWER).
 export const WorkspaceRole = z.enum([
   "OWNER",
