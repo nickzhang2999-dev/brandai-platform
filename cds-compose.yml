@@ -1,4 +1,4 @@
-# CDS Compose — OpenVisual 全栈
+# CDS Compose — BrandAI 全栈
 # 手工编写（cdscli scan 仅能从 docker-compose.yml 解析出 infra，
 # 应用服务 web/ai/worker 不在 docker-compose 中，故在此补全）。
 # 提交前必须 `cdscli verify` exit 0。
@@ -18,7 +18,7 @@
 x-cds-project:
   name: brandai
   description: "品牌视觉 AI 商业图片生成 (Next.js BFF + FastAPI AI + BullMQ worker)"
-  repo: "https://github.com/inernoro/brandai.git"
+  repo: "https://github.com/nickzhang2999-dev/brandai-platform.git"
 
 # 项目级共享环境变量 — CDS 注入本项目所有容器；密码由 CDS 随机生成
 x-cds-env:
@@ -112,7 +112,10 @@ services:
       DATABASE_URL: "${CDS_DATABASE_URL}"
       REDIS_URL: "${CDS_REDIS_URL}"
       AUTH_SECRET: "${CDS_JWT_SECRET}"
-      AUTH_URL: "https://plan-frontend-architecture-axy7a-claude-brandai.miduo.org"
+      # 灰度域名模式：<lowercased-branch-slug>-claude-<projectslug>.miduo.org
+      # 本分支 claude/brave-wright-2p3u3e + brandai 项目 → 下面这个域名。
+      # 若 CDS 给 brandai 项目分配的 slug 不是 "brandai"，部署后据实改这一行。
+      AUTH_URL: "https://brave-wright-2p3u3e-claude-brandai.miduo.org"
       AUTH_TRUST_HOST: "true"
       # ADMIN_EMAILS (allowlist for /admin/settings) comes from CDS _global env
       # via auto-injection — intentionally NOT declared here so the admin email
