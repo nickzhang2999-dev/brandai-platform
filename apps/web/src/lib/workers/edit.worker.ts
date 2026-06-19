@@ -120,13 +120,25 @@ export async function runEditJob(
     `generations/${workspaceId}`,
   );
 
+  // 尺寸:仅当本次编辑显式指定了 width/height(RESIZE / OUTPAINT 等改变画布的操作
+  // 会在 payload 里带上)才采用 AI 返回的尺寸;否则 RECOLOR/INPAINT/EDIT_TEXT 等
+  // 不改尺寸的操作沿用源版本尺寸——AI /v1/edit 对无尺寸 payload 默认 1024×1024,
+  // 直接采用会污染非正方形源的 lineage/导出标签/文字图层画布。
+  const payloadObj =
+    payload && typeof payload === "object"
+      ? (payload as Record<string, unknown>)
+      : {};
+  const hasExplicitSize = "width" in payloadObj || "height" in payloadObj;
+  const editedWidth = hasExplicitSize ? result.width : source.width;
+  const editedHeight = hasExplicitSize ? result.height : source.height;
+
   const created = await prisma.generationVersion.create({
     data: {
       generationId,
       index: nextIndex,
       imageUrl: editedImageUrl,
-      width: result.width,
-      height: result.height,
+      width: editedWidth,
+      height: editedHeight,
       parentVersionId: source.id,
       isFinal: false,
       params: {

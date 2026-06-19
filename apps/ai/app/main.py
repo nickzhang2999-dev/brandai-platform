@@ -8,6 +8,7 @@ from fastapi import Depends, FastAPI
 from fastapi.responses import JSONResponse
 
 from .config import settings
+from .ssrf import safe_get
 from .providers import resolve_image_provider, resolve_vlm_provider
 from .providers.base import ImageProvider, VLMProvider
 from .providers.http_providers import (
@@ -144,7 +145,10 @@ async def _fetch_pdf_text(url: str) -> str:
     from pypdf import PdfReader
 
     async with httpx.AsyncClient(timeout=settings.http_timeout) as c:
-        r = await c.get(url, follow_redirects=True)
+        # SSRF: initial URL is trusted internal storage (PDF inlining); redirect
+        # hops are attacker-controllable via a saved WEBSITE/VI_DOC asset URL, so
+        # validate them. safe_get raises on a private redirect → caller degrades.
+        r = await safe_get(c, url, allow_private_initial=True)
         r.raise_for_status()
         content = r.content
     reader = PdfReader(io.BytesIO(content))
