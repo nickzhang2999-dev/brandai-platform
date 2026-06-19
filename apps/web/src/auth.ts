@@ -15,10 +15,12 @@ import { verifyPassword } from "@/lib/password";
  *   un-provisioned deploy simply doesn't offer them (no broken buttons). OAuth
  *   users are upserted into our User table by email in the jwt callback, so
  *   workspace ownership (keyed by User.id) works without a DB-session adapter.
- * - "credentials" (demo, passwordless): kept for staging/preview/e2e; disable
- *   in production with AUTH_ALLOW_DEMO=0.
+ * - "credentials" (demo, passwordless): opt-in only (AUTH_ALLOW_DEMO=1) for
+ *   staging/preview/e2e. Default OFF so production is safe even if the env is
+ *   unset or copied from .env.example — the demo path upserts any supplied
+ *   email and bypasses the closed-registration + password gates.
  */
-const allowDemo = process.env.AUTH_ALLOW_DEMO !== "0";
+const allowDemo = process.env.AUTH_ALLOW_DEMO === "1";
 const hasGitHub = !!(
   process.env.AUTH_GITHUB_ID && process.env.AUTH_GITHUB_SECRET
 );
