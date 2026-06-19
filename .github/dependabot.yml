@@ -1,0 +1,25 @@
+version: 2
+updates:
+  # 保持 GitHub Actions 版本更新（安全 + 兼容）
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+
+  # JS/TS 依赖（pnpm workspace 根）
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      dev-dependencies:
+        dependency-type: "development"
+
+  # apps/ai Python 依赖
+  - package-ecosystem: "pip"
+    directory: "/apps/ai"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5

@@ -69,7 +69,10 @@ def test_build_body_openai_translation():
     assert body["n"] == 2
     assert body["model"] == "gpt-image-1"
     assert body["response_format"] == "url"
-    assert body["negative_prompt"] == "red, blur"
+    # OpenAI 的 gpt-image-* 不接受 negative_prompt（会 400），代码把负面约束折进
+    # 正向 prompt 的 "Avoid:" 子句，而非作为独立参数发送（与线上真出图一致）。
+    assert "negative_prompt" not in body
+    assert body["prompt"] == "a cup\n\nAvoid: red; blur"
     assert body["seed"] == 7 and body["cfg"] == 5
 
 

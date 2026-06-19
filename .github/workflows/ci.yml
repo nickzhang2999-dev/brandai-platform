@@ -1,0 +1,73 @@
+name: CI
+
+# PR 与主干推送的质量门禁。覆盖 CLAUDE.md §1「测试 + typecheck」全链：
+# L1 契约/UI vitest、web typecheck、web 生产 build，以及 apps/ai 的 pytest。
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  node:
+    name: web · contracts · ui (typecheck / test / build)
+    runs-on: ubuntu-latest
+    env:
+      # next build / prisma 在 CI 无真实后端：用占位值，运行时真值来自
+      # CDS env / AppSetting（见 CLAUDE.md §2）。
+      DATABASE_URL: "postgresql://ci:ci@localhost:5432/ci"
+      AUTH_SECRET: "ci-placeholder-secret-not-used-at-runtime"
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Prisma generate
+        run: pnpm db:generate
+
+      - name: Unit tests (L1 contracts + ui)
+        run: pnpm test
+
+      - name: Typecheck (web)
+        run: pnpm -F web typecheck
+
+      - name: Build (web)
+        run: pnpm -F web build
+
+  ai:
+    name: apps/ai (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps
+        working-directory: apps/ai
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Pytest (L2)
+        working-directory: apps/ai
+        run: python -m pytest -q
