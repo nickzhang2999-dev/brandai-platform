@@ -30,6 +30,19 @@ export async function POST(
     if (!version || version.generationId !== genId) {
       throw new ApiException(404, "Version not found in this generation");
     }
+    // 职责分离:只有 待审(PENDING)/ 已驳回(REJECTED) 的版本可(重新)提交。
+    // 否则 editor 直接 submit 一个已 APPROVED / 终稿版本会清空审核结论并退回
+    // SUBMITTED,等于绕过 review 端点的职责分离、撤销审核者决定。
+    if (
+      version.isFinal ||
+      (version.reviewStatus !== "PENDING" &&
+        version.reviewStatus !== "REJECTED")
+    ) {
+      throw new ApiException(
+        409,
+        "仅待审或已驳回的版本可提交;已批准或终稿不可回退",
+      );
+    }
     await prisma.generationVersion.update({
       where: { id: versionId },
       data: {
