@@ -22,6 +22,10 @@ export async function POST(
       ...(await req.json()),
       workspaceId: wsId,
     });
+    // SSRF 防护:这个 URL 会被 AI 服务端 httpx.get 抓取,先拒内网/本地/元数据地址。
+    // 注:AI 侧 follow_redirects=True,跨站重定向到内网的残留风险需在 apps/ai 侧
+    // 进一步加固(httpx 传输层拦私网 IP)。
+    await assertSafePublicUrl(input.url);
     const result = await ai.ingestWebsite({ url: input.url });
     return ok(result);
   } catch (err) {

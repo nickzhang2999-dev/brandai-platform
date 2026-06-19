@@ -372,11 +372,26 @@ export async function runGenerateJob(
         }
       : {};
 
-    // Replace any prior root versions on re-generate so `index` stays clean
-    // and 0-based (M4/M6 rely on a stable, queryable ordering).
-    await prisma.generationVersion.deleteMany({
-      where: { generationId, parentVersionId: null },
-    });
+    // Re-generate: capture prior root versions but DON'T delete them yet —
+    // only swap them out once the replacement has actually been generated +
+    // persisted AND this run is the authoritative winner (writeTerminal true).
+    // Deleting up-front lost the previous (possibly final) versions whenever the
+    // provider timed out / all sizes failed / upload threw. `index` stays clean
+    // 0-based because there's no unique (generationId,index) constraint: new
+    // rows coexist briefly, then the stale roots are removed below.
+    const staleRootIds = (
+      await prisma.generationVersion.findMany({
+        where: { generationId, parentVersionId: null },
+        select: { id: true },
+      })
+    ).map((r) => r.id);
+    async function dropStaleRoots() {
+      if (staleRootIds.length > 0) {
+        await prisma.generationVersion.deleteMany({
+          where: { id: { in: staleRootIds } },
+        });
+      }
+    }
 
     const baseFields = {
       sceneType: generation.sceneType,
@@ -497,6 +512,8 @@ export async function runGenerateJob(
         );
         return { generationId, versionIds };
       }
+      // Replacement is persisted and this run won → now safe to remove old roots.
+      await dropStaleRoots();
       await job.updateProgress(100);
       return { generationId, versionIds };
     }
@@ -557,6 +574,8 @@ export async function runGenerateJob(
       );
       return { generationId, versionIds };
     }
+    // Replacement is persisted and this run won → now safe to remove old roots.
+    await dropStaleRoots();
     await job.updateProgress(100);
     return { generationId, versionIds };
   }
