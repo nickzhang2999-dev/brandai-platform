@@ -2,7 +2,10 @@ import { prisma } from "@brandai/db";
 import { VI } from "@brandai/contracts";
 import { handleError, ok, parse, requireUser } from "@/lib/api";
 import { requireOwnedWorkspace, requireWorkspaceRole } from "@/lib/workspace";
-import { serializeProhibition } from "@/lib/prohibitions";
+import {
+  assertExampleAssetsInWorkspace,
+  serializeProhibition,
+} from "@/lib/prohibitions";
 
 /**
  * P1.1 — Prohibition rule (禁用规范) CRUD. Distinct from word-level
@@ -37,6 +40,10 @@ export async function POST(
     const { wsId } = await params;
     await requireWorkspaceRole(wsId, user.id, "EDITOR");
     const input = parse(VI.CreateProhibitionRuleInput, await req.json());
+    await assertExampleAssetsInWorkspace(wsId, [
+      input.positiveExampleAssetId,
+      input.negativeExampleAssetId,
+    ]);
     const row = await prisma.prohibitionRule.create({
       data: {
         workspaceId: wsId,

@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { prisma } from "@brandai/db";
 import { auth } from "@/auth";
 import { getOrCreateActiveBrand } from "@/lib/brandai";
 import { BrandProvider } from "./brand-context";
@@ -18,6 +19,15 @@ export default async function BrandaiLayout({
 }) {
   const session = await auth();
   if (!session?.user?.id) redirect("/login");
+
+  // 与 (app) 壳和 API 网关一致：JWT 是无状态的，被管理员停用的账号在 token 过期前
+  // 仍能带出有效会话。这里在渲染产品壳 / 自动建默认品牌之前先查 DB，停用即弹回登录，
+  // 避免为停用用户创建 workspace。
+  const dbUser = await prisma.user.findUnique({
+    where: { id: session.user.id },
+    select: { isActive: true },
+  });
+  if (!dbUser || dbUser.isActive === false) redirect("/login");
 
   const brand = await getOrCreateActiveBrand(session.user.id);
   const email = session.user.email ?? "";

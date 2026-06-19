@@ -1,5 +1,29 @@
 import { prisma } from "@brandai/db";
 import type { ReferenceImage, VI } from "@brandai/contracts";
+import { ApiException } from "@/lib/api";
+
+/**
+ * 跨空间 IDOR 防护：禁用规范引用的正/负示例素材必须属于同一 workspace，否则
+ * loadAssetUrlMap() 会按 ID 解析出别的空间的素材 URL 并写进生成版本的
+ * appliedReferenceImages，泄露他人素材。create/update 前调用。
+ */
+export async function assertExampleAssetsInWorkspace(
+  wsId: string,
+  ids: Array<string | null | undefined>,
+): Promise<void> {
+  const present = [...new Set(ids.filter((x): x is string => !!x))];
+  if (present.length === 0) return;
+  const rows = await prisma.asset.findMany({
+    where: { id: { in: present } },
+    select: { id: true, workspaceId: true },
+  });
+  for (const id of present) {
+    const a = rows.find((r) => r.id === id);
+    if (!a || a.workspaceId !== wsId) {
+      throw new ApiException(400, "示例素材不属于该品牌空间");
+    }
+  }
+}
 
 /**
  * Normalise a Prisma `ProhibitionRule` row to the contracts shape (ISO

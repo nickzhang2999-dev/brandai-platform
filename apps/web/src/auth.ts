@@ -7,6 +7,8 @@ import GitHub from "next-auth/providers/github";
 import Google from "next-auth/providers/google";
 import { prisma } from "@brandai/db";
 import { verifyPassword } from "@/lib/password";
+import { adminEmails } from "@/lib/admin";
+import { isRegistrationOpen } from "@/lib/settings";
 
 /**
  * M-B — production auth.
@@ -81,6 +83,23 @@ const nextAuth: NextAuthResult = NextAuth({
   session: { strategy: "jwt" },
   providers,
   callbacks: {
+    async signIn({ user, account }) {
+      // OAuth 自动建号需经注册门：注册关闭时，仅放行已有用户或 ADMIN_EMAILS 白名单
+      // 邮箱，否则陌生访客可用 GitHub/Google 绕过 /api/auth/register 直接开户
+      // （即便管理员已关闭注册）。password/demo provider 各自的 authorize 已自管。
+      if (account?.provider === "github" || account?.provider === "google") {
+        const email = user.email?.trim().toLowerCase();
+        if (!email) return false;
+        const existing = await prisma.user.findUnique({
+          where: { email },
+          select: { id: true },
+        });
+        if (existing) return true;
+        if (adminEmails().includes(email)) return true;
+        return await isRegistrationOpen();
+      }
+      return true;
+    },
     async jwt({ token, user, account }) {
       if (user) {
         if (
