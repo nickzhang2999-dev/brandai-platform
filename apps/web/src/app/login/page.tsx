@@ -41,7 +41,7 @@ export default function LoginPage() {
         redirect: false,
       });
       if (r?.error) throw new Error("邮箱或密码不正确");
-      window.location.href = "/workspaces";
+      window.location.href = "/";
     } catch (err) {
       setError(err instanceof Error ? err.message : "登录失败");
       setLoading(false);
@@ -55,7 +55,7 @@ export default function LoginPage() {
           Brand Visual AI
         </div>
         <h1 className="mt-3 font-serif text-3xl leading-tight text-foreground">
-          {mode === "login" ? "登录 OpenVisual" : "创建账号"}
+          {mode === "login" ? "登录 BrandAI" : "创建账号"}
         </h1>
         <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
           {mode === "login"
@@ -69,7 +69,7 @@ export default function LoginPage() {
               <Button
                 variant="outline"
                 className="w-full"
-                onClick={() => signIn("github", { callbackUrl: "/workspaces" })}
+                onClick={() => signIn("github", { callbackUrl: "/" })}
               >
                 用 GitHub 继续
               </Button>
@@ -78,7 +78,7 @@ export default function LoginPage() {
               <Button
                 variant="outline"
                 className="w-full"
-                onClick={() => signIn("google", { callbackUrl: "/workspaces" })}
+                onClick={() => signIn("google", { callbackUrl: "/" })}
               >
                 用 Google 继续
               </Button>
@@ -131,7 +131,7 @@ export default function LoginPage() {
             onClick={() =>
               signIn("credentials", {
                 email: email || "demo@brandai.dev",
-                callbackUrl: "/workspaces",
+                callbackUrl: "/",
               })
             }
           >
