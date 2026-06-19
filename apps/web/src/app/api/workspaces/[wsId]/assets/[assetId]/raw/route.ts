@@ -51,7 +51,12 @@ export async function GET(
           ? asset.mimeType
           : "application/octet-stream");
       return new Response(upstream.body, {
-        headers: { "content-type": contentType, "cache-control": cacheControl },
+        headers: {
+          "content-type": contentType,
+          "cache-control": cacheControl,
+          // 防嗅探:即便 content-type 被伪造成 HTML 也不会被浏览器当页面执行。
+          "x-content-type-options": "nosniff",
+        },
       });
     }
 
@@ -66,6 +71,7 @@ export async function GET(
             : contentType,
         ...(contentLength ? { "content-length": String(contentLength) } : {}),
         "cache-control": cacheControl,
+        "x-content-type-options": "nosniff",
       },
     });
   } catch (err) {

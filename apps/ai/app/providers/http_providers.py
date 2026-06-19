@@ -27,7 +27,7 @@ from bs4 import BeautifulSoup
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from ..config import settings
-from ..ssrf import safe_get
+from ..ssrf import SSRFError, safe_get
 from .base import ImageProvider, ProviderCheck, VLMProvider
 
 logger = logging.getLogger("brandai.ai.provider")
@@ -500,20 +500,23 @@ class HttpVLMProvider(VLMProvider):
             kwargs["transport"] = self._transport
         return httpx.AsyncClient(**kwargs)
 
-    async def _inline_image(self, url: str) -> str:
+    async def _inline_image(self, url: str) -> str | None:
         """Fetch an image server-side and return a data: URL the model can read.
 
         Asset URLs point at internal storage a third-party API can't reach; we
-        can (same network), so inline the bytes. On any failure fall back to the
-        original URL — it may already be publicly reachable.
+        can (same network), so inline the bytes.
+
+        Returns None when the fetch is SSRF-blocked (a redirect into private
+        space): callers must DROP the image rather than forward the raw URL, or
+        the VLM provider would fetch the blocked target server-side itself. Other
+        failures fall back to the raw URL (it may be publicly reachable).
         """
         try:
             async with self._client() as c:
                 # SSRF: the initial URL is a trusted internal asset URL (inlining
                 # internal storage is the whole point), but redirect hops are
                 # attacker-controllable via a saved WEBSITE asset URL → validate
-                # them. safe_get raises on a redirect into private space; the
-                # except below then falls back to the raw URL.
+                # them. safe_get raises SSRFError on a redirect into private space.
                 r = await safe_get(c, url, allow_private_initial=True)
                 r.raise_for_status()
                 ctype = (r.headers.get("content-type") or "").split(";")[0].strip()
@@ -521,6 +524,8 @@ class HttpVLMProvider(VLMProvider):
                     ctype = "image/png"
                 b64 = base64.b64encode(r.content).decode()
                 return f"data:{ctype};base64,{b64}"
+        except SSRFError:
+            return None  # blocked → never hand the raw URL to the VLM provider
         except Exception:  # noqa: BLE001 — best-effort, fall back to raw URL
             return url
 
@@ -562,6 +567,8 @@ class HttpVLMProvider(VLMProvider):
         ]
         for a in assets[:_MAX_VISION_IMAGES]:
             img = await self._inline_image(a["url"])
+            if img is None:
+                continue  # SSRF-blocked → drop this asset from the VLM request
             parts.append({"type": "text", "text": f"assetId={a['id']}"})
             parts.append({"type": "image_url", "image_url": {"url": img}})
         data = await self._chat_json(parts, system=_ANALYZE_SYSTEM)
@@ -589,8 +596,11 @@ class HttpVLMProvider(VLMProvider):
         parts: list[dict[str, Any]] = [
             {"type": "text", "text": _COMPLIANCE_PROMPT.format(rules=rules or "(none)")},
             {"type": "text", "text": "Image under review:"},
-            {"type": "image_url", "image_url": {"url": img}},
         ]
+        # SSRF-blocked image → omit it (text-only degraded check) rather than
+        # forwarding the raw URL for the provider to fetch.
+        if img is not None:
+            parts.append({"type": "image_url", "image_url": {"url": img}})
         # D5 — attach the brand's positive/negative example assets so the model
         # can judge resemblance. A generated image that looks like a `negative`
         # example (or strays from a `positive` one) should be flagged.
@@ -605,11 +615,14 @@ class HttpVLMProvider(VLMProvider):
                 if polarity == "negative"
                 else "POSITIVE example — the image SHOULD align with this"
             )
+            ref_img = await self._inline_image(url)
+            if ref_img is None:
+                continue  # SSRF-blocked reference → drop
             parts.append(
                 {"type": "text", "text": f"{label}{(': ' + note) if note else ''}"}
             )
             parts.append(
-                {"type": "image_url", "image_url": {"url": await self._inline_image(url)}}
+                {"type": "image_url", "image_url": {"url": ref_img}}
             )
         data = await self._chat_json(parts, system=_COMPLIANCE_SYSTEM)
         results: list[dict[str, Any]] = []

@@ -10,6 +10,36 @@ import { ApiException } from "@/lib/api";
  * 注:DNS 解析与随后的 fetch 之间存在理论上的重绑定窗口;此处在"落库"与"取流"
  * 两端都校验已显著收窄攻击面。彻底消除需把 fetch 钉到已解析 IP(后续可加固)。
  */
+/** 把 IPv6 字面量展开为 8 个 16bit 段(处理 `::` 压缩与内嵌 IPv4)。失败返回 null。 */
+function ipv6ToHextets(ip: string): number[] | null {
+  let s = ip.toLowerCase().replace(/^\[|\]$/g, "");
+  // 内嵌点分 IPv4(如 ::ffff:127.0.0.1)→ 把尾部转成两个 hex 段
+  const v4 = s.match(/^(.*:)((?:\d{1,3}\.){3}\d{1,3})$/);
+  if (v4) {
+    const parts = v4[2]!.split(".").map(Number);
+    if (parts.some((n) => n > 255)) return null;
+    const hi = ((parts[0]! << 8) | parts[1]!).toString(16);
+    const lo = ((parts[2]! << 8) | parts[3]!).toString(16);
+    s = `${v4[1]}${hi}:${lo}`;
+  }
+  const halves = s.split("::");
+  if (halves.length > 2) return null;
+  const head = halves[0] ? halves[0].split(":") : [];
+  const tail = halves.length === 2 && halves[1] ? halves[1].split(":") : [];
+  let groups: string[];
+  if (halves.length === 2) {
+    const missing = 8 - head.length - tail.length;
+    if (missing < 0) return null;
+    groups = [...head, ...Array(missing).fill("0"), ...tail];
+  } else {
+    groups = head;
+  }
+  if (groups.length !== 8) return null;
+  const nums = groups.map((g) => parseInt(g || "0", 16));
+  if (nums.some((n) => Number.isNaN(n) || n < 0 || n > 0xffff)) return null;
+  return nums;
+}
+
 function isPrivateIp(ip: string): boolean {
   if (net.isIPv4(ip)) {
     const [a = 0, b = 0] = ip.split(".").map(Number);
@@ -23,12 +53,20 @@ function isPrivateIp(ip: string): boolean {
     return false;
   }
   if (net.isIPv6(ip)) {
-    const a = ip.toLowerCase().replace(/^\[|\]$/g, "");
-    if (a === "::1" || a === "::") return true; // 回环 / 未指定
-    if (a.startsWith("fe80")) return true; // 链路本地
-    if (a.startsWith("fc") || a.startsWith("fd")) return true; // 唯一本地
-    const m = a.match(/::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
-    if (m) return isPrivateIp(m[1]!); // IPv4 映射
+    const h = ipv6ToHextets(ip);
+    if (!h) return true; // 解析不了 → 当作不安全
+    if (h.every((x) => x === 0)) return true; // :: 未指定
+    if (h.slice(0, 7).every((x) => x === 0) && h[7] === 1) return true; // ::1 回环
+    if ((h[0]! & 0xffc0) === 0xfe80) return true; // fe80::/10 链路本地
+    if ((h[0]! & 0xfe00) === 0xfc00) return true; // fc00::/7 唯一本地
+    // IPv4-mapped(::ffff:a.b.c.d,含十六进制写法 ::ffff:7f00:1)与已弃用的
+    // IPv4-compatible(::a.b.c.d)→ 还原 IPv4 再判私网。
+    const mapped =
+      h[0] === 0 && h[1] === 0 && h[2] === 0 && h[3] === 0 && h[4] === 0;
+    if (mapped && (h[5] === 0xffff || (h[5] === 0 && (h[6]! !== 0 || h[7]! !== 0)))) {
+      const v4 = `${h[6]! >> 8}.${h[6]! & 0xff}.${h[7]! >> 8}.${h[7]! & 0xff}`;
+      return isPrivateIp(v4);
+    }
     return false;
   }
   return false;
@@ -39,8 +77,14 @@ function isPrivateIp(ip: string): boolean {
  * 非 http(s)、内网/本地主机、解析到内网 IP 的域名 → 抛 400。
  */
 export async function assertSafePublicUrl(raw: string): Promise<void> {
-  if (raw.startsWith("data:")) return;
-
+  // data: URL 不触网,但 /assets/[id]/raw 会按其 content-type 同源回放——只放行
+  // 图片 data: URL,否则 data:text/html 等会变成同源 HTML/JS(存储型 XSS)。
+  if (raw.startsWith("data:")) {
+    if (!/^data:image\//i.test(raw)) {
+      throw new ApiException(400, "仅允许图片类型的 data: URL");
+    }
+    return;
+  }
   let u: URL;
   try {
     u = new URL(raw);

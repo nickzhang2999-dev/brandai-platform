@@ -499,8 +499,6 @@ export async function runGenerateJob(
           "All target sizes failed: " + failures.join("; "),
         );
       }
-      // Best-effort auto visual compliance (never throws).
-      await runAutoCompliance(workspaceId, versionIds, brandRules);
       // §2.4 — skip the terminal write if the watchdog already FAILED this
       // run (orphan after timeout): don't resurrect a timed-out generation.
       if (!(await writeTerminal({
@@ -514,6 +512,11 @@ export async function runGenerateJob(
       }
       // Replacement is persisted and this run won → now safe to remove old roots.
       await dropStaleRoots();
+      // Best-effort auto visual compliance AFTER SUCCEEDED is written: it's
+      // optional + can be slow (VLM calls); if the watchdog fires during it, the
+      // FAILED write no-ops (settled), so a job with usable outputs stays
+      // SUCCEEDED instead of being flipped to FAILED.
+      await runAutoCompliance(workspaceId, versionIds, brandRules);
       await job.updateProgress(100);
       return { generationId, versionIds };
     }
@@ -564,9 +567,6 @@ export async function runGenerateJob(
       index += 1;
     }
 
-    // Best-effort auto visual compliance (never throws).
-    await runAutoCompliance(workspaceId, versionIds, brandRules);
-
     // §2.4 — see multi-size path: don't overwrite a watchdog FAILED.
     if (!(await writeTerminal({ status: "SUCCEEDED", error: null }))) {
       console.warn(
@@ -576,6 +576,10 @@ export async function runGenerateJob(
     }
     // Replacement is persisted and this run won → now safe to remove old roots.
     await dropStaleRoots();
+    // Best-effort auto visual compliance AFTER SUCCEEDED is written (see
+    // multi-size path): optional + slow, must not let the watchdog flip a job
+    // with usable outputs to FAILED.
+    await runAutoCompliance(workspaceId, versionIds, brandRules);
     await job.updateProgress(100);
     return { generationId, versionIds };
   }

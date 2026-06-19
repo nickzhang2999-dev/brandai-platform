@@ -116,16 +116,9 @@ export async function POST(
   try {
     const user = await requireUser();
     const { wsId, genId } = await params;
-    const existing = await loadOwned(wsId, genId, user.id);
+    await loadOwned(wsId, genId, user.id);
     // G6 — 重新生成属于内容写操作:编辑+(EDITOR/OWNER)。
     await requireWorkspaceRole(wsId, user.id, "EDITOR");
-
-    // 仅允许在终态(SUCCEEDED/FAILED)重新生成。否则两次提交(或趁原 job
-    // PENDING/RUNNING 时再提交)会让两个 generate job 并发跑同一 generationId,
-    // 各自的"删旧 root + 写终态"互相覆盖,导致重复或丢失产出。
-    if (existing.status === "PENDING" || existing.status === "RUNNING") {
-      throw new ApiException(409, "该生成任务进行中,请等待完成后再重试");
-    }
 
     // Body is optional; tolerate an empty request.
     let body: z.infer<typeof RegenerateInput> = undefined;
@@ -136,10 +129,16 @@ export async function POST(
       body = undefined;
     }
 
-    await prisma.generation.update({
-      where: { id: genId },
+    // 原子抢占:只把"终态(SUCCEEDED/FAILED)"的行翻成 PENDING。两个并发 POST 中
+    // 只有一个能命中(count===1),另一个 count===0 → 409。避免先读 status 再写的
+    // TOCTOU 让两个 generate job 并发跑同一 generationId、互相覆盖删旧/写终态。
+    const claimed = await prisma.generation.updateMany({
+      where: { id: genId, status: { in: ["SUCCEEDED", "FAILED"] } },
       data: { status: "PENDING", error: null },
     });
+    if (claimed.count !== 1) {
+      throw new ApiException(409, "该生成任务进行中,请等待完成后再重试");
+    }
 
     // Schema (frozen) doesn't persist versionCount; preserve the original
     // request's intent by re-using the count of existing root versions.
