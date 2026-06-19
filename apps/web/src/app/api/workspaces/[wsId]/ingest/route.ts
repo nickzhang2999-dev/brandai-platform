@@ -3,6 +3,7 @@ import { prisma } from "@brandai/db";
 import { AssetCategory, IngestWebsiteInput } from "@brandai/contracts";
 import { handleError, ok, parse, requireUser } from "@/lib/api";
 import { ai } from "@/lib/ai";
+import { assertSafePublicUrl } from "@/lib/ssrf";
 import { requireWorkspaceRole } from "@/lib/workspace";
 
 /**
@@ -58,6 +59,13 @@ export async function PUT(
     const { wsId } = await params;
     await requireWorkspaceRole(wsId, user.id, "EDITOR");
     const input = parse(SaveIngestedInput, await req.json());
+
+    // SSRF 防护:previewUrl/sourceUrl 会被存为 asset.url/storageKey,之后
+    // /assets/[id]/raw 会服务端 fetch 它们。落库前先拒绝内网/本地/元数据地址。
+    for (const img of input.images) {
+      await assertSafePublicUrl(img.previewUrl);
+      await assertSafePublicUrl(img.sourceUrl);
+    }
 
     const created = await prisma.$transaction(
       input.images.map((img) => {
