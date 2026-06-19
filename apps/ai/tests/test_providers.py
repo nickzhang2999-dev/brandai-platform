@@ -593,3 +593,21 @@ def test_resolve_vlm_provider_mock_or_empty_key_falls_back():
         MockVLMProvider,
     )
     get_vlm_provider.cache_clear()
+
+
+def test_host_is_private():
+    from app.ssrf import host_is_private
+
+    # 私网 / 回环 / 链路本地(含云元数据)/ localhost / 空 → 视为内网
+    assert host_is_private("127.0.0.1")
+    assert host_is_private("10.0.0.5")
+    assert host_is_private("192.168.1.1")
+    assert host_is_private("172.16.0.1")
+    assert host_is_private("169.254.169.254")
+    assert host_is_private("::1")
+    assert host_is_private("localhost")
+    assert host_is_private("")
+    assert host_is_private(None)
+    # 公网字面 IP → 放行(用字面 IP 避免测试触发 DNS)
+    assert not host_is_private("93.184.216.34")
+    assert not host_is_private("8.8.8.8")

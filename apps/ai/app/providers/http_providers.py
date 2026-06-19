@@ -27,6 +27,7 @@ from bs4 import BeautifulSoup
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from ..config import settings
+from ..ssrf import host_is_private
 from .base import ImageProvider, ProviderCheck, VLMProvider
 
 logger = logging.getLogger("brandai.ai.provider")
@@ -508,7 +509,26 @@ class HttpVLMProvider(VLMProvider):
         """
         try:
             async with self._client() as c:
-                r = await c.get(url, follow_redirects=True)
+                # SSRF: follow redirects manually and refuse any hop into private
+                # space. The initial URL is a trusted internal asset URL (that's
+                # the whole point of inlining); redirect targets are attacker-
+                # controllable via a saved WEBSITE asset URL, so validate those.
+                current = url
+                r = None
+                for _ in range(5):
+                    r = await c.get(current, follow_redirects=False)
+                    if r.is_redirect:
+                        loc = r.headers.get("location")
+                        if not loc:
+                            return url
+                        nxt = httpx.URL(current).join(loc)
+                        if host_is_private(nxt.host):
+                            return url  # refuse to follow into private space
+                        current = str(nxt)
+                        continue
+                    break
+                if r is None:
+                    return url
                 r.raise_for_status()
                 ctype = (r.headers.get("content-type") or "").split(";")[0].strip()
                 if not ctype.startswith("image/"):

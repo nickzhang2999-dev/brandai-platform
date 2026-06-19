@@ -108,12 +108,16 @@ const nextAuth: NextAuthResult = NextAuth({
           user.email
         ) {
           // OAuth → map the provider identity onto our User row by email.
+          // 邮箱归一化(trim + 小写)后再 upsert:provider 可能返回 User@Ex.com,
+          // 而 email 列大小写敏感,用原始值会新建重复账号(丢 workspace/订阅)并
+          // 可能绕过被停用的小写账号。where 与 create 用同一归一化邮箱。
+          const email = user.email.trim().toLowerCase();
           const u = await prisma.user.upsert({
-            where: { email: user.email },
+            where: { email },
             update: {},
             create: {
-              email: user.email,
-              name: user.name ?? user.email.split("@")[0],
+              email,
+              name: user.name ?? email.split("@")[0],
               image: user.image ?? undefined,
               emailVerified: new Date(),
             },

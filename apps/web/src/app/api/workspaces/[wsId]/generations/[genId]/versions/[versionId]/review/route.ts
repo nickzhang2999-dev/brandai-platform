@@ -38,6 +38,12 @@ export async function POST(
     if (!version || version.generationId !== genId) {
       throw new ApiException(404, "Version not found in this generation");
     }
+    // 职责分离:仅可审批"已提交"的版本。否则审核者能把 editor 从未提交的
+    // PENDING 草稿直接 APPROVED,而终选端点对非 owner 只认 APPROVED,等于让
+    // 未提交草稿被标为终稿,绕过提交环节。
+    if (version.reviewStatus !== "SUBMITTED") {
+      throw new ApiException(409, "仅可审批已提交(SUBMITTED)的版本");
+    }
     const input = parse(ReviewDecisionInput, await req.json());
     await prisma.generationVersion.update({
       where: { id: versionId },
