@@ -45,19 +45,22 @@ export async function GET(
       if (!upstream.ok || !upstream.body) {
         throw new ApiException(502, "Failed to fetch source asset");
       }
-      const contentType =
+      const upstreamType =
         upstream.headers.get("content-type") ??
         (asset.mimeType && asset.mimeType !== "image/*"
           ? asset.mimeType
           : "application/octet-stream");
-      return new Response(upstream.body, {
-        headers: {
-          "content-type": contentType,
-          "cache-control": cacheControl,
-          // 防嗅探:即便 content-type 被伪造成 HTML 也不会被浏览器当页面执行。
-          "x-content-type-options": "nosniff",
-        },
-      });
+      // 资产代理只应回放图片。WEBSITE 资产的 upstream content-type 不可信:显式
+      // text/html 即使带 nosniff 也会在同源被当页面执行(存储型 XSS)。非图片一律
+      // 降级为 octet-stream + attachment,绝不在 app 源下内联渲染。
+      const isImg = upstreamType.toLowerCase().startsWith("image/");
+      const headers: Record<string, string> = {
+        "content-type": isImg ? upstreamType : "application/octet-stream",
+        "cache-control": cacheControl,
+        "x-content-type-options": "nosniff",
+      };
+      if (!isImg) headers["content-disposition"] = "attachment";
+      return new Response(upstream.body, { headers });
     }
 
     const { body, contentType, contentLength } = await getObjectStream(
