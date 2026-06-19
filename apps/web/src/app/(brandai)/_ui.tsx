@@ -1,6 +1,27 @@
 import type { CampaignStatusKey } from "@/lib/brandai-mock";
 import { statusMeta } from "@/lib/brandai-mock";
 
+/**
+ * 真实实体没有"封面渐变"，按 id/名称确定性地生成一个紫系渐变，让卡片缩略图保持
+ * 原型的视觉质感（同一实体每次渲染一致）。
+ */
+const GRADIENTS = [
+  "linear-gradient(135deg,#8B6CFF,#C9B6FF)",
+  "linear-gradient(135deg,#7C5CFF,#A88CFF)",
+  "linear-gradient(135deg,#5B3FE0,#8B6CFF)",
+  "linear-gradient(135deg,#8B6CFF,#FFC8D6)",
+  "linear-gradient(135deg,#5B3FE0,#9CE0FF)",
+  "linear-gradient(135deg,#7C5CFF,#FFD6E0)",
+  "linear-gradient(135deg,#8B6CFF,#B6E3FF)",
+  "linear-gradient(135deg,#3A2A7A,#C9B6FF)",
+];
+
+export function gradientFor(seed: string): string {
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
+  return GRADIENTS[h % GRADIENTS.length]!;
+}
+
 /** 全圆 chip（标签/渠道）。 */
 export function Chip({ children }: { children: React.ReactNode }) {
   return (

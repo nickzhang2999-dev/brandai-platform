@@ -2,13 +2,22 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { currentUser, navItems } from "@/lib/brandai-mock";
+import { navItems } from "@/lib/brandai-mock";
 
 /**
  * BrandAI 左侧导航壳（docs/04 §布局：侧栏 236px，logo mark + 主导航 + 底部
- * 用户卡）。紫色设计语言：选中项用 lavender 底 + violet 文字。
+ * 用户卡）。紫色设计语言：选中项用 lavender 底 + violet 文字。品牌名/用户来自
+ * 真实会话（由 (brandai)/layout 注入）。
  */
-export function BrandSidebar({ children }: { children: React.ReactNode }) {
+export function BrandSidebar({
+  children,
+  brandName,
+  user,
+}: {
+  children: React.ReactNode;
+  brandName: string;
+  user: { name: string; email: string; initial: string };
+}) {
   const pathname = usePathname() ?? "/";
 
   const isActive = (href: string) =>
@@ -58,11 +67,13 @@ export function BrandSidebar({ children }: { children: React.ReactNode }) {
           </Link>
           <div className="flex items-center gap-3 rounded-2xl bg-muted px-3 py-3">
             <span className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-primary to-accent text-sm font-semibold text-primary-foreground">
-              {currentUser.initial}
+              {user.initial}
             </span>
             <div className="min-w-0">
-              <div className="truncate text-sm font-medium">{currentUser.name}</div>
-              <div className="truncate text-xs text-muted-foreground">{currentUser.role}</div>
+              <div className="truncate text-sm font-medium">{user.name}</div>
+              <div className="truncate text-xs text-muted-foreground">
+                {brandName}
+              </div>
             </div>
           </div>
         </div>

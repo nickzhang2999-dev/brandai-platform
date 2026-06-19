@@ -1,14 +1,35 @@
+import { redirect } from "next/navigation";
+import { auth } from "@/auth";
+import { getOrCreateActiveBrand } from "@/lib/brandai";
+import { BrandProvider } from "./brand-context";
 import { BrandSidebar } from "./brand-sidebar";
 
 /**
  * BrandAI 产品页路由组布局：5 个核心页面（首页 / Campaign / 品牌知识库 /
- * 素材库 / AI 工作台）共用紫色侧栏壳。一期用 mock 数据驱动（见
- * src/lib/brandai-mock.ts），未接 auth；后续按需接 (app) 同款会话守卫。
+ * 素材库 / AI 工作台）共用紫色侧栏壳。
+ *
+ * 服务端守卫：未登录 → /login；登录后解析"当前品牌"(workspace) 注入
+ * BrandProvider，页面据此调真实 BFF 接口（不再用 mock）。
  */
-export default function BrandaiLayout({
+export default async function BrandaiLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  return <BrandSidebar>{children}</BrandSidebar>;
+  const session = await auth();
+  if (!session?.user?.id) redirect("/login");
+
+  const brand = await getOrCreateActiveBrand(session.user.id);
+  const email = session.user.email ?? "";
+  const name = session.user.name ?? email.split("@")[0] ?? "用户";
+  const initial = (name || email || "U").trim().slice(0, 1).toUpperCase();
+  const user = { name, email, initial };
+
+  return (
+    <BrandProvider value={{ wsId: brand.id, brandName: brand.name, user }}>
+      <BrandSidebar brandName={brand.name} user={user}>
+        {children}
+      </BrandSidebar>
+    </BrandProvider>
+  );
 }

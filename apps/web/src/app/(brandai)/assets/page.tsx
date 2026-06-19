@@ -1,35 +1,129 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useRef, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { Asset } from "@brandai/contracts";
 import { Button } from "@brandai/ui";
-import { assetFilters, assetStats, assets } from "@/lib/brandai-mock";
-import { Chip, PageHeader } from "../_ui";
+import { apiFetch } from "@/lib/client";
+import { useBrand } from "../brand-context";
+import { Chip, gradientFor, PageHeader } from "../_ui";
 
 /**
- * P04 · 素材库 — 统计卡 + 类型筛选 + 素材网格 + 右侧详情面板（AI 标签/描述）。
- * docs/02 §P04。
+ * P04 · 素材库 — 统计卡 + 类型筛选 + 素材网格 + 右侧详情面板。真实数据：
+ * GET /api/workspaces/[wsId]/assets，上传走 POST /assets/upload（multipart）。
  */
+const CATEGORIES: { value: string; label: string }[] = [
+  { value: "all", label: "全部" },
+  { value: "LOGO", label: "Logo" },
+  { value: "PRODUCT", label: "产品图" },
+  { value: "PACKAGING", label: "包装" },
+  { value: "KV", label: "主视觉" },
+  { value: "SOCIAL", label: "社媒" },
+  { value: "VI_DOC", label: "VI 文档" },
+  { value: "OTHER", label: "其他" },
+];
+const CAT_LABEL: Record<string, string> = Object.fromEntries(
+  CATEGORIES.map((c) => [c.value, c.label]),
+);
+
+function fmtSize(n: number): string {
+  if (!n) return "—";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+function isImage(a: Asset): boolean {
+  return (a.mimeType ?? "").startsWith("image/");
+}
+
 export default function AssetsPage() {
-  const [activeId, setActiveId] = useState(assets[0]!.assetId);
-  const [filter, setFilter] = useState("全部");
-  const active = assets.find((a) => a.assetId === activeId) ?? assets[0]!;
+  const { wsId } = useBrand();
+  const qc = useQueryClient();
+  const [filter, setFilter] = useState("all");
+  const [q, setQ] = useState("");
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const [uploadErr, setUploadErr] = useState<string | null>(null);
+
+  const { data: assets = [], isLoading } = useQuery({
+    queryKey: ["brandai-assets", wsId],
+    queryFn: () => apiFetch<Asset[]>(`/api/workspaces/${wsId}/assets`),
+  });
+
+  const upload = useMutation({
+    mutationFn: async (file: File) => {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("category", "OTHER");
+      const res = await fetch(`/api/workspaces/${wsId}/assets/upload`, {
+        method: "POST",
+        body: fd,
+      });
+      if (!res.ok) {
+        const b = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(b.error ?? "上传失败");
+      }
+      return (await res.json()) as Asset;
+    },
+    onSuccess: (a) => {
+      qc.invalidateQueries({ queryKey: ["brandai-assets", wsId] });
+      setActiveId(a.id);
+      setUploadErr(null);
+    },
+    onError: (e) => setUploadErr((e as Error).message),
+  });
+
+  const filtered = useMemo(
+    () =>
+      assets.filter((a) => {
+        if (filter !== "all" && a.category !== filter) return false;
+        if (q && !a.fileName.toLowerCase().includes(q.toLowerCase()))
+          return false;
+        return true;
+      }),
+    [assets, filter, q],
+  );
+  const active = filtered.find((a) => a.id === activeId) ?? filtered[0] ?? assets[0];
+
+  const stats = [
+    { label: "素材总数", value: String(assets.length) },
+    { label: "图片", value: String(assets.filter(isImage).length) },
+    { label: "已收藏", value: String(assets.filter((a) => a.isFavorite).length) },
+    {
+      label: "AI 已标注",
+      value: String(assets.filter((a) => (a.aiTags?.length ?? 0) > 0).length),
+    },
+  ];
 
   return (
     <div className="mx-auto max-w-[1180px] px-10 py-10">
+      <input
+        ref={fileInput}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) upload.mutate(f);
+          e.target.value = "";
+        }}
+      />
       <PageHeader
         title="素材库"
-        subtitle="集中管理品牌图片、视频、文档与参考素材"
+        subtitle="集中管理品牌图片、产品图与参考素材"
         action={
-          <div className="flex gap-2">
-            <Button variant="outline" size="lg">＋ 新建文件夹</Button>
-            <Button size="lg">⬆ 上传素材</Button>
-          </div>
+          <Button
+            size="lg"
+            disabled={upload.isPending}
+            onClick={() => fileInput.current?.click()}
+          >
+            {upload.isPending ? "上传中…" : "⬆ 上传素材"}
+          </Button>
         }
       />
 
-      {/* Stats */}
       <div className="mb-6 grid grid-cols-2 gap-3.5 lg:grid-cols-4">
-        {assetStats.map((s) => (
+        {stats.map((s) => (
           <div
             key={s.label}
             className="rounded-3xl border border-border bg-card p-5 shadow-[0_8px_24px_rgba(30,30,60,0.06)]"
@@ -40,99 +134,164 @@ export default function AssetsPage() {
         ))}
       </div>
 
-      {/* Search + filters */}
+      {uploadErr ? (
+        <p className="mb-4 text-sm text-destructive">{uploadErr}</p>
+      ) : null}
+
       <div className="mb-6 flex flex-wrap items-center gap-3">
         <input
-          placeholder="搜索素材名称 / 关键词 / 标签…"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="搜索素材名称…"
           className="h-10 flex-1 rounded-full border border-border bg-card px-4 text-sm outline-none focus:border-primary/40 focus:shadow-[0_0_0_4px_rgba(124,92,255,0.08)]"
         />
-        {assetFilters.map((f) => (
+        {CATEGORIES.map((f) => (
           <button
-            key={f}
-            onClick={() => setFilter(f)}
+            key={f.value}
+            onClick={() => setFilter(f.value)}
             className={[
               "h-9 rounded-full px-4 text-sm transition-colors",
-              filter === f
+              filter === f.value
                 ? "bg-accent-soft font-medium text-primary"
                 : "border border-border bg-card text-muted-foreground hover:bg-muted",
             ].join(" ")}
           >
-            {f}
+            {f.label}
           </button>
         ))}
       </div>
 
-      {/* Grid + detail */}
-      <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
-          {assets.map((a) => {
-            const isActive = a.assetId === activeId;
-            return (
-              <button
-                key={a.assetId}
-                onClick={() => setActiveId(a.assetId)}
-                className={[
-                  "flex flex-col overflow-hidden rounded-3xl border bg-card text-left transition-all",
-                  isActive
-                    ? "border-primary/40 shadow-[0_18px_50px_rgba(124,92,255,0.12)]"
-                    : "border-border shadow-[0_8px_24px_rgba(30,30,60,0.06)] hover:border-primary/25",
-                ].join(" ")}
-              >
-                <div className="h-32" style={{ background: a.cover }} />
-                <div className="flex flex-col gap-1.5 p-3">
-                  <div className="truncate text-xs font-medium">{a.fileName}</div>
-                  <div className="flex flex-wrap gap-1">
-                    {a.tags.map((t) => (
-                      <Chip key={t}>{t}</Chip>
-                    ))}
-                  </div>
-                </div>
-              </button>
-            );
-          })}
+      {isLoading ? (
+        <div className="rounded-3xl border border-border bg-card p-16 text-center text-sm text-muted-foreground">
+          加载中…
         </div>
-
-        {/* Detail panel */}
-        <aside className="sticky top-6 h-fit rounded-3xl border border-border bg-card p-5 shadow-[0_8px_24px_rgba(30,30,60,0.06)]">
-          <div className="h-44 rounded-2xl" style={{ background: active.cover }} />
-          <div className="mt-4 text-sm font-semibold">{active.fileName}</div>
-          <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
-            {active.aiDescription}
+      ) : assets.length === 0 ? (
+        <div className="rounded-3xl border border-dashed border-border bg-card p-16 text-center">
+          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-accent-soft text-2xl text-primary">
+            ▦
+          </div>
+          <div className="text-lg font-semibold">素材库还是空的</div>
+          <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
+            上传产品图、Logo、参考图，AI 会自动标注，供工作台出图时引用。
           </p>
-
-          <dl className="mt-4 grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-xs">
-            <dt className="text-muted-foreground">类型</dt>
-            <dd>{active.fileType} · {active.category}</dd>
-            <dt className="text-muted-foreground">尺寸</dt>
-            <dd>{active.resolution}</dd>
-            <dt className="text-muted-foreground">大小</dt>
-            <dd>{active.fileSize}</dd>
-            <dt className="text-muted-foreground">上传者</dt>
-            <dd>{active.uploader}</dd>
-            <dt className="text-muted-foreground">上传时间</dt>
-            <dd>{active.uploadTime}</dd>
-          </dl>
-
-          <div className="mt-4">
-            <div className="mb-2 flex items-center gap-1.5 text-xs text-muted-foreground">
-              <span className="text-primary">✦</span> AI 智能标签
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {active.aiTags.map((t) => (
-                <span key={t} className="rounded-full bg-accent-soft px-2.5 py-1 text-[11px] text-primary">
-                  {t}
-                </span>
-              ))}
-            </div>
+          <Button
+            size="lg"
+            className="mt-6"
+            onClick={() => fileInput.current?.click()}
+          >
+            ⬆ 上传素材
+          </Button>
+        </div>
+      ) : (
+        <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
+          <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
+            {filtered.map((a) => {
+              const isActive = a.id === active?.id;
+              return (
+                <button
+                  key={a.id}
+                  onClick={() => setActiveId(a.id)}
+                  className={[
+                    "flex flex-col overflow-hidden rounded-3xl border bg-card text-left transition-all",
+                    isActive
+                      ? "border-primary/40 shadow-[0_18px_50px_rgba(124,92,255,0.12)]"
+                      : "border-border shadow-[0_8px_24px_rgba(30,30,60,0.06)] hover:border-primary/25",
+                  ].join(" ")}
+                >
+                  {isImage(a) ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={a.url}
+                      alt={a.fileName}
+                      className="h-32 w-full object-cover"
+                    />
+                  ) : (
+                    <div
+                      className="flex h-32 items-center justify-center text-3xl text-primary-foreground"
+                      style={{ background: gradientFor(a.id) }}
+                    >
+                      ▦
+                    </div>
+                  )}
+                  <div className="flex flex-col gap-1.5 p-3">
+                    <div className="truncate text-xs font-medium">
+                      {a.fileName}
+                    </div>
+                    <div className="flex flex-wrap gap-1">
+                      <Chip>{CAT_LABEL[a.category] ?? a.category}</Chip>
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
           </div>
 
-          <div className="mt-5 flex flex-col gap-2">
-            <Button className="w-full justify-center">加入项目</Button>
-            <Button variant="outline" className="w-full justify-center">设为参考</Button>
-            <Button variant="ghost" className="w-full justify-center">查看来源</Button>
-          </div>
-        </aside>
-      </div>
+          <aside className="sticky top-6 h-fit rounded-3xl border border-border bg-card p-5 shadow-[0_8px_24px_rgba(30,30,60,0.06)]">
+            {active ? (
+              <>
+                {isImage(active) ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={active.url}
+                    alt={active.fileName}
+                    className="h-44 w-full rounded-2xl object-cover"
+                  />
+                ) : (
+                  <div
+                    className="flex h-44 items-center justify-center rounded-2xl text-4xl text-primary-foreground"
+                    style={{ background: gradientFor(active.id) }}
+                  >
+                    ▦
+                  </div>
+                )}
+                <div className="mt-4 text-sm font-semibold">
+                  {active.fileName}
+                </div>
+                {active.aiDescription ? (
+                  <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+                    {active.aiDescription}
+                  </p>
+                ) : null}
+                <dl className="mt-4 grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-xs">
+                  <dt className="text-muted-foreground">类型</dt>
+                  <dd>{CAT_LABEL[active.category] ?? active.category}</dd>
+                  {active.resolution ? (
+                    <>
+                      <dt className="text-muted-foreground">尺寸</dt>
+                      <dd>{active.resolution}</dd>
+                    </>
+                  ) : null}
+                  <dt className="text-muted-foreground">大小</dt>
+                  <dd>{fmtSize(active.sizeBytes)}</dd>
+                  <dt className="text-muted-foreground">来源</dt>
+                  <dd>{active.source === "WEBSITE" ? "网站采集" : "上传"}</dd>
+                </dl>
+                {active.aiTags && active.aiTags.length > 0 ? (
+                  <div className="mt-4">
+                    <div className="mb-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <span className="text-primary">✦</span> AI 智能标签
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {active.aiTags.map((t) => (
+                        <span
+                          key={t}
+                          className="rounded-full bg-accent-soft px-2.5 py-1 text-[11px] text-primary"
+                        >
+                          {t}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </>
+            ) : (
+              <div className="py-10 text-center text-sm text-muted-foreground">
+                选择左侧素材查看详情
+              </div>
+            )}
+          </aside>
+        </div>
+      )}
     </div>
   );
 }

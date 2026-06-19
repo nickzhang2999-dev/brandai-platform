@@ -106,6 +106,16 @@ export function serializeProject(row: {
   product: string | null;
   channel: string | null;
   createdAt: Date;
+  // BrandAI Campaign 业务字段（DB 列存在；旧行用默认值兜底）
+  status?: string | null;
+  progress?: number | null;
+  description?: string | null;
+  coverImage?: string | null;
+  tags?: string[] | null;
+  channels?: string[] | null;
+  startDate?: Date | null;
+  endDate?: Date | null;
+  aiSummary?: string | null;
 }): Project {
   return Project.parse({
     id: row.id,
@@ -115,6 +125,15 @@ export function serializeProject(row: {
     product: row.product ?? undefined,
     channel: row.channel ?? undefined,
     createdAt: row.createdAt.toISOString(),
+    status: row.status ?? undefined,
+    progress: row.progress ?? undefined,
+    description: row.description ?? undefined,
+    coverImage: row.coverImage ?? undefined,
+    tags: row.tags ?? undefined,
+    channels: row.channels ?? undefined,
+    startDate: row.startDate ? row.startDate.toISOString() : undefined,
+    endDate: row.endDate ? row.endDate.toISOString() : undefined,
+    aiSummary: row.aiSummary ?? undefined,
   });
 }
 

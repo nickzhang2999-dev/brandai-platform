@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { prisma } from "@brandai/db";
-import { CreateProjectInput } from "@brandai/contracts";
+import { CampaignStatus, CreateProjectInput } from "@brandai/contracts";
 import {
   ApiException,
   handleError,
@@ -42,10 +42,9 @@ export async function POST(
     const { wsId } = await params;
     await requireWorkspaceRole(wsId, user.id, "EDITOR");
 
-    const input = parse(CreateProjectInput, {
-      ...(await req.json()),
-      workspaceId: wsId,
-    });
+    const body = await req.json();
+    const input = parse(CreateProjectInput, { ...body, workspaceId: wsId });
+    const extra = parse(BrandaiProjectFields, body);
     const project = await prisma.project.create({
       data: {
         workspaceId: wsId,
@@ -53,6 +52,14 @@ export async function POST(
         campaign: input.campaign,
         product: input.product,
         channel: input.channel,
+        ...(extra.status ? { status: extra.status } : {}),
+        ...(extra.progress != null ? { progress: extra.progress } : {}),
+        ...(extra.description != null
+          ? { description: extra.description }
+          : {}),
+        ...(extra.tags ? { tags: extra.tags } : {}),
+        ...(extra.channels ? { channels: extra.channels } : {}),
+        ...(extra.aiSummary != null ? { aiSummary: extra.aiSummary } : {}),
       },
     });
     return ok(serializeProject(project), { status: 201 });
@@ -67,6 +74,17 @@ export async function POST(
  * same field shape via a local schema (no contract change). Reads/writes
  * stay workspace-scoped.
  */
+// BrandAI Campaign 业务字段（与 CreateProjectInput 的基础字段并存，全部可选；
+// DB 列已存在，见 packages/db schema 的 Project 模型）。
+const BrandaiProjectFields = z.object({
+  status: CampaignStatus.optional(),
+  progress: z.number().int().min(0).max(100).optional(),
+  description: z.string().max(2000).optional(),
+  tags: z.array(z.string()).max(20).optional(),
+  channels: z.array(z.string()).max(20).optional(),
+  aiSummary: z.string().max(4000).optional(),
+});
+
 const UpdateProjectInput = z.object({
   id: z.string(),
   name: z.string().min(1),
@@ -84,7 +102,9 @@ export async function PATCH(
     const { wsId } = await params;
     await requireWorkspaceRole(wsId, user.id, "EDITOR");
 
-    const input = parse(UpdateProjectInput, await req.json());
+    const body = await req.json();
+    const input = parse(UpdateProjectInput, body);
+    const extra = parse(BrandaiProjectFields, body);
     const existing = await prisma.project.findUnique({
       where: { id: input.id },
     });
@@ -98,6 +118,14 @@ export async function PATCH(
         campaign: input.campaign ?? null,
         product: input.product ?? null,
         channel: input.channel ?? null,
+        ...(extra.status ? { status: extra.status } : {}),
+        ...(extra.progress != null ? { progress: extra.progress } : {}),
+        ...(extra.description != null
+          ? { description: extra.description }
+          : {}),
+        ...(extra.tags ? { tags: extra.tags } : {}),
+        ...(extra.channels ? { channels: extra.channels } : {}),
+        ...(extra.aiSummary != null ? { aiSummary: extra.aiSummary } : {}),
       },
     });
     return ok(serializeProject(project));
