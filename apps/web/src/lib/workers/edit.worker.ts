@@ -8,6 +8,7 @@ import {
 import { connection } from "@/lib/queue";
 import { ai } from "@/lib/ai";
 import { recordUsage } from "@/lib/usage";
+import { uploadDataUrlImage } from "@/lib/s3";
 import {
   markRunning,
   setProgress,
@@ -111,11 +112,19 @@ export async function runEditJob(
       ? (source.params as Record<string, unknown>)
       : {};
 
+  // 与 generate.worker 一致:真实 provider 返回的 b64 会被 AI 服务转成多 MB 的
+  // data: URL。配了对象存储就上传换公网 URL,避免把大图塞进 Postgres/JSON 拖慢
+  // project/version 读取;未配存储时透传 data: URL。
+  const editedImageUrl = await uploadDataUrlImage(
+    result.imageUrl,
+    `generations/${workspaceId}`,
+  );
+
   const created = await prisma.generationVersion.create({
     data: {
       generationId,
       index: nextIndex,
-      imageUrl: result.imageUrl,
+      imageUrl: editedImageUrl,
       width: result.width,
       height: result.height,
       parentVersionId: source.id,

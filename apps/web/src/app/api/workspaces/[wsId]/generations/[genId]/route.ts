@@ -116,9 +116,16 @@ export async function POST(
   try {
     const user = await requireUser();
     const { wsId, genId } = await params;
-    await loadOwned(wsId, genId, user.id);
+    const existing = await loadOwned(wsId, genId, user.id);
     // G6 — 重新生成属于内容写操作:编辑+(EDITOR/OWNER)。
     await requireWorkspaceRole(wsId, user.id, "EDITOR");
+
+    // 仅允许在终态(SUCCEEDED/FAILED)重新生成。否则两次提交(或趁原 job
+    // PENDING/RUNNING 时再提交)会让两个 generate job 并发跑同一 generationId,
+    // 各自的"删旧 root + 写终态"互相覆盖,导致重复或丢失产出。
+    if (existing.status === "PENDING" || existing.status === "RUNNING") {
+      throw new ApiException(409, "该生成任务进行中,请等待完成后再重试");
+    }
 
     // Body is optional; tolerate an empty request.
     let body: z.infer<typeof RegenerateInput> = undefined;

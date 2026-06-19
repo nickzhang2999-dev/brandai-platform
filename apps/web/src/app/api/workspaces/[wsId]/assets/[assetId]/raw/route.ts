@@ -2,7 +2,7 @@ import { Readable } from "node:stream";
 import { prisma } from "@brandai/db";
 import { ApiException, handleError, requireUser } from "@/lib/api";
 import { requireOwnedWorkspace } from "@/lib/workspace";
-import { assertSafePublicUrl } from "@/lib/ssrf";
+import { safeFetch } from "@/lib/ssrf";
 import { getObjectStream } from "@/lib/s3";
 
 /**
@@ -39,9 +39,9 @@ export async function GET(
 
     if (isAbsoluteUrl(asset.storageKey) || isAbsoluteUrl(asset.url)) {
       const src = isAbsoluteUrl(asset.url) ? asset.url : asset.storageKey;
-      // SSRF 纵深防御:即便历史数据里存了内网地址,取流前再校验一次。
-      await assertSafePublicUrl(src);
-      const upstream = await fetch(src);
+      // SSRF 纵深防御:手动跟随重定向并逐跳校验(含历史数据里的内网地址 +
+      // 公网 URL 302 跳内网的重定向型 SSRF)。
+      const upstream = await safeFetch(src);
       if (!upstream.ok || !upstream.body) {
         throw new ApiException(502, "Failed to fetch source asset");
       }

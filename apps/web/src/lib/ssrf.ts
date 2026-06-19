@@ -71,3 +71,28 @@ export async function assertSafePublicUrl(raw: string): Promise<void> {
     throw new ApiException(400, "资源主机解析到内网/本地地址,已拒绝");
   }
 }
+
+/**
+ * 像 fetch 一样取资源,但手动跟随重定向并对**每一跳**(含初始 URL 与每个
+ * 3xx Location)做 assertSafePublicUrl 校验。fetch 默认自动跟随 30x,攻击者可
+ * 用一个公网 URL 302 跳到 169.254.169.254 等内网地址绕过仅校验初始 URL 的防护;
+ * 这里逐跳校验后再放行,彻底堵住重定向型 SSRF。
+ */
+export async function safeFetch(
+  url: string,
+  maxRedirects = 4,
+): Promise<Response> {
+  let current = url;
+  for (let hop = 0; hop <= maxRedirects; hop++) {
+    await assertSafePublicUrl(current);
+    const res = await fetch(current, { redirect: "manual" });
+    if (res.status >= 300 && res.status < 400) {
+      const loc = res.headers.get("location");
+      if (!loc) return res; // 3xx 但无 Location,交给调用方
+      current = new URL(loc, current).toString(); // 解析相对跳转,下轮再校验
+      continue;
+    }
+    return res;
+  }
+  throw new ApiException(400, "重定向次数过多,已拒绝");
+}

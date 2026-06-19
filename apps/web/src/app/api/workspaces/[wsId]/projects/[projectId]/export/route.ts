@@ -115,15 +115,27 @@ export async function POST(
     const compliance: Record<string, unknown> = {};
 
     for (const { version, generation } of versions) {
-      const ext =
-        (version.imageUrl.split("?")[0] ?? "").split(".").pop() ||
-        "png";
-      const imageFile = `images/${generation.id}-v${version.index}.${ext}`;
+      // 扩展名必须从 fetch 回来的 content-type 推导,而不是 split(imageUrl, ".")：
+      // 无存储/mock 流程下 imageUrl 是 data:image/svg+xml;base64,... ,按 "." 切会把
+      // 整个 data URL 当成扩展名,生成含路径分隔符的畸形 ZIP 条目名。
+      const baseName = `images/${generation.id}-v${version.index}`;
+      let imageFile = `${baseName}.png`; // content-type 未知时的兜底名
       try {
         const res = await fetch(version.imageUrl);
         if (!res.ok || !res.body) {
           throw new Error(`upstream ${res.status}`);
         }
+        const ct = (res.headers.get("content-type") ?? "").toLowerCase();
+        const ext = ct.includes("svg")
+          ? "svg"
+          : ct.includes("jpeg") || ct.includes("jpg")
+            ? "jpg"
+            : ct.includes("webp")
+              ? "webp"
+              : ct.includes("gif")
+                ? "gif"
+                : "png";
+        imageFile = `${baseName}.${ext}`;
         const buf = Buffer.from(await res.arrayBuffer());
         archive.append(buf, { name: imageFile });
         manifest.versions.push({
