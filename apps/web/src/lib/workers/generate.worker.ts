@@ -376,15 +376,31 @@ export async function runGenerateJob(
     // only swap them out once the replacement has actually been generated +
     // persisted AND this run is the authoritative winner (writeTerminal true).
     // Deleting up-front lost the previous (possibly final) versions whenever the
-    // provider timed out / all sizes failed / upload threw. `index` stays clean
-    // 0-based because there's no unique (generationId,index) constraint: new
-    // rows coexist briefly, then the stale roots are removed below.
+    // provider timed out / all sizes failed / upload threw.
+    //
+    // Partial retry ({targets:[oneSize]}) must ONLY replace the retried target's
+    // root — deleting every root would turn a complete multi-size kit into a
+    // single version. So scope the stale set by params.targetKey for a partial
+    // retry, and drop all roots only for a full regenerate. New rows for a
+    // partial retry start above the highest existing index (siblings kept, no
+    // collision); a full regenerate stays clean 0-based (all roots removed).
+    const allRoots = await prisma.generationVersion.findMany({
+      where: { generationId, parentVersionId: null },
+      select: { id: true, index: true, params: true },
+    });
+    const retryKeys =
+      targets && targets.length > 0 ? new Set(targets.map((t) => t.key)) : null;
     const staleRootIds = (
-      await prisma.generationVersion.findMany({
-        where: { generationId, parentVersionId: null },
-        select: { id: true },
-      })
+      retryKeys
+        ? allRoots.filter((r) => {
+            const k = (r.params as { targetKey?: unknown } | null)?.targetKey;
+            return typeof k === "string" && retryKeys.has(k);
+          })
+        : allRoots
     ).map((r) => r.id);
+    const baseIndex = retryKeys
+      ? allRoots.reduce((m, r) => Math.max(m, r.index), -1) + 1
+      : 0;
     async function dropStaleRoots() {
       if (staleRootIds.length > 0) {
         await prisma.generationVersion.deleteMany({
@@ -443,7 +459,9 @@ export async function runGenerateJob(
       // sink the batch. Failed sizes accumulate into Generation.error; the
       // batch is SUCCEEDED as long as ≥1 size produced a version.
       const failures: string[] = [];
-      let index = 0;
+      // 部分重试时从现有最大 index 之后开始,避免与保留的兄弟尺寸版本撞 index;
+      // 全新多尺寸生成 baseIndex=0(无旧 root)。
+      let index = baseIndex;
       for (const t of targets) {
         // §2.4 — stop persisting further sizes once the watchdog has FAILED
         // this run; don't attach orphan versions to a timed-out generation.

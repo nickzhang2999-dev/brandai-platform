@@ -66,17 +66,19 @@ export async function GET(
     const { body, contentType, contentLength } = await getObjectStream(
       asset.storageKey,
     );
-    return new Response(Readable.toWeb(body) as ReadableStream, {
-      headers: {
-        "content-type":
-          asset.mimeType && asset.mimeType !== "image/*"
-            ? asset.mimeType
-            : contentType,
-        ...(contentLength ? { "content-length": String(contentLength) } : {}),
-        "cache-control": cacheControl,
-        "x-content-type-options": "nosniff",
-      },
-    });
+    // 上传端接受任意 File 并原样存 mimeType:上传 text/html 经此 /raw 会在 app 源
+    // 内联执行(存储型 XSS)。与 WEBSITE 分支同策:非图片降级 octet-stream + 附件。
+    const resolvedType =
+      asset.mimeType && asset.mimeType !== "image/*" ? asset.mimeType : contentType;
+    const isImg = (resolvedType || "").toLowerCase().startsWith("image/");
+    const headers: Record<string, string> = {
+      "content-type": isImg ? resolvedType : "application/octet-stream",
+      ...(contentLength ? { "content-length": String(contentLength) } : {}),
+      "cache-control": cacheControl,
+      "x-content-type-options": "nosniff",
+    };
+    if (!isImg) headers["content-disposition"] = "attachment";
+    return new Response(Readable.toWeb(body) as ReadableStream, { headers });
   } catch (err) {
     return handleError(err);
   }
