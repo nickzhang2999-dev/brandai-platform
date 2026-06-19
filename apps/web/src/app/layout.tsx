@@ -3,8 +3,8 @@ import "./globals.css";
 import { Providers } from "./providers";
 
 export const metadata: Metadata = {
-  title: "OpenVisual · 品牌视觉 AI",
-  description: "基于固定品牌 VI 批量生成符合规范的商业视觉内容",
+  title: "BrandAI · 品牌视觉 AI",
+  description: "以 Campaign 为中心,基于品牌知识库批量生成符合规范的商业视觉内容",
 };
 
 /**
