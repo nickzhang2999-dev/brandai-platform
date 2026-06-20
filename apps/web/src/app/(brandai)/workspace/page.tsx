@@ -5,6 +5,12 @@ import { useSearchParams } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Generation, Project } from "@brandai/contracts";
 import { apiFetch } from "@/lib/client";
+import {
+  getReferences,
+  removeReference,
+  subscribeReferences,
+  type RefAsset,
+} from "@/lib/reference-tray";
 import { useBrand } from "../brand-context";
 
 /**
@@ -36,6 +42,19 @@ type JobState = {
   job: { jobId: string; status: string; progress: number; failedReason?: string };
 };
 
+// F11 — read-only quota status (GET /api/workspaces/[wsId]/quota). -1 = 不限.
+type QuotaStatus = {
+  dailyUsed: number;
+  dailyLimit: number;
+  periodUsed: number;
+  monthlyQuota: number;
+  plan: string;
+};
+
+// F7 — UI suggestion chips (text content only; not colors).
+const SUGGESTED_KEYWORDS = ["简约", "高级感", "科技感", "暖色调", "自然光"];
+const MAX_KEYWORDS = 20;
+
 export default function WorkspacePage() {
   return (
     <Suspense fallback={<div className="p-10 text-sm text-muted-foreground">加载中…</div>}>
@@ -65,6 +84,55 @@ function Workspace() {
   const [scene, setScene] = useState("夏日自然光场景");
   const [sceneType, setSceneType] = useState("SOCIAL_POSTER");
   const [versionCount, setVersionCount] = useState(4);
+
+  // F7 · 风格关键词 (max 20) — threaded into POST /generations as styleKeywords.
+  const [styleKeywords, setStyleKeywords] = useState<string[]>([]);
+  const [keywordDraft, setKeywordDraft] = useState("");
+
+  function addKeyword(raw: string) {
+    const kw = raw.trim();
+    if (!kw) return;
+    setStyleKeywords((prev) =>
+      prev.includes(kw) || prev.length >= MAX_KEYWORDS ? prev : [...prev, kw],
+    );
+  }
+  function removeKeyword(kw: string) {
+    setStyleKeywords((prev) => prev.filter((k) => k !== kw));
+  }
+  function onKeywordKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Enter" || e.key === ",") {
+      e.preventDefault();
+      addKeyword(keywordDraft);
+      setKeywordDraft("");
+    } else if (e.key === "Backspace" && !keywordDraft && styleKeywords.length) {
+      removeKeyword(styleKeywords[styleKeywords.length - 1]!);
+    }
+  }
+
+  // F9 · 参考素材区 — localStorage-backed, scoped to (wsId, projectId), shared
+  // with the assets page via reference-tray. Subscribe for cross-page updates.
+  const [references, setReferences] = useState<RefAsset[]>([]);
+  useEffect(() => {
+    if (!projectId) {
+      setReferences([]);
+      return;
+    }
+    const refresh = () => setReferences(getReferences(wsId, projectId));
+    refresh();
+    return subscribeReferences(refresh);
+  }, [wsId, projectId]);
+  function dropReference(assetId: string) {
+    if (!projectId) return;
+    removeReference(wsId, projectId, assetId);
+    setReferences(getReferences(wsId, projectId));
+  }
+
+  // F11 · 生成额度展示 — read-only quota status.
+  const { data: quota } = useQuery<QuotaStatus>({
+    queryKey: ["brandai-quota", wsId],
+    queryFn: () => apiFetch<QuotaStatus>(`/api/workspaces/${wsId}/quota`),
+    enabled: !!wsId,
+  });
 
   const [genId, setGenId] = useState<string | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
@@ -237,6 +305,12 @@ function Workspace() {
             sellingPoint: sellingPoint.trim(),
             scene: scene.trim(),
             versionCount,
+            // F7 — only send when non-empty (frozen-additive optional field).
+            ...(styleKeywords.length ? { styleKeywords } : {}),
+            // F9 — current project's staged reference asset ids.
+            ...(references.length
+              ? { referenceAssetIds: references.map((r) => r.id) }
+              : {}),
           }),
         },
       );
@@ -459,6 +533,117 @@ function Workspace() {
             </div>
           </div>
 
+          {/* F7 · 风格关键词 */}
+          <div>
+            <div className="mb-2 flex items-center justify-between text-sm font-semibold">
+              <span>风格关键词</span>
+              <span className="text-xs font-normal text-muted-foreground">
+                {styleKeywords.length}/{MAX_KEYWORDS}
+              </span>
+            </div>
+            <div className="flex flex-wrap items-center gap-1.5 rounded-2xl border border-border bg-background p-2 focus-within:border-primary/40 focus-within:shadow-[0_0_0_4px_rgba(124,92,255,0.08)]">
+              {styleKeywords.map((kw) => (
+                <span
+                  key={kw}
+                  className="inline-flex items-center gap-1 rounded-full bg-accent-soft px-2.5 py-1 text-xs font-medium text-primary"
+                >
+                  {kw}
+                  <button
+                    type="button"
+                    onClick={() => removeKeyword(kw)}
+                    aria-label={`移除 ${kw}`}
+                    className="text-primary/60 transition-colors hover:text-primary"
+                  >
+                    ✕
+                  </button>
+                </span>
+              ))}
+              <input
+                value={keywordDraft}
+                onChange={(e) => setKeywordDraft(e.target.value)}
+                onKeyDown={onKeywordKeyDown}
+                onBlur={() => {
+                  addKeyword(keywordDraft);
+                  setKeywordDraft("");
+                }}
+                disabled={styleKeywords.length >= MAX_KEYWORDS}
+                placeholder={
+                  styleKeywords.length >= MAX_KEYWORDS
+                    ? "已达上限"
+                    : "输入后回车添加…"
+                }
+                className="min-w-[7rem] flex-1 bg-transparent px-1 py-1 text-sm outline-none placeholder:text-muted-foreground"
+              />
+            </div>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {SUGGESTED_KEYWORDS.filter((k) => !styleKeywords.includes(k)).map(
+                (k) => (
+                  <button
+                    key={k}
+                    type="button"
+                    onClick={() => addKeyword(k)}
+                    disabled={styleKeywords.length >= MAX_KEYWORDS}
+                    className="rounded-full border border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted disabled:opacity-50"
+                  >
+                    + {k}
+                  </button>
+                ),
+              )}
+            </div>
+          </div>
+
+          {/* F9 · 参考素材区 */}
+          {projectId ? (
+            <div>
+              <div className="mb-2 flex items-center justify-between text-sm font-semibold">
+                <span>参考素材</span>
+                {references.length ? (
+                  <span className="text-xs font-normal text-muted-foreground">
+                    {references.length}/8
+                  </span>
+                ) : null}
+              </div>
+              {references.length ? (
+                <div className="flex flex-wrap gap-2">
+                  {references.map((r) => (
+                    <div
+                      key={r.id}
+                      className="group relative h-16 w-16 overflow-hidden rounded-xl border border-border bg-background"
+                    >
+                      {r.thumbUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={r.thumbUrl}
+                          alt={r.fileName ?? "参考素材"}
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <div className="flex h-full w-full items-center justify-center text-muted-foreground">
+                          ◇
+                        </div>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => dropReference(r.id)}
+                        aria-label="移除参考素材"
+                        className="absolute right-0.5 top-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-card/90 text-xs text-muted-foreground shadow-sm transition-colors hover:text-destructive"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="rounded-2xl border border-dashed border-border bg-background px-3 py-4 text-center text-xs text-muted-foreground">
+                  从素材库『设为参考』添加
+                </p>
+              )}
+            </div>
+          ) : null}
+
+          {/* F11 · 生成额度展示 */}
+          {quota ? <QuotaBar quota={quota} /> : null}
+
           <div className="rounded-2xl border border-primary/15 bg-accent-soft/50 p-3">
             <div className="flex items-center gap-2 text-sm font-medium text-primary">
               <span>◎</span> 品牌约束已生效
@@ -584,6 +769,57 @@ function Center({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex flex-col items-center justify-center text-center">
       {children}
+    </div>
+  );
+}
+
+// F11 — compact period/day usage with a violet bar. -1 = 不限.
+function QuotaBar({
+  quota,
+}: {
+  quota: {
+    dailyUsed: number;
+    dailyLimit: number;
+    periodUsed: number;
+    monthlyQuota: number;
+    plan: string;
+  };
+}) {
+  const { periodUsed, monthlyQuota, dailyUsed, dailyLimit, plan } = quota;
+  const monthlyText = monthlyQuota === -1 ? "不限" : monthlyQuota;
+  const dailyText = dailyLimit === -1 ? "不限" : dailyLimit;
+  const pct =
+    monthlyQuota > 0
+      ? Math.min(100, Math.round((periodUsed / monthlyQuota) * 100))
+      : monthlyQuota === -1
+        ? 0
+        : 100;
+  return (
+    <div className="rounded-2xl border border-border bg-background p-3">
+      <div className="flex items-center justify-between text-xs text-muted-foreground">
+        <span className="font-medium text-foreground">生成额度</span>
+        <span className="rounded-full bg-accent-soft px-2 py-0.5 text-[10px] font-medium text-primary">
+          {plan}
+        </span>
+      </div>
+      <p className="mt-1 text-xs text-muted-foreground">
+        本周期{" "}
+        <span className="font-medium text-foreground">
+          {periodUsed}/{monthlyText}
+        </span>{" "}
+        · 今日{" "}
+        <span className="font-medium text-foreground">
+          {dailyUsed}/{dailyText}
+        </span>
+      </p>
+      {monthlyQuota !== -1 ? (
+        <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-accent-soft">
+          <div
+            className="h-full rounded-full bg-primary transition-[width]"
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+      ) : null}
     </div>
   );
 }

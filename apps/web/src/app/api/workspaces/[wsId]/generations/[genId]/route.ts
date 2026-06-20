@@ -183,11 +183,46 @@ export async function POST(
           ? reconstructedTargets
           : undefined;
 
+    // F7 / F9 / L8 — reconstruct the original per-generation style keywords +
+    // reference assets from the prior root versions' params (same approach as
+    // targets above), so 重新生成 keeps the user's picks instead of dropping them.
+    const reconstructedStyleKeywords = (() => {
+      for (const v of priorRoots) {
+        const p = (v.params ?? {}) as { styleKeywords?: unknown };
+        if (
+          Array.isArray(p.styleKeywords) &&
+          p.styleKeywords.every((s) => typeof s === "string")
+        ) {
+          return p.styleKeywords as string[];
+        }
+      }
+      return undefined;
+    })();
+    const reconstructedReferenceAssetIds = (() => {
+      for (const v of priorRoots) {
+        const p = (v.params ?? {}) as { referenceAssetIds?: unknown };
+        if (
+          Array.isArray(p.referenceAssetIds) &&
+          p.referenceAssetIds.every((s) => typeof s === "string")
+        ) {
+          return p.referenceAssetIds as string[];
+        }
+      }
+      return undefined;
+    })();
+
     const jobData: GenerateJobData = {
       workspaceId: wsId,
       generationId: genId,
       versionCount: priorRoots.length > 0 ? priorRoots.length : 4,
       ...(targets ? { targets } : {}),
+      ...(reconstructedStyleKeywords && reconstructedStyleKeywords.length > 0
+        ? { styleKeywords: reconstructedStyleKeywords }
+        : {}),
+      ...(reconstructedReferenceAssetIds &&
+      reconstructedReferenceAssetIds.length > 0
+        ? { referenceAssetIds: reconstructedReferenceAssetIds }
+        : {}),
     };
     const job = await generateQueue.add("generate", jobData, {
       removeOnComplete: 50,

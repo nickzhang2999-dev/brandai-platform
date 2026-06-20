@@ -1,10 +1,12 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { Asset } from "@brandai/contracts";
+import type { Asset, Project } from "@brandai/contracts";
 import { Button } from "@brandai/ui";
 import { apiFetch, assetThumbUrl } from "@/lib/client";
+import { addReference } from "@/lib/reference-tray";
 import { useBrand } from "../brand-context";
 import { Chip, gradientFor, PageHeader } from "../_ui";
 
@@ -39,15 +41,28 @@ function isImage(a: Asset): boolean {
 export default function AssetsPage() {
   const { wsId } = useBrand();
   const qc = useQueryClient();
+  const router = useRouter();
   const [filter, setFilter] = useState("all");
   const [q, setQ] = useState("");
   const [activeId, setActiveId] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const [uploadErr, setUploadErr] = useState<string | null>(null);
+  // E11/E12 · 参考素材联动：选中的目标 Campaign + 暂存确认提示。
+  const [pickProject, setPickProject] = useState("");
+  const [stagedNote, setStagedNote] = useState<{
+    projectId: string;
+    projectName: string;
+  } | null>(null);
 
   const { data: assets = [], isLoading } = useQuery({
     queryKey: ["brandai-assets", wsId],
     queryFn: () => apiFetch<Asset[]>(`/api/workspaces/${wsId}/assets`),
+  });
+
+  // 共享 ["brandai-projects", wsId] 缓存（与首页/工作台/项目页同 key）。
+  const { data: projects = [] } = useQuery({
+    queryKey: ["brandai-projects", wsId],
+    queryFn: () => apiFetch<Project[]>(`/api/workspaces/${wsId}/projects`),
   });
 
   const upload = useMutation({
@@ -84,6 +99,34 @@ export default function AssetsPage() {
     [assets, filter, q],
   );
   const active = filtered.find((a) => a.id === activeId) ?? filtered[0] ?? assets[0];
+
+  // E11/E12 · 把当前选中素材暂存为目标 Campaign 的参考素材（client-side staging，
+  // 一期无 Project↔Asset DB 关系，暂存于 reference-tray，工作台出图时读取）。
+  function stageActiveAsReference(projectId: string): Project | null {
+    if (!active || !projectId) return null;
+    const project = projects.find((p) => p.id === projectId);
+    if (!project) return null;
+    addReference(wsId, projectId, {
+      id: active.id,
+      fileName: active.fileName,
+      thumbUrl: assetThumbUrl(wsId, active.id, active.url),
+    });
+    return project;
+  }
+
+  // E12 「设为参考」：暂存后留在本页 + 给出"去工作台查看"链接。
+  function handleSetReference() {
+    const p = stageActiveAsReference(pickProject);
+    if (!p) return;
+    setStagedNote({ projectId: p.id, projectName: p.name });
+  }
+
+  // E11 「加入项目」：暂存后直接跳转到工作台并带上目标 Campaign。
+  function handleAddToProject() {
+    const p = stageActiveAsReference(pickProject);
+    if (!p) return;
+    router.push(`/workspace?project=${p.id}`);
+  }
 
   const stats = [
     { label: "素材总数", value: String(assets.length) },
@@ -283,6 +326,64 @@ export default function AssetsPage() {
                     </div>
                   </div>
                 ) : null}
+
+                {/* E11/E12 · 联动工作台 / Campaign */}
+                <div className="mt-5 border-t border-border pt-4">
+                  <div className="mb-2 text-xs font-medium text-muted-foreground">
+                    用于 Campaign
+                  </div>
+                  {projects.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">
+                      还没有 Campaign，先去项目页创建一个。
+                    </p>
+                  ) : (
+                    <>
+                      <select
+                        value={pickProject}
+                        onChange={(e) => {
+                          setPickProject(e.target.value);
+                          setStagedNote(null);
+                        }}
+                        className="h-10 w-full rounded-full border border-border bg-card px-4 text-sm outline-none focus:border-primary/40 focus:shadow-[0_0_0_4px_rgba(124,92,255,0.08)]"
+                      >
+                        <option value="">选择 Campaign…</option>
+                        {projects.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}
+                          </option>
+                        ))}
+                      </select>
+                      <div className="mt-3 flex flex-col gap-2">
+                        <Button
+                          variant="outline"
+                          className="w-full rounded-full"
+                          disabled={!pickProject}
+                          onClick={handleSetReference}
+                        >
+                          ✦ 设为参考
+                        </Button>
+                        <Button
+                          className="w-full rounded-full"
+                          disabled={!pickProject}
+                          onClick={handleAddToProject}
+                        >
+                          ＋ 加入项目
+                        </Button>
+                      </div>
+                      {stagedNote ? (
+                        <div className="mt-3 rounded-2xl bg-accent-soft px-3.5 py-2.5 text-xs text-primary">
+                          已设为「{stagedNote.projectName}」的参考素材。{" "}
+                          <a
+                            className="font-medium underline underline-offset-2"
+                            href={`/workspace?project=${stagedNote.projectId}`}
+                          >
+                            去工作台查看
+                          </a>
+                        </div>
+                      ) : null}
+                    </>
+                  )}
+                </div>
               </>
             ) : (
               <div className="py-10 text-center text-sm text-muted-foreground">

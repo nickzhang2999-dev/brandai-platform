@@ -100,6 +100,18 @@ export interface GenerateJobData {
    * doesn't sink the whole batch.
    */
   targets?: SizeSpec[];
+  /**
+   * F7 — per-generation style keywords appended into the compiled
+   * `AIConstraints.promptAdditions` (so the AI service folds them into the
+   * prompt). Optional for backward compat with in-flight jobs.
+   */
+  styleKeywords?: string[];
+  /**
+   * F9 / L8 — per-generation reference asset ids. The worker resolves each to
+   * its asset URL (within the workspace) and pushes a positive `referenceImage`
+   * into the compiled `AIConstraints`. Optional for backward compat.
+   */
+  referenceAssetIds?: string[];
 }
 
 /** P2.0 feature flag. Default on; set MULTI_SIZE_V1=0 to fall back to the
@@ -356,6 +368,50 @@ export async function runGenerateJob(
       }
     }
 
+    // F7 / F9 / L8 — per-generation style keywords + reference assets. Merged
+    // into the compiled AIConstraints regardless of the AI_CONSTRAINTS_V1 flag
+    // so the user's explicit picks always reach the AI service:
+    //  - styleKeywords → appended to promptAdditions (the AI service folds
+    //    promptAdditions into the prompt; no AI-service contract change).
+    //  - referenceAssetIds → each resolved to its asset URL (workspace-scoped)
+    //    and pushed as a positive referenceImage. Ownership was IDOR-checked at
+    //    the POST route; we re-scope the lookup to the workspace here too.
+    const styleKeywords = (job.data.styleKeywords ?? [])
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+    if (styleKeywords.length > 0) {
+      aiConstraints = {
+        ...aiConstraints,
+        promptAdditions: [...aiConstraints.promptAdditions, ...styleKeywords],
+      };
+    }
+    const referenceAssetIds = [
+      ...new Set((job.data.referenceAssetIds ?? []).filter((x) => !!x)),
+    ];
+    if (referenceAssetIds.length > 0) {
+      const refAssets = await prisma.asset.findMany({
+        where: { id: { in: referenceAssetIds }, workspaceId },
+        select: { id: true, url: true },
+      });
+      const refImages = referenceAssetIds
+        .map((id) => {
+          const a = refAssets.find((r) => r.id === id);
+          if (!a?.url) return null;
+          return {
+            url: a.url,
+            polarity: "positive" as const,
+            source: `asset:${id}`,
+          };
+        })
+        .filter((r): r is NonNullable<typeof r> => r !== null);
+      if (refImages.length > 0) {
+        aiConstraints = {
+          ...aiConstraints,
+          referenceImages: [...aiConstraints.referenceImages, ...refImages],
+        };
+      }
+    }
+
     const appliedRuleIds = brandRules.map((r) => r.id);
     const sceneType = generation.sceneType;
     const constraintEcho = constraintsEnabled()
@@ -443,6 +499,10 @@ export async function runGenerateJob(
             appliedRuleIds,
             sceneType,
             ...constraintEcho,
+            // F7 / F9 / L8 — stamp the per-generation picks onto each version so
+            // they display and so 重新生成 can reconstruct them from prior roots.
+            ...(styleKeywords.length > 0 ? { styleKeywords } : {}),
+            ...(referenceAssetIds.length > 0 ? { referenceAssetIds } : {}),
           } as Prisma.InputJsonValue,
           // complianceReport / parentVersionId / isFinal left null/default
           // for M5 / M4 / M6 to fill in.
