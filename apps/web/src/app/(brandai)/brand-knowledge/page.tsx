@@ -264,11 +264,15 @@ function EvidenceThumbs({
   evidence: Evidence[];
 }) {
   if (!evidence?.length) return null;
+  // K4 — evidence may be note-only (no assetId) from VLM recognition. Show the
+  // thumbnail when an asset is referenced, otherwise render the observation note
+  // as a text chip so valid note-only evidence isn't silently dropped here.
+  const shown = evidence.filter((ev) => ev?.assetId || ev?.note).slice(0, 4);
+  if (!shown.length) return null;
   return (
-    <div className="flex flex-wrap gap-2 pt-1">
-      {evidence.slice(0, 4).map((ev, i) => {
-        if (!ev?.assetId) return null;
-        return (
+    <div className="flex flex-wrap items-center gap-2 pt-1">
+      {shown.map((ev, i) =>
+        ev.assetId ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
             key={`${ev.assetId}-${i}`}
@@ -277,8 +281,16 @@ function EvidenceThumbs({
             title={ev.note ?? undefined}
             className="h-12 w-12 rounded-xl border border-border object-cover"
           />
-        );
-      })}
+        ) : (
+          <span
+            key={`note-${i}`}
+            title={ev.note ?? undefined}
+            className="max-w-[220px] truncate rounded-full border border-border bg-muted px-3 py-1 text-xs text-muted-foreground"
+          >
+            {ev.note}
+          </span>
+        ),
+      )}
     </div>
   );
 }
