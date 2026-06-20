@@ -51,7 +51,7 @@
 |---|---|---|---|---|---|---|
 | A1 | 左侧导航栏 | doc01§1.9 / doc05§6.4 | ✅ | `app/(brandai)/brand-sidebar.tsx`、`lib/brandai-mock.ts::navItems` | 现 **6 项**（首页/Campaign/品牌知识库/素材库/AI工作台/**模板库**）。侧栏动态渲染 navItems | 6 项补齐 2026-06-20 |
 | A2 | 用户信息区（头像/姓名/职位/个人菜单） | P01-M02 | 🟡 | `brand-sidebar.tsx`（注入 `user.name`） | 姓名已显示；个人菜单/退出入口待核验 | 2026-06-20 |
-| A3 | 顶部通知入口 | P01-M03 | ❌ | — | 通知中心未实现 | 2026-06-20 |
+| A3 | 顶部通知入口 | P01-M03 | ✅ | `(brandai)/notification-center.tsx`（bell+未读 badge+收件箱）+ `GET .../notifications` | 从真实终态（Generation + AsyncTask）派生通知，无伪造无新表；未读用 localStorage `lastSeenAt`（phase-2 转服务端） | 接入 2026-06-20 |
 | A4 | 紫色视觉 token 系统（16 语义 token） | doc04§5.4 | ✅ | `packages/ui/src/styles.css` | violet SSOT，L1 快照守 | 2026-06-20 |
 | A5 | 圆角/阴影/字体(Inter)规范 | doc04§5.5-5.6 | ✅ | `packages/config/tailwind-preset.js` | — | 2026-06-20 |
 | A6 | 跨页队列 widget（§2.3 可观测） | CLAUDE§0.3 | ✅ | `GET /api/workspaces/[wsId]/queue` + widget | 展示 PENDING/RUNNING/SUCCEEDED/FAILED | 2026-06-20 |
@@ -65,7 +65,7 @@
 | B2 | AI 输入框（核心视觉符号） | P01-M05 | 🟡 | `page.tsx`（brief→立项） | **改进**：非空 brief 创建 DRAFT Campaign + 携 `?brief=` 跳工作台预填 sellingPoint（诚实 brief 透传）；真 AI 拆解/打标仍待 describe 端点 | brief 立项 2026-06-20 |
 | B3 | 快捷操作 4 入口 | P01-M06 | ✅ | `page.tsx:59` + `navigation/quickActions` | 创建Campaign/导入知识库/生成视觉/优化设计 | 2026-06-20 |
 | B4 | 近期 Campaign 横向卡 | P01-M07 | ✅ | `page.tsx:77`（真实 `GET /projects`） | 状态+进度条，取最近 8 | 2026-06-20 |
-| B5 | 推荐品牌瀑布流（Masonry） | P01-M08 | ❌ | — | 未实现；单品牌内部后台下语义待产品确认（§L2） | 2026-06-20 |
+| B5 | 推荐品牌瀑布流（Masonry） | P01-M08 | ✅ | `(brandai)/recommended-brands.tsx` + `GET /api/brands/recommended` | 真实 `BrandWorkspace`（用户 owner/member 范围，verified 优先，无跨租户泄漏）；CSS-columns masonry + 诚实空态 | 接入 2026-06-20 |
 
 ## C · P02 Campaign 项目页
 
@@ -95,7 +95,7 @@
 | D7 | 品牌语调（含禁用词） | P03-M08 | ✅ | 富卡片 | tone chip + 禁用词列表（划线） | 富卡片 2026-06-20 |
 | D8 | 视觉参考 | P03-M09 | ✅ | 富卡片 | value 结构化要点 | 富卡片 2026-06-20 |
 | D9 | 设计规范 | P03-M10 | ✅ | 富卡片 | value 结构化要点（网格/留白/光线…） | 富卡片 2026-06-20 |
-| D10 | 品牌预览（综合视觉自动生成） | P03-M11 | ❌ | — | 未做 | 2026-06-20 |
+| D10 | 品牌预览（综合视觉自动生成） | P03-M11 | ✅ | `lib/brand-preview.ts` + `GET/POST .../brand-preview` + `brand-knowledge` BrandPreview 卡 | 由 CONFIRMED 规则（色/字/调性/视觉）合 brief→§2 异步走现有 generate 管线→202→轮询；真 provider 真图 | 接入 2026-06-20 |
 | D11 | AI 知识摘要 | P03-M12 | ✅ | `page.tsx:187` | 基于规则数的文本摘要 + 关键词 chips | 2026-06-20 |
 | D12 | 规则确认（DRAFT→CONFIRMED） | — | ✅ | `page.tsx:52`（PATCH /rules/[id]） | 确认后 worker 出图加载 | 2026-06-20 |
 | D13 | AI 从素材识别规则（recognize） | doc03 AI | ✅ | `brand-knowledge/page.tsx` 素材选择器→`POST /rules/recognize`→轮询 task | 真 VLM；202→6min 有界轮询→刷新规则；灰度真识别待最终冒烟 | 接入 2026-06-20 |
@@ -124,7 +124,7 @@
 | 编号 | 功能点 | 来源 | 状态 | 路径 | 备注 · 验收 | 变更 |
 |---|---|---|---|---|---|---|
 | F1 | 顶部项目路径（breadcrumb） | P05-M02 | 🟡 | `workspace/page.tsx`（`?project=` 参数） | 接收 project，breadcrumb 富展示弱 | 2026-06-20 |
-| F2 | 顶部基础操作（撤销/重做/缩放/通知） | P05-M03 | ❌ | — | 未做 | 2026-06-20 |
+| F2 | 顶部基础操作（撤销/重做/缩放/通知） | P05-M03 | ✅ | `workspace/page.tsx` Toolbar（撤销/重做/缩放）+ 全局 notification-center（A3） | 表单快照有界历史（cap 50，redo 分支失效）+ 大图 zoom in/out/reset/fit；纯客户端 | 接入 2026-06-20 |
 | F3 | 大图展示区 | P05-M04 | ✅ | `page.tsx:289` | 当前变体大图 | 2026-06-20 |
 | F4 | 生成变体区（缩略图切换） | P05-M06 | ✅ | `page.tsx:300+` | 变体条+点击切换+终稿 badge | 2026-06-20 |
 | F5 | AI 提示词编辑(需求/卖点，500字) | P05-M08 | ✅ | `page.tsx:395` | 字段为 sellingPoint+scene（合后端契约） | 2026-06-20 |
@@ -163,7 +163,7 @@
 | H11 | 弹窗·归档项目（二次确认） | doc03 | ✅ | campaigns 确认弹窗→PATCH status=COMPLETED | — | 2026-06-20 |
 | H12 | 弹窗·额度升级 | doc03 | ❌ | — | 计费相关，phase 2 | 2026-06-20 |
 | H13 | 卡片·Campaign 项目卡 | doc04§5.7.3 | ✅ | campaigns | — | 2026-06-20 |
-| H14 | 卡片·推荐品牌卡 | doc04§5.7.4 | ❌ | — | 见 B5 | 2026-06-20 |
+| H14 | 卡片·推荐品牌卡 | doc04§5.7.4 | ✅ | `recommended-brands.tsx`（cover/name/verified/subtitle/slogan/tags） | 见 B5 | 接入 2026-06-20 |
 | H15 | 卡片·品牌知识卡 | doc04§5.7.5 | ✅ | brand-knowledge 富卡片 | 8 类富结构卡（见 D4-D9） | 2026-06-20 |
 | H16 | 卡片·素材卡 | doc04§5.7.6 | ✅ | assets | — | 2026-06-20 |
 
@@ -234,11 +234,11 @@
 | 编号 | 缺口 | 性质 | 关联 | 建议 |
 |---|---|---|---|---|
 | L1 | ~~模板库 P06 完全无~~ → 占位页 + nav 第6项已补 | 设计有(P2占位)·**已补占位** | G1/A1 | ✅ 占位页 + 6项 nav；真模板能力 phase-2 |
-| L2 | 推荐品牌瀑布流无 | 设计有·实现缺，**且语义存疑** | B5/H14 | 单超管内部后台「推荐品牌」是否还需要？产品定调 |
-| L3 | 顶部通知中心无 | 设计有·实现缺 | A3/P01-M03 | 确认一期是否需要通知体系 |
+| L2 | ~~推荐品牌瀑布流无~~ → 已补（用户定调纳入） | 设计有·**已补** | B5/H14 | ✅ `recommended-brands.tsx` 接真 BrandWorkspace（owner/member 范围）；自助 verified 流 phase-2 |
+| L3 | ~~顶部通知中心无~~ → 已补（用户定调纳入） | 设计有·**已补** | A3/P01-M03 | ✅ 通知中心从真实终态派生；未读 localStorage（phase-2 转服务端 per-user） |
 | L4 | ~~8 类富结构卡退化~~ → 富卡片已还原（色板/Logo do-don't/字体预览）；**品牌预览(D10)** 仍缺 | 设计有·**已还原**(除 D10) | D4-D10 | ✅ D4-D9 富卡片；D10 综合品牌预览（VLM 自动生成）待 describe 端点 |
 | L5 | ~~工作台三右栏模块无~~ → 风格词/参考素材/额度三模块已接 | 设计有·**已补** | F7/F9/F11 | ✅ 三模块全接（后端 frozen-additive 解锁） |
-| L6 | 工作台顶部 撤销/重做/缩放 无 | 设计有·实现缺 | F2 | 确认优先级 |
+| L6 | ~~工作台顶部 撤销/重做/缩放 无~~ → 已补 | 设计有·**已补** | F2 | ✅ Toolbar 撤销/重做（表单快照历史）+ 大图 zoom in/out/reset/fit |
 | L7 | Campaign 项目操作（补充需求/查看规范/提交终审/归档）只做了「进入工作台」 | 设计有·实现缺 | C9/H3/H4/H10/H11 | 提交终审/归档关乎交付流，建议补 |
 | L8 | ~~素材↔工作台/Campaign 无联动~~ → 设为参考/加入项目已接（reference-tray 暂存 ↔ 工作台 F9，出图真校验+持久化） | 设计有·**已补**(客户端暂存) | E11/E12/F9/H7 | ✅ UI 联动通；2 点 phase-2：①服务端 Project↔Asset 持久关系（多设备/协作）②参考图真视觉条件化（经 edits，OpenAI generate API 不收图） |
 | L9 | 通用弹窗体系：产品要 11 个轻量弹窗，仅「新建 Campaign」是弹窗 | 设计有·实现缺 | H2-H12 | 确认弹窗 vs 页内的取舍 |
