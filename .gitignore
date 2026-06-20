@@ -1,0 +1,26 @@
+node_modules/
+.next/
+dist/
+out/
+.turbo/
+tmp/
+# pnpm content-addressable store (see .npmrc store-dir).
+# Lives inside the repo so the cds-compose.yml `.:/app` bind keeps it
+# warm across container restarts — saves a ~950MB cold pull every time
+# the web/worker container restarts.
+.pnpm-store/
+coverage/
+*.log
+.env
+.env.local
+.DS_Store
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+prisma/*.db
+.vscode/
+
+# build info
+*.tsbuildinfo

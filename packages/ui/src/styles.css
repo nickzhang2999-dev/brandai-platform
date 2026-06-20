@@ -1,0 +1,76 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Semantic token definitions for the BrandAI theme system.
+ *
+ * Values are RGB triplets (no `rgb(...)` wrapper) so Tailwind can compose them
+ * with `<alpha-value>` (see packages/config/tailwind-preset.js).
+ *
+ * Theme blocks all share the SAME 16 token names — flipping the class on <html>
+ * repaints the entire UI without component edits:
+ *
+ *   :root        → brandai-light  (default, docs/04_UI视觉规范文档.md)
+ *   .dark        → brandai-dark   (opt-in)
+ *
+ * BrandAI palette (designer spec): one brand color = violet #7C5CFF; soft
+ * lavender surfaces (#F4F0FF) for selection/accent-soft; near-white neutral
+ * page (#FAFAFC) with clean white cards lifting via a violet-tinted soft
+ * shadow + neutral hairline (#ECECF3). Inter is the single type family.
+ *
+ * Token set (16):
+ *   bg fg card card-fg muted muted-fg primary primary-fg
+ *   accent accent-soft accent-deep destructive border ring
+ *   success warning
+ */
+@layer base {
+  :root {
+    color-scheme: light;
+
+    --bg: 250 250 252;            /* page              #FAFAFC */
+    --fg: 31 31 42;               /* deep text         #1F1F2A */
+    --card: 255 255 255;          /* white surface     #FFFFFF */
+    --card-fg: 31 31 42;
+    --muted: 246 245 250;         /* chip / inset      #F6F5FA */
+    --muted-fg: 107 107 122;      /* secondary text    #6B6B7A */
+    --primary: 124 92 255;        /* brand violet      #7C5CFF */
+    --primary-fg: 255 255 255;
+    --accent: 139 108 255;        /* violet gradient   #8B6CFF */
+    --accent-soft: 244 240 255;   /* soft lavender     #F4F0FF */
+    --accent-deep: 91 63 224;     /* deep violet       #5B3FE0 */
+    --destructive: 239 68 68;     /* error             #EF4444 */
+    --border: 236 236 243;        /* hairline          #ECECF3 */
+    --ring: 124 92 255;           /* violet focus      #7C5CFF */
+    --success: 52 168 83;         /* completed         #34A853 */
+    --warning: 245 158 11;        /* draft             #F59E0B */
+  }
+
+  .dark {
+    color-scheme: dark;
+
+    /* Neutral-dark page, deep cards, a lifted violet primary visible on dark. */
+    --bg: 17 17 23;               /* near-black page   #111117 */
+    --fg: 244 244 248;            /* near-white ink    #F4F4F8 */
+    --card: 28 28 36;             /* surface           #1C1C24 */
+    --card-fg: 244 244 248;
+    --muted: 38 38 48;            /* inset             #262630 */
+    --muted-fg: 160 160 174;      /* muted text        #A0A0AE */
+    --primary: 156 130 255;       /* lifted violet     #9C82FF */
+    --primary-fg: 17 17 23;
+    --accent: 156 130 255;
+    --accent-soft: 48 40 80;      /* deep violet inset */
+    --accent-deep: 184 165 255;
+    --destructive: 248 113 113;   /* red on dark */
+    --border: 48 48 60;           /* hairline */
+    --ring: 156 130 255;
+    --success: 74 222 128;        /* green-400 */
+    --warning: 250 204 21;        /* amber-400 */
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+  }
+}

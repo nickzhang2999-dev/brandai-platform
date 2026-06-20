@@ -1,0 +1,10 @@
+{
+  "name": "@brandai/config",
+  "version": "0.0.0",
+  "private": true,
+  "exports": {
+    "./tsconfig.base.json": "./tsconfig.base.json",
+    "./tailwind-preset.js": "./tailwind-preset.js"
+  },
+  "files": ["tsconfig.base.json", "tailwind-preset.js"]
+}

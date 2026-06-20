@@ -1,0 +1,143 @@
+import NextAuth, {
+  type NextAuthConfig,
+  type NextAuthResult,
+} from "next-auth";
+import Credentials from "next-auth/providers/credentials";
+import GitHub from "next-auth/providers/github";
+import Google from "next-auth/providers/google";
+import { prisma } from "@brandai/db";
+import { verifyPassword } from "@/lib/password";
+import { adminEmails } from "@/lib/admin";
+import { isRegistrationOpen } from "@/lib/settings";
+
+/**
+ * M-B — production auth.
+ * - "password": real email/password (scrypt) against User.passwordHash.
+ * - GitHub / Google: registered only when their env secrets are present, so an
+ *   un-provisioned deploy simply doesn't offer them (no broken buttons). OAuth
+ *   users are upserted into our User table by email in the jwt callback, so
+ *   workspace ownership (keyed by User.id) works without a DB-session adapter.
+ * - "credentials" (demo, passwordless): opt-in only (AUTH_ALLOW_DEMO=1) for
+ *   staging/preview/e2e. Default OFF so production is safe even if the env is
+ *   unset or copied from .env.example — the demo path upserts any supplied
+ *   email and bypasses the closed-registration + password gates.
+ */
+const allowDemo = process.env.AUTH_ALLOW_DEMO === "1";
+const hasGitHub = !!(
+  process.env.AUTH_GITHUB_ID && process.env.AUTH_GITHUB_SECRET
+);
+const hasGoogle = !!(
+  process.env.AUTH_GOOGLE_ID && process.env.AUTH_GOOGLE_SECRET
+);
+
+const providers: NextAuthConfig["providers"] = [
+  Credentials({
+    id: "password",
+    name: "Email & Password",
+    credentials: {
+      email: { label: "Email", type: "email" },
+      password: { label: "Password", type: "password" },
+    },
+    async authorize(creds) {
+      const email = String(creds?.email ?? "").trim().toLowerCase();
+      const password = String(creds?.password ?? "");
+      if (!email || !password) return null;
+      const user = await prisma.user.findUnique({ where: { email } });
+      if (!user?.passwordHash) return null;
+      if (!(await verifyPassword(password, user.passwordHash))) return null;
+      // Disabled accounts (admin user-management) cannot sign in.
+      if (!user.isActive) return null;
+      return { id: user.id, email: user.email, name: user.name };
+    },
+  }),
+];
+
+if (hasGitHub) providers.push(GitHub);
+if (hasGoogle) providers.push(Google);
+
+if (allowDemo) {
+  providers.push(
+    Credentials({
+      id: "credentials",
+      name: "Demo",
+      credentials: { email: { label: "Email", type: "email" } },
+      // Staging-only passwordless login; auto-provisions the user.
+      async authorize(creds) {
+        const email = String(creds?.email ?? "").trim().toLowerCase();
+        if (!email) return null;
+        const user = await prisma.user.upsert({
+          where: { email },
+          update: {},
+          create: { email, name: email.split("@")[0] },
+        });
+        // Disabled accounts cannot sign in, even via the demo provider.
+        if (!user.isActive) return null;
+        return { id: user.id, email: user.email, name: user.name };
+      },
+    }),
+  );
+}
+
+const nextAuth: NextAuthResult = NextAuth({
+  trustHost: true,
+  session: { strategy: "jwt" },
+  providers,
+  callbacks: {
+    async signIn({ user, account }) {
+      // OAuth 自动建号需经注册门：注册关闭时，仅放行已有用户或 ADMIN_EMAILS 白名单
+      // 邮箱，否则陌生访客可用 GitHub/Google 绕过 /api/auth/register 直接开户
+      // （即便管理员已关闭注册）。password/demo provider 各自的 authorize 已自管。
+      if (account?.provider === "github" || account?.provider === "google") {
+        const email = user.email?.trim().toLowerCase();
+        if (!email) return false;
+        const existing = await prisma.user.findUnique({
+          where: { email },
+          select: { id: true },
+        });
+        if (existing) return true;
+        if (adminEmails().includes(email)) return true;
+        return await isRegistrationOpen();
+      }
+      return true;
+    },
+    async jwt({ token, user, account }) {
+      if (user) {
+        if (
+          account &&
+          (account.provider === "github" || account.provider === "google") &&
+          user.email
+        ) {
+          // OAuth → map the provider identity onto our User row by email.
+          // 邮箱归一化(trim + 小写)后再 upsert:provider 可能返回 User@Ex.com,
+          // 而 email 列大小写敏感,用原始值会新建重复账号(丢 workspace/订阅)并
+          // 可能绕过被停用的小写账号。where 与 create 用同一归一化邮箱。
+          const email = user.email.trim().toLowerCase();
+          const u = await prisma.user.upsert({
+            where: { email },
+            update: {},
+            create: {
+              email,
+              name: user.name ?? email.split("@")[0],
+              image: user.image ?? undefined,
+              emailVerified: new Date(),
+            },
+          });
+          token.uid = u.id;
+        } else {
+          token.uid = user.id;
+        }
+      }
+      return token;
+    },
+    session({ session, token }) {
+      if (token.uid) session.user.id = token.uid as string;
+      return session;
+    },
+  },
+  pages: { signIn: "/login" },
+});
+
+export const handlers: NextAuthResult["handlers"] = nextAuth.handlers;
+export const auth: NextAuthResult["auth"] = nextAuth.auth;
+export const signIn: NextAuthResult["signIn"] = nextAuth.signIn;
+export const signOut: NextAuthResult["signOut"] = nextAuth.signOut;

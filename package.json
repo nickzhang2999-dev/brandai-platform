@@ -1,0 +1,32 @@
+{
+  "name": "brandai",
+  "private": true,
+  "version": "0.0.0",
+  "packageManager": "pnpm@9.15.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "db:generate": "pnpm --filter @brandai/db generate",
+    "db:migrate": "pnpm --filter @brandai/db migrate",
+    "db:push": "pnpm --filter @brandai/db push",
+    "db:seed": "pnpm --filter @brandai/db seed",
+    "test": "turbo run test",
+    "test:unit": "pnpm --filter @brandai/contracts test",
+    "test:ai": "cd apps/ai && ./.venv/bin/python -m pytest -q",
+    "test:fixtures": "bash tests/regenerate-fixtures.sh",
+    "test:e2e": "bash tests/e2e/p0-flow.sh",
+    "infra:up": "docker compose up -d",
+    "infra:down": "docker compose down",
+    "ai:dev": "cd apps/ai && uvicorn app.main:app --reload --port 8000"
+  },
+  "devDependencies": {
+    "turbo": "^2.3.3",
+    "typescript": "^5.7.2",
+    "prettier": "^3.4.2"
+  }
+}
