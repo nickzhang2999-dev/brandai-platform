@@ -40,9 +40,33 @@ export const IngestWebsiteResponse = z.object({
 });
 export type IngestWebsiteResponse = z.infer<typeof IngestWebsiteResponse>;
 
+/**
+ * K7 — an asset's provenance hint, threaded to the AI service so it can apply
+ * the right SSRF policy when fetching the asset's URL server-side:
+ *  - `UPLOAD` (default): the URL points at our own object storage (which may be
+ *    a private/internal host) → the initial host is trusted, only redirect hops
+ *    are validated (legacy behavior, unchanged).
+ *  - `WEBSITE`: the URL was harvested from an arbitrary third-party site. Its
+ *    host could DNS-rebind to private space between save-time validation and
+ *    fetch-time → the INITIAL host must be re-validated too.
+ * Frozen-additive: optional, defaults (when absent) to the trusting UPLOAD
+ * policy so existing callers are unchanged.
+ */
+export const AssetSourceHint = z.enum(["UPLOAD", "WEBSITE"]);
+export type AssetSourceHint = z.infer<typeof AssetSourceHint>;
+
 // POST /v1/recognize
 export const RecognizeRequest = z.object({
-  assets: z.array(z.object({ id: z.string(), url: z.string() })).min(1),
+  assets: z
+    .array(
+      z.object({
+        id: z.string(),
+        url: z.string(),
+        // K7 — per-asset SSRF policy hint (see AssetSourceHint).
+        source: AssetSourceHint.optional(),
+      }),
+    )
+    .min(1),
 });
 export type RecognizeRequest = z.infer<typeof RecognizeRequest>;
 
@@ -69,6 +93,33 @@ export const RecognizeResponse = z.object({
     .optional(),
 });
 export type RecognizeResponse = z.infer<typeof RecognizeResponse>;
+
+// POST /v1/describe — E9/E10 asset auto-tagging. Hands one image (by URL) to
+// the VLM and gets back concise tags + a one-paragraph description, persisted
+// onto Asset.aiTags / Asset.aiDescription by the describe worker.
+export const DescribeRequest = z.object({
+  /** Image asset URL (inlined server-side by the AI service, like recognize). */
+  url: z.string(),
+  /** Optional asset category hint (e.g. "PRODUCT" / "LOGO") to steer tagging. */
+  category: z.string().optional(),
+  /** Optional brand tone/voice hint so tags/description stay on-brand. */
+  brandTone: z.string().optional(),
+  /**
+   * K7 — provenance of `url` for SSRF policy (see AssetSourceHint). Asset
+   * tagging always runs on stored assets, so this is UPLOAD in practice; kept
+   * for symmetry / future WEBSITE-sourced assets. Optional → trusting default.
+   */
+  source: AssetSourceHint.optional(),
+});
+export type DescribeRequest = z.infer<typeof DescribeRequest>;
+
+export const DescribeResponse = z.object({
+  /** Concise descriptive tags (subjects, colors, style, usage). Possibly []. */
+  aiTags: z.array(z.string()).default([]),
+  /** A short natural-language description of the asset (Chinese). */
+  aiDescription: z.string(),
+});
+export type DescribeResponse = z.infer<typeof DescribeResponse>;
 
 // POST /v1/parse-manual — parse a brand/VI manual PDF (by asset URL) into the
 // same DRAFT rule shape as /v1/recognize, so the confirm workbench is reused.
@@ -119,6 +170,12 @@ export const ReferenceImage = z.object({
   polarity: z.enum(["positive", "negative"]),
   source: z.string(),
   note: z.string().optional(),
+  /**
+   * K7 — provenance of the reference image's URL so the AI service applies the
+   * right SSRF policy when inlining it (see AssetSourceHint). Frozen-additive:
+   * optional, absent → trusting UPLOAD policy (unchanged behavior).
+   */
+  sourceHint: AssetSourceHint.optional(),
 });
 export type ReferenceImage = z.infer<typeof ReferenceImage>;
 
@@ -211,6 +268,18 @@ export const GenerateResponse = z.object({
       imageUrl: z.string(),
       width: z.number().int(),
       height: z.number().int(),
+      /**
+       * K5 — the ACTUAL pixel dimensions of the returned image. OpenAI's
+       * gpt-image-* snaps the requested canvas to its supported size set
+       * (1024×1024 / 1024×1536 / 1536×1024), so the delivered image often does
+       * NOT match the requested `width`/`height`. These are decoded from the
+       * returned bytes (best-effort) so the worker can persist the truth into
+       * `GenerationVersion.params.actualWidth/actualHeight`. Frozen-additive:
+       * optional → absent when the decode failed / mock provider, in which case
+       * the requested `width`/`height` remain the only recorded size.
+       */
+      actualWidth: z.number().int().positive().optional(),
+      actualHeight: z.number().int().positive().optional(),
       params: z.record(z.unknown()),
     }),
   ),

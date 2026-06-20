@@ -16,6 +16,7 @@ from .conftest import find_nulls
 ENDPOINTS = [
     ("/v1/ingest/website", {"url": "https://example.com"}),
     ("/v1/recognize", {"assets": [{"id": "a1", "url": "http://x/y.png"}]}),
+    ("/v1/describe", {"url": "http://x/y.png", "category": "PRODUCT"}),
     (
         "/v1/generate",
         {

@@ -193,6 +193,26 @@ class MockVLMProvider(VLMProvider):
             "score": 88,
         }
 
+    async def describe_asset(
+        self,
+        url: str,
+        *,
+        category: str | None = None,
+        brand_tone: str | None = None,
+        source: str | None = None,
+    ) -> dict[str, Any]:
+        # Deterministic, zero-key tags. The category hint (when given) leads the
+        # tag list so the wiring (category → request → response) is observable.
+        tags = ["产品图", "暖色调", "浅景深", "真实场景"]
+        if category:
+            tags = [str(category), *tags]
+        return {
+            "aiTags": tags,
+            "aiDescription": (
+                "暖光近景的品牌素材，浅景深、真实场景质感，适合电商主图与社媒投放。"
+            ),
+        }
+
     async def scrape_website(self, url: str) -> dict[str, Any]:
         return {
             "images": [

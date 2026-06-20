@@ -3,6 +3,7 @@ import { AssetCategory } from "@brandai/contracts";
 import { ApiException, handleError, ok, requireUser } from "@/lib/api";
 import { uploadBuffer } from "@/lib/s3";
 import { requireWorkspaceRole } from "@/lib/workspace";
+import { serializeAsset } from "@/lib/assets";
 
 /**
  * Server-side brand-asset upload. The browser POSTs a `multipart/form-data` body
@@ -49,7 +50,7 @@ export async function POST(
         source: "UPLOAD",
       },
     });
-    return ok(asset, { status: 201 });
+    return ok(serializeAsset(asset), { status: 201 });
   } catch (err) {
     return handleError(err);
   }

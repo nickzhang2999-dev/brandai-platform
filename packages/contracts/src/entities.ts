@@ -44,6 +44,13 @@ export const Asset = z.object({
   aiDescription: z.string().optional(),
   isFavorite: z.boolean().optional(),
   resolution: z.string().optional(),
+  // P1.3 · 素材生命周期字段，暴露到 wire 后客户端可在参考选择器/识别选择器里
+  // 灰显并禁用「不可用于出图」的素材（frozen-additive：optional，省略而非 null）。
+  // `availableForGeneration` = 是否参与 M3 出图/参考；`deprecatedAt` = 弃用时间
+  // (ISO 串，省略表示在用)；`replacementAssetId` = 继任素材指针。
+  availableForGeneration: z.boolean().optional(),
+  deprecatedAt: z.string().optional(),
+  replacementAssetId: z.string().optional(),
 });
 export type Asset = z.infer<typeof Asset>;
 

@@ -1,6 +1,8 @@
 import type {
   ComplianceCheckRequest,
   ComplianceCheckResponse,
+  DescribeRequest,
+  DescribeResponse,
   DiagResponse,
   EditRequest,
   EditResponse,
@@ -61,6 +63,8 @@ export const ai = {
     ),
   recognize: (b: RecognizeRequest) =>
     call<RecognizeRequest, RecognizeResponse>("/v1/recognize", b),
+  describe: (b: DescribeRequest) =>
+    call<DescribeRequest, DescribeResponse>("/v1/describe", b),
   parseManual: (b: ParseManualRequest) =>
     call<ParseManualRequest, ParseManualResponse>("/v1/parse-manual", b),
   generate: (b: GenerateRequest) =>

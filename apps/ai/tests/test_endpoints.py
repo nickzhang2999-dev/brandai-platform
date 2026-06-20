@@ -141,6 +141,29 @@ def test_generate_layered_merges_with_existing_negatives(client):
     assert "typography" in negs
 
 
+def test_describe_returns_tags_and_description(client):
+    """E9/E10 — /v1/describe returns concise tags + a description (mock)."""
+    r = client.post(
+        "/v1/describe",
+        json={"url": "http://x/y.png", "category": "PRODUCT"},
+    )
+    d = r.json()
+    assert r.status_code == 200
+    assert isinstance(d["aiTags"], list) and len(d["aiTags"]) >= 1
+    # category hint leads the mock tag list → wiring is observable end-to-end.
+    assert d["aiTags"][0] == "PRODUCT"
+    assert isinstance(d["aiDescription"], str) and d["aiDescription"]
+
+
+def test_describe_no_null_fields(client):
+    """aiDescription is a required str; nothing serializes as null."""
+    from .conftest import find_nulls
+
+    r = client.post("/v1/describe", json={"url": "http://x/y.png"})
+    assert r.status_code == 200
+    assert find_nulls(r.json()) == []
+
+
 def test_edit_creates_image(client):
     r = client.post(
         "/v1/edit",

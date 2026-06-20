@@ -794,16 +794,25 @@ function RecognizeModal({
             {pickable.map((a) => {
               const on = selected.includes(a.id);
               const isImg = a.mimeType.startsWith("image/");
+              // P1.3 — assets the workspace marked unavailable / deprecated can't
+              // feed recognition (the recognize route filters them server-side),
+              // so gray them out + disable selection here too.
+              const usable =
+                a.availableForGeneration !== false && !a.deprecatedAt;
               return (
                 <button
                   key={a.id}
                   type="button"
                   aria-pressed={on}
-                  onClick={() => toggle(a.id)}
+                  disabled={!usable}
+                  title={usable ? undefined : "该素材已停用，不能用于识别"}
+                  onClick={() => usable && toggle(a.id)}
                   className={`group relative flex aspect-square flex-col items-center justify-center gap-1 overflow-hidden rounded-2xl border text-center transition-colors ${
-                    on
-                      ? "border-primary bg-accent-soft ring-2 ring-primary"
-                      : "border-border bg-muted/40 hover:border-primary/40"
+                    !usable
+                      ? "cursor-not-allowed border-border bg-muted/40 opacity-40 grayscale"
+                      : on
+                        ? "border-primary bg-accent-soft ring-2 ring-primary"
+                        : "border-border bg-muted/40 hover:border-primary/40"
                   }`}
                 >
                   {isImg ? (
@@ -824,6 +833,11 @@ function RecognizeModal({
                   {on ? (
                     <span className="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-primary text-[11px] text-primary-foreground">
                       ✓
+                    </span>
+                  ) : null}
+                  {!usable ? (
+                    <span className="absolute left-1.5 top-1.5 rounded-full bg-foreground/70 px-1.5 py-0.5 text-[9px] font-medium text-background">
+                      已停用
                     </span>
                   ) : null}
                 </button>

@@ -32,3 +32,8 @@ export const generateQueue = new Queue("generate", {
   prefix: queuePrefix,
 });
 export const editQueue = new Queue("edit", { connection, prefix: queuePrefix });
+// E9/E10 — asset auto-tagging (describe). Same prefix convention as the others.
+export const describeQueue = new Queue("describe", {
+  connection,
+  prefix: queuePrefix,
+});

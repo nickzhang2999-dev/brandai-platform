@@ -3,6 +3,7 @@ import { prisma } from "@brandai/db";
 import { AssetCategory } from "@brandai/contracts";
 import { ApiException, handleError, ok, parse, requireUser } from "@/lib/api";
 import { requireWorkspaceRole } from "@/lib/workspace";
+import { serializeAsset } from "@/lib/assets";
 
 /**
  * Asset PATCH — supports category edits plus P1.3 lifecycle fields:
@@ -47,7 +48,7 @@ export async function PATCH(
       where: { id: assetId },
       data,
     });
-    return ok(asset);
+    return ok(serializeAsset(asset));
   } catch (err) {
     return handleError(err);
   }

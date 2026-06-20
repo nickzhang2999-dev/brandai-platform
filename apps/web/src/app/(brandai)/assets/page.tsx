@@ -1,9 +1,9 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { Asset, Project } from "@brandai/contracts";
+import type { Asset, Project, TaskState } from "@brandai/contracts";
 import { Button } from "@brandai/ui";
 import { apiFetch, assetThumbUrl } from "@/lib/client";
 import {
@@ -40,6 +40,14 @@ function fmtSize(n: number): string {
 }
 function isImage(a: Asset): boolean {
   return (a.mimeType ?? "").startsWith("image/");
+}
+/**
+ * P1.3 — whether the asset may feed generation/references. `availableForGeneration`
+ * defaults to true on the wire when omitted (legacy rows); a set `deprecatedAt`
+ * also marks it unusable.
+ */
+function isAvailable(a: Asset): boolean {
+  return a.availableForGeneration !== false && !a.deprecatedAt;
 }
 
 export default function AssetsPage() {
@@ -113,6 +121,52 @@ export default function AssetsPage() {
   );
   const active = filtered.find((a) => a.id === activeId) ?? filtered[0] ?? assets[0];
 
+  // E9/E10 · AI 智能标注/生成描述 — POST 起异步任务（worker 调 /v1/describe →
+  // 真 VLM → 回写 Asset.aiTags/aiDescription），客户端轮询任务，成功后刷新素材。
+  const [describeTaskId, setDescribeTaskId] = useState<string | null>(null);
+  const describeStartedAt = useRef(0);
+  const describe = useMutation({
+    mutationFn: (assetId: string) => {
+      describeStartedAt.current = Date.now();
+      return apiFetch<{ taskId: string }>(
+        `/api/workspaces/${wsId}/assets/${assetId}/describe`,
+        { method: "POST" },
+      );
+    },
+    onSuccess: (res) => setDescribeTaskId(res.taskId),
+  });
+  const { data: describeTask } = useQuery<TaskState>({
+    queryKey: ["brandai-describe-task", wsId, describeTaskId],
+    queryFn: () =>
+      apiFetch<TaskState>(`/api/workspaces/${wsId}/tasks/${describeTaskId}`),
+    enabled: !!describeTaskId,
+    refetchInterval: (query) => {
+      const s = query.state.data?.status;
+      if (s === "SUCCEEDED" || s === "FAILED") return false;
+      // bounded intermediate (§2.2) — stop polling after 6 min.
+      if (Date.now() - describeStartedAt.current > 6 * 60_000) return false;
+      return 2000;
+    },
+  });
+  const describeStatus =
+    describeTask?.status ?? (describeTaskId ? "PENDING" : null);
+  const describeRunning =
+    !!describeTaskId &&
+    describeStatus !== "SUCCEEDED" &&
+    describeStatus !== "FAILED";
+  // On success, refresh assets (so the new tags/description surface) once.
+  const describeFiredFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (
+      describeStatus === "SUCCEEDED" &&
+      describeTaskId &&
+      describeFiredFor.current !== describeTaskId
+    ) {
+      describeFiredFor.current = describeTaskId;
+      qc.invalidateQueries({ queryKey: ["brandai-assets", wsId] });
+    }
+  }, [describeStatus, describeTaskId, qc, wsId]);
+
   // E11/E12 · 把当前选中素材暂存为目标 Campaign 的参考素材（client-side staging，
   // 一期无 Project↔Asset DB 关系，暂存于 reference-tray，工作台出图时读取）。
   function stageActiveAsReference(
@@ -120,9 +174,11 @@ export default function AssetsPage() {
   ): { project: Project; result: AddReferenceResult } | null {
     // Only generatable IMAGE assets can be references (POST /generations rejects
     // non-images), so don't stage PDFs/VI_DOC and create a client-allowed /
-    // server-rejected mismatch. (Deprecated/disabled is enforced server-side —
-    // those flags aren't on the Asset wire type.)
-    if (!active || !isImage(active) || !projectId) return null;
+    // server-rejected mismatch. P1.3 — also skip assets the workspace marked
+    // unavailable / deprecated for generation (now exposed on the wire type) so
+    // the user can't stage a reference the generate worker will silently drop.
+    if (!active || !isImage(active) || !isAvailable(active) || !projectId)
+      return null;
     const project = projects.find((p) => p.id === projectId);
     if (!project) return null;
     const result = addReference(wsId, projectId, {
@@ -291,21 +347,34 @@ export default function AssetsPage() {
                       : "border-border shadow-[0_8px_24px_rgba(30,30,60,0.06)] hover:border-primary/25",
                   ].join(" ")}
                 >
-                  {isImage(a) ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={assetThumbUrl(wsId, a.id, a.url)}
-                      alt={a.fileName}
-                      className="h-32 w-full object-cover"
-                    />
-                  ) : (
-                    <div
-                      className="flex h-32 items-center justify-center text-3xl text-primary-foreground"
-                      style={{ background: gradientFor(a.id) }}
-                    >
-                      ▦
-                    </div>
-                  )}
+                  <div className="relative">
+                    {isImage(a) ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={assetThumbUrl(wsId, a.id, a.url)}
+                        alt={a.fileName}
+                        className={[
+                          "h-32 w-full object-cover",
+                          isAvailable(a) ? "" : "opacity-40 grayscale",
+                        ].join(" ")}
+                      />
+                    ) : (
+                      <div
+                        className={[
+                          "flex h-32 items-center justify-center text-3xl text-primary-foreground",
+                          isAvailable(a) ? "" : "opacity-40 grayscale",
+                        ].join(" ")}
+                        style={{ background: gradientFor(a.id) }}
+                      >
+                        ▦
+                      </div>
+                    )}
+                    {!isAvailable(a) ? (
+                      <span className="absolute left-1.5 top-1.5 rounded-full bg-foreground/70 px-2 py-0.5 text-[10px] font-medium text-background">
+                        已停用
+                      </span>
+                    ) : null}
+                  </div>
                   <div className="flex flex-col gap-1.5 p-3">
                     <div className="truncate text-xs font-medium">
                       {a.fileName}
@@ -337,8 +406,13 @@ export default function AssetsPage() {
                     ▦
                   </div>
                 )}
-                <div className="mt-4 text-sm font-semibold">
-                  {active.fileName}
+                <div className="mt-4 flex items-center gap-2 text-sm font-semibold">
+                  <span className="truncate">{active.fileName}</span>
+                  {!isAvailable(active) ? (
+                    <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                      已停用
+                    </span>
+                  ) : null}
                 </div>
                 {active.aiDescription ? (
                   <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
@@ -377,6 +451,45 @@ export default function AssetsPage() {
                   </div>
                 ) : null}
 
+                {/* E9/E10 · AI 智能标注 / 生成描述（真异步任务） */}
+                {isImage(active) ? (
+                  <div className="mt-4">
+                    <Button
+                      variant="outline"
+                      className="w-full rounded-full"
+                      disabled={describe.isPending || describeRunning}
+                      onClick={() => {
+                        describeFiredFor.current = null;
+                        setDescribeTaskId(null);
+                        describe.mutate(active.id);
+                      }}
+                    >
+                      {describe.isPending || describeRunning
+                        ? "AI 标注中…"
+                        : active.aiTags && active.aiTags.length > 0
+                          ? "✦ 重新 AI 标注"
+                          : "✦ AI 智能标注 / 生成描述"}
+                    </Button>
+                    {describeRunning ? (
+                      <p className="mt-2 text-center text-xs text-muted-foreground">
+                        正在分析素材（{describeTask?.progress ?? 0}%），可离开本页，稍后回来查看。
+                      </p>
+                    ) : describeStatus === "FAILED" ? (
+                      <p className="mt-2 text-center text-xs text-destructive">
+                        {describeTask?.error ?? "AI 标注失败，请重试。"}
+                      </p>
+                    ) : describeStatus === "SUCCEEDED" ? (
+                      <p className="mt-2 text-center text-xs text-success">
+                        ✓ 已生成标签与描述
+                      </p>
+                    ) : describe.isError ? (
+                      <p className="mt-2 text-center text-xs text-destructive">
+                        {(describe.error as Error).message}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+
                 {/* E11/E12 · 联动工作台 / Campaign */}
                 <div className="mt-5 border-t border-border pt-4">
                   <div className="mb-2 text-xs font-medium text-muted-foreground">
@@ -385,6 +498,10 @@ export default function AssetsPage() {
                   {!isImage(active) ? (
                     <p className="text-xs text-muted-foreground">
                       仅图片素材可设为参考 / 加入项目（PDF·VI 文档等不支持）。
+                    </p>
+                  ) : !isAvailable(active) ? (
+                    <p className="text-xs text-muted-foreground">
+                      该素材已停用 / 弃用，不能再用于出图或设为参考。
                     </p>
                   ) : projects.length === 0 ? (
                     <p className="text-xs text-muted-foreground">

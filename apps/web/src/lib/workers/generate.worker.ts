@@ -513,6 +513,14 @@ export async function runGenerateJob(
             ...v.params,
             appliedRuleIds,
             sceneType,
+            // K5 — persist the ACTUAL returned pixel size (OpenAI snaps the
+            // requested canvas). The AI service also echoes these into
+            // `v.params`; stamping from the typed response fields here makes the
+            // record robust even if a provider drops the param echo. Absent when
+            // the size probe failed / mock provider (requested w×h stays truth).
+            ...(v.actualWidth && v.actualHeight
+              ? { actualWidth: v.actualWidth, actualHeight: v.actualHeight }
+              : {}),
             ...constraintEcho,
             // K5 / M3 — stamp the chosen text mode onto each version so 重新生成
             // can reconstruct it from prior roots (mirrors styleKeywords below;

@@ -511,6 +511,19 @@ _PARSE_MANUAL_PROMPT = (
     "Mark forbidden usages (禁用) with strength FORBIDDEN. Cite the manual "
     "section in each evidence note.\n\nManual text:\n{text}"
 )
+_DESCRIBE_SYSTEM = (
+    "You are a brand asset librarian. You look at one image and produce concise, "
+    "searchable tags plus a one-paragraph description. Reply with STRICT JSON "
+    "only — no prose, no code fences."
+)
+_DESCRIBE_PROMPT = (
+    "Describe this brand asset for a media library.{hints}\n"
+    "Return JSON shaped exactly as:\n"
+    "{{\"aiTags\":[\"<concise tag>\"],\"aiDescription\":\"<one paragraph in "
+    "Chinese describing subject, colors, style and likely usage>\"}}\n"
+    "Give 4–10 tags covering subject, dominant colors, style and usage. Tags are "
+    "short noun phrases (Chinese)."
+)
 _COMPLIANCE_SYSTEM = (
     "You are a brand compliance reviewer. Judge whether an image obeys the "
     "brand's visual rules. Reply with STRICT JSON only."
@@ -562,24 +575,35 @@ class HttpVLMProvider(VLMProvider):
             kwargs["transport"] = self._transport
         return httpx.AsyncClient(**kwargs)
 
-    async def _inline_image(self, url: str) -> str | None:
+    async def _inline_image(
+        self, url: str, *, source: str | None = None
+    ) -> str | None:
         """Fetch an image server-side and return a data: URL the model can read.
 
         Asset URLs point at internal storage a third-party API can't reach; we
         can (same network), so inline the bytes.
 
-        Returns None when the fetch is SSRF-blocked (a redirect into private
-        space): callers must DROP the image rather than forward the raw URL, or
-        the VLM provider would fetch the blocked target server-side itself. Other
-        failures fall back to the raw URL (it may be publicly reachable).
+        K7 — SSRF policy depends on the asset's provenance (`source`):
+          - UPLOAD / None (default): the URL is our own storage (which may be a
+            private/internal host) → trust the initial host, validate only
+            redirect hops. (Legacy behavior, unchanged.)
+          - WEBSITE: the URL was harvested from an arbitrary third-party site and
+            its host can DNS-rebind to private space between save-time validation
+            and fetch-time → the INITIAL host is validated too.
+
+        Returns None when the fetch is SSRF-blocked (a private initial host for a
+        WEBSITE asset, or a redirect into private space): callers must DROP the
+        image rather than forward the raw URL, or the VLM provider would fetch the
+        blocked target server-side itself. Other failures fall back to the raw URL
+        (it may be publicly reachable).
         """
+        # WEBSITE-sourced URLs are untrusted → validate the initial host too.
+        allow_private_initial = (source or "").upper() != "WEBSITE"
         try:
             async with self._client() as c:
-                # SSRF: the initial URL is a trusted internal asset URL (inlining
-                # internal storage is the whole point), but redirect hops are
-                # attacker-controllable via a saved WEBSITE asset URL → validate
-                # them. safe_get raises SSRFError on a redirect into private space.
-                r = await safe_get(c, url, allow_private_initial=True)
+                r = await safe_get(
+                    c, url, allow_private_initial=allow_private_initial
+                )
                 r.raise_for_status()
                 ctype = (r.headers.get("content-type") or "").split(";")[0].strip()
                 if not ctype.startswith("image/"):
@@ -629,7 +653,9 @@ class HttpVLMProvider(VLMProvider):
         ]
         attached = 0
         for a in assets[:_MAX_VISION_IMAGES]:
-            img = await self._inline_image(a["url"])
+            # K7 — pass the asset's provenance so a WEBSITE-sourced URL gets its
+            # initial host validated (DNS-rebinding defense).
+            img = await self._inline_image(a["url"], source=a.get("source"))
             if img is None:
                 continue  # SSRF-blocked → drop this asset from the VLM request
             parts.append({"type": "text", "text": f"assetId={a['id']}"})
@@ -651,6 +677,31 @@ class HttpVLMProvider(VLMProvider):
         # No image assetId to backfill — manual evidence is textual (note only),
         # the web worker stamps the VI_DOC assetId onto each rule's evidence.
         return _coerce_recognize(data, [])
+
+    async def describe_asset(
+        self,
+        url: str,
+        *,
+        category: str | None = None,
+        brand_tone: str | None = None,
+        source: str | None = None,
+    ) -> dict[str, Any]:
+        img = await self._inline_image(url, source=source)
+        if img is None:
+            # SSRF-blocked / unfetchable → fail closed with empty tags rather
+            # than hand the raw URL to the model or invent tags.
+            return {"aiTags": [], "aiDescription": ""}
+        hints = ""
+        if category:
+            hints += f" Asset category: {category}."
+        if brand_tone:
+            hints += f" Brand tone: {brand_tone}."
+        parts: list[dict[str, Any]] = [
+            {"type": "text", "text": _DESCRIBE_PROMPT.format(hints=hints)},
+            {"type": "image_url", "image_url": {"url": img}},
+        ]
+        data = await self._chat_json(parts, system=_DESCRIBE_SYSTEM)
+        return _coerce_describe(data)
 
     async def check_visual_compliance(
         self,
@@ -695,7 +746,8 @@ class HttpVLMProvider(VLMProvider):
                 if polarity == "negative"
                 else "POSITIVE example — the image SHOULD align with this"
             )
-            ref_img = await self._inline_image(url)
+            # K7 — a reference asset may be WEBSITE-sourced; honor its hint.
+            ref_img = await self._inline_image(url, source=ref.get("sourceHint"))
             if ref_img is None:
                 continue  # SSRF-blocked reference → drop
             parts.append(
@@ -1047,6 +1099,25 @@ def _coerce_recognize(
             "consistencyScore": float(cs.get("consistencyScore", 0) or 0),
         }
     return out
+
+
+def _coerce_describe(data: dict[str, Any]) -> dict[str, Any]:
+    """Force model output into a valid DescribeResponse shape.
+
+    De-dupes/trims tags, caps the count, and coerces a missing/odd description
+    to a string so the no-null contract holds (aiDescription is required str).
+    """
+    tags: list[str] = []
+    seen: set[str] = set()
+    for t in data.get("aiTags", []) or []:
+        s = str(t).strip()
+        if s and s.lower() not in seen:
+            seen.add(s.lower())
+            tags.append(s)
+        if len(tags) >= 12:
+            break
+    desc = data.get("aiDescription")
+    return {"aiTags": tags, "aiDescription": str(desc).strip() if desc else ""}
 
 
 def _coerce_ingest(

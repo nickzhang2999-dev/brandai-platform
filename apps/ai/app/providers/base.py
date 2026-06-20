@@ -73,6 +73,21 @@ class VLMProvider(ABC):
         """
 
     @abstractmethod
+    async def describe_asset(
+        self,
+        url: str,
+        *,
+        category: str | None = None,
+        brand_tone: str | None = None,
+        source: str | None = None,
+    ) -> dict[str, Any]:
+        """E9/E10 — auto-tag one image asset.
+
+        Return ``{"aiTags": [str, ...], "aiDescription": str}``. ``category`` /
+        ``brand_tone`` are optional steering hints; ``source`` is the SSRF
+        provenance hint (see ``_inline_image``)."""
+
+    @abstractmethod
     async def scrape_website(self, url: str) -> dict[str, Any]:
         """Return images / copies / selling points from a site."""
 

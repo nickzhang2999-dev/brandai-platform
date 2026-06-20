@@ -33,10 +33,29 @@ class IngestWebsiteResponse(BaseModel):
 class AssetRef(BaseModel):
     id: str
     url: str
+    # K7 — provenance hint for SSRF policy. "UPLOAD" (default) trusts the initial
+    # host (our own storage may be private); "WEBSITE" re-validates the initial
+    # host too (defense against DNS rebinding of a harvested third-party URL).
+    source: Optional[str] = None
 
 
 class RecognizeRequest(BaseModel):
     assets: list[AssetRef]
+
+
+class DescribeRequest(BaseModel):
+    """POST /v1/describe — E9/E10 asset auto-tagging by image URL."""
+
+    url: str
+    category: Optional[str] = None
+    brandTone: Optional[str] = None
+    # K7 — provenance hint for SSRF policy (see AssetRef.source).
+    source: Optional[str] = None
+
+
+class DescribeResponse(BaseModel):
+    aiTags: list[str] = Field(default_factory=list)
+    aiDescription: str = ""
 
 
 class ParseManualRequest(BaseModel):
@@ -101,6 +120,8 @@ class ReferenceImage(BaseModel):
     polarity: str  # "positive" | "negative"
     source: str
     note: Optional[str] = None
+    # K7 — provenance of the URL for SSRF policy ("UPLOAD" | "WEBSITE").
+    sourceHint: Optional[str] = None
 
 
 class AIConstraints(BaseModel):
@@ -149,6 +170,11 @@ class GeneratedVersion(BaseModel):
     imageUrl: str
     width: int
     height: int
+    # K5 — actual decoded pixel dimensions of the returned image (OpenAI snaps to
+    # its supported size set, so this can differ from the requested width/height).
+    # exclude_none keeps them omitted when undecodable / mock.
+    actualWidth: Optional[int] = None
+    actualHeight: Optional[int] = None
     params: dict[str, Any]
 
 

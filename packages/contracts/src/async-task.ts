@@ -6,7 +6,13 @@ import { JobStatus } from "./enums";
  * recognize / parse-manual / edit be refresh-resumable (`?task=`) with a real
  * progress %, mirroring the generate `?gen=` pattern.
  */
-export const AsyncTaskKind = z.enum(["RECOGNIZE", "PARSE_MANUAL", "EDIT"]);
+export const AsyncTaskKind = z.enum([
+  "RECOGNIZE",
+  "PARSE_MANUAL",
+  "EDIT",
+  // E9/E10 — asset auto-tagging (POST /assets/[id]/describe → describe worker).
+  "DESCRIBE",
+]);
 export type AsyncTaskKind = z.infer<typeof AsyncTaskKind>;
 
 export const TaskState = z.object({

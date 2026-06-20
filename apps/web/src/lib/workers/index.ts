@@ -15,6 +15,7 @@ import { createRecognizeWorker } from "./recognize.worker";
 import { createParseManualWorker } from "./parse-manual.worker";
 import { createGenerateWorker } from "./generate.worker";
 import { createEditWorker } from "./edit.worker";
+import { createDescribeWorker } from "./describe.worker";
 import { sweepStaleGenerations } from "@/lib/generations";
 
 const healthPort = Number(process.env.WORKER_HEALTH_PORT ?? 3001);
@@ -50,6 +51,7 @@ try {
     createParseManualWorker(),
     createGenerateWorker(),
     createEditWorker(),
+    createDescribeWorker(),
   );
   workersReady = true;
   console.log(`[workers] started: ${workers.length} worker(s)`);
