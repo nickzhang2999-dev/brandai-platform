@@ -49,6 +49,11 @@ export default function CampaignsPage() {
     null,
   );
   const [editingSummary, setEditingSummary] = useState(false);
+  // Snapshot the project a dialog targets, captured at open time, resolved from
+  // the FULL projects list (not the filter-derived `active`). Otherwise changing
+  // a filter while a dialog is open could re-target the confirm/summary action
+  // to a different visible project.
+  const [dialogProjectId, setDialogProjectId] = useState<string | null>(null);
 
   const invalidate = () =>
     qc.invalidateQueries({ queryKey: ["brandai-projects", wsId] });
@@ -93,6 +98,10 @@ export default function CampaignsPage() {
   // filters match nothing would make the summary panel + lifecycle actions
   // (补充需求 / 提交终审 / 归档) operate on a project that isn't shown.
   const active = filtered.find((p) => p.id === activeId) ?? filtered[0] ?? null;
+  // Dialog target is the snapshotted id resolved against ALL projects, so it is
+  // stable regardless of list filtering while the dialog is open.
+  const dialogProject =
+    projects.find((p) => p.id === dialogProjectId) ?? null;
 
   return (
     <div className="mx-auto max-w-[1180px] px-10 py-10">
@@ -252,7 +261,11 @@ export default function CampaignsPage() {
                 variant="outline"
                 className="w-full justify-center"
                 disabled={!active}
-                onClick={() => setEditingSummary(true)}
+                onClick={() => {
+                  if (!active) return;
+                  setDialogProjectId(active.id);
+                  setEditingSummary(true);
+                }}
               >
                 补充需求
               </Button>
@@ -262,7 +275,11 @@ export default function CampaignsPage() {
                 disabled={
                   !active || (active.status ?? "DRAFT") !== "DRAFT"
                 }
-                onClick={() => setConfirmAction("submit")}
+                onClick={() => {
+                  if (!active) return;
+                  setDialogProjectId(active.id);
+                  setConfirmAction("submit");
+                }}
               >
                 提交终审
               </Button>
@@ -272,7 +289,11 @@ export default function CampaignsPage() {
                 disabled={
                   !active || (active.status ?? "DRAFT") === "COMPLETED"
                 }
-                onClick={() => setConfirmAction("archive")}
+                onClick={() => {
+                  if (!active) return;
+                  setDialogProjectId(active.id);
+                  setConfirmAction("archive");
+                }}
               >
                 归档项目
               </Button>
@@ -293,10 +314,10 @@ export default function CampaignsPage() {
         />
       ) : null}
 
-      {active && confirmAction ? (
+      {dialogProject && confirmAction ? (
         <ConfirmActionDialog
           wsId={wsId}
-          project={active}
+          project={dialogProject}
           action={confirmAction}
           onClose={() => setConfirmAction(null)}
           onDone={() => {
@@ -306,10 +327,10 @@ export default function CampaignsPage() {
         />
       ) : null}
 
-      {active && editingSummary ? (
+      {dialogProject && editingSummary ? (
         <SummaryDialog
           wsId={wsId}
-          project={active}
+          project={dialogProject}
           onClose={() => setEditingSummary(false)}
           onDone={() => {
             invalidate();
