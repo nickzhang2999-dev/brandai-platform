@@ -173,6 +173,10 @@ async def parse_manual(
     confirm workbench already consumes.
     """
     text = await _fetch_pdf_text(req.url)
+    # 空文本(扫描件/加密 PDF/标错的 VI_DOC/抓取失败)不喂 VLM:模型(mock 与真实皆然)
+    # 会无视输入凭空"造"出规则,被 worker 落成 DRAFT 污染品牌知识库。直接返回空结果。
+    if not text.strip():
+        return RecognizeResponse(rules=[])
     data = await vlm.parse_manual(text)
     return RecognizeResponse(**data)
 
