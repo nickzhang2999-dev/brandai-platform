@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Project } from "@brandai/contracts";
 import { apiFetch } from "@/lib/client";
 import { quickActions } from "@/lib/brandai-mock";
@@ -23,6 +23,7 @@ const STATUS_META: Record<Status, { label: string; tone: string }> = {
 export default function HomePage() {
   const { wsId, brandName, user } = useBrand();
   const router = useRouter();
+  const qc = useQueryClient();
 
   const { data: projects = [] } = useQuery({
     queryKey: ["brandai-projects", wsId],
@@ -51,6 +52,9 @@ export default function HomePage() {
       });
     },
     onSuccess: (project, text) => {
+      // Refresh the shared projects cache so the new draft shows up everywhere
+      // that reuses this key (Campaign list, 素材库 picker, 首页近期项目).
+      qc.invalidateQueries({ queryKey: ["brandai-projects", wsId] });
       // Use the exact `text` submitted to the mutation (not the live `brief`
       // state, which the user may have edited while the POST was in flight) so
       // the saved description and the workspace prefill always agree.
