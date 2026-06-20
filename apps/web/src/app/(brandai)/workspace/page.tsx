@@ -67,6 +67,9 @@ function Workspace() {
   const { wsId } = useBrand();
   const search = useSearchParams();
   const presetProject = search.get("project");
+  // B2 · 首页 brief 透传 — 把首页输入的描述作为出图卖点初始值（仅首屏播种，
+  // 不在每次渲染时覆盖用户后续编辑）。
+  const presetBrief = search.get("brief");
 
   const { data: projects = [] } = useQuery({
     queryKey: ["brandai-projects", wsId],
@@ -79,7 +82,9 @@ function Workspace() {
   }, [projects, projectId]);
 
   const [sellingPoint, setSellingPoint] = useState(
-    "高端、清透、具有自然光感的护肤新品社交广告主视觉，紫色瓶身为主体，搭配花卉与水光质感。",
+    presetBrief?.trim()
+      ? presetBrief.trim().slice(0, 500)
+      : "高端、清透、具有自然光感的护肤新品社交广告主视觉，紫色瓶身为主体，搭配花卉与水光质感。",
   );
   const [scene, setScene] = useState("夏日自然光场景");
   const [sceneType, setSceneType] = useState("SOCIAL_POSTER");

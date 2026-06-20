@@ -20,11 +20,28 @@ const FILTERS: { key: string; label: string; status?: Status }[] = [
   { key: "done", label: "已完成", status: "COMPLETED" },
 ];
 
+type SortKey = "recent" | "name" | "progress";
+const SORTS: { key: SortKey; label: string }[] = [
+  { key: "recent", label: "最近创建" },
+  { key: "name", label: "名称 A-Z" },
+  { key: "progress", label: "进度" },
+];
+
+type RangeKey = "all" | "7" | "30" | "90";
+const RANGES: { key: RangeKey; label: string; days?: number }[] = [
+  { key: "all", label: "全部时间" },
+  { key: "7", label: "近 7 天", days: 7 },
+  { key: "30", label: "近 30 天", days: 30 },
+  { key: "90", label: "近 90 天", days: 90 },
+];
+
 export default function CampaignsPage() {
   const { wsId, brandName } = useBrand();
   const qc = useQueryClient();
   const [activeId, setActiveId] = useState<string | null>(null);
   const [filterKey, setFilterKey] = useState("all");
+  const [sortKey, setSortKey] = useState<SortKey>("recent");
+  const [rangeKey, setRangeKey] = useState<RangeKey>("all");
   const [q, setQ] = useState("");
   const [creating, setCreating] = useState(false);
   // Lifecycle action target: which transition the confirm dialog is for.
@@ -43,12 +60,34 @@ export default function CampaignsPage() {
 
   const filtered = useMemo(() => {
     const f = FILTERS.find((x) => x.key === filterKey);
-    return projects.filter((p) => {
+    const range = RANGES.find((x) => x.key === rangeKey);
+    const cutoff =
+      range?.days != null ? Date.now() - range.days * 86_400_000 : null;
+
+    const list = projects.filter((p) => {
       if (f?.status && (p.status ?? "DRAFT") !== f.status) return false;
       if (q && !p.name.toLowerCase().includes(q.toLowerCase())) return false;
+      if (cutoff != null) {
+        const t = Date.parse(p.createdAt);
+        if (Number.isNaN(t) || t < cutoff) return false;
+      }
       return true;
     });
-  }, [projects, filterKey, q]);
+
+    const sorted = [...list];
+    sorted.sort((a, b) => {
+      switch (sortKey) {
+        case "name":
+          return a.name.localeCompare(b.name, "zh-Hans-CN");
+        case "progress":
+          return (b.progress ?? 0) - (a.progress ?? 0);
+        case "recent":
+        default:
+          return (Date.parse(b.createdAt) || 0) - (Date.parse(a.createdAt) || 0);
+      }
+    });
+    return sorted;
+  }, [projects, filterKey, q, sortKey, rangeKey]);
 
   const active =
     filtered.find((p) => p.id === activeId) ?? filtered[0] ?? projects[0];
@@ -86,6 +125,30 @@ export default function CampaignsPage() {
             {f.label}
           </button>
         ))}
+        <select
+          value={rangeKey}
+          onChange={(e) => setRangeKey(e.target.value as RangeKey)}
+          aria-label="时间范围"
+          className="h-9 rounded-full border border-border bg-card px-4 text-sm text-muted-foreground outline-none transition-colors hover:bg-muted focus:border-primary/40 focus:shadow-[0_0_0_4px_rgba(124,92,255,0.08)]"
+        >
+          {RANGES.map((r) => (
+            <option key={r.key} value={r.key}>
+              {r.label}
+            </option>
+          ))}
+        </select>
+        <select
+          value={sortKey}
+          onChange={(e) => setSortKey(e.target.value as SortKey)}
+          aria-label="排序方式"
+          className="h-9 rounded-full border border-border bg-card px-4 text-sm text-muted-foreground outline-none transition-colors hover:bg-muted focus:border-primary/40 focus:shadow-[0_0_0_4px_rgba(124,92,255,0.08)]"
+        >
+          {SORTS.map((s) => (
+            <option key={s.key} value={s.key}>
+              {`排序：${s.label}`}
+            </option>
+          ))}
+        </select>
       </div>
 
       {isLoading ? (

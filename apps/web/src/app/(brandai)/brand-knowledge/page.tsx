@@ -1,11 +1,24 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { BrandRule, Evidence } from "@brandai/contracts";
+import type { Asset, BrandRule, Evidence, TaskState } from "@brandai/contracts";
+import { Button } from "@brandai/ui";
 import { apiFetch, assetThumbUrl } from "@/lib/client";
 import { useBrand } from "../brand-context";
 import { Chip } from "../_ui";
+
+// §2.2 — bounded intermediate state; mirror the workspace page's POLL_CAP.
+const POLL_CAP_MS = 6 * 60 * 1000;
+const POLL_INTERVAL_MS = 2500;
+
+// D2 · 快捷提示词 — pure client convenience, fills the rule textarea. text only.
+const QUICK_PROMPTS: { type: string; text: string }[] = [
+  { type: "color", text: "我们的主色是 #7C5CFF，辅助色是…，禁止使用其他高饱和色或描边。" },
+  { type: "font", text: "标题字体用…，正文字体用…，禁止使用系统默认衬线体。" },
+  { type: "copy", text: "品牌语气：专业而亲切、简洁有力；禁用词：最、第一、绝对。" },
+  { type: "logo", text: "Logo 须保留四周安全间距，最小宽度 24px；禁止拉伸、改色或加阴影。" },
+];
 
 /**
  * P03 · 品牌知识库 — 把品牌规则沉淀为 AI 可调用的结构化知识。真实数据：
@@ -488,11 +501,343 @@ function RuleCard({
   );
 }
 
+// ── AI recognize / parse-manual flow ─────────────────────────────────────────
+
+type StartResponse = { jobId?: string; taskId: string; status: string };
+
+/** Local dismissable modal shell (mirrors the campaigns ModalShell idiom). */
+function ModalShell({
+  title,
+  subtitle,
+  onClose,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/40 p-4 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-[28px] border border-border bg-card shadow-[0_24px_70px_rgba(124,92,255,0.18)]"
+      >
+        <div className="flex items-start justify-between gap-4 border-b border-border px-6 py-5">
+          <div>
+            <h3 className="text-lg font-semibold">{title}</h3>
+            {subtitle ? (
+              <p className="mt-1 text-xs text-muted-foreground">{subtitle}</p>
+            ) : null}
+          </div>
+          <button
+            type="button"
+            aria-label="关闭"
+            onClick={onClose}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted"
+          >
+            ✕
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/** Progress strip for a running AI task (PENDING/RUNNING + bounded timeout). */
+function TaskProgress({
+  status,
+  progress,
+  timedOut,
+  error,
+}: {
+  status: string | null;
+  progress: number;
+  timedOut: boolean;
+  error?: string | null;
+}) {
+  const label =
+    timedOut
+      ? "处理超时"
+      : status === "PENDING"
+        ? "已受理，排队中…"
+        : status === "RUNNING"
+          ? "AI 正在分析素材…"
+          : status === "FAILED"
+            ? "处理失败"
+            : "处理中…";
+  return (
+    <div className="flex flex-col gap-2 rounded-2xl border border-primary/15 bg-accent-soft/40 px-4 py-3">
+      <div className="flex items-center justify-between text-xs">
+        <span className="font-medium text-primary">{label}</span>
+        <span className="text-muted-foreground">{Math.round(progress)}%</span>
+      </div>
+      <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+        <div
+          className="h-full rounded-full bg-gradient-to-r from-primary to-accent transition-all"
+          style={{ width: `${Math.max(4, Math.min(100, progress))}%` }}
+        />
+      </div>
+      {error ? <p className="text-xs text-destructive">{error}</p> : null}
+    </div>
+  );
+}
+
+/**
+ * D13/D14 · AI 识别 modal — multi-select (recognize, images) or single-select
+ * (parse-manual, VI_DOC). Server-authoritative: POST → 202 {taskId} → poll
+ * GET /tasks/[taskId] every 2.5s, bounded to 6 min, invalidate rules on success.
+ */
+function RecognizeModal({
+  wsId,
+  mode,
+  onClose,
+  onDone,
+}: {
+  wsId: string;
+  mode: "recognize" | "parse-manual";
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const multi = mode === "recognize";
+  const [selected, setSelected] = useState<string[]>([]);
+  const [taskId, setTaskId] = useState<string | null>(null);
+  const [timedOut, setTimedOut] = useState(false);
+  const startedAt = useRef(0);
+
+  const { data: assets = [], isLoading } = useQuery({
+    queryKey: ["brandai-assets", wsId, mode],
+    queryFn: () =>
+      apiFetch<Asset[]>(
+        // parse-manual only accepts VI_DOC assets; recognize takes images.
+        multi
+          ? `/api/workspaces/${wsId}/assets`
+          : `/api/workspaces/${wsId}/assets?category=VI_DOC`,
+      ),
+  });
+  const pickable = multi
+    ? assets.filter((a) => a.mimeType.startsWith("image/"))
+    : assets;
+
+  const start = useMutation({
+    mutationFn: () => {
+      startedAt.current = Date.now();
+      setTimedOut(false);
+      return apiFetch<StartResponse>(
+        multi
+          ? `/api/workspaces/${wsId}/rules/recognize`
+          : `/api/workspaces/${wsId}/rules/parse-manual`,
+        {
+          method: "POST",
+          body: JSON.stringify(
+            multi ? { assetIds: selected } : { assetId: selected[0] },
+          ),
+        },
+      );
+    },
+    onSuccess: (res) => setTaskId(res.taskId),
+  });
+
+  const { data: task } = useQuery<TaskState>({
+    queryKey: ["brandai-task", wsId, taskId],
+    queryFn: () => apiFetch<TaskState>(`/api/workspaces/${wsId}/tasks/${taskId}`),
+    enabled: !!taskId,
+    refetchInterval: (q) => {
+      const s = q.state.data?.status;
+      if (s === "SUCCEEDED" || s === "FAILED") return false;
+      if (Date.now() - startedAt.current > POLL_CAP_MS) return false;
+      return POLL_INTERVAL_MS;
+    },
+  });
+
+  // bounded-state guard — flip to timed-out so the spinner can't run forever.
+  useEffect(() => {
+    if (!taskId) return;
+    const t = setInterval(() => {
+      if (Date.now() - startedAt.current > POLL_CAP_MS) setTimedOut(true);
+    }, 3000);
+    return () => clearInterval(t);
+  }, [taskId]);
+
+  const status = task?.status ?? (taskId ? "PENDING" : null);
+  const running =
+    !!taskId && status !== "SUCCEEDED" && status !== "FAILED" && !timedOut;
+
+  useEffect(() => {
+    if (status === "SUCCEEDED") onDone();
+  }, [status, onDone]);
+
+  function toggle(id: string) {
+    if (running) return;
+    setSelected((prev) =>
+      multi
+        ? prev.includes(id)
+          ? prev.filter((x) => x !== id)
+          : [...prev, id]
+        : [id],
+    );
+  }
+
+  function reset() {
+    setTaskId(null);
+    setTimedOut(false);
+    start.reset();
+  }
+
+  const failed = status === "FAILED" || timedOut;
+
+  return (
+    <ModalShell
+      title={multi ? "从素材识别品牌规则" : "解析 VI 手册 / PDF"}
+      subtitle={
+        multi
+          ? "选择品牌素材图，AI 将提取色彩、Logo、字体等规则草稿。"
+          : "选择一份 VI 手册（PDF），AI 将解析为结构化规则草稿。"
+      }
+      onClose={onClose}
+    >
+      <div className="flex-1 overflow-y-auto px-6 py-5">
+        {status === "SUCCEEDED" ? (
+          <div className="flex flex-col items-center gap-3 py-8 text-center">
+            <span className="flex h-12 w-12 items-center justify-center rounded-full bg-success/10 text-2xl text-success">
+              ✓
+            </span>
+            <p className="text-sm font-medium">
+              识别完成，新增 {task?.refCount ?? 0} 条规则草稿
+            </p>
+            <p className="text-xs text-muted-foreground">
+              请在下方知识库中查看并「确认采用」。
+            </p>
+          </div>
+        ) : taskId ? (
+          <div className="flex flex-col gap-4">
+            <TaskProgress
+              status={status}
+              progress={task?.progress ?? 0}
+              timedOut={timedOut}
+              error={
+                failed
+                  ? timedOut
+                    ? "处理超时，可能仍在后台运行，请稍后刷新页面或重试。"
+                    : (task?.error ?? "AI 处理失败，请重试。")
+                  : null
+              }
+            />
+            {failed ? (
+              <Button variant="outline" onClick={reset} className="self-start">
+                重试
+              </Button>
+            ) : null}
+          </div>
+        ) : isLoading ? (
+          <p className="py-8 text-center text-sm text-muted-foreground">
+            加载素材…
+          </p>
+        ) : pickable.length === 0 ? (
+          <div className="py-8 text-center text-sm text-muted-foreground">
+            {multi
+              ? "素材库还没有可识别的图片。先去素材库上传品牌素材。"
+              : "素材库还没有 VI 手册（PDF）。先去素材库上传 VI 文档。"}
+          </div>
+        ) : (
+          <div className="grid grid-cols-3 gap-3 sm:grid-cols-4">
+            {pickable.map((a) => {
+              const on = selected.includes(a.id);
+              const isImg = a.mimeType.startsWith("image/");
+              return (
+                <button
+                  key={a.id}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() => toggle(a.id)}
+                  className={`group relative flex aspect-square flex-col items-center justify-center gap-1 overflow-hidden rounded-2xl border text-center transition-colors ${
+                    on
+                      ? "border-primary bg-accent-soft ring-2 ring-primary"
+                      : "border-border bg-muted/40 hover:border-primary/40"
+                  }`}
+                >
+                  {isImg ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={assetThumbUrl(wsId, a.id, a.url)}
+                      alt={a.fileName}
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    <>
+                      <span className="text-2xl text-primary">▦</span>
+                      <span className="line-clamp-2 px-2 text-[10px] text-muted-foreground">
+                        {a.fileName}
+                      </span>
+                    </>
+                  )}
+                  {on ? (
+                    <span className="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-primary text-[11px] text-primary-foreground">
+                      ✓
+                    </span>
+                  ) : null}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {status !== "SUCCEEDED" && !taskId ? (
+        <div className="flex items-center justify-between gap-3 border-t border-border px-6 py-4">
+          <span className="text-xs text-muted-foreground">
+            已选 {selected.length} 项
+          </span>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={onClose}>
+              取消
+            </Button>
+            <Button
+              disabled={selected.length === 0 || start.isPending}
+              onClick={() => start.mutate()}
+            >
+              {start.isPending ? "提交中…" : multi ? "开始识别" : "开始解析"}
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex justify-end gap-2 border-t border-border px-6 py-4">
+          <Button variant="outline" onClick={onClose}>
+            {status === "SUCCEEDED" ? "完成" : running ? "后台运行并关闭" : "关闭"}
+          </Button>
+        </div>
+      )}
+      {start.isError ? (
+        <p className="px-6 pb-4 text-xs text-destructive">
+          {(start.error as Error).message}
+        </p>
+      ) : null}
+    </ModalShell>
+  );
+}
+
 export default function BrandKnowledgePage() {
   const { wsId, brandName } = useBrand();
   const qc = useQueryClient();
   const [text, setText] = useState("");
   const [type, setType] = useState("copy");
+  const [aiModal, setAiModal] = useState<null | "recognize" | "parse-manual">(
+    null,
+  );
 
   const { data: rules = [], isLoading } = useQuery({
     queryKey: ["brandai-rules", wsId],
@@ -542,6 +887,22 @@ export default function BrandKnowledgePage() {
           沉淀「{brandName}」的品牌规范，确认后的规则会在每次出图时被自动应用。
         </p>
         <div className="mx-auto mt-6 flex max-w-2xl flex-col gap-3 rounded-[28px] border border-primary/15 bg-card p-4 shadow-[0_24px_70px_rgba(124,92,255,0.12)]">
+          {/* D2 · 快捷提示词 — click to prefill the rule textarea (text only). */}
+          <div className="flex flex-wrap gap-1.5 px-1">
+            {QUICK_PROMPTS.map((q) => (
+              <button
+                key={q.text}
+                type="button"
+                onClick={() => {
+                  setType(q.type);
+                  setText(q.text);
+                }}
+                className="rounded-full border border-border bg-muted px-3 py-1 text-[11px] text-muted-foreground transition-colors hover:border-primary/40 hover:bg-accent-soft hover:text-primary"
+              >
+                {q.text.length > 20 ? `${q.text.slice(0, 20)}…` : q.text}
+              </button>
+            ))}
+          </div>
           <textarea
             value={text}
             onChange={(e) => setText(e.target.value)}
@@ -575,7 +936,36 @@ export default function BrandKnowledgePage() {
             {(add.error as Error).message}
           </p>
         ) : null}
+
+        {/* D13/D14 · AI 驱动入口 — 从素材识别规则 / 解析 VI 手册（server-authoritative）。 */}
+        <div className="mx-auto mt-4 flex max-w-2xl flex-wrap items-center justify-center gap-2">
+          <button
+            type="button"
+            onClick={() => setAiModal("recognize")}
+            className="flex items-center gap-2 rounded-full border border-primary/30 bg-card px-4 py-2 text-sm font-medium text-primary transition-colors hover:bg-accent-soft"
+          >
+            <span>✦</span> 从素材识别品牌规则
+          </button>
+          <button
+            type="button"
+            onClick={() => setAiModal("parse-manual")}
+            className="flex items-center gap-2 rounded-full border border-primary/30 bg-card px-4 py-2 text-sm font-medium text-primary transition-colors hover:bg-accent-soft"
+          >
+            <span>▦</span> 解析 VI 手册 / PDF
+          </button>
+        </div>
       </section>
+
+      {aiModal ? (
+        <RecognizeModal
+          wsId={wsId}
+          mode={aiModal}
+          onClose={() => setAiModal(null)}
+          onDone={() =>
+            qc.invalidateQueries({ queryKey: ["brandai-rules", wsId] })
+          }
+        />
+      ) : null}
 
       <section className="mt-10 grid grid-cols-3 gap-3.5 lg:grid-cols-6">
         {Object.entries(TYPE_META).map(([key, m]) => (
