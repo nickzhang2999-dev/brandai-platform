@@ -78,6 +78,13 @@ function Workspace() {
   });
 
   const [projectId, setProjectId] = useState<string | null>(presetProject);
+  // React to client-side navigations that change `?project=` (E11/E12 「加入项目」
+  // and the homepage brief flow router.push to /workspace?project=… without a
+  // remount). Without this the prior Campaign stays selected and reference-tray
+  // assets + POST /generations would target the wrong project.
+  useEffect(() => {
+    if (presetProject) setProjectId(presetProject);
+  }, [presetProject]);
   useEffect(() => {
     if (!projectId && projects.length > 0) setProjectId(projects[0]!.id);
   }, [projects, projectId]);

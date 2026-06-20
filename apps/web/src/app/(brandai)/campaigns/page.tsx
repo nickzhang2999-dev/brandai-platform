@@ -89,8 +89,10 @@ export default function CampaignsPage() {
     return sorted;
   }, [projects, filterKey, q, sortKey, rangeKey]);
 
-  const active =
-    filtered.find((p) => p.id === activeId) ?? filtered[0] ?? projects[0];
+  // Only ever select from the FILTERED set — falling back to projects[0] when
+  // filters match nothing would make the summary panel + lifecycle actions
+  // (补充需求 / 提交终审 / 归档) operate on a project that isn't shown.
+  const active = filtered.find((p) => p.id === activeId) ?? filtered[0] ?? null;
 
   return (
     <div className="mx-auto max-w-[1180px] px-10 py-10">
