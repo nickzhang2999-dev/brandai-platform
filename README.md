@@ -26,6 +26,8 @@
 > | 🗑 | 已作废（见附录） |
 >
 > **建档**：2026-06-20 · 基线对应分支 `claude/brave-wright-2p3u3e`（PR #1）。所有「✅」均指代码已落地；标「已验收」者另经真 provider→真 API→真 DB 端到端跑通。
+>
+> **二轮更新**：2026-06-20 · 分支 `claude/cool-pascal-ao72o3`。补齐设计稿缺口（L4 富卡片 / L5 工作台三右栏 / L8 素材联动 / L12 知识库真 AI 入口 / C5-C6 排序筛选 / Campaign 终审归档 / 模板库占位 + 6 项 nav）与 Phase-2 后端正确性（K4 recognize 证据 / K6 admin bootstrap 原子化 / K5 多尺寸+textMode）。全程 `pnpm test`(L1 83)+`typecheck`+`build`+`pytest`(77) 全绿；灰度 `dbf4c1e` 健康 ok（web/ai/worker）。本轮标 ✅ 的前端功能均已过工程门禁；**真出图/真 recognize 的端到端灰度冒烟**待超管登录后补做（见 PR 说明）。
 
 ## 进度总览（基线 2026-06-20）
 
@@ -42,7 +44,7 @@
 
 | 编号 | 功能点 | 来源 | 状态 | 路径 / 入口 | 备注 · 验收 | 变更 |
 |---|---|---|---|---|---|---|
-| A1 | 左侧导航栏 | doc01§1.9 / doc05§6.4 | 🟡 | `app/(brandai)/brand-sidebar.tsx`、`lib/brandai-mock.ts::navItems` | 现 **5 项**（首页/Campaign/品牌知识库/素材库/AI工作台）。产品要求 6 项含「模板库」→ 缺 | 2026-06-20 建档 |
+| A1 | 左侧导航栏 | doc01§1.9 / doc05§6.4 | ✅ | `app/(brandai)/brand-sidebar.tsx`、`lib/brandai-mock.ts::navItems` | 现 **6 项**（首页/Campaign/品牌知识库/素材库/AI工作台/**模板库**）。侧栏动态渲染 navItems | 6 项补齐 2026-06-20 |
 | A2 | 用户信息区（头像/姓名/职位/个人菜单） | P01-M02 | 🟡 | `brand-sidebar.tsx`（注入 `user.name`） | 姓名已显示；个人菜单/退出入口待核验 | 2026-06-20 |
 | A3 | 顶部通知入口 | P01-M03 | ❌ | — | 通知中心未实现 | 2026-06-20 |
 | A4 | 紫色视觉 token 系统（16 语义 token） | doc04§5.4 | ✅ | `packages/ui/src/styles.css` | violet SSOT，L1 快照守 | 2026-06-20 |
@@ -55,7 +57,7 @@
 | 编号 | 功能点 | 来源 | 状态 | 路径 | 备注 · 验收 | 变更 |
 |---|---|---|---|---|---|---|
 | B1 | 问候语区 | P01-M04 | ✅ | `app/(brandai)/page.tsx:33` | 「你好，{user.name}」真实会话 | 2026-06-20 |
-| B2 | AI 输入框（核心视觉符号） | P01-M05 | 🟡 | `page.tsx:42` | 输入框在，但**不解析**，仅跳转 `/workspace`；AI 立项/拆解未接 | 2026-06-20 |
+| B2 | AI 输入框（核心视觉符号） | P01-M05 | 🟡 | `page.tsx`（brief→立项） | **改进**：非空 brief 创建 DRAFT Campaign + 携 `?brief=` 跳工作台预填 sellingPoint（诚实 brief 透传）；真 AI 拆解/打标仍待 describe 端点 | brief 立项 2026-06-20 |
 | B3 | 快捷操作 4 入口 | P01-M06 | ✅ | `page.tsx:59` + `navigation/quickActions` | 创建Campaign/导入知识库/生成视觉/优化设计 | 2026-06-20 |
 | B4 | 近期 Campaign 横向卡 | P01-M07 | ✅ | `page.tsx:77`（真实 `GET /projects`） | 状态+进度条，取最近 8 | 2026-06-20 |
 | B5 | 推荐品牌瀑布流（Masonry） | P01-M08 | ❌ | — | 未实现；单品牌内部后台下语义待产品确认（§L2） | 2026-06-20 |
@@ -68,11 +70,11 @@
 | C2 | 项目搜索（名称） | P02-M03 | 🟡 | `page.tsx:60` | 仅按项目名；品牌名搜索未做 | 2026-06-20 |
 | C3 | 阶段筛选 | P02-M04 | ✅ | `page.tsx:16` | 全部/进行中/草稿/已完成 | 2026-06-20 |
 | C4 | 品牌筛选 | P02-M05 | ❌ | — | 单品牌作用域，无 | 2026-06-20 |
-| C5 | 时间范围筛选 | P02-M06 | ❌ | — | 未做 | 2026-06-20 |
-| C6 | 排序方式 | P02-M07 | ❌ | — | 未做 | 2026-06-20 |
+| C5 | 时间范围筛选 | P02-M06 | ✅ | `campaigns/page.tsx`（全部/近7/30/90天） | 客户端按 createdAt 过滤，与搜索/状态/排序合一 | 2026-06-20 |
+| C6 | 排序方式 | P02-M07 | ✅ | `campaigns/page.tsx`（最近/名称/进度） | 客户端排序 | 2026-06-20 |
 | C7 | 项目卡片列表（封面/状态/品牌/描述/标签/进度） | P02-M08~10 | ✅ | `page.tsx:91` | 真实 Project | 2026-06-20 |
-| C8 | 项目 AI 摘要（右侧面板） | P02-M11 | 🟡 | `page.tsx:140` | 展示 `aiSummary`+渠道；**自动生成摘要**未接 | 2026-06-20 |
-| C9 | 项目快捷操作（继续创作/补充需求/查看规范/提交终审/归档） | P02-M12 | 🟡 | `page.tsx:164` | 仅「进入工作台」；补充需求/查看规范/提交终审/归档 ❌ | 2026-06-20 |
+| C8 | 项目 AI 摘要（右侧面板） | P02-M11 | 🟡 | `page.tsx` + 补充需求弹窗 | 展示 `aiSummary`+渠道；**补充需求**可编辑 aiSummary（PATCH）；**自动生成摘要**(VLM)仍未接 | 2026-06-20 |
+| C9 | 项目快捷操作（继续创作/补充需求/查看规范/提交终审/归档） | P02-M12 | 🟡 | `page.tsx` + `projects/[projectId]` PATCH | 进入工作台✅ / 补充需求✅ / 提交终审✅(→IN_PROGRESS) / 归档✅(→COMPLETED)；查看规范 ❌ | 终审/归档/补充需求 2026-06-20 |
 | C10 | 创建 Campaign 弹窗 | doc03 弹窗1 | ✅ | `page.tsx:207`（真实 POST） | 名称/简介/渠道 | 2026-06-20 |
 
 ## D · P03 品牌知识库
@@ -80,19 +82,19 @@
 | 编号 | 功能点 | 来源 | 状态 | 路径 | 备注 · 验收 | 变更 |
 |---|---|---|---|---|---|---|
 | D1 | AI 共创输入区 | P03-M02 | 🟡 | `brand-knowledge/page.tsx:64` | 输入+类型+「添加规则」真实 POST；但是**手动加规则非 AI 解析** | 2026-06-20 |
-| D2 | 快捷提示词 | P03-M03 | ❌ | — | 未做 | 2026-06-20 |
+| D2 | 快捷提示词 | P03-M03 | ✅ | `brand-knowledge/page.tsx`（chips 预填） | 点击 chip 预填规则文本 + 类型 | 2026-06-20 |
 | D3 | 上传入口区（Logo/描述/色值/参考图/素材/文案） | P03-M04 | 🟡 | `page.tsx:109` | 6 个类型卡仅 link 到 `/assets`，无分类型上传+解析 | 2026-06-20 |
-| D4 | Logo 使用规范（标准组合/最小尺寸/安全空间/错误示例） | P03-M05 | 🟡 | 规则 type=logo 卡 | 退化为通用规则卡，无 4 子项结构化展示 | 2026-06-20 |
-| D5 | 品牌色彩（主/辅/点缀/中性 + 色板） | P03-M06 | 🟡 | 规则 type=color | 无色板 swatch 富展示 | 2026-06-20 |
-| D6 | 字体规范 | P03-M07 | 🟡 | 规则 type=font | 同上，退化 | 2026-06-20 |
-| D7 | 品牌语调（含禁用词） | P03-M08 | 🟡 | 规则 type=copy；禁用词另见 ComplianceTerm | 退化展示 | 2026-06-20 |
-| D8 | 视觉参考 | P03-M09 | 🟡 | 规则 type=imagery | 退化 | 2026-06-20 |
-| D9 | 设计规范 | P03-M10 | 🟡 | 规则 type=layout/graphic | 退化 | 2026-06-20 |
+| D4 | Logo 使用规范（标准组合/最小尺寸/安全空间/错误示例） | P03-M05 | ✅ | `brand-knowledge/page.tsx` 富卡片 | do/don't 子分区 + 最小尺寸/安全空间 chips（value 缺字段降级 summary） | 富卡片 2026-06-20 |
+| D5 | 品牌色彩（主/辅/点缀/中性 + 色板） | P03-M06 | ✅ | 富卡片（色板 swatch） | 真色板 swatch（inline 数据色）+ 角色/hex；容忍 palette/colors/colorSystem 多形态 | 富卡片 2026-06-20 |
+| D6 | 字体规范 | P03-M07 | ✅ | 富卡片（字体预览） | 标题/正文族名按本族预览 | 富卡片 2026-06-20 |
+| D7 | 品牌语调（含禁用词） | P03-M08 | ✅ | 富卡片 | tone chip + 禁用词列表（划线） | 富卡片 2026-06-20 |
+| D8 | 视觉参考 | P03-M09 | ✅ | 富卡片 | value 结构化要点 | 富卡片 2026-06-20 |
+| D9 | 设计规范 | P03-M10 | ✅ | 富卡片 | value 结构化要点（网格/留白/光线…） | 富卡片 2026-06-20 |
 | D10 | 品牌预览（综合视觉自动生成） | P03-M11 | ❌ | — | 未做 | 2026-06-20 |
 | D11 | AI 知识摘要 | P03-M12 | ✅ | `page.tsx:187` | 基于规则数的文本摘要 + 关键词 chips | 2026-06-20 |
 | D12 | 规则确认（DRAFT→CONFIRMED） | — | ✅ | `page.tsx:52`（PATCH /rules/[id]） | 确认后 worker 出图加载 | 2026-06-20 |
-| D13 | AI 从素材识别规则（recognize） | doc03 AI | 🟡 | 后端 `recognize.worker.ts` 就绪；本页 UI 未接 | 入口待接 | 2026-06-20 |
-| D14 | PDF/VI 手册解析（parse-manual） | — | 🟡 | 后端 `parse-manual.worker.ts` 就绪；本页 UI 未接 | 入口待接 | 2026-06-20 |
+| D13 | AI 从素材识别规则（recognize） | doc03 AI | ✅ | `brand-knowledge/page.tsx` 素材选择器→`POST /rules/recognize`→轮询 task | 真 VLM；202→6min 有界轮询→刷新规则；灰度真识别待最终冒烟 | 接入 2026-06-20 |
+| D14 | PDF/VI 手册解析（parse-manual） | — | ✅ | `brand-knowledge/page.tsx`（VI_DOC 单选）→`POST /rules/parse-manual`→轮询 | 真 VLM；同上有界轮询 | 接入 2026-06-20 |
 
 ## E · P04 素材库
 
@@ -108,8 +110,8 @@
 | E8 | 素材详情侧栏 | P04-M12 | ✅ | `page.tsx:229` | 预览/类型/尺寸/大小/来源/AI描述/AI标签 | 2026-06-20 |
 | E9 | AI 智能标签 | P04-M13 | 🟡 | 展示 `aiTags`；上传后**自动打标**未接（recognize 在知识库语义） | — | 2026-06-20 |
 | E10 | AI 生成描述 | P04-M14 | 🟡 | 展示 `aiDescription`；本页未触发自动生成 | — | 2026-06-20 |
-| E11 | 加入项目（→Campaign） | P04-M16 | ❌ | — | **关键联动缺失**（§L8） | 2026-06-20 |
-| E12 | 设为参考（→工作台参考区） | P04-M17 | ❌ | — | **关键联动缺失**（§L8） | 2026-06-20 |
+| E11 | 加入项目（→Campaign） | P04-M16 | 🟡 | `assets/page.tsx` + `lib/reference-tray.ts` | 详情选 Campaign→加入并跳工作台；客户端 reference-tray 暂存（DB Project↔Asset 关系 phase-2） | 接入 2026-06-20 |
+| E12 | 设为参考（→工作台参考区） | P04-M17 | ✅ | `assets/page.tsx` + `lib/reference-tray.ts` ↔ 工作台 F9 | 设为参考→工作台 F9 显示并入出图 referenceAssetIds（出图时真校验归属+持久化 version.params） | 接入 2026-06-20 |
 | E13 | 收藏切换 / 使用记录 / 查看来源 | doc02/05 | 🟡 | 详情含「来源」字段；收藏 toggle/使用记录未见 | 🔍 | 2026-06-20 |
 
 ## F · P05 工作台
@@ -122,11 +124,12 @@
 | F4 | 生成变体区（缩略图切换） | P05-M06 | ✅ | `page.tsx:300+` | 变体条+点击切换+终稿 badge | 2026-06-20 |
 | F5 | AI 提示词编辑(需求/卖点，500字) | P05-M08 | ✅ | `page.tsx:395` | 字段为 sellingPoint+scene（合后端契约） | 2026-06-20 |
 | F6 | 场景 / sceneType / 生成数量 | doc02 | ✅ | `page.tsx:414/425/443` | — | 2026-06-20 |
-| F7 | 风格关键词（标签增删） | P05-M10 | ❌ | — | 后端 styleKeywords 支持，UI 未做 | 2026-06-20 |
+| F7 | 风格关键词（标签增删） | P05-M10 | ✅ | `workspace/page.tsx` tag 输入 | 增删 chip + 建议词；进 `styleKeywords`→worker 折入 promptAdditions | 接入 2026-06-20 |
 | F8 | 品牌约束（显示已应用规则） | P05-M12 | 🟡 | `page.tsx:464`「品牌约束已生效」 | 仅状态行，非逐条规则展示 | 2026-06-20 |
-| F9 | 参考素材区 | P05-M13 | ❌ | — | 后端 referenceImages 支持，UI 未做（依赖 E12） | 2026-06-20 |
+| F9 | 参考素材区 | P05-M13 | ✅ | `workspace/page.tsx`（读 reference-tray） | 显示本项目参考缩略图（来自 E12）+ 可删；进 `referenceAssetIds`→worker 解析为 referenceImages | 接入 2026-06-20 |
 | F10 | 提交制作（真实出图 §2 异步） | P05-M15 | ✅ **已验收** | `page.tsx:230` → `POST /generations` 202 → 轮询 | 真 gpt-image-1→GenerationVersion | 2026-06-20 |
-| F11 | 生成额度展示 | doc02/05 | ❌ | quota 后端有，UI 未展示 | — | 2026-06-20 |
+| F11 | 生成额度展示 | doc02/05 | ✅ | `workspace/page.tsx` QuotaBar + `GET /quota` | 本周期/今日用量 + 进度条（-1=不限）；新增只读端点 | 接入 2026-06-20 |
+| F16 | 多尺寸渠道（targets）+ textMode | K5 | 🟡 | `workspace/page.tsx`（CHANNEL_SIZES 多选 + 直接/分层） | 渠道尺寸多选每尺寸各 1 张；textMode 直接/分层 + 持久化(version.params)+regenerate 重建；记录 snap 真实尺寸仍 phase-2 | 新增 2026-06-20 |
 | F12 | 修改优化（改图） | 一期闭环 | ✅ **已验收** | `page.tsx:145` → versions/[id]/edit（OpenAI multipart） | 子版本 parentVersionId | 2026-06-20 |
 | F13 | 终选（设为终稿 isFinal） | 一期闭环 | ✅ **已验收** | `page.tsx`（PATCH /generations/[id]） | — | 2026-06-20 |
 | F14 | 交付归档（导出 ZIP） | 一期闭环 | ✅ **已验收** | `page.tsx:200` → projects/[id]/export | 真 ZIP | 2026-06-20 |
@@ -136,7 +139,7 @@
 
 | 编号 | 功能点 | 来源 | 状态 | 路径 | 备注 | 变更 |
 |---|---|---|---|---|---|---|
-| G1 | 模板库占位页 | P06 / doc08（P2 占位） | ❌ | 无 `/templates` 路由、不在 nav | 产品列为 P2 占位；需确认一期是否交付占位（§L1） | 2026-06-20 |
+| G1 | 模板库占位页 | P06 / doc08（P2 占位） | 🟡 | `app/(brandai)/templates/page.tsx` + nav 第6项 | 紫色 coming-soon 占位页（不造假数据）；真模板能力 phase-2 | 占位 2026-06-20 |
 
 ## H · 通用交互（弹窗 / AI 输入 / 卡片）
 
@@ -144,19 +147,19 @@
 |---|---|---|---|---|---|---|
 | H1 | 统一 AI 输入框组件（附件/语音入口） | doc04§5.7.1 | 🟡 | 首页/知识库为内联 textarea；未抽象统一组件 | 语音/附件入口未实现 | 2026-06-20 |
 | H2 | 弹窗·新建 Campaign | doc03 | ✅ | campaigns CreateDialog | — | 2026-06-20 |
-| H3 | 弹窗·补充需求 | doc03 | ❌ | — | — | 2026-06-20 |
+| H3 | 弹窗·补充需求 | doc03 | ✅ | campaigns 补充需求弹窗（编辑 aiSummary） | — | 2026-06-20 |
 | H4 | 弹窗·查看项目规范（侧边） | doc03 | ❌ | — | — | 2026-06-20 |
 | H5 | 弹窗·上传品牌资料 | doc03 | 🟡 | 知识库类型卡跳转 /assets，非弹窗 | — | 2026-06-20 |
 | H6 | 弹窗·素材上传 | doc03 | 🟡 | 直接 file picker，非浮层 | — | 2026-06-20 |
 | H7 | 弹窗·加入项目 | doc03 | ❌ | — | 依赖 E11 | 2026-06-20 |
 | H8 | 弹窗·查看来源 | doc03 | 🟡 | 详情面板「来源」字段 | — | 2026-06-20 |
 | H9 | 弹窗·提交制作确认 | doc03 | ❌ | 直接提交，无二次确认 | — | 2026-06-20 |
-| H10 | 弹窗·提交终审 | doc03 | ❌ | — | — | 2026-06-20 |
-| H11 | 弹窗·归档项目（二次确认） | doc03 | ❌ | — | — | 2026-06-20 |
+| H10 | 弹窗·提交终审 | doc03 | ✅ | campaigns 确认弹窗→PATCH status | — | 2026-06-20 |
+| H11 | 弹窗·归档项目（二次确认） | doc03 | ✅ | campaigns 确认弹窗→PATCH status=COMPLETED | — | 2026-06-20 |
 | H12 | 弹窗·额度升级 | doc03 | ❌ | — | 计费相关，phase 2 | 2026-06-20 |
 | H13 | 卡片·Campaign 项目卡 | doc04§5.7.3 | ✅ | campaigns | — | 2026-06-20 |
 | H14 | 卡片·推荐品牌卡 | doc04§5.7.4 | ❌ | — | 见 B5 | 2026-06-20 |
-| H15 | 卡片·品牌知识卡 | doc04§5.7.5 | 🟡 | brand-knowledge | 退化（见 D4-D9） | 2026-06-20 |
+| H15 | 卡片·品牌知识卡 | doc04§5.7.5 | ✅ | brand-knowledge 富卡片 | 8 类富结构卡（见 D4-D9） | 2026-06-20 |
 | H16 | 卡片·素材卡 | doc04§5.7.6 | ✅ | assets | — | 2026-06-20 |
 
 ## I · 平台 / 后端能力（产品方案未展开，但实现真实需要——本进度表「超集」部分）
@@ -179,7 +182,7 @@
 | I14 | AI /v1/ingest/website（网站采集） | 🟡 | `apps/ai` 有端点；UI/worker 未接 | phase 2（§2 异步化） | 2026-06-20 |
 | I15 | Providers：openai ✅已验 / gemini ✅ / seeddream ✅ / mock ✅ | ✅ | `apps/ai/app/providers/*` | 仅 openai 端到端验过 | 2026-06-20 |
 | I16 | Prisma 全模型（Brand/Campaign/Knowledge/Asset/Generation 等） | ✅ | `packages/db/prisma/schema.prisma` | 业务映射见 CLAUDE§3 | 2026-06-20 |
-| I17 | 配额 quota（按计划 enforce） | ✅ | `lib/quota.ts` | 计费 UI/原子预留 phase 2 | 2026-06-20 |
+| I17 | 配额 quota（按计划 enforce）+ 只读端点 | ✅ | `lib/quota.ts`、`GET /quota` | 新增 `getQuotaStatus` + `GET /api/workspaces/[wsId]/quota`（F11 用）；计费 UI/原子预留/regenerate门 phase 2 | quota 读端点 2026-06-20 |
 | I18 | 异步任务 AsyncTask + 刷新可续轮询 | ✅ | `lib/async-tasks.ts`、`tasks/[taskId]` | §2.2 server-authoritative | 2026-06-20 |
 | I19 | 存储 S3/R2/COS + data: 兜底 | ✅ | `lib/s3.ts` | per-call client | 2026-06-20 |
 | I20 | 合规 precheck（文本）+ VLM（视觉） | ✅ | `lib/precheck.ts`、`compliance/precheck` | FORBIDDEN 阻断 | 2026-06-20 |
@@ -213,9 +216,9 @@
 | K1 | 配额/计费 enforcement（按 owner 计、原子预留、套餐 maxWorkspaces、kit/regenerate 走配额门） | ➖ phase2 | 含计费 UI / 额度升级弹窗(H12/F11) | 2026-06-20 |
 | K2 | G6 协作 RBAC（Membership 解析、被邀成员放行、导出只放行 final/approved） | ➖ phase2 | I25 底座就绪 | 2026-06-20 |
 | K3 | §2 异步化补齐（Campaign Kit precheck/ingest 移入 worker） | ➖ phase2 | I14 | 2026-06-20 |
-| K4 | PDF 知识库 + recognize 证据（Evidence.assetId optional + 校验归属） | ➖ phase2 | D13/D14 接 UI 时成套改 | 2026-06-20 |
-| K5 | 多尺寸 UI（targets）+ regenerate textMode 持久化 + 记录 snap 真实尺寸 | ➖ phase2 | 契约/AI 已支持 | 2026-06-20 |
-| K6 | 首个 admin bootstrap 原子化（并发竞态） | ➖ phase2 | — | 2026-06-20 |
+| K4 | PDF 知识库 + recognize 证据（Evidence.assetId optional + 校验归属） | ✅ | Evidence.assetId 双侧 optional；`_coerce_recognize` 保留 note-only + 剔除幻觉 assetId + 去回填；rule-workbench 消费侧守卫 | 完成 2026-06-20 |
+| K5 | 多尺寸 UI（targets）+ regenerate textMode 持久化 + 记录 snap 真实尺寸 | 🟡 | 多尺寸渠道多选 + textMode 切换/持久化/重建已做（见 F16）；**记录 OpenAI snap 后真实尺寸**仍未做 | 部分 2026-06-20 |
+| K6 | 首个 admin bootstrap 原子化（并发竞态） | ✅ | `register/route.ts` Serializable 事务 + P2034 退避 | 完成 2026-06-20 |
 | K7 | WEBSITE 素材初始 host 重校验（防 DNS rebinding；`_inline_image` 现 `allow_private_initial=True` 盲信初始 host） | ➖ phase2 | `apps/ai/app/providers/http_providers.py:581`。一期单超管+注册关→无不可信 editor，威胁不可达；随 ingest 接入(I14)+多用户落地一并修：按 asset source 区分 UPLOAD/storage(可私网) vs WEBSITE(初始 host 也校验) | 新增 2026-06-20 |
 
 ## L · 产品方案缺口（反推清单 · 给产品确认补需求）
@@ -224,18 +227,18 @@
 
 | 编号 | 缺口 | 性质 | 关联 | 建议 |
 |---|---|---|---|---|
-| L1 | 模板库 P06 完全无（无路由/无 nav） | 设计有(P2占位)·实现缺 | G1/A1 | 确认一期是否交付占位页；nav 是否补第 6 项 |
+| L1 | ~~模板库 P06 完全无~~ → 占位页 + nav 第6项已补 | 设计有(P2占位)·**已补占位** | G1/A1 | ✅ 占位页 + 6项 nav；真模板能力 phase-2 |
 | L2 | 推荐品牌瀑布流无 | 设计有·实现缺，**且语义存疑** | B5/H14 | 单超管内部后台「推荐品牌」是否还需要？产品定调 |
 | L3 | 顶部通知中心无 | 设计有·实现缺 | A3/P01-M03 | 确认一期是否需要通知体系 |
-| L4 | 品牌知识库 8 类**富结构卡**退化为通用规则卡（无色板/Logo do-don't/字体预览/品牌预览） | 设计有·实现退化 | D4-D10 | 确认是否要还原设计稿富展示，or 接受规则卡形态 |
-| L5 | 工作台「风格关键词 / 参考素材 / 额度」三右栏模块无 | 设计有·实现缺（后端就绪） | F7/F9/F11 | 风格词+参考素材是出图质量关键，建议优先补 |
+| L4 | ~~8 类富结构卡退化~~ → 富卡片已还原（色板/Logo do-don't/字体预览）；**品牌预览(D10)** 仍缺 | 设计有·**已还原**(除 D10) | D4-D10 | ✅ D4-D9 富卡片；D10 综合品牌预览（VLM 自动生成）待 describe 端点 |
+| L5 | ~~工作台三右栏模块无~~ → 风格词/参考素材/额度三模块已接 | 设计有·**已补** | F7/F9/F11 | ✅ 三模块全接（后端 frozen-additive 解锁） |
 | L6 | 工作台顶部 撤销/重做/缩放 无 | 设计有·实现缺 | F2 | 确认优先级 |
 | L7 | Campaign 项目操作（补充需求/查看规范/提交终审/归档）只做了「进入工作台」 | 设计有·实现缺 | C9/H3/H4/H10/H11 | 提交终审/归档关乎交付流，建议补 |
-| L8 | 素材「加入项目」「设为参考」无——素材库↔工作台/Campaign 无联动 | 设计有·实现缺 | E11/E12/F9/H7 | **核心联动缺失**，强烈建议补 |
+| L8 | ~~素材↔工作台/Campaign 无联动~~ → 设为参考/加入项目已接（reference-tray 暂存 ↔ 工作台 F9，出图真校验+持久化） | 设计有·**已补**(客户端暂存) | E11/E12/F9/H7 | ✅ 联动通；服务端 Project↔Asset 持久关系 phase-2（多设备/协作） |
 | L9 | 通用弹窗体系：产品要 11 个轻量弹窗，仅「新建 Campaign」是弹窗 | 设计有·实现缺 | H2-H12 | 确认弹窗 vs 页内的取舍 |
 | L10 | AI 输入框未抽象为可解析组件；语音/附件入口仅视觉保留 | 设计有·实现缺 | B2/D1/H1 | 确认 AI 解析（立项/拆解/打标）一期是否纳入 |
 | L11 | 品牌筛选/时间筛选/排序无 | 设计有·实现缺 | C4/C5/C6 | 单品牌下品牌筛选可不做；排序建议补 |
-| L12 | AI 解析类入口未接（首页输入解析、知识库 AI 共创、素材自动打标）——后端能力具备 | 设计有·后端就绪·前端缺 | B2/D1/D13/E9/E10 | 这是「AI 驱动」定位的核心，建议优先打通入口 |
+| L12 | AI 解析入口：知识库 recognize/parse-manual **已接真 VLM**（D13/D14）；首页 brief 立项**已接**(非 AI 拆解)；**素材自动打标(E9/E10)** 仍缺 describe 端点 | 设计有·**大部已接** | B2/D13/D14/E9/E10 | ✅ 知识库真 AI 识别入口；素材自动打标需新增 VLM describe 端点（下一波后端） |
 
 ## 附录 · 作废区
 
