@@ -69,11 +69,12 @@ def test_build_body_openai_translation():
     assert body["n"] == 2
     assert body["model"] == "gpt-image-1"
     assert body["response_format"] == "url"
-    # OpenAI 的 gpt-image-* 不接受 negative_prompt（会 400），代码把负面约束折进
-    # 正向 prompt 的 "Avoid:" 子句，而非作为独立参数发送（与线上真出图一致）。
+    # OpenAI 的 gpt-image-* 严格校验,对未知字段 400。代码因此:把 negative 折进
+    # prompt 的 "Avoid:" 子句、且不带 negative_prompt / seed / cfg / aspect_ratio
+    # （与线上真实出图一致;这些仅对 SD 风格网关有意义）。
     assert "negative_prompt" not in body
     assert body["prompt"] == "a cup\n\nAvoid: red; blur"
-    assert body["seed"] == 7 and body["cfg"] == 5
+    assert "seed" not in body and "cfg" not in body and "aspect_ratio" not in body
 
 
 def test_extract_refs_url_and_b64():

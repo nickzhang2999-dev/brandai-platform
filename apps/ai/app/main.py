@@ -144,16 +144,21 @@ async def _fetch_pdf_text(url: str) -> str:
     """
     from pypdf import PdfReader
 
-    async with httpx.AsyncClient(timeout=settings.http_timeout) as c:
-        # SSRF: initial URL is trusted internal storage (PDF inlining); redirect
-        # hops are attacker-controllable via a saved WEBSITE/VI_DOC asset URL, so
-        # validate them. safe_get raises on a private redirect → caller degrades.
-        r = await safe_get(c, url, allow_private_initial=True)
-        r.raise_for_status()
-        content = r.content
-    reader = PdfReader(io.BytesIO(content))
-    parts = [page.extract_text() or "" for page in reader.pages]
-    return "\n".join(p for p in parts if p).strip()
+    # 任何失败(SSRF 拦截 / HTTP 错误 / 非 PDF 字节 / pypdf 解析失败)都降级为空串,
+    # 让 /v1/parse-manual 仍返回合法(可能为空)的 RecognizeResponse 而非 500。
+    try:
+        async with httpx.AsyncClient(timeout=settings.http_timeout) as c:
+            # SSRF: initial URL is trusted internal storage (PDF inlining);
+            # redirect hops are attacker-controllable via a saved WEBSITE/VI_DOC
+            # asset URL → validate them. safe_get raises on a private redirect.
+            r = await safe_get(c, url, allow_private_initial=True)
+            r.raise_for_status()
+            content = r.content
+        reader = PdfReader(io.BytesIO(content))
+        parts = [page.extract_text() or "" for page in reader.pages]
+        return "\n".join(p for p in parts if p).strip()
+    except Exception:  # noqa: BLE001 — best-effort, degrade to empty text
+        return ""
 
 
 @app.post("/v1/parse-manual", response_model=RecognizeResponse, response_model_exclude_none=True)

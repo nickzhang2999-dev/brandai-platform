@@ -279,7 +279,10 @@ class HttpImageProvider(ImageProvider):
         # fold the constraints into the positive prompt up-stream instead.
         if negative and self.kind != "openai":
             body["negative_prompt"] = ", ".join(negative)
-        if extra:
+        # 这些参数只对 SD 风格网关有意义。OpenAI gpt-image-* 严格校验、对未知字段
+        # 400(同 negative_prompt),且 aspect_ratio 已在 main.py 折进 width/height,
+        # 故 kind="openai" 一律不带,避免带 machineRules 的真实出图被 400。
+        if extra and self.kind != "openai":
             for key in ("aspect_ratio", "cfg", "seed"):
                 if key in extra:
                     body[key] = extra[key]
