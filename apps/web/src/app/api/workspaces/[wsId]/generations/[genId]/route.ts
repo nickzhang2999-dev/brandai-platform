@@ -211,11 +211,25 @@ export async function POST(
       return undefined;
     })();
 
+    // K5 / M3 — reconstruct the chosen text mode from the prior root versions'
+    // params (same approach as styleKeywords above), so 重新生成 keeps the
+    // 直接出图 / 分层留白 选择 instead of silently reverting to "direct".
+    const reconstructedTextMode = (() => {
+      for (const v of priorRoots) {
+        const p = (v.params ?? {}) as { textMode?: unknown };
+        if (p.textMode === "direct" || p.textMode === "layered") {
+          return p.textMode;
+        }
+      }
+      return undefined;
+    })();
+
     const jobData: GenerateJobData = {
       workspaceId: wsId,
       generationId: genId,
       versionCount: priorRoots.length > 0 ? priorRoots.length : 4,
       ...(targets ? { targets } : {}),
+      ...(reconstructedTextMode ? { textMode: reconstructedTextMode } : {}),
       ...(reconstructedStyleKeywords && reconstructedStyleKeywords.length > 0
         ? { styleKeywords: reconstructedStyleKeywords }
         : {}),

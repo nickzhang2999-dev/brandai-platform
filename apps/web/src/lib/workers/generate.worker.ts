@@ -499,6 +499,10 @@ export async function runGenerateJob(
             appliedRuleIds,
             sceneType,
             ...constraintEcho,
+            // K5 / M3 — stamp the chosen text mode onto each version so 重新生成
+            // can reconstruct it from prior roots (mirrors styleKeywords below;
+            // defaults to "direct" for jobs enqueued before this field existed).
+            textMode: job.data.textMode ?? "direct",
             // F7 / F9 / L8 — stamp the per-generation picks onto each version so
             // they display and so 重新生成 can reconstruct them from prior roots.
             ...(styleKeywords.length > 0 ? { styleKeywords } : {}),

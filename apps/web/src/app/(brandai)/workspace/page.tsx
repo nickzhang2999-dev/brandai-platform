@@ -3,7 +3,8 @@
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import type { Generation, Project } from "@brandai/contracts";
+import type { Generation, Project, SizeSpec } from "@brandai/contracts";
+import { CHANNEL_SIZES } from "@brandai/contracts";
 import { apiFetch } from "@/lib/client";
 import {
   getReferences,
@@ -89,6 +90,23 @@ function Workspace() {
   const [scene, setScene] = useState("夏日自然光场景");
   const [sceneType, setSceneType] = useState("SOCIAL_POSTER");
   const [versionCount, setVersionCount] = useState(4);
+
+  // K5 · P2.0 多尺寸 — 选中的渠道尺寸档位（按 CHANNEL_SIZES.key 跟踪）。≥1 个时
+  // POST body 带 targets（每尺寸各出 1 张，AI 服务忽略 versionCount）。
+  const [targetKeys, setTargetKeys] = useState<string[]>([]);
+  const selectedTargets: SizeSpec[] = useMemo(
+    () => CHANNEL_SIZES.filter((s) => targetKeys.includes(s.key)),
+    [targetKeys],
+  );
+  const multiSize = selectedTargets.length > 0;
+  function toggleTarget(key: string) {
+    setTargetKeys((prev) =>
+      prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key],
+    );
+  }
+
+  // K5 · M3 文本策略 — direct（默认，模型可烤字）/ layered（留干净负空间、不烤字）。
+  const [textMode, setTextMode] = useState<"direct" | "layered">("direct");
 
   // F7 · 风格关键词 (max 20) — threaded into POST /generations as styleKeywords.
   const [styleKeywords, setStyleKeywords] = useState<string[]>([]);
@@ -310,6 +328,12 @@ function Workspace() {
             sellingPoint: sellingPoint.trim(),
             scene: scene.trim(),
             versionCount,
+            // K5 / M3 — text rendering strategy ("direct" default | "layered").
+            textMode,
+            // K5 / P2.0 — only send `targets` when ≥1 size selected (frozen-
+            // additive). When present the AI service fans out one image per size
+            // and ignores versionCount.
+            ...(selectedTargets.length ? { targets: selectedTargets } : {}),
             // F7 — only send when non-empty (frozen-additive optional field).
             ...(styleKeywords.length ? { styleKeywords } : {}),
             // F9 — current project's staged reference asset ids.
@@ -518,24 +542,100 @@ function Workspace() {
             </div>
           </div>
 
+          {/* 生成数量 — 多尺寸模式下隐藏（每尺寸各出 1 张，AI 服务忽略 versionCount）。 */}
+          {multiSize ? (
+            <div>
+              <div className="mb-2 text-sm font-semibold">生成数量</div>
+              <p className="rounded-2xl border border-primary/15 bg-accent-soft/50 px-3 py-2.5 text-xs leading-relaxed text-muted-foreground">
+                多尺寸模式：每个尺寸各出 1 张（共 {selectedTargets.length} 张）。
+              </p>
+            </div>
+          ) : (
+            <div>
+              <div className="mb-2 text-sm font-semibold">生成数量</div>
+              <div className="flex gap-1.5">
+                {[1, 2, 4, 6].map((n) => (
+                  <button
+                    key={n}
+                    onClick={() => setVersionCount(n)}
+                    className={[
+                      "h-9 w-12 rounded-xl text-sm transition-colors",
+                      versionCount === n
+                        ? "bg-accent-soft font-medium text-primary"
+                        : "border border-border text-muted-foreground hover:bg-muted",
+                    ].join(" ")}
+                  >
+                    {n}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* K5 · 多尺寸渠道档位（P2.0） */}
           <div>
-            <div className="mb-2 text-sm font-semibold">生成数量</div>
+            <div className="mb-2 flex items-center justify-between text-sm font-semibold">
+              <span>多尺寸渠道</span>
+              {targetKeys.length ? (
+                <span className="text-xs font-normal text-muted-foreground">
+                  已选 {targetKeys.length}
+                </span>
+              ) : null}
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {CHANNEL_SIZES.map((s) => {
+                const on = targetKeys.includes(s.key);
+                return (
+                  <button
+                    key={s.key}
+                    type="button"
+                    onClick={() => toggleTarget(s.key)}
+                    aria-pressed={on}
+                    className={[
+                      "rounded-full px-3 py-1 text-xs transition-colors",
+                      on
+                        ? "bg-accent-soft font-medium text-primary"
+                        : "border border-border text-muted-foreground hover:bg-muted",
+                    ].join(" ")}
+                  >
+                    {s.label} {s.width}×{s.height}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+              不选则按上方生成数量出同尺寸图；选 ≥1 个渠道则每个尺寸各出 1 张。
+            </p>
+          </div>
+
+          {/* K5 · 文本策略（M3 textMode） */}
+          <div>
+            <div className="mb-2 text-sm font-semibold">文本策略</div>
             <div className="flex gap-1.5">
-              {[1, 2, 4, 6].map((n) => (
+              {(
+                [
+                  { value: "direct", label: "直接出图" },
+                  { value: "layered", label: "分层留白" },
+                ] as const
+              ).map((o) => (
                 <button
-                  key={n}
-                  onClick={() => setVersionCount(n)}
+                  key={o.value}
+                  type="button"
+                  onClick={() => setTextMode(o.value)}
                   className={[
-                    "h-9 w-12 rounded-xl text-sm transition-colors",
-                    versionCount === n
+                    "rounded-full px-3 py-1 text-xs transition-colors",
+                    textMode === o.value
                       ? "bg-accent-soft font-medium text-primary"
                       : "border border-border text-muted-foreground hover:bg-muted",
                   ].join(" ")}
                 >
-                  {n}
+                  {o.label}
                 </button>
               ))}
             </div>
+            <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+              分层留白 = 模型留干净负空间、不烤字，便于后续叠真实文字。
+            </p>
           </div>
 
           {/* F7 · 风格关键词 */}
