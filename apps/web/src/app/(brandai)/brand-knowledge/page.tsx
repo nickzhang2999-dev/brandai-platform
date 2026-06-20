@@ -970,7 +970,14 @@ export default function BrandKnowledgePage() {
         <RecognizeModal
           wsId={wsId}
           mode={aiModal}
-          onClose={() => setAiModal(null)}
+          onClose={() => {
+            // Safety net: a recognize/parse-manual job can finish just AFTER
+            // the UI's bounded poll gives up (timeout). Always refresh rules on
+            // close so a late-completing job's new rules still surface without a
+            // manual page reload.
+            qc.invalidateQueries({ queryKey: ["brandai-rules", wsId] });
+            setAiModal(null);
+          }}
           onDone={() =>
             qc.invalidateQueries({ queryKey: ["brandai-rules", wsId] })
           }

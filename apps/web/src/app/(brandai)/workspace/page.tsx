@@ -94,6 +94,12 @@ function Workspace() {
       ? presetBrief.trim().slice(0, 500)
       : "高端、清透、具有自然光感的护肤新品社交广告主视觉，紫色瓶身为主体，搭配花卉与水光质感。",
   );
+  // Re-seed 卖点 when a NEW brief arrives via client navigation (the URL param
+  // changes). This only fires on a real navigation — typing in the textarea
+  // doesn't change `presetBrief`, so manual edits are never clobbered.
+  useEffect(() => {
+    if (presetBrief?.trim()) setSellingPoint(presetBrief.trim().slice(0, 500));
+  }, [presetBrief]);
   const [scene, setScene] = useState("夏日自然光场景");
   const [sceneType, setSceneType] = useState("SOCIAL_POSTER");
   const [versionCount, setVersionCount] = useState(4);

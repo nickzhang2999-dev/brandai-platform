@@ -16,6 +16,7 @@ mock stays the registry default, so the service runs with zero keys.
 import base64
 import json
 import logging
+import math
 import re
 import time
 from collections import Counter
@@ -1003,13 +1004,21 @@ def _coerce_recognize(
                 item["note"] = str(note)
             bbox = e.get("bbox")
             if isinstance(bbox, list) and len(bbox) == 4:
-                # A sloppy VLM can emit non-numeric bbox entries; coerce
-                # defensively and simply drop the bbox (keeping the rest of the
-                # evidence item) rather than failing the whole response.
+                # A sloppy VLM can emit non-numeric or non-finite bbox entries.
+                # `float("NaN")`/`float("Infinity")` don't raise but Starlette's
+                # JSON renderer 500s on NaN/Inf — so require finite numbers and a
+                # sane normalized 0..1 range, else drop just the bbox (keep the
+                # rest of the evidence item) rather than sinking the response.
                 try:
-                    item["bbox"] = [float(x) for x in bbox]
+                    coerced = [float(x) for x in bbox]
                 except (TypeError, ValueError):
-                    pass
+                    coerced = None
+                if (
+                    coerced is not None
+                    and all(math.isfinite(x) for x in coerced)
+                    and all(-0.01 <= x <= 1.01 for x in coerced)
+                ):
+                    item["bbox"] = coerced
             # Keep the item if it carries any usable signal (id, note, or bbox);
             # drop empties. Note-only evidence is retained.
             if item:
