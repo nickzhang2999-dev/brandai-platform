@@ -27,7 +27,12 @@
 >
 > **建档**：2026-06-20 · 基线对应分支 `claude/brave-wright-2p3u3e`（PR #1）。所有「✅」均指代码已落地；标「已验收」者另经真 provider→真 API→真 DB 端到端跑通。
 >
-> **二轮更新**：2026-06-20 · 分支 `claude/cool-pascal-ao72o3`。补齐设计稿缺口（L4 富卡片 / L5 工作台三右栏 / L8 素材联动 / L12 知识库真 AI 入口 / C5-C6 排序筛选 / Campaign 终审归档 / 模板库占位 + 6 项 nav）与 Phase-2 后端正确性（K4 recognize 证据 / K6 admin bootstrap 原子化 / K5 多尺寸+textMode）。全程 `pnpm test`(L1 83)+`typecheck`+`build`+`pytest`(77) 全绿；灰度 `dbf4c1e` 健康 ok（web/ai/worker）。本轮标 ✅ 的前端功能均已过工程门禁；**真出图/真 recognize 的端到端灰度冒烟**待超管登录后补做（见 PR 说明）。
+> **二轮更新**：2026-06-20 · 分支 `claude/cool-pascal-ao72o3`。补齐设计稿缺口（L4 富卡片 / L5 工作台三右栏 / L8 素材联动 / L12 知识库真 AI 入口 / C5-C6 排序筛选 / Campaign 终审归档 / 模板库占位 + 6 项 nav）与 Phase-2 后端正确性（K4 recognize 证据 / K6 admin bootstrap 原子化 / K5 多尺寸+textMode）。全程 `pnpm test`(L1 83)+`typecheck`+`build`+`pytest`(77) 全绿。
+>
+> **灰度端到端真验收（No-mock，2026-06-20）**：真 provider（`openai · gpt-image-1` / `gpt-4o-mini`）→真 API→真 DB。已验：登录门禁、真出图（~1.3–2MB PNG）、**多尺寸 targets**（1024² / 1080×1440）、**textMode=layered**、**风格关键词 F7**（落 `params.styleKeywords` + `appliedPromptAdditions` 进 prompt）、`GET /quota`。
+> **本轮还发现并修复一个真隔离 bug（I28）**：CDS 灰度 Redis 共享，BullMQ 队列名无前缀 → 其他部署（如 main 旧代码）的 worker 抢本部署 job 并静默丢弃新字段（实测 styleKeywords 不落）。已加按部署 `BULLMQ_PREFIX` 前缀隔离，重验通过。
+> **未补冒烟**：真 recognize（D13）/ 参考图视觉条件化（F9，受 OpenAI generate API 限制，详见 L8）。
+> （评审：本轮处理 Bugbot/Codex 共 ~12 条，安全/正确性/UX 类已逐条修复并重验；计费/配额/协作类按 §3.5 留 phase-2。）
 
 ## 进度总览（基线 2026-06-20）
 
@@ -124,12 +129,12 @@
 | F4 | 生成变体区（缩略图切换） | P05-M06 | ✅ | `page.tsx:300+` | 变体条+点击切换+终稿 badge | 2026-06-20 |
 | F5 | AI 提示词编辑(需求/卖点，500字) | P05-M08 | ✅ | `page.tsx:395` | 字段为 sellingPoint+scene（合后端契约） | 2026-06-20 |
 | F6 | 场景 / sceneType / 生成数量 | doc02 | ✅ | `page.tsx:414/425/443` | — | 2026-06-20 |
-| F7 | 风格关键词（标签增删） | P05-M10 | ✅ | `workspace/page.tsx` tag 输入 | 增删 chip + 建议词；进 `styleKeywords`→worker 折入 promptAdditions | 接入 2026-06-20 |
+| F7 | 风格关键词（标签增删） | P05-M10 | ✅ **已验收** | `workspace/page.tsx` tag 输入 | 增删 chip + 建议词；进 `styleKeywords`→worker 折入 promptAdditions。灰度真验：`params.styleKeywords`+`appliedPromptAdditions` 落库 | 接入+验收 2026-06-20 |
 | F8 | 品牌约束（显示已应用规则） | P05-M12 | 🟡 | `page.tsx:464`「品牌约束已生效」 | 仅状态行，非逐条规则展示 | 2026-06-20 |
 | F9 | 参考素材区 | P05-M13 | 🟡 | `workspace/page.tsx`（读 reference-tray） | 显示本项目参考缩略图（来自 E12）+ 可删；进 `referenceAssetIds`→worker 解析为 referenceImages（**OpenAI generate 仅 prompt 级引导；真视觉条件化经 edits phase-2**） | 接入 2026-06-20 |
 | F10 | 提交制作（真实出图 §2 异步） | P05-M15 | ✅ **已验收** | `page.tsx:230` → `POST /generations` 202 → 轮询 | 真 gpt-image-1→GenerationVersion | 2026-06-20 |
 | F11 | 生成额度展示 | doc02/05 | ✅ | `workspace/page.tsx` QuotaBar + `GET /quota` | 本周期/今日用量 + 进度条（-1=不限）；新增只读端点 | 接入 2026-06-20 |
-| F16 | 多尺寸渠道（targets）+ textMode | K5 | 🟡 | `workspace/page.tsx`（CHANNEL_SIZES 多选 + 直接/分层） | 渠道尺寸多选每尺寸各 1 张；textMode 直接/分层 + 持久化(version.params)+regenerate 重建；记录 snap 真实尺寸仍 phase-2 | 新增 2026-06-20 |
+| F16 | 多尺寸渠道（targets）+ textMode | K5 | ✅ **已验收** | `workspace/page.tsx`（CHANNEL_SIZES 多选 + 直接/分层） | 渠道尺寸多选每尺寸各 1 张；textMode 直接/分层 + 持久化+regenerate 重建。灰度真验：1024²/1080×1440 出图 + `params.textMode=layered`；记录 snap 真实尺寸仍 phase-2 | 新增+验收 2026-06-20 |
 | F12 | 修改优化（改图） | 一期闭环 | ✅ **已验收** | `page.tsx:145` → versions/[id]/edit（OpenAI multipart） | 子版本 parentVersionId | 2026-06-20 |
 | F13 | 终选（设为终稿 isFinal） | 一期闭环 | ✅ **已验收** | `page.tsx`（PATCH /generations/[id]） | — | 2026-06-20 |
 | F14 | 交付归档（导出 ZIP） | 一期闭环 | ✅ **已验收** | `page.tsx:200` → projects/[id]/export | 真 ZIP | 2026-06-20 |
@@ -193,6 +198,7 @@
 | I25 | G6 协作（review/submit/approve 端点 + 字段） | 🟡 | `versions/[id]/{submit,review,recheck}` | 端点+schema 就绪，UI/enforce phase 2 | 2026-06-20 |
 | I26 | CI / release / dependabot | ✅ | `.github/workflows/*`、`.github/dependabot.yml` | — | 2026-06-20 |
 | I27 | 部署+冒烟技能 cds-deploy-verify | ✅ | `.claude/skills/cds-deploy-verify` | push→deploy→真出图冒烟 | 2026-06-20 |
+| I28 | BullMQ 队列按部署命名空间隔离 | ✅ | `lib/queue.ts`、`lib/workers/*`、`BULLMQ_PREFIX` | 共享 Redis 下队列无前缀致跨部署 worker 串 job（实测丢字段）；加 `BULLMQ_PREFIX`(默认 bull) 隔离；契合 §3.5 多租户 | 新增 2026-06-20 |
 
 ## J · 一期业务闭环（端到端事件流 · doc01§1.10）
 

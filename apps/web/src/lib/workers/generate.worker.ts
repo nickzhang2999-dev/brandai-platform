@@ -395,7 +395,16 @@ export async function runGenerateJob(
     ];
     if (referenceAssetIds.length > 0) {
       const refAssets = await prisma.asset.findMany({
-        where: { id: { in: referenceAssetIds }, workspaceId },
+        // Only feed generatable IMAGE assets as visual references — mirror the
+        // recognize path's lifecycle guard (skip deprecated/disabled) and
+        // exclude non-image assets (e.g. VI_DOC/PDF) that can't steer image gen.
+        where: {
+          id: { in: referenceAssetIds },
+          workspaceId,
+          availableForGeneration: true,
+          deprecatedAt: null,
+          mimeType: { startsWith: "image/" },
+        },
         select: { id: true, url: true },
       });
       const refImages = referenceAssetIds
