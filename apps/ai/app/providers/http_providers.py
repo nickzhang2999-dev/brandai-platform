@@ -151,6 +151,33 @@ def _snap_openai_size(width: int, height: int) -> str:
     return "1024x1024"
 
 
+# 改图 op → 自然语言 prompt 前缀(OpenAI /images/edits 只吃文字 prompt)。
+_EDIT_OP_PROMPTS = {
+    "REPLACE_BACKGROUND": "Replace the background of the product image",
+    "MOVE_PRODUCT": "Reposition the main product within the frame",
+    "EDIT_TEXT": "Edit the text shown in the image",
+    "RECOLOR": "Recolor the image",
+    "ADD_ELEMENT": "Add an element to the image",
+    "REMOVE_ELEMENT": "Remove an element from the image",
+    "OUTPAINT": "Extend the image outward (outpaint)",
+    "INPAINT": "Inpaint and refine the masked region",
+    "RESIZE": "Re-render the image at the requested size",
+}
+
+
+def _edit_prompt(op: str, payload: dict[str, Any]) -> str:
+    """把 op + payload 里的用户指令拼成给 OpenAI 的编辑 prompt。"""
+    instr = (
+        payload.get("prompt")
+        or payload.get("instruction")
+        or payload.get("text")
+        or payload.get("description")
+    )
+    base = _EDIT_OP_PROMPTS.get(op, "Edit the image as instructed")
+    instr = str(instr).strip() if instr else ""
+    return f"{base}. {instr}".strip() if instr else f"{base}."
+
+
 def _estimate_cost_usd(
     kind: str, size: str, quality: str, n: int
 ) -> float | None:
@@ -376,6 +403,15 @@ class HttpImageProvider(ImageProvider):
             )
 
     @_retry
+    async def _load_image_bytes(self, image_url: str) -> bytes:
+        """取源图字节:data: URL 直接 base64 解码;http(s) 经 SSRF 安全取流。"""
+        if image_url.startswith("data:"):
+            return base64.b64decode(image_url.split(",", 1)[1])
+        async with self._client() as c:
+            r = await safe_get(c, image_url, allow_private_initial=True)
+            r.raise_for_status()
+            return r.content
+
     async def edit(
         self, image_url: str, op: str, payload: dict[str, Any]
     ) -> str:
@@ -384,11 +420,33 @@ class HttpImageProvider(ImageProvider):
         error: str | None = None
         try:
             async with self._client() as c:
-                r = await c.post(
-                    f"{self.base_url}/images/edits",
-                    headers={"Authorization": f"Bearer {self.api_key}"},
-                    json={"image": image_url, "op": op, **payload},
-                )
+                if self.kind == "openai":
+                    # OpenAI /images/edits 是 multipart form-data:image 文件字节 +
+                    # 自然语言 prompt(JSON 体会 400)。把 op + payload 指令拼成 prompt,
+                    # 源图取字节作为文件上传;gpt-image-1 返回 b64。
+                    img_bytes = await self._load_image_bytes(image_url)
+                    size = _snap_openai_size(
+                        int(payload.get("width", 1024) or 1024),
+                        int(payload.get("height", 1024) or 1024),
+                    )
+                    r = await c.post(
+                        f"{self.base_url}/images/edits",
+                        headers={"Authorization": f"Bearer {self.api_key}"},
+                        files={"image": ("image.png", img_bytes, "image/png")},
+                        data={
+                            "prompt": _edit_prompt(op, payload),
+                            "model": self.model or "gpt-image-1",
+                            "size": size,
+                            "n": "1",
+                        },
+                    )
+                else:
+                    # OpenAI 兼容网关:保留 JSON 体(img2img-capable 网关自解析)。
+                    r = await c.post(
+                        f"{self.base_url}/images/edits",
+                        headers={"Authorization": f"Bearer {self.api_key}"},
+                        json={"image": image_url, "op": op, **payload},
+                    )
                 status = r.status_code
                 r.raise_for_status()
                 refs = _extract_image_refs(r.json())

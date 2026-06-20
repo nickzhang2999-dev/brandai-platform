@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Generation, Project } from "@brandai/contracts";
 import { apiFetch } from "@/lib/client";
 import { useBrand } from "../brand-context";
@@ -19,6 +19,14 @@ const SCENE_TYPES: { value: string; label: string }[] = [
   { value: "SCENE", label: "场景图" },
   { value: "CAMPAIGN_KV", label: "Campaign KV" },
   { value: "SELLING_POINT", label: "卖点图" },
+];
+
+const EDIT_OPS: { value: string; label: string }[] = [
+  { value: "REPLACE_BACKGROUND", label: "换背景" },
+  { value: "RECOLOR", label: "改色" },
+  { value: "EDIT_TEXT", label: "改文字" },
+  { value: "ADD_ELEMENT", label: "加元素" },
+  { value: "REMOVE_ELEMENT", label: "去元素" },
 ];
 
 const POLL_CAP_MS = 6 * 60 * 1000; // §2.2 有界中间态
@@ -96,6 +104,118 @@ function Workspace() {
   );
   const running = !!genId && status !== "SUCCEEDED" && status !== "FAILED" && !timedOut;
   const current = versions[activeVariant] ?? versions[0];
+
+  // —— 修改优化(改图)/ 终选 / 交付归档 ——
+  const qc = useQueryClient();
+  const [editOp, setEditOp] = useState("REPLACE_BACKGROUND");
+  const [editInstr, setEditInstr] = useState("");
+  const [editVid, setEditVid] = useState<string | null>(null);
+  const [editJobId, setEditJobId] = useState<string | null>(null);
+  const [actionErr, setActionErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState<null | "edit" | "final" | "export">(null);
+
+  // 改图 server-authoritative:POST→202→轮询 edit job→成功后刷新主 generation,
+  // 新的子版本(parentVersionId)就会出现在变体条里。
+  const { data: editPoll } = useQuery<{ job?: { status: string } }>({
+    queryKey: ["brandai-edit", wsId, genId, editVid, editJobId],
+    queryFn: () =>
+      apiFetch(
+        `/api/workspaces/${wsId}/generations/${genId}/versions/${editVid}/edit?jobId=${editJobId}`,
+      ),
+    enabled: !!editJobId && !!editVid && !!genId,
+    refetchInterval: (q) => {
+      const s = q.state.data?.job?.status;
+      return s === "SUCCEEDED" || s === "FAILED" ? false : 2500;
+    },
+  });
+  useEffect(() => {
+    const s = editPoll?.job?.status;
+    if (s === "SUCCEEDED") {
+      setEditJobId(null);
+      setEditVid(null);
+      setEditInstr("");
+      qc.invalidateQueries({ queryKey: ["brandai-gen", wsId, genId] });
+    } else if (s === "FAILED") {
+      setEditJobId(null);
+      setActionErr("改图失败,请重试");
+    }
+  }, [editPoll, qc, wsId, genId]);
+  const editing = !!editJobId;
+
+  async function submitEdit() {
+    if (!current || !genId || !editInstr.trim()) return;
+    setActionErr(null);
+    setBusy("edit");
+    try {
+      const r = await apiFetch<{ jobId: string }>(
+        `/api/workspaces/${wsId}/generations/${genId}/versions/${current.id}/edit`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            op: editOp,
+            payload: { prompt: editInstr.trim() },
+          }),
+        },
+      );
+      setEditVid(current.id);
+      setEditJobId(r.jobId);
+    } catch (e) {
+      setActionErr(e instanceof Error ? e.message : "改图提交失败");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function markFinal() {
+    if (!current || !genId) return;
+    setActionErr(null);
+    setBusy("final");
+    try {
+      await apiFetch(`/api/workspaces/${wsId}/generations/${genId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ versionId: current.id }),
+      });
+      qc.invalidateQueries({ queryKey: ["brandai-gen", wsId, genId] });
+    } catch (e) {
+      setActionErr(e instanceof Error ? e.message : "设为终稿失败");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function exportKit() {
+    if (!projectId) return;
+    const finals = versions.filter((v) => v.isFinal).map((v) => v.id);
+    const ids = finals.length > 0 ? finals : current ? [current.id] : [];
+    if (ids.length === 0) return;
+    setActionErr(null);
+    setBusy("export");
+    try {
+      const res = await fetch(
+        `/api/workspaces/${wsId}/projects/${projectId}/export`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ versionIds: ids }),
+        },
+      );
+      if (!res.ok) {
+        const b = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(b.error ?? "导出失败");
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "brandai-delivery.zip";
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setActionErr(e instanceof Error ? e.message : "导出失败");
+    } finally {
+      setBusy(null);
+    }
+  }
 
   async function submit() {
     if (!projectId) {
@@ -175,13 +295,13 @@ function Workspace() {
             )}
           </div>
           {versions.length > 0 ? (
-            <div className="mt-4 flex gap-3">
+            <div className="mt-4 flex flex-wrap gap-3">
               {versions.map((v, i) => (
                 <button
                   key={v.id}
                   onClick={() => setActiveVariant(i)}
                   className={[
-                    "h-[82px] w-[118px] overflow-hidden rounded-[18px] border-2 transition-colors",
+                    "relative h-[82px] w-[118px] overflow-hidden rounded-[18px] border-2 transition-colors",
                     i === activeVariant
                       ? "border-primary"
                       : "border-transparent hover:border-border",
@@ -193,8 +313,81 @@ function Workspace() {
                     alt={`变体 ${i + 1}`}
                     className="h-full w-full object-cover"
                   />
+                  {v.isFinal ? (
+                    <span className="absolute left-1 top-1 rounded-full bg-success px-1.5 py-0.5 text-[10px] font-medium text-primary-foreground">
+                      终稿
+                    </span>
+                  ) : null}
+                  {v.parentVersionId ? (
+                    <span className="absolute right-1 top-1 rounded-full bg-accent-soft px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                      改
+                    </span>
+                  ) : null}
                 </button>
               ))}
+            </div>
+          ) : null}
+
+          {/* 修改优化 / 终选 / 交付归档 —— 仅在已出图后对选中变体可用 */}
+          {status === "SUCCEEDED" && current ? (
+            <div className="mt-4 rounded-2xl border border-border bg-card p-4">
+              <div className="mb-2 text-xs font-semibold text-muted-foreground">
+                对选中图片
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {EDIT_OPS.map((o) => (
+                  <button
+                    key={o.value}
+                    onClick={() => setEditOp(o.value)}
+                    className={[
+                      "rounded-full px-2.5 py-1 text-xs transition-colors",
+                      editOp === o.value
+                        ? "bg-accent-soft font-medium text-primary"
+                        : "border border-border text-muted-foreground hover:bg-muted",
+                    ].join(" ")}
+                  >
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+              <div className="mt-2 flex gap-2">
+                <input
+                  value={editInstr}
+                  onChange={(e) => setEditInstr(e.target.value)}
+                  placeholder="改图指令,如:把背景换成纯色米白、瓶身更通透…"
+                  className="h-10 flex-1 rounded-xl border border-border bg-background px-3 text-sm outline-none focus:border-primary/40"
+                />
+                <button
+                  onClick={submitEdit}
+                  disabled={!editInstr.trim() || busy === "edit" || editing}
+                  className="h-10 shrink-0 rounded-xl bg-gradient-to-br from-primary to-accent px-4 text-sm font-medium text-primary-foreground disabled:opacity-60"
+                >
+                  {editing ? "改图中…" : "改图"}
+                </button>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  onClick={markFinal}
+                  disabled={busy === "final" || current.isFinal}
+                  className="rounded-full border border-success/40 px-3 py-1.5 text-xs text-success transition-colors hover:bg-success/10 disabled:opacity-60"
+                >
+                  {current.isFinal ? "✓ 已是终稿" : "设为终稿"}
+                </button>
+                <button
+                  onClick={exportKit}
+                  disabled={busy === "export"}
+                  className="rounded-full border border-primary/40 px-3 py-1.5 text-xs text-primary transition-colors hover:bg-accent-soft disabled:opacity-60"
+                >
+                  {busy === "export"
+                    ? "打包中…"
+                    : versions.some((v) => v.isFinal)
+                      ? "导出交付包(终稿)"
+                      : "导出交付包(当前图)"}
+                </button>
+              </div>
+              {actionErr ? (
+                <p className="mt-2 text-xs text-destructive">{actionErr}</p>
+              ) : null}
             </div>
           ) : null}
         </div>
