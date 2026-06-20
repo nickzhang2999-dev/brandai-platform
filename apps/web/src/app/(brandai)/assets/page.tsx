@@ -50,6 +50,11 @@ export default function AssetsPage() {
   const [q, setQ] = useState("");
   const [activeId, setActiveId] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  // Upload category picker — lets users create non-image assets too (notably
+  // VI_DOC/PDF, which the 手册解析(D14) flow needs). Defaults to OTHER.
+  const [uploadCategory, setUploadCategory] = useState("OTHER");
+  const uploadAccept =
+    uploadCategory === "VI_DOC" ? "application/pdf,image/*" : "image/*";
   const [uploadErr, setUploadErr] = useState<string | null>(null);
   // E11/E12 · 参考素材联动：选中的目标 Campaign + 暂存确认提示。
   const [pickProject, setPickProject] = useState("");
@@ -74,7 +79,7 @@ export default function AssetsPage() {
     mutationFn: async (file: File) => {
       const fd = new FormData();
       fd.append("file", file);
-      fd.append("category", "OTHER");
+      fd.append("category", uploadCategory);
       const res = await fetch(`/api/workspaces/${wsId}/assets/upload`, {
         method: "POST",
         body: fd,
@@ -162,7 +167,7 @@ export default function AssetsPage() {
       <input
         ref={fileInput}
         type="file"
-        accept="image/*"
+        accept={uploadAccept}
         className="hidden"
         onChange={(e) => {
           const f = e.target.files?.[0];
@@ -174,13 +179,32 @@ export default function AssetsPage() {
         title="素材库"
         subtitle="集中管理品牌图片、产品图与参考素材"
         action={
-          <Button
-            size="lg"
-            disabled={upload.isPending}
-            onClick={() => fileInput.current?.click()}
-          >
-            {upload.isPending ? "上传中…" : "⬆ 上传素材"}
-          </Button>
+          <div className="flex items-center gap-2">
+            <select
+              value={uploadCategory}
+              onChange={(e) => setUploadCategory(e.target.value)}
+              disabled={upload.isPending}
+              aria-label="上传分类"
+              className="h-11 rounded-full border border-border bg-card px-4 text-sm text-foreground"
+            >
+              {CATEGORIES.filter((c) => c.value !== "all").map((c) => (
+                <option key={c.value} value={c.value}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+            <Button
+              size="lg"
+              disabled={upload.isPending}
+              onClick={() => fileInput.current?.click()}
+            >
+              {upload.isPending
+                ? "上传中…"
+                : uploadCategory === "VI_DOC"
+                  ? "⬆ 上传 PDF/VI 手册"
+                  : "⬆ 上传素材"}
+            </Button>
+          </div>
         }
       />
 
