@@ -132,9 +132,20 @@ export async function POST(
     // 原子抢占:只把"终态(SUCCEEDED/FAILED)"的行翻成 PENDING。两个并发 POST 中
     // 只有一个能命中(count===1),另一个 count===0 → 409。避免先读 status 再写的
     // TOCTOU 让两个 generate job 并发跑同一 generationId、互相覆盖删旧/写终态。
+    // 重新锚定 stale 计时:sweepStaleGenerations 按 createdAt < cutoff(10min)把
+    // PENDING/RUNNING 判为"丢失"。重生成一个 10 分钟前创建的 generation 若不刷新
+    // createdAt,会被下一次 sweep 立刻误杀为 FAILED(并放行再次重试,与仍在跑的
+    // 本次 job 撞车)。这里把 createdAt 重置为现在、清空上一轮 started/finished。
+    const now = new Date();
     const claimed = await prisma.generation.updateMany({
       where: { id: genId, status: { in: ["SUCCEEDED", "FAILED"] } },
-      data: { status: "PENDING", error: null },
+      data: {
+        status: "PENDING",
+        error: null,
+        createdAt: now,
+        startedAt: null,
+        finishedAt: null,
+      },
     });
     if (claimed.count !== 1) {
       throw new ApiException(409, "该生成任务进行中,请等待完成后再重试");

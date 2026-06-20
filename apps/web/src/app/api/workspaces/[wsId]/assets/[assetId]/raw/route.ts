@@ -21,6 +21,15 @@ function isAbsoluteUrl(s: string): boolean {
   return /^https?:\/\//i.test(s) || s.startsWith("data:");
 }
 
+/**
+ * 可安全内联渲染的图片类型:光栅图。**排除 SVG**——SVG 是活动内容,直接打开会在
+ * app 同源执行脚本(存储型 XSS),必须走附件下载。
+ */
+function inlineSafeImage(contentType: string): boolean {
+  const t = (contentType || "").toLowerCase();
+  return t.startsWith("image/") && !t.includes("svg");
+}
+
 export async function GET(
   _req: Request,
   { params }: { params: Promise<{ wsId: string; assetId: string }> },
@@ -53,7 +62,7 @@ export async function GET(
       // 资产代理只应回放图片。WEBSITE 资产的 upstream content-type 不可信:显式
       // text/html 即使带 nosniff 也会在同源被当页面执行(存储型 XSS)。非图片一律
       // 降级为 octet-stream + attachment,绝不在 app 源下内联渲染。
-      const isImg = upstreamType.toLowerCase().startsWith("image/");
+      const isImg = inlineSafeImage(upstreamType);
       const headers: Record<string, string> = {
         "content-type": isImg ? upstreamType : "application/octet-stream",
         "cache-control": cacheControl,
@@ -70,7 +79,7 @@ export async function GET(
     // 内联执行(存储型 XSS)。与 WEBSITE 分支同策:非图片降级 octet-stream + 附件。
     const resolvedType =
       asset.mimeType && asset.mimeType !== "image/*" ? asset.mimeType : contentType;
-    const isImg = (resolvedType || "").toLowerCase().startsWith("image/");
+    const isImg = inlineSafeImage(resolvedType || "");
     const headers: Record<string, string> = {
       "content-type": isImg ? resolvedType : "application/octet-stream",
       ...(contentLength ? { "content-length": String(contentLength) } : {}),

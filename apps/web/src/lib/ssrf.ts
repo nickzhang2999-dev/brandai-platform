@@ -80,8 +80,9 @@ export async function assertSafePublicUrl(raw: string): Promise<void> {
   // data: URL 不触网,但 /assets/[id]/raw 会按其 content-type 同源回放——只放行
   // 图片 data: URL,否则 data:text/html 等会变成同源 HTML/JS(存储型 XSS)。
   if (raw.startsWith("data:")) {
-    if (!/^data:image\//i.test(raw)) {
-      throw new ApiException(400, "仅允许图片类型的 data: URL");
+    // 仅放行光栅图 data: URL;svg 是活动内容(同源可执行脚本),排除。
+    if (!/^data:image\//i.test(raw) || /^data:image\/svg/i.test(raw)) {
+      throw new ApiException(400, "仅允许光栅图片类型的 data: URL");
     }
     return;
   }

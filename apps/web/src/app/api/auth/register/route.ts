@@ -35,23 +35,22 @@ export async function POST(req: Request) {
     }
 
     const existing = await prisma.user.findUnique({ where: { email } });
-    if (existing?.passwordHash) {
+    // 账号接管防护:拒绝任何**已存在**的用户行,而不仅是已设密码的。否则未鉴权的
+    // 注册路径可把攻击者选的密码写到一个无 passwordHash 的 OAuth/demo 账号上,
+    // 之后用该密码登录受害者账号。给已存在账号补密码必须经已鉴权会话/邮箱验证
+    // (本平台无 OAuth/demo,直接拒绝最稳)。
+    if (existing) {
       throw new ApiException(409, "该邮箱已注册");
     }
 
     const passwordHash = await hashPassword(input.password);
-    const user = existing
-      ? await prisma.user.update({
-          where: { email },
-          data: { passwordHash, name: input.name ?? existing.name },
-        })
-      : await prisma.user.create({
-          data: {
-            email,
-            passwordHash,
-            name: input.name ?? email.split("@")[0],
-          },
-        });
+    const user = await prisma.user.create({
+      data: {
+        email,
+        passwordHash,
+        name: input.name ?? email.split("@")[0],
+      },
+    });
 
     // Bootstrap: the first user to register becomes the platform admin, unless
     // an ADMIN_EMAILS allowlist is configured (then env is authoritative).
