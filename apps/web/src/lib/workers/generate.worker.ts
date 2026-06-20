@@ -9,7 +9,7 @@ import {
   type BrandRule,
   type SizeSpec,
 } from "@brandai/contracts";
-import { connection } from "@/lib/queue";
+import { connection, queuePrefix } from "@/lib/queue";
 import { ai } from "@/lib/ai";
 import { uploadDataUrlImage } from "@/lib/s3";
 import { getConfirmedRules } from "@/lib/rules";
@@ -100,6 +100,18 @@ export interface GenerateJobData {
    * doesn't sink the whole batch.
    */
   targets?: SizeSpec[];
+  /**
+   * F7 — per-generation style keywords appended into the compiled
+   * `AIConstraints.promptAdditions` (so the AI service folds them into the
+   * prompt). Optional for backward compat with in-flight jobs.
+   */
+  styleKeywords?: string[];
+  /**
+   * F9 / L8 — per-generation reference asset ids. The worker resolves each to
+   * its asset URL (within the workspace) and pushes a positive `referenceImage`
+   * into the compiled `AIConstraints`. Optional for backward compat.
+   */
+  referenceAssetIds?: string[];
 }
 
 /** P2.0 feature flag. Default on; set MULTI_SIZE_V1=0 to fall back to the
@@ -356,6 +368,65 @@ export async function runGenerateJob(
       }
     }
 
+    // F7 / F9 / L8 — per-generation style keywords + reference assets. Merged
+    // into the compiled AIConstraints regardless of the AI_CONSTRAINTS_V1 flag
+    // so the user's explicit picks always reach the AI service:
+    //  - styleKeywords → appended to promptAdditions (the AI service folds
+    //    promptAdditions into the prompt; no AI-service contract change).
+    //  - referenceAssetIds → each resolved to its asset URL (workspace-scoped)
+    //    and pushed as a positive referenceImage. Ownership was IDOR-checked at
+    //    the POST route; we re-scope the lookup to the workspace here too.
+    // Track explicit user picks so we forward `aiConstraints` even when the
+    // AI_CONSTRAINTS_V1 flag is off — the user's deliberate style/reference
+    // choices must always reach the AI service.
+    let hasExplicitPicks = false;
+    const styleKeywords = (job.data.styleKeywords ?? [])
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+    if (styleKeywords.length > 0) {
+      aiConstraints = {
+        ...aiConstraints,
+        promptAdditions: [...aiConstraints.promptAdditions, ...styleKeywords],
+      };
+      hasExplicitPicks = true;
+    }
+    const referenceAssetIds = [
+      ...new Set((job.data.referenceAssetIds ?? []).filter((x) => !!x)),
+    ];
+    if (referenceAssetIds.length > 0) {
+      const refAssets = await prisma.asset.findMany({
+        // Only feed generatable IMAGE assets as visual references — mirror the
+        // recognize path's lifecycle guard (skip deprecated/disabled) and
+        // exclude non-image assets (e.g. VI_DOC/PDF) that can't steer image gen.
+        where: {
+          id: { in: referenceAssetIds },
+          workspaceId,
+          availableForGeneration: true,
+          deprecatedAt: null,
+          mimeType: { startsWith: "image/" },
+        },
+        select: { id: true, url: true },
+      });
+      const refImages = referenceAssetIds
+        .map((id) => {
+          const a = refAssets.find((r) => r.id === id);
+          if (!a?.url) return null;
+          return {
+            url: a.url,
+            polarity: "positive" as const,
+            source: `asset:${id}`,
+          };
+        })
+        .filter((r): r is NonNullable<typeof r> => r !== null);
+      if (refImages.length > 0) {
+        aiConstraints = {
+          ...aiConstraints,
+          referenceImages: [...aiConstraints.referenceImages, ...refImages],
+        };
+        hasExplicitPicks = true;
+      }
+    }
+
     const appliedRuleIds = brandRules.map((r) => r.id);
     const sceneType = generation.sceneType;
     const constraintEcho = constraintsEnabled()
@@ -417,7 +488,7 @@ export async function runGenerateJob(
       // M3 — forward the chosen text mode (defaults to "direct" when a job was
       // enqueued before this field existed, preserving legacy behavior).
       textMode: job.data.textMode ?? "direct",
-      ...(constraintsEnabled() ? { aiConstraints } : {}),
+      ...(constraintsEnabled() || hasExplicitPicks ? { aiConstraints } : {}),
     };
 
     async function persist(
@@ -443,6 +514,14 @@ export async function runGenerateJob(
             appliedRuleIds,
             sceneType,
             ...constraintEcho,
+            // K5 / M3 — stamp the chosen text mode onto each version so 重新生成
+            // can reconstruct it from prior roots (mirrors styleKeywords below;
+            // defaults to "direct" for jobs enqueued before this field existed).
+            textMode: job.data.textMode ?? "direct",
+            // F7 / F9 / L8 — stamp the per-generation picks onto each version so
+            // they display and so 重新生成 can reconstruct them from prior roots.
+            ...(styleKeywords.length > 0 ? { styleKeywords } : {}),
+            ...(referenceAssetIds.length > 0 ? { referenceAssetIds } : {}),
           } as Prisma.InputJsonValue,
           // complianceReport / parentVersionId / isFinal left null/default
           // for M5 / M4 / M6 to fill in.
@@ -607,7 +686,7 @@ export function createGenerateWorker() {
   const worker = new Worker<GenerateJobData, GenerateJobResult>(
     "generate",
     runGenerateJob,
-    { connection, concurrency: 2 },
+    { connection, prefix: queuePrefix, concurrency: 2 },
   );
   worker.on("failed", (job, err) => {
     console.error(`[generate] job ${job?.id} failed:`, err);

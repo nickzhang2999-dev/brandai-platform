@@ -46,7 +46,12 @@ class ParseManualRequest(BaseModel):
 
 
 class Evidence(BaseModel):
-    assetId: str
+    # assetId is optional for note-only evidence (a VLM observation not tied to a
+    # specific requested asset). Like every other optional here it serializes via
+    # response_model_exclude_none=True → OMITTED, never null (Zod .optional()
+    # rejects null). A foreign/hallucinated assetId is stripped in
+    # _coerce_recognize, so any value present belongs to the requested set.
+    assetId: Optional[str] = None
     bbox: Optional[list[float]] = None
     note: Optional[str] = None
     thumbnailUrl: Optional[str] = None

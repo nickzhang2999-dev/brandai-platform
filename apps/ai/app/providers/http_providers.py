@@ -16,6 +16,7 @@ mock stays the registry default, so the service runs with zero keys.
 import base64
 import json
 import logging
+import math
 import re
 import time
 from collections import Counter
@@ -976,23 +977,52 @@ def _coerce_recognize(
 ) -> dict[str, Any]:
     """Force model output into a valid RecognizeResponse shape.
 
-    Guarantees every rule carries evidence ("每条都看证据") — backfilling the
-    first asset id when the model omits it — and only emits colorSystem when a
-    palette is present, so the no-null contract boundary holds.
+    Keeps note-only evidence (a VLM observation with no assetId) and never trusts
+    a hallucinated/foreign id: a model-supplied assetId outside the requested
+    ``asset_ids`` set is stripped (the note is kept as note-only) rather than
+    passed through. We do NOT fabricate/backfill ids — if the model gave no
+    evidence the rule's evidence stays ``[]`` (the contract default). Only emits
+    colorSystem when a palette is present, so the no-null contract boundary holds.
     """
+    allowed_ids = set(asset_ids)
     rules: list[dict[str, Any]] = []
     for r in data.get("rules", []) or []:
         if not isinstance(r, dict):
             continue
         evidence: list[dict[str, Any]] = []
         for e in r.get("evidence", []) or []:
-            if isinstance(e, dict) and e.get("assetId"):
-                item: dict[str, Any] = {"assetId": str(e["assetId"])}
-                if e.get("note"):
-                    item["note"] = str(e["note"])
+            if not isinstance(e, dict):
+                continue
+            item: dict[str, Any] = {}
+            # Only trust an assetId the model actually got in the request; a
+            # foreign/hallucinated id is dropped (item degrades to note-only).
+            raw_id = e.get("assetId")
+            if raw_id and str(raw_id) in allowed_ids:
+                item["assetId"] = str(raw_id)
+            note = e.get("note")
+            if note:
+                item["note"] = str(note)
+            bbox = e.get("bbox")
+            if isinstance(bbox, list) and len(bbox) == 4:
+                # A sloppy VLM can emit non-numeric or non-finite bbox entries.
+                # `float("NaN")`/`float("Infinity")` don't raise but Starlette's
+                # JSON renderer 500s on NaN/Inf — so require finite numbers and a
+                # sane normalized 0..1 range, else drop just the bbox (keep the
+                # rest of the evidence item) rather than sinking the response.
+                try:
+                    coerced = [float(x) for x in bbox]
+                except (TypeError, ValueError):
+                    coerced = None
+                if (
+                    coerced is not None
+                    and all(math.isfinite(x) for x in coerced)
+                    and all(-0.01 <= x <= 1.01 for x in coerced)
+                ):
+                    item["bbox"] = coerced
+            # Keep the item if it carries any usable signal (id, note, or bbox);
+            # drop empties. Note-only evidence is retained.
+            if item:
                 evidence.append(item)
-        if not evidence and asset_ids:
-            evidence = [{"assetId": asset_ids[0], "note": "model-inferred"}]
         rules.append(
             {
                 "type": str(r.get("type", "imagery")),

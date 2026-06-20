@@ -15,7 +15,10 @@ import {
 } from "@/lib/generations";
 import type { GenerateJobData } from "@/lib/workers/generate.worker";
 import { getConfirmedRules } from "@/lib/rules";
-import { serializeProhibition } from "@/lib/prohibitions";
+import {
+  assertExampleAssetsInWorkspace,
+  serializeProhibition,
+} from "@/lib/prohibitions";
 import {
   compileAIConstraints,
   constraintsEnabled,
@@ -75,6 +78,35 @@ export async function POST(
     });
     if (!project || project.workspaceId !== wsId) {
       throw new ApiException(404, "Project not found in this workspace");
+    }
+
+    // F9 / L8 — every reference asset must belong to THIS workspace (IDOR
+    // guard, same pattern as prohibition example assets). 400 on mismatch,
+    // consistent with assertExampleAssetsInWorkspace's error style.
+    if (input.referenceAssetIds && input.referenceAssetIds.length > 0) {
+      await assertExampleAssetsInWorkspace(wsId, input.referenceAssetIds);
+      // Reference assets must be generatable IMAGES (mirror the worker's
+      // lifecycle/type filter) so an unusable pick fails fast with a clear 400
+      // instead of being accepted here and silently dropped from the AI job.
+      const refIds = [...new Set(input.referenceAssetIds)];
+      const usable = await prisma.asset.findMany({
+        where: {
+          id: { in: refIds },
+          workspaceId: wsId,
+          availableForGeneration: true,
+          deprecatedAt: null,
+          mimeType: { startsWith: "image/" },
+        },
+        select: { id: true },
+      });
+      if (usable.length !== refIds.length) {
+        const ok = new Set(usable.map((a) => a.id));
+        const bad = refIds.filter((id) => !ok.has(id));
+        throw new ApiException(
+          400,
+          `参考素材不可用于生成（需为未停用、未弃用的图片素材）：${bad.join(", ")}`,
+        );
+      }
     }
 
     // M-D — quota/rate-limit gate (402). Checked before any work so an
@@ -157,6 +189,14 @@ export async function POST(
       // batch; AI precheck happens inside the worker.
       ...(input.targets && input.targets.length > 0
         ? { targets: input.targets }
+        : {}),
+      // F7 / F9 / L8 — thread per-generation style keywords + reference asset
+      // ids to the worker (merged into AIConstraints there).
+      ...(input.styleKeywords && input.styleKeywords.length > 0
+        ? { styleKeywords: input.styleKeywords }
+        : {}),
+      ...(input.referenceAssetIds && input.referenceAssetIds.length > 0
+        ? { referenceAssetIds: input.referenceAssetIds }
         : {}),
     };
     const job = await generateQueue.add("generate", jobData, {

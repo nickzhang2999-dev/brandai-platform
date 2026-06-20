@@ -1,8 +1,9 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Project } from "@brandai/contracts";
 import { apiFetch } from "@/lib/client";
 import { quickActions } from "@/lib/brandai-mock";
@@ -22,11 +23,61 @@ const STATUS_META: Record<Status, { label: string; tone: string }> = {
 export default function HomePage() {
   const { wsId, brandName, user } = useBrand();
   const router = useRouter();
+  const qc = useQueryClient();
 
   const { data: projects = [] } = useQuery({
     queryKey: ["brandai-projects", wsId],
     queryFn: () => apiFetch<Project[]>(`/api/workspaces/${wsId}/projects`),
   });
+
+  // B2 · 首页 brief → 草稿 Campaign。注意：这不是 AI 拆解，只是把这段描述
+  // 立项为草稿并把原文透传到工作台出图卖点（honest brief-threading）。
+  const [brief, setBrief] = useState("");
+
+  const startFromBrief = useMutation({
+    mutationFn: (text: string) => {
+      const title =
+        text.split("\n")[0]!.trim().slice(0, 24) ||
+        text.trim().slice(0, 24);
+      return apiFetch<Project>(`/api/workspaces/${wsId}/projects`, {
+        method: "POST",
+        body: JSON.stringify({
+          name: title,
+          // CreateProjectInput caps description at 2000 chars — clamp so a long
+          // brief still 立项 succeeds instead of failing validation.
+          description: text.trim().slice(0, 2000),
+          status: "DRAFT",
+          channels: [],
+        }),
+      });
+    },
+    onSuccess: (project, text) => {
+      // Refresh the shared projects cache so the new draft shows up everywhere
+      // that reuses this key (Campaign list, 素材库 picker, 首页近期项目).
+      qc.invalidateQueries({ queryKey: ["brandai-projects", wsId] });
+      // Use the exact `text` submitted to the mutation (not the live `brief`
+      // state, which the user may have edited while the POST was in flight) so
+      // the saved description and the workspace prefill always agree.
+      // The workspace 卖点 field caps at 500 chars; pass only that much as the
+      // prefill seed (the full brief, up to 2000, is saved on the Campaign
+      // description). Avoids a silent over-length truncation surprise.
+      router.push(
+        `/workspace?project=${encodeURIComponent(project.id)}&brief=${encodeURIComponent(
+          text.trim().slice(0, 500),
+        )}`,
+      );
+    },
+  });
+
+  function handleStart() {
+    if (startFromBrief.isPending) return;
+    const text = brief.trim();
+    if (!text) {
+      router.push("/workspace");
+      return;
+    }
+    startFromBrief.mutate(text);
+  }
 
   return (
     <div className="mx-auto max-w-[1180px] px-10 py-10">
@@ -43,17 +94,42 @@ export default function HomePage() {
         <div className="flex items-end gap-3 rounded-[34px] border border-primary/15 bg-card p-3 pl-6 shadow-[0_24px_70px_rgba(124,92,255,0.12)]">
           <textarea
             rows={2}
+            value={brief}
+            onChange={(e) => setBrief(e.target.value)}
+            onKeyDown={(e) => {
+              if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                e.preventDefault();
+                handleStart();
+              }
+            }}
+            disabled={startFromBrief.isPending}
             placeholder={`例如：为 ${brandName} 做一组小红书种草主视觉，清透水光风格…`}
-            className="min-h-[56px] flex-1 resize-none border-0 bg-transparent py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground"
+            className="min-h-[56px] flex-1 resize-none border-0 bg-transparent py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-60"
           />
           <button
             type="button"
-            onClick={() => router.push("/workspace")}
-            className="h-11 shrink-0 rounded-[18px] bg-gradient-to-br from-primary to-accent px-6 text-sm font-medium text-primary-foreground shadow-[0_12px_28px_rgba(124,92,255,0.26)]"
+            onClick={handleStart}
+            disabled={startFromBrief.isPending}
+            className="h-11 shrink-0 rounded-[18px] bg-gradient-to-br from-primary to-accent px-6 text-sm font-medium text-primary-foreground shadow-[0_12px_28px_rgba(124,92,255,0.26)] transition-opacity disabled:opacity-70"
           >
-            去出图
+            {startFromBrief.isPending
+              ? "正在立项…"
+              : brief.trim()
+                ? "从这段描述开始创作"
+                : "去出图"}
           </button>
         </div>
+        <p className="mt-2 pl-6 text-xs text-muted-foreground">
+          填写后将以这段描述新建草稿 Campaign（原文存入项目描述），并把前 500 字预填进工作台作为出图卖点起点（不做 AI 自动拆解）。
+        </p>
+        {startFromBrief.isError ? (
+          <p className="mt-2 pl-6 text-xs text-destructive">
+            立项失败：
+            {startFromBrief.error instanceof Error
+              ? startFromBrief.error.message
+              : "请重试"}
+          </p>
+        ) : null}
       </section>
 
       <section className="mt-10 grid grid-cols-2 gap-[18px] lg:grid-cols-4">

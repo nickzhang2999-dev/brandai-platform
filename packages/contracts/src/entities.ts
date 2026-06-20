@@ -12,7 +12,14 @@ import {
 } from "./enums";
 
 export const Evidence = z.object({
-  assetId: z.string(),
+  /**
+   * The asset this evidence points at. Optional for *note-only* evidence: a VLM
+   * observation that isn't tied to a specific requested asset (e.g. a global
+   * remark, or a PDF-knowledge note). Omitted (not null) when absent — keep the
+   * no-null wire contract. A model-supplied assetId outside the requested set is
+   * stripped upstream, so any assetId present here belongs to the request.
+   */
+  assetId: z.string().optional(),
   /** normalized bounding box [x,y,w,h] in 0..1, optional for global evidence */
   bbox: z.tuple([z.number(), z.number(), z.number(), z.number()]).optional(),
   note: z.string().optional(),

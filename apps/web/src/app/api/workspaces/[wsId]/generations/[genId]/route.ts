@@ -183,11 +183,79 @@ export async function POST(
           ? reconstructedTargets
           : undefined;
 
+    // F7 / F9 / L8 — reconstruct the original per-generation style keywords +
+    // reference assets from the prior root versions' params (same approach as
+    // targets above), so 重新生成 keeps the user's picks instead of dropping them.
+    const reconstructedStyleKeywords = (() => {
+      for (const v of priorRoots) {
+        const p = (v.params ?? {}) as { styleKeywords?: unknown };
+        if (
+          Array.isArray(p.styleKeywords) &&
+          p.styleKeywords.every((s) => typeof s === "string")
+        ) {
+          return p.styleKeywords as string[];
+        }
+      }
+      return undefined;
+    })();
+    const reconstructedReferenceAssetIds = (() => {
+      for (const v of priorRoots) {
+        const p = (v.params ?? {}) as { referenceAssetIds?: unknown };
+        if (
+          Array.isArray(p.referenceAssetIds) &&
+          p.referenceAssetIds.every((s) => typeof s === "string")
+        ) {
+          return p.referenceAssetIds as string[];
+        }
+      }
+      return undefined;
+    })();
+
+    // K5 / M3 — reconstruct the chosen text mode from the prior root versions'
+    // params (same approach as styleKeywords above), so 重新生成 keeps the
+    // 直接出图 / 分层留白 选择 instead of silently reverting to "direct".
+    const reconstructedTextMode = (() => {
+      for (const v of priorRoots) {
+        const p = (v.params ?? {}) as { textMode?: unknown };
+        if (p.textMode === "direct" || p.textMode === "layered") {
+          return p.textMode;
+        }
+      }
+      return undefined;
+    })();
+
+    // Re-validate the reconstructed references against CURRENT state (a prior
+    // pick may since have been deprecated/disabled/deleted or be a non-image).
+    // Filter to still-usable images rather than 400 — the user isn't actively
+    // re-choosing on a regenerate; we just don't re-thread stale/invalid ids.
+    const validReferenceAssetIds =
+      reconstructedReferenceAssetIds && reconstructedReferenceAssetIds.length > 0
+        ? (
+            await prisma.asset.findMany({
+              where: {
+                id: { in: [...new Set(reconstructedReferenceAssetIds)] },
+                workspaceId: wsId,
+                availableForGeneration: true,
+                deprecatedAt: null,
+                mimeType: { startsWith: "image/" },
+              },
+              select: { id: true },
+            })
+          ).map((a) => a.id)
+        : undefined;
+
     const jobData: GenerateJobData = {
       workspaceId: wsId,
       generationId: genId,
       versionCount: priorRoots.length > 0 ? priorRoots.length : 4,
       ...(targets ? { targets } : {}),
+      ...(reconstructedTextMode ? { textMode: reconstructedTextMode } : {}),
+      ...(reconstructedStyleKeywords && reconstructedStyleKeywords.length > 0
+        ? { styleKeywords: reconstructedStyleKeywords }
+        : {}),
+      ...(validReferenceAssetIds && validReferenceAssetIds.length > 0
+        ? { referenceAssetIds: validReferenceAssetIds }
+        : {}),
     };
     const job = await generateQueue.add("generate", jobData, {
       removeOnComplete: 50,

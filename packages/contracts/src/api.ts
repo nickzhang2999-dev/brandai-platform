@@ -99,6 +99,21 @@ export const CreateGenerationInput = z.object({
    * can overlay crisp editable text. Frozen-additive.
    */
   textMode: z.enum(["direct", "layered"]).default("direct"),
+  /**
+   * F7 — per-generation style keywords. The worker appends these into the
+   * compiled `AIConstraints.promptAdditions` so the AI service folds them into
+   * the prompt (no AI-service contract change). Frozen-additive: optional, no
+   * default, bounded.
+   */
+  styleKeywords: z.array(z.string()).max(20).optional(),
+  /**
+   * F9 / L8 — per-generation reference asset ids (素材库 references). Each must
+   * belong to the same workspace (IDOR-checked at the route, see
+   * lib/prohibitions.ts::assertExampleAssetsInWorkspace). The worker resolves
+   * each to its asset URL and pushes a positive `referenceImage` into the
+   * compiled `AIConstraints`. Frozen-additive: optional, no default, bounded.
+   */
+  referenceAssetIds: z.array(z.string()).max(8).optional(),
 });
 export type CreateGenerationInput = z.infer<typeof CreateGenerationInput>;
 

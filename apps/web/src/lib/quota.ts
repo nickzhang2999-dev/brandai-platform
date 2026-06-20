@@ -153,6 +153,36 @@ export async function getUsage(userId: string): Promise<QuotaUsage> {
   return { plan, dailyUsed, periodUsed };
 }
 
+export interface QuotaStatus {
+  /** Generations counted across the user's owned workspaces today (UTC). */
+  dailyUsed: number;
+  /** Daily limit for the resolved plan; -1 = unlimited. */
+  dailyLimit: number;
+  /** Generations counted in the current billing period. */
+  periodUsed: number;
+  /** Monthly quota for the resolved plan; -1 = unlimited. */
+  monthlyQuota: number;
+  /** Resolved plan tier (STARTER / ENTERPRISE / …). */
+  plan: string;
+}
+
+/**
+ * Read-only quota status for display (F11). Reuses the SAME plan resolution +
+ * usage counting as enforcement — no separate counter — so what the UI shows
+ * always matches what `assertGenerationQuota` enforces. `-1` on a limit means
+ * unlimited. This NEVER throws a 402 / mutates anything.
+ */
+export async function getQuotaStatus(userId: string): Promise<QuotaStatus> {
+  const { plan, dailyUsed, periodUsed } = await getUsage(userId);
+  return {
+    dailyUsed,
+    dailyLimit: plan.dailyGenerationLimit,
+    periodUsed,
+    monthlyQuota: plan.monthlyGenerationQuota,
+    plan: plan.tier,
+  };
+}
+
 /**
  * Throw 402 when the next `count` generations would exceed the daily rate limit
  * or the monthly quota. Call this BEFORE creating the Generation row(s). For a

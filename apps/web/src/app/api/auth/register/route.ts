@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { prisma } from "@brandai/db";
+import { prisma, Prisma } from "@brandai/db";
 import { ApiException, handleError, ok, parse } from "@/lib/api";
 import { adminEmails } from "@/lib/admin";
 import { hashPassword } from "@/lib/password";
@@ -54,13 +54,41 @@ export async function POST(req: Request) {
 
     // Bootstrap: the first user to register becomes the platform admin, unless
     // an ADMIN_EMAILS allowlist is configured (then env is authoritative).
+    //
+    // The count-then-update must be atomic: two concurrent registrations could
+    // both read adminCount === 0 and both promote themselves. We run the
+    // check+promote inside a Serializable transaction so concurrent bootstraps
+    // serialize — the loser observes the winner's write (or aborts with a
+    // serialization error, which we swallow: that registrant simply stays
+    // non-admin). Registration itself already succeeded above; promotion is
+    // best-effort and never fails the request.
     if (!user.isAdmin && adminEmails().length === 0) {
-      const adminCount = await prisma.user.count({ where: { isAdmin: true } });
-      if (adminCount === 0) {
-        await prisma.user.update({
-          where: { id: user.id },
-          data: { isAdmin: true },
-        });
+      try {
+        await prisma.$transaction(
+          async (tx) => {
+            const adminCount = await tx.user.count({ where: { isAdmin: true } });
+            if (adminCount === 0) {
+              await tx.user.update({
+                where: { id: user.id },
+                data: { isAdmin: true },
+              });
+            }
+          },
+          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+        );
+      } catch (bootstrapErr) {
+        // Serialization failure (P2034) means another concurrent registration
+        // won the bootstrap; this user correctly stays non-admin. Any other
+        // error is non-fatal to registration — the account was created, an
+        // operator can still be promoted via ADMIN_EMAILS / /admin/users.
+        if (
+          !(
+            bootstrapErr instanceof Prisma.PrismaClientKnownRequestError &&
+            bootstrapErr.code === "P2034"
+          )
+        ) {
+          console.error("[register] admin bootstrap failed", bootstrapErr);
+        }
       }
     }
 

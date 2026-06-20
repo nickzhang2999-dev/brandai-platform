@@ -1,10 +1,16 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { Asset } from "@brandai/contracts";
+import type { Asset, Project } from "@brandai/contracts";
 import { Button } from "@brandai/ui";
 import { apiFetch, assetThumbUrl } from "@/lib/client";
+import {
+  addReference,
+  REFERENCE_CAP,
+  type AddReferenceResult,
+} from "@/lib/reference-tray";
 import { useBrand } from "../brand-context";
 import { Chip, gradientFor, PageHeader } from "../_ui";
 
@@ -39,22 +45,44 @@ function isImage(a: Asset): boolean {
 export default function AssetsPage() {
   const { wsId } = useBrand();
   const qc = useQueryClient();
+  const router = useRouter();
   const [filter, setFilter] = useState("all");
   const [q, setQ] = useState("");
   const [activeId, setActiveId] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  // Upload category picker — lets users create non-image assets too (notably
+  // VI_DOC/PDF, which the 手册解析(D14) flow needs). Defaults to OTHER.
+  const [uploadCategory, setUploadCategory] = useState("OTHER");
+  // VI_DOC feeds the parse-manual flow, whose backend only reads PDF bytes
+  // (pypdf) — so restrict VI manuals to PDF (an image saved as VI_DOC would
+  // "parse" to 0 rules silently). Other categories stay image-only.
+  const uploadAccept =
+    uploadCategory === "VI_DOC" ? "application/pdf" : "image/*";
   const [uploadErr, setUploadErr] = useState<string | null>(null);
+  // E11/E12 · 参考素材联动：选中的目标 Campaign + 暂存确认提示。
+  const [pickProject, setPickProject] = useState("");
+  const [stagedNote, setStagedNote] = useState<{
+    projectId: string;
+    projectName: string;
+    result: AddReferenceResult;
+  } | null>(null);
 
   const { data: assets = [], isLoading } = useQuery({
     queryKey: ["brandai-assets", wsId],
     queryFn: () => apiFetch<Asset[]>(`/api/workspaces/${wsId}/assets`),
   });
 
+  // 共享 ["brandai-projects", wsId] 缓存（与首页/工作台/项目页同 key）。
+  const { data: projects = [] } = useQuery({
+    queryKey: ["brandai-projects", wsId],
+    queryFn: () => apiFetch<Project[]>(`/api/workspaces/${wsId}/projects`),
+  });
+
   const upload = useMutation({
     mutationFn: async (file: File) => {
       const fd = new FormData();
       fd.append("file", file);
-      fd.append("category", "OTHER");
+      fd.append("category", uploadCategory);
       const res = await fetch(`/api/workspaces/${wsId}/assets/upload`, {
         method: "POST",
         body: fd,
@@ -85,6 +113,52 @@ export default function AssetsPage() {
   );
   const active = filtered.find((a) => a.id === activeId) ?? filtered[0] ?? assets[0];
 
+  // E11/E12 · 把当前选中素材暂存为目标 Campaign 的参考素材（client-side staging，
+  // 一期无 Project↔Asset DB 关系，暂存于 reference-tray，工作台出图时读取）。
+  function stageActiveAsReference(
+    projectId: string,
+  ): { project: Project; result: AddReferenceResult } | null {
+    // Only generatable IMAGE assets can be references (POST /generations rejects
+    // non-images), so don't stage PDFs/VI_DOC and create a client-allowed /
+    // server-rejected mismatch. (Deprecated/disabled is enforced server-side —
+    // those flags aren't on the Asset wire type.)
+    if (!active || !isImage(active) || !projectId) return null;
+    const project = projects.find((p) => p.id === projectId);
+    if (!project) return null;
+    const result = addReference(wsId, projectId, {
+      id: active.id,
+      fileName: active.fileName,
+      thumbUrl: assetThumbUrl(wsId, active.id, active.url),
+    });
+    return { project, result };
+  }
+
+  // E12 「设为参考」：暂存后留在本页 + 给出"去工作台查看"链接（满额/重复也如实反馈）。
+  function handleSetReference() {
+    const r = stageActiveAsReference(pickProject);
+    if (!r) return;
+    setStagedNote({
+      projectId: r.project.id,
+      projectName: r.project.name,
+      result: r.result,
+    });
+  }
+
+  // E11 「加入项目」：暂存成功（或已存在）才跳工作台；满额则只提示、不跳转。
+  function handleAddToProject() {
+    const r = stageActiveAsReference(pickProject);
+    if (!r) return;
+    if (r.result === "full") {
+      setStagedNote({
+        projectId: r.project.id,
+        projectName: r.project.name,
+        result: r.result,
+      });
+      return;
+    }
+    router.push(`/workspace?project=${r.project.id}`);
+  }
+
   const stats = [
     { label: "素材总数", value: String(assets.length) },
     { label: "图片", value: String(assets.filter(isImage).length) },
@@ -100,7 +174,7 @@ export default function AssetsPage() {
       <input
         ref={fileInput}
         type="file"
-        accept="image/*"
+        accept={uploadAccept}
         className="hidden"
         onChange={(e) => {
           const f = e.target.files?.[0];
@@ -112,13 +186,32 @@ export default function AssetsPage() {
         title="素材库"
         subtitle="集中管理品牌图片、产品图与参考素材"
         action={
-          <Button
-            size="lg"
-            disabled={upload.isPending}
-            onClick={() => fileInput.current?.click()}
-          >
-            {upload.isPending ? "上传中…" : "⬆ 上传素材"}
-          </Button>
+          <div className="flex items-center gap-2">
+            <select
+              value={uploadCategory}
+              onChange={(e) => setUploadCategory(e.target.value)}
+              disabled={upload.isPending}
+              aria-label="上传分类"
+              className="h-11 rounded-full border border-border bg-card px-4 text-sm text-foreground"
+            >
+              {CATEGORIES.filter((c) => c.value !== "all").map((c) => (
+                <option key={c.value} value={c.value}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+            <Button
+              size="lg"
+              disabled={upload.isPending}
+              onClick={() => fileInput.current?.click()}
+            >
+              {upload.isPending
+                ? "上传中…"
+                : uploadCategory === "VI_DOC"
+                  ? "⬆ 上传 PDF/VI 手册"
+                  : "⬆ 上传素材"}
+            </Button>
+          </div>
         }
       />
 
@@ -283,6 +376,77 @@ export default function AssetsPage() {
                     </div>
                   </div>
                 ) : null}
+
+                {/* E11/E12 · 联动工作台 / Campaign */}
+                <div className="mt-5 border-t border-border pt-4">
+                  <div className="mb-2 text-xs font-medium text-muted-foreground">
+                    用于 Campaign
+                  </div>
+                  {!isImage(active) ? (
+                    <p className="text-xs text-muted-foreground">
+                      仅图片素材可设为参考 / 加入项目（PDF·VI 文档等不支持）。
+                    </p>
+                  ) : projects.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">
+                      还没有 Campaign，先去项目页创建一个。
+                    </p>
+                  ) : (
+                    <>
+                      <select
+                        value={pickProject}
+                        onChange={(e) => {
+                          setPickProject(e.target.value);
+                          setStagedNote(null);
+                        }}
+                        className="h-10 w-full rounded-full border border-border bg-card px-4 text-sm outline-none focus:border-primary/40 focus:shadow-[0_0_0_4px_rgba(124,92,255,0.08)]"
+                      >
+                        <option value="">选择 Campaign…</option>
+                        {projects.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}
+                          </option>
+                        ))}
+                      </select>
+                      <div className="mt-3 flex flex-col gap-2">
+                        <Button
+                          variant="outline"
+                          className="w-full rounded-full"
+                          disabled={!pickProject}
+                          onClick={handleSetReference}
+                        >
+                          ✦ 设为参考
+                        </Button>
+                        <Button
+                          className="w-full rounded-full"
+                          disabled={!pickProject}
+                          onClick={handleAddToProject}
+                        >
+                          ＋ 加入项目
+                        </Button>
+                      </div>
+                      {stagedNote ? (
+                        stagedNote.result === "full" ? (
+                          <div className="mt-3 rounded-2xl bg-muted px-3.5 py-2.5 text-xs text-muted-foreground">
+                            「{stagedNote.projectName}」的参考素材已满（上限{" "}
+                            {REFERENCE_CAP} 个），请先在工作台移除部分再添加。
+                          </div>
+                        ) : (
+                          <div className="mt-3 rounded-2xl bg-accent-soft px-3.5 py-2.5 text-xs text-primary">
+                            {stagedNote.result === "duplicate"
+                              ? `该素材已在「${stagedNote.projectName}」的参考中。`
+                              : `已设为「${stagedNote.projectName}」的参考素材。`}{" "}
+                            <a
+                              className="font-medium underline underline-offset-2"
+                              href={`/workspace?project=${stagedNote.projectId}`}
+                            >
+                              去工作台查看
+                            </a>
+                          </div>
+                        )
+                      ) : null}
+                    </>
+                  )}
+                </div>
               </>
             ) : (
               <div className="py-10 text-center text-sm text-muted-foreground">

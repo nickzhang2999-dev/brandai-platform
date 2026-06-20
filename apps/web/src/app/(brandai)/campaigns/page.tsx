@@ -20,13 +20,43 @@ const FILTERS: { key: string; label: string; status?: Status }[] = [
   { key: "done", label: "已完成", status: "COMPLETED" },
 ];
 
+type SortKey = "recent" | "name" | "progress";
+const SORTS: { key: SortKey; label: string }[] = [
+  { key: "recent", label: "最近创建" },
+  { key: "name", label: "名称 A-Z" },
+  { key: "progress", label: "进度" },
+];
+
+type RangeKey = "all" | "7" | "30" | "90";
+const RANGES: { key: RangeKey; label: string; days?: number }[] = [
+  { key: "all", label: "全部时间" },
+  { key: "7", label: "近 7 天", days: 7 },
+  { key: "30", label: "近 30 天", days: 30 },
+  { key: "90", label: "近 90 天", days: 90 },
+];
+
 export default function CampaignsPage() {
   const { wsId, brandName } = useBrand();
   const qc = useQueryClient();
   const [activeId, setActiveId] = useState<string | null>(null);
   const [filterKey, setFilterKey] = useState("all");
+  const [sortKey, setSortKey] = useState<SortKey>("recent");
+  const [rangeKey, setRangeKey] = useState<RangeKey>("all");
   const [q, setQ] = useState("");
   const [creating, setCreating] = useState(false);
+  // Lifecycle action target: which transition the confirm dialog is for.
+  const [confirmAction, setConfirmAction] = useState<LifecycleAction | null>(
+    null,
+  );
+  const [editingSummary, setEditingSummary] = useState(false);
+  // Snapshot the project a dialog targets, captured at open time, resolved from
+  // the FULL projects list (not the filter-derived `active`). Otherwise changing
+  // a filter while a dialog is open could re-target the confirm/summary action
+  // to a different visible project.
+  const [dialogProjectId, setDialogProjectId] = useState<string | null>(null);
+
+  const invalidate = () =>
+    qc.invalidateQueries({ queryKey: ["brandai-projects", wsId] });
 
   const { data: projects = [], isLoading } = useQuery({
     queryKey: ["brandai-projects", wsId],
@@ -35,15 +65,43 @@ export default function CampaignsPage() {
 
   const filtered = useMemo(() => {
     const f = FILTERS.find((x) => x.key === filterKey);
-    return projects.filter((p) => {
+    const range = RANGES.find((x) => x.key === rangeKey);
+    const cutoff =
+      range?.days != null ? Date.now() - range.days * 86_400_000 : null;
+
+    const list = projects.filter((p) => {
       if (f?.status && (p.status ?? "DRAFT") !== f.status) return false;
       if (q && !p.name.toLowerCase().includes(q.toLowerCase())) return false;
+      if (cutoff != null) {
+        const t = Date.parse(p.createdAt);
+        if (Number.isNaN(t) || t < cutoff) return false;
+      }
       return true;
     });
-  }, [projects, filterKey, q]);
 
-  const active =
-    filtered.find((p) => p.id === activeId) ?? filtered[0] ?? projects[0];
+    const sorted = [...list];
+    sorted.sort((a, b) => {
+      switch (sortKey) {
+        case "name":
+          return a.name.localeCompare(b.name, "zh-Hans-CN");
+        case "progress":
+          return (b.progress ?? 0) - (a.progress ?? 0);
+        case "recent":
+        default:
+          return (Date.parse(b.createdAt) || 0) - (Date.parse(a.createdAt) || 0);
+      }
+    });
+    return sorted;
+  }, [projects, filterKey, q, sortKey, rangeKey]);
+
+  // Only ever select from the FILTERED set — falling back to projects[0] when
+  // filters match nothing would make the summary panel + lifecycle actions
+  // (补充需求 / 提交终审 / 归档) operate on a project that isn't shown.
+  const active = filtered.find((p) => p.id === activeId) ?? filtered[0] ?? null;
+  // Dialog target is the snapshotted id resolved against ALL projects, so it is
+  // stable regardless of list filtering while the dialog is open.
+  const dialogProject =
+    projects.find((p) => p.id === dialogProjectId) ?? null;
 
   return (
     <div className="mx-auto max-w-[1180px] px-10 py-10">
@@ -78,6 +136,30 @@ export default function CampaignsPage() {
             {f.label}
           </button>
         ))}
+        <select
+          value={rangeKey}
+          onChange={(e) => setRangeKey(e.target.value as RangeKey)}
+          aria-label="时间范围"
+          className="h-9 rounded-full border border-border bg-card px-4 text-sm text-muted-foreground outline-none transition-colors hover:bg-muted focus:border-primary/40 focus:shadow-[0_0_0_4px_rgba(124,92,255,0.08)]"
+        >
+          {RANGES.map((r) => (
+            <option key={r.key} value={r.key}>
+              {r.label}
+            </option>
+          ))}
+        </select>
+        <select
+          value={sortKey}
+          onChange={(e) => setSortKey(e.target.value as SortKey)}
+          aria-label="排序方式"
+          className="h-9 rounded-full border border-border bg-card px-4 text-sm text-muted-foreground outline-none transition-colors hover:bg-muted focus:border-primary/40 focus:shadow-[0_0_0_4px_rgba(124,92,255,0.08)]"
+        >
+          {SORTS.map((s) => (
+            <option key={s.key} value={s.key}>
+              {`排序：${s.label}`}
+            </option>
+          ))}
+        </select>
       </div>
 
       {isLoading ? (
@@ -151,6 +233,14 @@ export default function CampaignsPage() {
               {active?.aiSummary ||
                 "该项目尚无 AI 摘要。进入工作台出图、补充需求后，这里会沉淀项目进展与下一步建议。"}
             </p>
+            {active ? (
+              <div className="mt-2 text-[11px] text-muted-foreground">
+                当前状态：
+                <span className="font-medium text-foreground/80">
+                  {STATUS_LABEL[(active.status ?? "DRAFT") as Status]}
+                </span>
+              </div>
+            ) : null}
             {active?.channels && active.channels.length > 0 ? (
               <div className="mt-4">
                 <div className="mb-2 text-xs text-muted-foreground">投放渠道</div>
@@ -167,6 +257,46 @@ export default function CampaignsPage() {
                   进入工作台出图
                 </Button>
               </a>
+              <Button
+                variant="outline"
+                className="w-full justify-center"
+                disabled={!active}
+                onClick={() => {
+                  if (!active) return;
+                  setDialogProjectId(active.id);
+                  setEditingSummary(true);
+                }}
+              >
+                补充需求
+              </Button>
+              <Button
+                variant="outline"
+                className="w-full justify-center"
+                disabled={
+                  !active || (active.status ?? "DRAFT") !== "DRAFT"
+                }
+                onClick={() => {
+                  if (!active) return;
+                  setDialogProjectId(active.id);
+                  setConfirmAction("submit");
+                }}
+              >
+                提交终审
+              </Button>
+              <Button
+                variant="outline"
+                className="w-full justify-center"
+                disabled={
+                  !active || (active.status ?? "DRAFT") === "COMPLETED"
+                }
+                onClick={() => {
+                  if (!active) return;
+                  setDialogProjectId(active.id);
+                  setConfirmAction("archive");
+                }}
+              >
+                归档项目
+              </Button>
             </div>
           </aside>
         </div>
@@ -177,12 +307,204 @@ export default function CampaignsPage() {
           wsId={wsId}
           onClose={() => setCreating(false)}
           onCreated={(p) => {
-            qc.invalidateQueries({ queryKey: ["brandai-projects", wsId] });
+            invalidate();
             setActiveId(p.id);
             setCreating(false);
           }}
         />
       ) : null}
+
+      {dialogProject && confirmAction ? (
+        <ConfirmActionDialog
+          wsId={wsId}
+          project={dialogProject}
+          action={confirmAction}
+          onClose={() => setConfirmAction(null)}
+          onDone={() => {
+            invalidate();
+            setConfirmAction(null);
+          }}
+        />
+      ) : null}
+
+      {dialogProject && editingSummary ? (
+        <SummaryDialog
+          wsId={wsId}
+          project={dialogProject}
+          onClose={() => setEditingSummary(false)}
+          onDone={() => {
+            invalidate();
+            setEditingSummary(false);
+          }}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+type LifecycleAction = "submit" | "archive";
+
+const STATUS_LABEL: Record<Status, string> = {
+  DRAFT: "草稿",
+  IN_PROGRESS: "进行中",
+  COMPLETED: "已完成",
+};
+
+// Honest mapping onto the real CampaignStatus enum (DRAFT/IN_PROGRESS/COMPLETED):
+// there is no dedicated REVIEW status, so 「提交终审」moves to IN_PROGRESS
+// (closest "under review / in progress" state) and 「归档项目」to COMPLETED.
+const ACTION_META: Record<
+  LifecycleAction,
+  { title: string; body: string; cta: string; nextStatus: Status }
+> = {
+  submit: {
+    title: "提交终审",
+    body: "提交后项目将进入「进行中」状态，进入评审与出图阶段。可继续在工作台出图。",
+    cta: "确认提交",
+    nextStatus: "IN_PROGRESS",
+  },
+  archive: {
+    title: "归档项目",
+    body: "归档后项目将标记为「已完成」，从进行中的工作中收起。你仍可随时查看其历史产出。",
+    cta: "确认归档",
+    nextStatus: "COMPLETED",
+  },
+};
+
+function ConfirmActionDialog({
+  wsId,
+  project,
+  action,
+  onClose,
+  onDone,
+}: {
+  wsId: string;
+  project: Project;
+  action: LifecycleAction;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const meta = ACTION_META[action];
+  const mutation = useMutation({
+    mutationFn: () =>
+      apiFetch<Project>(
+        `/api/workspaces/${wsId}/projects/${project.id}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ status: meta.nextStatus }),
+        },
+      ),
+    onSuccess: onDone,
+  });
+
+  return (
+    <ModalShell onClose={onClose}>
+      <div className="text-lg font-semibold">{meta.title}</div>
+      <p className="mt-1 text-sm text-muted-foreground">「{project.name}」</p>
+      <p className="mt-4 rounded-2xl bg-accent-soft/60 p-4 text-sm leading-relaxed text-foreground/80">
+        {meta.body}
+      </p>
+      {mutation.isError ? (
+        <p className="mt-3 text-sm text-destructive">
+          {(mutation.error as Error).message}
+        </p>
+      ) : null}
+      <div className="mt-6 flex justify-end gap-2">
+        <Button variant="outline" onClick={onClose}>
+          取消
+        </Button>
+        <Button
+          disabled={mutation.isPending}
+          onClick={() => mutation.mutate()}
+        >
+          {mutation.isPending ? "处理中…" : meta.cta}
+        </Button>
+      </div>
+    </ModalShell>
+  );
+}
+
+function SummaryDialog({
+  wsId,
+  project,
+  onClose,
+  onDone,
+}: {
+  wsId: string;
+  project: Project;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [summary, setSummary] = useState(project.aiSummary ?? "");
+  const mutation = useMutation({
+    mutationFn: () =>
+      apiFetch<Project>(
+        `/api/workspaces/${wsId}/projects/${project.id}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ aiSummary: summary.trim() }),
+        },
+      ),
+    onSuccess: onDone,
+  });
+
+  return (
+    <ModalShell onClose={onClose}>
+      <div className="text-lg font-semibold">补充需求 / 项目摘要</div>
+      <p className="mt-1 text-sm text-muted-foreground">
+        补充这个 Campaign 的目标、进展与下一步，沉淀为 AI 项目摘要。
+      </p>
+      <div className="mt-5">
+        <Field label="项目摘要">
+          <textarea
+            autoFocus
+            value={summary}
+            onChange={(e) => setSummary(e.target.value)}
+            rows={6}
+            placeholder="如：本期主打夏季新品，已完成 KV 主视觉初稿，下一步补充电商详情页…"
+            className="w-full resize-none rounded-2xl border border-border bg-background p-3 text-sm outline-none focus:border-primary/40 focus:shadow-[0_0_0_4px_rgba(124,92,255,0.08)]"
+          />
+        </Field>
+      </div>
+      {mutation.isError ? (
+        <p className="mt-3 text-sm text-destructive">
+          {(mutation.error as Error).message}
+        </p>
+      ) : null}
+      <div className="mt-6 flex justify-end gap-2">
+        <Button variant="outline" onClick={onClose}>
+          取消
+        </Button>
+        <Button
+          disabled={mutation.isPending}
+          onClick={() => mutation.mutate()}
+        >
+          {mutation.isPending ? "保存中…" : "保存"}
+        </Button>
+      </div>
+    </ModalShell>
+  );
+}
+
+/** 共享浮层外壳（与 CreateDialog 同款圆角/阴影/遮罩）。 */
+function ModalShell({
+  onClose,
+  children,
+}: {
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/30 p-4 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-md rounded-3xl border border-border bg-card p-6 shadow-[0_24px_70px_rgba(30,30,60,0.18)]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {children}
+      </div>
     </div>
   );
 }

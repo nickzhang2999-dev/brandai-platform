@@ -749,9 +749,9 @@ function RuleCard({
   // rendered separately below as large thumbnails — the panel API is text-only).
   const evidenceNotes = rule.evidence
     .map((ev) => {
-      const asset = assetById.get(ev.assetId);
-      const label = asset?.fileName ?? ev.assetId;
-      return ev.note ? `${label} — ${ev.note}` : label;
+      const asset = ev.assetId ? assetById.get(ev.assetId) : undefined;
+      const label = asset?.fileName ?? ev.assetId ?? "";
+      return ev.note ? (label ? `${label} — ${ev.note}` : ev.note) : label;
     })
     .filter(Boolean);
 
@@ -796,7 +796,7 @@ function RuleCard({
           <FieldLabel className="mb-3">证据 · 每条都看证据</FieldLabel>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {rule.evidence.map((ev, i) => {
-              const asset = assetById.get(ev.assetId);
+              const asset = ev.assetId ? assetById.get(ev.assetId) : undefined;
               const thumb =
                 ev.thumbnailUrl ??
                 (asset ? assetThumbUrl(wsId, asset.id, asset.url) : undefined);
@@ -809,7 +809,7 @@ function RuleCard({
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
                       src={thumb}
-                      alt={asset?.fileName ?? ev.assetId}
+                      alt={asset?.fileName ?? ev.assetId ?? "证据"}
                       className="aspect-video w-full rounded-xl border border-foreground/10 object-cover"
                     />
                   ) : (
@@ -817,7 +817,7 @@ function RuleCard({
                   )}
                   <figcaption className="flex flex-col gap-0.5">
                     <span className="truncate font-mono text-[11px] text-foreground/70">
-                      {asset?.fileName ?? ev.assetId}
+                      {asset?.fileName ?? ev.assetId ?? "证据"}
                     </span>
                     {ev.note ? (
                       <span className="text-xs text-muted-foreground">
