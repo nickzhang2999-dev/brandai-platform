@@ -91,7 +91,7 @@ export const CreateGenerationInput = z.object({
    * W×H) instead of `versionCount` same-size versions. Empty/absent → legacy
    * versionCount path.
    */
-  targets: z.array(SizeSpec).optional(),
+  targets: z.array(SizeSpec).max(12).optional(),
   /**
    * M3 — text rendering strategy threaded down to the AI service's
    * GenerateRequest. `direct` (default) keeps legacy behavior; `layered` steers
@@ -113,7 +113,7 @@ export const CampaignKitInput = z.object({
   sellingPoint: z.string().min(1),
   scene: z.string().min(1),
   scenes: z.array(SceneType).min(1).max(5),
-  targets: z.array(SizeSpec).min(1),
+  targets: z.array(SizeSpec).min(1).max(12),
   textMode: z.enum(["direct", "layered"]).default("direct"),
 });
 export type CampaignKitInput = z.infer<typeof CampaignKitInput>;

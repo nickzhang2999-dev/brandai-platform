@@ -90,8 +90,8 @@ export type ParseManualResponse = z.infer<typeof ParseManualResponse>;
 export const SizeSpec = z.object({
   key: z.string(),
   label: z.string(),
-  width: z.number().int().positive(),
-  height: z.number().int().positive(),
+  width: z.number().int().positive().max(8192),
+  height: z.number().int().positive().max(8192),
 });
 export type SizeSpec = z.infer<typeof SizeSpec>;
 
@@ -171,7 +171,7 @@ export const GenerateRequest = z.object({
    * `targetKey` / `targetLabel` into each version's `params`. When absent, the
    * legacy same-size `versionCount` path is used unchanged.
    */
-  targets: z.array(SizeSpec).optional(),
+  targets: z.array(SizeSpec).max(12).optional(),
   /**
    * M3 — text rendering strategy. AI models render text (especially Chinese)
    * unreliably, so the caller picks how text lands on the image:

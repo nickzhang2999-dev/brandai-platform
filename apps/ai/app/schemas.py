@@ -118,8 +118,8 @@ class SizeSpec(BaseModel):
 
     key: str
     label: str
-    width: int
-    height: int
+    width: int = Field(gt=0, le=8192)
+    height: int = Field(gt=0, le=8192)
 
 
 class GenerateRequest(BaseModel):
@@ -131,7 +131,7 @@ class GenerateRequest(BaseModel):
     aiConstraints: Optional[AIConstraints] = None
     # P2.0 — when present, produce one image per target (ignoring versionCount
     # and the sceneType default size). exclude_none keeps the legacy wire shape.
-    targets: Optional[list[SizeSpec]] = None
+    targets: Optional[list[SizeSpec]] = Field(default=None, max_length=12)
     # M3 — text rendering strategy. "direct" (default) = model renders any text
     # itself (legacy). "layered" = steer the model to leave clean negative space
     # and render NO text, so the client overlays crisp editable text on top.
