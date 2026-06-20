@@ -18,7 +18,7 @@
     "@brandai/db": "workspace:*",
     "@brandai/ui": "workspace:*",
     "@tanstack/react-query": "^5.62.7",
-    "archiver": "^7.0.1",
+    "archiver": "^8.0.0",
     "bullmq": "^5.34.5",
     "glob": "^11.0.0",
     "ioredis": "^5.4.2",
@@ -32,7 +32,7 @@
   "devDependencies": {
     "@brandai/config": "workspace:*",
     "@playwright/test": "^1.60.0",
-    "@types/archiver": "^6.0.3",
+    "@types/archiver": "^8.0.0",
     "@types/node": "^22.10.2",
     "@types/react": "^19.0.2",
     "@types/react-dom": "^19.0.2",
