@@ -184,10 +184,10 @@
 | I11 | Admin·注册开关 / 活动日志 / 用量 | ✅ | `api/admin/registration|activity|usage` | — | 2026-06-20 |
 | I12 | Workers（generate/edit/recognize/parse-manual） | ✅ | `lib/workers/*.worker.ts` | BullMQ，独立容器 | 2026-06-20 |
 | I13 | AI 服务 /v1（generate/edit/recognize/parse-manual/compliance/diag） | ✅ | `apps/ai/app/main.py` | 内部网，不出公网 | 2026-06-20 |
-| I14 | AI /v1/ingest/website（网站采集） | 🟡 | `apps/ai` 有端点；UI/worker 未接 | phase 2（§2 异步化） | 2026-06-20 |
+| I14 | AI /v1/ingest/website（网站采集） | ✅ | `apps/ai` 端点 + `ingest.worker.ts` + `website-ingest.tsx`（K3 §2 异步：202→轮询） | 异步接入 2026-06-20 |
 | I15 | Providers：openai ✅已验 / gemini ✅ / seeddream ✅ / mock ✅ | ✅ | `apps/ai/app/providers/*` | 仅 openai 端到端验过 | 2026-06-20 |
 | I16 | Prisma 全模型（Brand/Campaign/Knowledge/Asset/Generation 等） | ✅ | `packages/db/prisma/schema.prisma` | 业务映射见 CLAUDE§3 | 2026-06-20 |
-| I17 | 配额 quota（按计划 enforce）+ 只读端点 | ✅ | `lib/quota.ts`、`GET /quota` | 新增 `getQuotaStatus` + `GET /api/workspaces/[wsId]/quota`（F11 用）；计费 UI/原子预留/regenerate门 phase 2 | quota 读端点 2026-06-20 |
+| I17 | 配额 quota（按计划 enforce）+ 只读端点 | ✅ | `lib/quota.ts`、`GET /quota`、`contracts/quota-policy.ts` | `getQuotaStatus` + `GET .../quota`（F11）；**K1 落地**：owner 计量 + Serializable 原子预留 + generate/regenerate/kit 配额门 + kit 去重计费 + maxWorkspaces。默认 -1 不限→一期零回归。**计费 UI / 额度升级弹窗(H12)** 仍 phase-2 | quota enforce 2026-06-20 |
 | I18 | 异步任务 AsyncTask + 刷新可续轮询 | ✅ | `lib/async-tasks.ts`、`tasks/[taskId]` | §2.2 server-authoritative | 2026-06-20 |
 | I19 | 存储 S3/R2/COS + data: 兜底 | ✅ | `lib/s3.ts` | per-call client | 2026-06-20 |
 | I20 | 合规 precheck（文本）+ VLM（视觉） | ✅ | `lib/precheck.ts`、`compliance/precheck` | FORBIDDEN 阻断 | 2026-06-20 |
@@ -195,7 +195,7 @@
 | I22 | 规则快照 / 恢复 | ✅ | `rules/snapshots/*` | 自动备份后恢复 | 2026-06-20 |
 | I23 | 用量日志 UsageLog | ✅ | `lib/usage.ts` | provider/model/cost/tokens | 2026-06-20 |
 | I24 | 健康探针 /api/health | ✅ | `api/health` | `{web,ai}` | 2026-06-20 |
-| I25 | G6 协作（review/submit/approve 端点 + 字段） | 🟡 | `versions/[id]/{submit,review,recheck}` | 端点+schema 就绪，UI/enforce phase 2 | 2026-06-20 |
+| I25 | G6 协作（review/submit/approve 端点 + 字段） | 🟡 | `versions/[id]/{submit,review,recheck}`、`contracts/release-policy.ts` | 端点+schema 就绪；**K2 enforce 接入**：导出/下载按角色只放行 final/approved，membership-first 解析品牌。协作 UI/邀请流 phase-2 | enforce 2026-06-20 |
 | I26 | CI / release / dependabot | ✅ | `.github/workflows/*`、`.github/dependabot.yml` | — | 2026-06-20 |
 | I27 | 部署+冒烟技能 cds-deploy-verify | ✅ | `.claude/skills/cds-deploy-verify` | push→deploy→真出图冒烟 | 2026-06-20 |
 | I28 | BullMQ 队列按部署命名空间隔离 | ✅ | `lib/queue.ts`、`lib/workers/*`、`BULLMQ_PREFIX` | 共享 Redis 下队列无前缀致跨部署 worker 串 job（实测丢字段）；加 `BULLMQ_PREFIX`(默认 bull) 隔离；契合 §3.5 多租户。**部署要求**：每分支须设 **branch-scoped** `BULLMQ_PREFIX`（本分支已设并经冒烟验证：队列计数归零 + styleKeywords 落库，证明 web+worker 共享前缀）。**phase-2**：把该前缀自动化进 `cds-compose.yml`（需 compose 审批 + 每分支 token），免手设 | 新增 2026-06-20 |
@@ -219,9 +219,9 @@
 
 | 编号 | 项 | 状态 | 备注 | 变更 |
 |---|---|---|---|---|
-| K1 | 配额/计费 enforcement（按 owner 计、原子预留、套餐 maxWorkspaces、kit/regenerate 走配额门） | ➖ phase2 | 含计费 UI / 额度升级弹窗(H12/F11) | 2026-06-20 |
-| K2 | G6 协作 RBAC（Membership 解析、被邀成员放行、导出只放行 final/approved） | ➖ phase2 | I25 底座就绪 | 2026-06-20 |
-| K3 | §2 异步化补齐（Campaign Kit precheck/ingest 移入 worker） | ➖ phase2 | I14 | 2026-06-20 |
+| K1 | 配额/计费 enforcement（按 owner 计、原子预留、套餐 maxWorkspaces、kit/regenerate 走配额门） | ✅ | `lib/quota.ts`+`contracts/quota-policy.ts`：`reserveGenerationQuota` 解析 owner→Serializable 事务计 owner 用量+建 PENDING（原子预留，FAILED 释放）；generate/regenerate/campaign-kit 全过配额门；kit 按**去重** scene 计；`maxWorkspaces` 在 `POST /workspaces` enforce。默认 owner/admin = ENTERPRISE 不限(-1)→**一期闭环零回归**（不限走 no-tx 快路径） | 完成 2026-06-20 |
+| K2 | G6 协作 RBAC（Membership 解析、被邀成员放行、导出只放行 final/approved） | 🟡 | `contracts/release-policy.ts`：导出 ZIP + 单图下载按角色过滤（OWNER 全量；协作者/VIEWER 仅 final/approved，草稿静默剔除/403）；`getOrCreateActiveBrand` membership-first。**协作 UI/邀请流仍 phase-2** | enforce 接入 2026-06-20 |
+| K3 | §2 异步化补齐（Campaign Kit precheck/ingest 移入 worker） | ✅ | 新 `AsyncTaskKind=INGEST` + `ingestQueue` + `ingest.worker.ts`（202→轮询，6min 有界）；campaign-kit precheck 从 handler 移除（worker 内按 scene 跑） | 完成 2026-06-20 |
 | K4 | PDF 知识库 + recognize 证据（Evidence.assetId optional + 校验归属） | ✅ | Evidence.assetId 双侧 optional；`_coerce_recognize` 保留 note-only + 剔除幻觉 assetId + 去回填；rule-workbench 消费侧守卫 | 完成 2026-06-20 |
 | K5 | 多尺寸 UI（targets）+ regenerate textMode 持久化 + 记录 snap 真实尺寸 | ✅ | 多尺寸渠道多选 + textMode 切换/持久化/重建（见 F16）；**记录 OpenAI snap 真实尺寸**：`apps/ai` PIL 解码返回图→`actualWidth/actualHeight`→`generate.worker` 落 `GenerationVersion.params`（top-level width/height 仍存请求值，避免语义变更） | 完成 2026-06-20 |
 | K6 | 首个 admin bootstrap 原子化（并发竞态） | ✅ | `register/route.ts` Serializable 事务 + P2034 退避 | 完成 2026-06-20 |
