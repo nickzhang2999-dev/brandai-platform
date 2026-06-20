@@ -256,6 +256,38 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+function EvidenceChip({ note }: { note?: string }) {
+  return (
+    <span
+      title={note}
+      className="max-w-[220px] truncate rounded-full border border-border bg-muted px-3 py-1 text-xs text-muted-foreground"
+    >
+      {note ?? "📄 文件"}
+    </span>
+  );
+}
+
+function EvidenceItem({ wsId, ev }: { wsId: string; ev: Evidence }) {
+  const [failed, setFailed] = useState(false);
+  // note-only evidence (no assetId) → text chip.
+  if (!ev.assetId) return ev.note ? <EvidenceChip note={ev.note} /> : null;
+  // assetId may point at a NON-image asset (e.g. a parse-manual VI_DOC/PDF whose
+  // id is stamped onto evidence) → the <img> 404s/decodes-empty; fall back to a
+  // file/note chip instead of a broken thumbnail.
+  if (failed)
+    return <EvidenceChip note={ev.note ? `📄 ${ev.note}` : "📄 文件"} />;
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={assetThumbUrl(wsId, ev.assetId, ev.thumbnailUrl ?? "")}
+      alt={ev.note ?? "依据"}
+      title={ev.note ?? undefined}
+      onError={() => setFailed(true)}
+      className="h-12 w-12 rounded-xl border border-border object-cover"
+    />
+  );
+}
+
 function EvidenceThumbs({
   wsId,
   evidence,
@@ -264,33 +296,15 @@ function EvidenceThumbs({
   evidence: Evidence[];
 }) {
   if (!evidence?.length) return null;
-  // K4 — evidence may be note-only (no assetId) from VLM recognition. Show the
-  // thumbnail when an asset is referenced, otherwise render the observation note
-  // as a text chip so valid note-only evidence isn't silently dropped here.
+  // K4 — evidence may be note-only (no assetId) from VLM recognition; PDF-manual
+  // evidence carries a non-image assetId. EvidenceItem handles both.
   const shown = evidence.filter((ev) => ev?.assetId || ev?.note).slice(0, 4);
   if (!shown.length) return null;
   return (
     <div className="flex flex-wrap items-center gap-2 pt-1">
-      {shown.map((ev, i) =>
-        ev.assetId ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            key={`${ev.assetId}-${i}`}
-            src={assetThumbUrl(wsId, ev.assetId, ev.thumbnailUrl ?? "")}
-            alt={ev.note ?? "依据"}
-            title={ev.note ?? undefined}
-            className="h-12 w-12 rounded-xl border border-border object-cover"
-          />
-        ) : (
-          <span
-            key={`note-${i}`}
-            title={ev.note ?? undefined}
-            className="max-w-[220px] truncate rounded-full border border-border bg-muted px-3 py-1 text-xs text-muted-foreground"
-          >
-            {ev.note}
-          </span>
-        ),
-      )}
+      {shown.map((ev, i) => (
+        <EvidenceItem key={`${ev.assetId ?? "note"}-${i}`} wsId={wsId} ev={ev} />
+      ))}
     </div>
   );
 }

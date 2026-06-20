@@ -53,8 +53,11 @@ export default function AssetsPage() {
   // Upload category picker — lets users create non-image assets too (notably
   // VI_DOC/PDF, which the 手册解析(D14) flow needs). Defaults to OTHER.
   const [uploadCategory, setUploadCategory] = useState("OTHER");
+  // VI_DOC feeds the parse-manual flow, whose backend only reads PDF bytes
+  // (pypdf) — so restrict VI manuals to PDF (an image saved as VI_DOC would
+  // "parse" to 0 rules silently). Other categories stay image-only.
   const uploadAccept =
-    uploadCategory === "VI_DOC" ? "application/pdf,image/*" : "image/*";
+    uploadCategory === "VI_DOC" ? "application/pdf" : "image/*";
   const [uploadErr, setUploadErr] = useState<string | null>(null);
   // E11/E12 · 参考素材联动：选中的目标 Campaign + 暂存确认提示。
   const [pickProject, setPickProject] = useState("");
