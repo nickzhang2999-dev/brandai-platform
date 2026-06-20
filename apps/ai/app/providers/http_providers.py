@@ -568,12 +568,19 @@ class HttpVLMProvider(VLMProvider):
         parts: list[dict[str, Any]] = [
             {"type": "text", "text": _ANALYZE_PROMPT.format(ids=", ".join(asset_ids))}
         ]
+        attached = 0
         for a in assets[:_MAX_VISION_IMAGES]:
             img = await self._inline_image(a["url"])
             if img is None:
                 continue  # SSRF-blocked → drop this asset from the VLM request
             parts.append({"type": "text", "text": f"assetId={a['id']}"})
             parts.append({"type": "image_url", "image_url": {"url": img}})
+            attached += 1
+        if attached == 0:
+            # 没有任何素材图能安全内联(全被 SSRF 拦/抓取失败,或 assets 为空):不把纯
+            # 文本喂给 VLM——它会无视输入凭空造规则、再被 _coerce_recognize 回填 assetId。
+            # 直接返回空规则,与 parse-manual 空文本的处理一致(fail-closed)。
+            return {"rules": []}
         data = await self._chat_json(parts, system=_ANALYZE_SYSTEM)
         return _coerce_recognize(data, asset_ids)
 
