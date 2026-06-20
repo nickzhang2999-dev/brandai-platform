@@ -2,7 +2,13 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { Asset, BrandRule, Evidence, TaskState } from "@brandai/contracts";
+import type {
+  Asset,
+  BrandRule,
+  Evidence,
+  Generation,
+  TaskState,
+} from "@brandai/contracts";
 import { Button } from "@brandai/ui";
 import { apiFetch, assetThumbUrl } from "@/lib/client";
 import { useBrand } from "../brand-context";
@@ -11,6 +17,18 @@ import { Chip } from "../_ui";
 // §2.2 — bounded intermediate state; mirror the workspace page's POLL_CAP.
 const POLL_CAP_MS = 6 * 60 * 1000;
 const POLL_INTERVAL_MS = 2500;
+
+// D10 — generate-poll shape (mirrors the workspace page's JobState) for the
+// brand-preview server-authoritative flow.
+type JobState = {
+  generation: Generation;
+  job: {
+    jobId: string;
+    status: string;
+    progress: number;
+    failedReason?: string;
+  };
+};
 
 // D2 · 快捷提示词 — pure client convenience, fills the rule textarea. text only.
 const QUICK_PROMPTS: { type: string; text: string }[] = [
@@ -880,6 +898,174 @@ function RecognizeModal({
   );
 }
 
+/**
+ * D10 · 生成品牌预览 — compose a brief from CONFIRMED brand knowledge and run it
+ * through the EXISTING server-authoritative generate pipeline (POST
+ * /brand-preview → 202 → poll GET /generations/[id]?jobId= → image surfaces).
+ * Real provider → real image. Persists/shows the latest preview across refresh
+ * via GET /brand-preview. §2: no synchronous AI; bounded client poll + exit.
+ */
+function BrandPreview({
+  wsId,
+  confirmedCount,
+}: {
+  wsId: string;
+  confirmedCount: number;
+}) {
+  const qc = useQueryClient();
+  const [genId, setGenId] = useState<string | null>(null);
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [timedOut, setTimedOut] = useState(false);
+  const startedAt = useRef(0);
+
+  // Latest persisted preview (so a refresh still shows the most recent image).
+  const { data: latest } = useQuery<{ generation: Generation | null }>({
+    queryKey: ["brandai-brand-preview", wsId],
+    queryFn: () =>
+      apiFetch<{ generation: Generation | null }>(
+        `/api/workspaces/${wsId}/brand-preview`,
+      ),
+  });
+
+  const { data: poll } = useQuery<JobState>({
+    queryKey: ["brandai-brand-preview-poll", wsId, genId, jobId],
+    queryFn: () =>
+      apiFetch<JobState>(
+        `/api/workspaces/${wsId}/generations/${genId}?jobId=${jobId}`,
+      ),
+    enabled: !!genId,
+    refetchInterval: (q) => {
+      const s = q.state.data?.job?.status ?? q.state.data?.generation.status;
+      if (s === "SUCCEEDED" || s === "FAILED") return false;
+      if (Date.now() - startedAt.current > POLL_CAP_MS) return false;
+      return POLL_INTERVAL_MS;
+    },
+  });
+
+  useEffect(() => {
+    if (!genId) return;
+    const t = setInterval(() => {
+      if (Date.now() - startedAt.current > POLL_CAP_MS) setTimedOut(true);
+    }, 3000);
+    return () => clearInterval(t);
+  }, [genId]);
+
+  const status = poll?.job?.status ?? poll?.generation.status ?? null;
+  const running =
+    !!genId && status !== "SUCCEEDED" && status !== "FAILED" && !timedOut;
+
+  // On success, refresh the persisted-latest query so the new image sticks.
+  const doneRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (status === "SUCCEEDED" && genId && doneRef.current !== genId) {
+      doneRef.current = genId;
+      qc.invalidateQueries({ queryKey: ["brandai-brand-preview", wsId] });
+    }
+  }, [status, genId, wsId, qc]);
+
+  const start = useMutation({
+    mutationFn: () => {
+      startedAt.current = Date.now();
+      setTimedOut(false);
+      setErr(null);
+      return apiFetch<{ generation: Generation; jobId: string }>(
+        `/api/workspaces/${wsId}/brand-preview`,
+        { method: "POST", body: JSON.stringify({}) },
+      );
+    },
+    onSuccess: (res) => {
+      setGenId(res.generation.id);
+      setJobId(res.jobId);
+    },
+    onError: (e) => setErr(e instanceof Error ? e.message : "生成失败"),
+  });
+
+  // The live image while polling, else the persisted latest.
+  const liveImage = poll?.generation.versions?.[0]?.imageUrl;
+  const latestImage = latest?.generation?.versions?.[0]?.imageUrl;
+  const image = liveImage ?? latestImage ?? null;
+
+  return (
+    <section className="mt-12 rounded-3xl border border-primary/15 bg-card p-7 shadow-[0_8px_24px_rgba(30,30,60,0.06)]">
+      <div className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <div className="flex items-center gap-2">
+            <span className="flex h-7 w-7 items-center justify-center rounded-xl bg-accent-soft text-sm text-primary">
+              ✸
+            </span>
+            <h2 className="text-base font-semibold">品牌预览</h2>
+          </div>
+          <p className="mt-1.5 max-w-xl text-xs leading-relaxed text-muted-foreground">
+            综合已确认的色彩 / 字体 / 语气 / 视觉规则，由真实 AI provider 合成一张
+            代表品牌整体调性的预览主视觉（受品牌约束）。
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => start.mutate()}
+          disabled={start.isPending || running || confirmedCount === 0}
+          title={
+            confirmedCount === 0 ? "请先确认至少一条品牌规则" : undefined
+          }
+          className="h-10 shrink-0 self-start rounded-[16px] bg-gradient-to-br from-primary to-accent px-5 text-sm font-medium text-primary-foreground shadow-[0_12px_28px_rgba(124,92,255,0.26)] disabled:opacity-60"
+        >
+          {running
+            ? "生成中…"
+            : start.isPending
+              ? "提交中…"
+              : image
+                ? "重新生成预览"
+                : "生成品牌预览"}
+        </button>
+      </div>
+
+      <div className="mt-5 flex min-h-[220px] items-center justify-center overflow-hidden rounded-2xl border border-border bg-background p-4">
+        {timedOut ? (
+          <div className="text-center">
+            <p className="text-sm text-warning">生成超时</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              可能仍在后台处理或已失败，请点「重新生成预览」重试。
+            </p>
+          </div>
+        ) : status === "FAILED" ? (
+          <div className="text-center">
+            <p className="text-sm text-destructive">生成失败</p>
+            <p className="mt-1 max-w-sm text-xs text-muted-foreground">
+              {poll?.job?.failedReason ??
+                poll?.generation.error ??
+                "请检查 AI provider 配置或稍后重试。"}
+            </p>
+          </div>
+        ) : running && !image ? (
+          <div className="flex flex-col items-center gap-3 text-center">
+            <div className="h-9 w-9 animate-spin rounded-full border-2 border-accent-soft border-t-primary" />
+            <p className="text-xs text-muted-foreground">
+              {status === "PENDING" ? "已受理，排队中…" : "AI 正在合成品牌预览…"}
+            </p>
+          </div>
+        ) : image ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={image}
+            alt="品牌预览"
+            className="max-h-[420px] max-w-full rounded-xl object-contain shadow-[0_18px_50px_rgba(124,92,255,0.2)]"
+          />
+        ) : (
+          <div className="text-center">
+            <div className="text-3xl text-accent-soft">✸</div>
+            <p className="mt-2 text-sm font-medium">还没有品牌预览</p>
+            <p className="mt-1 max-w-sm text-xs text-muted-foreground">
+              确认色彩、字体等品牌规则后，点「生成品牌预览」由 AI 合成。
+            </p>
+          </div>
+        )}
+      </div>
+      {err ? <p className="mt-2 text-xs text-destructive">{err}</p> : null}
+    </section>
+  );
+}
+
 export default function BrandKnowledgePage() {
   const { wsId, brandName } = useBrand();
   const qc = useQueryClient();
@@ -1129,6 +1315,9 @@ export default function BrandKnowledgePage() {
           </div>
         ) : null}
       </section>
+
+      {/* D10 · 品牌预览 — composite visual auto-generation from confirmed KB. */}
+      <BrandPreview wsId={wsId} confirmedCount={confirmedCount} />
     </div>
   );
 }

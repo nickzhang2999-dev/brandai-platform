@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { navItems } from "@/lib/brandai-mock";
+import { QueueWidget } from "@/app/(app)/queue-widget";
+import { NotificationCenter } from "./notification-center";
 
 /**
  * BrandAI 左侧导航壳（docs/04 §布局：侧栏 236px，logo mark + 主导航 + 底部
@@ -13,10 +15,12 @@ export function BrandSidebar({
   children,
   brandName,
   user,
+  wsId,
 }: {
   children: React.ReactNode;
   brandName: string;
   user: { name: string; email: string; initial: string };
+  wsId: string;
 }) {
   const pathname = usePathname() ?? "/";
 
@@ -80,6 +84,17 @@ export function BrandSidebar({
       </aside>
 
       <main className="min-w-0 flex-1">{children}</main>
+
+      {/* A3 / L3 — top-bar notification entry (bell + inbox). Fixed top-right so
+          it sits consistently over every product page, including the
+          full-height workspace, without shifting page layout. */}
+      <div className="fixed right-4 top-4 z-40">
+        <NotificationCenter wsId={wsId} />
+      </div>
+
+      {/* §2.3 — persistent cross-page queue widget (bottom-right). Reused from
+          the (app) shell so BrandAI pages get the same observable surface. */}
+      <QueueWidget wsId={wsId} />
     </div>
   );
 }

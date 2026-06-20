@@ -94,6 +94,11 @@ function Workspace() {
       ? presetBrief.trim().slice(0, 500)
       : "高端、清透、具有自然光感的护肤新品社交广告主视觉，紫色瓶身为主体，搭配花卉与水光质感。",
   );
+  // F2 / L6 — undo/redo for the generation-form state. We track a snapshot of
+  // every editable field in a bounded history stack and expose undo/redo that
+  // restores a whole snapshot. `applyingHistory` suppresses re-recording while
+  // a restore is in flight (so undo→redo round-trips cleanly).
+  const applyingHistory = useRef(false);
   // Re-seed 卖点 when a NEW brief arrives via client navigation (the URL param
   // changes). This only fires on a real navigation — typing in the textarea
   // doesn't change `presetBrief`, so manual edits are never clobbered.
@@ -143,6 +148,122 @@ function Workspace() {
     } else if (e.key === "Backspace" && !keywordDraft && styleKeywords.length) {
       removeKeyword(styleKeywords[styleKeywords.length - 1]!);
     }
+  }
+
+  // F2 / L6 — bounded undo/redo history over the generation-form snapshot.
+  // The current snapshot is recomputed from the live field state; an effect
+  // pushes it onto the past stack (debounced via a shallow-equality check) so
+  // typing coalesces into discrete steps. Undo/redo restore a whole snapshot.
+  type FormSnapshot = {
+    sellingPoint: string;
+    scene: string;
+    sceneType: string;
+    versionCount: number;
+    targetKeys: string[];
+    textMode: "direct" | "layered";
+    styleKeywords: string[];
+  };
+  const snapshot: FormSnapshot = useMemo(
+    () => ({
+      sellingPoint,
+      scene,
+      sceneType,
+      versionCount,
+      targetKeys,
+      textMode,
+      styleKeywords,
+    }),
+    [sellingPoint, scene, sceneType, versionCount, targetKeys, textMode, styleKeywords],
+  );
+  const HISTORY_CAP = 50;
+  const past = useRef<FormSnapshot[]>([]);
+  const future = useRef<FormSnapshot[]>([]);
+  const lastSnap = useRef<FormSnapshot>(snapshot);
+  const [histVersion, setHistVersion] = useState(0); // re-render on stack change
+
+  function snapEqual(a: FormSnapshot, b: FormSnapshot): boolean {
+    return (
+      a.sellingPoint === b.sellingPoint &&
+      a.scene === b.scene &&
+      a.sceneType === b.sceneType &&
+      a.versionCount === b.versionCount &&
+      a.textMode === b.textMode &&
+      a.targetKeys.length === b.targetKeys.length &&
+      a.targetKeys.every((k, i) => k === b.targetKeys[i]) &&
+      a.styleKeywords.length === b.styleKeywords.length &&
+      a.styleKeywords.every((k, i) => k === b.styleKeywords[i])
+    );
+  }
+
+  function restoreSnapshot(s: FormSnapshot) {
+    applyingHistory.current = true;
+    setSellingPoint(s.sellingPoint);
+    setScene(s.scene);
+    setSceneType(s.sceneType);
+    setVersionCount(s.versionCount);
+    setTargetKeys(s.targetKeys);
+    setTextMode(s.textMode);
+    setStyleKeywords(s.styleKeywords);
+    lastSnap.current = s;
+    // Clear the suppression flag after the state updates flush.
+    setTimeout(() => {
+      applyingHistory.current = false;
+    }, 0);
+  }
+
+  // Record a new history step whenever the snapshot changes by a real edit.
+  useEffect(() => {
+    if (applyingHistory.current) return;
+    if (snapEqual(snapshot, lastSnap.current)) return;
+    past.current.push(lastSnap.current);
+    if (past.current.length > HISTORY_CAP) past.current.shift();
+    future.current = []; // a fresh edit invalidates the redo branch
+    lastSnap.current = snapshot;
+    setHistVersion((v) => v + 1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [snapshot]);
+
+  function undo() {
+    const prev = past.current.pop();
+    if (!prev) return;
+    future.current.push(lastSnap.current);
+    setHistVersion((v) => v + 1);
+    restoreSnapshot(prev);
+  }
+  function redo() {
+    const next = future.current.pop();
+    if (!next) return;
+    past.current.push(lastSnap.current);
+    setHistVersion((v) => v + 1);
+    restoreSnapshot(next);
+  }
+  const canUndo = past.current.length > 0;
+  const canRedo = future.current.length > 0;
+  // Reference histVersion so the toolbar re-renders when stacks change.
+  void histVersion;
+
+  // F3 / L6 — preview zoom (zoom in/out/reset/fit). `fit` lets the image scale
+  // to the canvas (object-contain default); a numeric zoom switches to scaled
+  // overflow-scroll so the operator can inspect detail.
+  const [zoom, setZoom] = useState(1);
+  const [fitMode, setFitMode] = useState(true);
+  const ZOOM_MIN = 0.5;
+  const ZOOM_MAX = 4;
+  function zoomIn() {
+    setFitMode(false);
+    setZoom((z) => Math.min(ZOOM_MAX, Math.round((z + 0.25) * 100) / 100));
+  }
+  function zoomOut() {
+    setFitMode(false);
+    setZoom((z) => Math.max(ZOOM_MIN, Math.round((z - 0.25) * 100) / 100));
+  }
+  function zoomReset() {
+    setZoom(1);
+    setFitMode(false);
+  }
+  function zoomFit() {
+    setZoom(1);
+    setFitMode(true);
   }
 
   // F9 · 参考素材区 — localStorage-backed, scoped to (wsId, projectId), shared
@@ -396,19 +517,52 @@ function Workspace() {
             ))}
           </select>
         </div>
-        <StatusPill status={status} timedOut={timedOut} />
+        <div className="flex items-center gap-3">
+          {/* F2 / L6 — undo/redo (generation-form state) + zoom (preview). */}
+          <Toolbar
+            canUndo={canUndo}
+            canRedo={canRedo}
+            onUndo={undo}
+            onRedo={redo}
+            zoom={zoom}
+            fitMode={fitMode}
+            onZoomIn={zoomIn}
+            onZoomOut={zoomOut}
+            onZoomReset={zoomReset}
+            onZoomFit={zoomFit}
+            zoomDisabled={!current?.imageUrl}
+          />
+          <StatusPill status={status} timedOut={timedOut} />
+        </div>
       </div>
 
       <div className="grid min-h-0 flex-1 grid-cols-[1fr_400px]">
         {/* Canvas */}
         <div className="flex min-h-0 flex-col bg-background p-6">
-          <div className="flex flex-1 items-center justify-center overflow-hidden rounded-3xl border border-border bg-card p-6">
+          <div
+            className={[
+              "flex flex-1 items-center justify-center rounded-3xl border border-border bg-card p-6",
+              current?.imageUrl && !fitMode
+                ? "overflow-auto"
+                : "overflow-hidden",
+            ].join(" ")}
+          >
             {current?.imageUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={current.imageUrl}
                 alt="生成结果"
-                className="max-h-[560px] max-w-full rounded-2xl object-contain shadow-[0_26px_80px_rgba(124,92,255,0.24)]"
+                style={
+                  fitMode
+                    ? undefined
+                    : { transform: `scale(${zoom})`, transformOrigin: "center" }
+                }
+                className={[
+                  "rounded-2xl shadow-[0_26px_80px_rgba(124,92,255,0.24)]",
+                  fitMode
+                    ? "max-h-[560px] max-w-full object-contain"
+                    : "max-w-none transition-transform",
+                ].join(" ")}
               />
             ) : (
               <CanvasPlaceholder
@@ -802,6 +956,108 @@ function Workspace() {
             </p>
           </div>
         </aside>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * F2 / L6 — workspace top toolbar: undo/redo for the generation-form state and
+ * zoom controls (in / out / reset 100% / fit) for the big preview. Pure
+ * client-side; buttons disable at their bounds. Uses semantic tokens only.
+ */
+function Toolbar({
+  canUndo,
+  canRedo,
+  onUndo,
+  onRedo,
+  zoom,
+  fitMode,
+  onZoomIn,
+  onZoomOut,
+  onZoomReset,
+  onZoomFit,
+  zoomDisabled,
+}: {
+  canUndo: boolean;
+  canRedo: boolean;
+  onUndo: () => void;
+  onRedo: () => void;
+  zoom: number;
+  fitMode: boolean;
+  onZoomIn: () => void;
+  onZoomOut: () => void;
+  onZoomReset: () => void;
+  onZoomFit: () => void;
+  zoomDisabled: boolean;
+}) {
+  const btn =
+    "flex h-8 min-w-8 items-center justify-center rounded-lg px-2 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40";
+  return (
+    <div className="flex items-center gap-2">
+      <div className="flex items-center gap-0.5 rounded-xl border border-border bg-background p-0.5">
+        <button
+          type="button"
+          onClick={onUndo}
+          disabled={!canUndo}
+          aria-label="撤销"
+          title="撤销 (表单)"
+          className={btn}
+        >
+          ↶
+        </button>
+        <button
+          type="button"
+          onClick={onRedo}
+          disabled={!canRedo}
+          aria-label="重做"
+          title="重做 (表单)"
+          className={btn}
+        >
+          ↷
+        </button>
+      </div>
+      <div className="flex items-center gap-0.5 rounded-xl border border-border bg-background p-0.5">
+        <button
+          type="button"
+          onClick={onZoomOut}
+          disabled={zoomDisabled}
+          aria-label="缩小"
+          title="缩小"
+          className={btn}
+        >
+          −
+        </button>
+        <button
+          type="button"
+          onClick={onZoomReset}
+          disabled={zoomDisabled}
+          aria-label="实际大小"
+          title="100%"
+          className={`${btn} tabular-nums text-xs`}
+        >
+          {fitMode ? "适应" : `${Math.round(zoom * 100)}%`}
+        </button>
+        <button
+          type="button"
+          onClick={onZoomIn}
+          disabled={zoomDisabled}
+          aria-label="放大"
+          title="放大"
+          className={btn}
+        >
+          ＋
+        </button>
+        <button
+          type="button"
+          onClick={onZoomFit}
+          disabled={zoomDisabled}
+          aria-label="适应窗口"
+          title="适应窗口"
+          className={`${btn} text-xs`}
+        >
+          ⤢
+        </button>
       </div>
     </div>
   );

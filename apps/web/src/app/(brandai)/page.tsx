@@ -9,6 +9,7 @@ import { apiFetch } from "@/lib/client";
 import { quickActions } from "@/lib/brandai-mock";
 import { useBrand } from "./brand-context";
 import { gradientFor } from "./_ui";
+import { RecommendedBrands } from "./recommended-brands";
 
 /**
  * P01 · 首页 — AI 入口 + 近期项目速览。真实数据：当前品牌的 Campaign 列表。
@@ -197,6 +198,10 @@ export default function HomePage() {
           </div>
         )}
       </section>
+
+      {/* L2 / B5 / H14 · 推荐品牌瀑布流 — REAL BrandWorkspace rows the user can
+          see (owned / member-of). Honest empty state when none. */}
+      <RecommendedBrands />
     </div>
   );
 }

@@ -37,7 +37,7 @@ export default async function BrandaiLayout({
 
   return (
     <BrandProvider value={{ wsId: brand.id, brandName: brand.name, user }}>
-      <BrandSidebar brandName={brand.name} user={user}>
+      <BrandSidebar brandName={brand.name} user={user} wsId={brand.id}>
         {children}
       </BrandSidebar>
     </BrandProvider>
