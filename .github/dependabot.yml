@@ -1,25 +1,36 @@
 version: 2
+# 分组策略：每个生态最多产出 1 个「分组」PR（patterns: ["*"] 把该生态所有更新
+# 合并进一个 PR），并把 open-pull-requests-limit 收紧到 3 作为安全上限。
+# 背景：旧配置只给 dev-deps 分组，其余每个生产依赖各开一个 PR，首次运行就开到
+# npm10 + pip5 + actions5 ≈ 20 个，造成 PR 列表泛滥。分组后每周最多 ~3 个，
+# 仍保留自动安全/版本更新。
 updates:
-  # 保持 GitHub Actions 版本更新（安全 + 兼容）
+  # GitHub Actions 版本更新（安全 + 兼容）
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 3
+    groups:
+      github-actions:
+        patterns: ["*"]
 
   # JS/TS 依赖（pnpm workspace 根）
   - package-ecosystem: "npm"
     directory: "/"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 3
     groups:
-      dev-dependencies:
-        dependency-type: "development"
+      npm-dependencies:
+        patterns: ["*"]
 
   # apps/ai Python 依赖
   - package-ecosystem: "pip"
     directory: "/apps/ai"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 3
+    groups:
+      pip-dependencies:
+        patterns: ["*"]
