@@ -244,6 +244,15 @@ function Workspace() {
       setActionErr("改图失败,请重试");
     }
   }, [editPoll, qc, wsId, genId]);
+  // F11 — refresh the quota bar once a generation completes so the displayed
+  // 本周期/今日 用量 matches server-side enforcement without a manual reload.
+  const quotaInvalidatedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (status === "SUCCEEDED" && genId && quotaInvalidatedRef.current !== genId) {
+      quotaInvalidatedRef.current = genId;
+      qc.invalidateQueries({ queryKey: ["brandai-quota", wsId] });
+    }
+  }, [status, genId, wsId, qc]);
   const editing = !!editJobId;
 
   async function submitEdit() {
