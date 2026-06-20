@@ -74,7 +74,7 @@ function Workspace() {
       ),
     enabled: !!genId,
     refetchInterval: (q) => {
-      const s = q.state.data?.job.status ?? q.state.data?.generation.status;
+      const s = q.state.data?.job?.status ?? q.state.data?.generation.status;
       if (s === "SUCCEEDED" || s === "FAILED") return false;
       if (Date.now() - startedAt.current > POLL_CAP_MS) return false;
       return 2500;
@@ -89,7 +89,7 @@ function Workspace() {
     return () => clearInterval(t);
   }, [genId]);
 
-  const status = poll?.job.status ?? poll?.generation.status ?? null;
+  const status = poll?.job?.status ?? poll?.generation.status ?? null;
   const versions = useMemo(
     () => poll?.generation.versions ?? [],
     [poll],
@@ -170,7 +170,7 @@ function Workspace() {
                 running={running}
                 status={status}
                 timedOut={timedOut}
-                error={poll?.job.failedReason ?? poll?.generation.error ?? undefined}
+                error={poll?.job?.failedReason ?? poll?.generation.error ?? undefined}
               />
             )}
           </div>
