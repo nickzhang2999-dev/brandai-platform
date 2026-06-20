@@ -1003,7 +1003,13 @@ def _coerce_recognize(
                 item["note"] = str(note)
             bbox = e.get("bbox")
             if isinstance(bbox, list) and len(bbox) == 4:
-                item["bbox"] = [float(x) for x in bbox]
+                # A sloppy VLM can emit non-numeric bbox entries; coerce
+                # defensively and simply drop the bbox (keeping the rest of the
+                # evidence item) rather than failing the whole response.
+                try:
+                    item["bbox"] = [float(x) for x in bbox]
+                except (TypeError, ValueError):
+                    pass
             # Keep the item if it carries any usable signal (id, note, or bbox);
             # drop empties. Note-only evidence is retained.
             if item:

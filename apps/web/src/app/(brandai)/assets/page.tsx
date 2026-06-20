@@ -6,7 +6,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Asset, Project } from "@brandai/contracts";
 import { Button } from "@brandai/ui";
 import { apiFetch, assetThumbUrl } from "@/lib/client";
-import { addReference } from "@/lib/reference-tray";
+import {
+  addReference,
+  REFERENCE_CAP,
+  type AddReferenceResult,
+} from "@/lib/reference-tray";
 import { useBrand } from "../brand-context";
 import { Chip, gradientFor, PageHeader } from "../_ui";
 
@@ -52,6 +56,7 @@ export default function AssetsPage() {
   const [stagedNote, setStagedNote] = useState<{
     projectId: string;
     projectName: string;
+    result: AddReferenceResult;
   } | null>(null);
 
   const { data: assets = [], isLoading } = useQuery({
@@ -102,30 +107,44 @@ export default function AssetsPage() {
 
   // E11/E12 · 把当前选中素材暂存为目标 Campaign 的参考素材（client-side staging，
   // 一期无 Project↔Asset DB 关系，暂存于 reference-tray，工作台出图时读取）。
-  function stageActiveAsReference(projectId: string): Project | null {
+  function stageActiveAsReference(
+    projectId: string,
+  ): { project: Project; result: AddReferenceResult } | null {
     if (!active || !projectId) return null;
     const project = projects.find((p) => p.id === projectId);
     if (!project) return null;
-    addReference(wsId, projectId, {
+    const result = addReference(wsId, projectId, {
       id: active.id,
       fileName: active.fileName,
       thumbUrl: assetThumbUrl(wsId, active.id, active.url),
     });
-    return project;
+    return { project, result };
   }
 
-  // E12 「设为参考」：暂存后留在本页 + 给出"去工作台查看"链接。
+  // E12 「设为参考」：暂存后留在本页 + 给出"去工作台查看"链接（满额/重复也如实反馈）。
   function handleSetReference() {
-    const p = stageActiveAsReference(pickProject);
-    if (!p) return;
-    setStagedNote({ projectId: p.id, projectName: p.name });
+    const r = stageActiveAsReference(pickProject);
+    if (!r) return;
+    setStagedNote({
+      projectId: r.project.id,
+      projectName: r.project.name,
+      result: r.result,
+    });
   }
 
-  // E11 「加入项目」：暂存后直接跳转到工作台并带上目标 Campaign。
+  // E11 「加入项目」：暂存成功（或已存在）才跳工作台；满额则只提示、不跳转。
   function handleAddToProject() {
-    const p = stageActiveAsReference(pickProject);
-    if (!p) return;
-    router.push(`/workspace?project=${p.id}`);
+    const r = stageActiveAsReference(pickProject);
+    if (!r) return;
+    if (r.result === "full") {
+      setStagedNote({
+        projectId: r.project.id,
+        projectName: r.project.name,
+        result: r.result,
+      });
+      return;
+    }
+    router.push(`/workspace?project=${r.project.id}`);
   }
 
   const stats = [
@@ -371,15 +390,24 @@ export default function AssetsPage() {
                         </Button>
                       </div>
                       {stagedNote ? (
-                        <div className="mt-3 rounded-2xl bg-accent-soft px-3.5 py-2.5 text-xs text-primary">
-                          已设为「{stagedNote.projectName}」的参考素材。{" "}
-                          <a
-                            className="font-medium underline underline-offset-2"
-                            href={`/workspace?project=${stagedNote.projectId}`}
-                          >
-                            去工作台查看
-                          </a>
-                        </div>
+                        stagedNote.result === "full" ? (
+                          <div className="mt-3 rounded-2xl bg-muted px-3.5 py-2.5 text-xs text-muted-foreground">
+                            「{stagedNote.projectName}」的参考素材已满（上限{" "}
+                            {REFERENCE_CAP} 个），请先在工作台移除部分再添加。
+                          </div>
+                        ) : (
+                          <div className="mt-3 rounded-2xl bg-accent-soft px-3.5 py-2.5 text-xs text-primary">
+                            {stagedNote.result === "duplicate"
+                              ? `该素材已在「${stagedNote.projectName}」的参考中。`
+                              : `已设为「${stagedNote.projectName}」的参考素材。`}{" "}
+                            <a
+                              className="font-medium underline underline-offset-2"
+                              href={`/workspace?project=${stagedNote.projectId}`}
+                            >
+                              去工作台查看
+                            </a>
+                          </div>
+                        )
                       ) : null}
                     </>
                   )}

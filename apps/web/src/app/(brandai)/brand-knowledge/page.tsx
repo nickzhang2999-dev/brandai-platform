@@ -677,9 +677,19 @@ function RecognizeModal({
   const running =
     !!taskId && status !== "SUCCEEDED" && status !== "FAILED" && !timedOut;
 
+  // Fire onDone exactly ONCE per successful task. The parent passes a fresh
+  // inline callback each render, so depending on `onDone` identity would
+  // re-invalidate (→ refetch → re-render → loop) while the success modal stays
+  // open. Keep the latest callback in a ref and guard by the task id.
+  const onDoneRef = useRef(onDone);
+  onDoneRef.current = onDone;
+  const firedForRef = useRef<string | null>(null);
   useEffect(() => {
-    if (status === "SUCCEEDED") onDone();
-  }, [status, onDone]);
+    if (status === "SUCCEEDED" && taskId && firedForRef.current !== taskId) {
+      firedForRef.current = taskId;
+      onDoneRef.current();
+    }
+  }, [status, taskId]);
 
   function toggle(id: string) {
     if (running) return;

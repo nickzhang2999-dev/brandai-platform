@@ -48,10 +48,13 @@ export default function HomePage() {
         }),
       });
     },
-    onSuccess: (project) => {
+    onSuccess: (project, text) => {
+      // Use the exact `text` submitted to the mutation (not the live `brief`
+      // state, which the user may have edited while the POST was in flight) so
+      // the saved description and the workspace prefill always agree.
       router.push(
         `/workspace?project=${encodeURIComponent(project.id)}&brief=${encodeURIComponent(
-          brief.trim(),
+          text.trim(),
         )}`,
       );
     },

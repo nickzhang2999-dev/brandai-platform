@@ -58,17 +58,24 @@ export function getReferences(wsId: string, projectId: string): RefAsset[] {
   return read(keyFor(wsId, projectId));
 }
 
-/** 追加一个参考素材；按 id 去重；满 CAP 则拒绝（no-op）。 */
+/** addReference 结果：成功新增 / 已存在(去重) / 已满(拒绝)。供 UI 给出准确反馈。 */
+export type AddReferenceResult = "added" | "duplicate" | "full";
+
+/** 每个项目的参考素材上限（导出给 UI 显示用）。 */
+export const REFERENCE_CAP = CAP;
+
+/** 追加一个参考素材；按 id 去重；满 CAP 则拒绝。返回结果让调用方据此提示。 */
 export function addReference(
   wsId: string,
   projectId: string,
   asset: RefAsset,
-): void {
+): AddReferenceResult {
   const key = keyFor(wsId, projectId);
   const list = read(key);
-  if (list.some((a) => a.id === asset.id)) return; // 去重
-  if (list.length >= CAP) return; // 满则拒绝
+  if (list.some((a) => a.id === asset.id)) return "duplicate"; // 去重
+  if (list.length >= CAP) return "full"; // 满则拒绝
   write(key, [...list, asset]);
+  return "added";
 }
 
 export function removeReference(
