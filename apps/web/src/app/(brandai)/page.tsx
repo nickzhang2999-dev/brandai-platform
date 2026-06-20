@@ -42,7 +42,9 @@ export default function HomePage() {
         method: "POST",
         body: JSON.stringify({
           name: title,
-          description: text.trim(),
+          // CreateProjectInput caps description at 2000 chars — clamp so a long
+          // brief still 立项 succeeds instead of failing validation.
+          description: text.trim().slice(0, 2000),
           status: "DRAFT",
           channels: [],
         }),
@@ -52,9 +54,12 @@ export default function HomePage() {
       // Use the exact `text` submitted to the mutation (not the live `brief`
       // state, which the user may have edited while the POST was in flight) so
       // the saved description and the workspace prefill always agree.
+      // The workspace 卖点 field caps at 500 chars; pass only that much as the
+      // prefill seed (the full brief, up to 2000, is saved on the Campaign
+      // description). Avoids a silent over-length truncation surprise.
       router.push(
         `/workspace?project=${encodeURIComponent(project.id)}&brief=${encodeURIComponent(
-          text.trim(),
+          text.trim().slice(0, 500),
         )}`,
       );
     },
@@ -111,7 +116,7 @@ export default function HomePage() {
           </button>
         </div>
         <p className="mt-2 pl-6 text-xs text-muted-foreground">
-          填写后将以这段描述新建草稿 Campaign，并把原文带入工作台作为出图卖点（不做 AI 自动拆解）。
+          填写后将以这段描述新建草稿 Campaign（原文存入项目描述），并把前 500 字预填进工作台作为出图卖点起点（不做 AI 自动拆解）。
         </p>
         {startFromBrief.isError ? (
           <p className="mt-2 pl-6 text-xs text-destructive">

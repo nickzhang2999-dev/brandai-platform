@@ -111,7 +111,7 @@
 | E9 | AI 智能标签 | P04-M13 | 🟡 | 展示 `aiTags`；上传后**自动打标**未接（recognize 在知识库语义） | — | 2026-06-20 |
 | E10 | AI 生成描述 | P04-M14 | 🟡 | 展示 `aiDescription`；本页未触发自动生成 | — | 2026-06-20 |
 | E11 | 加入项目（→Campaign） | P04-M16 | 🟡 | `assets/page.tsx` + `lib/reference-tray.ts` | 详情选 Campaign→加入并跳工作台；客户端 reference-tray 暂存（DB Project↔Asset 关系 phase-2） | 接入 2026-06-20 |
-| E12 | 设为参考（→工作台参考区） | P04-M17 | ✅ | `assets/page.tsx` + `lib/reference-tray.ts` ↔ 工作台 F9 | 设为参考→工作台 F9 显示并入出图 referenceAssetIds（出图时真校验归属+持久化 version.params） | 接入 2026-06-20 |
+| E12 | 设为参考（→工作台参考区） | P04-M17 | 🟡 | `assets/page.tsx` + `lib/reference-tray.ts` ↔ 工作台 F9 | UI 联动通：设为参考→工作台 F9 显示并入 referenceAssetIds（真校验归属+留痕 version.params）。**注**：OpenAI generate API 不收图，当前为 prompt 级引导，真视觉条件化需经 edits 路由（phase-2） | 接入 2026-06-20 |
 | E13 | 收藏切换 / 使用记录 / 查看来源 | doc02/05 | 🟡 | 详情含「来源」字段；收藏 toggle/使用记录未见 | 🔍 | 2026-06-20 |
 
 ## F · P05 工作台
@@ -126,7 +126,7 @@
 | F6 | 场景 / sceneType / 生成数量 | doc02 | ✅ | `page.tsx:414/425/443` | — | 2026-06-20 |
 | F7 | 风格关键词（标签增删） | P05-M10 | ✅ | `workspace/page.tsx` tag 输入 | 增删 chip + 建议词；进 `styleKeywords`→worker 折入 promptAdditions | 接入 2026-06-20 |
 | F8 | 品牌约束（显示已应用规则） | P05-M12 | 🟡 | `page.tsx:464`「品牌约束已生效」 | 仅状态行，非逐条规则展示 | 2026-06-20 |
-| F9 | 参考素材区 | P05-M13 | ✅ | `workspace/page.tsx`（读 reference-tray） | 显示本项目参考缩略图（来自 E12）+ 可删；进 `referenceAssetIds`→worker 解析为 referenceImages | 接入 2026-06-20 |
+| F9 | 参考素材区 | P05-M13 | 🟡 | `workspace/page.tsx`（读 reference-tray） | 显示本项目参考缩略图（来自 E12）+ 可删；进 `referenceAssetIds`→worker 解析为 referenceImages（**OpenAI generate 仅 prompt 级引导；真视觉条件化经 edits phase-2**） | 接入 2026-06-20 |
 | F10 | 提交制作（真实出图 §2 异步） | P05-M15 | ✅ **已验收** | `page.tsx:230` → `POST /generations` 202 → 轮询 | 真 gpt-image-1→GenerationVersion | 2026-06-20 |
 | F11 | 生成额度展示 | doc02/05 | ✅ | `workspace/page.tsx` QuotaBar + `GET /quota` | 本周期/今日用量 + 进度条（-1=不限）；新增只读端点 | 接入 2026-06-20 |
 | F16 | 多尺寸渠道（targets）+ textMode | K5 | 🟡 | `workspace/page.tsx`（CHANNEL_SIZES 多选 + 直接/分层） | 渠道尺寸多选每尺寸各 1 张；textMode 直接/分层 + 持久化(version.params)+regenerate 重建；记录 snap 真实尺寸仍 phase-2 | 新增 2026-06-20 |
@@ -234,7 +234,7 @@
 | L5 | ~~工作台三右栏模块无~~ → 风格词/参考素材/额度三模块已接 | 设计有·**已补** | F7/F9/F11 | ✅ 三模块全接（后端 frozen-additive 解锁） |
 | L6 | 工作台顶部 撤销/重做/缩放 无 | 设计有·实现缺 | F2 | 确认优先级 |
 | L7 | Campaign 项目操作（补充需求/查看规范/提交终审/归档）只做了「进入工作台」 | 设计有·实现缺 | C9/H3/H4/H10/H11 | 提交终审/归档关乎交付流，建议补 |
-| L8 | ~~素材↔工作台/Campaign 无联动~~ → 设为参考/加入项目已接（reference-tray 暂存 ↔ 工作台 F9，出图真校验+持久化） | 设计有·**已补**(客户端暂存) | E11/E12/F9/H7 | ✅ 联动通；服务端 Project↔Asset 持久关系 phase-2（多设备/协作） |
+| L8 | ~~素材↔工作台/Campaign 无联动~~ → 设为参考/加入项目已接（reference-tray 暂存 ↔ 工作台 F9，出图真校验+持久化） | 设计有·**已补**(客户端暂存) | E11/E12/F9/H7 | ✅ UI 联动通；2 点 phase-2：①服务端 Project↔Asset 持久关系（多设备/协作）②参考图真视觉条件化（经 edits，OpenAI generate API 不收图） |
 | L9 | 通用弹窗体系：产品要 11 个轻量弹窗，仅「新建 Campaign」是弹窗 | 设计有·实现缺 | H2-H12 | 确认弹窗 vs 页内的取舍 |
 | L10 | AI 输入框未抽象为可解析组件；语音/附件入口仅视觉保留 | 设计有·实现缺 | B2/D1/H1 | 确认 AI 解析（立项/拆解/打标）一期是否纳入 |
 | L11 | 品牌筛选/时间筛选/排序无 | 设计有·实现缺 | C4/C5/C6 | 单品牌下品牌筛选可不做；排序建议补 |
