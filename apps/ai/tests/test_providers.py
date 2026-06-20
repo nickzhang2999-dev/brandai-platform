@@ -574,7 +574,8 @@ def test_resolve_vlm_provider_uses_endpoint_table_when_no_base_url():
     req = _Req({"X-OV-Vlm-Provider": "gemini", "X-OV-Vlm-Key": "sk-vlm"})
     prov = resolve_vlm_provider(req)
     assert isinstance(prov, HttpVLMProvider)
-    assert prov.base_url == "https://generativelanguage.googleapis.com/v1beta"
+    # gemini 默认走 Google 文档化的 OpenAI 兼容层(OpenAI 形状客户端可用)。
+    assert prov.base_url == "https://generativelanguage.googleapis.com/v1beta/openai"
 
 
 def test_resolve_vlm_provider_falls_back_to_mock_without_headers():

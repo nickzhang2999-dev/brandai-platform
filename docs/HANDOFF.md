@@ -23,19 +23,25 @@ AI 服务 + BullMQ worker + Prisma/Postgres + Zod contracts。产品以 Campaign
 - 超管账号 inernoro@gmail.com（密码在与用户的对话里，不在代码）。ADMIN_EMAILS 经
   CDS 单键 env 配置。
 
-## 你的任务（按优先级，逐项与用户确认范围）
-1. **补齐一期闭环最后两环到 BrandAI 界面**（现仅在 (app)/workspaces 底座）：
-   a. 修改优化（改图 edit）——注意 apps/ai 的 OpenAI /images/edits 需改 multipart
-      form-data（当前 JSON 会被 OpenAI 400，见 CLAUDE.md §3.5 backlog）。
-   b. 最终交付 / 归档（终选 isFinal + 导出 ZIP）。
-2. **门禁 UX 决策**（公网安全，必须先问用户拍板，别擅自）：BrandAI 想"打开即后台"，
-   但部署在公网，裸跑=任何人烧 OpenAI key。选项：单一访问口令 / CDS 反代 Basic Auth /
-   完整用户体系登录。用户已表态"phase 2 增加用户体系"，故用户体系底座（Auth.js +
-   User/Membership + workspace 作用域）保留、勿删，作为多租户地基。
-3. **Phase 2（多租户 SaaS）**：按 CLAUDE.md §3.5 的隔离标准 + backlog 推进——配额按
-   owner 计、配额原子预留、套餐 enforcement、G6 协作放行成员、首个 admin bootstrap
-   原子化、Campaign Kit precheck 异步化、多尺寸 snap 尺寸等。这批正是 PR #1 里被
-   归类为"一期外"的 Codex P2。
+## 一期已完成(6/6,端到端真验收)——勿重复造
+闭环全通:Campaign 创建 → 品牌知识库 → 素材库 → 真出图(gpt-image-1) → **真改图**
+(OpenAI /images/edits multipart) → **终选 + 导出交付 ZIP**。公网门禁已做(demo 关 +
+注册防接管 + 只 ADMIN_EMAILS 登录 + middleware.ts 边缘门禁 + key 加密存 DB,密钥+JWT
+混合)。用户体系底座(Auth.js + User/Membership + workspace 作用域)保留勿删——是二期
+多租户地基。
+
+## 你的任务 = Phase 2（多租户 SaaS,逐项与用户确认范围)
+按 CLAUDE.md §3.5 隔离标准 + backlog 推进(这批是 PR #1 里被归为"一期外"的 Codex/Bugbot
+P2,**不是一期缺陷**):
+- **配额/计费**:按 workspace owner 计、配额原子预留(并发)、regenerate/campaign-kit
+  走配额门、套餐 maxWorkspaces enforcement。
+- **G6 协作**:(app) owner-only 守卫放行被邀成员、getOrCreateActiveBrand 先解析
+  Membership、导出/单图下载只放行 final/approved。
+- **健壮性 & §2 异步化**:首个 admin bootstrap 原子化;Campaign Kit precheck / ingest
+  网站采集移入 worker(现同步 await 慢 AI,违反 §2)。
+- **PDF 知识库 / recognize 证据**:Evidence.assetId 改 optional + _coerce_recognize
+  保留 note-only & 校验 assetId 属于请求素材集(成套改)。
+- **多尺寸**:记录 OpenAI snap 后真实尺寸、regenerate 持久化 textMode。
 
 ## 工作纪律（binding）
 - **No mock**（CLAUDE.md §0.1）：每张验收产出必须 真 provider→真 API→真 DB。

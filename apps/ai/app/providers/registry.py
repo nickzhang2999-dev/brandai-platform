@@ -7,9 +7,13 @@ from ..config import settings
 from .base import ImageProvider, VLMProvider
 from .mock import MockImageProvider, MockVLMProvider
 
+# HttpImageProvider / HttpVLMProvider 只会 OpenAI 形状的 /images/generations 与
+# /chat/completions,所以这里的默认端点必须是 OpenAI 兼容网关地址。Gemini 走
+# Google 文档化的 OpenAI 兼容层 (/v1beta/openai),而非原生 /v1beta(后者形状不匹配
+# 会 404)。需要原生协议的厂商请在 *_BASE_URL 显式覆盖。
 _IMAGE_ENDPOINTS = {
     "openai": "https://api.openai.com/v1",
-    "gemini": "https://generativelanguage.googleapis.com/v1beta",
+    "gemini": "https://generativelanguage.googleapis.com/v1beta/openai",
     "seeddream": "https://ark.cn-beijing.volces.com/api/v3",
 }
 

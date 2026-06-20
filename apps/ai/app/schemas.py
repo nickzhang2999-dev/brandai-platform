@@ -127,7 +127,9 @@ class GenerateRequest(BaseModel):
     sellingPoint: str
     scene: str
     brandRules: list[BrandRuleIn] = []
-    versionCount: int = 2  # 与 packages/contracts 的 Zod GenerateRequest 默认(2)对齐
+    # 与 packages/contracts 的 Zod GenerateRequest 对齐:默认 2、min(1)、max(8)。
+    # 直连 /v1/generate 传 0 会被拒，避免返回零版本破坏调用方。
+    versionCount: int = Field(default=2, ge=1, le=8)
     aiConstraints: Optional[AIConstraints] = None
     # P2.0 — when present, produce one image per target (ignoring versionCount
     # and the sceneType default size). exclude_none keeps the legacy wire shape.
