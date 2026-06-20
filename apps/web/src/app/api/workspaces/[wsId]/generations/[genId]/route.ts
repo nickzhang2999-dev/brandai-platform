@@ -224,6 +224,26 @@ export async function POST(
       return undefined;
     })();
 
+    // Re-validate the reconstructed references against CURRENT state (a prior
+    // pick may since have been deprecated/disabled/deleted or be a non-image).
+    // Filter to still-usable images rather than 400 — the user isn't actively
+    // re-choosing on a regenerate; we just don't re-thread stale/invalid ids.
+    const validReferenceAssetIds =
+      reconstructedReferenceAssetIds && reconstructedReferenceAssetIds.length > 0
+        ? (
+            await prisma.asset.findMany({
+              where: {
+                id: { in: [...new Set(reconstructedReferenceAssetIds)] },
+                workspaceId: wsId,
+                availableForGeneration: true,
+                deprecatedAt: null,
+                mimeType: { startsWith: "image/" },
+              },
+              select: { id: true },
+            })
+          ).map((a) => a.id)
+        : undefined;
+
     const jobData: GenerateJobData = {
       workspaceId: wsId,
       generationId: genId,
@@ -233,9 +253,8 @@ export async function POST(
       ...(reconstructedStyleKeywords && reconstructedStyleKeywords.length > 0
         ? { styleKeywords: reconstructedStyleKeywords }
         : {}),
-      ...(reconstructedReferenceAssetIds &&
-      reconstructedReferenceAssetIds.length > 0
-        ? { referenceAssetIds: reconstructedReferenceAssetIds }
+      ...(validReferenceAssetIds && validReferenceAssetIds.length > 0
+        ? { referenceAssetIds: validReferenceAssetIds }
         : {}),
     };
     const job = await generateQueue.add("generate", jobData, {

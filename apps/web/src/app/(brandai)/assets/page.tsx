@@ -118,7 +118,11 @@ export default function AssetsPage() {
   function stageActiveAsReference(
     projectId: string,
   ): { project: Project; result: AddReferenceResult } | null {
-    if (!active || !projectId) return null;
+    // Only generatable IMAGE assets can be references (POST /generations rejects
+    // non-images), so don't stage PDFs/VI_DOC and create a client-allowed /
+    // server-rejected mismatch. (Deprecated/disabled is enforced server-side —
+    // those flags aren't on the Asset wire type.)
+    if (!active || !isImage(active) || !projectId) return null;
     const project = projects.find((p) => p.id === projectId);
     if (!project) return null;
     const result = addReference(wsId, projectId, {
@@ -378,7 +382,11 @@ export default function AssetsPage() {
                   <div className="mb-2 text-xs font-medium text-muted-foreground">
                     用于 Campaign
                   </div>
-                  {projects.length === 0 ? (
+                  {!isImage(active) ? (
+                    <p className="text-xs text-muted-foreground">
+                      仅图片素材可设为参考 / 加入项目（PDF·VI 文档等不支持）。
+                    </p>
+                  ) : projects.length === 0 ? (
                     <p className="text-xs text-muted-foreground">
                       还没有 Campaign，先去项目页创建一个。
                     </p>
