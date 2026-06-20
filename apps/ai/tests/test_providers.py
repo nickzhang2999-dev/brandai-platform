@@ -148,7 +148,8 @@ def test_loads_json_lenient_handles_fences_and_prose():
 # --- coercion guarantees the contract shape regardless of model sloppiness ---
 
 
-def test_coerce_recognize_backfills_evidence():
+def test_coerce_recognize_no_evidence_stays_empty():
+    # Never fabricate/backfill an assetId — no evidence means evidence == [].
     out = _coerce_recognize(
         {"rules": [{"type": "color", "strength": "strong", "summary": "s"}]},
         ["asset-1"],
@@ -156,8 +157,50 @@ def test_coerce_recognize_backfills_evidence():
     rule = out["rules"][0]
     assert rule["strength"] == "STRONG"  # upper-cased
     assert rule["value"] == {}  # missing → empty dict, never null
-    assert rule["evidence"] == [{"assetId": "asset-1", "note": "model-inferred"}]
+    assert rule["evidence"] == []  # no backfill, contract default
     assert "colorSystem" not in out  # omitted when no palette → no null leak
+
+
+def test_coerce_recognize_keeps_note_only_evidence():
+    # A VLM observation with no assetId is retained as note-only, not dropped.
+    out = _coerce_recognize(
+        {
+            "rules": [
+                {
+                    "type": "imagery",
+                    "summary": "s",
+                    "evidence": [{"note": "global observation"}],
+                }
+            ]
+        },
+        ["asset-1"],
+    )
+    assert out["rules"][0]["evidence"] == [{"note": "global observation"}]
+
+
+def test_coerce_recognize_strips_foreign_asset_id():
+    # A hallucinated/foreign assetId is dropped (degraded to note-only); a valid
+    # requested id is kept; an empty item (no id/note/bbox) is dropped.
+    out = _coerce_recognize(
+        {
+            "rules": [
+                {
+                    "type": "logo",
+                    "summary": "s",
+                    "evidence": [
+                        {"assetId": "ghost-99", "note": "made up"},
+                        {"assetId": "asset-1", "note": "real"},
+                        {"assetId": "ghost-2"},  # no note → dropped entirely
+                    ],
+                }
+            ]
+        },
+        ["asset-1"],
+    )
+    assert out["rules"][0]["evidence"] == [
+        {"note": "made up"},  # foreign id stripped, note kept
+        {"assetId": "asset-1", "note": "real"},
+    ]
 
 
 def test_coerce_recognize_keeps_color_system():
@@ -319,8 +362,10 @@ async def test_vlm_analyze_assets_shapes_rules():
     p = HttpVLMProvider(OPENAI, "k", model="gpt-4o", transport=_vlm_handler(payload))
     out = await p.analyze_assets([{"id": "a1", "url": "http://s/a1.png"}])
     assert len(out["rules"]) == 2
-    # every rule must carry evidence (backfilled for the font rule)
-    assert all(r["evidence"] for r in out["rules"])
+    # K4 — model-supplied evidence is preserved; the requested asset id is kept.
+    assert out["rules"][0]["evidence"][0]["assetId"] == "a1"
+    # No fabricated backfill: the font rule had no evidence → stays empty.
+    assert out["rules"][1]["evidence"] == []
     assert out["rules"][1]["strength"] == "WEAK"
     assert out["colorSystem"]["contrastScore"] == 92.0
 

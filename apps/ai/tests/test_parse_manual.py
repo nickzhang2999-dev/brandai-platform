@@ -78,8 +78,11 @@ async def test_http_parse_manual_coerces_rules():
     # strength upper-cased; missing value defaulted to {} (never null)
     assert out["rules"][1]["strength"] == "STRONG"
     assert out["rules"][1]["value"] == {}
-    # no assetId to backfill → evidence list stays empty (worker stamps it)
-    assert out["rules"][0]["evidence"] == []
+    # K4 — note-only evidence is retained (assetId optional); the parse-manual
+    # worker stamps the manual's assetId onto it downstream.
+    assert len(out["rules"][0]["evidence"]) == 1
+    assert out["rules"][0]["evidence"][0]["note"] == "第 2 章 · 色彩规范"
+    assert "assetId" not in out["rules"][0]["evidence"][0]
     assert out["colorSystem"]["contrastScore"] == 90.0
 
 
