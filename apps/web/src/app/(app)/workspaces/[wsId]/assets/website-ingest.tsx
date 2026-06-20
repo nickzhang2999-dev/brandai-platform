@@ -34,12 +34,39 @@ export function WebsiteIngest({
   const [category, setCategory] = useState<AssetCategory>("OTHER");
   const [error, setError] = useState<string | null>(null);
 
+  // K3 / §2 — ingest is now server-authoritative: POST returns 202 + jobId, we
+  // poll GET ?jobId=... until SUCCEEDED/FAILED and then read the candidate
+  // result. Bounded at ~6 min (§2.2) so the spinner can't hang forever.
   const ingest = useMutation({
-    mutationFn: () =>
-      apiFetch<IngestWebsiteResponse>(`/api/workspaces/${wsId}/ingest`, {
-        method: "POST",
-        body: JSON.stringify({ workspaceId: wsId, url }),
-      }),
+    mutationFn: async () => {
+      const start = await apiFetch<{ jobId: string; status: string }>(
+        `/api/workspaces/${wsId}/ingest`,
+        {
+          method: "POST",
+          body: JSON.stringify({ workspaceId: wsId, url }),
+        },
+      );
+      const deadline = Date.now() + 6 * 60_000;
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        if (Date.now() > deadline) {
+          throw new Error("读取超时,请重试或更换页面地址");
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+        const poll = await apiFetch<{
+          status: "PENDING" | "RUNNING" | "SUCCEEDED" | "FAILED";
+          result?: IngestWebsiteResponse;
+          failedReason?: string;
+        }>(`/api/workspaces/${wsId}/ingest?jobId=${start.jobId}`);
+        if (poll.status === "SUCCEEDED") {
+          if (!poll.result) throw new Error("读取完成但结果为空,请重试");
+          return poll.result;
+        }
+        if (poll.status === "FAILED") {
+          throw new Error(poll.failedReason || "读取失败");
+        }
+      }
+    },
     onSuccess: (r) => {
       setResult(r);
       setSelected(new Set());

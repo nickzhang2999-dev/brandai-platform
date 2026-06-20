@@ -12,6 +12,11 @@ export const AsyncTaskKind = z.enum([
   "EDIT",
   // E9/E10 — asset auto-tagging (POST /assets/[id]/describe → describe worker).
   "DESCRIBE",
+  // K3 / §2 — website ingest crawl (POST /ingest → ingest worker). The AI
+  // crawl is slow, so it runs server-authoritatively in a worker instead of
+  // being awaited in the HTTP handler. The candidate result is read back via
+  // the job return value (GET ?jobId=).
+  "INGEST",
 ]);
 export type AsyncTaskKind = z.infer<typeof AsyncTaskKind>;
 

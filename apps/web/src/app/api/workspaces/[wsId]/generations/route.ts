@@ -23,7 +23,7 @@ import {
   compileAIConstraints,
   constraintsEnabled,
 } from "@/lib/ai-constraints";
-import { assertGenerationQuota } from "@/lib/quota";
+import { reserveGenerationQuota } from "@/lib/quota";
 
 /**
  * GET  /api/workspaces/[wsId]/generations?projectId=...
@@ -109,10 +109,6 @@ export async function POST(
       }
     }
 
-    // M-D — quota/rate-limit gate (402). Checked before any work so an
-    // over-quota user neither runs the worker nor creates a row.
-    await assertGenerationQuota(user.id);
-
     // §2.1 — NO AI calls in this handler. The earlier `await runPrecheck(...)`
     // (which makes an AI compliance call) lived here and caused POST to time
     // out → 529. AI precheck now runs in generate.worker.ts and surfaces a
@@ -167,16 +163,24 @@ export async function POST(
       }
     }
 
-    const generation = await prisma.generation.create({
-      data: {
+    // K1 — atomic quota reservation (metered by workspace OWNER, not the
+    // invoking collaborator). The PENDING Generation row IS the reservation;
+    // the serializable transaction prevents concurrent over-spend. Default /
+    // owner / admin plan is unlimited → fast no-transaction path, phase-1
+    // behavior unchanged. Over-quota throws 402 here before any work/enqueue.
+    const reserved = await reserveGenerationQuota({
+      workspaceId: wsId,
+      count: 1,
+      make: () => ({
         projectId: input.projectId,
         workspaceId: wsId,
         sceneType: input.sceneType,
         sellingPoint: input.sellingPoint,
         scene: input.scene,
         status: "PENDING",
-      },
+      }),
     });
+    const generation = { id: reserved[0]!.id };
 
     const jobData: GenerateJobData = {
       workspaceId: wsId,

@@ -21,8 +21,11 @@ describe("H-async TaskState", () => {
     expect(r.success).toBe(false);
   });
 
-  it("AsyncTaskKind is one of RECOGNIZE/PARSE_MANUAL/EDIT", () => {
+  it("AsyncTaskKind includes RECOGNIZE/PARSE_MANUAL/EDIT/DESCRIBE/INGEST", () => {
     expect(AsyncTaskKind.safeParse("PARSE_MANUAL").success).toBe(true);
+    expect(AsyncTaskKind.safeParse("DESCRIBE").success).toBe(true);
+    // K3 — website ingest is now an async-task kind.
+    expect(AsyncTaskKind.safeParse("INGEST").success).toBe(true);
     expect(AsyncTaskKind.safeParse("GENERATE").success).toBe(false);
   });
 });

@@ -37,3 +37,9 @@ export const describeQueue = new Queue("describe", {
   connection,
   prefix: queuePrefix,
 });
+// K3 / §2 — website ingest crawl (moved out of the HTTP handler). Same prefix
+// convention as the others.
+export const ingestQueue = new Queue("ingest", {
+  connection,
+  prefix: queuePrefix,
+});

@@ -11,6 +11,7 @@ import {
 import { requireWorkspaceRole } from "@/lib/workspace";
 import { getProject, getVersion } from "@/lib/generations";
 import { getConfirmedRules } from "@/lib/rules";
+import { canReleaseVersion } from "@brandai/contracts";
 
 /**
  * M6 · 交付包导出 — POST { versionIds[] } streams a ZIP containing:
@@ -60,7 +61,7 @@ export async function POST(
   try {
     const user = await requireUser();
     const { wsId, projectId } = await params;
-    await requireWorkspaceRole(wsId, user.id, "REVIEWER");
+    const { role } = await requireWorkspaceRole(wsId, user.id, "REVIEWER");
 
     const project = await getProject(wsId, projectId);
     if (!project) throw new ApiException(404, "Project not found");
@@ -78,10 +79,18 @@ export async function POST(
       if (!gen || gen.workspaceId !== wsId || gen.projectId !== projectId) {
         continue;
       }
+      // K2 — separation of duties: a non-owner collaborator may only export
+      // RELEASED (final/approved) versions. The owner exports anything (the
+      // phase-1 closed loop is unchanged). Unreleased drafts are silently
+      // dropped for collaborators rather than 403-ing the whole ZIP.
+      if (!canReleaseVersion(role, v)) continue;
       versions.push({ version: v, generation: gen });
     }
     if (versions.length === 0) {
-      throw new ApiException(404, "No exportable versions in this project");
+      throw new ApiException(
+        404,
+        "No exportable versions in this project",
+      );
     }
 
     const rules = await getConfirmedRules(wsId);

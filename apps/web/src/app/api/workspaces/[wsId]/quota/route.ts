@@ -1,6 +1,10 @@
 import { handleError, ok, requireUser } from "@/lib/api";
 import { requireWorkspaceRole } from "@/lib/workspace";
-import { getQuotaStatus, quotaEnabled } from "@/lib/quota";
+import {
+  getQuotaStatus,
+  getWorkspaceOwnerId,
+  quotaEnabled,
+} from "@/lib/quota";
 
 /**
  * GET /api/workspaces/[wsId]/quota
@@ -24,7 +28,10 @@ export async function GET(
     // Read-only: any workspace member may view quota status.
     await requireWorkspaceRole(wsId, user.id, "VIEWER");
 
-    const status = await getQuotaStatus(user.id);
+    // §3.5 — quota is metered by workspace OWNER (tenant), so the displayed
+    // status must resolve the owner's plan/usage, not the viewing member's.
+    const ownerId = await getWorkspaceOwnerId(wsId);
+    const status = await getQuotaStatus(ownerId);
     if (!quotaEnabled()) {
       return ok({ ...status, dailyLimit: -1, monthlyQuota: -1 });
     }

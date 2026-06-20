@@ -1,4 +1,9 @@
-import { prisma } from "@brandai/db";
+import { prisma, Prisma } from "@brandai/db";
+import {
+  canCreateWorkspace,
+  evaluateGenerationQuota,
+  UNLIMITED,
+} from "@brandai/contracts";
 import { ApiException } from "@/lib/api";
 import { adminEmails } from "@/lib/admin";
 
@@ -19,8 +24,6 @@ import { adminEmails } from "@/lib/admin";
 export function quotaEnabled(): boolean {
   return (process.env.QUOTA_V1 ?? "1") !== "0";
 }
-
-const UNLIMITED = -1;
 
 export interface ResolvedPlan {
   tier: string;
@@ -127,29 +130,67 @@ async function ownedWorkspaceIds(userId: string): Promise<string[]> {
   return rows.map((r) => r.id);
 }
 
+/**
+ * §3.5 isolation rule 3 — quota/billing is metered by workspace OWNER (tenant),
+ * NOT the invoking collaborator. A shared-workspace generation must count
+ * against the owner so a collaborator can't burn unmetered generations and so
+ * the owner's plan is the one enforced. Returns the owner's userId (used as the
+ * quota subject everywhere a generation is initiated in a workspace).
+ */
+export async function getWorkspaceOwnerId(
+  workspaceId: string,
+): Promise<string> {
+  const ws = await prisma.brandWorkspace.findUnique({
+    where: { id: workspaceId },
+    select: { ownerId: true },
+  });
+  if (!ws) throw new ApiException(404, "Workspace not found");
+  return ws.ownerId;
+}
+
 export interface QuotaUsage {
   plan: ResolvedPlan;
   dailyUsed: number;
   periodUsed: number;
 }
 
+/**
+ * Count the owner's generations in the daily + period windows. FAILED rows are
+ * EXCLUDED — a generation that errored out is "released" (settled) and must not
+ * permanently consume quota (K1: reserve before enqueue, release on terminal
+ * failure). Optionally runs inside a transaction client so the count and the
+ * reservation insert are atomic (see `reserveGenerationQuota`).
+ */
+async function countOwnerUsage(
+  client: Prisma.TransactionClient | typeof prisma,
+  wsIds: string[],
+  periodStart: Date,
+): Promise<{ dailyUsed: number; periodUsed: number }> {
+  if (wsIds.length === 0) return { dailyUsed: 0, periodUsed: 0 };
+  const released: Prisma.GenerationWhereInput = {
+    workspaceId: { in: wsIds },
+    // Release-on-failure: a FAILED attempt no longer holds a reservation.
+    status: { not: "FAILED" },
+  };
+  const [dailyUsed, periodUsed] = await Promise.all([
+    client.generation.count({
+      where: { ...released, createdAt: { gte: startOfDayUTC() } },
+    }),
+    client.generation.count({
+      where: { ...released, createdAt: { gte: periodStart } },
+    }),
+  ]);
+  return { dailyUsed, periodUsed };
+}
+
 export async function getUsage(userId: string): Promise<QuotaUsage> {
   const plan = await resolvePlan(userId);
   const wsIds = await ownedWorkspaceIds(userId);
-  if (wsIds.length === 0) {
-    return { plan, dailyUsed: 0, periodUsed: 0 };
-  }
-  const [dailyUsed, periodUsed] = await Promise.all([
-    prisma.generation.count({
-      where: { workspaceId: { in: wsIds }, createdAt: { gte: startOfDayUTC() } },
-    }),
-    prisma.generation.count({
-      where: {
-        workspaceId: { in: wsIds },
-        createdAt: { gte: plan.periodStart },
-      },
-    }),
-  ]);
+  const { dailyUsed, periodUsed } = await countOwnerUsage(
+    prisma,
+    wsIds,
+    plan.periodStart,
+  );
   return { plan, dailyUsed, periodUsed };
 }
 
@@ -183,47 +224,177 @@ export async function getQuotaStatus(userId: string): Promise<QuotaStatus> {
   };
 }
 
+/** Translate a policy deny decision into the 402 ApiException the UI expects. */
+function denyToException(
+  tier: string,
+  decision: ReturnType<typeof evaluateGenerationQuota>,
+): ApiException {
+  const msg =
+    decision.reason === "DAILY_LIMIT"
+      ? "已达当日生成上限,请明日再试或升级订阅"
+      : "已达本周期生成配额,请升级订阅以继续";
+  return new ApiException(402, msg, {
+    reason: decision.reason,
+    tier,
+    limit: decision.limit,
+    used: decision.used,
+    requested: decision.requested,
+  });
+}
+
 /**
  * Throw 402 when the next `count` generations would exceed the daily rate limit
- * or the monthly quota. Call this BEFORE creating the Generation row(s). For a
- * Campaign Kit, pass `count = scenes.length` so the WHOLE set is gated at once
- * (no half-finished kit). No-op when QUOTA_V1=0. `count` defaults to 1.
+ * or the monthly quota, metered against the workspace OWNER (tenant). Call this
+ * BEFORE creating the Generation row(s). For a Campaign Kit, pass the DEDUPED
+ * scene count so the WHOLE set is gated at once (no half-finished kit, no false
+ * 402 from a repeated scene). No-op when QUOTA_V1=0. `count` defaults to 1.
+ *
+ * NOTE: this is the NON-atomic read-then-act check used by the synchronous
+ * surface (fast 402 feedback). Routes that actually create the Generation row
+ * should use `reserveGenerationQuota` so concurrent requests can't over-spend.
  */
 export async function assertGenerationQuota(
-  userId: string,
+  ownerUserId: string,
   count = 1,
 ): Promise<void> {
   if (!quotaEnabled()) return;
 
   // Admin handling is centralized in resolvePlan — operators resolve to the
-  // ENTERPRISE plan (unlimited limits), so the checks below naturally pass for
-  // them. No special-case here keeps quota and tier display consistent.
-  const { plan, dailyUsed, periodUsed } = await getUsage(userId);
-  const n = Math.max(1, count);
+  // ENTERPRISE plan (unlimited limits), so the policy below is a no-op for them.
+  const { plan, dailyUsed, periodUsed } = await getUsage(ownerUserId);
+  const decision = evaluateGenerationQuota(
+    plan,
+    { dailyUsed, periodUsed },
+    count,
+  );
+  if (!decision.ok) throw denyToException(plan.tier, decision);
+}
 
-  if (
-    plan.dailyGenerationLimit !== UNLIMITED &&
-    dailyUsed + n > plan.dailyGenerationLimit
-  ) {
-    throw new ApiException(402, "已达当日生成上限,请明日再试或升级订阅", {
-      reason: "DAILY_LIMIT",
-      tier: plan.tier,
-      limit: plan.dailyGenerationLimit,
-      used: dailyUsed,
-      requested: n,
-    });
+/**
+ * K1 — quota gate for 重新生成 (regenerate). Regenerate re-runs an EXISTING
+ * Generation row rather than creating a new one, so its quota accounting depends
+ * on the prior terminal state:
+ *  - prior FAILED: the slot was released (FAILED is excluded from usage), so the
+ *    re-run consumes a fresh slot → gate as +1.
+ *  - prior SUCCEEDED: the row already holds its slot (still counted), so the
+ *    re-run does NOT consume a new slot → gate at the CURRENT usage (no +1),
+ *    only blocking if the owner is already over a (since-lowered) limit.
+ *
+ * Metered against the workspace OWNER. No-op when QUOTA_V1=0 / unlimited plan.
+ */
+export async function assertRegenerateQuota(
+  workspaceId: string,
+  priorStatus: string,
+): Promise<void> {
+  if (!quotaEnabled()) return;
+  const ownerId = await getWorkspaceOwnerId(workspaceId);
+  const { plan, dailyUsed, periodUsed } = await getUsage(ownerId);
+  // A previously-SUCCEEDED row is already in the counts; re-running it must not
+  // double-charge. Use count=1 only when the prior attempt was released.
+  const consumesNewSlot = priorStatus === "FAILED";
+  const decision = evaluateGenerationQuota(
+    plan,
+    {
+      // For an already-counted SUCCEEDED row, subtract its own slot from the
+      // baseline so "used + 1" lands back at the true current usage.
+      dailyUsed: consumesNewSlot ? dailyUsed : Math.max(0, dailyUsed - 1),
+      periodUsed: consumesNewSlot ? periodUsed : Math.max(0, periodUsed - 1),
+    },
+    1,
+  );
+  if (!decision.ok) throw denyToException(plan.tier, decision);
+}
+
+/**
+ * K1 — ATOMIC quota reservation. Resolves the workspace owner (tenant), then in
+ * a SERIALIZABLE transaction: counts the owner's released usage AND creates the
+ * `count` PENDING Generation rows in the SAME transaction. Because the count and
+ * the inserts are serialized, two concurrent requests can't both read "1 slot
+ * left" and each create a row — the second transaction sees the first's rows (or
+ * conflicts and retries), so the limit holds under concurrency.
+ *
+ * The PENDING Generation rows ARE the reservation: a later FAILED terminal
+ * status releases the slot (countOwnerUsage excludes FAILED). Returns the
+ * created Generation rows so the caller can enqueue their jobs.
+ *
+ * `make` builds the per-row create data (scene type / selling point / etc).
+ */
+export async function reserveGenerationQuota(args: {
+  workspaceId: string;
+  count: number;
+  make: (i: number) => Prisma.GenerationCreateManyInput;
+}): Promise<{ id: string }[]> {
+  const n = Math.max(1, args.count);
+  const ownerId = await getWorkspaceOwnerId(args.workspaceId);
+  const plan = await resolvePlan(ownerId);
+  const wsIds = await ownedWorkspaceIds(ownerId);
+
+  // Fast path: unlimited plan (default / owner / admin) → no transaction
+  // overhead, no serialization, identical phase-1 behavior.
+  const unlimited =
+    !quotaEnabled() ||
+    (plan.dailyGenerationLimit === UNLIMITED &&
+      plan.monthlyGenerationQuota === UNLIMITED);
+
+  if (unlimited) {
+    const created: { id: string }[] = [];
+    for (let i = 0; i < n; i += 1) {
+      const row = await prisma.generation.create({
+        data: args.make(i),
+        select: { id: true },
+      });
+      created.push(row);
+    }
+    return created;
   }
 
-  if (
-    plan.monthlyGenerationQuota !== UNLIMITED &&
-    periodUsed + n > plan.monthlyGenerationQuota
-  ) {
-    throw new ApiException(402, "已达本周期生成配额,请升级订阅以继续", {
-      reason: "PERIOD_QUOTA",
+  return prisma.$transaction(
+    async (tx: Prisma.TransactionClient) => {
+      const { dailyUsed, periodUsed } = await countOwnerUsage(
+        tx,
+        wsIds,
+        plan.periodStart,
+      );
+      const decision = evaluateGenerationQuota(
+        plan,
+        { dailyUsed, periodUsed },
+        n,
+      );
+      if (!decision.ok) throw denyToException(plan.tier, decision);
+
+      const created: { id: string }[] = [];
+      for (let i = 0; i < n; i += 1) {
+        const row = await tx.generation.create({
+          data: args.make(i),
+          select: { id: true },
+        });
+        created.push(row);
+      }
+      return created;
+    },
+    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+  );
+}
+
+/**
+ * K1 — enforce the plan's `maxWorkspaces` (tenant cap) on workspace creation.
+ * Counts the user's currently-owned workspaces and throws 402 when creating one
+ * more would exceed the plan. Unlimited (-1, the default/owner/admin plan) is a
+ * no-op, so phase-1 single-brand auto-create is untouched. No-op when QUOTA_V1=0.
+ */
+export async function assertCanCreateWorkspace(userId: string): Promise<void> {
+  if (!quotaEnabled()) return;
+  const plan = await resolvePlan(userId);
+  if (plan.maxWorkspaces === UNLIMITED) return;
+  const current = await prisma.brandWorkspace.count({
+    where: { ownerId: userId },
+  });
+  if (!canCreateWorkspace(plan.maxWorkspaces, current)) {
+    throw new ApiException(402, "已达套餐可创建品牌数量上限,请升级订阅", {
+      reason: "MAX_WORKSPACES",
       tier: plan.tier,
-      limit: plan.monthlyGenerationQuota,
-      used: periodUsed,
-      requested: n,
+      limit: plan.maxWorkspaces,
+      used: current,
     });
   }
 }

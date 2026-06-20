@@ -15,6 +15,7 @@ import {
 } from "@/lib/workspace";
 import { generateQueue } from "@/lib/queue";
 import { getGeneration } from "@/lib/generations";
+import { assertRegenerateQuota } from "@/lib/quota";
 import type { GenerateJobData } from "@/lib/workers/generate.worker";
 
 /**
@@ -116,9 +117,15 @@ export async function POST(
   try {
     const user = await requireUser();
     const { wsId, genId } = await params;
-    await loadOwned(wsId, genId, user.id);
+    const priorRow = await loadOwned(wsId, genId, user.id);
     // G6 — 重新生成属于内容写操作:编辑+(EDITOR/OWNER)。
     await requireWorkspaceRole(wsId, user.id, "EDITOR");
+
+    // K1 — gate 重新生成 through the same quota door (metered by workspace
+    // owner). A re-run of a released (FAILED) attempt consumes a fresh slot; a
+    // re-run of a SUCCEEDED row keeps its existing slot. Checked before the
+    // atomic claim so an over-quota owner neither flips state nor enqueues.
+    await assertRegenerateQuota(wsId, priorRow.status);
 
     // Body is optional; tolerate an empty request.
     let body: z.infer<typeof RegenerateInput> = undefined;
