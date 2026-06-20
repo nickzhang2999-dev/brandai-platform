@@ -198,7 +198,7 @@
 | I25 | G6 协作（review/submit/approve 端点 + 字段） | 🟡 | `versions/[id]/{submit,review,recheck}` | 端点+schema 就绪，UI/enforce phase 2 | 2026-06-20 |
 | I26 | CI / release / dependabot | ✅ | `.github/workflows/*`、`.github/dependabot.yml` | — | 2026-06-20 |
 | I27 | 部署+冒烟技能 cds-deploy-verify | ✅ | `.claude/skills/cds-deploy-verify` | push→deploy→真出图冒烟 | 2026-06-20 |
-| I28 | BullMQ 队列按部署命名空间隔离 | ✅ | `lib/queue.ts`、`lib/workers/*`、`BULLMQ_PREFIX` | 共享 Redis 下队列无前缀致跨部署 worker 串 job（实测丢字段）；加 `BULLMQ_PREFIX`(默认 bull) 隔离；契合 §3.5 多租户 | 新增 2026-06-20 |
+| I28 | BullMQ 队列按部署命名空间隔离 | ✅ | `lib/queue.ts`、`lib/workers/*`、`BULLMQ_PREFIX` | 共享 Redis 下队列无前缀致跨部署 worker 串 job（实测丢字段）；加 `BULLMQ_PREFIX`(默认 bull) 隔离；契合 §3.5 多租户。**部署要求**：每分支须设 **branch-scoped** `BULLMQ_PREFIX`（本分支已设并经冒烟验证：队列计数归零 + styleKeywords 落库，证明 web+worker 共享前缀）。**phase-2**：把该前缀自动化进 `cds-compose.yml`（需 compose 审批 + 每分支 token），免手设 | 新增 2026-06-20 |
 
 ## J · 一期业务闭环（端到端事件流 · doc01§1.10）
 
