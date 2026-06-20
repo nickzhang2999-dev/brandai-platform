@@ -151,19 +151,43 @@ export async function POST(
       throw new ApiException(409, "该生成任务进行中,请等待完成后再重试");
     }
 
-    // Schema (frozen) doesn't persist versionCount; preserve the original
-    // request's intent by re-using the count of existing root versions.
-    const priorRootVersions = await prisma.generationVersion.count({
+    // 载入旧 root 版本:既复用数量,又**重建多尺寸 targets**——否则无 body 的整体
+    // 重生成会丢掉原 targets,被 worker 当 versionCount 同尺寸路径跑、删光旧 root,
+    // 把一整套渠道尺寸(banner/小红书封面/电商主图…)换成几张场景默认尺寸图。
+    // 版本列 width/height 存的就是当初请求的目标尺寸,params.targetKey/Label 标识档位。
+    const priorRoots = await prisma.generationVersion.findMany({
       where: { generationId: genId, parentVersionId: null },
+      select: { width: true, height: true, params: true },
     });
+    const reconstructedTargets = priorRoots
+      .map((v) => {
+        const p = (v.params ?? {}) as {
+          targetKey?: unknown;
+          targetLabel?: unknown;
+        };
+        if (typeof p.targetKey !== "string") return null;
+        return {
+          key: p.targetKey,
+          label: typeof p.targetLabel === "string" ? p.targetLabel : p.targetKey,
+          width: v.width,
+          height: v.height,
+        };
+      })
+      .filter((t): t is SizeSpec => t !== null);
+
+    // 显式 body.targets(单尺寸重试)优先;否则用重建的多尺寸;都没有才走 versionCount。
+    const targets =
+      body?.targets && body.targets.length > 0
+        ? body.targets
+        : reconstructedTargets.length > 0
+          ? reconstructedTargets
+          : undefined;
 
     const jobData: GenerateJobData = {
       workspaceId: wsId,
       generationId: genId,
-      versionCount: priorRootVersions > 0 ? priorRootVersions : 4,
-      ...(body?.targets && body.targets.length > 0
-        ? { targets: body.targets }
-        : {}),
+      versionCount: priorRoots.length > 0 ? priorRoots.length : 4,
+      ...(targets ? { targets } : {}),
     };
     const job = await generateQueue.add("generate", jobData, {
       removeOnComplete: 50,
