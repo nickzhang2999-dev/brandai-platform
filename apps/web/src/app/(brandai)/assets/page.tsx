@@ -4,7 +4,7 @@ import { useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Asset } from "@brandai/contracts";
 import { Button } from "@brandai/ui";
-import { apiFetch } from "@/lib/client";
+import { apiFetch, assetThumbUrl } from "@/lib/client";
 import { useBrand } from "../brand-context";
 import { Chip, gradientFor, PageHeader } from "../_ui";
 
@@ -201,7 +201,7 @@ export default function AssetsPage() {
                   {isImage(a) ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
-                      src={a.url}
+                      src={assetThumbUrl(wsId, a.id, a.url)}
                       alt={a.fileName}
                       className="h-32 w-full object-cover"
                     />
@@ -232,7 +232,7 @@ export default function AssetsPage() {
                 {isImage(active) ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
-                    src={active.url}
+                    src={assetThumbUrl(wsId, active.id, active.url)}
                     alt={active.fileName}
                     className="h-44 w-full rounded-2xl object-cover"
                   />
