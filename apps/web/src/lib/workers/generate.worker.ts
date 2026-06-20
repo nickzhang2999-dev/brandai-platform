@@ -9,7 +9,7 @@ import {
   type BrandRule,
   type SizeSpec,
 } from "@brandai/contracts";
-import { connection } from "@/lib/queue";
+import { connection, queuePrefix } from "@/lib/queue";
 import { ai } from "@/lib/ai";
 import { uploadDataUrlImage } from "@/lib/s3";
 import { getConfirmedRules } from "@/lib/rules";
@@ -677,7 +677,7 @@ export function createGenerateWorker() {
   const worker = new Worker<GenerateJobData, GenerateJobResult>(
     "generate",
     runGenerateJob,
-    { connection, concurrency: 2 },
+    { connection, prefix: queuePrefix, concurrency: 2 },
   );
   worker.on("failed", (job, err) => {
     console.error(`[generate] job ${job?.id} failed:`, err);

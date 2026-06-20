@@ -4,7 +4,7 @@ import {
   ParseManualRequest,
   RecognizeResponse,
 } from "@brandai/contracts";
-import { connection } from "@/lib/queue";
+import { connection, queuePrefix } from "@/lib/queue";
 import { ai } from "@/lib/ai";
 import { recordUsage } from "@/lib/usage";
 import {
@@ -120,7 +120,7 @@ export function createParseManualWorker() {
   const worker = new Worker<ParseManualJobData, ParseManualJobResult>(
     "parse-manual",
     runParseManualJob,
-    { connection, concurrency: 2 },
+    { connection, prefix: queuePrefix, concurrency: 2 },
   );
   worker.on("failed", (job, err) => {
     console.error(`[parse-manual] job ${job?.id} failed:`, err);

@@ -5,7 +5,7 @@ import {
   EditRequest,
   EditResponse,
 } from "@brandai/contracts";
-import { connection } from "@/lib/queue";
+import { connection, queuePrefix } from "@/lib/queue";
 import { ai } from "@/lib/ai";
 import { recordUsage } from "@/lib/usage";
 import { uploadDataUrlImage } from "@/lib/s3";
@@ -174,7 +174,7 @@ export function createEditWorker() {
   const worker = new Worker<EditJobData, EditJobResult>(
     "edit",
     runEditJob,
-    { connection, concurrency: 2 },
+    { connection, prefix: queuePrefix, concurrency: 2 },
   );
   worker.on("failed", (job, err) => {
     console.error(`[edit] job ${job?.id} failed:`, err);

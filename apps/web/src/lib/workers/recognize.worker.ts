@@ -4,7 +4,7 @@ import {
   RecognizeRequest,
   RecognizeResponse,
 } from "@brandai/contracts";
-import { connection } from "@/lib/queue";
+import { connection, queuePrefix } from "@/lib/queue";
 import { ai } from "@/lib/ai";
 import { recordUsage } from "@/lib/usage";
 import {
@@ -112,7 +112,7 @@ export function createRecognizeWorker() {
   const worker = new Worker<RecognizeJobData, RecognizeJobResult>(
     "recognize",
     runRecognizeJob,
-    { connection, concurrency: 2 },
+    { connection, prefix: queuePrefix, concurrency: 2 },
   );
   worker.on("failed", (job, err) => {
     console.error(`[recognize] job ${job?.id} failed:`, err);
