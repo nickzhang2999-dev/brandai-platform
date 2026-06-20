@@ -376,6 +376,10 @@ export async function runGenerateJob(
     //  - referenceAssetIds → each resolved to its asset URL (workspace-scoped)
     //    and pushed as a positive referenceImage. Ownership was IDOR-checked at
     //    the POST route; we re-scope the lookup to the workspace here too.
+    // Track explicit user picks so we forward `aiConstraints` even when the
+    // AI_CONSTRAINTS_V1 flag is off — the user's deliberate style/reference
+    // choices must always reach the AI service.
+    let hasExplicitPicks = false;
     const styleKeywords = (job.data.styleKeywords ?? [])
       .map((s) => s.trim())
       .filter((s) => s.length > 0);
@@ -384,6 +388,7 @@ export async function runGenerateJob(
         ...aiConstraints,
         promptAdditions: [...aiConstraints.promptAdditions, ...styleKeywords],
       };
+      hasExplicitPicks = true;
     }
     const referenceAssetIds = [
       ...new Set((job.data.referenceAssetIds ?? []).filter((x) => !!x)),
@@ -409,6 +414,7 @@ export async function runGenerateJob(
           ...aiConstraints,
           referenceImages: [...aiConstraints.referenceImages, ...refImages],
         };
+        hasExplicitPicks = true;
       }
     }
 
@@ -473,7 +479,7 @@ export async function runGenerateJob(
       // M3 — forward the chosen text mode (defaults to "direct" when a job was
       // enqueued before this field existed, preserving legacy behavior).
       textMode: job.data.textMode ?? "direct",
-      ...(constraintsEnabled() ? { aiConstraints } : {}),
+      ...(constraintsEnabled() || hasExplicitPicks ? { aiConstraints } : {}),
     };
 
     async function persist(
