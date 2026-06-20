@@ -113,8 +113,8 @@
 | E6 | 素材统计（总数/图片/收藏/AI标注） | P04-M07 | ✅ | `page.tsx:88` | — | 2026-06-20 |
 | E7 | 素材网格 | P04-M08 | ✅ | `page.tsx:187` | 缩略图+类型 chip，走同源代理 | 2026-06-20 |
 | E8 | 素材详情侧栏 | P04-M12 | ✅ | `page.tsx:229` | 预览/类型/尺寸/大小/来源/AI描述/AI标签 | 2026-06-20 |
-| E9 | AI 智能标签 | P04-M13 | 🟡 | 展示 `aiTags`；上传后**自动打标**未接（recognize 在知识库语义） | — | 2026-06-20 |
-| E10 | AI 生成描述 | P04-M14 | 🟡 | 展示 `aiDescription`；本页未触发自动生成 | — | 2026-06-20 |
+| E9 | AI 智能标签 | P04-M13 | ✅ | `assets/page.tsx` 详情「AI 智能标注」→`POST .../describe`→worker→真 VLM `/v1/describe`→写 `Asset.aiTags` | 真 describe 端点（§2 异步 202→轮询）；落真 DB | 接入 2026-06-20 |
+| E10 | AI 生成描述 | P04-M14 | ✅ | 同 E9（`/v1/describe` 返回 `aiDescription`，worker 写 `Asset.aiDescription`） | 真 VLM 描述 | 接入 2026-06-20 |
 | E11 | 加入项目（→Campaign） | P04-M16 | 🟡 | `assets/page.tsx` + `lib/reference-tray.ts` | 详情选 Campaign→加入并跳工作台；客户端 reference-tray 暂存（DB Project↔Asset 关系 phase-2） | 接入 2026-06-20 |
 | E12 | 设为参考（→工作台参考区） | P04-M17 | 🟡 | `assets/page.tsx` + `lib/reference-tray.ts` ↔ 工作台 F9 | UI 联动通：设为参考→工作台 F9 显示并入 referenceAssetIds（真校验归属+留痕 version.params）。**注**：OpenAI generate API 不收图，当前为 prompt 级引导，真视觉条件化需经 edits 路由（phase-2） | 接入 2026-06-20 |
 | E13 | 收藏切换 / 使用记录 / 查看来源 | doc02/05 | 🟡 | 详情含「来源」字段；收藏 toggle/使用记录未见 | 🔍 | 2026-06-20 |
@@ -131,10 +131,10 @@
 | F6 | 场景 / sceneType / 生成数量 | doc02 | ✅ | `page.tsx:414/425/443` | — | 2026-06-20 |
 | F7 | 风格关键词（标签增删） | P05-M10 | ✅ **已验收** | `workspace/page.tsx` tag 输入 | 增删 chip + 建议词；进 `styleKeywords`→worker 折入 promptAdditions。灰度真验：`params.styleKeywords`+`appliedPromptAdditions` 落库 | 接入+验收 2026-06-20 |
 | F8 | 品牌约束（显示已应用规则） | P05-M12 | 🟡 | `page.tsx:464`「品牌约束已生效」 | 仅状态行，非逐条规则展示 | 2026-06-20 |
-| F9 | 参考素材区 | P05-M13 | 🟡 | `workspace/page.tsx`（读 reference-tray） | 显示本项目参考缩略图（来自 E12）+ 可删；进 `referenceAssetIds`→worker 解析为 referenceImages（**OpenAI generate 仅 prompt 级引导；真视觉条件化经 edits phase-2**） | 接入 2026-06-20 |
+| F9 | 参考素材区 | P05-M13 | 🟡 | `workspace/page.tsx`（读 reference-tray） | 显示本项目参考缩略图（来自 E12）+ 可删；进 `referenceAssetIds`→worker 解析为 referenceImages（**OpenAI generate 仅 prompt 级引导；真视觉条件化经 edits phase-2**）；**素材生命周期上线**：`availableForGeneration=false` 的素材在参考暂存/识别 picker 灰掉禁选（wire 暴露 `availableForGeneration/deprecatedAt`） | 接入 2026-06-20；生命周期灰显 2026-06-20 |
 | F10 | 提交制作（真实出图 §2 异步） | P05-M15 | ✅ **已验收** | `page.tsx:230` → `POST /generations` 202 → 轮询 | 真 gpt-image-1→GenerationVersion | 2026-06-20 |
 | F11 | 生成额度展示 | doc02/05 | ✅ | `workspace/page.tsx` QuotaBar + `GET /quota` | 本周期/今日用量 + 进度条（-1=不限）；新增只读端点 | 接入 2026-06-20 |
-| F16 | 多尺寸渠道（targets）+ textMode | K5 | ✅ **已验收** | `workspace/page.tsx`（CHANNEL_SIZES 多选 + 直接/分层） | 渠道尺寸多选每尺寸各 1 张；textMode 直接/分层 + 持久化+regenerate 重建。灰度真验：1024²/1080×1440 出图 + `params.textMode=layered`；记录 snap 真实尺寸仍 phase-2 | 新增+验收 2026-06-20 |
+| F16 | 多尺寸渠道（targets）+ textMode | K5 | ✅ **已验收** | `workspace/page.tsx`（CHANNEL_SIZES 多选 + 直接/分层） | 渠道尺寸多选每尺寸各 1 张；textMode 直接/分层 + 持久化+regenerate 重建。灰度真验：1024²/1080×1440 出图 + `params.textMode=layered`；**记录 snap 真实尺寸已做**（K5：`params.actualWidth/Height` 由 apps/ai PIL 解码） | 新增+验收 2026-06-20；K5 补 2026-06-20 |
 | F12 | 修改优化（改图） | 一期闭环 | ✅ **已验收** | `page.tsx:145` → versions/[id]/edit（OpenAI multipart） | 子版本 parentVersionId | 2026-06-20 |
 | F13 | 终选（设为终稿 isFinal） | 一期闭环 | ✅ **已验收** | `page.tsx`（PATCH /generations/[id]） | — | 2026-06-20 |
 | F14 | 交付归档（导出 ZIP） | 一期闭环 | ✅ **已验收** | `page.tsx:200` → projects/[id]/export | 真 ZIP | 2026-06-20 |
@@ -223,9 +223,9 @@
 | K2 | G6 协作 RBAC（Membership 解析、被邀成员放行、导出只放行 final/approved） | ➖ phase2 | I25 底座就绪 | 2026-06-20 |
 | K3 | §2 异步化补齐（Campaign Kit precheck/ingest 移入 worker） | ➖ phase2 | I14 | 2026-06-20 |
 | K4 | PDF 知识库 + recognize 证据（Evidence.assetId optional + 校验归属） | ✅ | Evidence.assetId 双侧 optional；`_coerce_recognize` 保留 note-only + 剔除幻觉 assetId + 去回填；rule-workbench 消费侧守卫 | 完成 2026-06-20 |
-| K5 | 多尺寸 UI（targets）+ regenerate textMode 持久化 + 记录 snap 真实尺寸 | 🟡 | 多尺寸渠道多选 + textMode 切换/持久化/重建已做（见 F16）；**记录 OpenAI snap 后真实尺寸**仍未做 | 部分 2026-06-20 |
+| K5 | 多尺寸 UI（targets）+ regenerate textMode 持久化 + 记录 snap 真实尺寸 | ✅ | 多尺寸渠道多选 + textMode 切换/持久化/重建（见 F16）；**记录 OpenAI snap 真实尺寸**：`apps/ai` PIL 解码返回图→`actualWidth/actualHeight`→`generate.worker` 落 `GenerationVersion.params`（top-level width/height 仍存请求值，避免语义变更） | 完成 2026-06-20 |
 | K6 | 首个 admin bootstrap 原子化（并发竞态） | ✅ | `register/route.ts` Serializable 事务 + P2034 退避 | 完成 2026-06-20 |
-| K7 | WEBSITE 素材初始 host 重校验（防 DNS rebinding；`_inline_image` 现 `allow_private_initial=True` 盲信初始 host） | ➖ phase2 | `apps/ai/app/providers/http_providers.py:581`。一期单超管+注册关→无不可信 editor，威胁不可达；随 ingest 接入(I14)+多用户落地一并修：按 asset source 区分 UPLOAD/storage(可私网) vs WEBSITE(初始 host 也校验) | 新增 2026-06-20 |
+| K7 | WEBSITE 素材初始 host 重校验（防 DNS rebinding；`_inline_image` 现 `allow_private_initial=True` 盲信初始 host） | ✅ | `apps/ai` `_inline_image(source=)` 对 `WEBSITE` 源校验初始 host（+逐跳）；UPLOAD/storage 源保持可私网。source hint 经 contracts(`AssetSourceHint`)+schemas.py 双侧 + recognize/describe/reference 串接；web 路由从 `Asset.source` 解析 | 完成 2026-06-20 |
 
 ## L · 产品方案缺口（反推清单 · 给产品确认补需求）
 
