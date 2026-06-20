@@ -596,14 +596,25 @@ class HttpVLMProvider(VLMProvider):
             str(r.get("summary", "")) for r in brand_rules if r.get("summary")
         )
         img = await self._inline_image(image_url)
+        if img is None:
+            # 主审图无法安全获取(SSRF 拦截 / 抓取失败):不能当作"通过"。直接返回一条
+            # RISK 待复核结果、score=None,让上层 overall 落 RISK、分数非满分,避免
+            # 偏离规范的图因"没看成图"被静默判 PASS(fail-closed)。不浪费一次模型调用。
+            return {
+                "results": [
+                    {
+                        "level": "RISK",
+                        "reason": "审图无法获取(被安全策略拦截或抓取失败),未完成视觉合规,请人工复核",
+                        "category": "BRAND_VISUAL",
+                    }
+                ],
+                "score": None,
+            }
         parts: list[dict[str, Any]] = [
             {"type": "text", "text": _COMPLIANCE_PROMPT.format(rules=rules or "(none)")},
             {"type": "text", "text": "Image under review:"},
+            {"type": "image_url", "image_url": {"url": img}},
         ]
-        # SSRF-blocked image → omit it (text-only degraded check) rather than
-        # forwarding the raw URL for the provider to fetch.
-        if img is not None:
-            parts.append({"type": "image_url", "image_url": {"url": img}})
         # D5 — attach the brand's positive/negative example assets so the model
         # can judge resemblance. A generated image that looks like a `negative`
         # example (or strays from a `positive` one) should be flagged.
