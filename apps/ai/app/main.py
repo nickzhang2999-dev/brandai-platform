@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import httpx
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 
 from .config import settings
@@ -418,6 +418,17 @@ async def generate(
                 negative=negative or None,
                 extra=provider_extra or None,
             )
+            # A provider may return no image for a target (filtered/empty
+            # response). Surface a controlled 502 with the failing target rather
+            # than an opaque 500 IndexError on urls[0].
+            if not urls:
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        f"AI provider returned no image for target "
+                        f"{t.key} ({t.width}x{t.height})"
+                    ),
+                )
             actual = await _probe_image_size(urls[0])
             versions.append(
                 GeneratedVersion(
