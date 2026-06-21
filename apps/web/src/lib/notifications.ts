@@ -9,7 +9,7 @@ import { BRAND_PREVIEW_PROJECT_NAME } from "./brand-preview";
  * A3 / L3 — derive the in-app notification inbox from REAL server state. There
  * is no `Notification` table: notifications are projections of terminal
  * `Generation` rows (generate) and terminal `AsyncTask` rows (edit / recognize
- * / parse-manual / describe / ingest). Unread tracking is client-side (a
+ * / parse-manual / describe / ingest / summarize). Unread tracking is client-side (a
  * localStorage `lastSeenAt` marker compared to `createdAt`), so no migration is
  * needed. Callers must enforce workspace membership before calling.
  *
@@ -39,6 +39,9 @@ const TASK_KIND_META: Record<
   },
   DESCRIBE: { kind: "DESCRIBE", label: "素材智能描述", href: "/assets" },
   INGEST: { kind: "INGEST", label: "网站素材采集", href: "/assets" },
+  // SUMMARIZE covers both brief-decompose (homepage 立项) and campaign AI
+  // summary — both write a Campaign, so the inbox links to the Campaign list.
+  SUMMARIZE: { kind: "SUMMARIZE", label: "AI 摘要", href: "/campaigns" },
 };
 
 /**
