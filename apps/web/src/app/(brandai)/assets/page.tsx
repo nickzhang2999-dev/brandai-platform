@@ -95,6 +95,7 @@ export default function AssetsPage() {
   // H7 · 加入项目弹窗 — 打开后选择 Campaign 并确认（诚实：暂存为该 Campaign 的参考
   // 素材，出图时带入；一期无 Project↔Asset DB 关系）。
   const [joinDialog, setJoinDialog] = useState(false);
+  const [joinError, setJoinError] = useState<string | null>(null);
   // E3 · 文件夹组织 — 当前选中的文件夹筛选 + 新建文件夹弹窗。
   // folderFilter: "all" = 全部, "none" = 未归档, 否则为文件夹 id。
   const [folderFilter, setFolderFilter] = useState("all");
@@ -236,6 +237,7 @@ export default function AssetsPage() {
   // E9/E10 · AI 智能标注/生成描述 — POST 起异步任务（worker 调 /v1/describe →
   // 真 VLM → 回写 Asset.aiTags/aiDescription），客户端轮询任务，成功后刷新素材。
   const [describeTaskId, setDescribeTaskId] = useState<string | null>(null);
+  const [describeTimedOut, setDescribeTimedOut] = useState(false);
   const describeStartedAt = useRef(0);
   const describe = useMutation({
     mutationFn: (assetId: string) => {
@@ -265,7 +267,21 @@ export default function AssetsPage() {
   const describeRunning =
     !!describeTaskId &&
     describeStatus !== "SUCCEEDED" &&
-    describeStatus !== "FAILED";
+    describeStatus !== "FAILED" &&
+    !describeTimedOut;
+  // §2.4 bounded-state guard — after the 6-min poll cap the query stops
+  // refetching; flip a timed-out flag so the button re-enables (retry) instead
+  // of being stuck on "AI 标注中…" forever (mirrors home/campaigns timedOut).
+  useEffect(() => {
+    if (!describeTaskId) return;
+    if (describeStatus === "SUCCEEDED" || describeStatus === "FAILED") return;
+    const t = setInterval(() => {
+      if (Date.now() - describeStartedAt.current > 6 * 60_000) {
+        setDescribeTimedOut(true);
+      }
+    }, 3000);
+    return () => clearInterval(t);
+  }, [describeTaskId, describeStatus]);
   // On success, refresh assets (so the new tags/description surface) once.
   const describeFiredFor = useRef<string | null>(null);
   useEffect(() => {
@@ -686,6 +702,7 @@ export default function AssetsPage() {
                       onClick={() => {
                         describeFiredFor.current = null;
                         setDescribeTaskId(null);
+                        setDescribeTimedOut(false);
                         describe.mutate(active.id);
                       }}
                     >
@@ -698,6 +715,10 @@ export default function AssetsPage() {
                     {describeRunning ? (
                       <p className="mt-2 text-center text-xs text-muted-foreground">
                         正在分析素材（{describeTask?.progress ?? 0}%），可离开本页，稍后回来查看。
+                      </p>
+                    ) : describeTimedOut ? (
+                      <p className="mt-2 text-center text-xs text-destructive">
+                        分析超时，可能已失败，请重试。
                       </p>
                     ) : describeStatus === "FAILED" ? (
                       <p className="mt-2 text-center text-xs text-destructive">
@@ -873,13 +894,24 @@ export default function AssetsPage() {
           assetName={active.fileName}
           projects={projects}
           initialProjectId={pickProject}
-          onClose={() => setJoinDialog(false)}
+          error={joinError}
+          onClose={() => {
+            setJoinError(null);
+            setJoinDialog(false);
+          }}
           onConfirm={(projectId) => {
             setPickProject(projectId);
             const result = handleAddToProject(projectId);
-            // On success/duplicate we navigate away; only keep the dialog open
-            // (with the staged-full note) when the reference tray is full.
-            if (result !== "full") setJoinDialog(false);
+            if (result === "added" || result === "duplicate") {
+              // Real success → navigate (handled in handleAddToProject) + close.
+              setJoinError(null);
+              setJoinDialog(false);
+            } else if (result === null) {
+              // Staging failed (deactivated asset / non-image) — keep the dialog
+              // open and surface why instead of silently "succeeding".
+              setJoinError("该素材无法加入：需为可用的图片素材。");
+            }
+            // "full" → keep open; the staged-full note already explains it.
           }}
         />
       ) : null}
@@ -898,12 +930,14 @@ function JoinProjectDialog({
   assetName,
   projects,
   initialProjectId,
+  error,
   onClose,
   onConfirm,
 }: {
   assetName: string;
   projects: Project[];
   initialProjectId: string;
+  error?: string | null;
   onClose: () => void;
   onConfirm: (projectId: string) => void;
 }) {
@@ -943,6 +977,10 @@ function JoinProjectDialog({
         <p className="mt-3 rounded-2xl bg-accent-soft/60 p-3.5 text-xs leading-relaxed text-foreground/80">
           素材将作为该 Campaign 的参考素材暂存，出图时随提交带入。确认后将进入工作台。
         </p>
+
+        {error ? (
+          <p className="mt-3 text-xs text-destructive">{error}</p>
+        ) : null}
 
         <div className="mt-6 flex justify-end gap-2">
           <Button variant="outline" onClick={onClose}>
