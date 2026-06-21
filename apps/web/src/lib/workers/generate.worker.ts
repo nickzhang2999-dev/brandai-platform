@@ -460,7 +460,7 @@ export async function runGenerateJob(
           deprecatedAt: null,
           mimeType: { startsWith: "image/" },
         },
-        select: { id: true, url: true },
+        select: { id: true, url: true, source: true },
       });
       const refImages = referenceAssetIds
         .map((id) => {
@@ -470,6 +470,11 @@ export async function runGenerateJob(
             url: a.url,
             polarity: "positive" as const,
             source: `asset:${id}`,
+            // K7 — thread the asset's provenance so the AI service applies the
+            // strict initial-host SSRF check to WEBSITE-harvested references
+            // (DNS-rebinding guard). UPLOAD/storage keeps the trusting default.
+            // `Asset.source` ("UPLOAD"|"WEBSITE") matches AssetSourceHint.
+            sourceHint: a.source,
           };
         })
         .filter((r): r is NonNullable<typeof r> => r !== null);
