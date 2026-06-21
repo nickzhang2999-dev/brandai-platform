@@ -15,10 +15,11 @@ class Settings:
     image_base_url: str = os.getenv("IMAGE_PROVIDER_BASE_URL", "")
     vlm_base_url: str = os.getenv("VLM_PROVIDER_BASE_URL", "")
     # Model ids. Gateways like OpenRouter require a namespaced id
-    # ("openai/gpt-image-1", "openai/gpt-4o"); OpenAI direct takes the bare id
-    # ("gpt-image-1", "gpt-4o"). Empty image_model → upstream default; empty
-    # vlm_model → "gpt-4o".
-    image_model: str = os.getenv("IMAGE_MODEL", "")
+    # ("openai/gpt-image-2", "openai/gpt-4o"); OpenAI direct takes the bare id
+    # ("gpt-image-2", "gpt-4o"). 铁律：图像模型固定 gpt-image-2（写死默认），
+    # 仍可被 IMAGE_MODEL env / AppSetting 覆盖为兼容网关的命名空间 id；empty
+    # vlm_model → "gpt-4o"。
+    image_model: str = os.getenv("IMAGE_MODEL", "gpt-image-2")
     vlm_model: str = os.getenv("VLM_MODEL", "")
     # Image models (gpt-image-1/2) take ~70-150s; measured gpt-image-2 ≈ 70s.
     # Floor the timeout at 180s so a low compose/env value (the contract pins 60)

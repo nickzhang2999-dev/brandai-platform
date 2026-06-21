@@ -32,7 +32,7 @@ type Kind = "image" | "vlm";
 const LABELS: Record<Kind, { title: string; hint: string }> = {
   image: {
     title: "出图 (Image)",
-    hint: "OpenAI gpt-image-1 最适配。provider=openai,model=gpt-image-1。",
+    hint: "铁律：图像模型固定 gpt-image-2。provider=openai,model=gpt-image-2（留空亦默认 gpt-image-2）。",
   },
   vlm: {
     title: "视觉理解 (VLM)",
@@ -214,7 +214,7 @@ export function AiSettingsForm({ initial }: { initial: Masked }) {
                 <Label>Model</Label>
                 <Input
                   value={p.model}
-                  placeholder={kind === "image" ? "gpt-image-1" : "gpt-4o"}
+                  placeholder={kind === "image" ? "gpt-image-2" : "gpt-4o"}
                   autoComplete="off"
                   data-1p-ignore
                   data-lpignore="true"

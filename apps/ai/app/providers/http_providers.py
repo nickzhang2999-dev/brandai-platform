@@ -436,7 +436,7 @@ class HttpImageProvider(ImageProvider):
                         files={"image": ("image.png", img_bytes, "image/png")},
                         data={
                             "prompt": _edit_prompt(op, payload),
-                            "model": self.model or "gpt-image-1",
+                            "model": self.model or "gpt-image-2",
                             "size": size,
                             "n": "1",
                         },
