@@ -228,7 +228,7 @@
 | K2 | G6 协作 RBAC（Membership 解析、被邀成员放行、导出只放行 final/approved） | 🟡 | `contracts/release-policy.ts`：导出 ZIP + 单图下载按角色过滤（OWNER 全量；协作者/VIEWER 仅 final/approved，草稿静默剔除/403）；`getOrCreateActiveBrand` membership-first。**协作 UI/邀请流仍 phase-2** | enforce 接入 2026-06-20 |
 | K3 | §2 异步化补齐（Campaign Kit precheck/ingest 移入 worker） | ✅ | 新 `AsyncTaskKind=INGEST` + `ingestQueue` + `ingest.worker.ts`（202→轮询，6min 有界）；campaign-kit precheck 从 handler 移除（worker 内按 scene 跑） | 完成 2026-06-20 |
 | K4 | PDF 知识库 + recognize 证据（Evidence.assetId optional + 校验归属） | ✅ | Evidence.assetId 双侧 optional；`_coerce_recognize` 保留 note-only + 剔除幻觉 assetId + 去回填；rule-workbench 消费侧守卫 | 完成 2026-06-20 |
-| K5 | 多尺寸 UI（targets）+ regenerate textMode 持久化 + 记录 snap 真实尺寸 | ✅ | 多尺寸渠道多选 + textMode 切换/持久化/重建（见 F16）；**记录 OpenAI snap 真实尺寸**：`apps/ai` PIL 解码返回图→`actualWidth/actualHeight`→`generate.worker` 落 `GenerationVersion.params`（top-level width/height 仍存请求值，避免语义变更） | 完成 2026-06-20 |
+| K5 | 多尺寸 UI（targets）+ regenerate textMode 持久化 + 记录 snap 真实尺寸 | ✅ | 多尺寸渠道多选 + textMode 切换/持久化/重建（见 F16）；**记录真实尺寸**：`generate.worker` 优先用 `apps/ai` 探测值，兜底自读 PNG IHDR/JPEG SOF 头（AI 容器探测在灰度不稳，worker 端零依赖兜底）→落 `params.actualWidth/Height`。**灰度真验**：出图后 `params.actualWidth/Height=1024×1024` 已写入 | 完成+灰度验 2026-06-21 |
 | K6 | 首个 admin bootstrap 原子化（并发竞态） | ✅ | `register/route.ts` Serializable 事务 + P2034 退避 | 完成 2026-06-20 |
 | K7 | WEBSITE 素材初始 host 重校验（防 DNS rebinding；`_inline_image` 现 `allow_private_initial=True` 盲信初始 host） | ✅ | `apps/ai` `_inline_image(source=)` 对 `WEBSITE` 源校验初始 host（+逐跳）；UPLOAD/storage 源保持可私网。source hint 经 contracts(`AssetSourceHint`)+schemas.py 双侧 + recognize/describe/reference 串接；web 路由从 `Asset.source` 解析 | 完成 2026-06-20 |
 
