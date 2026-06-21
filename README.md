@@ -30,17 +30,19 @@
 > **二轮更新**：2026-06-20 · 分支 `claude/cool-pascal-ao72o3`。补齐设计稿缺口（L4 富卡片 / L5 工作台三右栏 / L8 素材联动 / L12 知识库真 AI 入口 / C5-C6 排序筛选 / Campaign 终审归档 / 模板库占位 + 6 项 nav）与 Phase-2 后端正确性（K4 recognize 证据 / K6 admin bootstrap 原子化 / K5 多尺寸+textMode）。全程 `pnpm test`(L1 83)+`typecheck`+`build`+`pytest`(77) 全绿。
 >
 > **灰度端到端真验收（No-mock，2026-06-21 更新）**：真 provider（`openai · gpt-image-2`【铁律】/ `gpt-4o-mini`）→真 API→真 DB。**已真验**：登录门禁、真出图（R2 1.5MB PNG, gpt-image-2）、`actualWidth/Height` 落库(K5)、配额计数(K1, periodUsed 8→12)、通知中心(A3)、网站采集异步真爬(K3/I14)、推荐品牌(L2)、素材文件夹建/移(E3)、R2 存储读写、素材 AI 标注 describe 早前曾真验出真标签(E9)。
-> **⚠️ AI 路由灰度阻塞（诚实标注）**：本会话新增的 `apps/ai` 路由（`/v1/describe`、`/v1/summarize`）依赖的 ai 容器在该 CDS 上**不会被 deploy/restart 可靠 recreate**，常回退陈旧 in-memory 代码 → 这些路由间歇 404。受影响：**E9/E10（描述/标注）、B2（brief 拆解）、C8（campaign 摘要）**。这 4 项**代码全部完成、L1+pytest 全绿、describe 早前已真验出真 VLM 结果**；根因是基础设施（ai 容器重载），非业务代码。已提交修复 `WATCHFILES_FORCE_POLLING=true`（轮询侦测 bind-mount），但需 ai 容器被真正 recreate 一次才生效——需有 node/docker 权限者执行 `docker compose up -d --force-recreate ai`。**旧 AI 路由（/v1/generate 等）与全部 web/worker 功能不受影响。**
-> **本轮还发现并修复一个真隔离 bug（I28）**：CDS 灰度 Redis 共享，BullMQ 队列名无前缀 → 其他部署（如 main 旧代码）的 worker 抢本部署 job 并静默丢弃新字段（实测 styleKeywords 不落）。已加按部署 `BULLMQ_PREFIX` 前缀隔离，重验通过。
+> **✅ AI 路由全部灰度真验通过（E9/E10 describe、B2/C8 summarize）**：真 VLM `gpt-4o-mini`。B2 8/8、describe 5/5、C8 写入真 `Project.aiSummary`。
+> **本轮发现并修复 2 个真·跨分支隔离 bug（I28 类）**——CDS 灰度 **Redis 与 docker 网络在同项目多分支间共享**：
+> 1. **Redis 队列共享**：BullMQ 队列名无前缀 → 别的分支(main 旧代码)worker 抢本分支 job 并静默丢字段。修复：分支级 `BULLMQ_PREFIX`。
+> 2. **AI 服务 DNS 共享（本轮根因）**：main 与本分支的 ai 容器**同挂一个 docker 网络且都用裸别名 `ai`** → 本分支 worker 的 `http://ai:8000` round-robin 命中 main 的旧 ai（无新路由）→ `/v1/describe`、`/v1/summarize` 间歇 404。**用 cdscli `branch exec` 进 worker 容器 `getent hosts ai` 实证到两个 IP(本分支 .8 + main .18)**。修复：分支级 `AI_SERVICE_URL` 指向唯一容器名 `cds-<branchId>-ai:8000`（compose 改 `${AI_SERVICE_URL:-http://ai:8000}`，其他分支回退裸别名）。修复后 worker 只命中本分支 ai，全部真验通过。
+> （这也纠正了中途一个错误假设——曾以为是「ai 容器陈旧/不重建」，用容器内 `/openapi.json` 实证后确认 ai 代码其实是新的，真凶是 DNS 串台。）
 > **未补冒烟**：真 recognize（D13）/ 参考图视觉条件化（F9，受 OpenAI generate API 限制，详见 L8）。
 > （评审：本轮处理 Bugbot/Codex 共 ~12 条，安全/正确性/UX 类已逐条修复并重验；计费/配额/协作类按 §3.5 留 phase-2。）
 
 ## 进度总览（更新 2026-06-21 · 6 波子智能体后）
 
-进度表 137 行，**❌ 已清零**。仅剩 6 个 🟡，无一是"没做"：
-- **E9 / E10 / B2 / C8** — 代码完成、L1+pytest 全绿、describe 早前已真验出真 VLM 结果；当前仅因**灰度 ai 容器陈旧、新 AI 路由间歇 404**（基础设施阻塞，见上「AI 路由灰度阻塞」+「部署陷阱」，修复已提交待 ai recreate）。非业务代码问题。
-- **I25 / K2** — G6 协作 UI/邀请流，产品方案 §3.5 明确 **phase-2**（后端 enforce 已就绪）。
-> **所有 phase-1 产品方案功能的代码均已完成**；进度表已与产品文档（docs/01–08）逐项对齐。唯一未"已验收"的是上述 4 个 AI 路由功能，卡在 ai 容器重载这一基础设施环节（operator 一条 `docker compose up -d --force-recreate ai` 即可闭环）。
+进度表 137 行，**❌ 已清零**。仅剩 2 个 🟡，均**非"没做"且非 phase-1 范围**：
+- **I25 / K2** — G6 协作 UI/邀请流，产品方案 §3.5 明确 **phase-2**（后端 enforce + release 门已就绪，仅缺协作 UI/邀请流）。
+> **所有 phase-1 产品方案功能均已完成且灰度真验**（含本轮一度受阻的 4 个 AI 路由 E9/E10/B2/C8 —— 跨分支 DNS 串台修复后全部真验通过）。进度表已与产品文档（docs/01–08）逐项对齐。
 
 | 维度 | ✅ | 🟡 | ❌ | ➖/范围外 |
 |---|---|---|---|---|
@@ -54,7 +56,7 @@
 >
 > 一句话结论：**业务主干（创建→沉淀→素材→出图→改图→终选→交付）已真实跑通且安全收尾**，设计稿弹窗体系 / 模板库 / 素材文件夹 / 通知 / 推荐品牌 / 品牌预览均已补齐并多数灰度真验。剩余 🟡 多为「富展示 / VLM 自动摘要 / 协作 enforce」等增强项（详见 §L）。
 
-> **⚠️ 部署陷阱（2026-06-21，部分缓解·仍需 operator 收尾）：CDS 该分支的 `ai` 容器不会被 `deploy`/`restart` 可靠 recreate，常停留在陈旧 in-memory 代码 → 本会话新增的 `apps/ai` 路由（`/v1/describe`、`/v1/summarize`）间歇 404（`/v1/generate` 等旧路由正常；web/worker 走 next build/tsx 不受影响）。已提交两步修复：`cds-compose.yml` 给 ai 的 uvicorn 加 `--reload --reload-dir /app/app` + `WATCHFILES_FORCE_POLLING=true`（inotify 不侦测 host 侧 bind-mount git 改动，强制轮询可侦测）。**生效前提：ai 容器需被真正 recreate 一次**——`docker compose up -d --force-recreate ai`（需 node/docker 权限）。之后 AI 代码改动会自动重载，该陷阱根除。**
+> **✅ 跨分支隔离陷阱已修复（2026-06-21）：同项目多分支共享 CDS 的 Redis 与 docker 网络。** ① Redis：分支级 `BULLMQ_PREFIX` 隔离 BullMQ 队列。② AI DNS：裸别名 `ai` 在共享网络上同时解析到所有分支的 ai 容器（round-robin → 命中别分支旧 ai → 新路由 404）；修复为分支级 `AI_SERVICE_URL=http://cds-<branchId>-ai:8000`（compose 用 `${AI_SERVICE_URL:-http://ai:8000}`，单分支默认不变）。诊断工具：CDS 技能包 `cdscli branch exec`（进容器 `getent hosts ai` / 查 `/openapi.json`）。**根除后 worker 只命中本分支 ai，E9/E10/B2/C8 全部真验通过。**（附带 ai uvicorn 已加 `--reload`+`WATCHFILES_FORCE_POLLING`，AI 代码改动随 deploy 自动重载。）
 
 > **🔒 铁律：图像模型固定 `gpt-image-2`（写死）。** `apps/ai/config.py` / `web settings.ts` / 改图兜底 / admin UI 默认全部 `gpt-image-2`；AppSetting.imageModel + 项目 env IMAGE_MODEL 已设 `gpt-image-2`。灰度 provider 自测 `openai OK · model=gpt-image-2`，真出图(R2, 1.5MB PNG)已验。**禁止回退 gpt-image-1。**
 
@@ -75,7 +77,7 @@
 | 编号 | 功能点 | 来源 | 状态 | 路径 | 备注 · 验收 | 变更 |
 |---|---|---|---|---|---|---|
 | B1 | 问候语区 | P01-M04 | ✅ | `app/(brandai)/page.tsx:33` | 「你好，{user.name}」真实会话 | 2026-06-20 |
-| B2 | AI 输入框（核心视觉符号） | P01-M05 | 🟡 | `page.tsx`（brief→立项） | **改进**：非空 brief 创建 DRAFT Campaign + 携 `?brief=` 跳工作台预填 sellingPoint（诚实 brief 透传）；真 AI 拆解/打标仍待 describe 端点 ⚠️灰度 AI 容器陈旧未重载该新路由(404)，代码+本地 pytest 全绿、describe 早前曾真验出真标签；修复(WATCHFILES_FORCE_POLLING)已提交，待 ai 容器真正 recreate | 代码完成/灰度AI受阻 2026-06-21 |
+| B2 | AI 输入框（核心视觉符号） | P01-M05 | ✅ | `page.tsx`（brief→立项） | 首页 `AIInput`→`/brief/decompose`(§2 异步)→真 VLM `/v1/summarize`(mode=brief_decompose)→拆出卖点/场景/风格/sceneType 预填工作台；灰度真验通过(worker→分支唯一 ai 容器) | 真验 8/8 2026-06-21 |
 | B3 | 快捷操作 4 入口 | P01-M06 | ✅ | `page.tsx:59` + `navigation/quickActions` | 创建Campaign/导入知识库/生成视觉/优化设计 | 2026-06-20 |
 | B4 | 近期 Campaign 横向卡 | P01-M07 | ✅ | `page.tsx:77`（真实 `GET /projects`） | 状态+进度条，取最近 8 | 2026-06-20 |
 | B5 | 推荐品牌瀑布流（Masonry） | P01-M08 | ✅ | `(brandai)/recommended-brands.tsx` + `GET /api/brands/recommended` | 真实 `BrandWorkspace`（用户 owner/member 范围，verified 优先，无跨租户泄漏）；CSS-columns masonry + 诚实空态 | 接入 2026-06-20 |
@@ -91,7 +93,7 @@
 | C5 | 时间范围筛选 | P02-M06 | ✅ | `campaigns/page.tsx`（全部/近7/30/90天） | 客户端按 createdAt 过滤，与搜索/状态/排序合一 | 2026-06-20 |
 | C6 | 排序方式 | P02-M07 | ✅ | `campaigns/page.tsx`（最近/名称/进度） | 客户端排序 | 2026-06-20 |
 | C7 | 项目卡片列表（封面/状态/品牌/描述/标签/进度） | P02-M08~10 | ✅ | `page.tsx:91` | 真实 Project | 2026-06-20 |
-| C8 | 项目 AI 摘要（右侧面板） | P02-M11 | 🟡 | `page.tsx` + 补充需求弹窗 | 展示 `aiSummary`+渠道；**补充需求**可编辑 aiSummary（PATCH）；**自动生成摘要**(VLM)仍未接 ⚠️灰度 AI 容器陈旧未重载该新路由(404)，代码+本地 pytest 全绿、describe 早前曾真验出真标签；修复(WATCHFILES_FORCE_POLLING)已提交，待 ai 容器真正 recreate | 代码完成/灰度AI受阻 2026-06-21 |
+| C8 | 项目 AI 摘要（右侧面板） | P02-M11 | ✅ | `page.tsx` + 补充需求弹窗 | campaigns「AI 自动生成摘要」→`/projects/[id]/summarize`(§2 异步)→真 VLM→写 `Project.aiSummary`；灰度真验通过(worker→分支唯一 ai 容器) | 真验 2026-06-21 |
 | C9 | 项目快捷操作（继续创作/补充需求/查看规范/提交终审/归档） | P02-M12 | ✅ | `page.tsx` + `RulesPanel` + `projects/[projectId]` PATCH | 进入工作台 / 补充需求 / 提交终审 / 归档 / **查看规范(H4 侧栏)** 全部接入 | 全通 2026-06-21 |
 | C10 | 创建 Campaign 弹窗 | doc03 弹窗1 | ✅ | `page.tsx:207`（真实 POST） | 名称/简介/渠道 | 2026-06-20 |
 
@@ -126,8 +128,8 @@
 | E6 | 素材统计（总数/图片/收藏/AI标注） | P04-M07 | ✅ | `page.tsx:88` | — | 2026-06-20 |
 | E7 | 素材网格 | P04-M08 | ✅ | `page.tsx:187` | 缩略图+类型 chip，走同源代理 | 2026-06-20 |
 | E8 | 素材详情侧栏 | P04-M12 | ✅ | `page.tsx:229` | 预览/类型/尺寸/大小/来源/AI描述/AI标签 | 2026-06-20 |
-| E9 | AI 智能标签 | P04-M13 | 🟡 | `assets/page.tsx` 详情「AI 智能标注」→`POST .../describe`→worker→真 VLM `/v1/describe`→写 `Asset.aiTags` | 代码完成；**曾灰度真验出真标签**（`aiTags=['饮料','柠檬','清爽',...]`），但 ai 容器现回退陈旧代码 `/v1/describe` 404（见顶部「AI 路由灰度阻塞」）。修复已提交待 ai recreate | 代码完成/灰度AI受阻 2026-06-21 |
-| E10 | AI 生成描述 | P04-M14 | 🟡 | 同 E9（`/v1/describe` 返回 `aiDescription`，worker 写 `Asset.aiDescription`） | **灰度真验通过**：真 VLM 中文描述落库 ⚠️灰度 AI 容器陈旧未重载该新路由(404)，代码+本地 pytest 全绿、describe 早前曾真验出真标签；修复(WATCHFILES_FORCE_POLLING)已提交，待 ai 容器真正 recreate | 代码完成/灰度AI受阻 2026-06-21 |
+| E9 | AI 智能标签 | P04-M13 | ✅ | `assets/page.tsx` 详情「AI 智能标注」→`POST .../describe`→worker→真 VLM `/v1/describe`→写 `Asset.aiTags` | `assets/page.tsx` 详情「AI 智能标注」→worker→真 VLM `/v1/describe`→写 `Asset.aiTags`；灰度真验通过(worker→分支唯一 ai 容器) | 真验 5/5 2026-06-21 |
+| E10 | AI 生成描述 | P04-M14 | ✅ | 同 E9（`/v1/describe` 返回 `aiDescription`，worker 写 `Asset.aiDescription`） | 同 E9（`/v1/describe` 返回 `aiDescription`→写 `Asset.aiDescription`）；灰度真验通过(worker→分支唯一 ai 容器) | 真验 2026-06-21 |
 | E11 | 加入项目（→Campaign） | P04-M16 | ✅ | `assets/page.tsx::JoinProjectDialog` + `lib/reference-tray.ts` | 真弹窗选 Campaign→加入并跳工作台；reference-tray 暂存（持久化 DB Project↔Asset 关系仍 phase-2，弹窗文案诚实标注） | 弹窗化 2026-06-21 |
 | E12 | 设为参考（→工作台参考区） | P04-M17 | ✅ | `assets/page.tsx` + `lib/reference-tray.ts` ↔ 工作台 F9 | UI 联动通：设为参考→工作台 F9 显示并入 referenceAssetIds（真校验归属+留痕 version.params）。**注**：OpenAI generate API 不收图，当前为 prompt 级引导，真视觉条件化需经 edits 路由（phase-2） | 接入 2026-06-21 |
 | E13 | 收藏切换 / 使用记录 / 查看来源 | doc02/05 | ✅ | 详情含「来源」字段；收藏 toggle/使用记录未见 | 🔍 | 接入 2026-06-21 |
