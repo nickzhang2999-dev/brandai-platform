@@ -3,6 +3,7 @@ import type {
   NotificationItem,
   NotificationKind,
 } from "@brandai/contracts";
+import { BRAND_PREVIEW_PROJECT_NAME } from "./brand-preview";
 
 /**
  * A3 / L3 — derive the in-app notification inbox from REAL server state. There
@@ -51,7 +52,13 @@ export async function listWorkspaceNotifications(
 ): Promise<NotificationItem[]> {
   const [gens, tasks] = await Promise.all([
     prisma.generation.findMany({
-      where: { workspaceId, status: { in: ["SUCCEEDED", "FAILED"] } },
+      where: {
+        workspaceId,
+        status: { in: ["SUCCEEDED", "FAILED"] },
+        // Exclude hidden D10 brand-preview runs — they use the same generate
+        // pipeline but are internal, not user "出图完成" events.
+        project: { name: { not: BRAND_PREVIEW_PROJECT_NAME } },
+      },
       orderBy: { finishedAt: "desc" },
       take: limit,
       select: {

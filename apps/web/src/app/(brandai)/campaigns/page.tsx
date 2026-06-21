@@ -177,7 +177,7 @@ export default function CampaignsPage() {
           className="h-9 rounded-full border border-border bg-card px-4 text-sm text-muted-foreground outline-none transition-colors hover:bg-muted focus:border-primary/40 focus:shadow-[0_0_0_4px_rgba(124,92,255,0.08)]"
         >
           <option value="all">全部品牌</option>
-          {brands.map((b) => (
+          {brandOptions.map((b) => (
             <option key={b.id} value={b.id}>
               {b.name}
             </option>
