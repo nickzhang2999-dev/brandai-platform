@@ -4,7 +4,15 @@ import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import type { BrandRule, Generation, Project, SizeSpec } from "@brandai/contracts";
+import type {
+  BrandRule,
+  Generation,
+  GenerationVersion,
+  ListMembersResponse,
+  Project,
+  SizeSpec,
+  WorkspaceRole,
+} from "@brandai/contracts";
 import { CHANNEL_SIZES } from "@brandai/contracts";
 import { apiFetch } from "@/lib/client";
 import { planTiers, upgradeContactEmail } from "@/lib/brandai-mock";
@@ -486,6 +494,66 @@ function Workspace() {
   }, [status, genId, wsId, qc]);
   const editing = !!editJobId;
 
+  // G6 · 审阅 / 批准流 — 拿调用者在本空间的角色，决定显示哪些审核动作。
+  // EDITOR/OWNER 可「提交审阅」；REVIEWER/OWNER 可「批准 / 驳回」。
+  const { data: membersData } = useQuery<ListMembersResponse>({
+    queryKey: ["brandai-members", wsId],
+    queryFn: () =>
+      apiFetch<ListMembersResponse>(`/api/workspaces/${wsId}/members`),
+    enabled: !!wsId,
+  });
+  const myRole: WorkspaceRole | null = membersData?.myRole ?? null;
+  const canSubmitReview = myRole === "OWNER" || myRole === "EDITOR";
+  const canDecideReview = myRole === "OWNER" || myRole === "REVIEWER";
+
+  const [reviewBusy, setReviewBusy] = useState(false);
+  const [reviewErr, setReviewErr] = useState<string | null>(null);
+  // 驳回时附理由（可选）。
+  const [rejectOpen, setRejectOpen] = useState(false);
+  const [rejectNote, setRejectNote] = useState("");
+
+  async function submitForReview() {
+    if (!current || !genId) return;
+    setReviewErr(null);
+    setReviewBusy(true);
+    try {
+      await apiFetch(
+        `/api/workspaces/${wsId}/generations/${genId}/versions/${current.id}/submit`,
+        { method: "POST" },
+      );
+      qc.invalidateQueries({ queryKey: ["brandai-gen", wsId, genId] });
+    } catch (e) {
+      setReviewErr(e instanceof Error ? e.message : "提交审阅失败");
+    } finally {
+      setReviewBusy(false);
+    }
+  }
+
+  async function decideReview(decision: "APPROVED" | "REJECTED", note?: string) {
+    if (!current || !genId) return;
+    setReviewErr(null);
+    setReviewBusy(true);
+    try {
+      await apiFetch(
+        `/api/workspaces/${wsId}/generations/${genId}/versions/${current.id}/review`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            decision,
+            ...(note?.trim() ? { note: note.trim() } : {}),
+          }),
+        },
+      );
+      setRejectOpen(false);
+      setRejectNote("");
+      qc.invalidateQueries({ queryKey: ["brandai-gen", wsId, genId] });
+    } catch (e) {
+      setReviewErr(e instanceof Error ? e.message : "审批失败");
+    } finally {
+      setReviewBusy(false);
+    }
+  }
+
   async function submitEdit() {
     if (!current || !genId || !editInstr.trim()) return;
     setActionErr(null);
@@ -807,6 +875,23 @@ function Workspace() {
               {actionErr ? (
                 <p className="mt-2 text-xs text-destructive">{actionErr}</p>
               ) : null}
+
+              {/* G6 · 审阅 / 批准流 — 选中变体的审核状态 + 角色门控的动作。 */}
+              <ReviewPanel
+                version={current}
+                myRole={myRole}
+                canSubmit={canSubmitReview}
+                canDecide={canDecideReview}
+                busy={reviewBusy}
+                error={reviewErr}
+                onSubmit={submitForReview}
+                onApprove={() => decideReview("APPROVED")}
+                onOpenReject={() => {
+                  setReviewErr(null);
+                  setRejectNote("");
+                  setRejectOpen(true);
+                }}
+              />
             </div>
           ) : null}
         </div>
@@ -1140,6 +1225,203 @@ function Workspace() {
           onClose={() => setShowUpgrade(false)}
         />
       ) : null}
+
+      {/* G6 · 驳回弹窗 — 可选附理由（reviewNote），走真实 review 端点。 */}
+      {rejectOpen ? (
+        <RejectDialog
+          note={rejectNote}
+          submitting={reviewBusy}
+          error={reviewErr}
+          onChange={setRejectNote}
+          onCancel={() => {
+            setRejectOpen(false);
+            setReviewErr(null);
+          }}
+          onConfirm={() => void decideReview("REJECTED", rejectNote)}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * G6 · 审阅 / 批准面板 — 显示选中变体的 reviewStatus（PENDING / SUBMITTED /
+ * APPROVED / REJECTED）+ 审核理由（reviewNote），并按调用者角色门控动作：
+ *   - EDITOR / OWNER 可对 PENDING / REJECTED 版本「提交审阅」（→ SUBMITTED）。
+ *   - REVIEWER / OWNER 可对 SUBMITTED 版本「批准 / 驳回」。
+ * 终稿（isFinal）不再可审。全部接真实 submit / review 端点，语义 token only。
+ */
+function ReviewPanel({
+  version,
+  myRole,
+  canSubmit,
+  canDecide,
+  busy,
+  error,
+  onSubmit,
+  onApprove,
+  onOpenReject,
+}: {
+  version: GenerationVersion;
+  myRole: WorkspaceRole | null;
+  canSubmit: boolean;
+  canDecide: boolean;
+  busy: boolean;
+  error: string | null;
+  onSubmit: () => void;
+  onApprove: () => void;
+  onOpenReject: () => void;
+}) {
+  const rs = version.reviewStatus ?? "PENDING";
+  const meta: Record<string, { tone: Tone; label: string }> = {
+    PENDING: { tone: "muted", label: "待提交审阅" },
+    SUBMITTED: { tone: "primary", label: "审阅中" },
+    APPROVED: { tone: "success", label: "已批准" },
+    REJECTED: { tone: "danger", label: "已驳回" },
+  };
+  const m = meta[rs] ?? meta.PENDING!;
+
+  // 可提交：PENDING / REJECTED 且非终稿（与 submit 端点的职责分离一致）。
+  const submittable =
+    canSubmit && !version.isFinal && (rs === "PENDING" || rs === "REJECTED");
+  // 可审批：仅 SUBMITTED。
+  const decidable = canDecide && rs === "SUBMITTED";
+
+  return (
+    <div className="mt-3 border-t border-border pt-3">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-semibold text-muted-foreground">
+          审阅状态
+        </span>
+        <Pill tone={m.tone}>{m.label}</Pill>
+      </div>
+
+      {version.reviewNote ? (
+        <p className="mt-2 rounded-xl bg-muted px-2.5 py-1.5 text-[11px] leading-relaxed text-muted-foreground">
+          <span className="font-medium text-foreground">审核意见：</span>
+          {version.reviewNote}
+        </p>
+      ) : null}
+
+      <div className="mt-2.5 flex flex-wrap gap-2">
+        {submittable ? (
+          <button
+            type="button"
+            onClick={onSubmit}
+            disabled={busy}
+            className="rounded-full bg-gradient-to-br from-primary to-accent px-3 py-1.5 text-xs font-medium text-primary-foreground shadow-[0_8px_20px_rgba(124,92,255,0.22)] disabled:opacity-60"
+          >
+            {busy ? "提交中…" : rs === "REJECTED" ? "重新提交审阅" : "提交审阅"}
+          </button>
+        ) : null}
+        {decidable ? (
+          <>
+            <button
+              type="button"
+              onClick={onApprove}
+              disabled={busy}
+              className="rounded-full border border-success/40 px-3 py-1.5 text-xs text-success transition-colors hover:bg-success/10 disabled:opacity-60"
+            >
+              批准
+            </button>
+            <button
+              type="button"
+              onClick={onOpenReject}
+              disabled={busy}
+              className="rounded-full border border-destructive/40 px-3 py-1.5 text-xs text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-60"
+            >
+              驳回
+            </button>
+          </>
+        ) : null}
+      </div>
+
+      {/* 诚实空态：既不能提交也不能审批时，说明原因。 */}
+      {!submittable && !decidable ? (
+        <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+          {rs === "SUBMITTED"
+            ? myRole
+              ? "等待审核角色（审核 / 所有者）批准或驳回。"
+              : "等待审核。"
+            : rs === "APPROVED"
+              ? "该版本已批准，可设为终稿并导出交付。"
+              : myRole && !canSubmit
+                ? "你的角色（查看）无提交审阅权限。"
+                : "出图后可提交审阅。"}
+        </p>
+      ) : null}
+
+      {error ? (
+        <p className="mt-2 text-xs text-destructive">{error}</p>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * G6 · 驳回弹窗 — 驳回时可选附审核意见（reviewNote，≤500），走真实 review 端点
+ * （decision=REJECTED）。语义 token only。
+ */
+function RejectDialog({
+  note,
+  submitting,
+  error,
+  onChange,
+  onCancel,
+  onConfirm,
+}: {
+  note: string;
+  submitting: boolean;
+  error: string | null;
+  onChange: (v: string) => void;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/30 p-4 backdrop-blur-sm"
+      onClick={onCancel}
+    >
+      <div
+        className="w-full max-w-md rounded-3xl border border-border bg-card p-6 shadow-[0_24px_70px_rgba(30,30,60,0.18)]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="text-lg font-semibold">驳回版本</div>
+        <p className="mt-1 text-sm text-muted-foreground">
+          可填写驳回理由，便于编辑修改后重新提交审阅。
+        </p>
+        <textarea
+          value={note}
+          maxLength={500}
+          onChange={(e) => onChange(e.target.value)}
+          rows={4}
+          placeholder="如：主体偏色、负空间不足、文案需调整…"
+          className="mt-4 w-full resize-none rounded-2xl border border-border bg-background p-3 text-sm outline-none focus:border-primary/40 focus:shadow-[0_0_0_4px_rgba(124,92,255,0.08)]"
+        />
+        <div className="mt-1 text-right text-[11px] text-muted-foreground">
+          {note.length}/500
+        </div>
+        {error ? (
+          <p className="mt-2 text-sm text-destructive">{error}</p>
+        ) : null}
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="rounded-full border border-border px-4 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted"
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={submitting}
+            className="rounded-full bg-destructive px-5 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-destructive/90 disabled:opacity-70"
+          >
+            {submitting ? "驳回中…" : "确认驳回"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
