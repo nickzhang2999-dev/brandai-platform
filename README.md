@@ -131,7 +131,7 @@
 | E10 | AI 生成描述 | P04-M14 | ✅ | 同 E9（`/v1/describe` 返回 `aiDescription`，worker 写 `Asset.aiDescription`） | 同 E9（`/v1/describe` 返回 `aiDescription`→写 `Asset.aiDescription`）；灰度真验通过(worker→分支唯一 ai 容器) | 真验 2026-06-21 |
 | E11 | 加入项目（→Campaign） | P04-M16 | ✅ | `assets/page.tsx::JoinProjectDialog` + `lib/reference-tray.ts` | 真弹窗选 Campaign→加入并跳工作台；reference-tray 暂存（持久化 DB Project↔Asset 关系仍 phase-2，弹窗文案诚实标注） | 弹窗化 2026-06-21 |
 | E12 | 设为参考（→工作台参考区） | P04-M17 | ✅ | `assets/page.tsx` + `lib/reference-tray.ts` ↔ 工作台 F9 | UI 联动通：设为参考→工作台 F9 显示并入 referenceAssetIds（真校验归属+留痕 version.params）。**注**：OpenAI generate API 不收图，当前为 prompt 级引导，真视觉条件化需经 edits 路由（phase-2） | 接入 2026-06-21 |
-| E13 | 收藏切换 / 使用记录 / 查看来源 | doc02/05 | ✅ | 详情含「来源」字段；收藏 toggle/使用记录未见 | 🔍 | 接入 2026-06-21 |
+| E13 | 收藏切换 / 使用记录 / 查看来源 | doc02/05 | ✅ | 收藏 toggle(PATCH isFavorite)+筛选、使用记录(generation 引用派生)、查看来源弹窗(H8) | 灰度真验 | 接入 2026-06-21 |
 
 ## F · P05 工作台
 
@@ -250,15 +250,15 @@
 | L1 | ~~模板库 P06 完全无~~ → 真模板库已补 | 设计有·**已补** | G1/A1 | ✅ 策展预设模板→点选预填工作台驱动真出图；6项 nav |
 | L2 | ~~推荐品牌瀑布流无~~ → 已补（用户定调纳入） | 设计有·**已补** | B5/H14 | ✅ `recommended-brands.tsx` 接真 BrandWorkspace（owner/member 范围）；自助 verified 流 phase-2 |
 | L3 | ~~顶部通知中心无~~ → 已补（用户定调纳入） | 设计有·**已补** | A3/P01-M03 | ✅ 通知中心从真实终态派生；未读 localStorage（phase-2 转服务端 per-user） |
-| L4 | ~~8 类富结构卡退化~~ → 富卡片已还原（色板/Logo do-don't/字体预览）；**品牌预览(D10)** 仍缺 | 设计有·**已还原**(除 D10) | D4-D10 | ✅ D4-D9 富卡片；D10 综合品牌预览（VLM 自动生成）待 describe 端点 |
+| L4 | ~~8 类富结构卡退化 + 品牌预览缺~~ → 全部已补 | 设计有·**全补** | D4-D10 | ✅ D4-D9 富卡片 + D10 品牌预览（§2 异步走 generate，灰度真验） |
 | L5 | ~~工作台三右栏模块无~~ → 风格词/参考素材/额度三模块已接 | 设计有·**已补** | F7/F9/F11 | ✅ 三模块全接（后端 frozen-additive 解锁） |
 | L6 | ~~工作台顶部 撤销/重做/缩放 无~~ → 已补 | 设计有·**已补** | F2 | ✅ Toolbar 撤销/重做（表单快照历史）+ 大图 zoom in/out/reset/fit |
-| L7 | Campaign 项目操作（补充需求/查看规范/提交终审/归档）只做了「进入工作台」 | 设计有·实现缺 | C9/H3/H4/H10/H11 | 提交终审/归档关乎交付流，建议补 |
+| L7 | ~~Campaign 项目操作只做了进入工作台~~ → 全部已补 | 设计有·**全补** | C9/H4 | ✅ 进入工作台/补充需求/查看规范(H4 侧栏)/提交终审/归档 全接入 |
 | L8 | ~~素材↔工作台/Campaign 无联动~~ → 设为参考/加入项目已接（reference-tray 暂存 ↔ 工作台 F9，出图真校验+持久化） | 设计有·**已补**(客户端暂存) | E11/E12/F9/H7 | ✅ UI 联动通；2 点 phase-2：①服务端 Project↔Asset 持久关系（多设备/协作）②参考图真视觉条件化（经 edits，OpenAI generate API 不收图） |
 | L9 | ~~通用弹窗体系：仅「新建 Campaign」是弹窗~~ → 弹窗体系已补 | 设计有·**已补** | H2-H12 | ✅ H4 查看规范/H7 加入项目/H9 提交确认/H12 额度升级 + 既有创建/上传/补充需求弹窗，复用统一 dialog 范式 |
-| L10 | AI 输入框未抽象为可解析组件；语音/附件入口仅视觉保留 | 设计有·实现缺 | B2/D1/H1 | 确认 AI 解析（立项/拆解/打标）一期是否纳入 |
-| L11 | 品牌筛选/时间筛选/排序无 | 设计有·实现缺 | C4/C5/C6 | 单品牌下品牌筛选可不做；排序建议补 |
-| L12 | AI 解析入口：知识库 recognize/parse-manual **已接真 VLM**（D13/D14）；首页 brief 立项**已接**(非 AI 拆解)；**素材自动打标(E9/E10)** 仍缺 describe 端点 | 设计有·**大部已接** | B2/D13/D14/E9/E10 | ✅ 知识库真 AI 识别入口；素材自动打标需新增 VLM describe 端点（下一波后端） |
+| L10 | ~~AI 输入框未抽象；语音/附件仅视觉~~ → 已补 | 设计有·**已补** | B2/D1/H1 | ✅ `AIInput` 组件(附件+Web Speech 语音)；brief 拆解(B2)/打标(E9)/解析(D1) 真 AI 接入 |
+| L11 | ~~品牌筛选/时间筛选/排序无~~ → 已补 | 设计有·**已补** | C4/C5/C6 | ✅ 品牌筛选 + 时间范围 + 排序全接入 |
+| L12 | ~~AI 解析入口部分缺~~ → 全部已接真 VLM | 设计有·**全接** | B2/D13/D14/E9/E10 | ✅ 知识库 recognize/parse-manual + 首页 brief 拆解(B2) + 素材自动打标 describe(E9/E10) 全接真 VLM，灰度真验 |
 
 ## 附录 · 作废区
 
