@@ -1166,7 +1166,7 @@ function BrandPreview({
       </div>
 
       <div className="mt-5 flex min-h-[220px] items-center justify-center overflow-hidden rounded-2xl border border-border bg-background p-4">
-        {timedOut ? (
+        {timedOut && status !== "SUCCEEDED" ? (
           <div className="text-center">
             <p className="text-sm text-warning">生成超时</p>
             <p className="mt-1 text-xs text-muted-foreground">

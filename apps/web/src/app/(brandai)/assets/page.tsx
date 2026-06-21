@@ -733,7 +733,7 @@ export default function AssetsPage() {
                       <p className="mt-2 text-center text-xs text-muted-foreground">
                         正在分析素材（{describeTask?.progress ?? 0}%），可离开本页，稍后回来查看。
                       </p>
-                    ) : describeTimedOut ? (
+                    ) : describeTimedOut && describeStatus !== "SUCCEEDED" ? (
                       <p className="mt-2 text-center text-xs text-destructive">
                         分析超时，可能已失败，请重试。
                       </p>

@@ -500,7 +500,11 @@ function AutoSummaryButton({
     }
   }, [status, taskId]);
 
-  const failed = status === "FAILED" || timedOut;
+  // §2.4 — a SUCCEEDED that lands right around the 6-min cap must not be hidden
+  // by the timedOut flag (the cap-interval can flip it on the same tick the poll
+  // observes success), so let an observed success win over the timeout copy.
+  const failed =
+    status === "FAILED" || (timedOut && status !== "SUCCEEDED");
 
   return (
     <div className="mt-2">
