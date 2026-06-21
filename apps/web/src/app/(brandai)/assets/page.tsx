@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { Asset, Project, TaskState } from "@brandai/contracts";
+import type { Asset, AssetFolder, Project, TaskState } from "@brandai/contracts";
 import { Button } from "@brandai/ui";
 import { apiFetch, assetThumbUrl } from "@/lib/client";
 import {
@@ -74,6 +74,13 @@ export default function AssetsPage() {
     projectName: string;
     result: AddReferenceResult;
   } | null>(null);
+  // H7 · 加入项目弹窗 — 打开后选择 Campaign 并确认（诚实：暂存为该 Campaign 的参考
+  // 素材，出图时带入；一期无 Project↔Asset DB 关系）。
+  const [joinDialog, setJoinDialog] = useState(false);
+  // E3 · 文件夹组织 — 当前选中的文件夹筛选 + 新建文件夹弹窗。
+  // folderFilter: "all" = 全部, "none" = 未归档, 否则为文件夹 id。
+  const [folderFilter, setFolderFilter] = useState("all");
+  const [creatingFolder, setCreatingFolder] = useState(false);
 
   const { data: assets = [], isLoading } = useQuery({
     queryKey: ["brandai-assets", wsId],
@@ -84,6 +91,41 @@ export default function AssetsPage() {
   const { data: projects = [] } = useQuery({
     queryKey: ["brandai-projects", wsId],
     queryFn: () => apiFetch<Project[]>(`/api/workspaces/${wsId}/projects`),
+  });
+
+  // E3 · 素材文件夹 — workspace 作用域，含 assetCount。
+  const { data: folders = [] } = useQuery({
+    queryKey: ["brandai-folders", wsId],
+    queryFn: () => apiFetch<AssetFolder[]>(`/api/workspaces/${wsId}/folders`),
+  });
+  const invalidateFolders = () => {
+    qc.invalidateQueries({ queryKey: ["brandai-folders", wsId] });
+    qc.invalidateQueries({ queryKey: ["brandai-assets", wsId] });
+  };
+  const createFolder = useMutation({
+    mutationFn: (name: string) =>
+      apiFetch<AssetFolder>(`/api/workspaces/${wsId}/folders`, {
+        method: "POST",
+        body: JSON.stringify({ name }),
+      }),
+    onSuccess: () => {
+      invalidateFolders();
+      setCreatingFolder(false);
+    },
+  });
+  const moveAsset = useMutation({
+    mutationFn: ({
+      assetId,
+      folderId,
+    }: {
+      assetId: string;
+      folderId: string | null;
+    }) =>
+      apiFetch<Asset>(`/api/workspaces/${wsId}/assets/${assetId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ folderId }),
+      }),
+    onSuccess: invalidateFolders,
   });
 
   const upload = useMutation({
@@ -115,9 +157,17 @@ export default function AssetsPage() {
         if (filter !== "all" && a.category !== filter) return false;
         if (q && !a.fileName.toLowerCase().includes(q.toLowerCase()))
           return false;
+        // E3 — folder filter: all / none (un-filed) / a specific folder id.
+        if (folderFilter === "none" && a.folderId) return false;
+        if (
+          folderFilter !== "all" &&
+          folderFilter !== "none" &&
+          a.folderId !== folderFilter
+        )
+          return false;
         return true;
       }),
-    [assets, filter, q],
+    [assets, filter, q, folderFilter],
   );
   const active = filtered.find((a) => a.id === activeId) ?? filtered[0] ?? assets[0];
 
@@ -200,19 +250,21 @@ export default function AssetsPage() {
     });
   }
 
-  // E11 「加入项目」：暂存成功（或已存在）才跳工作台；满额则只提示、不跳转。
-  function handleAddToProject() {
-    const r = stageActiveAsReference(pickProject);
-    if (!r) return;
+  // E11 / H7 「加入项目」：暂存成功（或已存在）才跳工作台；满额则只提示、不跳转。
+  // 返回 result 让弹窗在满额时停留并提示。
+  function handleAddToProject(projectId: string): AddReferenceResult | null {
+    const r = stageActiveAsReference(projectId);
+    if (!r) return null;
     if (r.result === "full") {
       setStagedNote({
         projectId: r.project.id,
         projectName: r.project.name,
         result: r.result,
       });
-      return;
+      return r.result;
     }
     router.push(`/workspace?project=${r.project.id}`);
+    return r.result;
   }
 
   const stats = [
@@ -243,6 +295,13 @@ export default function AssetsPage() {
         subtitle="集中管理品牌图片、产品图与参考素材"
         action={
           <div className="flex items-center gap-2">
+            <Button
+              size="lg"
+              variant="outline"
+              onClick={() => setCreatingFolder(true)}
+            >
+              ＋ 新建文件夹
+            </Button>
             <select
               value={uploadCategory}
               onChange={(e) => setUploadCategory(e.target.value)}
@@ -285,6 +344,34 @@ export default function AssetsPage() {
 
       {uploadErr ? (
         <p className="mb-4 text-sm text-destructive">{uploadErr}</p>
+      ) : null}
+
+      {/* E3 · 文件夹筛选 */}
+      {folders.length > 0 ? (
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          <span className="text-xs text-muted-foreground">文件夹：</span>
+          {[
+            { key: "all", label: "全部" },
+            { key: "none", label: "未归档" },
+            ...folders.map((f) => ({
+              key: f.id,
+              label: `${f.name}${f.assetCount != null ? ` (${f.assetCount})` : ""}`,
+            })),
+          ].map((f) => (
+            <button
+              key={f.key}
+              onClick={() => setFolderFilter(f.key)}
+              className={[
+                "h-8 rounded-full px-3 text-xs transition-colors",
+                folderFilter === f.key
+                  ? "bg-accent-soft font-medium text-primary"
+                  : "border border-border bg-card text-muted-foreground hover:bg-muted",
+              ].join(" ")}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
       ) : null}
 
       <div className="mb-6 flex flex-wrap items-center gap-3">
@@ -535,8 +622,10 @@ export default function AssetsPage() {
                         </Button>
                         <Button
                           className="w-full rounded-full"
-                          disabled={!pickProject}
-                          onClick={handleAddToProject}
+                          onClick={() => {
+                            setStagedNote(null);
+                            setJoinDialog(true);
+                          }}
                         >
                           ＋ 加入项目
                         </Button>
@@ -564,6 +653,37 @@ export default function AssetsPage() {
                     </>
                   )}
                 </div>
+
+                {/* E3 · 移动到文件夹 */}
+                <div className="mt-5 border-t border-border pt-4">
+                  <div className="mb-2 text-xs font-medium text-muted-foreground">
+                    文件夹
+                  </div>
+                  {folders.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">
+                      还没有文件夹。点右上角「新建文件夹」来组织素材。
+                    </p>
+                  ) : (
+                    <select
+                      value={active.folderId ?? ""}
+                      disabled={moveAsset.isPending}
+                      onChange={(e) =>
+                        moveAsset.mutate({
+                          assetId: active.id,
+                          folderId: e.target.value || null,
+                        })
+                      }
+                      className="h-10 w-full rounded-full border border-border bg-card px-4 text-sm outline-none focus:border-primary/40 focus:shadow-[0_0_0_4px_rgba(124,92,255,0.08)]"
+                    >
+                      <option value="">未归档</option>
+                      {folders.map((f) => (
+                        <option key={f.id} value={f.id}>
+                          {f.name}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
               </>
             ) : (
               <div className="py-10 text-center text-sm text-muted-foreground">
@@ -573,6 +693,169 @@ export default function AssetsPage() {
           </aside>
         </div>
       )}
+
+      {/* E3 · 新建文件夹弹窗 */}
+      {creatingFolder ? (
+        <CreateFolderDialog
+          pending={createFolder.isPending}
+          error={createFolder.isError ? (createFolder.error as Error).message : null}
+          onClose={() => {
+            createFolder.reset();
+            setCreatingFolder(false);
+          }}
+          onCreate={(name) => createFolder.mutate(name)}
+        />
+      ) : null}
+
+      {/* H7 · 加入项目弹窗 */}
+      {joinDialog && active ? (
+        <JoinProjectDialog
+          assetName={active.fileName}
+          projects={projects}
+          initialProjectId={pickProject}
+          onClose={() => setJoinDialog(false)}
+          onConfirm={(projectId) => {
+            setPickProject(projectId);
+            const result = handleAddToProject(projectId);
+            // On success/duplicate we navigate away; only keep the dialog open
+            // (with the staged-full note) when the reference tray is full.
+            if (result !== "full") setJoinDialog(false);
+          }}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * H7 · 加入项目弹窗 — pick a Campaign and confirm adding the selected asset.
+ * Honest about what it does: it stages the asset as that Campaign's reference
+ * (client-side reference tray; one-期 has no Project↔Asset DB relation) and
+ * jumps to the workspace. Reuses the same staging path as the inline action.
+ * Semantic tokens only.
+ */
+function JoinProjectDialog({
+  assetName,
+  projects,
+  initialProjectId,
+  onClose,
+  onConfirm,
+}: {
+  assetName: string;
+  projects: Project[];
+  initialProjectId: string;
+  onClose: () => void;
+  onConfirm: (projectId: string) => void;
+}) {
+  const [projectId, setProjectId] = useState(initialProjectId);
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/30 p-4 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-md rounded-3xl border border-border bg-card p-6 shadow-[0_24px_70px_rgba(30,30,60,0.18)]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="text-lg font-semibold">加入 Campaign</div>
+        <p className="mt-1 text-sm text-muted-foreground">
+          把素材「{assetName}」作为参考加入一个 Campaign，进入工作台出图时自动带入。
+        </p>
+
+        <div className="mt-5">
+          <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
+            选择 Campaign
+          </label>
+          <select
+            value={projectId}
+            onChange={(e) => setProjectId(e.target.value)}
+            className="h-11 w-full rounded-2xl border border-border bg-background px-3 text-sm outline-none focus:border-primary/40 focus:shadow-[0_0_0_4px_rgba(124,92,255,0.08)]"
+          >
+            <option value="">选择 Campaign…</option>
+            {projects.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <p className="mt-3 rounded-2xl bg-accent-soft/60 p-3.5 text-xs leading-relaxed text-foreground/80">
+          素材将作为该 Campaign 的参考素材暂存，出图时随提交带入。确认后将进入工作台。
+        </p>
+
+        <div className="mt-6 flex justify-end gap-2">
+          <Button variant="outline" onClick={onClose}>
+            取消
+          </Button>
+          <Button disabled={!projectId} onClick={() => onConfirm(projectId)}>
+            确认加入
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * E3 · 新建文件夹弹窗 — name a new asset folder. Workspace-scoped real model
+ * (AssetFolder); on confirm POSTs to /folders. Semantic tokens only.
+ */
+function CreateFolderDialog({
+  pending,
+  error,
+  onClose,
+  onCreate,
+}: {
+  pending: boolean;
+  error: string | null;
+  onClose: () => void;
+  onCreate: (name: string) => void;
+}) {
+  const [name, setName] = useState("");
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/30 p-4 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-md rounded-3xl border border-border bg-card p-6 shadow-[0_24px_70px_rgba(30,30,60,0.18)]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="text-lg font-semibold">新建文件夹</div>
+        <p className="mt-1 text-sm text-muted-foreground">
+          为素材建立分组，便于按主题 / Campaign 组织管理。
+        </p>
+        <div className="mt-5">
+          <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
+            文件夹名称
+          </label>
+          <input
+            autoFocus
+            value={name}
+            maxLength={60}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && name.trim() && !pending)
+                onCreate(name.trim());
+            }}
+            placeholder="如：夏季新品素材"
+            className="h-11 w-full rounded-2xl border border-border bg-background px-3 text-sm outline-none focus:border-primary/40 focus:shadow-[0_0_0_4px_rgba(124,92,255,0.08)]"
+          />
+        </div>
+        {error ? <p className="mt-3 text-sm text-destructive">{error}</p> : null}
+        <div className="mt-6 flex justify-end gap-2">
+          <Button variant="outline" onClick={onClose}>
+            取消
+          </Button>
+          <Button
+            disabled={!name.trim() || pending}
+            onClick={() => onCreate(name.trim())}
+          >
+            {pending ? "创建中…" : "创建"}
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }

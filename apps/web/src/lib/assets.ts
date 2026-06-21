@@ -33,5 +33,7 @@ export function serializeAsset(a: PrismaAsset): Asset {
     ...(a.replacementAssetId
       ? { replacementAssetId: a.replacementAssetId }
       : {}),
+    // E3 — folder organization (nullable column omitted when un-filed).
+    ...(a.folderId ? { folderId: a.folderId } : {}),
   };
 }

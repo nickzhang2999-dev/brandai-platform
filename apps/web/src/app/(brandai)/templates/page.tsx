@@ -1,40 +1,81 @@
 "use client";
 
-import { PageHeader } from "../_ui";
+import { useRouter } from "next/navigation";
+import { Button } from "@brandai/ui";
+import { generationTemplates } from "@/lib/brandai-mock";
+import { gradientFor, PageHeader } from "../_ui";
 
 /**
- * P06 · 模板库（占位）— 即将上线。把高频出图配置（prompt / 风格关键词 / 品牌
- * 约束 / 参考图）沉淀为可复用模板，一键带入工作台出图。一期先放占位骨架，
- * 不造模板假数据；接 BFF 后按同名字段替换数据源。
+ * P06 · 模板库（G1）— 把高频出图配置（场景 / 画面类型 / 风格关键词 / 卖点起手式）
+ * 沉淀为可复用模板，一键带入工作台。模板是产品常量（lib/brandai-mock.ts::
+ * generationTemplates），不是伪造数据，也不是假"生成结果"——点击只把配置经 query
+ * 参数带进 `/workspace`，由用户在真实 worker→apps/ai→真 provider 管线里出图。
  */
 export default function TemplatesPage() {
+  const router = useRouter();
+
+  function useTemplate(key: string) {
+    const t = generationTemplates.find((x) => x.key === key);
+    if (!t) return;
+    const qs = new URLSearchParams({
+      sceneType: t.sceneType,
+      scene: t.scene,
+      brief: t.sellingPoint,
+      style: t.styleKeywords.join(","),
+    });
+    router.push(`/workspace?${qs.toString()}`);
+  }
+
   return (
     <div className="mx-auto max-w-[1180px] px-10 py-10">
       <PageHeader
         title="模板库"
-        subtitle="把高频出图配置沉淀为可复用模板，下次一键带入工作台"
+        subtitle="把高频出图配置沉淀为可复用模板，一键带入工作台出图"
       />
 
-      <div className="rounded-3xl border border-dashed border-border bg-card p-16 text-center shadow-[0_8px_24px_rgba(30,30,60,0.06)]">
-        <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-3xl bg-accent-soft text-3xl text-primary">
-          ▱
-        </div>
-        <div className="text-lg font-semibold">模板库即将上线</div>
-        <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-muted-foreground">
-          把高频出图配置（提示词、风格关键词、品牌约束与参考图）沉淀为可复用模板，
-          团队成员一键带入工作台，保持品牌一致性的同时大幅提速。
-        </p>
-        <div className="mt-6 flex flex-wrap items-center justify-center gap-2">
-          <span className="rounded-full border border-border bg-muted px-3 py-1 text-[11px] text-muted-foreground">
-            提示词模板
-          </span>
-          <span className="rounded-full border border-border bg-muted px-3 py-1 text-[11px] text-muted-foreground">
-            风格预设
-          </span>
-          <span className="rounded-full border border-border bg-muted px-3 py-1 text-[11px] text-muted-foreground">
-            场景套件
-          </span>
-        </div>
+      <div className="mb-6 rounded-2xl border border-primary/15 bg-accent-soft/50 px-4 py-3 text-xs leading-relaxed text-muted-foreground">
+        模板预填场景、画面类型、风格关键词与卖点起手式；带入工作台后仍可自由编辑，
+        再由真实 AI 受控出图。模板本身不含生成图片，仅作为配置起点。
+      </div>
+
+      <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+        {generationTemplates.map((t) => (
+          <div
+            key={t.key}
+            className="flex flex-col overflow-hidden rounded-3xl border border-border bg-card shadow-[0_8px_24px_rgba(30,30,60,0.06)] transition-all hover:border-primary/25 hover:shadow-[0_18px_50px_rgba(124,92,255,0.12)]"
+          >
+            <div
+              className="flex h-32 items-center justify-center text-4xl text-primary-foreground"
+              style={{ background: gradientFor(t.key) }}
+            >
+              {t.icon}
+            </div>
+            <div className="flex flex-1 flex-col p-5">
+              <div className="text-[15px] font-semibold">{t.name}</div>
+              <p className="mt-1.5 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
+                {t.desc}
+              </p>
+              <div className="mt-3 flex flex-wrap gap-1.5">
+                {t.styleKeywords.slice(0, 4).map((k) => (
+                  <span
+                    key={k}
+                    className="rounded-full bg-accent-soft px-2.5 py-1 text-[11px] text-primary"
+                  >
+                    {k}
+                  </span>
+                ))}
+              </div>
+              <div className="mt-5">
+                <Button
+                  className="w-full justify-center"
+                  onClick={() => useTemplate(t.key)}
+                >
+                  用此模板出图
+                </Button>
+              </div>
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );

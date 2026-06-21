@@ -51,8 +51,27 @@ export const Asset = z.object({
   availableForGeneration: z.boolean().optional(),
   deprecatedAt: z.string().optional(),
   replacementAssetId: z.string().optional(),
+  // E3 · 素材文件夹归属（frozen-additive：optional，未归档则省略而非 null）。
+  folderId: z.string().optional(),
 });
 export type Asset = z.infer<typeof Asset>;
+
+/** E3 · 素材文件夹（workspace 作用域素材分组）。 */
+export const AssetFolder = z.object({
+  id: z.string(),
+  workspaceId: z.string(),
+  name: z.string(),
+  createdAt: z.string(),
+  /** 该文件夹下的素材数（serializer 计算，便于 UI 直接展示）。 */
+  assetCount: z.number().int().nonnegative().optional(),
+});
+export type AssetFolder = z.infer<typeof AssetFolder>;
+
+/** E3 · 新建文件夹入参。 */
+export const CreateAssetFolderInput = z.object({
+  name: z.string().min(1).max(60),
+});
+export type CreateAssetFolderInput = z.infer<typeof CreateAssetFolderInput>;
 
 export const BrandRule = z.object({
   id: z.string(),

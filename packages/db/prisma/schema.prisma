@@ -206,6 +206,7 @@ model BrandWorkspace {
   targetAudience String?
   slogan         String?
   assets       Asset[]
+  assetFolders AssetFolder[]
   rules        BrandRule[]
   ruleSnapshots RuleSnapshot[]
   terms        ComplianceTerm[]
@@ -241,9 +242,27 @@ model Asset {
   aiDescription          String?
   isFavorite             Boolean           @default(false)
   resolution             String?
+  // E3 — optional folder organization (workspace-scoped). SetNull so deleting a
+  // folder un-files its assets rather than cascading them away.
+  folderId               String?
+  folder                 AssetFolder?      @relation(fields: [folderId], references: [id], onDelete: SetNull)
 
   @@index([workspaceId, category])
   @@index([workspaceId, availableForGeneration])
+  @@index([workspaceId, folderId])
+}
+
+// E3 · 素材文件夹 — workspace 作用域的素材分组（多租户隔离：folder 与 asset 同
+// workspace；移动/查询路由都校验归属）。
+model AssetFolder {
+  id          String         @id @default(cuid())
+  workspaceId String
+  workspace   BrandWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name        String
+  assets      Asset[]
+  createdAt   DateTime       @default(now())
+
+  @@index([workspaceId])
 }
 
 model BrandRule {

@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { Project } from "@brandai/contracts";
+import type { BrandRule, Project } from "@brandai/contracts";
 import { Button } from "@brandai/ui";
 import { apiFetch } from "@/lib/client";
 import { useBrand } from "../brand-context";
@@ -49,6 +49,8 @@ export default function CampaignsPage() {
     null,
   );
   const [editingSummary, setEditingSummary] = useState(false);
+  // H4 · 查看项目规范侧边面板 — read-only brand knowledge (confirmed rules).
+  const [viewingRules, setViewingRules] = useState(false);
   // Snapshot the project a dialog targets, captured at open time, resolved from
   // the FULL projects list (not the filter-derived `active`). Otherwise changing
   // a filter while a dialog is open could re-target the confirm/summary action
@@ -272,6 +274,13 @@ export default function CampaignsPage() {
               <Button
                 variant="outline"
                 className="w-full justify-center"
+                onClick={() => setViewingRules(true)}
+              >
+                查看规范
+              </Button>
+              <Button
+                variant="outline"
+                className="w-full justify-center"
                 disabled={
                   !active || (active.status ?? "DRAFT") !== "DRAFT"
                 }
@@ -338,6 +347,157 @@ export default function CampaignsPage() {
           }}
         />
       ) : null}
+
+      {viewingRules ? (
+        <RulesPanel
+          wsId={wsId}
+          brandName={brandName}
+          onClose={() => setViewingRules(false)}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+// H4 · 查看项目规范 — 规则类型展示元信息（对齐知识库页 TYPE_META）。
+const RULE_TYPE_META: Record<string, { label: string; icon: string }> = {
+  logo: { label: "Logo 使用规范", icon: "◐" },
+  color: { label: "品牌色彩系统", icon: "◉" },
+  font: { label: "字体规范", icon: "Aa" },
+  copy: { label: "品牌语气 / 文案", icon: "❝" },
+  imagery: { label: "视觉参考", icon: "▦" },
+  layout: { label: "版式规范", icon: "▤" },
+  graphic: { label: "设计元素", icon: "✦" },
+};
+const RULE_TYPE_ORDER = ["logo", "color", "font", "copy", "imagery", "layout", "graphic"];
+const STRENGTH_META: Record<string, { label: string; cls: string }> = {
+  STRONG: { label: "强约束", cls: "bg-accent-soft text-primary" },
+  WEAK: { label: "弱约束", cls: "bg-muted text-muted-foreground" },
+  FORBIDDEN: { label: "禁用", cls: "bg-destructive/10 text-destructive" },
+};
+
+/**
+ * H4 · 查看项目规范（侧边面板）— read-only view of the brand's CONFIRMED brand
+ * knowledge, grouped by rule type. Reuses GET /api/workspaces/[wsId]/rules
+ * (same endpoint the 知识库 page + generate worker consume); shows only
+ * CONFIRMED rules (the ones that actually constrain出图). No editing here — the
+ * 知识库 page owns rule authoring/confirmation.
+ */
+function RulesPanel({
+  wsId,
+  brandName,
+  onClose,
+}: {
+  wsId: string;
+  brandName: string;
+  onClose: () => void;
+}) {
+  const { data: rules = [], isLoading } = useQuery({
+    queryKey: ["brandai-rules", wsId],
+    queryFn: () => apiFetch<BrandRule[]>(`/api/workspaces/${wsId}/rules`),
+  });
+  const confirmed = rules.filter((r) => r.status === "CONFIRMED");
+  const groups = RULE_TYPE_ORDER.map((type) => ({
+    type,
+    meta: RULE_TYPE_META[type]!,
+    items: confirmed.filter((r) => r.type === type),
+  })).filter((g) => g.items.length > 0);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex justify-end bg-foreground/30 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <aside
+        className="flex h-full w-full max-w-md flex-col border-l border-border bg-card shadow-[-24px_0_70px_rgba(30,30,60,0.18)]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between border-b border-border p-6">
+          <div>
+            <div className="text-lg font-semibold">项目品牌规范</div>
+            <p className="mt-1 text-sm text-muted-foreground">
+              「{brandName}」已确认的品牌知识库规则，出图时受控生效。
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="关闭"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-6">
+          {isLoading ? (
+            <div className="py-10 text-center text-sm text-muted-foreground">
+              加载中…
+            </div>
+          ) : groups.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-border p-8 text-center">
+              <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-accent-soft text-2xl text-primary">
+                ◎
+              </div>
+              <div className="text-sm font-semibold">暂无已确认规范</div>
+              <p className="mx-auto mt-2 max-w-xs text-xs leading-relaxed text-muted-foreground">
+                去「品牌知识库」沉淀并确认 Logo / 色彩 / 字体 / 调性等规则，确认后
+                会在这里展示并约束出图。
+              </p>
+              <a href="/brand-knowledge">
+                <Button variant="outline" className="mt-4">
+                  前往品牌知识库
+                </Button>
+              </a>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-4">
+              {groups.map((g) => (
+                <div
+                  key={g.type}
+                  className="rounded-2xl border border-border bg-background p-4"
+                >
+                  <div className="mb-3 flex items-center gap-2">
+                    <span className="flex h-7 w-7 items-center justify-center rounded-xl bg-accent-soft text-sm text-primary">
+                      {g.meta.icon}
+                    </span>
+                    <span className="text-sm font-semibold">{g.meta.label}</span>
+                    <span className="ml-auto text-xs text-muted-foreground">
+                      {g.items.length} 条
+                    </span>
+                  </div>
+                  <ul className="flex flex-col gap-2.5">
+                    {g.items.map((r) => {
+                      const s = STRENGTH_META[r.strength] ?? STRENGTH_META.WEAK!;
+                      return (
+                        <li
+                          key={r.id}
+                          className="flex items-start gap-2 text-sm leading-relaxed"
+                        >
+                          <span
+                            className={`mt-0.5 shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${s.cls}`}
+                          >
+                            {s.label}
+                          </span>
+                          <span className="text-foreground/90">{r.summary}</span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="border-t border-border p-4">
+          <a href="/brand-knowledge">
+            <Button variant="outline" className="w-full justify-center">
+              管理品牌知识库
+            </Button>
+          </a>
+        </div>
+      </aside>
     </div>
   );
 }
