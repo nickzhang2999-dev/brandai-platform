@@ -29,7 +29,7 @@
 >
 > **二轮更新**：2026-06-20 · 分支 `claude/cool-pascal-ao72o3`。补齐设计稿缺口（L4 富卡片 / L5 工作台三右栏 / L8 素材联动 / L12 知识库真 AI 入口 / C5-C6 排序筛选 / Campaign 终审归档 / 模板库占位 + 6 项 nav）与 Phase-2 后端正确性（K4 recognize 证据 / K6 admin bootstrap 原子化 / K5 多尺寸+textMode）。全程 `pnpm test`(L1 83)+`typecheck`+`build`+`pytest`(77) 全绿。
 >
-> **灰度端到端真验收（No-mock，2026-06-20）**：真 provider（`openai · gpt-image-1` / `gpt-4o-mini`）→真 API→真 DB。已验：登录门禁、真出图（~1.3–2MB PNG）、**多尺寸 targets**（1024² / 1080×1440）、**textMode=layered**、**风格关键词 F7**（落 `params.styleKeywords` + `appliedPromptAdditions` 进 prompt）、`GET /quota`。
+> **灰度端到端真验收（No-mock，2026-06-21 更新）**：真 provider（`openai · gpt-image-2`【铁律】/ `gpt-4o-mini`）→真 API→真 DB。已验：登录门禁、真出图（R2 1.5MB PNG）、`actualWidth/Height` 落库(K5)、配额计数(K1)、通知中心(A3)、网站采集异步(K3/I14)、推荐品牌(L2)、**素材 AI 标注/描述真 VLM 落库(E9/E10)**、多尺寸 targets / textMode / 风格关键词 F7 / `GET /quota`。
 > **本轮还发现并修复一个真隔离 bug（I28）**：CDS 灰度 Redis 共享，BullMQ 队列名无前缀 → 其他部署（如 main 旧代码）的 worker 抢本部署 job 并静默丢弃新字段（实测 styleKeywords 不落）。已加按部署 `BULLMQ_PREFIX` 前缀隔离，重验通过。
 > **未补冒烟**：真 recognize（D13）/ 参考图视觉条件化（F9，受 OpenAI generate API 限制，详见 L8）。
 > （评审：本轮处理 Bugbot/Codex 共 ~12 条，安全/正确性/UX 类已逐条修复并重验；计费/配额/协作类按 §3.5 留 phase-2。）
@@ -50,7 +50,9 @@
 >
 > 一句话结论：**业务主干（创建→沉淀→素材→出图→改图→终选→交付）已真实跑通且安全收尾**；本轮把**通知中心 / 推荐品牌 / 品牌预览 / 工作台工具栏 / 素材 AI 标注**补齐；**剩余缺口集中在「弹窗体系（H4/H7/H9/H12）、模板库（G1）、部分跨模块联动与富展示」**（详见 §L 反推清单）。
 
-> **⚠️ 部署注记（2026-06-21 灰度发现，给后续智能体）：CDS `branch deploy` 会重建 `web`/`worker`（next build / tsx 重载），但 `ai` 容器（`python:3.12-slim` + `./apps/ai:/app` bind + `pip install && uvicorn`，无 `--reload`）停留在创建时的 in-memory 代码，`deploy` 与 `/api/branches/<id>/restart` 都未能让其加载新 `apps/ai` 代码（本轮 `/v1/describe` 持续 404；`/restart` 一度把分支打到 `error`）。**影响：任何**新增/修改 `apps/ai` 路由**的改动（本轮 describe E9/E10、AI 侧 K5/K7 探测）在灰度不会自动生效——需要有 node/docker 权限者 `docker compose up -d --force-recreate ai`，或一次性 compose 改动（uvicorn 加 `--reload` 或给 ai 加 build/重建钩子，走 pending-import 批审）。web/worker 侧改动不受影响。K5 已用 worker 端兜底规避该问题并真验通过。**
+> **✅ 部署陷阱已修复（2026-06-21）：曾发现 CDS `branch deploy` 重建 `web`/`worker` 但 `ai` 容器（`python:3.12-slim` + bind + 无 `--reload`）停留在创建时的 in-memory 代码 → 新增/改动 `apps/ai` 路由（如 `/v1/describe`）在灰度不生效（持续 404），`deploy`/`restart` 均无效。修复：`cds-compose.yml` 给 ai 的 uvicorn 加 `--reload --reload-dir /app/app`（uvicorn[standard] 自带 watchfiles），**显式 `POST /api/branches/<id>/deploy` 会应用 compose 改动并重建 ai 容器**，此后 AI 代码改动自动重载。describe E9/E10 修复后已真验通过。注意：github 自动部署可能不应用 compose 改动，AI 侧改动后用显式 deploy。**
+
+> **🔒 铁律：图像模型固定 `gpt-image-2`（写死）。** `apps/ai/config.py` / `web settings.ts` / 改图兜底 / admin UI 默认全部 `gpt-image-2`；AppSetting.imageModel + 项目 env IMAGE_MODEL 已设 `gpt-image-2`。灰度 provider 自测 `openai OK · model=gpt-image-2`，真出图(R2, 1.5MB PNG)已验。**禁止回退 gpt-image-1。**
 
 ## A · 平台基础架构 / 全局
 
@@ -120,8 +122,8 @@
 | E6 | 素材统计（总数/图片/收藏/AI标注） | P04-M07 | ✅ | `page.tsx:88` | — | 2026-06-20 |
 | E7 | 素材网格 | P04-M08 | ✅ | `page.tsx:187` | 缩略图+类型 chip，走同源代理 | 2026-06-20 |
 | E8 | 素材详情侧栏 | P04-M12 | ✅ | `page.tsx:229` | 预览/类型/尺寸/大小/来源/AI描述/AI标签 | 2026-06-20 |
-| E9 | AI 智能标签 | P04-M13 | 🟡 | `assets/page.tsx` 详情「AI 智能标注」→`POST .../describe`→worker→真 VLM `/v1/describe`→写 `Asset.aiTags` | 代码完成+L2 pytest 验；**灰度真验受阻**：灰度 AI 容器停留在 Wave-1 前代码（`/v1/describe` 返回 404），deploy/restart 均未能让其重载（见下「部署注记」）。存储已配 R2、素材上传→R2 已真验(CDN 200) | 代码 2026-06-20 / 灰度受阻 2026-06-21 |
-| E10 | AI 生成描述 | P04-M14 | 🟡 | 同 E9（`/v1/describe` 返回 `aiDescription`，worker 写 `Asset.aiDescription`） | 同 E9：代码+L2 完成，灰度 AI 容器未重载 → 暂未线上取证 | 代码 2026-06-20 / 灰度受阻 2026-06-21 |
+| E9 | AI 智能标签 | P04-M13 | ✅ | `assets/page.tsx` 详情「AI 智能标注」→`POST .../describe`→worker→真 VLM `/v1/describe`→写 `Asset.aiTags` | **灰度真验通过**：素材→R2→真 VLM(gpt-4o-mini)→`aiTags=['饮料','柠檬','清爽','绿色','瓶装水',...]` 落库（compose `--reload` 修复 AI 重载后）| 真验 2026-06-21 |
+| E10 | AI 生成描述 | P04-M14 | ✅ | 同 E9（`/v1/describe` 返回 `aiDescription`，worker 写 `Asset.aiDescription`） | **灰度真验通过**：真 VLM 中文描述落库 | 真验 2026-06-21 |
 | E11 | 加入项目（→Campaign） | P04-M16 | 🟡 | `assets/page.tsx` + `lib/reference-tray.ts` | 详情选 Campaign→加入并跳工作台；客户端 reference-tray 暂存（DB Project↔Asset 关系 phase-2） | 接入 2026-06-20 |
 | E12 | 设为参考（→工作台参考区） | P04-M17 | 🟡 | `assets/page.tsx` + `lib/reference-tray.ts` ↔ 工作台 F9 | UI 联动通：设为参考→工作台 F9 显示并入 referenceAssetIds（真校验归属+留痕 version.params）。**注**：OpenAI generate API 不收图，当前为 prompt 级引导，真视觉条件化需经 edits 路由（phase-2） | 接入 2026-06-20 |
 | E13 | 收藏切换 / 使用记录 / 查看来源 | doc02/05 | 🟡 | 详情含「来源」字段；收藏 toggle/使用记录未见 | 🔍 | 2026-06-20 |
@@ -139,7 +141,7 @@
 | F7 | 风格关键词（标签增删） | P05-M10 | ✅ **已验收** | `workspace/page.tsx` tag 输入 | 增删 chip + 建议词；进 `styleKeywords`→worker 折入 promptAdditions。灰度真验：`params.styleKeywords`+`appliedPromptAdditions` 落库 | 接入+验收 2026-06-20 |
 | F8 | 品牌约束（显示已应用规则） | P05-M12 | 🟡 | `page.tsx:464`「品牌约束已生效」 | 仅状态行，非逐条规则展示 | 2026-06-20 |
 | F9 | 参考素材区 | P05-M13 | 🟡 | `workspace/page.tsx`（读 reference-tray） | 显示本项目参考缩略图（来自 E12）+ 可删；进 `referenceAssetIds`→worker 解析为 referenceImages（**OpenAI generate 仅 prompt 级引导；真视觉条件化经 edits phase-2**）；**素材生命周期上线**：`availableForGeneration=false` 的素材在参考暂存/识别 picker 灰掉禁选（wire 暴露 `availableForGeneration/deprecatedAt`） | 接入 2026-06-20；生命周期灰显 2026-06-20 |
-| F10 | 提交制作（真实出图 §2 异步） | P05-M15 | ✅ **已验收** | `page.tsx:230` → `POST /generations` 202 → 轮询 | 真 gpt-image-1→GenerationVersion | 2026-06-20 |
+| F10 | 提交制作（真实出图 §2 异步） | P05-M15 | ✅ **已验收** | `page.tsx:230` → `POST /generations` 202 → 轮询 | 真 gpt-image-2→GenerationVersion | 2026-06-20 |
 | F11 | 生成额度展示 | doc02/05 | ✅ | `workspace/page.tsx` QuotaBar + `GET /quota` | 本周期/今日用量 + 进度条（-1=不限）；新增只读端点 | 接入 2026-06-20 |
 | F16 | 多尺寸渠道（targets）+ textMode | K5 | ✅ **已验收** | `workspace/page.tsx`（CHANNEL_SIZES 多选 + 直接/分层） | 渠道尺寸多选每尺寸各 1 张；textMode 直接/分层 + 持久化+regenerate 重建。灰度真验：1024²/1080×1440 出图 + `params.textMode=layered`；**记录 snap 真实尺寸已做**（K5：`params.actualWidth/Height` 由 apps/ai PIL 解码） | 新增+验收 2026-06-20；K5 补 2026-06-20 |
 | F12 | 修改优化（改图） | 一期闭环 | ✅ **已验收** | `page.tsx:145` → versions/[id]/edit（OpenAI multipart） | 子版本 parentVersionId | 2026-06-20 |
@@ -217,7 +219,7 @@
 | J2 | 选择/沉淀品牌知识库 | ✅ | D1/D12 / `rules` | 2026-06-20 |
 | J3 | 上传项目素材 | ✅ | E2 / `assets/upload` | 2026-06-20 |
 | J4 | 工作台输入提示词+提交制作 | ✅ | F5/F10 | 2026-06-20 |
-| J5 | 生成图片结果与变体（真 gpt-image-1） | ✅ | F4/F10 | 2026-06-20 |
+| J5 | 生成图片结果与变体（真 gpt-image-2） | ✅ | F4/F10 | 2026-06-20 |
 | J6 | 继续修改（改图，真 OpenAI edits） | ✅ | F12 | 2026-06-20 |
 | J7 | 确认终稿（终选） | ✅ | F13 | 2026-06-20 |
 | J8 | 项目归档 / 交付（导出 ZIP） | ✅ | F14 | 2026-06-20 |
