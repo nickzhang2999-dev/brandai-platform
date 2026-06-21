@@ -121,6 +121,47 @@ export const DescribeResponse = z.object({
 });
 export type DescribeResponse = z.infer<typeof DescribeResponse>;
 
+// POST /v1/summarize — B2/C8 text-only VLM (chat) endpoint with two modes:
+//  - "brief_decompose": turn a free-text brand brief into structured creation
+//    seeds (selling point / scene / scene type / style keywords) + a one-line
+//    summary, so the homepage AI input can 立项 + prefill the workspace.
+//  - "campaign_summary": condense a Campaign's context (name + brief +
+//    confirmed brand rules) into a short AI 项目摘要 + a few highlights.
+// Real path runs through the same VLM provider/model resolution as recognize /
+// describe (text-only chat, no image); mock.py gives a deterministic zero-key
+// result for contract tests. Every output field is optional/no-null per the L1
+// null-vs-optional convention (the AI service runs response_model_exclude_none).
+export const SummarizeMode = z.enum(["brief_decompose", "campaign_summary"]);
+export type SummarizeMode = z.infer<typeof SummarizeMode>;
+
+export const SummarizeRequest = z.object({
+  mode: SummarizeMode,
+  /** The text to work on: the raw brief (decompose) or the campaign context (summary). */
+  text: z.string(),
+  /** Optional steering context (brand tone, confirmed rule summaries, name). */
+  context: z
+    .object({
+      brandName: z.string().optional(),
+      brandTone: z.string().optional(),
+      campaignName: z.string().optional(),
+      ruleSummaries: z.array(z.string()).default([]),
+    })
+    .optional(),
+});
+export type SummarizeRequest = z.infer<typeof SummarizeRequest>;
+
+export const SummarizeResponse = z.object({
+  // brief_decompose fields (all optional — the model may omit any).
+  sellingPoint: z.string().optional(),
+  scene: z.string().optional(),
+  sceneType: SceneType.optional(),
+  styleKeywords: z.array(z.string()).default([]),
+  // shared / campaign_summary fields.
+  summary: z.string().optional(),
+  highlights: z.array(z.string()).default([]),
+});
+export type SummarizeResponse = z.infer<typeof SummarizeResponse>;
+
 // POST /v1/parse-manual — parse a brand/VI manual PDF (by asset URL) into the
 // same DRAFT rule shape as /v1/recognize, so the confirm workbench is reused.
 export const ParseManualRequest = z.object({ url: z.string() });

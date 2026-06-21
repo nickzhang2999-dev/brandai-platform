@@ -164,6 +164,56 @@ def test_describe_no_null_fields(client):
     assert find_nulls(r.json()) == []
 
 
+def test_summarize_brief_decompose(client):
+    """B2 — brief_decompose returns creation seeds; sceneType is a valid enum."""
+    r = client.post(
+        "/v1/summarize",
+        json={
+            "mode": "brief_decompose",
+            "text": "为夏季新品做一组小红书种草主视觉，清透水光风格",
+        },
+    )
+    d = r.json()
+    assert r.status_code == 200, r.text
+    # mock leads sellingPoint with the brief's first line → wiring observable.
+    assert d["sellingPoint"]
+    assert d["sceneType"] in {
+        "ECOM_MAIN", "SCENE", "SOCIAL_POSTER", "CAMPAIGN_KV", "SELLING_POINT"
+    }
+    assert isinstance(d["styleKeywords"], list) and d["styleKeywords"]
+    assert d["summary"]
+
+
+def test_summarize_campaign_summary(client):
+    """C8 — campaign_summary returns a summary + highlights from the context."""
+    r = client.post(
+        "/v1/summarize",
+        json={
+            "mode": "campaign_summary",
+            "text": "夏季新品上市 Campaign，已完成 KV 主视觉初稿",
+            "context": {
+                "campaignName": "夏季新品",
+                "ruleSummaries": ["主色 #7C5CFF", "标题衬线"],
+            },
+        },
+    )
+    d = r.json()
+    assert r.status_code == 200, r.text
+    assert isinstance(d["summary"], str) and d["summary"]
+    assert isinstance(d["highlights"], list) and d["highlights"]
+
+
+def test_summarize_no_null_fields(client):
+    """No response field serializes as null (the .optional() contract boundary)."""
+    from .conftest import find_nulls
+
+    r = client.post(
+        "/v1/summarize", json={"mode": "brief_decompose", "text": "x"}
+    )
+    assert r.status_code == 200
+    assert find_nulls(r.json()) == []
+
+
 def test_edit_creates_image(client):
     r = client.post(
         "/v1/edit",

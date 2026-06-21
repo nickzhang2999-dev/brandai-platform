@@ -14,6 +14,8 @@ import type {
   ParseManualResponse,
   RecognizeRequest,
   RecognizeResponse,
+  SummarizeRequest,
+  SummarizeResponse,
 } from "@brandai/contracts";
 import { getEffectiveAiSettings } from "@/lib/settings";
 
@@ -67,6 +69,8 @@ export const ai = {
     call<DescribeRequest, DescribeResponse>("/v1/describe", b),
   parseManual: (b: ParseManualRequest) =>
     call<ParseManualRequest, ParseManualResponse>("/v1/parse-manual", b),
+  summarize: (b: SummarizeRequest) =>
+    call<SummarizeRequest, SummarizeResponse>("/v1/summarize", b),
   generate: (b: GenerateRequest) =>
     call<GenerateRequest, GenerateResponse>("/v1/generate", b),
   edit: (b: EditRequest) => call<EditRequest, EditResponse>("/v1/edit", b),

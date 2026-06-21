@@ -88,6 +88,19 @@ class VLMProvider(ABC):
         provenance hint (see ``_inline_image``)."""
 
     @abstractmethod
+    async def summarize(
+        self, mode: str, text: str, *, context: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """B2/C8 — text-only chat over a brand brief / campaign context.
+
+        ``mode`` is ``"brief_decompose"`` (return ``sellingPoint`` / ``scene`` /
+        ``sceneType`` / ``styleKeywords`` / ``summary``) or ``"campaign_summary"``
+        (return ``summary`` / ``highlights``). ``context`` carries optional
+        steering (brand tone, confirmed rule summaries, names). Returns a dict in
+        the SummarizeResponse shape; omitted keys degrade to the contract default
+        (no nulls)."""
+
+    @abstractmethod
     async def scrape_website(self, url: str) -> dict[str, Any]:
         """Return images / copies / selling points from a site."""
 

@@ -17,6 +17,7 @@ import { createGenerateWorker } from "./generate.worker";
 import { createEditWorker } from "./edit.worker";
 import { createDescribeWorker } from "./describe.worker";
 import { createIngestWorker } from "./ingest.worker";
+import { createSummarizeWorker } from "./summarize.worker";
 import { sweepStaleGenerations } from "@/lib/generations";
 
 const healthPort = Number(process.env.WORKER_HEALTH_PORT ?? 3001);
@@ -54,6 +55,7 @@ try {
     createEditWorker(),
     createDescribeWorker(),
     createIngestWorker(),
+    createSummarizeWorker(),
   );
   workersReady = true;
   console.log(`[workers] started: ${workers.length} worker(s)`);

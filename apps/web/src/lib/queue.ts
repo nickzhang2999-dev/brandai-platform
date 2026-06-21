@@ -43,3 +43,9 @@ export const ingestQueue = new Queue("ingest", {
   connection,
   prefix: queuePrefix,
 });
+// B2/C8 / §2 — text summarization (brief decompose / campaign summary). The VLM
+// chat call is slow → runs in a worker. Same prefix convention as the others.
+export const summarizeQueue = new Queue("summarize", {
+  connection,
+  prefix: queuePrefix,
+});

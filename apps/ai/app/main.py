@@ -38,6 +38,8 @@ from .schemas import (
     ParseManualRequest,
     RecognizeRequest,
     RecognizeResponse,
+    SummarizeRequest,
+    SummarizeResponse,
 )
 
 
@@ -183,6 +185,24 @@ async def describe(
         source=req.source,
     )
     return DescribeResponse(**data)
+
+
+@app.post("/v1/summarize", response_model=SummarizeResponse, response_model_exclude_none=True)
+async def summarize(
+    req: SummarizeRequest,
+    vlm: VLMProvider = Depends(resolve_vlm_provider),
+):
+    """B2/C8 — text-only VLM (chat) over a brand brief / campaign context.
+
+    mode="brief_decompose": decompose a free-text brief into creation seeds.
+    mode="campaign_summary": condense a campaign's context into a summary.
+    """
+    data = await vlm.summarize(
+        req.mode,
+        req.text,
+        context=req.context.model_dump() if req.context else None,
+    )
+    return SummarizeResponse(**data)
 
 
 async def _fetch_pdf_text(url: str) -> str:

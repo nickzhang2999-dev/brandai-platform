@@ -17,6 +17,11 @@ export const AsyncTaskKind = z.enum([
   // being awaited in the HTTP handler. The candidate result is read back via
   // the job return value (GET ?jobId=).
   "INGEST",
+  // B2/C8 — text summarization (brief decompose / campaign summary). The VLM
+  // chat call is slow, so it runs server-authoritatively in the summarize
+  // worker (POST → 202 → client polls). The structured result is read back via
+  // the job return value (GET ?jobId=).
+  "SUMMARIZE",
 ]);
 export type AsyncTaskKind = z.infer<typeof AsyncTaskKind>;
 

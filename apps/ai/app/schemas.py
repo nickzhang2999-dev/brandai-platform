@@ -58,6 +58,36 @@ class DescribeResponse(BaseModel):
     aiDescription: str = ""
 
 
+class SummarizeContext(BaseModel):
+    brandName: Optional[str] = None
+    brandTone: Optional[str] = None
+    campaignName: Optional[str] = None
+    ruleSummaries: list[str] = Field(default_factory=list)
+
+
+class SummarizeRequest(BaseModel):
+    """POST /v1/summarize — B2/C8 text-only VLM endpoint, two modes."""
+
+    mode: str  # "brief_decompose" | "campaign_summary"
+    text: str
+    context: Optional[SummarizeContext] = None
+
+
+class SummarizeResponse(BaseModel):
+    """Mirror of @brandai/contracts SummarizeResponse. Every field optional /
+    default-empty so response_model_exclude_none keeps the no-null wire shape
+    (Zod .optional() rejects null)."""
+
+    # brief_decompose
+    sellingPoint: Optional[str] = None
+    scene: Optional[str] = None
+    sceneType: Optional[str] = None
+    styleKeywords: list[str] = Field(default_factory=list)
+    # shared / campaign_summary
+    summary: Optional[str] = None
+    highlights: list[str] = Field(default_factory=list)
+
+
 class ParseManualRequest(BaseModel):
     """POST /v1/parse-manual — a brand/VI manual PDF asset URL to parse."""
 

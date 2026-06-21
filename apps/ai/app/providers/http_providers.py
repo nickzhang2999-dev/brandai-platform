@@ -524,6 +524,36 @@ _DESCRIBE_PROMPT = (
     "Give 4–10 tags covering subject, dominant colors, style and usage. Tags are "
     "short noun phrases (Chinese)."
 )
+_DECOMPOSE_SYSTEM = (
+    "You are a senior brand campaign strategist. You read a free-text marketing "
+    "brief and decompose it into structured creation seeds for an image "
+    "generator. Reply with STRICT JSON only — no prose, no code fences."
+)
+_DECOMPOSE_PROMPT = (
+    "Decompose this brand marketing brief into creation seeds.{hints}\n"
+    "Brief:\n{text}\n\n"
+    "Return JSON shaped exactly as:\n"
+    "{{\"sellingPoint\":\"<the single core selling point, concise Chinese>\","
+    "\"scene\":\"<a concrete visual scene description, Chinese>\","
+    "\"sceneType\":\"ECOM_MAIN|SCENE|SOCIAL_POSTER|CAMPAIGN_KV|SELLING_POINT\","
+    "\"styleKeywords\":[\"<style keyword>\"],"
+    "\"summary\":\"<one-line Chinese summary of the brief>\"}}\n"
+    "Pick the single best sceneType. Give 3–6 short style keywords (Chinese)."
+)
+_CAMPAIGN_SUMMARY_SYSTEM = (
+    "You are a brand campaign assistant. You read a campaign's context (its "
+    "name, brief and the brand's confirmed rules) and write a concise project "
+    "summary. Reply with STRICT JSON only — no prose, no code fences."
+)
+_CAMPAIGN_SUMMARY_PROMPT = (
+    "Summarize this campaign for its project dashboard.{hints}\n"
+    "Context:\n{text}\n\n"
+    "Return JSON shaped exactly as:\n"
+    "{{\"summary\":\"<2–4 sentence Chinese summary of goal, status and next "
+    "step>\",\"highlights\":[\"<short Chinese highlight / next-step>\"]}}\n"
+    "Give 2–5 highlights. Keep it grounded in the provided context — do not "
+    "invent facts."
+)
 _COMPLIANCE_SYSTEM = (
     "You are a brand compliance reviewer. Judge whether an image obeys the "
     "brand's visual rules. Reply with STRICT JSON only."
@@ -702,6 +732,34 @@ class HttpVLMProvider(VLMProvider):
         ]
         data = await self._chat_json(parts, system=_DESCRIBE_SYSTEM)
         return _coerce_describe(data)
+
+    async def summarize(
+        self, mode: str, text: str, *, context: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        ctx = context or {}
+        hints = ""
+        if ctx.get("brandName"):
+            hints += f" Brand: {ctx['brandName']}."
+        if ctx.get("campaignName"):
+            hints += f" Campaign: {ctx['campaignName']}."
+        if ctx.get("brandTone"):
+            hints += f" Brand tone: {ctx['brandTone']}."
+        rule_summaries = [str(r) for r in (ctx.get("ruleSummaries") or []) if r]
+        if rule_summaries:
+            hints += " Confirmed brand rules: " + "; ".join(
+                rule_summaries[:20]
+            ) + "."
+        clipped = (text or "")[:_MAX_SCRAPE_TEXT]
+        if mode == "campaign_summary":
+            prompt = _CAMPAIGN_SUMMARY_PROMPT.format(hints=hints, text=clipped)
+            system = _CAMPAIGN_SUMMARY_SYSTEM
+        else:  # brief_decompose (default)
+            prompt = _DECOMPOSE_PROMPT.format(hints=hints, text=clipped)
+            system = _DECOMPOSE_SYSTEM
+        data = await self._chat_json(
+            [{"type": "text", "text": prompt}], system=system
+        )
+        return _coerce_summarize(data, mode)
 
     async def check_visual_compliance(
         self,
@@ -1118,6 +1176,49 @@ def _coerce_describe(data: dict[str, Any]) -> dict[str, Any]:
             break
     desc = data.get("aiDescription")
     return {"aiTags": tags, "aiDescription": str(desc).strip() if desc else ""}
+
+
+_SCENE_TYPES = {
+    "ECOM_MAIN", "SCENE", "SOCIAL_POSTER", "CAMPAIGN_KV", "SELLING_POINT"
+}
+
+
+def _coerce_summarize(data: dict[str, Any], mode: str) -> dict[str, Any]:
+    """Force model output into a valid SummarizeResponse shape.
+
+    Only emits keys the model actually provided (omitted → contract default), so
+    the no-null boundary holds. Drops an invalid sceneType rather than passing a
+    value the SceneType enum would reject. Keywords/highlights are trimmed,
+    de-duped and capped.
+    """
+
+    def _str_list(raw: Any, cap: int) -> list[str]:
+        out: list[str] = []
+        seen: set[str] = set()
+        for x in raw or []:
+            s = str(x).strip()
+            if s and s.lower() not in seen:
+                seen.add(s.lower())
+                out.append(s)
+            if len(out) >= cap:
+                break
+        return out
+
+    out: dict[str, Any] = {}
+    if mode == "brief_decompose":
+        if data.get("sellingPoint"):
+            out["sellingPoint"] = str(data["sellingPoint"]).strip()
+        if data.get("scene"):
+            out["scene"] = str(data["scene"]).strip()
+        st = str(data.get("sceneType") or "").strip().upper()
+        if st in _SCENE_TYPES:
+            out["sceneType"] = st
+        out["styleKeywords"] = _str_list(data.get("styleKeywords"), 20)
+    else:
+        out["highlights"] = _str_list(data.get("highlights"), 8)
+    if data.get("summary"):
+        out["summary"] = str(data["summary"]).strip()
+    return out
 
 
 def _coerce_ingest(
