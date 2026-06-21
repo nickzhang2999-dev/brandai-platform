@@ -135,7 +135,10 @@ services:
       # Encrypts admin-supplied AI keys at rest. Dedicated key = the project JWT
       # secret (stable); the app also falls back to AUTH_SECRET if this is empty.
       SETTINGS_ENC_KEY: "${CDS_JWT_SECRET}"
-      AI_SERVICE_URL: "http://ai:8000"
+      # 跨分支共享 docker 网络时裸 `ai` 别名会同时解析到本分支与 main 分支的 ai 容器
+      # (round-robin → 间歇命中 main 旧 ai → 新路由 404)。用分支级 env 指向唯一容器名
+      # `cds-<branchId>-ai` 即可隔离；其他分支不设该 env 时回退裸别名。
+      AI_SERVICE_URL: "${AI_SERVICE_URL:-http://ai:8000}"
       NODE_ENV: "production"
       CI: "true"
       # scripts/web-startup.sh listens on $PORT.
@@ -184,7 +187,10 @@ services:
       REDIS_URL: "${CDS_REDIS_URL}"
       AUTH_SECRET: "${CDS_JWT_SECRET}"
       SETTINGS_ENC_KEY: "${CDS_JWT_SECRET}"
-      AI_SERVICE_URL: "http://ai:8000"
+      # 跨分支共享 docker 网络时裸 `ai` 别名会同时解析到本分支与 main 分支的 ai 容器
+      # (round-robin → 间歇命中 main 旧 ai → 新路由 404)。用分支级 env 指向唯一容器名
+      # `cds-<branchId>-ai` 即可隔离；其他分支不设该 env 时回退裸别名。
+      AI_SERVICE_URL: "${AI_SERVICE_URL:-http://ai:8000}"
       WORKER_HEALTH_PORT: "3001"
       NODE_ENV: "production"
       CI: "true"
