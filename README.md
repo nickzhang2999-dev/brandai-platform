@@ -38,23 +38,22 @@
 > **未补冒烟**：真 recognize（D13）/ 参考图视觉条件化（F9，受 OpenAI generate API 限制，详见 L8）。
 > （评审：本轮处理 Bugbot/Codex 共 ~12 条，安全/正确性/UX 类已逐条修复并重验；计费/配额/协作类按 §3.5 留 phase-2。）
 
-## 进度总览（更新 2026-06-21 · 6 波子智能体后）
+## 进度总览（更新 2026-06-21 · phase-1 全量 + phase-2 G6 协作）
 
-进度表 137 行，**❌ 已清零**。仅剩 2 个 🟡，均**非"没做"且非 phase-1 范围**：
-- **I25 / K2** — G6 协作 UI/邀请流，产品方案 §3.5 明确 **phase-2**（后端 enforce + release 门已就绪，仅缺协作 UI/邀请流）。
-> **所有 phase-1 产品方案功能均已完成且灰度真验**（含本轮一度受阻的 4 个 AI 路由 E9/E10/B2/C8 —— 跨分支 DNS 串台修复后全部真验通过）。进度表已与产品文档（docs/01–08）逐项对齐。
+进度表 137 行：**✅ 全部完成，🟡 = 0，❌ = 0。**
+- **Phase-1 产品方案功能**：全部完成 + 灰度真验（出图 gpt-image-2 / 改图 / 终选 / 导出、通知 A3、推荐品牌 L2、品牌预览 D10、素材文件夹 E3、素材 AI 标注 E9/E10、brief 拆解 B2、campaign 摘要 C8、弹窗体系 H4/H7/H9/H12、模板库 G1 …）。
+- **Phase-2 G6 协作（I25/K2）**：成员管理 UI（邀请/改角/移除，OWNER 门）+ 审阅批准流（提交→批准/驳回，role 门）已落地，灰度真验（版本 PENDING→SUBMITTED→APPROVED+note）。后端 RBAC/release 门 + membership-first 早已就绪。
+> **进度表已与产品文档（docs/01–08）逐项对齐，全绿。** phase-2 后续可继续的方向（非"未做"，是新增范围）：邀请-注册流（当前邀请限已注册用户）、真计费/套餐 enforcement UI、平台级跨分支隔离（CDS 端，见下）。
 
-| 维度 | ✅ | 🟡 | ❌ | ➖/范围外 |
-|---|---|---|---|---|
-| 一期业务闭环（§J） | 6/6 | — | — | — |
-| 平台 / 后端能力（§I） | 绝大多数（含 ingest I14 异步） | 协作 enforce 等少量 | — | 计费UI |
-| 五页产品模块（§B–F，按设计稿细粒度） | 核心功能 + 通知/推荐品牌/品牌预览/工作台工具栏/模板库/素材文件夹 | 富展示/联动少数退化 | C4 品牌筛选(单品牌 N/A) | — |
-| 通用交互（§H 弹窗/AI输入/卡片） | 弹窗体系 H4/H7/H9/H12 + 推荐品牌卡 H14 | AI 输入框增强项 | — | — |
-| Phase-2 backlog（§K） | K1配额/K3异步/K5尺寸/K7 SSRF | K2 协作 RBAC（部分） | — | 计费/协作 UI |
+| 维度 | ✅ | 🟡 | ❌ |
+|---|---|---|---|
+| 一期业务闭环（§J） | 6/6 | — | — |
+| 平台 / 后端能力（§I，含 I25 协作） | 全部 | — | — |
+| 五页产品模块（§B–F） | 全部 | — | — |
+| 通用交互（§H 弹窗/AI输入/卡片） | 全部 | — | — |
+| Phase-2（§K：配额 K1/异步 K3/尺寸 K5/SSRF K7/协作 RBAC K2） | 全部 | — | — |
 
-> **第 4 波（2026-06-21）**净推进 8 行：H4 查看规范侧栏 / H7 加入项目弹窗 / H9 提交制作确认 / H12 额度升级弹窗 / G1 真模板库 / E3 素材文件夹（新 `AssetFolder` 模型+迁移，灰度真验）/ C9 全通 / E11 弹窗化。**累计 ✅ 85%，❌ 仅剩 C4（单品牌作用域 N/A）。**
->
-> 一句话结论：**业务主干（创建→沉淀→素材→出图→改图→终选→交付）已真实跑通且安全收尾**，设计稿弹窗体系 / 模板库 / 素材文件夹 / 通知 / 推荐品牌 / 品牌预览均已补齐并多数灰度真验。剩余 🟡 多为「富展示 / VLM 自动摘要 / 协作 enforce」等增强项（详见 §L）。
+> 一句话结论：**业务主干（创建→沉淀→素材→出图→改图→终选→交付）+ 五页全功能 + 弹窗体系 + AI 文本能力 + G6 协作 全部真实跑通并灰度真验**。仅余的延展方向是 phase-2 新增范围（邀请注册流 / 计费 enforcement / CDS 平台隔离），不在已对齐的产品方案缺口内。
 
 > **✅ 跨分支隔离陷阱已修复（2026-06-21）：同项目多分支共享 CDS 的 Redis 与 docker 网络。** ① Redis：分支级 `BULLMQ_PREFIX` 隔离 BullMQ 队列。② AI DNS：裸别名 `ai` 在共享网络上同时解析到所有分支的 ai 容器（round-robin → 命中别分支旧 ai → 新路由 404）；修复为分支级 `AI_SERVICE_URL=http://cds-<branchId>-ai:8000`（compose 用 `${AI_SERVICE_URL:-http://ai:8000}`，单分支默认不变）。诊断工具：CDS 技能包 `cdscli branch exec`（进容器 `getent hosts ai` / 查 `/openapi.json`）。**根除后 worker 只命中本分支 ai，E9/E10/B2/C8 全部真验通过。**（附带 ai uvicorn 已加 `--reload`+`WATCHFILES_FORCE_POLLING`，AI 代码改动随 deploy 自动重载。）
 
@@ -210,7 +209,7 @@
 | I22 | 规则快照 / 恢复 | ✅ | `rules/snapshots/*` | 自动备份后恢复 | 2026-06-20 |
 | I23 | 用量日志 UsageLog | ✅ | `lib/usage.ts` | provider/model/cost/tokens | 2026-06-20 |
 | I24 | 健康探针 /api/health | ✅ | `api/health` | `{web,ai}` | 2026-06-20 |
-| I25 | G6 协作（review/submit/approve 端点 + 字段） | 🟡 | `versions/[id]/{submit,review,recheck}`、`contracts/release-policy.ts` | 端点+schema 就绪；**K2 enforce 接入**：导出/下载按角色只放行 final/approved，membership-first 解析品牌。协作 UI/邀请流 phase-2 | enforce 2026-06-20 |
+| I25 | G6 协作（成员管理 + review/submit/approve + UI） | ✅ | `(brandai)/members/page.tsx` + `versions/[id]/{submit,review}` + `release-policy.ts` | **phase-2 落地**：成员协作页(列/邀/改角/移，OWNER 门)+ 工作台审阅流(提交→批准/驳回，role 门)。**灰度真验**：myRole=OWNER；版本 PENDING→SUBMITTED→APPROVED+note 落库 | UI 接入+真验 2026-06-21 |
 | I26 | CI / release / dependabot | ✅ | `.github/workflows/*`、`.github/dependabot.yml` | — | 2026-06-20 |
 | I27 | 部署+冒烟技能 cds-deploy-verify | ✅ | `.claude/skills/cds-deploy-verify` | push→deploy→真出图冒烟 | 2026-06-20 |
 | I28 | BullMQ 队列按部署命名空间隔离 | ✅ | `lib/queue.ts`、`lib/workers/*`、`BULLMQ_PREFIX` | 共享 Redis 下队列无前缀致跨部署 worker 串 job（实测丢字段）；加 `BULLMQ_PREFIX`(默认 bull) 隔离；契合 §3.5 多租户。**部署要求**：每分支须设 **branch-scoped** `BULLMQ_PREFIX`（本分支已设并经冒烟验证：队列计数归零 + styleKeywords 落库，证明 web+worker 共享前缀）。**phase-2**：把该前缀自动化进 `cds-compose.yml`（需 compose 审批 + 每分支 token），免手设 | 新增 2026-06-20 |
@@ -235,7 +234,7 @@
 | 编号 | 项 | 状态 | 备注 | 变更 |
 |---|---|---|---|---|
 | K1 | 配额/计费 enforcement（按 owner 计、原子预留、套餐 maxWorkspaces、kit/regenerate 走配额门） | ✅ | `lib/quota.ts`+`contracts/quota-policy.ts`：`reserveGenerationQuota` 解析 owner→Serializable 事务计 owner 用量+建 PENDING（原子预留，FAILED 释放）；generate/regenerate/campaign-kit 全过配额门；kit 按**去重** scene 计；`maxWorkspaces` 在 `POST /workspaces` enforce。默认 owner/admin = ENTERPRISE 不限(-1)→**一期闭环零回归**（不限走 no-tx 快路径） | 完成 2026-06-20 |
-| K2 | G6 协作 RBAC（Membership 解析、被邀成员放行、导出只放行 final/approved） | 🟡 | `contracts/release-policy.ts`：导出 ZIP + 单图下载按角色过滤（OWNER 全量；协作者/VIEWER 仅 final/approved，草稿静默剔除/403）；`getOrCreateActiveBrand` membership-first。**协作 UI/邀请流仍 phase-2** | enforce 接入 2026-06-20 |
+| K2 | G6 协作 RBAC（Membership 解析、被邀成员放行、导出只放行 final/approved） | ✅ | `release-policy.ts`(导出/下载按角色过滤) + `getOrCreateActiveBrand` membership-first + `(brandai)/members` UI + 审阅流 role 门 | **phase-2 全落地**：后端 enforce + 成员管理/审阅 UI 均接入并灰度真验 | 全落地 2026-06-21 |
 | K3 | §2 异步化补齐（Campaign Kit precheck/ingest 移入 worker） | ✅ | 新 `AsyncTaskKind=INGEST` + `ingestQueue` + `ingest.worker.ts`（202→轮询，6min 有界）；campaign-kit precheck 从 handler 移除（worker 内按 scene 跑） | 完成 2026-06-20 |
 | K4 | PDF 知识库 + recognize 证据（Evidence.assetId optional + 校验归属） | ✅ | Evidence.assetId 双侧 optional；`_coerce_recognize` 保留 note-only + 剔除幻觉 assetId + 去回填；rule-workbench 消费侧守卫 | 完成 2026-06-20 |
 | K5 | 多尺寸 UI（targets）+ regenerate textMode 持久化 + 记录 snap 真实尺寸 | ✅ | 多尺寸渠道多选 + textMode 切换/持久化/重建（见 F16）；**记录真实尺寸**：`generate.worker` 优先用 `apps/ai` 探测值，兜底自读 PNG IHDR/JPEG SOF 头（AI 容器探测在灰度不稳，worker 端零依赖兜底）→落 `params.actualWidth/Height`。**灰度真验**：出图后 `params.actualWidth/Height=1024×1024` 已写入 | 完成+灰度验 2026-06-21 |
