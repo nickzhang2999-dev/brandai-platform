@@ -34,21 +34,21 @@
 > **未补冒烟**：真 recognize（D13）/ 参考图视觉条件化（F9，受 OpenAI generate API 限制，详见 L8）。
 > （评审：本轮处理 Bugbot/Codex 共 ~12 条，安全/正确性/UX 类已逐条修复并重验；计费/配额/协作类按 §3.5 留 phase-2。）
 
-## 进度总览（更新 2026-06-20 · 三波子智能体后）
+## 进度总览（更新 2026-06-21 · 四波子智能体 + 灰度真验后）
 
-进度表共 **137 行**：✅ **113（82%）** · 🟡 22（16%） · ❌ 7（5%）。
+进度表共 **137 行**：✅ **117（85%）** · 🟡 19（14%） · ❌ **1（C4 品牌筛选，单品牌作用域 N/A）**。
 
 | 维度 | ✅ | 🟡 | ❌ | ➖/范围外 |
 |---|---|---|---|---|
 | 一期业务闭环（§J） | 6/6 | — | — | — |
 | 平台 / 后端能力（§I） | 绝大多数（含 ingest I14 异步） | 协作 enforce 等少量 | — | 计费UI |
-| 五页产品模块（§B–F，按设计稿细粒度） | 核心功能 + 通知/推荐品牌/品牌预览/工作台工具栏 | 富展示/联动多处退化 | 模板库/部分快捷操作 | — |
-| 通用交互（§H 弹窗/AI输入/卡片） | 推荐品牌卡 H14 等 | AI 输入框/卡片多数 | 5 个弹窗（H4/H7/H9/H12 + 见 §H） | — |
+| 五页产品模块（§B–F，按设计稿细粒度） | 核心功能 + 通知/推荐品牌/品牌预览/工作台工具栏/模板库/素材文件夹 | 富展示/联动少数退化 | C4 品牌筛选(单品牌 N/A) | — |
+| 通用交互（§H 弹窗/AI输入/卡片） | 弹窗体系 H4/H7/H9/H12 + 推荐品牌卡 H14 | AI 输入框增强项 | — | — |
 | Phase-2 backlog（§K） | K1配额/K3异步/K5尺寸/K7 SSRF | K2 协作 RBAC（部分） | — | 计费/协作 UI |
 
-> 本轮（3 波）净推进约 **12 行**：5 行从「完全没做 ❌→✅」（通知中心 A3、推荐品牌 B5、品牌预览 D10、工作台撤销/重做/缩放 F2、推荐品牌卡 H14），7+ 行从「半成品/phase2→✅」（素材 AI 标注 E9/E10、记录 OpenAI snap 真实尺寸 K5、WEBSITE SSRF K7、配额 enforcement K1、§2 异步化 K3+I14），协作 RBAC K2 从范围外→部分落地。整体约 74% → 82%。
+> **第 4 波（2026-06-21）**净推进 8 行：H4 查看规范侧栏 / H7 加入项目弹窗 / H9 提交制作确认 / H12 额度升级弹窗 / G1 真模板库 / E3 素材文件夹（新 `AssetFolder` 模型+迁移，灰度真验）/ C9 全通 / E11 弹窗化。**累计 ✅ 85%，❌ 仅剩 C4（单品牌作用域 N/A）。**
 >
-> 一句话结论：**业务主干（创建→沉淀→素材→出图→改图→终选→交付）已真实跑通且安全收尾**；本轮把**通知中心 / 推荐品牌 / 品牌预览 / 工作台工具栏 / 素材 AI 标注**补齐；**剩余缺口集中在「弹窗体系（H4/H7/H9/H12）、模板库（G1）、部分跨模块联动与富展示」**（详见 §L 反推清单）。
+> 一句话结论：**业务主干（创建→沉淀→素材→出图→改图→终选→交付）已真实跑通且安全收尾**，设计稿弹窗体系 / 模板库 / 素材文件夹 / 通知 / 推荐品牌 / 品牌预览均已补齐并多数灰度真验。剩余 🟡 多为「富展示 / VLM 自动摘要 / 协作 enforce」等增强项（详见 §L）。
 
 > **✅ 部署陷阱已修复（2026-06-21）：曾发现 CDS `branch deploy` 重建 `web`/`worker` 但 `ai` 容器（`python:3.12-slim` + bind + 无 `--reload`）停留在创建时的 in-memory 代码 → 新增/改动 `apps/ai` 路由（如 `/v1/describe`）在灰度不生效（持续 404），`deploy`/`restart` 均无效。修复：`cds-compose.yml` 给 ai 的 uvicorn 加 `--reload --reload-dir /app/app`（uvicorn[standard] 自带 watchfiles），**显式 `POST /api/branches/<id>/deploy` 会应用 compose 改动并重建 ai 容器**，此后 AI 代码改动自动重载。describe E9/E10 修复后已真验通过。注意：github 自动部署可能不应用 compose 改动，AI 侧改动后用显式 deploy。**
 
@@ -88,7 +88,7 @@
 | C6 | 排序方式 | P02-M07 | ✅ | `campaigns/page.tsx`（最近/名称/进度） | 客户端排序 | 2026-06-20 |
 | C7 | 项目卡片列表（封面/状态/品牌/描述/标签/进度） | P02-M08~10 | ✅ | `page.tsx:91` | 真实 Project | 2026-06-20 |
 | C8 | 项目 AI 摘要（右侧面板） | P02-M11 | 🟡 | `page.tsx` + 补充需求弹窗 | 展示 `aiSummary`+渠道；**补充需求**可编辑 aiSummary（PATCH）；**自动生成摘要**(VLM)仍未接 | 2026-06-20 |
-| C9 | 项目快捷操作（继续创作/补充需求/查看规范/提交终审/归档） | P02-M12 | 🟡 | `page.tsx` + `projects/[projectId]` PATCH | 进入工作台✅ / 补充需求✅ / 提交终审✅(→IN_PROGRESS) / 归档✅(→COMPLETED)；查看规范 ❌ | 终审/归档/补充需求 2026-06-20 |
+| C9 | 项目快捷操作（继续创作/补充需求/查看规范/提交终审/归档） | P02-M12 | ✅ | `page.tsx` + `RulesPanel` + `projects/[projectId]` PATCH | 进入工作台 / 补充需求 / 提交终审 / 归档 / **查看规范(H4 侧栏)** 全部接入 | 全通 2026-06-21 |
 | C10 | 创建 Campaign 弹窗 | doc03 弹窗1 | ✅ | `page.tsx:207`（真实 POST） | 名称/简介/渠道 | 2026-06-20 |
 
 ## D · P03 品牌知识库
@@ -116,7 +116,7 @@
 |---|---|---|---|---|---|---|
 | E1 | 页面标题区 | P04-M02 | ✅ | `assets/page.tsx`（PageHeader） | — | 2026-06-20 |
 | E2 | 上传素材 | P04-M03 | 🟡 | `page.tsx:53`（multipart 真实） | 仅图片（`accept=image/*`）；视频/文档未支持 | 2026-06-20 |
-| E3 | 新建文件夹 | P04-M04 | ❌ | — | 未做 | 2026-06-20 |
+| E3 | 新建文件夹 | P04-M04 | ✅ | `AssetFolder` 模型+迁移 `20260621100829_asset_folders` + `folders` 路由 + assets 页 `CreateFolderDialog`/筛选/移动 | 真模型：建/列/改名/删(SetNull 不删素材)/移动/筛选。灰度真验：建夹+移素材 assetCount=1 | 接入+真验 2026-06-21 |
 | E4 | 素材搜索 | P04-M05 | 🟡 | `page.tsx:142` | 按文件名；关键词/标签搜索未做 | 2026-06-20 |
 | E5 | 类型筛选 | P04-M06 | ✅ | `page.tsx:15` | Logo/产品图/包装/主视觉/社媒/VI文档/其他 | 2026-06-20 |
 | E6 | 素材统计（总数/图片/收藏/AI标注） | P04-M07 | ✅ | `page.tsx:88` | — | 2026-06-20 |
@@ -124,7 +124,7 @@
 | E8 | 素材详情侧栏 | P04-M12 | ✅ | `page.tsx:229` | 预览/类型/尺寸/大小/来源/AI描述/AI标签 | 2026-06-20 |
 | E9 | AI 智能标签 | P04-M13 | ✅ | `assets/page.tsx` 详情「AI 智能标注」→`POST .../describe`→worker→真 VLM `/v1/describe`→写 `Asset.aiTags` | **灰度真验通过**：素材→R2→真 VLM(gpt-4o-mini)→`aiTags=['饮料','柠檬','清爽','绿色','瓶装水',...]` 落库（compose `--reload` 修复 AI 重载后）| 真验 2026-06-21 |
 | E10 | AI 生成描述 | P04-M14 | ✅ | 同 E9（`/v1/describe` 返回 `aiDescription`，worker 写 `Asset.aiDescription`） | **灰度真验通过**：真 VLM 中文描述落库 | 真验 2026-06-21 |
-| E11 | 加入项目（→Campaign） | P04-M16 | 🟡 | `assets/page.tsx` + `lib/reference-tray.ts` | 详情选 Campaign→加入并跳工作台；客户端 reference-tray 暂存（DB Project↔Asset 关系 phase-2） | 接入 2026-06-20 |
+| E11 | 加入项目（→Campaign） | P04-M16 | ✅ | `assets/page.tsx::JoinProjectDialog` + `lib/reference-tray.ts` | 真弹窗选 Campaign→加入并跳工作台；reference-tray 暂存（持久化 DB Project↔Asset 关系仍 phase-2，弹窗文案诚实标注） | 弹窗化 2026-06-21 |
 | E12 | 设为参考（→工作台参考区） | P04-M17 | 🟡 | `assets/page.tsx` + `lib/reference-tray.ts` ↔ 工作台 F9 | UI 联动通：设为参考→工作台 F9 显示并入 referenceAssetIds（真校验归属+留痕 version.params）。**注**：OpenAI generate API 不收图，当前为 prompt 级引导，真视觉条件化需经 edits 路由（phase-2） | 接入 2026-06-20 |
 | E13 | 收藏切换 / 使用记录 / 查看来源 | doc02/05 | 🟡 | 详情含「来源」字段；收藏 toggle/使用记录未见 | 🔍 | 2026-06-20 |
 
@@ -153,7 +153,7 @@
 
 | 编号 | 功能点 | 来源 | 状态 | 路径 | 备注 | 变更 |
 |---|---|---|---|---|---|---|
-| G1 | 模板库占位页 | P06 / doc08（P2 占位） | 🟡 | `app/(brandai)/templates/page.tsx` + nav 第6项 | 紫色 coming-soon 占位页（不造假数据）；真模板能力 phase-2 | 占位 2026-06-20 |
+| G1 | 模板库 | P06 / doc08 | ✅ | `app/(brandai)/templates/page.tsx` + `lib/brandai-mock.ts::generationTemplates` | 真模板库：策展预设(scene+style+sellingPoint)卡片→点选携 query 预填 `/workspace` 驱动真出图（同 B2 `?brief=` 范式） | 接入 2026-06-21 |
 
 ## H · 通用交互（弹窗 / AI 输入 / 卡片）
 
@@ -162,15 +162,15 @@
 | H1 | 统一 AI 输入框组件（附件/语音入口） | doc04§5.7.1 | 🟡 | 首页/知识库为内联 textarea；未抽象统一组件 | 语音/附件入口未实现 | 2026-06-20 |
 | H2 | 弹窗·新建 Campaign | doc03 | ✅ | campaigns CreateDialog | — | 2026-06-20 |
 | H3 | 弹窗·补充需求 | doc03 | ✅ | campaigns 补充需求弹窗（编辑 aiSummary） | — | 2026-06-20 |
-| H4 | 弹窗·查看项目规范（侧边） | doc03 | ❌ | — | — | 2026-06-20 |
+| H4 | 弹窗·查看项目规范（侧边） | doc03 | ✅ | `campaigns/page.tsx::RulesPanel`（reuse `GET /rules`） | 侧栏只读，按类型分组展示 CONFIRMED 规则 + 强度 badge；C9「查看规范」触发 | 接入 2026-06-21 |
 | H5 | 弹窗·上传品牌资料 | doc03 | 🟡 | 知识库类型卡跳转 /assets，非弹窗 | — | 2026-06-20 |
 | H6 | 弹窗·素材上传 | doc03 | 🟡 | 直接 file picker，非浮层 | — | 2026-06-20 |
-| H7 | 弹窗·加入项目 | doc03 | ❌ | — | 依赖 E11 | 2026-06-20 |
+| H7 | 弹窗·加入项目 | doc03 | ✅ | `assets/page.tsx::JoinProjectDialog` | Campaign 选择器+确认（见 E11） | 接入 2026-06-21 |
 | H8 | 弹窗·查看来源 | doc03 | 🟡 | 详情面板「来源」字段 | — | 2026-06-20 |
-| H9 | 弹窗·提交制作确认 | doc03 | ❌ | 直接提交，无二次确认 | — | 2026-06-20 |
+| H9 | 弹窗·提交制作确认 | doc03 | ✅ | `workspace/page.tsx::ConfirmSubmitDialog` | 提交前汇总 scene/卖点/版本数/尺寸/风格 + 配额提示→确认走 F10 真出图 | 接入 2026-06-21 |
 | H10 | 弹窗·提交终审 | doc03 | ✅ | campaigns 确认弹窗→PATCH status | — | 2026-06-20 |
 | H11 | 弹窗·归档项目（二次确认） | doc03 | ✅ | campaigns 确认弹窗→PATCH status=COMPLETED | — | 2026-06-20 |
-| H12 | 弹窗·额度升级 | doc03 | ❌ | — | 计费相关，phase 2 | 2026-06-20 |
+| H12 | 弹窗·额度升级 | doc03 | ✅ | `workspace/page.tsx::UpgradeDialog`（reuse `GET /quota`） | 展示当前配额(K1)+套餐分层；一期无真计费→信息态+联系升级 mailto(不造假支付)；402 自动弹出 | 接入 2026-06-21 |
 | H13 | 卡片·Campaign 项目卡 | doc04§5.7.3 | ✅ | campaigns | — | 2026-06-20 |
 | H14 | 卡片·推荐品牌卡 | doc04§5.7.4 | ✅ | `recommended-brands.tsx`（cover/name/verified/subtitle/slogan/tags） | 见 B5 | 接入 2026-06-20 |
 | H15 | 卡片·品牌知识卡 | doc04§5.7.5 | ✅ | brand-knowledge 富卡片 | 8 类富结构卡（见 D4-D9） | 2026-06-20 |
@@ -242,7 +242,7 @@
 
 | 编号 | 缺口 | 性质 | 关联 | 建议 |
 |---|---|---|---|---|
-| L1 | ~~模板库 P06 完全无~~ → 占位页 + nav 第6项已补 | 设计有(P2占位)·**已补占位** | G1/A1 | ✅ 占位页 + 6项 nav；真模板能力 phase-2 |
+| L1 | ~~模板库 P06 完全无~~ → 真模板库已补 | 设计有·**已补** | G1/A1 | ✅ 策展预设模板→点选预填工作台驱动真出图；6项 nav |
 | L2 | ~~推荐品牌瀑布流无~~ → 已补（用户定调纳入） | 设计有·**已补** | B5/H14 | ✅ `recommended-brands.tsx` 接真 BrandWorkspace（owner/member 范围）；自助 verified 流 phase-2 |
 | L3 | ~~顶部通知中心无~~ → 已补（用户定调纳入） | 设计有·**已补** | A3/P01-M03 | ✅ 通知中心从真实终态派生；未读 localStorage（phase-2 转服务端 per-user） |
 | L4 | ~~8 类富结构卡退化~~ → 富卡片已还原（色板/Logo do-don't/字体预览）；**品牌预览(D10)** 仍缺 | 设计有·**已还原**(除 D10) | D4-D10 | ✅ D4-D9 富卡片；D10 综合品牌预览（VLM 自动生成）待 describe 端点 |
@@ -250,7 +250,7 @@
 | L6 | ~~工作台顶部 撤销/重做/缩放 无~~ → 已补 | 设计有·**已补** | F2 | ✅ Toolbar 撤销/重做（表单快照历史）+ 大图 zoom in/out/reset/fit |
 | L7 | Campaign 项目操作（补充需求/查看规范/提交终审/归档）只做了「进入工作台」 | 设计有·实现缺 | C9/H3/H4/H10/H11 | 提交终审/归档关乎交付流，建议补 |
 | L8 | ~~素材↔工作台/Campaign 无联动~~ → 设为参考/加入项目已接（reference-tray 暂存 ↔ 工作台 F9，出图真校验+持久化） | 设计有·**已补**(客户端暂存) | E11/E12/F9/H7 | ✅ UI 联动通；2 点 phase-2：①服务端 Project↔Asset 持久关系（多设备/协作）②参考图真视觉条件化（经 edits，OpenAI generate API 不收图） |
-| L9 | 通用弹窗体系：产品要 11 个轻量弹窗，仅「新建 Campaign」是弹窗 | 设计有·实现缺 | H2-H12 | 确认弹窗 vs 页内的取舍 |
+| L9 | ~~通用弹窗体系：仅「新建 Campaign」是弹窗~~ → 弹窗体系已补 | 设计有·**已补** | H2-H12 | ✅ H4 查看规范/H7 加入项目/H9 提交确认/H12 额度升级 + 既有创建/上传/补充需求弹窗，复用统一 dialog 范式 |
 | L10 | AI 输入框未抽象为可解析组件；语音/附件入口仅视觉保留 | 设计有·实现缺 | B2/D1/H1 | 确认 AI 解析（立项/拆解/打标）一期是否纳入 |
 | L11 | 品牌筛选/时间筛选/排序无 | 设计有·实现缺 | C4/C5/C6 | 单品牌下品牌筛选可不做；排序建议补 |
 | L12 | AI 解析入口：知识库 recognize/parse-manual **已接真 VLM**（D13/D14）；首页 brief 立项**已接**(非 AI 拆解)；**素材自动打标(E9/E10)** 仍缺 describe 端点 | 设计有·**大部已接** | B2/D13/D14/E9/E10 | ✅ 知识库真 AI 识别入口；素材自动打标需新增 VLM describe 端点（下一波后端） |
