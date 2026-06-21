@@ -238,6 +238,9 @@ export default function AssetsPage() {
   // 真 VLM → 回写 Asset.aiTags/aiDescription），客户端轮询任务，成功后刷新素材。
   const [describeTaskId, setDescribeTaskId] = useState<string | null>(null);
   const [describeTimedOut, setDescribeTimedOut] = useState(false);
+  // Which asset the in-flight describe belongs to — so the progress/disabled UI
+  // only shows on that asset's detail pane, not whichever asset is selected.
+  const [describeAssetId, setDescribeAssetId] = useState<string | null>(null);
   const describeStartedAt = useRef(0);
   const describe = useMutation({
     mutationFn: (assetId: string) => {
@@ -282,6 +285,10 @@ export default function AssetsPage() {
     }, 3000);
     return () => clearInterval(t);
   }, [describeTaskId, describeStatus]);
+  // Busy state scoped to the asset that started the describe — switching to
+  // another asset must not show "AI 标注中…"/disable its button.
+  const describeBusyHere =
+    (describe.isPending || describeRunning) && describeAssetId === active?.id;
   // On success, refresh assets (so the new tags/description surface) once.
   const describeFiredFor = useRef<string | null>(null);
   useEffect(() => {
@@ -698,21 +705,22 @@ export default function AssetsPage() {
                     <Button
                       variant="outline"
                       className="w-full rounded-full"
-                      disabled={describe.isPending || describeRunning}
+                      disabled={describeBusyHere}
                       onClick={() => {
                         describeFiredFor.current = null;
                         setDescribeTaskId(null);
                         setDescribeTimedOut(false);
+                        setDescribeAssetId(active.id);
                         describe.mutate(active.id);
                       }}
                     >
-                      {describe.isPending || describeRunning
+                      {describeBusyHere
                         ? "AI 标注中…"
                         : active.aiTags && active.aiTags.length > 0
                           ? "✦ 重新 AI 标注"
                           : "✦ AI 智能标注 / 生成描述"}
                     </Button>
-                    {describeRunning ? (
+                    {describeAssetId !== active.id ? null : describeRunning ? (
                       <p className="mt-2 text-center text-xs text-muted-foreground">
                         正在分析素材（{describeTask?.progress ?? 0}%），可离开本页，稍后回来查看。
                       </p>

@@ -1177,7 +1177,7 @@ function BrandPreview({
                 "请检查 AI provider 配置或稍后重试。"}
             </p>
           </div>
-        ) : running && !image ? (
+        ) : running ? (
           <div className="flex flex-col items-center gap-3 text-center">
             <div className="h-9 w-9 animate-spin rounded-full border-2 border-accent-soft border-t-primary" />
             <p className="text-xs text-muted-foreground">
