@@ -16,6 +16,8 @@ const UpdateAssetInput = z.object({
   availableForGeneration: z.boolean().optional(),
   deprecatedAt: z.string().datetime().nullable().optional(),
   replacementAssetId: z.string().nullable().optional(),
+  // E13 — favorite toggle (star). `Asset.isFavorite` already exists in schema.
+  isFavorite: z.boolean().optional(),
   // E3 — move into a folder (id) or un-file (null). Folder ownership is
   // validated below (must belong to the same workspace) to prevent IDOR.
   folderId: z.string().nullable().optional(),
@@ -43,6 +45,7 @@ export async function PATCH(
     if (input.category !== undefined) data.category = input.category;
     if (input.availableForGeneration !== undefined)
       data.availableForGeneration = input.availableForGeneration;
+    if (input.isFavorite !== undefined) data.isFavorite = input.isFavorite;
     if (input.deprecatedAt !== undefined)
       data.deprecatedAt = input.deprecatedAt ? new Date(input.deprecatedAt) : null;
     if (input.replacementAssetId !== undefined)

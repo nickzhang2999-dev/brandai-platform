@@ -1,7 +1,9 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { signOut } from "next-auth/react";
 import { navItems } from "@/lib/brandai-mock";
 import { QueueWidget } from "@/app/(app)/queue-widget";
 import { NotificationCenter } from "./notification-center";
@@ -69,17 +71,8 @@ export function BrandSidebar({
             <span className="w-5 text-center text-base">⚙</span>
             设置
           </Link>
-          <div className="flex items-center gap-3 rounded-2xl bg-muted px-3 py-3">
-            <span className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-primary to-accent text-sm font-semibold text-primary-foreground">
-              {user.initial}
-            </span>
-            <div className="min-w-0">
-              <div className="truncate text-sm font-medium">{user.name}</div>
-              <div className="truncate text-xs text-muted-foreground">
-                {brandName}
-              </div>
-            </div>
-          </div>
+          {/* A2 · 用户信息区 — avatar / name / position(email) + 个人菜单 */}
+          <UserMenu user={user} brandName={brandName} />
         </div>
       </aside>
 
@@ -95,6 +88,114 @@ export function BrandSidebar({
       {/* §2.3 — persistent cross-page queue widget (bottom-right). Reused from
           the (app) shell so BrandAI pages get the same observable surface. */}
       <QueueWidget wsId={wsId} />
+    </div>
+  );
+}
+
+/**
+ * A2 · 用户信息区 + 个人菜单 — clicking the user card opens a popover with the
+ * real account email and actions: 设置(管理后台) + 退出登录. Logout uses the
+ * client-side Auth.js `signOut` (next-auth/react), the same module the login
+ * page uses for `signIn`; it clears the session and returns to `/`.
+ */
+function UserMenu({
+  user,
+  brandName,
+}: {
+  user: { name: string; email: string; initial: string };
+  brandName: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  // Click-away + Escape close (matches notification-center idiom).
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        className={[
+          "flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left transition-colors",
+          open ? "bg-accent-soft" : "bg-muted hover:bg-accent-soft/60",
+        ].join(" ")}
+      >
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-primary to-accent text-sm font-semibold text-primary-foreground">
+          {user.initial}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-medium">{user.name}</div>
+          <div className="truncate text-xs text-muted-foreground">
+            {brandName}
+          </div>
+        </div>
+        <span
+          className={[
+            "shrink-0 text-xs text-muted-foreground transition-transform",
+            open ? "rotate-180" : "",
+          ].join(" ")}
+        >
+          ▾
+        </span>
+      </button>
+
+      {open ? (
+        <div
+          role="menu"
+          className="absolute bottom-[calc(100%+8px)] left-0 z-50 w-full min-w-[220px] overflow-hidden rounded-2xl border border-border bg-card shadow-[0_24px_70px_rgba(124,92,255,0.18)]"
+        >
+          <div className="border-b border-border px-4 py-3">
+            <div className="truncate text-sm font-medium">{user.name}</div>
+            <div className="truncate text-xs text-muted-foreground">
+              {user.email}
+            </div>
+          </div>
+          <div className="flex flex-col py-1">
+            <Link
+              href="/admin/settings"
+              role="menuitem"
+              onClick={() => setOpen(false)}
+              className="flex items-center gap-2.5 px-4 py-2.5 text-sm text-foreground/90 transition-colors hover:bg-muted"
+            >
+              <span className="w-4 text-center text-base">⚙</span>
+              管理后台设置
+            </Link>
+            <button
+              type="button"
+              role="menuitem"
+              disabled={signingOut}
+              onClick={() => {
+                setSigningOut(true);
+                void signOut({ callbackUrl: "/" });
+              }}
+              className="flex items-center gap-2.5 px-4 py-2.5 text-left text-sm text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-60"
+            >
+              <span className="w-4 text-center text-base">⏻</span>
+              {signingOut ? "退出中…" : "退出登录"}
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

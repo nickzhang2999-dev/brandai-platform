@@ -2,8 +2,9 @@
 
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import type { Generation, Project, SizeSpec } from "@brandai/contracts";
+import type { BrandRule, Generation, Project, SizeSpec } from "@brandai/contracts";
 import { CHANNEL_SIZES } from "@brandai/contracts";
 import { apiFetch } from "@/lib/client";
 import { planTiers, upgradeContactEmail } from "@/lib/brandai-mock";
@@ -76,8 +77,19 @@ export default function WorkspacePage() {
   );
 }
 
+// F8 — readable labels for BrandKnowledge rule types (RuleType enum).
+const RULE_TYPE_LABELS: Record<string, string> = {
+  color: "色彩",
+  font: "字体",
+  layout: "版式",
+  imagery: "图像",
+  graphic: "图形",
+  copy: "文案",
+  logo: "Logo",
+};
+
 function Workspace() {
-  const { wsId } = useBrand();
+  const { wsId, brandName } = useBrand();
   const search = useSearchParams();
   const presetProject = search.get("project");
   // B2 · 首页 brief 透传 — 把首页输入的描述作为出图卖点初始值（仅首屏播种，
@@ -327,6 +339,19 @@ function Workspace() {
     setReferences(getReferences(wsId, projectId));
   }
 
+  // F8 · 品牌约束 — 本品牌已确认（CONFIRMED）的知识库规则。出图 worker 正是加载
+  // 这套规则做受控生成（generate.worker.ts），所以在面板真实列出它们，而非一句
+  // 静态「已生效」。空集时给诚实空态。
+  const { data: allRules = [] } = useQuery<BrandRule[]>({
+    queryKey: ["brandai-rules", wsId],
+    queryFn: () => apiFetch<BrandRule[]>(`/api/workspaces/${wsId}/rules`),
+    enabled: !!wsId,
+  });
+  const confirmedRules = useMemo(
+    () => allRules.filter((r) => r.status === "CONFIRMED"),
+    [allRules],
+  );
+
   // F11 · 生成额度展示 — read-only quota status.
   const { data: quota } = useQuery<QuotaStatus>({
     queryKey: ["brandai-quota", wsId],
@@ -378,6 +403,42 @@ function Workspace() {
   );
   const running = !!genId && status !== "SUCCEEDED" && status !== "FAILED" && !timedOut;
   const current = versions[activeVariant] ?? versions[0];
+
+  // F8 · 已应用规则 — 优先用「当前展示的这张图」实际记录的 appliedRuleIds
+  // （worker 在出图时把加载的规则写进 version.params.appliedRuleIds/appliedRules），
+  // 把 id 解析成可读 summary；若该图还没记录（如尚未出图），退化为本品牌
+  // CONFIRMED 规则集——即 worker 下次出图将加载的那批。
+  const appliedRules = useMemo(() => {
+    const byId = new Map(confirmedRules.map((r) => [r.id, r]));
+    const params = (current?.params ?? {}) as Record<string, unknown>;
+    const rawIds =
+      (Array.isArray(params.appliedRuleIds) && params.appliedRuleIds) ||
+      (Array.isArray(params.appliedRules) && params.appliedRules) ||
+      null;
+    if (rawIds) {
+      return (rawIds as string[]).map((id) => {
+        const r = byId.get(id);
+        return {
+          id,
+          type: r?.type ?? null,
+          summary: r?.summary ?? id,
+        };
+      });
+    }
+    // 退化：本品牌已确认规则集（下次出图将加载的）。
+    return confirmedRules.map((r) => ({
+      id: r.id,
+      type: r.type as string,
+      summary: r.summary,
+    }));
+  }, [current, confirmedRules]);
+  // 标题区分：是「这张图实际应用的」还是「下次出图将加载的」。
+  const appliedFromResult = useMemo(() => {
+    const params = (current?.params ?? {}) as Record<string, unknown>;
+    return (
+      Array.isArray(params.appliedRuleIds) || Array.isArray(params.appliedRules)
+    );
+  }, [current]);
 
   // —— 修改优化(改图)/ 终选 / 交付归档 ——
   const qc = useQueryClient();
@@ -551,24 +612,51 @@ function Workspace() {
   return (
     <div className="flex h-screen flex-col">
       <div className="flex items-center justify-between border-b border-border bg-card px-6 py-3">
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <span>AI 工作台</span>
-          <span>/</span>
-          <select
-            value={projectId ?? ""}
-            onChange={(e) => setProjectId(e.target.value || null)}
-            className="rounded-lg border border-border bg-background px-2 py-1 text-sm text-foreground outline-none"
+        {/* F1 · 顶部项目路径 breadcrumb — 品牌 / Campaign 名（可切换 + 回项目列表）/ 工作台 */}
+        <nav
+          aria-label="项目路径"
+          className="flex items-center gap-2 text-sm text-muted-foreground"
+        >
+          <Link
+            href="/campaigns"
+            className="font-medium text-foreground transition-colors hover:text-primary"
+            title="返回项目列表"
           >
-            {projects.length === 0 ? (
-              <option value="">无项目，请先去 Campaign 创建</option>
-            ) : null}
-            {projects.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-        </div>
+            {brandName}
+          </Link>
+          <span aria-hidden className="text-muted-foreground/60">
+            /
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <select
+              value={projectId ?? ""}
+              onChange={(e) => setProjectId(e.target.value || null)}
+              aria-label="当前 Campaign 项目"
+              className="max-w-[16rem] rounded-lg border border-border bg-background px-2 py-1 text-sm font-medium text-foreground outline-none focus:border-primary/40"
+            >
+              {projects.length === 0 ? (
+                <option value="">无项目，请先去 Campaign 创建</option>
+              ) : null}
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+            <Link
+              href="/campaigns"
+              aria-label="返回项目列表"
+              title="返回项目列表"
+              className="text-xs text-muted-foreground transition-colors hover:text-primary"
+            >
+              ↩
+            </Link>
+          </span>
+          <span aria-hidden className="text-muted-foreground/60">
+            /
+          </span>
+          <span className="font-medium text-foreground">工作台</span>
+        </nav>
         <div className="flex items-center gap-3">
           {/* F2 / L6 — undo/redo (generation-form state) + zoom (preview). */}
           <Toolbar
@@ -979,15 +1067,12 @@ function Workspace() {
             <QuotaBar quota={quota} onUpgrade={() => setShowUpgrade(true)} />
           ) : null}
 
-          <div className="rounded-2xl border border-primary/15 bg-accent-soft/50 p-3">
-            <div className="flex items-center gap-2 text-sm font-medium text-primary">
-              <span>◎</span> 品牌约束已生效
-            </div>
-            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-              出图在 worker 中加载本品牌已确认的知识库规则（色彩/字体/Logo/调性）
-              进行受控生成。
-            </p>
-          </div>
+          {/* F8 · 品牌约束（显示已应用规则）— 真实列出已确认 / 本图实际应用的规则 */}
+          <BrandConstraintPanel
+            rules={appliedRules}
+            fromResult={appliedFromResult}
+            typeLabels={RULE_TYPE_LABELS}
+          />
 
           {submitErr ? (
             <p className="text-sm text-destructive">{submitErr}</p>
@@ -1500,6 +1585,74 @@ function Center({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex flex-col items-center justify-center text-center">
       {children}
+    </div>
+  );
+}
+
+/**
+ * F8 · 品牌约束（显示已应用规则）— 不再是静态「已生效」字串，而是真实列出：
+ * - 当前展示图实际记录的 appliedRuleIds（`fromResult=true`），或
+ * - 本品牌已确认（CONFIRMED）、worker 下次出图将加载的规则集（`fromResult=false`）。
+ * 空集时给诚实空态（去知识库确认规则）。语义 token only。
+ */
+function BrandConstraintPanel({
+  rules,
+  fromResult,
+  typeLabels,
+}: {
+  rules: { id: string; type: string | null; summary: string }[];
+  fromResult: boolean;
+  typeLabels: Record<string, string>;
+}) {
+  return (
+    <div className="rounded-2xl border border-primary/15 bg-accent-soft/50 p-3">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 text-sm font-medium text-primary">
+          <span>◎</span> 品牌约束
+        </div>
+        {rules.length ? (
+          <span className="rounded-full bg-card px-2 py-0.5 text-[10px] font-medium text-primary">
+            {fromResult ? "本图已应用" : "将应用"} {rules.length}
+          </span>
+        ) : null}
+      </div>
+      {rules.length ? (
+        <>
+          <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+            {fromResult
+              ? "下列规则已在 worker 中加载并应用到当前展示的这张图。"
+              : "下列已确认的知识库规则会在出图时由 worker 加载并受控生成。"}
+          </p>
+          <ul className="mt-2 flex flex-col gap-1.5">
+            {rules.map((r) => (
+              <li
+                key={r.id}
+                className="flex items-start gap-2 rounded-xl bg-card/70 px-2.5 py-1.5"
+              >
+                {r.type ? (
+                  <span className="mt-0.5 shrink-0 rounded-full bg-accent-soft px-2 py-0.5 text-[10px] font-medium text-primary">
+                    {typeLabels[r.type] ?? r.type}
+                  </span>
+                ) : null}
+                <span className="text-xs leading-relaxed text-foreground/80">
+                  {r.summary}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : (
+        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+          本品牌暂无已确认（CONFIRMED）的知识库规则，出图将不附加品牌约束。去
+          <Link
+            href="/brand-knowledge"
+            className="mx-0.5 font-medium text-primary underline underline-offset-2"
+          >
+            品牌知识库
+          </Link>
+          确认规则后即在此生效。
+        </p>
+      )}
     </div>
   );
 }

@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { BrandRule, Project } from "@brandai/contracts";
+import type { BrandRule, BrandWorkspace, Project } from "@brandai/contracts";
 import { Button } from "@brandai/ui";
 import { apiFetch } from "@/lib/client";
 import { useBrand } from "../brand-context";
@@ -42,6 +42,8 @@ export default function CampaignsPage() {
   const [filterKey, setFilterKey] = useState("all");
   const [sortKey, setSortKey] = useState<SortKey>("recent");
   const [rangeKey, setRangeKey] = useState<RangeKey>("all");
+  // C4 · 品牌筛选 — "all" = 全部品牌, otherwise a BrandWorkspace id.
+  const [brandFilter, setBrandFilter] = useState<string>("all");
   const [q, setQ] = useState("");
   const [creating, setCreating] = useState(false);
   // Lifecycle action target: which transition the confirm dialog is for.
@@ -65,15 +67,44 @@ export default function CampaignsPage() {
     queryFn: () => apiFetch<Project[]>(`/api/workspaces/${wsId}/projects`),
   });
 
+  // C4 · 品牌筛选 — the user's real brands (owned or member of). Same endpoint
+  // the homepage 推荐品牌 uses; no mock rows. Phase-1 is single-brand, so this
+  // is usually [activeBrand] → "全部品牌" + that one brand. Honest, not faked:
+  // selecting a brand filters campaigns by their workspaceId (= brand id).
+  const { data: brands = [] } = useQuery({
+    queryKey: ["brandai-recommended-brands"],
+    queryFn: () => apiFetch<BrandWorkspace[]>(`/api/brands/recommended`),
+  });
+
+  // C2 · brand-name lookup for search — map each project's workspaceId to its
+  // brand name. The active brand (from context) always resolves even before the
+  // brands list loads, since every loaded project shares the active wsId.
+  const brandNameOf = useMemo(() => {
+    const map = new Map<string, string>();
+    map.set(wsId, brandName);
+    for (const b of brands) map.set(b.id, b.name);
+    return (id: string) => map.get(id) ?? "";
+  }, [brands, wsId, brandName]);
+
   const filtered = useMemo(() => {
     const f = FILTERS.find((x) => x.key === filterKey);
     const range = RANGES.find((x) => x.key === rangeKey);
     const cutoff =
       range?.days != null ? Date.now() - range.days * 86_400_000 : null;
+    const needle = q.trim().toLowerCase();
 
     const list = projects.filter((p) => {
       if (f?.status && (p.status ?? "DRAFT") !== f.status) return false;
-      if (q && !p.name.toLowerCase().includes(q.toLowerCase())) return false;
+      // C4 — filter by selected brand (project.workspaceId === brand id).
+      if (brandFilter !== "all" && p.workspaceId !== brandFilter) return false;
+      // C2 — match project name OR its brand/workspace name.
+      if (needle) {
+        const inName = p.name.toLowerCase().includes(needle);
+        const inBrand = brandNameOf(p.workspaceId)
+          .toLowerCase()
+          .includes(needle);
+        if (!inName && !inBrand) return false;
+      }
       if (cutoff != null) {
         const t = Date.parse(p.createdAt);
         if (Number.isNaN(t) || t < cutoff) return false;
@@ -94,7 +125,7 @@ export default function CampaignsPage() {
       }
     });
     return sorted;
-  }, [projects, filterKey, q, sortKey, rangeKey]);
+  }, [projects, filterKey, q, sortKey, rangeKey, brandFilter, brandNameOf]);
 
   // Only ever select from the FILTERED set — falling back to projects[0] when
   // filters match nothing would make the summary panel + lifecycle actions
@@ -121,9 +152,23 @@ export default function CampaignsPage() {
         <input
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="搜索项目名称…"
+          placeholder="搜索项目 / 品牌名称…"
           className="h-10 flex-1 rounded-full border border-border bg-card px-4 text-sm outline-none focus:border-primary/40 focus:shadow-[0_0_0_4px_rgba(124,92,255,0.08)]"
         />
+        {/* C4 · 品牌筛选 */}
+        <select
+          value={brandFilter}
+          onChange={(e) => setBrandFilter(e.target.value)}
+          aria-label="品牌筛选"
+          className="h-9 rounded-full border border-border bg-card px-4 text-sm text-muted-foreground outline-none transition-colors hover:bg-muted focus:border-primary/40 focus:shadow-[0_0_0_4px_rgba(124,92,255,0.08)]"
+        >
+          <option value="all">全部品牌</option>
+          {brands.map((b) => (
+            <option key={b.id} value={b.id}>
+              {b.name}
+            </option>
+          ))}
+        </select>
         {FILTERS.map((f) => (
           <button
             key={f.key}
