@@ -86,6 +86,11 @@ services:
       AI_HTTP_TIMEOUT_SECONDS: "240"
       AI_MAX_RETRIES: "1"
       PIP_CACHE_DIR: "/app/.pip-cache"
+      # watchfiles(uvicorn --reload 的后端)默认用 inotify，但 host 侧 git checkout
+      # 改 bind-mount 文件不会在容器内触发 inotify → --reload 收不到，新 apps/ai
+      # 路由(如 /v1/summarize)仍 404。强制轮询模式可靠侦测 bind-mount 变化，使
+      # `branch deploy` 拉新代码后 AI 自动重载，无需手动 recreate/restart。
+      WATCHFILES_FORCE_POLLING: "true"
     # `--reload`：ai 容器 bind-mount `./apps/ai`，但 CDS `branch deploy` 不会
     # recreate 它（image/config 未变）→ 旧 in-memory uvicorn 进程会停留在部署
     # 时的代码，新增/改动 `apps/ai` 路由(如 /v1/describe)在灰度永不生效。
