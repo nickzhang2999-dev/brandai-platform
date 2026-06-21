@@ -59,8 +59,20 @@ export function WebsiteIngest({
           failedReason?: string;
         }>(`/api/workspaces/${wsId}/ingest?jobId=${start.jobId}`);
         if (poll.status === "SUCCEEDED") {
-          if (!poll.result) throw new Error("读取完成但结果为空,请重试");
-          return poll.result;
+          if (poll.result) return poll.result;
+          // BullMQ flips a job to `completed` a beat before its returnvalue is
+          // persisted/readable — same race the homepage brief flow retries for.
+          // Re-poll a few times (≈4s) before treating an empty result as an
+          // error, instead of failing the whole ingest on a transient gap.
+          for (let i = 0; i < 8; i++) {
+            await new Promise((r) => setTimeout(r, 500));
+            const again = await apiFetch<{
+              status: "PENDING" | "RUNNING" | "SUCCEEDED" | "FAILED";
+              result?: IngestWebsiteResponse;
+            }>(`/api/workspaces/${wsId}/ingest?jobId=${start.jobId}`);
+            if (again.result) return again.result;
+          }
+          throw new Error("读取完成但结果为空,请重试");
         }
         if (poll.status === "FAILED") {
           throw new Error(poll.failedReason || "读取失败");

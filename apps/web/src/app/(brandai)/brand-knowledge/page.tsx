@@ -1072,7 +1072,12 @@ function BrandPreview({
     queryKey: ["brandai-brand-preview-poll", wsId, genId, jobId],
     queryFn: () =>
       apiFetch<JobState>(
-        `/api/workspaces/${wsId}/generations/${genId}?jobId=${jobId}`,
+        // Only thread jobId when we actually have one — otherwise the GET route
+        // gets the literal string "null" and can't match the live BullMQ job
+        // (it still returns generation.status, so polling stays correct).
+        `/api/workspaces/${wsId}/generations/${genId}${
+          jobId ? `?jobId=${jobId}` : ""
+        }`,
       ),
     enabled: !!genId,
     refetchInterval: (q) => {

@@ -101,6 +101,15 @@ export default function AssetsPage() {
   const [folderFilter, setFolderFilter] = useState("all");
   const [creatingFolder, setCreatingFolder] = useState(false);
 
+  // Deep-link: /assets?category=LOGO preselects the type filter — e.g. the
+  // brand-knowledge upload dialog's "在素材库查看该分类" link. Read once on
+  // mount; ignore unknown values so a stale/garbage param can't blank the grid.
+  useEffect(() => {
+    const cat = new URLSearchParams(window.location.search).get("category");
+    if (cat && CATEGORIES.some((c) => c.value === cat)) setFilter(cat);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const { data: assets = [], isLoading } = useQuery({
     queryKey: ["brandai-assets", wsId],
     queryFn: () => apiFetch<Asset[]>(`/api/workspaces/${wsId}/assets`),
