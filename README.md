@@ -50,6 +50,8 @@
 >
 > 一句话结论：**业务主干（创建→沉淀→素材→出图→改图→终选→交付）已真实跑通且安全收尾**；本轮把**通知中心 / 推荐品牌 / 品牌预览 / 工作台工具栏 / 素材 AI 标注**补齐；**剩余缺口集中在「弹窗体系（H4/H7/H9/H12）、模板库（G1）、部分跨模块联动与富展示」**（详见 §L 反推清单）。
 
+> **⚠️ 部署注记（2026-06-21 灰度发现，给后续智能体）：CDS `branch deploy` 会重建 `web`/`worker`（next build / tsx 重载），但 `ai` 容器（`python:3.12-slim` + `./apps/ai:/app` bind + `pip install && uvicorn`，无 `--reload`）停留在创建时的 in-memory 代码，`deploy` 与 `/api/branches/<id>/restart` 都未能让其加载新 `apps/ai` 代码（本轮 `/v1/describe` 持续 404；`/restart` 一度把分支打到 `error`）。**影响：任何**新增/修改 `apps/ai` 路由**的改动（本轮 describe E9/E10、AI 侧 K5/K7 探测）在灰度不会自动生效——需要有 node/docker 权限者 `docker compose up -d --force-recreate ai`，或一次性 compose 改动（uvicorn 加 `--reload` 或给 ai 加 build/重建钩子，走 pending-import 批审）。web/worker 侧改动不受影响。K5 已用 worker 端兜底规避该问题并真验通过。**
+
 ## A · 平台基础架构 / 全局
 
 | 编号 | 功能点 | 来源 | 状态 | 路径 / 入口 | 备注 · 验收 | 变更 |
@@ -118,8 +120,8 @@
 | E6 | 素材统计（总数/图片/收藏/AI标注） | P04-M07 | ✅ | `page.tsx:88` | — | 2026-06-20 |
 | E7 | 素材网格 | P04-M08 | ✅ | `page.tsx:187` | 缩略图+类型 chip，走同源代理 | 2026-06-20 |
 | E8 | 素材详情侧栏 | P04-M12 | ✅ | `page.tsx:229` | 预览/类型/尺寸/大小/来源/AI描述/AI标签 | 2026-06-20 |
-| E9 | AI 智能标签 | P04-M13 | ✅ | `assets/page.tsx` 详情「AI 智能标注」→`POST .../describe`→worker→真 VLM `/v1/describe`→写 `Asset.aiTags` | 真 describe 端点（§2 异步 202→轮询）；落真 DB | 接入 2026-06-20 |
-| E10 | AI 生成描述 | P04-M14 | ✅ | 同 E9（`/v1/describe` 返回 `aiDescription`，worker 写 `Asset.aiDescription`） | 真 VLM 描述 | 接入 2026-06-20 |
+| E9 | AI 智能标签 | P04-M13 | 🟡 | `assets/page.tsx` 详情「AI 智能标注」→`POST .../describe`→worker→真 VLM `/v1/describe`→写 `Asset.aiTags` | 代码完成+L2 pytest 验；**灰度真验受阻**：灰度 AI 容器停留在 Wave-1 前代码（`/v1/describe` 返回 404），deploy/restart 均未能让其重载（见下「部署注记」）。存储已配 R2、素材上传→R2 已真验(CDN 200) | 代码 2026-06-20 / 灰度受阻 2026-06-21 |
+| E10 | AI 生成描述 | P04-M14 | 🟡 | 同 E9（`/v1/describe` 返回 `aiDescription`，worker 写 `Asset.aiDescription`） | 同 E9：代码+L2 完成，灰度 AI 容器未重载 → 暂未线上取证 | 代码 2026-06-20 / 灰度受阻 2026-06-21 |
 | E11 | 加入项目（→Campaign） | P04-M16 | 🟡 | `assets/page.tsx` + `lib/reference-tray.ts` | 详情选 Campaign→加入并跳工作台；客户端 reference-tray 暂存（DB Project↔Asset 关系 phase-2） | 接入 2026-06-20 |
 | E12 | 设为参考（→工作台参考区） | P04-M17 | 🟡 | `assets/page.tsx` + `lib/reference-tray.ts` ↔ 工作台 F9 | UI 联动通：设为参考→工作台 F9 显示并入 referenceAssetIds（真校验归属+留痕 version.params）。**注**：OpenAI generate API 不收图，当前为 prompt 级引导，真视觉条件化需经 edits 路由（phase-2） | 接入 2026-06-20 |
 | E13 | 收藏切换 / 使用记录 / 查看来源 | doc02/05 | 🟡 | 详情含「来源」字段；收藏 toggle/使用记录未见 | 🔍 | 2026-06-20 |
