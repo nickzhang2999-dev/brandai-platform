@@ -8,6 +8,7 @@ import pytest
 from app.providers.http_providers import (
     HttpImageProvider,
     HttpVLMProvider,
+    _coerce_describe,
     _coerce_ingest,
     _coerce_recognize,
     _estimate_cost_usd,
@@ -640,6 +641,79 @@ def test_resolve_vlm_provider_mock_or_empty_key_falls_back():
         MockVLMProvider,
     )
     get_vlm_provider.cache_clear()
+
+
+# --- E9/E10 describe coercion + provider ---
+
+
+def test_coerce_describe_dedupes_and_coerces():
+    out = _coerce_describe(
+        {"aiTags": ["产品图", "产品图", " 暖色 ", ""], "aiDescription": " 一段描述 "}
+    )
+    assert out["aiTags"] == ["产品图", "暖色"]  # de-duped + trimmed, empties dropped
+    assert out["aiDescription"] == "一段描述"
+
+
+def test_coerce_describe_missing_description_is_empty_string():
+    # aiDescription is a REQUIRED str on the contract → never null.
+    out = _coerce_describe({"aiTags": ["x"]})
+    assert out["aiDescription"] == ""
+
+
+@pytest.mark.asyncio
+async def test_vlm_describe_asset_shapes_output():
+    payload = {"aiTags": ["瓶身", "暖色调", "瓶身"], "aiDescription": "暖光产品图"}
+    p = HttpVLMProvider(OPENAI, "k", model="gpt-4o", transport=_vlm_handler(payload))
+    out = await p.describe_asset("http://s/a.png", category="PRODUCT")
+    assert out["aiDescription"] == "暖光产品图"
+    assert out["aiTags"] == ["瓶身", "暖色调"]  # de-duped
+
+
+# --- K7: WEBSITE-sourced assets re-validate the INITIAL host (DNS rebinding) ---
+
+
+@pytest.mark.asyncio
+async def test_inline_image_website_source_validates_initial_host(monkeypatch):
+    """A WEBSITE-sourced URL must call safe_get with allow_private_initial=False;
+    an UPLOAD/None source keeps the trusting allow_private_initial=True."""
+    import app.providers.http_providers as hp
+
+    seen: list[bool] = []
+
+    async def fake_safe_get(client, url, *, allow_private_initial=False, **kw):
+        seen.append(allow_private_initial)
+        return httpx.Response(
+            200, content=b"\x89PNG", headers={"content-type": "image/png"}
+        )
+
+    monkeypatch.setattr(hp, "safe_get", fake_safe_get)
+    p = HttpVLMProvider(OPENAI, "k", model="gpt-4o")
+
+    await p._inline_image("http://evil/x.png", source="WEBSITE")
+    await p._inline_image("http://storage/x.png", source="UPLOAD")
+    await p._inline_image("http://storage/x.png")  # default → trusting
+    assert seen == [False, True, True]
+
+
+@pytest.mark.asyncio
+async def test_inline_image_website_blocked_initial_returns_none(monkeypatch):
+    """When the initial host is private for a WEBSITE asset, safe_get raises
+    SSRFError → _inline_image returns None (drop, never forward the raw URL)."""
+    import app.providers.http_providers as hp
+    from app.ssrf import SSRFError
+
+    async def fake_safe_get(client, url, *, allow_private_initial=False, **kw):
+        if not allow_private_initial:
+            raise SSRFError("blocked private host")
+        return httpx.Response(200, content=b"\x89PNG")
+
+    monkeypatch.setattr(hp, "safe_get", fake_safe_get)
+    p = HttpVLMProvider(OPENAI, "k", model="gpt-4o")
+    assert await p._inline_image("http://internal/x.png", source="WEBSITE") is None
+    # UPLOAD source is allowed to hit the private host (our own storage).
+    assert (
+        await p._inline_image("http://internal/x.png", source="UPLOAD")
+    ) is not None
 
 
 def test_host_is_private():

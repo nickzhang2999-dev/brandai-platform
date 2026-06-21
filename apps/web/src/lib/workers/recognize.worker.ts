@@ -20,7 +20,8 @@ import {
  */
 export interface RecognizeJobData {
   workspaceId: string;
-  assets: { id: string; url: string }[];
+  /** K7 — `source` carries asset provenance for the AI service's SSRF policy. */
+  assets: { id: string; url: string; source?: "UPLOAD" | "WEBSITE" }[];
   /** H-async — server-authoritative task row to mirror progress/status into. */
   taskId?: string;
 }

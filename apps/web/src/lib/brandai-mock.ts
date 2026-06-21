@@ -31,7 +31,8 @@ export type NavKey =
   | "brand-knowledge"
   | "assets"
   | "workspace"
-  | "templates";
+  | "templates"
+  | "members";
 
 export const navItems: { key: NavKey; label: string; href: string; icon: string }[] = [
   { key: "home", label: "首页", href: "/", icon: "✦" },
@@ -40,6 +41,8 @@ export const navItems: { key: NavKey; label: string; href: string; icon: string 
   { key: "assets", label: "素材库", href: "/assets", icon: "▦" },
   { key: "workspace", label: "AI 工作台", href: "/workspace", icon: "✸" },
   { key: "templates", label: "模板库", href: "/templates", icon: "▱" },
+  // G6 · 成员/协作管理 — 团队成员邀请 + 角色管理（接真实 /members BFF）。
+  { key: "members", label: "成员协作", href: "/members", icon: "◍" },
 ];
 
 export const quickActions = [
@@ -48,6 +51,148 @@ export const quickActions = [
   { title: "生成广告视觉", desc: "进入工作台，按品牌规范受控出图", href: "/workspace", icon: "✸" },
   { title: "优化已有设计", desc: "对现有素材做改写、扩展与再创作", href: "/workspace", icon: "✎" },
 ];
+
+/**
+ * G1 · 模板库预设 — 高频出图配置骨架（场景 / 画面类型 / 风格关键词 / 卖点起手式）。
+ *
+ * 这些是**产品常量**（同 navItems/quickActions），不是伪造的 DB 行，也不是假"生成
+ * 结果"——每个模板点击后只把这套字段经 query 参数带进工作台，由用户在真实 worker→
+ * apps/ai→真 provider 管线里出图。`sceneType` 取 workspace 的 SCENE_TYPES.value；
+ * `accent` 仅用于卡片缩略图的确定性紫系渐变 seed。
+ */
+export interface GenerationTemplate {
+  key: string;
+  name: string;
+  desc: string;
+  icon: string;
+  /** workspace「画面类型」(SceneType-ish value, see workspace SCENE_TYPES). */
+  sceneType: string;
+  /** workspace「场景」自由文本初始值。 */
+  scene: string;
+  /** workspace「需求描述 / 卖点」起手式（用户可继续编辑，500 字内）。 */
+  sellingPoint: string;
+  /** workspace「风格关键词」预填 chips。 */
+  styleKeywords: string[];
+}
+
+export const generationTemplates: GenerationTemplate[] = [
+  {
+    key: "social-poster-fresh",
+    name: "社交海报 · 清透自然光",
+    desc: "小红书 / 朋友圈高赞质感，自然光、干净留白，主体居中。",
+    icon: "✸",
+    sceneType: "SOCIAL_POSTER",
+    scene: "夏日自然光场景",
+    sellingPoint:
+      "高端清透、自然光感的产品社交广告主视觉，主体居中突出，背景干净留白。",
+    styleKeywords: ["自然光", "清透", "高级感", "留白"],
+  },
+  {
+    key: "ecom-main-white",
+    name: "电商主图 · 纯净白底",
+    desc: "天猫 / 京东主图规范，纯白背景、商品居中、卖点克制。",
+    icon: "▦",
+    sceneType: "ECOM_MAIN",
+    scene: "纯白棚拍背景",
+    sellingPoint:
+      "电商主图，纯白背景、商品居中、光影通透，突出材质与卖点，构图克制。",
+    styleKeywords: ["纯白背景", "棚拍", "高清", "商业摄影"],
+  },
+  {
+    key: "campaign-kv-bold",
+    name: "Campaign KV · 主视觉大片",
+    desc: "活动主 KV，强氛围、电影感光影、为标题预留负空间。",
+    icon: "◳",
+    sceneType: "CAMPAIGN_KV",
+    scene: "电影感氛围场景",
+    sellingPoint:
+      "Campaign 主视觉大片，强氛围、电影质感光影，构图大气并为主标题预留干净负空间。",
+    styleKeywords: ["电影感", "氛围", "高级感", "戏剧光影"],
+  },
+  {
+    key: "scene-lifestyle",
+    name: "场景图 · 生活方式",
+    desc: "真实使用场景，温暖生活感，人货场结合。",
+    icon: "❀",
+    sceneType: "SCENE",
+    scene: "温暖居家生活场景",
+    sellingPoint:
+      "真实生活方式场景图，温暖生活感，产品自然融入使用情境，人货场结合。",
+    styleKeywords: ["生活方式", "温暖", "自然", "真实感"],
+  },
+  {
+    key: "selling-point-card",
+    name: "卖点图 · 利益点聚焦",
+    desc: "单一卖点放大，简约背景，为利益点文案留白。",
+    icon: "✦",
+    sceneType: "SELLING_POINT",
+    scene: "简约纯色背景",
+    sellingPoint:
+      "单一核心卖点放大呈现，简约纯色背景，主体特写，为利益点文案预留清晰留白区。",
+    styleKeywords: ["简约", "聚焦", "特写", "高级感"],
+  },
+  {
+    key: "social-poster-tech",
+    name: "社交海报 · 科技冷感",
+    desc: "数码 / 科技品类，冷色调、几何感、未来质感。",
+    icon: "◈",
+    sceneType: "SOCIAL_POSTER",
+    scene: "未来科技感空间",
+    sellingPoint:
+      "科技数码产品社交主视觉，冷色调、几何构成、未来质感，主体硬朗、光影锐利。",
+    styleKeywords: ["科技感", "冷色调", "几何", "未来感"],
+  },
+];
+
+/**
+ * H12 · 额度升级弹窗 — 套餐档位（产品常量，仅供展示）。
+ *
+ * 一期没有真实计费（phase-2 backlog，CLAUDE§3.5），所以这里只做**信息性**展示 +
+ * 「联系升级」，绝不伪造支付。`planKey` 与 lib/quota.ts 的 plan 解析对齐（FREE/
+ * PRO/ENTERPRISE），用于在弹窗里高亮当前套餐。
+ */
+export interface PlanTier {
+  planKey: string;
+  name: string;
+  priceLabel: string;
+  highlight?: boolean;
+  features: string[];
+}
+
+export const planTiers: PlanTier[] = [
+  {
+    planKey: "FREE",
+    name: "体验版",
+    priceLabel: "免费",
+    features: ["每日少量出图额度", "单品牌知识库", "基础模板库"],
+  },
+  {
+    planKey: "PRO",
+    name: "专业版",
+    priceLabel: "联系销售",
+    highlight: true,
+    features: [
+      "大幅提升每日 / 每周期出图额度",
+      "多尺寸渠道批量出图",
+      "完整改图与交付导出",
+      "优先 AI provider 通道",
+    ],
+  },
+  {
+    planKey: "ENTERPRISE",
+    name: "企业版",
+    priceLabel: "定制",
+    features: [
+      "不限量出图额度",
+      "多品牌 / 多团队协作",
+      "专属合规与品牌约束",
+      "专属支持与 SLA",
+    ],
+  },
+];
+
+/** H12 — 升级联系方式（产品常量，无真实计费时的诚实出口）。 */
+export const upgradeContactEmail = "sales@brandai.example";
 
 export type CampaignStatusKey = "DRAFT" | "IN_PROGRESS" | "COMPLETED";
 

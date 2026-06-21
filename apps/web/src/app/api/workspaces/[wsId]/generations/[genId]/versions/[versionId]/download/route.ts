@@ -1,6 +1,7 @@
 import { prisma } from "@brandai/db";
+import { canReleaseVersion } from "@brandai/contracts";
 import { ApiException, handleError, requireUser } from "@/lib/api";
-import { requireOwnedWorkspace } from "@/lib/workspace";
+import { getWorkspaceRole, requireOwnedWorkspace } from "@/lib/workspace";
 import { getVersion } from "@/lib/generations";
 
 /**
@@ -21,6 +22,7 @@ export async function GET(
     const user = await requireUser();
     const { wsId, genId, versionId } = await params;
     await requireOwnedWorkspace(wsId, user.id);
+    const role = await getWorkspaceRole(wsId, user.id);
 
     const gen = await prisma.generation.findUnique({
       where: { id: genId },
@@ -31,6 +33,15 @@ export async function GET(
     const version = await getVersion(versionId);
     if (!version || version.generationId !== genId) {
       throw new ApiException(404, "Version not found in this generation");
+    }
+
+    // K2 — separation of duties: a non-owner collaborator may only download a
+    // RELEASED (final/approved) version, not an unapproved draft. The owner
+    // downloads anything (phase-1 closed loop unchanged). 403 rather than 404
+    // here: the version exists and belongs to the workspace, the caller just
+    // lacks the release privilege for an unapproved draft.
+    if (!canReleaseVersion(role, version)) {
+      throw new ApiException(403, "该版本未审批通过,协作者暂不能下载");
     }
 
     const upstream = await fetch(version.imageUrl);

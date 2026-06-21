@@ -1,6 +1,7 @@
 import { prisma } from "@brandai/db";
 import { CreateWorkspaceInput } from "@brandai/contracts";
 import { handleError, ok, parse, requireUser } from "@/lib/api";
+import { assertCanCreateWorkspace } from "@/lib/quota";
 
 export async function GET() {
   try {
@@ -27,6 +28,10 @@ export async function POST(req: Request) {
   try {
     const user = await requireUser();
     const input = parse(CreateWorkspaceInput, await req.json());
+    // K1 — enforce the plan's maxWorkspaces (tenant cap). Unlimited (-1, the
+    // default/owner/admin plan) is a no-op, so phase-1 single-brand creation is
+    // untouched; only a finite plan that's already at its cap throws 402.
+    await assertCanCreateWorkspace(user.id);
     const workspace = await prisma.brandWorkspace.create({
       data: {
         ownerId: user.id,

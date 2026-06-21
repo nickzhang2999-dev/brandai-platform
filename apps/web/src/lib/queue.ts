@@ -32,3 +32,20 @@ export const generateQueue = new Queue("generate", {
   prefix: queuePrefix,
 });
 export const editQueue = new Queue("edit", { connection, prefix: queuePrefix });
+// E9/E10 — asset auto-tagging (describe). Same prefix convention as the others.
+export const describeQueue = new Queue("describe", {
+  connection,
+  prefix: queuePrefix,
+});
+// K3 / §2 — website ingest crawl (moved out of the HTTP handler). Same prefix
+// convention as the others.
+export const ingestQueue = new Queue("ingest", {
+  connection,
+  prefix: queuePrefix,
+});
+// B2/C8 / §2 — text summarization (brief decompose / campaign summary). The VLM
+// chat call is slow → runs in a worker. Same prefix convention as the others.
+export const summarizeQueue = new Queue("summarize", {
+  connection,
+  prefix: queuePrefix,
+});

@@ -34,12 +34,51 @@ export function WebsiteIngest({
   const [category, setCategory] = useState<AssetCategory>("OTHER");
   const [error, setError] = useState<string | null>(null);
 
+  // K3 / §2 — ingest is now server-authoritative: POST returns 202 + jobId, we
+  // poll GET ?jobId=... until SUCCEEDED/FAILED and then read the candidate
+  // result. Bounded at ~6 min (§2.2) so the spinner can't hang forever.
   const ingest = useMutation({
-    mutationFn: () =>
-      apiFetch<IngestWebsiteResponse>(`/api/workspaces/${wsId}/ingest`, {
-        method: "POST",
-        body: JSON.stringify({ workspaceId: wsId, url }),
-      }),
+    mutationFn: async () => {
+      const start = await apiFetch<{ jobId: string; status: string }>(
+        `/api/workspaces/${wsId}/ingest`,
+        {
+          method: "POST",
+          body: JSON.stringify({ workspaceId: wsId, url }),
+        },
+      );
+      const deadline = Date.now() + 6 * 60_000;
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        if (Date.now() > deadline) {
+          throw new Error("读取超时,请重试或更换页面地址");
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+        const poll = await apiFetch<{
+          status: "PENDING" | "RUNNING" | "SUCCEEDED" | "FAILED";
+          result?: IngestWebsiteResponse;
+          failedReason?: string;
+        }>(`/api/workspaces/${wsId}/ingest?jobId=${start.jobId}`);
+        if (poll.status === "SUCCEEDED") {
+          if (poll.result) return poll.result;
+          // BullMQ flips a job to `completed` a beat before its returnvalue is
+          // persisted/readable — same race the homepage brief flow retries for.
+          // Re-poll a few times (≈4s) before treating an empty result as an
+          // error, instead of failing the whole ingest on a transient gap.
+          for (let i = 0; i < 8; i++) {
+            await new Promise((r) => setTimeout(r, 500));
+            const again = await apiFetch<{
+              status: "PENDING" | "RUNNING" | "SUCCEEDED" | "FAILED";
+              result?: IngestWebsiteResponse;
+            }>(`/api/workspaces/${wsId}/ingest?jobId=${start.jobId}`);
+            if (again.result) return again.result;
+          }
+          throw new Error("读取完成但结果为空,请重试");
+        }
+        if (poll.status === "FAILED") {
+          throw new Error(poll.failedReason || "读取失败");
+        }
+      }
+    },
     onSuccess: (r) => {
       setResult(r);
       setSelected(new Set());

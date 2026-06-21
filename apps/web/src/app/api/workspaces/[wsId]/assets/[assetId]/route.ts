@@ -3,6 +3,7 @@ import { prisma } from "@brandai/db";
 import { AssetCategory } from "@brandai/contracts";
 import { ApiException, handleError, ok, parse, requireUser } from "@/lib/api";
 import { requireWorkspaceRole } from "@/lib/workspace";
+import { serializeAsset } from "@/lib/assets";
 
 /**
  * Asset PATCH — supports category edits plus P1.3 lifecycle fields:
@@ -15,6 +16,11 @@ const UpdateAssetInput = z.object({
   availableForGeneration: z.boolean().optional(),
   deprecatedAt: z.string().datetime().nullable().optional(),
   replacementAssetId: z.string().nullable().optional(),
+  // E13 — favorite toggle (star). `Asset.isFavorite` already exists in schema.
+  isFavorite: z.boolean().optional(),
+  // E3 — move into a folder (id) or un-file (null). Folder ownership is
+  // validated below (must belong to the same workspace) to prevent IDOR.
+  folderId: z.string().nullable().optional(),
 });
 
 async function loadAsset(wsId: string, assetId: string, userId: string) {
@@ -39,15 +45,30 @@ export async function PATCH(
     if (input.category !== undefined) data.category = input.category;
     if (input.availableForGeneration !== undefined)
       data.availableForGeneration = input.availableForGeneration;
+    if (input.isFavorite !== undefined) data.isFavorite = input.isFavorite;
     if (input.deprecatedAt !== undefined)
       data.deprecatedAt = input.deprecatedAt ? new Date(input.deprecatedAt) : null;
     if (input.replacementAssetId !== undefined)
       data.replacementAssetId = input.replacementAssetId;
+    if (input.folderId !== undefined) {
+      // §3.5 isolation rule 2 — a cross-workspace folder reference is an IDOR;
+      // verify the target folder belongs to this workspace before filing.
+      if (input.folderId !== null) {
+        const folder = await prisma.assetFolder.findUnique({
+          where: { id: input.folderId },
+          select: { workspaceId: true },
+        });
+        if (!folder || folder.workspaceId !== wsId) {
+          throw new ApiException(404, "Folder not found");
+        }
+      }
+      data.folderId = input.folderId;
+    }
     const asset = await prisma.asset.update({
       where: { id: assetId },
       data,
     });
-    return ok(asset);
+    return ok(serializeAsset(asset));
   } catch (err) {
     return handleError(err);
   }

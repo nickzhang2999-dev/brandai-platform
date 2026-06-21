@@ -193,6 +193,52 @@ class MockVLMProvider(VLMProvider):
             "score": 88,
         }
 
+    async def describe_asset(
+        self,
+        url: str,
+        *,
+        category: str | None = None,
+        brand_tone: str | None = None,
+        source: str | None = None,
+    ) -> dict[str, Any]:
+        # Deterministic, zero-key tags. The category hint (when given) leads the
+        # tag list so the wiring (category → request → response) is observable.
+        tags = ["产品图", "暖色调", "浅景深", "真实场景"]
+        if category:
+            tags = [str(category), *tags]
+        return {
+            "aiTags": tags,
+            "aiDescription": (
+                "暖光近景的品牌素材，浅景深、真实场景质感，适合电商主图与社媒投放。"
+            ),
+        }
+
+    async def summarize(
+        self, mode: str, text: str, *, context: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        # Deterministic, zero-key result. The input `text` leads the output so
+        # the wiring (text → request → response) is observable end-to-end, and
+        # no field is null (the no-null contract holds via the defaults).
+        snippet = (text or "").strip().splitlines()[0][:60] if text else ""
+        if mode == "brief_decompose":
+            return {
+                "sellingPoint": snippet or "核心卖点",
+                "scene": "自然光生活场景",
+                "sceneType": "SOCIAL_POSTER",
+                "styleKeywords": ["清透", "高级感", "暖色调"],
+                "summary": (f"已从需求拆解：{snippet}" if snippet else "已拆解需求"),
+            }
+        # campaign_summary
+        return {
+            "summary": (
+                f"项目当前进展概述：{snippet}。建议下一步在工作台围绕核心卖点出图，"
+                "并在品牌知识库确认色彩与调性规则后批量产出多渠道素材。"
+                if snippet
+                else "项目摘要：建议进入工作台出图并确认品牌规则。"
+            ),
+            "highlights": ["明确核心卖点", "确认品牌色彩与调性", "规划多渠道出图"],
+        }
+
     async def scrape_website(self, url: str) -> dict[str, Any]:
         return {
             "images": [

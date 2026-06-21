@@ -33,10 +33,59 @@ class IngestWebsiteResponse(BaseModel):
 class AssetRef(BaseModel):
     id: str
     url: str
+    # K7 — provenance hint for SSRF policy. "UPLOAD" (default) trusts the initial
+    # host (our own storage may be private); "WEBSITE" re-validates the initial
+    # host too (defense against DNS rebinding of a harvested third-party URL).
+    source: Optional[str] = None
 
 
 class RecognizeRequest(BaseModel):
     assets: list[AssetRef]
+
+
+class DescribeRequest(BaseModel):
+    """POST /v1/describe — E9/E10 asset auto-tagging by image URL."""
+
+    url: str
+    category: Optional[str] = None
+    brandTone: Optional[str] = None
+    # K7 — provenance hint for SSRF policy (see AssetRef.source).
+    source: Optional[str] = None
+
+
+class DescribeResponse(BaseModel):
+    aiTags: list[str] = Field(default_factory=list)
+    aiDescription: str = ""
+
+
+class SummarizeContext(BaseModel):
+    brandName: Optional[str] = None
+    brandTone: Optional[str] = None
+    campaignName: Optional[str] = None
+    ruleSummaries: list[str] = Field(default_factory=list)
+
+
+class SummarizeRequest(BaseModel):
+    """POST /v1/summarize — B2/C8 text-only VLM endpoint, two modes."""
+
+    mode: str  # "brief_decompose" | "campaign_summary"
+    text: str
+    context: Optional[SummarizeContext] = None
+
+
+class SummarizeResponse(BaseModel):
+    """Mirror of @brandai/contracts SummarizeResponse. Every field optional /
+    default-empty so response_model_exclude_none keeps the no-null wire shape
+    (Zod .optional() rejects null)."""
+
+    # brief_decompose
+    sellingPoint: Optional[str] = None
+    scene: Optional[str] = None
+    sceneType: Optional[str] = None
+    styleKeywords: list[str] = Field(default_factory=list)
+    # shared / campaign_summary
+    summary: Optional[str] = None
+    highlights: list[str] = Field(default_factory=list)
 
 
 class ParseManualRequest(BaseModel):
@@ -101,6 +150,8 @@ class ReferenceImage(BaseModel):
     polarity: str  # "positive" | "negative"
     source: str
     note: Optional[str] = None
+    # K7 — provenance of the URL for SSRF policy ("UPLOAD" | "WEBSITE").
+    sourceHint: Optional[str] = None
 
 
 class AIConstraints(BaseModel):
@@ -149,6 +200,11 @@ class GeneratedVersion(BaseModel):
     imageUrl: str
     width: int
     height: int
+    # K5 — actual decoded pixel dimensions of the returned image (OpenAI snaps to
+    # its supported size set, so this can differ from the requested width/height).
+    # exclude_none keeps them omitted when undecodable / mock.
+    actualWidth: Optional[int] = None
+    actualHeight: Optional[int] = None
     params: dict[str, Any]
 
 

@@ -9,26 +9,28 @@ import {
 } from "@/lib/api";
 import { requireWorkspaceRole } from "@/lib/workspace";
 import { generateQueue } from "@/lib/queue";
-import { runPrecheck } from "@/lib/precheck";
 import { getGeneration } from "@/lib/generations";
 import type { GenerateJobData } from "@/lib/workers/generate.worker";
 import { getConfirmedRules } from "@/lib/rules";
 import { serializeProhibition } from "@/lib/prohibitions";
 import { compileAIConstraints, constraintsEnabled } from "@/lib/ai-constraints";
-import { assertGenerationQuota } from "@/lib/quota";
+import { reserveGenerationQuota } from "@/lib/quota";
+import { dedupedSceneCount } from "@brandai/contracts";
 
 /**
  * E8 Campaign Kit · POST /api/workspaces/[wsId]/campaigns
  *
  * One brief → a whole set of channel materials. Creates one Generation per
- * `scenes[]` entry (each fanning out to one image per `targets[]` size via the
- * existing multi-size generate worker), all under the same Project.
+ * DISTINCT `scenes[]` entry (each fanning out to one image per `targets[]` size
+ * via the existing multi-size generate worker), all under the same Project.
  *
- * The expensive gates run ONCE for the whole kit (not per scene):
- *  - quota: aggregate check for `scenes.length` generations (no half kit);
- *  - precheck: the shared selling point (FORBIDDEN blocks the whole kit);
+ * The synchronous gates run ONCE for the whole kit (not per scene):
+ *  - quota: atomic reservation for the DEDUPED scene count (no half kit, no
+ *    false 402 from a repeated scene), metered against the workspace owner;
  *  - hard-block: HIGH prohibitions / FORBIDDEN rules abort the whole kit.
- * Then one Generation row + `generate` job is enqueued per scene.
+ * The compliance precheck (slow AI) runs per-scene IN THE WORKER (K3 / §2), so
+ * the POST returns 202 immediately. Then one `generate` job is enqueued per
+ * reserved Generation.
  */
 export async function POST(
   req: Request,
@@ -48,23 +50,12 @@ export async function POST(
       throw new ApiException(404, "Project not found in this workspace");
     }
 
-    // Aggregate quota gate — the WHOLE kit (one generation per scene) must fit,
-    // so a user never gets a half-finished set then a 402 mid-way.
-    await assertGenerationQuota(user.id, input.scenes.length);
-
-    // Pre-generation compliance precheck on the shared selling point.
-    const precheck = await runPrecheck({
-      workspaceId: wsId,
-      text: input.sellingPoint,
-      baseUrl: new URL(req.url).origin,
-    });
-    if (precheck.blocking) {
-      throw new ApiException(
-        422,
-        "卖点文案存在违禁风险，请修改后再生成",
-        precheck,
-      );
-    }
+    // K3 / §2 — the compliance precheck (a slow AI call) used to be `await`-ed
+    // HERE in the HTTP handler, violating the "no slow AI in a request handler"
+    // rule. It now runs inside the generate worker (per-scene, server-
+    // authoritative) exactly like the single-generation path, so the kit POST
+    // returns 202 promptly. The hard-block + quota gates remain synchronous
+    // (fast DB-only checks).
 
     // Hard-block gate — runs once for the whole kit.
     if (constraintsEnabled()) {
@@ -88,27 +79,38 @@ export async function POST(
       }
     }
 
-    // Fan out: one Generation + job per scene type (deduped, order preserved).
+    // Fan out: one Generation per DISTINCT scene type (deduped, order
+    // preserved). K1 — quota is metered on the DEDUPED scene count via the
+    // atomic reservation, NOT the raw `scenes.length`: a repeated scene must
+    // not inflate the count and trigger a false 402 (this exact bug is in the
+    // phase-2 backlog). The whole kit is reserved at once (serializable txn) so
+    // a user never gets a half-finished set then a 402 mid-way, and concurrent
+    // kits can't over-spend. Metered against the workspace OWNER (tenant).
     const sceneTypes = [...new Set(input.scenes)];
+    const reserved = await reserveGenerationQuota({
+      workspaceId: wsId,
+      count: dedupedSceneCount(input.scenes),
+      make: (i) => ({
+        projectId: input.projectId,
+        workspaceId: wsId,
+        sceneType: sceneTypes[i]!,
+        sellingPoint: input.sellingPoint,
+        scene: input.scene,
+        status: "PENDING",
+      }),
+    });
+
     const scenes: Array<{
       sceneType: string;
       generation: Awaited<ReturnType<typeof getGeneration>>;
       jobId: string | undefined;
     }> = [];
-    for (const sceneType of sceneTypes) {
-      const generation = await prisma.generation.create({
-        data: {
-          projectId: input.projectId,
-          workspaceId: wsId,
-          sceneType,
-          sellingPoint: input.sellingPoint,
-          scene: input.scene,
-          status: "PENDING",
-        },
-      });
+    for (let i = 0; i < sceneTypes.length; i += 1) {
+      const sceneType = sceneTypes[i]!;
+      const generationId = reserved[i]!.id;
       const jobData: GenerateJobData = {
         workspaceId: wsId,
-        generationId: generation.id,
+        generationId,
         versionCount: 1,
         textMode: input.textMode,
         targets: input.targets,
@@ -119,15 +121,12 @@ export async function POST(
       });
       scenes.push({
         sceneType,
-        generation: await getGeneration(generation.id),
+        generation: await getGeneration(generationId),
         jobId: job.id,
       });
     }
 
-    return ok(
-      { projectId: input.projectId, scenes, precheck },
-      { status: 202 },
-    );
+    return ok({ projectId: input.projectId, scenes }, { status: 202 });
   } catch (err) {
     return handleError(err);
   }

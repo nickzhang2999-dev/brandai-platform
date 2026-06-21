@@ -37,7 +37,7 @@ export async function POST(
         availableForGeneration: true,
         deprecatedAt: null,
       },
-      select: { id: true, url: true },
+      select: { id: true, url: true, source: true },
     });
     if (assets.length === 0) {
       throw new ApiException(400, "No matching assets in this workspace");
@@ -48,7 +48,10 @@ export async function POST(
     const task = await createTask({ workspaceId: wsId, kind: "RECOGNIZE" });
     const jobData: RecognizeJobData = {
       workspaceId: wsId,
-      assets: assets.map((a) => ({ id: a.id, url: a.url })),
+      // K7 — thread each asset's provenance so the AI service applies the
+      // strict initial-host SSRF check to WEBSITE-harvested library assets
+      // (DNS-rebinding guard); UPLOAD/storage keeps the trusting default.
+      assets: assets.map((a) => ({ id: a.id, url: a.url, source: a.source })),
       taskId: task.id,
     };
     const job = await recognizeQueue.add("recognize", jobData, {

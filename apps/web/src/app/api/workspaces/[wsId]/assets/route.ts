@@ -3,6 +3,7 @@ import { AssetCategory, CreateAssetInput } from "@brandai/contracts";
 import { handleError, ok, parse, requireUser } from "@/lib/api";
 import { getEffectiveStorage } from "@/lib/settings";
 import { requireOwnedWorkspace, requireWorkspaceRole } from "@/lib/workspace";
+import { serializeAsset } from "@/lib/assets";
 
 export async function GET(
   req: Request,
@@ -24,7 +25,7 @@ export async function GET(
       where: { workspaceId: wsId, ...(category ? { category } : {}) },
       orderBy: { createdAt: "desc" },
     });
-    return ok(assets);
+    return ok(assets.map(serializeAsset));
   } catch (err) {
     return handleError(err);
   }
@@ -66,7 +67,7 @@ export async function POST(
         source: input.source,
       },
     });
-    return ok(asset, { status: 201 });
+    return ok(serializeAsset(asset), { status: 201 });
   } catch (err) {
     return handleError(err);
   }

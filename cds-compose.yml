@@ -86,9 +86,19 @@ services:
       AI_HTTP_TIMEOUT_SECONDS: "240"
       AI_MAX_RETRIES: "1"
       PIP_CACHE_DIR: "/app/.pip-cache"
+      # watchfiles(uvicorn --reload 的后端)默认用 inotify，但 host 侧 git checkout
+      # 改 bind-mount 文件不会在容器内触发 inotify → --reload 收不到，新 apps/ai
+      # 路由(如 /v1/summarize)仍 404。强制轮询模式可靠侦测 bind-mount 变化，使
+      # `branch deploy` 拉新代码后 AI 自动重载，无需手动 recreate/restart。
+      WATCHFILES_FORCE_POLLING: "true"
+    # `--reload`：ai 容器 bind-mount `./apps/ai`，但 CDS `branch deploy` 不会
+    # recreate 它（image/config 未变）→ 旧 in-memory uvicorn 进程会停留在部署
+    # 时的代码，新增/改动 `apps/ai` 路由(如 /v1/describe)在灰度永不生效。
+    # uvicorn[standard] 自带 watchfiles，--reload 监听 bind-mount 文件变化，
+    # 部署拉新代码后自动重载，根除「ai 容器陈旧代码」陷阱。
     command: >
       /bin/sh -c "pip install -r requirements.txt &&
-      uvicorn app.main:app --host 0.0.0.0 --port 8000"
+      uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/app --reload-include '*.py'"
     # 不暴露公网路由:FastAPI 的 /v1/* 没有 requireUser/workspace/quota 门禁,
     # 公网直达会让任何人调 /ai/v1/generate 烧 provider 凭据。web 容器只经内部
     # AI_SERVICE_URL=http://ai:8000 调用它,故移除原 cds.path-prefix=/ai/ 暴露。
@@ -125,7 +135,10 @@ services:
       # Encrypts admin-supplied AI keys at rest. Dedicated key = the project JWT
       # secret (stable); the app also falls back to AUTH_SECRET if this is empty.
       SETTINGS_ENC_KEY: "${CDS_JWT_SECRET}"
-      AI_SERVICE_URL: "http://ai:8000"
+      # 跨分支共享 docker 网络时裸 `ai` 别名会同时解析到本分支与 main 分支的 ai 容器
+      # (round-robin → 间歇命中 main 旧 ai → 新路由 404)。用分支级 env 指向唯一容器名
+      # `cds-<branchId>-ai` 即可隔离；其他分支不设该 env 时回退裸别名。
+      AI_SERVICE_URL: "${AI_SERVICE_URL:-http://ai:8000}"
       NODE_ENV: "production"
       CI: "true"
       # scripts/web-startup.sh listens on $PORT.
@@ -174,7 +187,10 @@ services:
       REDIS_URL: "${CDS_REDIS_URL}"
       AUTH_SECRET: "${CDS_JWT_SECRET}"
       SETTINGS_ENC_KEY: "${CDS_JWT_SECRET}"
-      AI_SERVICE_URL: "http://ai:8000"
+      # 跨分支共享 docker 网络时裸 `ai` 别名会同时解析到本分支与 main 分支的 ai 容器
+      # (round-robin → 间歇命中 main 旧 ai → 新路由 404)。用分支级 env 指向唯一容器名
+      # `cds-<branchId>-ai` 即可隔离；其他分支不设该 env 时回退裸别名。
+      AI_SERVICE_URL: "${AI_SERVICE_URL:-http://ai:8000}"
       WORKER_HEALTH_PORT: "3001"
       NODE_ENV: "production"
       CI: "true"

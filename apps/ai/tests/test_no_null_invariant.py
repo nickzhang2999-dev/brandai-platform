@@ -16,6 +16,19 @@ from .conftest import find_nulls
 ENDPOINTS = [
     ("/v1/ingest/website", {"url": "https://example.com"}),
     ("/v1/recognize", {"assets": [{"id": "a1", "url": "http://x/y.png"}]}),
+    ("/v1/describe", {"url": "http://x/y.png", "category": "PRODUCT"}),
+    (
+        "/v1/summarize",
+        {"mode": "brief_decompose", "text": "为夏季新品做一组小红书种草主视觉"},
+    ),
+    (
+        "/v1/summarize",
+        {
+            "mode": "campaign_summary",
+            "text": "夏季新品上市 Campaign，已完成 KV 初稿",
+            "context": {"ruleSummaries": ["主色 #7C5CFF", "标题衬线"]},
+        },
+    ),
     (
         "/v1/generate",
         {

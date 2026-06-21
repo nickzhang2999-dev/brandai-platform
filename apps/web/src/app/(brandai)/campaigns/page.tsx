@@ -1,8 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { Project } from "@brandai/contracts";
+import type {
+  BrandRule,
+  BrandWorkspace,
+  Project,
+  TaskState,
+} from "@brandai/contracts";
 import { Button } from "@brandai/ui";
 import { apiFetch } from "@/lib/client";
 import { useBrand } from "../brand-context";
@@ -42,6 +47,8 @@ export default function CampaignsPage() {
   const [filterKey, setFilterKey] = useState("all");
   const [sortKey, setSortKey] = useState<SortKey>("recent");
   const [rangeKey, setRangeKey] = useState<RangeKey>("all");
+  // C4 · 品牌筛选 — "all" = 全部品牌, otherwise a BrandWorkspace id.
+  const [brandFilter, setBrandFilter] = useState<string>("all");
   const [q, setQ] = useState("");
   const [creating, setCreating] = useState(false);
   // Lifecycle action target: which transition the confirm dialog is for.
@@ -49,6 +56,8 @@ export default function CampaignsPage() {
     null,
   );
   const [editingSummary, setEditingSummary] = useState(false);
+  // H4 · 查看项目规范侧边面板 — read-only brand knowledge (confirmed rules).
+  const [viewingRules, setViewingRules] = useState(false);
   // Snapshot the project a dialog targets, captured at open time, resolved from
   // the FULL projects list (not the filter-derived `active`). Otherwise changing
   // a filter while a dialog is open could re-target the confirm/summary action
@@ -63,15 +72,53 @@ export default function CampaignsPage() {
     queryFn: () => apiFetch<Project[]>(`/api/workspaces/${wsId}/projects`),
   });
 
+  // C4 · 品牌筛选 — the user's real brands (owned or member of). Same endpoint
+  // the homepage 推荐品牌 uses; no mock rows. Phase-1 is single-brand, so this
+  // is usually [activeBrand] → "全部品牌" + that one brand. Honest, not faked:
+  // selecting a brand filters campaigns by their workspaceId (= brand id).
+  const { data: brands = [] } = useQuery({
+    queryKey: ["brandai-recommended-brands"],
+    queryFn: () => apiFetch<BrandWorkspace[]>(`/api/brands/recommended`),
+  });
+
+  // C2 · brand-name lookup for search — map each project's workspaceId to its
+  // brand name. The active brand (from context) always resolves even before the
+  // brands list loads, since every loaded project shares the active wsId.
+  const brandNameOf = useMemo(() => {
+    const map = new Map<string, string>();
+    map.set(wsId, brandName);
+    for (const b of brands) map.set(b.id, b.name);
+    return (id: string) => map.get(id) ?? "";
+  }, [brands, wsId, brandName]);
+
+  // C4 — only offer brands that actually have loaded campaigns. Projects come
+  // only from the active workspace's GET /projects, so listing every brand let
+  // a user pick one with no loaded rows → misleading empty list. Restricting to
+  // present brands keeps the filter honest (usually just the active brand).
+  const brandOptions = useMemo(() => {
+    const present = new Set(projects.map((p) => p.workspaceId));
+    return brands.filter((b) => present.has(b.id));
+  }, [brands, projects]);
+
   const filtered = useMemo(() => {
     const f = FILTERS.find((x) => x.key === filterKey);
     const range = RANGES.find((x) => x.key === rangeKey);
     const cutoff =
       range?.days != null ? Date.now() - range.days * 86_400_000 : null;
+    const needle = q.trim().toLowerCase();
 
     const list = projects.filter((p) => {
       if (f?.status && (p.status ?? "DRAFT") !== f.status) return false;
-      if (q && !p.name.toLowerCase().includes(q.toLowerCase())) return false;
+      // C4 — filter by selected brand (project.workspaceId === brand id).
+      if (brandFilter !== "all" && p.workspaceId !== brandFilter) return false;
+      // C2 — match project name OR its brand/workspace name.
+      if (needle) {
+        const inName = p.name.toLowerCase().includes(needle);
+        const inBrand = brandNameOf(p.workspaceId)
+          .toLowerCase()
+          .includes(needle);
+        if (!inName && !inBrand) return false;
+      }
       if (cutoff != null) {
         const t = Date.parse(p.createdAt);
         if (Number.isNaN(t) || t < cutoff) return false;
@@ -92,7 +139,7 @@ export default function CampaignsPage() {
       }
     });
     return sorted;
-  }, [projects, filterKey, q, sortKey, rangeKey]);
+  }, [projects, filterKey, q, sortKey, rangeKey, brandFilter, brandNameOf]);
 
   // Only ever select from the FILTERED set — falling back to projects[0] when
   // filters match nothing would make the summary panel + lifecycle actions
@@ -119,9 +166,23 @@ export default function CampaignsPage() {
         <input
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="搜索项目名称…"
+          placeholder="搜索项目 / 品牌名称…"
           className="h-10 flex-1 rounded-full border border-border bg-card px-4 text-sm outline-none focus:border-primary/40 focus:shadow-[0_0_0_4px_rgba(124,92,255,0.08)]"
         />
+        {/* C4 · 品牌筛选 */}
+        <select
+          value={brandFilter}
+          onChange={(e) => setBrandFilter(e.target.value)}
+          aria-label="品牌筛选"
+          className="h-9 rounded-full border border-border bg-card px-4 text-sm text-muted-foreground outline-none transition-colors hover:bg-muted focus:border-primary/40 focus:shadow-[0_0_0_4px_rgba(124,92,255,0.08)]"
+        >
+          <option value="all">全部品牌</option>
+          {brandOptions.map((b) => (
+            <option key={b.id} value={b.id}>
+              {b.name}
+            </option>
+          ))}
+        </select>
         {FILTERS.map((f) => (
           <button
             key={f.key}
@@ -231,8 +292,15 @@ export default function CampaignsPage() {
             </div>
             <p className="mt-2 rounded-2xl bg-accent-soft/60 p-4 text-xs leading-relaxed text-foreground/80">
               {active?.aiSummary ||
-                "该项目尚无 AI 摘要。进入工作台出图、补充需求后，这里会沉淀项目进展与下一步建议。"}
+                "该项目尚无 AI 摘要。点击下方「AI 自动生成摘要」，或进入工作台出图、补充需求后，这里会沉淀项目进展与下一步建议。"}
             </p>
+            {active ? (
+              <AutoSummaryButton
+                wsId={wsId}
+                projectId={active.id}
+                onDone={invalidate}
+              />
+            ) : null}
             {active ? (
               <div className="mt-2 text-[11px] text-muted-foreground">
                 当前状态：
@@ -268,6 +336,13 @@ export default function CampaignsPage() {
                 }}
               >
                 补充需求
+              </Button>
+              <Button
+                variant="outline"
+                className="w-full justify-center"
+                onClick={() => setViewingRules(true)}
+              >
+                查看规范
               </Button>
               <Button
                 variant="outline"
@@ -338,6 +413,274 @@ export default function CampaignsPage() {
           }}
         />
       ) : null}
+
+      {viewingRules ? (
+        <RulesPanel
+          wsId={wsId}
+          brandName={brandName}
+          onClose={() => setViewingRules(false)}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+const POLL_INTERVAL_MS = 2500;
+const POLL_CAP_MS = 6 * 60 * 1000; // §2.2 有界中间态
+type StartResponse = { jobId: string; taskId: string; status: string };
+
+/**
+ * C8 · Campaign AI 摘要自动生成 — server-authoritative summarize (§2). POST →
+ * 202 {taskId} → poll GET /tasks/[taskId] (bounded to 6 min) → on SUCCEEDED the
+ * worker has already written Project.aiSummary, so refetch the projects list.
+ */
+function AutoSummaryButton({
+  wsId,
+  projectId,
+  onDone,
+}: {
+  wsId: string;
+  projectId: string;
+  onDone: () => void;
+}) {
+  const [taskId, setTaskId] = useState<string | null>(null);
+  const [timedOut, setTimedOut] = useState(false);
+  const startedAt = useRef(0);
+
+  // Reset any in-flight poll when the targeted campaign changes.
+  useEffect(() => {
+    setTaskId(null);
+    setTimedOut(false);
+  }, [projectId]);
+
+  const start = useMutation({
+    mutationFn: () => {
+      startedAt.current = Date.now();
+      setTimedOut(false);
+      return apiFetch<StartResponse>(
+        `/api/workspaces/${wsId}/projects/${projectId}/summarize`,
+        { method: "POST" },
+      );
+    },
+    onSuccess: (res) => setTaskId(res.taskId),
+  });
+
+  const { data: task } = useQuery<TaskState>({
+    queryKey: ["brandai-task", wsId, taskId],
+    queryFn: () => apiFetch<TaskState>(`/api/workspaces/${wsId}/tasks/${taskId}`),
+    enabled: !!taskId,
+    refetchInterval: (q) => {
+      const s = q.state.data?.status;
+      if (s === "SUCCEEDED" || s === "FAILED") return false;
+      if (Date.now() - startedAt.current > POLL_CAP_MS) return false;
+      return POLL_INTERVAL_MS;
+    },
+  });
+
+  useEffect(() => {
+    if (!taskId) return;
+    const t = setInterval(() => {
+      if (Date.now() - startedAt.current > POLL_CAP_MS) setTimedOut(true);
+    }, 3000);
+    return () => clearInterval(t);
+  }, [taskId]);
+
+  const status = task?.status ?? (taskId ? "PENDING" : null);
+  const running =
+    !!taskId && status !== "SUCCEEDED" && status !== "FAILED" && !timedOut;
+
+  // Refetch the project once on success so the freshly-written aiSummary shows.
+  const firedForRef = useRef<string | null>(null);
+  const onDoneRef = useRef(onDone);
+  onDoneRef.current = onDone;
+  useEffect(() => {
+    if (status === "SUCCEEDED" && taskId && firedForRef.current !== taskId) {
+      firedForRef.current = taskId;
+      onDoneRef.current();
+    }
+  }, [status, taskId]);
+
+  // §2.4 — a SUCCEEDED that lands right around the 6-min cap must not be hidden
+  // by the timedOut flag (the cap-interval can flip it on the same tick the poll
+  // observes success), so let an observed success win over the timeout copy.
+  const failed =
+    status === "FAILED" || (timedOut && status !== "SUCCEEDED");
+
+  return (
+    <div className="mt-2">
+      <Button
+        variant="outline"
+        className="w-full justify-center"
+        disabled={running || start.isPending}
+        onClick={() => {
+          if (running || start.isPending) return;
+          start.mutate();
+        }}
+      >
+        {running
+          ? status === "RUNNING"
+            ? "AI 生成摘要中…"
+            : "正在受理…"
+          : "✦ AI 自动生成摘要"}
+      </Button>
+      {running ? (
+        <p className="mt-1.5 text-[11px] text-primary">
+          AI 正在根据项目信息与品牌规则生成摘要，可离开稍后查看…
+        </p>
+      ) : null}
+      {start.isError ? (
+        <p className="mt-1.5 text-[11px] text-destructive">
+          {(start.error as Error).message}
+        </p>
+      ) : null}
+      {failed && !start.isError ? (
+        <p className="mt-1.5 text-[11px] text-destructive">
+          摘要生成未完成（可能超时或失败），请重试。
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+// H4 · 查看项目规范 — 规则类型展示元信息（对齐知识库页 TYPE_META）。
+const RULE_TYPE_META: Record<string, { label: string; icon: string }> = {
+  logo: { label: "Logo 使用规范", icon: "◐" },
+  color: { label: "品牌色彩系统", icon: "◉" },
+  font: { label: "字体规范", icon: "Aa" },
+  copy: { label: "品牌语气 / 文案", icon: "❝" },
+  imagery: { label: "视觉参考", icon: "▦" },
+  layout: { label: "版式规范", icon: "▤" },
+  graphic: { label: "设计元素", icon: "✦" },
+};
+const RULE_TYPE_ORDER = ["logo", "color", "font", "copy", "imagery", "layout", "graphic"];
+const STRENGTH_META: Record<string, { label: string; cls: string }> = {
+  STRONG: { label: "强约束", cls: "bg-accent-soft text-primary" },
+  WEAK: { label: "弱约束", cls: "bg-muted text-muted-foreground" },
+  FORBIDDEN: { label: "禁用", cls: "bg-destructive/10 text-destructive" },
+};
+
+/**
+ * H4 · 查看项目规范（侧边面板）— read-only view of the brand's CONFIRMED brand
+ * knowledge, grouped by rule type. Reuses GET /api/workspaces/[wsId]/rules
+ * (same endpoint the 知识库 page + generate worker consume); shows only
+ * CONFIRMED rules (the ones that actually constrain出图). No editing here — the
+ * 知识库 page owns rule authoring/confirmation.
+ */
+function RulesPanel({
+  wsId,
+  brandName,
+  onClose,
+}: {
+  wsId: string;
+  brandName: string;
+  onClose: () => void;
+}) {
+  const { data: rules = [], isLoading } = useQuery({
+    queryKey: ["brandai-rules", wsId],
+    queryFn: () => apiFetch<BrandRule[]>(`/api/workspaces/${wsId}/rules`),
+  });
+  const confirmed = rules.filter((r) => r.status === "CONFIRMED");
+  const groups = RULE_TYPE_ORDER.map((type) => ({
+    type,
+    meta: RULE_TYPE_META[type]!,
+    items: confirmed.filter((r) => r.type === type),
+  })).filter((g) => g.items.length > 0);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex justify-end bg-foreground/30 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <aside
+        className="flex h-full w-full max-w-md flex-col border-l border-border bg-card shadow-[-24px_0_70px_rgba(30,30,60,0.18)]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between border-b border-border p-6">
+          <div>
+            <div className="text-lg font-semibold">项目品牌规范</div>
+            <p className="mt-1 text-sm text-muted-foreground">
+              「{brandName}」已确认的品牌知识库规则，出图时受控生效。
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="关闭"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-6">
+          {isLoading ? (
+            <div className="py-10 text-center text-sm text-muted-foreground">
+              加载中…
+            </div>
+          ) : groups.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-border p-8 text-center">
+              <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-accent-soft text-2xl text-primary">
+                ◎
+              </div>
+              <div className="text-sm font-semibold">暂无已确认规范</div>
+              <p className="mx-auto mt-2 max-w-xs text-xs leading-relaxed text-muted-foreground">
+                去「品牌知识库」沉淀并确认 Logo / 色彩 / 字体 / 调性等规则，确认后
+                会在这里展示并约束出图。
+              </p>
+              <a href="/brand-knowledge">
+                <Button variant="outline" className="mt-4">
+                  前往品牌知识库
+                </Button>
+              </a>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-4">
+              {groups.map((g) => (
+                <div
+                  key={g.type}
+                  className="rounded-2xl border border-border bg-background p-4"
+                >
+                  <div className="mb-3 flex items-center gap-2">
+                    <span className="flex h-7 w-7 items-center justify-center rounded-xl bg-accent-soft text-sm text-primary">
+                      {g.meta.icon}
+                    </span>
+                    <span className="text-sm font-semibold">{g.meta.label}</span>
+                    <span className="ml-auto text-xs text-muted-foreground">
+                      {g.items.length} 条
+                    </span>
+                  </div>
+                  <ul className="flex flex-col gap-2.5">
+                    {g.items.map((r) => {
+                      const s = STRENGTH_META[r.strength] ?? STRENGTH_META.WEAK!;
+                      return (
+                        <li
+                          key={r.id}
+                          className="flex items-start gap-2 text-sm leading-relaxed"
+                        >
+                          <span
+                            className={`mt-0.5 shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${s.cls}`}
+                          >
+                            {s.label}
+                          </span>
+                          <span className="text-foreground/90">{r.summary}</span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="border-t border-border p-4">
+          <a href="/brand-knowledge">
+            <Button variant="outline" className="w-full justify-center">
+              管理品牌知识库
+            </Button>
+          </a>
+        </div>
+      </aside>
     </div>
   );
 }

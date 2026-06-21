@@ -1,14 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { Project } from "@brandai/contracts";
+import type { Project, TaskState } from "@brandai/contracts";
 import { apiFetch } from "@/lib/client";
 import { quickActions } from "@/lib/brandai-mock";
 import { useBrand } from "./brand-context";
+import { AIInput } from "./ai-input";
 import { gradientFor } from "./_ui";
+import { RecommendedBrands } from "./recommended-brands";
 
 /**
  * P01 · 首页 — AI 入口 + 近期项目速览。真实数据：当前品牌的 Campaign 列表。
@@ -18,6 +20,26 @@ const STATUS_META: Record<Status, { label: string; tone: string }> = {
   DRAFT: { label: "草稿", tone: "warning" },
   IN_PROGRESS: { label: "进行中", tone: "primary" },
   COMPLETED: { label: "已完成", tone: "success" },
+};
+
+const POLL_INTERVAL_MS = 2500;
+const POLL_CAP_MS = 6 * 60 * 1000; // §2.2 有界中间态
+
+type StartResponse = { jobId: string; taskId: string; status: string };
+type DecomposeResult = {
+  projectId?: string;
+  sellingPoint?: string;
+  scene?: string;
+  sceneType?: string;
+  styleKeywords?: string[];
+  summary?: string;
+};
+type JobPoll = {
+  jobId: string;
+  status: "PENDING" | "RUNNING" | "SUCCEEDED" | "FAILED";
+  progress: number;
+  result?: DecomposeResult;
+  failedReason?: string;
 };
 
 export default function HomePage() {
@@ -30,54 +52,112 @@ export default function HomePage() {
     queryFn: () => apiFetch<Project[]>(`/api/workspaces/${wsId}/projects`),
   });
 
-  // B2 · 首页 brief → 草稿 Campaign。注意：这不是 AI 拆解，只是把这段描述
-  // 立项为草稿并把原文透传到工作台出图卖点（honest brief-threading）。
+  // B2 · 首页 AI 拆解 — REAL async decomposition (§2). Submit brief → POST
+  // 202 {taskId, jobId} → poll the task for status, then read the decomposed
+  // seeds from the job return value → 立项 a draft Campaign + navigate to the
+  // workspace prefilled (sellingPoint / scene / sceneType / styleKeywords).
   const [brief, setBrief] = useState("");
+  const [taskId, setTaskId] = useState<string | null>(null);
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [timedOut, setTimedOut] = useState(false);
+  const startedAt = useRef(0);
+  const navigatedRef = useRef(false);
 
-  const startFromBrief = useMutation({
+  const start = useMutation({
     mutationFn: (text: string) => {
-      const title =
-        text.split("\n")[0]!.trim().slice(0, 24) ||
-        text.trim().slice(0, 24);
-      return apiFetch<Project>(`/api/workspaces/${wsId}/projects`, {
-        method: "POST",
-        body: JSON.stringify({
-          name: title,
-          // CreateProjectInput caps description at 2000 chars — clamp so a long
-          // brief still 立项 succeeds instead of failing validation.
-          description: text.trim().slice(0, 2000),
-          status: "DRAFT",
-          channels: [],
-        }),
-      });
-    },
-    onSuccess: (project, text) => {
-      // Refresh the shared projects cache so the new draft shows up everywhere
-      // that reuses this key (Campaign list, 素材库 picker, 首页近期项目).
-      qc.invalidateQueries({ queryKey: ["brandai-projects", wsId] });
-      // Use the exact `text` submitted to the mutation (not the live `brief`
-      // state, which the user may have edited while the POST was in flight) so
-      // the saved description and the workspace prefill always agree.
-      // The workspace 卖点 field caps at 500 chars; pass only that much as the
-      // prefill seed (the full brief, up to 2000, is saved on the Campaign
-      // description). Avoids a silent over-length truncation surprise.
-      router.push(
-        `/workspace?project=${encodeURIComponent(project.id)}&brief=${encodeURIComponent(
-          text.trim().slice(0, 500),
-        )}`,
+      startedAt.current = Date.now();
+      setTimedOut(false);
+      navigatedRef.current = false;
+      return apiFetch<StartResponse>(
+        `/api/workspaces/${wsId}/brief/decompose`,
+        { method: "POST", body: JSON.stringify({ text: text.slice(0, 4000) }) },
       );
+    },
+    onSuccess: (res) => {
+      setTaskId(res.taskId);
+      setJobId(res.jobId);
     },
   });
 
+  const { data: task } = useQuery<TaskState>({
+    queryKey: ["brandai-task", wsId, taskId],
+    queryFn: () => apiFetch<TaskState>(`/api/workspaces/${wsId}/tasks/${taskId}`),
+    enabled: !!taskId,
+    refetchInterval: (q) => {
+      const s = q.state.data?.status;
+      if (s === "SUCCEEDED" || s === "FAILED") return false;
+      if (Date.now() - startedAt.current > POLL_CAP_MS) return false;
+      return POLL_INTERVAL_MS;
+    },
+  });
+
+  const status = task?.status ?? (taskId ? "PENDING" : null);
+  const running =
+    !!taskId && status !== "SUCCEEDED" && status !== "FAILED" && !timedOut;
+
+  // §2.4 bounded-state guard — flip to timed-out so the spinner can't run forever.
+  useEffect(() => {
+    if (!taskId) return;
+    const t = setInterval(() => {
+      if (Date.now() - startedAt.current > POLL_CAP_MS) setTimedOut(true);
+    }, 3000);
+    return () => clearInterval(t);
+  }, [taskId]);
+
+  // On success, read the decomposed seeds from the job return value, then
+  // navigate to the workspace prefilled. Fire exactly once.
+  useEffect(() => {
+    if (status !== "SUCCEEDED" || !jobId || navigatedRef.current) return;
+    navigatedRef.current = true;
+    (async () => {
+      let result: DecomposeResult | undefined;
+      // The worker marks the AsyncTask SUCCEEDED before BullMQ flushes the job's
+      // returnValue, so the first job poll can race and come back with no
+      // result. Retry briefly (bounded ~4s) until the seeds land, then fall
+      // back to a plain brief prefill below.
+      for (let i = 0; i < 8; i++) {
+        try {
+          const poll = await apiFetch<JobPoll>(
+            `/api/workspaces/${wsId}/brief/decompose?jobId=${jobId}`,
+          );
+          if (poll.result) {
+            result = poll.result;
+            break;
+          }
+        } catch {
+          /* transient — retry, then fall back below */
+        }
+        await new Promise((r) => setTimeout(r, 500));
+      }
+      qc.invalidateQueries({ queryKey: ["brandai-projects", wsId] });
+      const params = new URLSearchParams();
+      if (result?.projectId) params.set("project", result.projectId);
+      // The decomposed selling point seeds the workspace 卖点 (brief fallback).
+      params.set(
+        "brief",
+        (result?.sellingPoint || brief).trim().slice(0, 500),
+      );
+      if (result?.scene) params.set("scene", result.scene.slice(0, 500));
+      if (result?.sceneType) params.set("sceneType", result.sceneType);
+      if (result?.styleKeywords?.length) {
+        params.set("style", result.styleKeywords.slice(0, 20).join(","));
+      }
+      router.push(`/workspace?${params.toString()}`);
+    })();
+  }, [status, jobId, wsId, brief, qc, router]);
+
   function handleStart() {
-    if (startFromBrief.isPending) return;
+    if (running || start.isPending) return;
     const text = brief.trim();
     if (!text) {
       router.push("/workspace");
       return;
     }
-    startFromBrief.mutate(text);
+    start.mutate(text);
   }
+
+  const busy = start.isPending || running;
+  const failed = status === "FAILED" || timedOut;
 
   return (
     <div className="mx-auto max-w-[1180px] px-10 py-10">
@@ -86,48 +166,65 @@ export default function HomePage() {
           你好，{user.name}
         </h1>
         <p className="mt-3 text-base text-muted-foreground">
-          用一句话描述你的品牌广告需求，BrandAI 帮你拆解、立项并受控出图。
+          用一句话描述你的品牌广告需求，BrandAI 帮你 AI 拆解、立项并受控出图。
         </p>
       </section>
 
       <section className="mx-auto mt-8 max-w-3xl">
-        <div className="flex items-end gap-3 rounded-[34px] border border-primary/15 bg-card p-3 pl-6 shadow-[0_24px_70px_rgba(124,92,255,0.12)]">
-          <textarea
-            rows={2}
-            value={brief}
-            onChange={(e) => setBrief(e.target.value)}
-            onKeyDown={(e) => {
-              if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-                e.preventDefault();
-                handleStart();
-              }
-            }}
-            disabled={startFromBrief.isPending}
-            placeholder={`例如：为 ${brandName} 做一组小红书种草主视觉，清透水光风格…`}
-            className="min-h-[56px] flex-1 resize-none border-0 bg-transparent py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-60"
-          />
-          <button
-            type="button"
-            onClick={handleStart}
-            disabled={startFromBrief.isPending}
-            className="h-11 shrink-0 rounded-[18px] bg-gradient-to-br from-primary to-accent px-6 text-sm font-medium text-primary-foreground shadow-[0_12px_28px_rgba(124,92,255,0.26)] transition-opacity disabled:opacity-70"
-          >
-            {startFromBrief.isPending
-              ? "正在立项…"
-              : brief.trim()
-                ? "从这段描述开始创作"
-                : "去出图"}
-          </button>
-        </div>
+        <AIInput
+          value={brief}
+          onChange={setBrief}
+          onSubmit={handleStart}
+          disabled={busy}
+          placeholder={`例如：为 ${brandName} 做一组小红书种草主视觉，清透水光风格…`}
+          primaryAction={
+            <button
+              type="button"
+              onClick={handleStart}
+              disabled={busy}
+              className="h-11 shrink-0 rounded-[18px] bg-gradient-to-br from-primary to-accent px-6 text-sm font-medium text-primary-foreground shadow-[0_12px_28px_rgba(124,92,255,0.26)] transition-opacity disabled:opacity-70"
+            >
+              {busy
+                ? status === "RUNNING"
+                  ? "AI 拆解中…"
+                  : "正在受理…"
+                : brief.trim()
+                  ? "AI 拆解并开始创作"
+                  : "去出图"}
+            </button>
+          }
+        />
         <p className="mt-2 pl-6 text-xs text-muted-foreground">
-          填写后将以这段描述新建草稿 Campaign（原文存入项目描述），并把前 500 字预填进工作台作为出图卖点起点（不做 AI 自动拆解）。
+          提交后 BrandAI 会用 AI 拆解出核心卖点、画面场景与风格关键词，立项为草稿
+          Campaign，并把拆解结果预填进工作台（服务端异步处理，可离开稍后查看）。
         </p>
-        {startFromBrief.isError ? (
+        {busy ? (
+          <p className="mt-2 pl-6 text-xs text-primary">
+            {status === "RUNNING"
+              ? "AI 正在拆解你的需求，完成后将自动进入工作台…"
+              : "已受理，正在排队拆解…"}
+          </p>
+        ) : null}
+        {start.isError ? (
           <p className="mt-2 pl-6 text-xs text-destructive">
-            立项失败：
-            {startFromBrief.error instanceof Error
-              ? startFromBrief.error.message
-              : "请重试"}
+            提交失败：
+            {start.error instanceof Error ? start.error.message : "请重试"}
+          </p>
+        ) : null}
+        {failed && !start.isError ? (
+          <p className="mt-2 pl-6 text-xs text-destructive">
+            AI 拆解未完成（可能超时或失败）。
+            <button
+              type="button"
+              onClick={() => {
+                setTaskId(null);
+                setJobId(null);
+                setTimedOut(false);
+              }}
+              className="ml-1 underline hover:text-destructive/80"
+            >
+              重试
+            </button>
           </p>
         ) : null}
       </section>
@@ -197,6 +294,10 @@ export default function HomePage() {
           </div>
         )}
       </section>
+
+      {/* L2 / B5 / H14 · 推荐品牌瀑布流 — REAL BrandWorkspace rows the user can
+          see (owned / member-of). Honest empty state when none. */}
+      <RecommendedBrands />
     </div>
   );
 }

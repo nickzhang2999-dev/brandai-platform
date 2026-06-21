@@ -1,14 +1,18 @@
+import base64
 import io
+import logging
 import time
 from datetime import datetime, timezone
 from typing import Any
 
 import httpx
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 
 from .config import settings
-from .ssrf import safe_get
+from .ssrf import SSRFError, safe_get
+
+logger = logging.getLogger("brandai.ai")
 from .providers import resolve_image_provider, resolve_vlm_provider
 from .providers.base import ImageProvider, VLMProvider
 from .providers.http_providers import (
@@ -21,6 +25,8 @@ from .schemas import (
     ComplianceCheckResponse,
     ComplianceReport,
     ComplianceResult,
+    DescribeRequest,
+    DescribeResponse,
     EditRequest,
     EditResponse,
     GenerateRequest,
@@ -32,6 +38,8 @@ from .schemas import (
     ParseManualRequest,
     RecognizeRequest,
     RecognizeResponse,
+    SummarizeRequest,
+    SummarizeResponse,
 )
 
 
@@ -40,6 +48,36 @@ def _call_cost(kind: str, width: int, height: int, n: int) -> float | None:
     to the priced set; other vendors use the literal canvas; mock/unpriced → None."""
     size = _snap_openai_size(width, height) if kind == "openai" else f"{width}x{height}"
     return _estimate_cost_usd(kind, size, _DEFAULT_IMAGE_QUALITY, n)
+
+async def _probe_image_size(image_ref: str) -> tuple[int, int] | None:
+    """K5 — decode the actual pixel W×H of a generated image.
+
+    Handles both ``data:`` URLs (gpt-image-1 returns base64) and hosted http(s)
+    URLs (fetched SSRF-guarded — these are our own generator output, so the
+    initial host is trusted; redirect hops are validated). Best-effort: returns
+    None on any failure so a probe miss never breaks generation — the worker
+    simply keeps the requested size as the only recorded dimensions.
+    """
+    from PIL import Image
+
+    try:
+        if image_ref.startswith("data:"):
+            raw = base64.b64decode(image_ref.split(",", 1)[1])
+        elif image_ref.startswith(("http://", "https://")):
+            async with httpx.AsyncClient(timeout=settings.http_timeout) as c:
+                r = await safe_get(c, image_ref, allow_private_initial=True)
+                r.raise_for_status()
+                raw = r.content
+        else:
+            return None
+        with Image.open(io.BytesIO(raw)) as im:
+            w, h = im.size
+        if w > 0 and h > 0:
+            return int(w), int(h)
+        return None
+    except (SSRFError, Exception):  # noqa: BLE001 — best-effort; never break gen
+        return None
+
 
 app = FastAPI(title="OpenVisual AI Service", version="0.1.0")
 
@@ -132,6 +170,39 @@ async def recognize(
         [a.model_dump() for a in req.assets]
     )
     return RecognizeResponse(**data)
+
+
+@app.post("/v1/describe", response_model=DescribeResponse, response_model_exclude_none=True)
+async def describe(
+    req: DescribeRequest,
+    vlm: VLMProvider = Depends(resolve_vlm_provider),
+):
+    """E9/E10 — auto-tag one image asset (tags + description) for the library."""
+    data = await vlm.describe_asset(
+        req.url,
+        category=req.category,
+        brand_tone=req.brandTone,
+        source=req.source,
+    )
+    return DescribeResponse(**data)
+
+
+@app.post("/v1/summarize", response_model=SummarizeResponse, response_model_exclude_none=True)
+async def summarize(
+    req: SummarizeRequest,
+    vlm: VLMProvider = Depends(resolve_vlm_provider),
+):
+    """B2/C8 — text-only VLM (chat) over a brand brief / campaign context.
+
+    mode="brief_decompose": decompose a free-text brief into creation seeds.
+    mode="campaign_summary": condense a campaign's context into a summary.
+    """
+    data = await vlm.summarize(
+        req.mode,
+        req.text,
+        context=req.context.model_dump() if req.context else None,
+    )
+    return SummarizeResponse(**data)
 
 
 async def _fetch_pdf_text(url: str) -> str:
@@ -347,13 +418,35 @@ async def generate(
                 negative=negative or None,
                 extra=provider_extra or None,
             )
+            # A provider may return no image for a target (filtered/empty
+            # response). Surface a controlled 502 with the failing target rather
+            # than an opaque 500 IndexError on urls[0].
+            if not urls:
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        f"AI provider returned no image for target "
+                        f"{t.key} ({t.width}x{t.height})"
+                    ),
+                )
+            actual = await _probe_image_size(urls[0])
             versions.append(
                 GeneratedVersion(
                     imageUrl=urls[0],
                     width=t.width,
                     height=t.height,
+                    actualWidth=actual[0] if actual else None,
+                    actualHeight=actual[1] if actual else None,
                     params=_echo_params(
-                        {"targetKey": t.key, "targetLabel": t.label}
+                        {
+                            "targetKey": t.key,
+                            "targetLabel": t.label,
+                            **(
+                                {"actualWidth": actual[0], "actualHeight": actual[1]}
+                                if actual
+                                else {}
+                            ),
+                        }
                     ),
                 )
             )
@@ -394,18 +487,24 @@ async def generate(
         latencyMs=int((time.perf_counter() - started) * 1000),
         totalTokens=getattr(provider, "last_total_tokens", None),
     )
-    return GenerateResponse(
-        versions=[
+    versions = []
+    for u in urls:
+        actual = await _probe_image_size(u)
+        versions.append(
             GeneratedVersion(
                 imageUrl=u,
                 width=w,
                 height=h,
-                params=_echo_params(),
+                actualWidth=actual[0] if actual else None,
+                actualHeight=actual[1] if actual else None,
+                params=_echo_params(
+                    {"actualWidth": actual[0], "actualHeight": actual[1]}
+                    if actual
+                    else {}
+                ),
             )
-            for u in urls
-        ],
-        usage=usage,
-    )
+        )
+    return GenerateResponse(versions=versions, usage=usage)
 
 
 @app.post("/v1/edit", response_model=EditResponse, response_model_exclude_none=True)

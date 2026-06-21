@@ -3,6 +3,7 @@ import { AssetCategory } from "@brandai/contracts";
 import { ApiException, handleError, ok, requireUser } from "@/lib/api";
 import { uploadBuffer } from "@/lib/s3";
 import { requireWorkspaceRole } from "@/lib/workspace";
+import { serializeAsset } from "@/lib/assets";
 
 /**
  * Server-side brand-asset upload. The browser POSTs a `multipart/form-data` body
@@ -23,6 +24,7 @@ export async function POST(
     const form = await req.formData();
     const file = form.get("file");
     const categoryRaw = form.get("category");
+    const folderRaw = form.get("folderId");
 
     if (!(file instanceof File)) {
       throw new ApiException(400, "Missing file");
@@ -32,6 +34,21 @@ export async function POST(
       throw new ApiException(400, "Invalid category");
     }
     const category = parsedCategory.data;
+
+    // H6 — optional folder selected in the upload dialog. Validate ownership so
+    // a cross-workspace folder id can't be filed against (§3.5 isolation rule 2,
+    // mirrors the PATCH route's folder check / IDOR guard).
+    let folderId: string | null = null;
+    if (typeof folderRaw === "string" && folderRaw.length > 0) {
+      const folder = await prisma.assetFolder.findUnique({
+        where: { id: folderRaw },
+        select: { workspaceId: true },
+      });
+      if (!folder || folder.workspaceId !== wsId) {
+        throw new ApiException(404, "Folder not found");
+      }
+      folderId = folderRaw;
+    }
 
     const buf = Buffer.from(await file.arrayBuffer());
     const mimeType = file.type || "application/octet-stream";
@@ -47,9 +64,10 @@ export async function POST(
         mimeType,
         sizeBytes: buf.length,
         source: "UPLOAD",
+        ...(folderId ? { folderId } : {}),
       },
     });
-    return ok(asset, { status: 201 });
+    return ok(serializeAsset(asset), { status: 201 });
   } catch (err) {
     return handleError(err);
   }
