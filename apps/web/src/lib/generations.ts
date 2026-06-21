@@ -7,6 +7,7 @@ import {
   Project,
   type QueueItem,
 } from "@brandai/contracts";
+import { BRAND_PREVIEW_PROJECT_NAME } from "./brand-preview";
 
 /**
  * Read-side helpers for Generation / GenerationVersion data, shaped to the
@@ -237,8 +238,11 @@ export async function setVersionComplianceReport(
 export async function listWorkspaceProjects(
   workspaceId: string,
 ): Promise<Project[]> {
+  // Exclude the hidden D10 brand-preview bucket (Generation.projectId requires
+  // a Project, but it must NOT surface as a user Campaign anywhere this list
+  // feeds — Campaign page / homepage / assets join dialog).
   const rows = await prisma.project.findMany({
-    where: { workspaceId },
+    where: { workspaceId, name: { not: BRAND_PREVIEW_PROJECT_NAME } },
     orderBy: { createdAt: "desc" },
   });
   return rows.map(serializeProject);

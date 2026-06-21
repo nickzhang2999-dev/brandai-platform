@@ -217,7 +217,9 @@ export default function AssetsPage() {
       return true;
     });
   }, [assets, filter, q, favOnly, folderFilter]);
-  const active = filtered.find((a) => a.id === activeId) ?? filtered[0] ?? assets[0];
+  // Detail pane must track the FILTERED grid — falling back to assets[0] would
+  // show a sidebar asset that isn't visible under the active filter/search.
+  const active = filtered.find((a) => a.id === activeId) ?? filtered[0];
 
   // E13 · 使用记录 — real linkage derived from generation versions referencing
   // this asset (see assets/[assetId]/usage route). Empty list → honest

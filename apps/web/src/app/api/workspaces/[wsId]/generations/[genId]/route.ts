@@ -125,7 +125,7 @@ export async function POST(
     // owner). A re-run of a released (FAILED) attempt consumes a fresh slot; a
     // re-run of a SUCCEEDED row keeps its existing slot. Checked before the
     // atomic claim so an over-quota owner neither flips state nor enqueues.
-    await assertRegenerateQuota(wsId, priorRow.status);
+    await assertRegenerateQuota(wsId, priorRow.status, priorRow.createdAt);
 
     // Body is optional; tolerate an empty request.
     let body: z.infer<typeof RegenerateInput> = undefined;

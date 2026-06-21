@@ -111,13 +111,23 @@ export default function HomePage() {
     navigatedRef.current = true;
     (async () => {
       let result: DecomposeResult | undefined;
-      try {
-        const poll = await apiFetch<JobPoll>(
-          `/api/workspaces/${wsId}/brief/decompose?jobId=${jobId}`,
-        );
-        result = poll.result;
-      } catch {
-        /* fall back to a plain brief prefill below */
+      // The worker marks the AsyncTask SUCCEEDED before BullMQ flushes the job's
+      // returnValue, so the first job poll can race and come back with no
+      // result. Retry briefly (bounded ~4s) until the seeds land, then fall
+      // back to a plain brief prefill below.
+      for (let i = 0; i < 8; i++) {
+        try {
+          const poll = await apiFetch<JobPoll>(
+            `/api/workspaces/${wsId}/brief/decompose?jobId=${jobId}`,
+          );
+          if (poll.result) {
+            result = poll.result;
+            break;
+          }
+        } catch {
+          /* transient — retry, then fall back below */
+        }
+        await new Promise((r) => setTimeout(r, 500));
       }
       qc.invalidateQueries({ queryKey: ["brandai-projects", wsId] });
       const params = new URLSearchParams();

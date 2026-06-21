@@ -169,8 +169,12 @@ async function countOwnerUsage(
   if (wsIds.length === 0) return { dailyUsed: 0, periodUsed: 0 };
   const released: Prisma.GenerationWhereInput = {
     workspaceId: { in: wsIds },
-    // Release-on-failure: a FAILED attempt no longer holds a reservation.
-    status: { not: "FAILED" },
+    // Release-on-failure ONLY when nothing usable remains. A plain FAILED
+    // attempt (no versions) is released; but a FAILED *rerun* that kept its
+    // prior root versions still has downloadable/exportable output, so it must
+    // keep holding its slot — otherwise a user could free a slot by triggering
+    // a failed rerun while retaining the old image.
+    NOT: { status: "FAILED", versions: { none: {} } },
   };
   const [dailyUsed, periodUsed] = await Promise.all([
     client.generation.count({
@@ -285,20 +289,25 @@ export async function assertGenerationQuota(
 export async function assertRegenerateQuota(
   workspaceId: string,
   priorStatus: string,
+  priorCreatedAt: Date,
 ): Promise<void> {
   if (!quotaEnabled()) return;
   const ownerId = await getWorkspaceOwnerId(workspaceId);
   const { plan, dailyUsed, periodUsed } = await getUsage(ownerId);
-  // A previously-SUCCEEDED row is already in the counts; re-running it must not
-  // double-charge. Use count=1 only when the prior attempt was released.
-  const consumesNewSlot = priorStatus === "FAILED";
+  // The prior row only occupies a slot in the windows it actually falls within.
+  // Regenerate resets the row's createdAt to now, so a prior success from an
+  // EARLIER day/period consumes a NEW current-window slot and must be gated
+  // like one (no subtraction) — otherwise an at-limit owner could rerun a stale
+  // success for free. Subtract its slot only where it's truly counted: a
+  // non-released (non-FAILED) prior whose createdAt is inside that window.
+  const priorCounted = priorStatus !== "FAILED";
+  const inDaily = priorCounted && priorCreatedAt >= startOfDayUTC();
+  const inPeriod = priorCounted && priorCreatedAt >= plan.periodStart;
   const decision = evaluateGenerationQuota(
     plan,
     {
-      // For an already-counted SUCCEEDED row, subtract its own slot from the
-      // baseline so "used + 1" lands back at the true current usage.
-      dailyUsed: consumesNewSlot ? dailyUsed : Math.max(0, dailyUsed - 1),
-      periodUsed: consumesNewSlot ? periodUsed : Math.max(0, periodUsed - 1),
+      dailyUsed: inDaily ? Math.max(0, dailyUsed - 1) : dailyUsed,
+      periodUsed: inPeriod ? Math.max(0, periodUsed - 1) : periodUsed,
     },
     1,
   );

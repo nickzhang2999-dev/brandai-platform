@@ -91,6 +91,15 @@ export default function CampaignsPage() {
     return (id: string) => map.get(id) ?? "";
   }, [brands, wsId, brandName]);
 
+  // C4 — only offer brands that actually have loaded campaigns. Projects come
+  // only from the active workspace's GET /projects, so listing every brand let
+  // a user pick one with no loaded rows → misleading empty list. Restricting to
+  // present brands keeps the filter honest (usually just the active brand).
+  const brandOptions = useMemo(() => {
+    const present = new Set(projects.map((p) => p.workspaceId));
+    return brands.filter((b) => present.has(b.id));
+  }, [brands, projects]);
+
   const filtered = useMemo(() => {
     const f = FILTERS.find((x) => x.key === filterKey);
     const range = RANGES.find((x) => x.key === rangeKey);
