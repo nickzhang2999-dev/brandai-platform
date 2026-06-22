@@ -3,7 +3,7 @@ import { AssetCategory } from "@brandai/contracts";
 import { ApiException, handleError, ok, requireUser } from "@/lib/api";
 import { uploadBuffer } from "@/lib/s3";
 import { requireWorkspaceRole } from "@/lib/workspace";
-import { serializeAsset } from "@/lib/assets";
+import { serializeAsset, decodeImageResolution } from "@/lib/assets";
 
 /**
  * Server-side brand-asset upload. The browser POSTs a `multipart/form-data` body
@@ -54,6 +54,11 @@ export async function POST(
     const mimeType = file.type || "application/octet-stream";
     const { key, url } = await uploadBuffer(buf, mimeType, wsId);
 
+    // P04-M12 — persist the pixel dimensions so the detail panel's 尺寸 row
+    // renders. Zero-dependency probe (PNG IHDR / JPEG SOF); a miss leaves
+    // resolution unset rather than failing the upload.
+    const resolution = decodeImageResolution(buf);
+
     const asset = await prisma.asset.create({
       data: {
         workspaceId: wsId,
@@ -64,6 +69,7 @@ export async function POST(
         mimeType,
         sizeBytes: buf.length,
         source: "UPLOAD",
+        ...(resolution ? { resolution } : {}),
         ...(folderId ? { folderId } : {}),
       },
     });
