@@ -253,6 +253,7 @@ export default function CampaignsPage() {
                   <div className="flex flex-col gap-2">
                     <div className="flex items-center gap-2">
                       <StatusBadge status={status} />
+                      {c.archivedAt ? <Chip>已归档</Chip> : null}
                       <span className="text-xs text-muted-foreground">
                         {brandName}
                       </span>
@@ -305,7 +306,9 @@ export default function CampaignsPage() {
               <div className="mt-2 text-[11px] text-muted-foreground">
                 当前状态：
                 <span className="font-medium text-foreground/80">
-                  {STATUS_LABEL[(active.status ?? "DRAFT") as Status]}
+                  {active.archivedAt
+                    ? "已归档"
+                    : STATUS_LABEL[(active.status ?? "DRAFT") as Status]}
                 </span>
               </div>
             ) : null}
@@ -734,7 +737,12 @@ function ConfirmActionDialog({
         `/api/workspaces/${wsId}/projects/${project.id}`,
         {
           method: "PATCH",
-          body: JSON.stringify({ status: meta.nextStatus }),
+          // P02 归档 — archive 落 archivedAt（区别于普通「已完成」），提交终审仍走 status。
+          body: JSON.stringify(
+            action === "archive"
+              ? { archive: true }
+              : { status: meta.nextStatus },
+          ),
         },
       ),
     onSuccess: onDone,

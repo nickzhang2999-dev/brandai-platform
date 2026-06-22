@@ -1048,9 +1048,11 @@ function RecognizeModal({
 function BrandPreview({
   wsId,
   confirmedCount,
+  hasForbidden,
 }: {
   wsId: string;
   confirmedCount: number;
+  hasForbidden: boolean;
 }) {
   const qc = useQueryClient();
   const [genId, setGenId] = useState<string | null>(null);
@@ -1164,6 +1166,13 @@ function BrandPreview({
                 : "生成品牌预览"}
         </button>
       </div>
+
+      {hasForbidden ? (
+        <p className="mt-3 rounded-xl border border-destructive/30 bg-destructive/10 px-3.5 py-2 text-[11px] leading-relaxed text-destructive">
+          注意：当前存在「禁用(FORBIDDEN)」品牌规则，会对出图做硬阻断。若预览生成失败并提示
+          受限，请先把相应规则调整为「拒绝(REJECTED)」或更低强度后再试。
+        </p>
+      ) : null}
 
       <div className="mt-5 flex min-h-[220px] items-center justify-center overflow-hidden rounded-2xl border border-border bg-background p-4">
         {timedOut && status !== "SUCCEEDED" ? (
@@ -1606,7 +1615,13 @@ export default function BrandKnowledgePage() {
       </section>
 
       {/* D10 · 品牌预览 — composite visual auto-generation from confirmed KB. */}
-      <BrandPreview wsId={wsId} confirmedCount={confirmedCount} />
+      <BrandPreview
+        wsId={wsId}
+        confirmedCount={confirmedCount}
+        hasForbidden={rules.some(
+          (r) => r.status === "CONFIRMED" && r.strength === "FORBIDDEN",
+        )}
+      />
     </div>
   );
 }

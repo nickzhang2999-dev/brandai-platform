@@ -8,6 +8,7 @@ import {
   SceneType,
 } from "./enums";
 import { SizeSpec } from "./ai";
+import { Asset } from "./entities";
 
 /** Web BFF (Next.js Route Handlers) request schemas. */
 
@@ -156,6 +157,29 @@ export const ChangePasswordInput = z.object({
   newPassword: z.string().min(8),
 });
 export type ChangePasswordInput = z.infer<typeof ChangePasswordInput>;
+
+/**
+ * E11/E12 — durable Project↔Asset link. `MEMBER` = 加入项目（素材属于该
+ * Campaign）；`REFERENCE` = 设为参考（工作台出图带入）。Replaces the browser-only
+ * reference tray with a server-authoritative relation.
+ */
+export const ProjectAssetKind = z.enum(["MEMBER", "REFERENCE"]);
+export type ProjectAssetKind = z.infer<typeof ProjectAssetKind>;
+
+export const LinkProjectAssetInput = z.object({
+  assetId: z.string(),
+  kind: ProjectAssetKind.default("MEMBER"),
+});
+export type LinkProjectAssetInput = z.infer<typeof LinkProjectAssetInput>;
+
+export const ProjectAssetLink = z.object({
+  id: z.string(),
+  projectId: z.string(),
+  kind: ProjectAssetKind,
+  createdAt: z.string(),
+  asset: Asset,
+});
+export type ProjectAssetLink = z.infer<typeof ProjectAssetLink>;
 
 export const ApiError = z.object({
   error: z.string(),

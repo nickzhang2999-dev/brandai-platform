@@ -194,6 +194,8 @@ export const Project = z.object({
   startDate: z.string().optional(),
   endDate: z.string().optional(),
   aiSummary: z.string().optional(),
+  // P02 归档 — 设置则表示「已归档」（区别于 status=COMPLETED 的「已完成」）。
+  archivedAt: z.string().optional(),
 });
 export type Project = z.infer<typeof Project>;
 

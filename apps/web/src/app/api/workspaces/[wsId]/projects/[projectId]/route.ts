@@ -33,10 +33,17 @@ const PatchProjectInput = z
   .object({
     status: CampaignStatus.optional(),
     aiSummary: z.string().max(4000).optional(),
+    // P02 归档 — `archive:true` 归档（落 archivedAt + status=COMPLETED），
+    // `archive:false` 取消归档。区别于普通 status=COMPLETED 的「已完成」。
+    archive: z.boolean().optional(),
   })
-  .refine((v) => v.status !== undefined || v.aiSummary !== undefined, {
-    message: "Nothing to update",
-  });
+  .refine(
+    (v) =>
+      v.status !== undefined ||
+      v.aiSummary !== undefined ||
+      v.archive !== undefined,
+    { message: "Nothing to update" },
+  );
 
 async function loadScoped(wsId: string, projectId: string) {
   const existing = await prisma.project.findUnique({
@@ -82,6 +89,10 @@ export async function PATCH(
       data: {
         ...(input.status ? { status: input.status } : {}),
         ...(input.aiSummary != null ? { aiSummary: input.aiSummary } : {}),
+        ...(input.archive === true
+          ? { archivedAt: new Date(), status: "COMPLETED" as const }
+          : {}),
+        ...(input.archive === false ? { archivedAt: null } : {}),
       },
     });
     return ok(serializeProject(project));

@@ -246,10 +246,30 @@ model Asset {
   // folder un-files its assets rather than cascading them away.
   folderId               String?
   folder                 AssetFolder?      @relation(fields: [folderId], references: [id], onDelete: SetNull)
+  // E11/E12 — links into projects (加入项目 / 设为参考).
+  projectLinks           ProjectAsset[]
 
   @@index([workspaceId, category])
   @@index([workspaceId, availableForGeneration])
   @@index([workspaceId, folderId])
+}
+
+// E11/E12 · Project↔Asset 关联 — 「加入项目」(kind=MEMBER) 与「设为参考」
+// (kind=REFERENCE) 的服务端真关系（取代 reference-tray 客户端暂存）。projectId 与
+// assetId 同 workspace（路由层 IDOR 校验，§3.5 隔离规则 2）。kind 用 String 而非新
+// enum，避免在共享 CDS Postgres 上 CREATE TYPE 的跨分支耦合。
+model ProjectAsset {
+  id        String   @id @default(cuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  assetId   String
+  asset     Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  kind      String   @default("MEMBER") // MEMBER | REFERENCE
+  createdAt DateTime @default(now())
+
+  @@unique([projectId, assetId, kind])
+  @@index([projectId])
+  @@index([assetId])
 }
 
 // E3 · 素材文件夹 — workspace 作用域的素材分组（多租户隔离：folder 与 asset 同
@@ -360,6 +380,15 @@ model Project {
   endDate     DateTime?
   aiSummary   String?
   generations Generation[]
+  // E11/E12 — durable Project↔Asset links (加入项目 / 设为参考). Replaces the
+  // browser-only reference tray with a server-authoritative relation so the
+  // selection survives across devices and feeds the workbench.
+  assetLinks  ProjectAsset[]
+  // P02 归档 — archivedAt distinguishes 已归档 from 已完成 without a new
+  // CampaignStatus enum value (shared CDS Postgres: an unknown enum value would
+  // break sibling branches that don't know it; an additive nullable column is
+  // backward-compatible).
+  archivedAt  DateTime?
 
   @@index([workspaceId])
   @@index([workspaceId, status])

@@ -59,6 +59,14 @@
 
 > **🔒 铁律：图像模型固定 `gpt-image-2`（写死）。** `apps/ai/config.py` / `web settings.ts` / 改图兜底 / admin UI 默认全部 `gpt-image-2`；AppSetting.imageModel + 项目 env IMAGE_MODEL 已设 `gpt-image-2`。灰度 provider 自测 `openai OK · model=gpt-image-2`，真出图(R2, 1.5MB PNG)已验。**禁止回退 gpt-image-1。**
 
+> **本轮收尾对齐（2026-06-22 · 6 角色 MECE 全量验收 + 缺陷修复）。** 按 doc01§四 5 类平台角色拆 MECE 6 套件，6 子智能体并行端到端真验（约 65 检查 / 0 FAIL，6 份报告入 CDS 报告区 + 总评估报告）。本轮把验收暴露的「产品方案要求/退化」项**全部做实**：
+> - **E2 素材尺寸落库**（S4 WARN-1）：上传零依赖解析 PNG IHDR / JPEG SOF → `resolution="W × H"`，详情「尺寸」行恢复。灰度复验 PNG320×200 / JPEG800×600 正确。
+> - **E11/E12 加入项目 / 设为参考服务端化**（原客户端暂存 → 真关系）：新 `ProjectAsset` 表（kind=MEMBER/REFERENCE）+ `projects/[id]/assets` GET/POST/DELETE（workspace 作用域 + IDOR）；工作台合并服务端 REFERENCE（跨设备可续，tray 退化为同 tab 即时反馈）。
+> - **C9/H11 归档独立态**：新增 `Project.archivedAt`（加性列，避免改 CampaignStatus 枚举破共享 DB 的兄弟分支）；归档落 archivedAt + UI「已归档」chip。
+> - **F16 多尺寸 snap 提示** + **D10 FORBIDDEN 硬阻断前置提示**（UI 文案）。
+> - **doc01§11 明确「一期不纳入」项不臆造**：完整商业计费系统 / 多团队复杂协作 / 多级审批流 / 视频生成 / PSD 深度编辑 / 泛网络素材抓取 —— 这些是产品方案显式排除，**不做即是遵循产品方案**；其余 phase-2（邀请-注册令牌流、通知/读端成员级守卫）见 §K，单超管一期不可达。
+> 全程 `pnpm test`+`typecheck`+`build` 绿；迁移幂等加性。
+
 ## A · 平台基础架构 / 全局
 
 | 编号 | 功能点 | 来源 | 状态 | 路径 / 入口 | 备注 · 验收 | 变更 |
@@ -120,7 +128,7 @@
 | 编号 | 功能点 | 来源 | 状态 | 路径 | 备注 · 验收 | 变更 |
 |---|---|---|---|---|---|---|
 | E1 | 页面标题区 | P04-M02 | ✅ | `assets/page.tsx`（PageHeader） | — | 2026-06-20 |
-| E2 | 上传素材 | P04-M03 | ✅ | `page.tsx:53`（multipart 真实） | 仅图片（`accept=image/*`）；视频/文档未支持 | 接入 2026-06-21 |
+| E2 | 上传素材 | P04-M03 | ✅ | `page.tsx:53`（multipart 真实）+ `assets/upload/route.ts` | 仅图片（`accept=image/*`）；**上传即解析宽高落 `resolution`**（PNG IHDR/JPEG SOF 零依赖），详情「尺寸」行真显（灰度复验 320×200 / 800×600）。视频/文档未支持 | 尺寸补 2026-06-22 |
 | E3 | 新建文件夹 | P04-M04 | ✅ | `AssetFolder` 模型+迁移 `20260621100829_asset_folders` + `folders` 路由 + assets 页 `CreateFolderDialog`/筛选/移动 | 真模型：建/列/改名/删(SetNull 不删素材)/移动/筛选。灰度真验：建夹+移素材 assetCount=1 | 接入+真验 2026-06-21 |
 | E4 | 素材搜索 | P04-M05 | ✅ | `page.tsx:142` | 按文件名；关键词/标签搜索未做 | 接入 2026-06-21 |
 | E5 | 类型筛选 | P04-M06 | ✅ | `page.tsx:15` | Logo/产品图/包装/主视觉/社媒/VI文档/其他 | 2026-06-20 |
@@ -129,8 +137,8 @@
 | E8 | 素材详情侧栏 | P04-M12 | ✅ | `page.tsx:229` | 预览/类型/尺寸/大小/来源/AI描述/AI标签 | 2026-06-20 |
 | E9 | AI 智能标签 | P04-M13 | ✅ | `assets/page.tsx` 详情「AI 智能标注」→`POST .../describe`→worker→真 VLM `/v1/describe`→写 `Asset.aiTags` | `assets/page.tsx` 详情「AI 智能标注」→worker→真 VLM `/v1/describe`→写 `Asset.aiTags`；灰度真验通过(worker→分支唯一 ai 容器) | 真验 5/5 2026-06-21 |
 | E10 | AI 生成描述 | P04-M14 | ✅ | 同 E9（`/v1/describe` 返回 `aiDescription`，worker 写 `Asset.aiDescription`） | 同 E9（`/v1/describe` 返回 `aiDescription`→写 `Asset.aiDescription`）；灰度真验通过(worker→分支唯一 ai 容器) | 真验 2026-06-21 |
-| E11 | 加入项目（→Campaign） | P04-M16 | ✅ | `assets/page.tsx::JoinProjectDialog` + `lib/reference-tray.ts` | 真弹窗选 Campaign→加入并跳工作台；reference-tray 暂存（持久化 DB Project↔Asset 关系仍 phase-2，弹窗文案诚实标注） | 弹窗化 2026-06-21 |
-| E12 | 设为参考（→工作台参考区） | P04-M17 | ✅ | `assets/page.tsx` + `lib/reference-tray.ts` ↔ 工作台 F9 | UI 联动通：设为参考→工作台 F9 显示并入 referenceAssetIds（真校验归属+留痕 version.params）。**注**：OpenAI generate API 不收图，当前为 prompt 级引导，真视觉条件化需经 edits 路由（phase-2） | 接入 2026-06-21 |
+| E11 | 加入项目（→Campaign） | P04-M16 | ✅ | `assets/page.tsx::JoinProjectDialog` + `projects/[id]/assets`(POST kind=MEMBER) | 真弹窗选 Campaign→加入并跳工作台；**服务端 `ProjectAsset` 真关系**（取代纯客户端暂存，跨设备/协作可续），tray 退化为同 tab 即时反馈 | 服务端化 2026-06-22 |
+| E12 | 设为参考（→工作台参考区） | P04-M17 | ✅ | `assets/page.tsx` + `projects/[id]/assets`(kind=REFERENCE) ↔ 工作台 F9 | 设为参考→落 `ProjectAsset(REFERENCE)`；工作台 F9 合并服务端参考（真校验归属+留痕 version.params）。**注**：OpenAI generate API 不收图，当前为 prompt 级引导，真视觉条件化需经 edits 路由（phase-2） | 服务端化 2026-06-22 |
 | E13 | 收藏切换 / 使用记录 / 查看来源 | doc02/05 | ✅ | 收藏 toggle(PATCH isFavorite)+筛选、使用记录(generation 引用派生)、查看来源弹窗(H8) | 灰度真验 | 接入 2026-06-21 |
 
 ## F · P05 工作台

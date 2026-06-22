@@ -117,6 +117,7 @@ export function serializeProject(row: {
   startDate?: Date | null;
   endDate?: Date | null;
   aiSummary?: string | null;
+  archivedAt?: Date | null;
 }): Project {
   return Project.parse({
     id: row.id,
@@ -135,6 +136,7 @@ export function serializeProject(row: {
     startDate: row.startDate ? row.startDate.toISOString() : undefined,
     endDate: row.endDate ? row.endDate.toISOString() : undefined,
     aiSummary: row.aiSummary ?? undefined,
+    archivedAt: row.archivedAt ? row.archivedAt.toISOString() : undefined,
   });
 }
 

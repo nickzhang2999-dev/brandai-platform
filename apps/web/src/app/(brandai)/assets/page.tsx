@@ -333,10 +333,25 @@ export default function AssetsPage() {
     return { project, result };
   }
 
+  // E11/E12 — durable server-side link (加入项目=MEMBER / 设为参考=REFERENCE),
+  // best-effort & additive on top of the client tray so the selection survives
+  // across devices and is the workbench's source of truth. A failure here never
+  // blocks the immediate (tray-backed) UX.
+  function persistLink(projectId: string, kind: "MEMBER" | "REFERENCE") {
+    if (!active || !projectId) return;
+    apiFetch(`/api/workspaces/${wsId}/projects/${projectId}/assets`, {
+      method: "POST",
+      body: JSON.stringify({ assetId: active.id, kind }),
+    }).catch(() => {
+      /* tray already gave feedback; durability is best-effort */
+    });
+  }
+
   // E12 「设为参考」：暂存后留在本页 + 给出"去工作台查看"链接（满额/重复也如实反馈）。
   function handleSetReference() {
     const r = stageActiveAsReference(pickProject);
     if (!r) return;
+    if (r.result !== "full") persistLink(r.project.id, "REFERENCE");
     setStagedNote({
       projectId: r.project.id,
       projectName: r.project.name,
@@ -349,6 +364,10 @@ export default function AssetsPage() {
   function handleAddToProject(projectId: string): AddReferenceResult | null {
     const r = stageActiveAsReference(projectId);
     if (!r) return null;
+    if (r.result !== "full") {
+      persistLink(projectId, "MEMBER");
+      persistLink(projectId, "REFERENCE");
+    }
     if (r.result === "full") {
       setStagedNote({
         projectId: r.project.id,
