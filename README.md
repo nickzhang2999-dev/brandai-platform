@@ -307,6 +307,8 @@ pnpm --filter @brandai/web dev                        # http://localhost:3000
 ## 测试
 
 ```bash
+pnpm install
+pnpm db:generate       # ⚠️ 前置：未生成 Prisma client 时 typecheck/build 会红（@prisma/client did not initialize）
 pnpm test              # L1: contracts + ui vitest
 pnpm test:ai           # L2: apps/ai pytest
 pnpm -F web typecheck  # tsc --noEmit
