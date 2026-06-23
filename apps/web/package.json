@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "next dev -p 3000",
-    "build": "next build",
+    "build": "sh ../../scripts/web-build.sh",
     "start": "next start -p 3000",
     "worker": "tsx src/lib/workers/index.ts",
     "lint": "next lint",
