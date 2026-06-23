@@ -12,6 +12,7 @@ import {
 import { connection, queuePrefix } from "@/lib/queue";
 import { ai } from "@/lib/ai";
 import { uploadDataUrlImage } from "@/lib/s3";
+import { mirrorGenerationVersionToAsset } from "@/lib/asset-mirror";
 import { getConfirmedRules } from "@/lib/rules";
 import { runPrecheck, type PrecheckResult } from "@/lib/precheck";
 import {
@@ -603,6 +604,23 @@ export async function runGenerateJob(
           // complianceReport / parentVersionId / isFinal left null/default
           // for M5 / M4 / M6 to fill in.
         },
+      });
+      // F18 · 出图回流素材库 — 把刚落库的出图版本镜像成一条真实 Asset，使生成图与
+      // 上传素材并列出现在素材库（P04）。best-effort：失败只 warn，绝不让出图 FAILED。
+      const mWidth =
+        (actualSize as { actualWidth?: number }).actualWidth ?? v.width;
+      const mHeight =
+        (actualSize as { actualHeight?: number }).actualHeight ?? v.height;
+      await mirrorGenerationVersionToAsset({
+        workspaceId,
+        generationVersionId: created.id,
+        imageUrl,
+        dataUrl: v.imageUrl,
+        width: mWidth,
+        height: mHeight,
+        sceneType,
+        fileLabel: `${(generation.scene || "AI 出图").slice(0, 40)} #${index + 1}`,
+        aiDescription: generation.scene || undefined,
       });
       return created.id;
     }
