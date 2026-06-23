@@ -102,6 +102,17 @@ node -e "$PLACEHOLDER_JS" &
 PLACEHOLDER_PID=$!
 echo "[startup] placeholder pid=$PLACEHOLDER_PID"
 
+# Keep the placeholder at the HIGHEST scheduler priority. Root cause of the cold
+# deploy deadlock: `next build` pins the node's CPU(s), starving this tiny
+# placeholder so it can't answer the CDS readiness probe within each ~2.4s
+# attempt → probe fails for the whole window → container reaped before the build
+# ever finishes (so .next/CDS_DEPLOY_COMMIT is never written → every redeploy is
+# cold again). Pinning the placeholder high (and nice-ing the heavy build below
+# low) keeps the port responsive so the probe passes on the placeholder, the
+# container survives, and the build completes in its own time then swaps to
+# `next start`. Best-effort: renice needs privilege; ignore if denied.
+renice -n -19 -p "$PLACEHOLDER_PID" >/dev/null 2>&1 || true
+
 # Give the placeholder a brief moment to bind the port before the probe hits.
 sleep 1
 
@@ -127,7 +138,7 @@ set +e
 # --prefer-offline: on the warm .:/app store, skip registry metadata round-trips
 # (pure speed-up, no behavior change) so more of the readiness window is left
 # for `next build` below — the cold build is what overruns the CDS probe window.
-run_step "pnpm install" pnpm install --frozen-lockfile --prod=false --prefer-offline
+run_step "pnpm install" nice -n 19 pnpm install --frozen-lockfile --prod=false --prefer-offline
 INSTALL_RC=$?
 
 # Post-install integrity check. pnpm install can RC=0 even when the CAS
@@ -286,8 +297,10 @@ else
   # pressure (GC churn, not CPU, is what makes the CDS build ~3× the local 68s).
   # If RAM is genuinely too tight the process exits non-zero → the build-failed
   # forensics 503 below surfaces it (observable, not a silent hang).
+  # nice -n 19: yield CPU to the high-priority placeholder so the readiness probe
+  # keeps getting answered during this long build (see placeholder renice above).
   NODE_OPTIONS="${NODE_OPTIONS:-} --max-old-space-size=4096" \
-    pnpm --filter @brandai/web build >> "$BUILD_LOG" 2>&1
+    nice -n 19 pnpm --filter @brandai/web build >> "$BUILD_LOG" 2>&1
   BUILD_RC=$?
   tail -n 60 "$BUILD_LOG"
   set -e
