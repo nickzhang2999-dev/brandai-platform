@@ -10,11 +10,12 @@ import type {
   GenerationVersion,
   ListMembersResponse,
   Project,
+  ProjectAssetLink,
   SizeSpec,
   WorkspaceRole,
 } from "@brandai/contracts";
 import { CHANNEL_SIZES } from "@brandai/contracts";
-import { apiFetch } from "@/lib/client";
+import { apiFetch, assetThumbUrl } from "@/lib/client";
 import { planTiers, upgradeContactEmail } from "@/lib/brandai-mock";
 import {
   getReferences,
@@ -337,14 +338,50 @@ function Workspace() {
       setReferences([]);
       return;
     }
-    const refresh = () => setReferences(getReferences(wsId, projectId));
+    let cancelled = false;
+    // E11/E12 — merge the durable server-side REFERENCE links (source of truth,
+    // survives across devices) with the local tray (instant same-tab feedback),
+    // de-duped by asset id. A server miss degrades gracefully to tray-only.
+    const refresh = () => {
+      const tray = getReferences(wsId, projectId);
+      setReferences(tray);
+      apiFetch<ProjectAssetLink[]>(
+        `/api/workspaces/${wsId}/projects/${projectId}/assets?kind=REFERENCE`,
+      )
+        .then((links) => {
+          if (cancelled) return;
+          const seen = new Set(tray.map((r) => r.id));
+          const fromServer: RefAsset[] = links
+            .filter((l) => !seen.has(l.asset.id))
+            .map((l) => ({
+              id: l.asset.id,
+              fileName: l.asset.fileName,
+              thumbUrl: assetThumbUrl(wsId, l.asset.id, l.asset.url),
+            }));
+          if (fromServer.length > 0) {
+            setReferences((prev) => [...prev, ...fromServer]);
+          }
+        })
+        .catch(() => {
+          /* tray-only fallback */
+        });
+    };
     refresh();
-    return subscribeReferences(refresh);
+    const unsub = subscribeReferences(refresh);
+    return () => {
+      cancelled = true;
+      unsub();
+    };
   }, [wsId, projectId]);
   function dropReference(assetId: string) {
     if (!projectId) return;
     removeReference(wsId, projectId, assetId);
-    setReferences(getReferences(wsId, projectId));
+    setReferences((prev) => prev.filter((r) => r.id !== assetId));
+    // E11/E12 — also drop the durable server link (best-effort).
+    apiFetch(`/api/workspaces/${wsId}/projects/${projectId}/assets`, {
+      method: "DELETE",
+      body: JSON.stringify({ assetId, kind: "REFERENCE" }),
+    }).catch(() => {});
   }
 
   // F8 · 品牌约束 — 本品牌已确认（CONFIRMED）的知识库规则。出图 worker 正是加载
@@ -1007,6 +1044,11 @@ function Workspace() {
             <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
               不选则按上方生成数量出同尺寸图；选 ≥1 个渠道则每个尺寸各出 1 张。
             </p>
+            {multiSize ? (
+              <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+                注：模型会就近匹配到支持的比例（如 1080×1440 → 1024×1536），出图后以实际尺寸为准。
+              </p>
+            ) : null}
           </div>
 
           {/* K5 · 文本策略（M3 textMode） */}
