@@ -124,7 +124,10 @@ run_step() {
 }
 
 set +e
-run_step "pnpm install" pnpm install --frozen-lockfile --prod=false
+# --prefer-offline: on the warm .:/app store, skip registry metadata round-trips
+# (pure speed-up, no behavior change) so more of the readiness window is left
+# for `next build` below — the cold build is what overruns the CDS probe window.
+run_step "pnpm install" pnpm install --frozen-lockfile --prod=false --prefer-offline
 INSTALL_RC=$?
 
 # Post-install integrity check. pnpm install can RC=0 even when the CAS
@@ -276,7 +279,15 @@ else
   : > "$BUILD_LOG"
   set +e
   echo "[startup] === next build ==="
-  pnpm --filter @brandai/web build >> "$BUILD_LOG" 2>&1
+  # Cold `next build` is the step that overruns the CDS readiness window. The
+  # in-process type-check (the prior OOM source) is already disabled in
+  # next.config.mjs, so the build's peak memory is much lower now — give V8 a
+  # larger old-space ceiling to stop GC thrashing under the container's memory
+  # pressure (GC churn, not CPU, is what makes the CDS build ~3× the local 68s).
+  # If RAM is genuinely too tight the process exits non-zero → the build-failed
+  # forensics 503 below surfaces it (observable, not a silent hang).
+  NODE_OPTIONS="${NODE_OPTIONS:-} --max-old-space-size=4096" \
+    pnpm --filter @brandai/web build >> "$BUILD_LOG" 2>&1
   BUILD_RC=$?
   tail -n 60 "$BUILD_LOG"
   set -e
