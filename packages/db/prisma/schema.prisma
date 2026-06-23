@@ -248,6 +248,12 @@ model Asset {
   folder                 AssetFolder?      @relation(fields: [folderId], references: [id], onDelete: SetNull)
   // E11/E12 — links into projects (加入项目 / 设为参考).
   projectLinks           ProjectAsset[]
+  // F18 · 出图回流素材库 — 指向被镜像的出图版本。加性可空列 + 唯一（→幂等回流）。
+  // 不改 AssetSource 枚举（避免共享 CDS Postgres 上其它分支 Prisma 读未知枚举值崩）；
+  // AI 生成来源由该列是否存在标识，source 仍存 UPLOAD。onDelete: Cascade —— 出图版本
+  // 被重新生成删除时，其镜像素材随之清理。
+  generationVersionId    String?           @unique
+  generationVersion      GenerationVersion? @relation("GenerationVersionMirror", fields: [generationVersionId], references: [id], onDelete: Cascade)
 
   @@index([workspaceId, category])
   @@index([workspaceId, availableForGeneration])
@@ -440,6 +446,8 @@ model GenerationVersion {
   reviewedAt       DateTime?
   reviewNote       String?
   createdAt        DateTime   @default(now())
+  // F18 · 出图回流素材库 — 该版本在素材库里的镜像 Asset（回流投影，可空）。
+  mirrorAsset      Asset?     @relation("GenerationVersionMirror")
 
   @@index([generationId])
 }

@@ -9,6 +9,7 @@ import { connection, queuePrefix } from "@/lib/queue";
 import { ai } from "@/lib/ai";
 import { recordUsage } from "@/lib/usage";
 import { uploadDataUrlImage } from "@/lib/s3";
+import { mirrorGenerationVersionToAsset } from "@/lib/asset-mirror";
 import {
   markRunning,
   setProgress,
@@ -155,6 +156,23 @@ export async function runEditJob(
       } as Prisma.InputJsonValue,
       // complianceReport left null for M5 to (re)fill on edited versions.
     },
+  });
+
+  // F18 · 出图回流素材库 — 改图子版本同样镜像成素材，使改图产物也进素材库。
+  // sceneType 沿用源版本 params 里 generate.worker 盖的戳；best-effort，不阻断改图。
+  await mirrorGenerationVersionToAsset({
+    workspaceId,
+    generationVersionId: created.id,
+    imageUrl: editedImageUrl,
+    dataUrl: result.imageUrl,
+    width: editedWidth,
+    height: editedHeight,
+    sceneType:
+      typeof sourceParams.sceneType === "string"
+        ? sourceParams.sceneType
+        : null,
+    fileLabel: `改图_${op}_${nextIndex}`,
+    aiDescription: `由出图改图生成（${op}）`,
   });
 
   await job.updateProgress(100);

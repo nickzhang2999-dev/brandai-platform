@@ -53,6 +53,9 @@ export const Asset = z.object({
   replacementAssetId: z.string().optional(),
   // E3 · 素材文件夹归属（frozen-additive：optional，未归档则省略而非 null）。
   folderId: z.string().optional(),
+  // F18 · 出图回流素材库 — 该素材镜像自哪个出图版本（frozen-additive：optional，
+  // 上传/采集素材省略而非 null）。客户端据此把来源展示为「AI 生成」而非「上传」。
+  generationVersionId: z.string().optional(),
 });
 export type Asset = z.infer<typeof Asset>;
 
