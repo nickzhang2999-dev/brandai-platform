@@ -500,6 +500,30 @@ function Workspace() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [presetGen]);
 
+  // E · 反向同步:把当前 Campaign 写回 URL(?project=),让刷新/分享落到同一项目。
+  // 用 ref 只在 projectId「真的变了」时写——手动切 <select>、默认选 projects[0]、
+  // 「加入项目」程序化导航都覆盖(Codex: 默认/侧边栏/模板入口选中的项目也必须进
+  // URL,否则出图成功后 ?gen= 反向同步会产出缺 project 的分享链,刷新/分享时把这
+  // 次出图绑到当前最新的 campaign,project 作用域的历史/引用/导出全落错项目)。
+  // 深链导航改 ?project= 时本 effect 因 search 变化触发,但此刻 projectId 尚未被
+  // 上面的同步 effect 更新(ref===projectId)→直接跳过,不会用旧 projectId 把深链
+  // 改回去(Bugbot: stale project in deep link)。
+  const lastUrlProjectRef = useRef<string | null>(projectId);
+  useEffect(() => {
+    if (lastUrlProjectRef.current === projectId) return;
+    const prev = lastUrlProjectRef.current;
+    lastUrlProjectRef.current = projectId;
+    if (!projectId) return;
+    if (search.get("project") === projectId) return;
+    const params = new URLSearchParams(Array.from(search.entries()));
+    params.set("project", projectId);
+    // 只有「从一个已同步项目切到另一个」才抹旧 ?gen=(交给下面 gen 反向同步按新
+    // 项目重写);首次播种(prev=null,如默认选 projects[0])不抹,避免清掉仅带
+    // ?gen= 的深链。
+    if (prev) params.delete("gen");
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+  }, [projectId, search, pathname, router]);
+
   // E · 反向同步:把当前查看的出图写回 URL(?gen=),让刷新/分享落到精确那张。
   // 实时出图/改图进行中(jobId 仅会话内存在)不写,避免把一次性 job 深链出去。
   useEffect(() => {
@@ -840,22 +864,7 @@ function Workspace() {
           <span className="inline-flex items-center gap-1">
             <select
               value={projectId ?? ""}
-              onChange={(e) => {
-                const next = e.target.value || null;
-                setProjectId(next);
-                // 把切换写回 URL:用户主动切项目时(只有 onChange 会触发,不与
-                // 「外部深链导航改 ?project=」竞态)同步 ?project=,并抹掉旧项目的
-                // ?gen=(交给 gen 反向同步按新项目重写),让刷新/分享落到同一
-                // Campaign。否则下面 ?gen= 反向同步会把新项目的出图 id 写进仍带旧
-                // ?project= 的 URL,加载错上下文(Bugbot/Codex: stale project)。
-                const params = new URLSearchParams(Array.from(search.entries()));
-                if (next) params.set("project", next);
-                else params.delete("project");
-                params.delete("gen");
-                router.replace(`${pathname}?${params.toString()}`, {
-                  scroll: false,
-                });
-              }}
+              onChange={(e) => setProjectId(e.target.value || null)}
               aria-label="当前 Campaign 项目"
               className="max-w-[16rem] rounded-lg border border-border bg-background px-2 py-1 text-sm font-medium text-foreground outline-none focus:border-primary/40"
             >
