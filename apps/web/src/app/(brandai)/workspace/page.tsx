@@ -500,6 +500,21 @@ function Workspace() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [presetGen]);
 
+  // E · 反向同步:把当前 Campaign 写回 URL(?project=),让刷新/分享落到同一项目。
+  // 用 <select> 切项目只改了 projectId,不碰 URL;若不同步,下面 ?gen= 反向同步会
+  // 把新项目的出图 id 写进仍带旧 ?project= 的 URL,刷新/分享就会用「另一个 Campaign
+  // 的出图」加载错上下文(Bugbot: stale project in deep link)。切项目时旧的 ?gen=
+  // 属于上一项目,一并抹掉,交给下面的 gen 反向同步按新项目重写。深链(URL 已带正确
+  // project)不进此分支,不会误删其 ?gen=。
+  useEffect(() => {
+    if (!projectId) return;
+    if (search.get("project") === projectId) return;
+    const params = new URLSearchParams(Array.from(search.entries()));
+    params.set("project", projectId);
+    params.delete("gen");
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+  }, [projectId, search, pathname, router]);
+
   // E · 反向同步:把当前查看的出图写回 URL(?gen=),让刷新/分享落到精确那张。
   // 实时出图/改图进行中(jobId 仅会话内存在)不写,避免把一次性 job 深链出去。
   useEffect(() => {
