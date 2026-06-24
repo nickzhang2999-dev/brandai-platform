@@ -49,7 +49,8 @@ export default function HomePage() {
 
   const { data: projects = [] } = useQuery({
     queryKey: ["brandai-projects", wsId],
-    queryFn: () => apiFetch<Project[]>(`/api/workspaces/${wsId}/projects`),
+    queryFn: () =>
+      apiFetch<Project[]>(`/api/workspaces/${wsId}/projects?latestCover=1`),
   });
 
   // B2 · 首页 AI 拆解 — REAL async decomposition (§2). Submit brief → POST
@@ -269,7 +270,7 @@ export default function HomePage() {
           </Link>
         ) : (
           <div className="grid auto-cols-[minmax(260px,1fr)] grid-flow-col gap-[18px] overflow-x-auto pb-2">
-            {projects.slice(0, 8).map((c) => {
+            {projects.map((c) => {
               const s = STATUS_META[(c.status ?? "DRAFT") as Status];
               return (
                 <Link
@@ -277,7 +278,11 @@ export default function HomePage() {
                   href="/campaigns"
                   className="flex flex-col overflow-hidden rounded-3xl border border-border bg-card shadow-[0_8px_24px_rgba(30,30,60,0.06)] transition-all hover:-translate-y-0.5"
                 >
-                  <div className="h-32" style={{ background: gradientFor(c.id) }} />
+                  <CampaignCover
+                    campaignId={c.id}
+                    imageUrl={c.coverImage}
+                    name={c.name}
+                  />
                   <div className="flex flex-1 flex-col gap-2 p-4">
                     <div className="flex items-center gap-2">
                       <span className={badgeCls(s.tone)}>{s.label}</span>
@@ -298,6 +303,35 @@ export default function HomePage() {
       {/* L2 / B5 / H14 · 推荐品牌瀑布流 — REAL BrandWorkspace rows the user can
           see (owned / member-of). Honest empty state when none. */}
       <RecommendedBrands />
+    </div>
+  );
+}
+
+function CampaignCover({
+  campaignId,
+  imageUrl,
+  name,
+}: {
+  campaignId: string;
+  imageUrl?: string;
+  name: string;
+}) {
+  const [failed, setFailed] = useState(false);
+
+  if (!imageUrl || failed) {
+    return <div className="h-32" style={{ background: gradientFor(campaignId) }} />;
+  }
+
+  return (
+    <div className="h-32 overflow-hidden">
+      {/* Dynamic storage and provider URLs cannot be safely enumerated for next/image. */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={imageUrl}
+        alt={`${name} 最新生成图`}
+        className="h-full w-full object-cover"
+        onError={() => setFailed(true)}
+      />
     </div>
   );
 }

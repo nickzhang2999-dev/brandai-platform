@@ -183,20 +183,18 @@ export default function CampaignsPage() {
             </option>
           ))}
         </select>
-        {FILTERS.map((f) => (
-          <button
-            key={f.key}
-            onClick={() => setFilterKey(f.key)}
-            className={[
-              "h-9 rounded-full px-4 text-sm transition-colors",
-              filterKey === f.key
-                ? "bg-accent-soft font-medium text-primary"
-                : "border border-border bg-card text-muted-foreground hover:bg-muted",
-            ].join(" ")}
-          >
-            {f.label}
-          </button>
-        ))}
+        <select
+          value={filterKey}
+          onChange={(e) => setFilterKey(e.target.value)}
+          aria-label="项目状态"
+          className="h-9 rounded-full border border-border bg-card px-4 text-sm text-muted-foreground outline-none transition-colors hover:bg-muted focus:border-primary/40 focus:shadow-[0_0_0_4px_rgba(124,92,255,0.08)]"
+        >
+          {FILTERS.map((f) => (
+            <option key={f.key} value={f.key}>
+              {f.label}
+            </option>
+          ))}
+        </select>
         <select
           value={rangeKey}
           onChange={(e) => setRangeKey(e.target.value as RangeKey)}

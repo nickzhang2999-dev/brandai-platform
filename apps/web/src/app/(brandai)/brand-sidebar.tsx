@@ -7,6 +7,7 @@ import { signOut } from "next-auth/react";
 import { navItems } from "@/lib/brandai-mock";
 import { QueueWidget } from "@/app/(app)/queue-widget";
 import { NotificationCenter } from "./notification-center";
+import { useBrand } from "./brand-context";
 
 /**
  * BrandAI 左侧导航壳（docs/04 §布局：侧栏 236px，logo mark + 主导航 + 底部
@@ -15,16 +16,13 @@ import { NotificationCenter } from "./notification-center";
  */
 export function BrandSidebar({
   children,
-  brandName,
   user,
-  wsId,
 }: {
   children: React.ReactNode;
-  brandName: string;
   user: { name: string; email: string; initial: string };
-  wsId: string;
 }) {
   const pathname = usePathname() ?? "/";
+  const { brandName, knowledgeBases, switchKnowledgeBase, wsId } = useBrand();
 
   const isActive = (href: string) =>
     href === "/" ? pathname === "/" : pathname.startsWith(href);
@@ -39,6 +37,28 @@ export function BrandSidebar({
           </span>
           <span className="text-lg font-semibold tracking-tight">BrandAI</span>
         </Link>
+
+        <label className="mb-5 flex flex-col gap-1.5 px-1">
+          <span className="text-[11px] font-medium text-muted-foreground">
+            当前品牌知识库
+          </span>
+          <select
+            value={wsId}
+            onChange={(event) => switchKnowledgeBase(event.target.value)}
+            aria-label="切换品牌知识库"
+            className="h-9 w-full rounded-lg border border-border bg-background px-2 text-sm outline-none focus:border-primary/40"
+          >
+            {knowledgeBases.length === 0 ? (
+              <option value={wsId}>{brandName}</option>
+            ) : (
+              knowledgeBases.map((base) => (
+                <option key={base.id} value={base.id}>
+                  {base.name}
+                </option>
+              ))
+            )}
+          </select>
+        </label>
 
         {/* Nav */}
         <nav className="flex flex-1 flex-col gap-1.5">

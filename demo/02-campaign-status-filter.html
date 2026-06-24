@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Demo 02 - Campaign 状态筛选</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <div class="app">
+      <aside class="sidebar">
+        <a class="brand" href="index.html"><span class="brand-mark">B</span>BrandAI</a>
+        <label><span class="label">当前品牌知识库</span><select class="control"><option>澄曦护肤</option><option>山野咖啡</option></select></label>
+        <nav><a class="nav-link" href="01-home-campaign-cover.html"><span data-icon="home"></span>首页</a><a class="nav-link active" href="#"><span data-icon="projects"></span>Campaign 项目</a><a class="nav-link" href="03-brand-knowledge-bases.html"><span data-icon="library"></span>品牌知识库</a><a class="nav-link" href="#"><span data-icon="assets"></span>素材库</a><a class="nav-link" href="#"><span data-icon="workspace"></span>AI 工作台</a></nav>
+        <div class="nav-spacer"></div><div class="user"><span class="avatar">N</span><div><strong style="font-size:13px">Nick</strong><small>澄曦护肤</small></div></div>
+      </aside>
+      <main class="content">
+        <header class="page-head"><div><h1>Campaign 项目</h1><p class="sub">集中管理「澄曦护肤」的所有营销项目</p></div><button class="primary"><span data-icon="plus"></span> 创建新 Campaign</button></header>
+        <section class="filters" aria-label="项目筛选">
+          <input class="search" placeholder="搜索项目 / 品牌名称…">
+          <select class="control filter-select"><option>全部品牌</option><option>澄曦护肤</option></select>
+          <select class="control filter-select" data-status-filter aria-label="项目状态"><option value="all">全部状态</option><option value="progress">进行中</option><option value="draft">草稿</option><option value="done">已完成</option></select>
+          <select class="control filter-select"><option>排序：最近创建</option><option>排序：名称 A-Z</option><option>排序：进度</option></select>
+        </section>
+        <div class="campaign-layout">
+          <section class="project-list">
+            <button class="project-card selected" data-project data-status="progress" data-name="夏日水光精华首发"><div class="project-cover"><img alt="水光精华项目图片" src="https://images.unsplash.com/photo-1556228720-195a672e8a03?auto=format&fit=crop&w=700&q=85"></div><div class="project-copy"><div class="row"><span class="badge progress">进行中</span><span class="tiny">澄曦护肤</span></div><h3 style="margin-top:10px">夏日水光精华首发</h3><p>以轻盈水光、半透明质感与洁净留白构建首发系列视觉。</p><div class="progress-line"><span style="width:72%"></span></div></div></button>
+            <button class="project-card" data-project data-status="draft" data-name="七夕限定礼盒"><div class="project-cover"><img alt="礼盒项目图片" src="https://images.unsplash.com/photo-1547887538-e3a2f32cb1cc?auto=format&fit=crop&w=700&q=85"></div><div class="project-copy"><div class="row"><span class="badge draft">草稿</span><span class="tiny">澄曦护肤</span></div><h3 style="margin-top:10px">七夕限定礼盒</h3><p>围绕城市夜色与珍珠光泽，创建可延展的礼赠 Campaign。</p><div class="progress-line"><span style="width:14%"></span></div></div></button>
+            <button class="project-card" data-project data-status="done" data-name="悦己礼赠季"><div class="project-cover"><img alt="礼赠季项目图片" src="https://images.unsplash.com/photo-1556229010-6c3f2c9ca5f8?auto=format&fit=crop&w=700&q=85"></div><div class="project-copy"><div class="row"><span class="badge done">已完成</span><span class="tiny">澄曦护肤</span></div><h3 style="margin-top:10px">悦己礼赠季</h3><p>已完成主视觉、电商详情页与社媒延展图，等待归档。</p><div class="progress-line"><span style="width:100%"></span></div></div></button>
+          </section>
+          <aside class="summary-panel"><div class="row"><span class="rule-icon" data-icon="projects"></span><strong>AI 项目摘要</strong></div><h3 data-summary-title style="margin-top:18px">夏日水光精华首发</h3><p class="summary-copy">首发 KV 已完成两轮出图；当前版本保持清透水感和品牌紫作为点缀，下一步补充电商详情页尺寸。</p><div class="stack"><button class="primary">进入工作台出图</button><button class="secondary">补充需求</button><button class="secondary">查看规范</button></div></aside>
+        </div>
+        <p class="tiny" style="margin-top:18px">审阅重点：状态不再占用四个横向按钮；在同一个下拉框中选择“进行中 / 草稿 / 已完成”即可筛选项目。</p>
+      </main>
+    </div>
+    <script src="demo.js"></script>
+  </body>
+</html>

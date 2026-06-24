@@ -20,14 +20,21 @@ import {
  * M6 owns deeper project management.
  */
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ wsId: string }> },
 ) {
   try {
     const user = await requireUser();
     const { wsId } = await params;
     await requireOwnedWorkspace(wsId, user.id);
-    return ok(await listWorkspaceProjects(wsId));
+    const url = new URL(req.url);
+    const includeLatestCover = url.searchParams.get("latestCover") === "1";
+    return ok(
+      await listWorkspaceProjects(wsId, {
+        includeLatestCover,
+        ...(includeLatestCover ? { take: 8 } : {}),
+      }),
+    );
   } catch (err) {
     return handleError(err);
   }

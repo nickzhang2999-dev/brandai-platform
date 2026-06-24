@@ -8,6 +8,8 @@ import type { BrandRule } from "@brandai/contracts";
  * shaped to the frozen `@brandai/contracts` `BrandRule` schema (dates
  * serialised to ISO strings, `evidence` always an array). M3 should call
  * this to assemble generation parameters — do not read the table directly.
+ * Newer revisions are emitted first so newly enabled content takes precedence
+ * when the generation prompt is assembled.
  *
  * @param workspaceId owning workspace id (callers must enforce ownership)
  */
@@ -16,7 +18,7 @@ export async function getConfirmedRules(
 ): Promise<BrandRule[]> {
   const rows = await prisma.brandRule.findMany({
     where: { workspaceId, status: "CONFIRMED" },
-    orderBy: { createdAt: "asc" },
+    orderBy: { updatedAt: "desc" },
   });
   return rows.map(serializeRule);
 }

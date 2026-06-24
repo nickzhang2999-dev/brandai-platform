@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Demo 01 - 首页 Campaign 封面</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <div class="app">
+      <aside class="sidebar">
+        <a class="brand" href="index.html"><span class="brand-mark">B</span>BrandAI</a>
+        <label><span class="label">当前品牌知识库</span><select class="control"><option>澄曦护肤</option><option>山野咖啡</option></select></label>
+        <nav>
+          <a class="nav-link active" href="#"><span data-icon="home"></span>首页</a>
+          <a class="nav-link" href="02-campaign-status-filter.html"><span data-icon="projects"></span>Campaign 项目</a>
+          <a class="nav-link" href="03-brand-knowledge-bases.html"><span data-icon="library"></span>品牌知识库</a>
+          <a class="nav-link" href="#"><span data-icon="assets"></span>素材库</a>
+          <a class="nav-link" href="#"><span data-icon="workspace"></span>AI 工作台</a>
+        </nav>
+        <div class="nav-spacer"></div><div class="user"><span class="avatar">N</span><div><strong style="font-size:13px">Nick</strong><small>澄曦护肤</small></div></div>
+      </aside>
+      <main class="content">
+        <div style="max-width:730px;margin:34px auto 0;text-align:center"><h1>你好，Nick</h1><p class="sub">用一句话描述品牌广告需求，BrandAI 帮你拆解并开始创作。</p></div>
+        <section class="composer" style="max-width:760px;margin:30px auto 0"><div class="composer-head"><strong>为夏日水光精华制作小红书主视觉</strong><button class="primary">AI 拆解并开始创作</button></div><p class="tiny">已接入品牌知识库：澄曦护肤</p></section>
+        <section class="section-head"><h2>近期 Campaign</h2><a class="muted-link" href="02-campaign-status-filter.html">查看全部</a></section>
+        <div class="campaign-grid">
+          <article class="campaign-card"><div class="campaign-cover"><img loading="lazy" alt="夏日水光精华最新生成图" src="https://images.unsplash.com/photo-1556228720-195a672e8a03?auto=format&fit=crop&w=900&q=85"></div><div class="campaign-info"><div class="row"><span class="badge progress">进行中</span><span class="tiny">澄曦护肤</span></div><div class="campaign-title">夏日水光精华首发</div><div class="progress-line"><span style="width:72%"></span></div></div></article>
+          <article class="campaign-card"><div class="campaign-cover"><img loading="lazy" alt="屏障修护系列最新生成图" src="https://images.unsplash.com/photo-1598440947619-2c35fc9aa908?auto=format&fit=crop&w=900&q=85"></div><div class="campaign-info"><div class="row"><span class="badge progress">进行中</span><span class="tiny">澄曦护肤</span></div><div class="campaign-title">屏障修护系列</div><div class="progress-line"><span style="width:48%"></span></div></div></article>
+          <article class="campaign-card"><div class="campaign-cover fallback"><span class="fallback-label">尚无生成图</span></div><div class="campaign-info"><div class="row"><span class="badge draft">草稿</span><span class="tiny">澄曦护肤</span></div><div class="campaign-title">七夕限定礼盒</div><div class="progress-line"><span style="width:12%"></span></div></div></article>
+          <article class="campaign-card"><div class="campaign-cover"><img loading="lazy" alt="悦己礼赠季最新生成图" src="https://images.unsplash.com/photo-1556229010-6c3f2c9ca5f8?auto=format&fit=crop&w=900&q=85"></div><div class="campaign-info"><div class="row"><span class="badge done">已完成</span><span class="tiny">澄曦护肤</span></div><div class="campaign-title">悦己礼赠季</div><div class="progress-line"><span style="width:100%"></span></div></div></article>
+        </div>
+        <p class="tiny" style="margin-top:16px">审阅重点：前三张卡封面来自对应 Campaign 的最新生成图；仅无图的“七夕限定礼盒”保留默认渐变。</p>
+      </main>
+    </div>
+    <script src="demo.js"></script>
+  </body>
+</html>

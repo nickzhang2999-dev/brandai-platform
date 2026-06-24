@@ -236,9 +236,15 @@ export async function setVersionComplianceReport(
   return serializeVersion(row);
 }
 
+type ListWorkspaceProjectOptions = {
+  take?: number;
+  includeLatestCover?: boolean;
+};
+
 /** Projects in a workspace, newest first. */
 export async function listWorkspaceProjects(
   workspaceId: string,
+  options: ListWorkspaceProjectOptions = {},
 ): Promise<Project[]> {
   // Exclude the hidden D10 brand-preview bucket (Generation.projectId requires
   // a Project, but it must NOT surface as a user Campaign anywhere this list
@@ -246,8 +252,34 @@ export async function listWorkspaceProjects(
   const rows = await prisma.project.findMany({
     where: { workspaceId, name: { not: BRAND_PREVIEW_PROJECT_NAME } },
     orderBy: { createdAt: "desc" },
+    ...(options.take ? { take: options.take } : {}),
   });
-  return rows.map(serializeProject);
+
+  if (!options.includeLatestCover) return rows.map(serializeProject);
+
+  // The home page only asks for its visible eight Campaigns. Resolve each
+  // Campaign's newest version at read time so historical output works too,
+  // without keeping a duplicated cover URL in sync with every edit.
+  const covers = await Promise.all(
+    rows.map(async (project) => {
+      const version = await prisma.generationVersion.findFirst({
+        where: { generation: { projectId: project.id } },
+        orderBy: { createdAt: "desc" },
+        select: { imageUrl: true },
+      });
+      return [project.id, version?.imageUrl] as const;
+    }),
+  );
+  const coverByProjectId = new Map(
+    covers.filter(([, imageUrl]) => Boolean(imageUrl)),
+  );
+
+  return rows.map((project) =>
+    serializeProject({
+      ...project,
+      coverImage: coverByProjectId.get(project.id) ?? project.coverImage,
+    }),
+  );
 }
 
 /**

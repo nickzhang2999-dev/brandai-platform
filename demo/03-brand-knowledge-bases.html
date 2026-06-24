@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Demo 03 - 多品牌知识库</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <div class="app">
+      <aside class="sidebar">
+        <a class="brand" href="index.html"><span class="brand-mark">B</span>BrandAI</a>
+        <label><span class="label">当前品牌知识库</span><select class="control" data-kb-select><option>澄曦护肤</option><option>山野咖啡</option><option>北岸香氛</option></select></label>
+        <nav><a class="nav-link" href="01-home-campaign-cover.html"><span data-icon="home"></span>首页</a><a class="nav-link" href="02-campaign-status-filter.html"><span data-icon="projects"></span>Campaign 项目</a><a class="nav-link active" href="#"><span data-icon="library"></span>品牌知识库</a><a class="nav-link" href="#"><span data-icon="assets"></span>素材库</a><a class="nav-link" href="#"><span data-icon="workspace"></span>AI 工作台</a></nav>
+        <div class="nav-spacer"></div><div class="user"><span class="avatar">N</span><div><strong style="font-size:13px">Nick</strong><small>澄曦护肤</small></div></div>
+      </aside>
+      <main class="content">
+        <section class="knowledge-top">
+          <div><h1>品牌知识库</h1><p class="sub">每套知识库独立管理品牌规则、素材、Campaign 与 AI 出图约束。</p></div>
+          <div class="kb-chooser"><select class="control" data-kb-select aria-label="选择品牌知识库"><option>澄曦护肤</option><option>山野咖啡</option><option>北岸香氛</option></select><button class="primary" data-open-dialog><span data-icon="plus"></span> 新建知识库</button></div>
+        </section>
+
+        <section class="composer" aria-labelledby="source-title">
+          <div class="composer-head"><div><h2 id="source-title">添加知识内容</h2><p class="sub" style="margin-top:4px">文本、图片与 PDF 都归入当前知识库，并先生成可编辑的规则预览。</p></div><select class="control" style="width:auto"><option>品牌描述</option><option>Logo 规范</option><option>色值规范</option><option>参考图 / 素材规范</option><option>文案规范</option></select></div>
+          <textarea placeholder="例如：主色为 #7458F6，Logo 四周保留安全距离；画面使用清透自然光，避免高饱和描边。"></textarea>
+          <div class="composer-foot"><label class="file-button"><span data-icon="upload"></span> 上传图片或 PDF<input hidden type="file" accept="image/*,application/pdf"></label><button class="primary" data-add-rule>生成规则预览</button></div>
+          <div class="notice" data-notice>已生成一条“草稿”规则预览。可在下方编辑并启用。</div>
+        </section>
+
+        <section class="section-head"><div><h2>澄曦护肤的核心知识</h2><p class="sub">7 条内容 · 5 条已启用</p></div><a class="muted-link" href="#">检索已有素材与文档</a></section>
+        <section class="knowledge-grid">
+          <article class="rule-card"><div class="row between"><div class="row"><span class="rule-icon" data-icon="library"></span><h3>Logo 使用规范</h3></div><span class="badge enabled" data-rule-status>已启用</span></div><p>使用圆角几何图形 Logo，保持最小宽度 24px 与四周 1/2 标识宽度的安全空间。</p><div class="chips"><span class="chip">Logo.svg</span><span class="chip">最小宽度 24px</span></div><div class="rule-actions"><button>增加同类</button><button>编辑</button><button class="toggle" data-rule-toggle>禁用</button><button class="delete" data-delete-rule>删除</button></div></article>
+          <article class="rule-card"><div class="row between"><div class="row"><span class="rule-icon">#</span><h3>色值规范</h3></div><span class="badge enabled" data-rule-status>已启用</span></div><p>紫色用于品牌识别与关键动作，薄荷蓝只用于水感点缀；避免高饱和红色背景。</p><div class="colors"><span class="swatch" style="background:#7355f6"></span><span class="swatch" style="background:#bdaeff"></span><span class="swatch" style="background:#b9e8ea"></span></div><div class="rule-actions"><button>增加同类</button><button>编辑</button><button class="toggle" data-rule-toggle>禁用</button><button class="delete" data-delete-rule>删除</button></div></article>
+          <article class="rule-card"><div class="row between"><div class="row"><span class="rule-icon" data-icon="assets"></span><h3>参考图 / 素材规范</h3></div><span class="badge enabled" data-rule-status>已启用</span></div><p>护肤产品材质保持通透、真实可见；可使用水滴、柔焦阴影与低对比度自然光。</p><div class="chips"><span class="chip">水光参考 01.jpg</span><span class="chip">产品质感</span></div><div class="rule-actions"><button>增加同类</button><button>编辑</button><button class="toggle" data-rule-toggle>禁用</button><button class="delete" data-delete-rule>删除</button></div></article>
+          <article class="rule-card"><div class="row between"><div class="row"><span class="rule-icon">Aa</span><h3>文案规范</h3></div><span class="badge disabled" data-rule-status>已禁用</span></div><p>旧版本使用“极致”“第一”等绝对化措辞，已停用。仍可编辑、删除或重新启用。</p><div class="chips"><span class="chip">旧版调性</span><span class="chip">禁用词</span></div><div class="rule-actions"><button>增加同类</button><button>编辑</button><button class="toggle" data-rule-toggle>启用</button><button class="delete" data-delete-rule>删除</button></div></article>
+          <article class="rule-card"><div class="row between"><div class="row"><span class="rule-icon">T</span><h3>品牌描述</h3></div><span class="badge enabled" data-rule-status>已启用</span></div><p>为敏感肌提供舒缓、可信赖的日常护肤体验，语气克制、温和且有专业依据。</p><div class="chips"><span class="chip">品牌定位</span><span class="chip">语气：克制温和</span></div><div class="rule-actions"><button>增加同类</button><button>编辑</button><button class="toggle" data-rule-toggle>禁用</button><button class="delete" data-delete-rule>删除</button></div></article>
+          <article class="rule-card"><div class="row between"><div class="row"><span class="rule-icon">▤</span><h3>版式规范</h3></div><span class="badge draft" data-rule-status>草稿</span></div><p>AI 从最新 PDF 里识别出的版式建议，尚未启用。编辑后确认即可加入当前品牌的出图规则。</p><div class="chips"><span class="chip">VI-2026.pdf</span><span class="chip">草稿预览</span></div><div class="rule-actions"><button>增加同类</button><button>编辑</button><button class="toggle" data-rule-toggle>启用</button><button class="delete" data-delete-rule>删除</button></div></article>
+        </section>
+        <p class="tiny" style="margin-top:18px">审阅重点：不再有六个分散上传入口。所有内容统一归属当前知识库；图片/PDF 会变成规则草稿，且任何禁用内容都可恢复、编辑或删除。</p>
+      </main>
+    </div>
+    <div class="dialog-backdrop" data-dialog><div class="dialog"><h2>新建品牌知识库</h2><p class="sub">名称会成为这个品牌的独立规则、素材、Campaign 与出图空间。</p><input class="control" data-kb-name placeholder="例如：春日护肤品牌"><div class="dialog-actions"><button class="secondary" data-close-dialog>取消</button><button class="primary" data-create-kb>创建知识库</button></div></div></div>
+    <script src="demo.js"></script>
+  </body>
+</html>
