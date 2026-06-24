@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>BrandAI 灰度验收报告 · 2026-06-24</title>
+<style>
+  :root{
+    --primary:#7C5CFF; --accent-soft:#F4F0FF; --bg:#FAFAFC; --card:#FFFFFF;
+    --hairline:#ECECF3; --ink:#1A1726; --muted:#6B6680; --ok:#16A34A; --warn:#D97706;
+    --shadow:0 12px 40px -18px rgba(124,92,255,.45);
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:'Inter',system-ui,-apple-system,'Segoe UI',Roboto,'PingFang SC','Microsoft YaHei',sans-serif;
+    line-height:1.6; -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:920px;margin:0 auto;padding:32px 20px 80px}
+  .eyebrow{font-size:13px;letter-spacing:.12em;text-transform:uppercase;color:var(--primary);font-weight:600;margin:0 0 8px}
+  h1{font-size:34px;line-height:1.2;margin:0 0 12px;letter-spacing:-.01em}
+  .lede{font-size:17px;color:var(--muted);margin:0 0 28px;max-width:62ch}
+
+  .verdict{
+    display:flex;align-items:center;gap:16px;flex-wrap:wrap;
+    background:linear-gradient(135deg,#7C5CFF,#9B7BFF);color:#fff;
+    border-radius:24px;padding:24px 28px;box-shadow:var(--shadow);margin-bottom:32px;
+  }
+  .verdict .big{font-size:26px;font-weight:700}
+  .verdict .pill{background:rgba(255,255,255,.22);border-radius:999px;padding:6px 14px;font-size:14px;font-weight:600}
+  .verdict .sub{font-size:14px;opacity:.92;flex-basis:100%}
+
+  .hero{
+    background:var(--card);border:1px solid var(--hairline);border-radius:24px;overflow:hidden;
+    box-shadow:var(--shadow);margin-bottom:36px;
+  }
+  .hero img{display:block;width:100%;height:auto;background:var(--accent-soft)}
+  .hero .cap{padding:16px 22px;font-size:14px;color:var(--muted);border-top:1px solid var(--hairline)}
+  .hero .cap b{color:var(--ink)}
+
+  h2{font-size:13px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin:40px 0 16px;font-weight:700}
+
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px}
+  .card{background:var(--card);border:1px solid var(--hairline);border-radius:20px;padding:18px 18px 16px}
+  .card .top{display:flex;align-items:center;gap:9px;margin-bottom:6px}
+  .dot{width:22px;height:22px;border-radius:999px;display:grid;place-items:center;font-size:13px;color:#fff;flex:none}
+  .dot.ok{background:var(--ok)} .dot.warn{background:var(--warn)}
+  .card h3{font-size:15px;margin:0;font-weight:650}
+  .card p{margin:6px 0 0;font-size:14px;color:var(--muted)}
+  .card .ev{margin-top:10px;font-size:12.5px;color:var(--primary);background:var(--accent-soft);border-radius:10px;padding:6px 10px;display:inline-block}
+
+  ol.steps{list-style:none;counter-reset:s;padding:0;margin:0}
+  ol.steps li{counter-increment:s;position:relative;padding:12px 0 12px 46px;border-bottom:1px dashed var(--hairline)}
+  ol.steps li:last-child{border-bottom:0}
+  ol.steps li::before{
+    content:counter(s);position:absolute;left:0;top:11px;width:30px;height:30px;border-radius:999px;
+    background:var(--accent-soft);color:var(--primary);font-weight:700;display:grid;place-items:center;font-size:14px;
+  }
+  ol.steps b{font-weight:650}
+  ol.steps span{color:var(--muted);font-size:14px}
+
+  .finding{background:#FFFBEB;border:1px solid #FDE9C8;border-radius:20px;padding:20px 22px}
+  .finding h3{margin:0 0 6px;font-size:16px;color:#92400E}
+  .finding p{margin:6px 0;font-size:14.5px;color:#7C5A1E}
+  .finding .tags{margin-top:10px;display:flex;gap:8px;flex-wrap:wrap}
+  .finding .tag{font-size:12.5px;background:#fff;border:1px solid #FDE9C8;border-radius:999px;padding:4px 12px;color:#92400E;font-weight:600}
+
+  .foot{margin-top:44px;padding-top:20px;border-top:1px solid var(--hairline);font-size:13px;color:var(--muted)}
+  .foot code{background:var(--accent-soft);color:var(--primary);border-radius:6px;padding:1px 7px;font-size:12.5px}
+  .kv{display:flex;flex-wrap:wrap;gap:6px 28px;margin-top:8px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <p class="eyebrow">BrandAI · 灰度环境验收</p>
+  <h1>这一版,做完后真的能用</h1>
+  <p class="lede">我们把这一版部署到了线上预览环境,像真实用户一样从头走了一遍:登录 → 建活动 → 让 AI 出图 → 在素材库和工作台找回它。下面是结果。</p>
+
+  <div class="verdict">
+    <span class="pill">✓ 验收通过</span>
+    <span class="big">核心流程全部跑通,用的是真 AI、真出图,不是演示数据</span>
+    <span class="sub">2026 年 6 月 24 日 · 预览环境实测</span>
+  </div>
+
+  <div class="hero">
+    <img src="https://cdn.geole.me/generations/cmqlejj5u0001pgbcw41htd4h/ef06f4cb-80e7-4d6f-b0d5-46a8fb3e3ea1.png" alt="AI 真实生成的端午限定礼盒海报" loading="lazy" />
+    <div class="cap">这张图是这次验收里 <b>AI 真实生成</b> 的成品(端午限定礼盒,社交海报)。用的是 <b>真正的图像模型</b>,从点击到出图约 <b>1 分钟</b>,成品是一张 <b>2 MB 的高清大图</b> —— 不是占位图、不是假数据。</div>
+  </div>
+
+  <h2>都检查了什么</h2>
+  <div class="grid">
+    <div class="card">
+      <div class="top"><span class="dot ok">✓</span><h3>门口有人把守</h3></div>
+      <p>没登录的人连页面都进不去,会被直接挡回登录页。</p>
+      <span class="ev">未登录访问 → 自动跳登录</span>
+    </div>
+    <div class="card">
+      <div class="top"><span class="dot ok">✓</span><h3>用的是真 AI</h3></div>
+      <p>图像和文案都接的是真正的 AI 服务,后台自检全部正常。</p>
+      <span class="ev">图像模型自检:正常</span>
+    </div>
+    <div class="card">
+      <div class="top"><span class="dot ok">✓</span><h3>真的能出图</h3></div>
+      <p>新建一个活动,让 AI 出图,约 1 分钟拿到一张高清成品。</p>
+      <span class="ev">出图成功 · 2 MB 高清</span>
+    </div>
+    <div class="card">
+      <div class="top"><span class="dot ok">✓</span><h3>出过的图找得回</h3></div>
+      <p>进工作台能看到这个活动以前出过的图,不会"出完就消失"。</p>
+      <span class="ev">历史出图可回看</span>
+    </div>
+    <div class="card">
+      <div class="top"><span class="dot ok">✓</span><h3>自动进素材库</h3></div>
+      <p>AI 出的图会自动存进素材库,可以收藏、归档、当参考。</p>
+      <span class="ev">出图自动入库</span>
+    </div>
+    <div class="card">
+      <div class="top"><span class="dot ok">✓</span><h3>点通知直达那张图</h3></div>
+      <p>完成通知和右下角队列,点一下就跳到对应的那张图。</p>
+      <span class="ev">一键直达 · 链接可分享</span>
+    </div>
+  </div>
+
+  <h2>我们是怎么验的</h2>
+  <ol class="steps">
+    <li><b>像真实用户一样登录</b> <span>—— 用管理员账号从登录页进入。</span></li>
+    <li><b>新建一个活动(Campaign)</b> <span>—— 顺手确认了"线上建活动"是正常的(之前担心的问题其实不存在)。</span></li>
+    <li><b>让 AI 出图</b> <span>—— 提交后约 1 分钟,拿到一张真实高清成品。</span></li>
+    <li><b>确认它是真图</b> <span>—— 2 MB、1024×1536 高清,来自真实图像模型,不是占位图。</span></li>
+    <li><b>回到各个页面找它</b> <span>—— 工作台能回看、素材库能找到、通知能点进去。</span></li>
+  </ol>
+
+  <h2>发现的一个小问题(已修复)</h2>
+  <div class="finding">
+    <h3>一条品牌规则会"误伤",挡住所有出图 —— 已根治</h3>
+    <p>品牌知识库里有一条关于 Logo 留白的<b>建议性</b>规则,被设成了最高的"禁止"级别。系统原本会把它当成硬性禁令,结果<b>这个品牌的任何出图都会被拦下来</b>。</p>
+    <p><b>已修复</b>:现在系统对 Logo 这类"使用建议"不再一刀切拦截 —— 建议照样会提醒 AI 注意,但不会再把整个品牌锁死;真正的"内容禁令"(比如禁止出现某类画面)仍然正常拦截。修复后,那条规则<b>原样保留在"禁止"级、没动你的数据</b>,同一张图也能正常出了。</p>
+    <div class="tags"><span class="tag">已记录归档</span><span class="tag">数据未改动</span><span class="tag">✓ 已修复并复验</span></div>
+  </div>
+
+  <div class="foot">
+    <div><b>验收范围</b>:登录门禁 · 真出图 · 历史回看 · 素材回流 · 出图深链 · 线上建活动</div>
+    <div class="kv">
+      <span><b>环境</b>:灰度预览(分支 wonderful-clarke)</span>
+      <span><b>方式</b>:真 AI → 真接口 → 真数据库,全程无演示数据</span>
+      <span><b>日期</b>:2026-06-24</span>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

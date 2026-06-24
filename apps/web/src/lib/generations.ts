@@ -393,6 +393,7 @@ export async function listWorkspaceQueue(
 ): Promise<{ items: QueueItem[]; activeCount: number }> {
   const select = {
     id: true,
+    projectId: true,
     status: true,
     sceneType: true,
     createdAt: true,
@@ -417,6 +418,7 @@ export async function listWorkspaceQueue(
   ]);
   const toItem = (r: (typeof active)[number]): QueueItem => ({
     id: r.id,
+    projectId: r.projectId,
     status: r.status as QueueItem["status"],
     progress:
       r.status === "SUCCEEDED" ? 100 : r.status === "RUNNING" ? 50 : 0,
