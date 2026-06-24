@@ -35,6 +35,10 @@ export function serializeAsset(a: PrismaAsset): Asset {
       : {}),
     // E3 — folder organization (nullable column omitted when un-filed).
     ...(a.folderId ? { folderId: a.folderId } : {}),
+    // F18 — AI 出图回流来源指针（nullable column omitted for uploads/website).
+    ...(a.generationVersionId
+      ? { generationVersionId: a.generationVersionId }
+      : {}),
   };
 }
 

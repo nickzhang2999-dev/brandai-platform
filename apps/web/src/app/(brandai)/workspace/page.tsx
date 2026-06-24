@@ -404,6 +404,18 @@ function Workspace() {
     enabled: !!wsId,
   });
 
+  // 历史出图回看 — 进入工作台默认能看到本 Campaign 已生成的图，而不是空态。
+  // 接现成的 GET /generations?projectId=（listProjectGenerations，newest first）。
+  // 修复「产出蒸发」：刷新/切项目/换设备后历史出图不再消失。
+  const { data: history = [] } = useQuery<Generation[]>({
+    queryKey: ["brandai-project-gens", wsId, projectId],
+    queryFn: () =>
+      apiFetch<Generation[]>(
+        `/api/workspaces/${wsId}/generations?projectId=${projectId}`,
+      ),
+    enabled: !!wsId && !!projectId,
+  });
+
   // H9 · 提交制作确认弹窗 — 提交前先汇总将要生成的内容（场景/卖点/数量/尺寸/风格）
   // + 额度提示，确认后再走真实 POST /generations 出图流。
   const [confirmSubmit, setConfirmSubmit] = useState(false);
@@ -422,24 +434,72 @@ function Workspace() {
     queryKey: ["brandai-gen", wsId, genId, jobId],
     queryFn: () =>
       apiFetch<JobState>(
-        `/api/workspaces/${wsId}/generations/${genId}?jobId=${jobId}`,
+        // jobId 仅在「本次会话刚提交」时存在；回看历史出图（无 job）时省略，
+        // 路由会回退到 generation.status（SUCCEEDED），不再拼出 ?jobId=null。
+        `/api/workspaces/${wsId}/generations/${genId}${jobId ? `?jobId=${jobId}` : ""}`,
       ),
     enabled: !!genId,
     refetchInterval: (q) => {
-      const s = q.state.data?.job?.status ?? q.state.data?.generation.status;
+      const d = q.state.data;
+      const s = d?.job?.status ?? d?.generation.status;
       if (s === "SUCCEEDED" || s === "FAILED") return false;
-      if (Date.now() - startedAt.current > POLL_CAP_MS) return false;
+      // §2.4 6-min 上界。实时出图(有 jobId)用本地 startedAt;回看历史出图
+      // (jobId=null → startedAt=0)改用该 generation 的服务端起始时间
+      // (startedAt→createdAt),否则 0 会让仍在跑的历史出图被瞬间判超时而停轮询,
+      // 卡死在"生成中"直到整页刷新(Bugbot #3d80902a)。无可解析时间则继续轮询。
+      const startMs =
+        startedAt.current > 0
+          ? startedAt.current
+          : Date.parse(d?.generation.startedAt ?? d?.generation.createdAt ?? "") || 0;
+      if (startMs > 0 && Date.now() - startMs > POLL_CAP_MS) return false;
       return 2500;
     },
   });
 
+  // 中间态超时只在「本会话实时出图」（有 jobId）时计时；回看历史出图（jobId=null）
+  // 不参与计时，否则 startedAt=0 会被瞬间判超时。
   useEffect(() => {
-    if (!genId) return;
+    if (!genId || !jobId) return;
     const t = setInterval(() => {
       if (Date.now() - startedAt.current > POLL_CAP_MS) setTimedOut(true);
     }, 3000);
     return () => clearInterval(t);
-  }, [genId]);
+  }, [genId, jobId]);
+
+  // 切换 Campaign 时清掉当前查看的出图，交给下面的「默认展示最近一次」按新项目
+  // 重新播种（否则上一个项目的图会残留、且 POST/改图会打到错项目）。
+  const prevProjectRef = useRef<string | null>(projectId);
+  useEffect(() => {
+    if (prevProjectRef.current === projectId) return;
+    prevProjectRef.current = projectId;
+    setGenId(null);
+    setJobId(null);
+    setTimedOut(false);
+    setActiveVariant(0);
+  }, [projectId]);
+
+  // 进入工作台默认展示该 Campaign 最近一次出图（history newest-first）。仅当本会话
+  // 还没有选中/提交任何出图时播种 —— 不覆盖用户的实时提交，也不覆盖手动切换的历史。
+  useEffect(() => {
+    if (genId) return;
+    if (history.length > 0) {
+      setGenId(history[0]!.id);
+      setJobId(null);
+      setTimedOut(false);
+      setActiveVariant(0);
+    }
+  }, [history, genId]);
+
+  // 点击历史缩略图回看某次出图：复用整套机制（轮询无 jobId → 回退 SUCCEEDED，
+  // 改图/终选/导出/审阅全部对该历史出图生效）。
+  function viewGeneration(id: string) {
+    if (id === genId) return;
+    setGenId(id);
+    setJobId(null);
+    setTimedOut(false);
+    setActiveVariant(0);
+    setSubmitErr(null);
+  }
 
   const status = poll?.job?.status ?? poll?.generation.status ?? null;
   const versions = useMemo(
@@ -527,8 +587,12 @@ function Workspace() {
     if (status === "SUCCEEDED" && genId && quotaInvalidatedRef.current !== genId) {
       quotaInvalidatedRef.current = genId;
       qc.invalidateQueries({ queryKey: ["brandai-quota", wsId] });
+      // 让刚出图的这次进入历史缩略条（回看列表 newest-first）。
+      qc.invalidateQueries({
+        queryKey: ["brandai-project-gens", wsId, projectId],
+      });
     }
-  }, [status, genId, wsId, qc]);
+  }, [status, genId, wsId, projectId, qc]);
   const editing = !!editJobId;
 
   // G6 · 审阅 / 批准流 — 拿调用者在本空间的角色，决定显示哪些审核动作。
@@ -849,6 +913,76 @@ function Workspace() {
                   ) : null}
                 </button>
               ))}
+            </div>
+          ) : null}
+
+          {/* 历史出图回看 —— 本 Campaign 已生成的每一次出图，newest-first。点击即在
+              上方画布回看（复用改图/终选/导出/审阅）。修复「产出蒸发」：刷新/切项目
+              后历史不再消失。 */}
+          {history.length > 0 ? (
+            <div className="mt-5 border-t border-border pt-4">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-xs font-semibold text-muted-foreground">
+                  历史出图
+                </span>
+                <span className="text-xs font-normal text-muted-foreground">
+                  {history.length} 次
+                </span>
+              </div>
+              <div className="flex gap-3 overflow-x-auto pb-1">
+                {history.map((g) => {
+                  const cover = g.versions?.find((v) => v.imageUrl)?.imageUrl;
+                  const active = g.id === genId;
+                  const finalCount = (g.versions ?? []).filter(
+                    (v) => v.isFinal,
+                  ).length;
+                  return (
+                    <button
+                      key={g.id}
+                      onClick={() => viewGeneration(g.id)}
+                      title={`${g.scene || g.sceneType} · ${new Date(
+                        g.createdAt,
+                      ).toLocaleString("zh-CN")}`}
+                      className={[
+                        "group relative flex h-[88px] w-[116px] shrink-0 flex-col overflow-hidden rounded-[16px] border-2 text-left transition-colors",
+                        active
+                          ? "border-primary"
+                          : "border-transparent hover:border-border",
+                      ].join(" ")}
+                    >
+                      {cover ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={cover}
+                          alt={g.scene || "历史出图"}
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <div className="flex h-full w-full items-center justify-center bg-muted text-[10px] text-muted-foreground">
+                          {g.status === "FAILED"
+                            ? "失败"
+                            : g.status === "PENDING" || g.status === "RUNNING"
+                              ? "生成中…"
+                              : "无图"}
+                        </div>
+                      )}
+                      <span className="absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-foreground/70 to-transparent px-1.5 pb-1 pt-3 text-[10px] font-medium text-white">
+                        {g.scene || g.sceneType}
+                      </span>
+                      {(g.versions?.length ?? 0) > 1 ? (
+                        <span className="absolute right-1 top-1 rounded-full bg-card/90 px-1.5 py-0.5 text-[10px] font-medium text-foreground">
+                          ×{g.versions!.length}
+                        </span>
+                      ) : null}
+                      {finalCount > 0 ? (
+                        <span className="absolute left-1 top-1 rounded-full bg-success px-1.5 py-0.5 text-[10px] font-medium text-primary-foreground">
+                          终稿
+                        </span>
+                      ) : null}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           ) : null}
 

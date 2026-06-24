@@ -62,6 +62,17 @@ function isImage(a: Asset): boolean {
   return (a.mimeType ?? "").startsWith("image/");
 }
 /**
+ * F18 · 素材来源标签 — 出图回流的素材（带 generationVersionId）显示「AI 生成」，
+ * 否则按 source 区分网站采集 / 上传。
+ */
+function isGenerated(a: Asset): boolean {
+  return !!a.generationVersionId;
+}
+function provenanceLabel(a: Asset): string {
+  if (isGenerated(a)) return "AI 生成";
+  return a.source === "WEBSITE" ? "网站采集" : "上传";
+}
+/**
  * P1.3 — whether the asset may feed generation/references. `availableForGeneration`
  * defaults to true on the wire when omitted (legacy rows); a set `deprecatedAt`
  * also marks it unusable.
@@ -572,6 +583,11 @@ export default function AssetsPage() {
                       <span className="absolute left-1.5 top-1.5 rounded-full bg-foreground/70 px-2 py-0.5 text-[10px] font-medium text-background">
                         已停用
                       </span>
+                    ) : isGenerated(a) ? (
+                      // F18 · AI 出图回流标识
+                      <span className="absolute left-1.5 top-1.5 rounded-full bg-accent-soft px-2 py-0.5 text-[10px] font-medium text-primary shadow-[0_2px_8px_rgba(124,92,255,0.18)]">
+                        ✦ AI 生成
+                      </span>
                     ) : null}
                     {/* E13 · 收藏 toggle star (overlay) */}
                     <button
@@ -665,7 +681,7 @@ export default function AssetsPage() {
                   <dt className="text-muted-foreground">大小</dt>
                   <dd>{fmtSize(active.sizeBytes)}</dd>
                   <dt className="text-muted-foreground">来源</dt>
-                  <dd>{active.source === "WEBSITE" ? "网站采集" : "上传"}</dd>
+                  <dd>{provenanceLabel(active)}</dd>
                 </dl>
 
                 {/* H8 · 查看来源 */}
@@ -1292,7 +1308,7 @@ function ViewSourceDialog({
     { label: "文件名", value: asset.fileName },
     {
       label: "来源",
-      value: asset.source === "WEBSITE" ? "网站采集" : "上传",
+      value: provenanceLabel(asset),
     },
     { label: "类型", value: CAT_LABEL[asset.category] ?? asset.category },
     { label: "格式", value: asset.mimeType || "—" },
@@ -1313,9 +1329,11 @@ function ViewSourceDialog({
       >
         <div className="text-lg font-semibold">素材来源</div>
         <p className="mt-1 text-sm text-muted-foreground">
-          {asset.source === "WEBSITE"
-            ? "该素材由网站采集而来。"
-            : "该素材由本地上传而来。"}
+          {asset.generationVersionId
+            ? "该素材由工作台 AI 出图回流而来。"
+            : asset.source === "WEBSITE"
+              ? "该素材由网站采集而来。"
+              : "该素材由本地上传而来。"}
         </p>
 
         <dl className="mt-5 grid grid-cols-[auto_1fr] gap-x-4 gap-y-2.5 text-sm">

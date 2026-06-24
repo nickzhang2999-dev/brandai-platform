@@ -140,6 +140,7 @@
 | E11 | 加入项目（→Campaign） | P04-M16 | ✅ | `assets/page.tsx::JoinProjectDialog` + `projects/[id]/assets`(POST kind=MEMBER) | 真弹窗选 Campaign→加入并跳工作台；**服务端 `ProjectAsset` 真关系**（取代纯客户端暂存，跨设备/协作可续），tray 退化为同 tab 即时反馈 | 服务端化 2026-06-22 |
 | E12 | 设为参考（→工作台参考区） | P04-M17 | ✅ | `assets/page.tsx` + `projects/[id]/assets`(kind=REFERENCE) ↔ 工作台 F9 | 设为参考→落 `ProjectAsset(REFERENCE)`；工作台 F9 合并服务端参考（真校验归属+留痕 version.params）。**注**：OpenAI generate API 不收图，当前为 prompt 级引导，真视觉条件化需经 edits 路由（phase-2） | 服务端化 2026-06-22 |
 | E13 | 收藏切换 / 使用记录 / 查看来源 | doc02/05 | ✅ | 收藏 toggle(PATCH isFavorite)+筛选、使用记录(generation 引用派生)、查看来源弹窗(H8) | 灰度真验 | 接入 2026-06-21 |
+| E14 | 出图回流素材库（AI 生成图 → 素材） | 心智断层修复 | ✅ | `lib/asset-mirror.ts`（generate/edit worker 出图落库后镜像 Asset）+ `assets/page.tsx`「✦ AI 生成」标识 + 历史回填 `api/admin/backfill-generated-assets` | 修复「出图只在工作台、素材库看不到」：每次真出图/改图产出 `GenerationVersion` 后**镜像一条真实 Asset**（`url` 指向同一张真图，加性可空列 `generationVersionId` 标识 AI 来源——**不改 AssetSource 枚举**避共享库其它分支崩；source 仍 UPLOAD）。素材库即列出、可收藏/归档/设为参考；来源显示「AI 生成」。best-effort 不阻断出图；唯一约束幂等。历史出图经 admin 回填端点补镜像 | 新增 2026-06-23 |
 
 ## F · P05 工作台
 
@@ -161,6 +162,7 @@
 | F13 | 终选（设为终稿 isFinal） | 一期闭环 | ✅ **已验收** | `page.tsx`（PATCH /generations/[id]） | — | 2026-06-20 |
 | F14 | 交付归档（导出 ZIP） | 一期闭环 | ✅ **已验收** | `page.tsx:200` → projects/[id]/export | 真 ZIP | 2026-06-20 |
 | F15 | 中间态超时 + 出口（§2.4） | CLAUDE§0.3 | ✅ | `page.tsx` 轮询 6 分钟上界 | 超时给重试出口 | 2026-06-20 |
+| F17 | 历史出图回看（进入工作台展示该 Campaign 历史出图） | 心智断层修复 | ✅ | `workspace/page.tsx`（`GET /generations?projectId=` → `listProjectGenerations`） | 修复「产出蒸发」：进入工作台默认展示该 Campaign 最近一次出图（newest-first），底部「历史出图」缩略条可切换回看任意一次，复用改图/终选/导出/审阅全套；切项目自动重置+重新播种。刷新/换设备后历史不再消失 | 新增 2026-06-23 |
 
 ## G · P06 模板库
 
