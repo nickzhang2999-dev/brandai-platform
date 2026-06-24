@@ -445,9 +445,18 @@ function Workspace() {
       ),
     enabled: !!genId,
     refetchInterval: (q) => {
-      const s = q.state.data?.job?.status ?? q.state.data?.generation.status;
+      const d = q.state.data;
+      const s = d?.job?.status ?? d?.generation.status;
       if (s === "SUCCEEDED" || s === "FAILED") return false;
-      if (Date.now() - startedAt.current > POLL_CAP_MS) return false;
+      // §2.4 6-min 上界。实时出图(有 jobId)用本地 startedAt;回看历史出图
+      // (jobId=null → startedAt=0)改用该 generation 的服务端起始时间
+      // (startedAt→createdAt),否则 0 会让仍在跑的历史出图被瞬间判超时而停轮询,
+      // 卡死在"生成中"直到整页刷新(Bugbot #3d80902a)。无可解析时间则继续轮询。
+      const startMs =
+        startedAt.current > 0
+          ? startedAt.current
+          : Date.parse(d?.generation.startedAt ?? d?.generation.createdAt ?? "") || 0;
+      if (startMs > 0 && Date.now() - startMs > POLL_CAP_MS) return false;
       return 2500;
     },
   });
