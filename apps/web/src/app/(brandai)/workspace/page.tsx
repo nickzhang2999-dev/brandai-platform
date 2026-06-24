@@ -500,21 +500,6 @@ function Workspace() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [presetGen]);
 
-  // E · 反向同步:把当前 Campaign 写回 URL(?project=),让刷新/分享落到同一项目。
-  // 用 <select> 切项目只改了 projectId,不碰 URL;若不同步,下面 ?gen= 反向同步会
-  // 把新项目的出图 id 写进仍带旧 ?project= 的 URL,刷新/分享就会用「另一个 Campaign
-  // 的出图」加载错上下文(Bugbot: stale project in deep link)。切项目时旧的 ?gen=
-  // 属于上一项目,一并抹掉,交给下面的 gen 反向同步按新项目重写。深链(URL 已带正确
-  // project)不进此分支,不会误删其 ?gen=。
-  useEffect(() => {
-    if (!projectId) return;
-    if (search.get("project") === projectId) return;
-    const params = new URLSearchParams(Array.from(search.entries()));
-    params.set("project", projectId);
-    params.delete("gen");
-    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
-  }, [projectId, search, pathname, router]);
-
   // E · 反向同步:把当前查看的出图写回 URL(?gen=),让刷新/分享落到精确那张。
   // 实时出图/改图进行中(jobId 仅会话内存在)不写,避免把一次性 job 深链出去。
   useEffect(() => {
@@ -641,6 +626,14 @@ function Workspace() {
       });
     }
   }, [status, genId, wsId, projectId, qc]);
+  // E · 实时出图到达 SUCCEEDED 后清掉 jobId,让上面的 ?gen= 反向同步把这次出图写回
+  // URL(刷新/分享落到刚生成的这张)。否则 submit() 设的 jobId 整个会话不清,
+  // 反向同步的 `if (jobId) return` 永远挡住,新出的图分享不出去(Bugbot)。
+  // 只在 SUCCEEDED 清:FAILED 仍需保留 jobId,否则轮询会丢掉 ?jobId= 携带的
+  // failedReason。改图流同样在终态清 editJobId,此处对齐。
+  useEffect(() => {
+    if (jobId && status === "SUCCEEDED") setJobId(null);
+  }, [status, jobId]);
   const editing = !!editJobId;
 
   // G6 · 审阅 / 批准流 — 拿调用者在本空间的角色，决定显示哪些审核动作。
@@ -847,7 +840,22 @@ function Workspace() {
           <span className="inline-flex items-center gap-1">
             <select
               value={projectId ?? ""}
-              onChange={(e) => setProjectId(e.target.value || null)}
+              onChange={(e) => {
+                const next = e.target.value || null;
+                setProjectId(next);
+                // 把切换写回 URL:用户主动切项目时(只有 onChange 会触发,不与
+                // 「外部深链导航改 ?project=」竞态)同步 ?project=,并抹掉旧项目的
+                // ?gen=(交给 gen 反向同步按新项目重写),让刷新/分享落到同一
+                // Campaign。否则下面 ?gen= 反向同步会把新项目的出图 id 写进仍带旧
+                // ?project= 的 URL,加载错上下文(Bugbot/Codex: stale project)。
+                const params = new URLSearchParams(Array.from(search.entries()));
+                if (next) params.set("project", next);
+                else params.delete("project");
+                params.delete("gen");
+                router.replace(`${pathname}?${params.toString()}`, {
+                  scroll: false,
+                });
+              }}
               aria-label="当前 Campaign 项目"
               className="max-w-[16rem] rounded-lg border border-border bg-background px-2 py-1 text-sm font-medium text-foreground outline-none focus:border-primary/40"
             >
