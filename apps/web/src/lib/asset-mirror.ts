@@ -61,17 +61,18 @@ export async function mirrorGenerationVersionToAsset(opts: {
   /** 文件名标签（不含扩展名）；扩展名由 storageKey 推出后追加。 */
   fileLabel: string;
   aiDescription?: string;
-}): Promise<void> {
+  /** @returns 是否实际新建了镜像 Asset（true=已回流；false=跳过/失败）。回填端点据此计数。 */
+}): Promise<boolean> {
   try {
     // 仅当图已上传到对象存储（公网 http(s) URL）才回流：未配存储时是内联 data: URL，
     // 推不出 storageKey，/raw 代理取不到原图 —— 跳过而非建一条取不到图的坏素材。
-    if (!/^https?:\/\//i.test(opts.imageUrl)) return;
+    if (!/^https?:\/\//i.test(opts.imageUrl)) return false;
     const storage = await getEffectiveStorage();
-    if (!storage.configured) return;
+    if (!storage.configured) return false;
     const publicBase = storage.publicUrl.replace(/\/+$/, "");
     // storageKey = 公网 URL 去掉 publicBase 前缀（与 lib/s3.ts 的拼接方式互逆）。
     // URL 不在当前存储域下（换过 bucket / 旧域名）则放弃，避免 /raw 取错对象。
-    if (!opts.imageUrl.startsWith(publicBase + "/")) return;
+    if (!opts.imageUrl.startsWith(publicBase + "/")) return false;
     const storageKey = opts.imageUrl.slice(publicBase.length + 1);
 
     const ext = (storageKey.split(".").pop() || "png").toLowerCase();
@@ -105,10 +106,12 @@ export async function mirrorGenerationVersionToAsset(opts: {
         ...(opts.aiDescription ? { aiDescription: opts.aiDescription } : {}),
       },
     });
+    return true;
   } catch (err) {
     // 幂等冲突（同一版本已回流）或任何写失败都不致命 —— 出图本身已成功。
     console.warn(
       `[asset-mirror] skip mirror for version ${opts.generationVersionId}: ${String(err)}`,
     );
+    return false;
   }
 }
