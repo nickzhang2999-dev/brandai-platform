@@ -1,7 +1,7 @@
 "use client";
 
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
@@ -100,7 +100,12 @@ const RULE_TYPE_LABELS: Record<string, string> = {
 function Workspace() {
   const { wsId, brandName } = useBrand();
   const search = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
   const presetProject = search.get("project");
+  // E · 深链/刷新恢复 —— ?gen= 指明当前查看的出图。通知中心与队列 widget 都跳到
+  // /workspace?gen=<id>&project=<pid>;刷新也带着它,落到精确那张而非空白/最近。
+  const presetGen = search.get("gen");
   // B2 · 首页 brief 透传 — 把首页输入的描述作为出图卖点初始值（仅首屏播种，
   // 不在每次渲染时覆盖用户后续编辑）。
   const presetBrief = search.get("brief");
@@ -422,7 +427,7 @@ function Workspace() {
   // H12 · 额度升级弹窗（信息性，无真实计费）。
   const [showUpgrade, setShowUpgrade] = useState(false);
 
-  const [genId, setGenId] = useState<string | null>(null);
+  const [genId, setGenId] = useState<string | null>(presetGen);
   const [jobId, setJobId] = useState<string | null>(null);
   const [activeVariant, setActiveVariant] = useState(0);
   const [submitErr, setSubmitErr] = useState<string | null>(null);
@@ -463,11 +468,39 @@ function Workspace() {
   useEffect(() => {
     if (prevProjectRef.current === projectId) return;
     prevProjectRef.current = projectId;
-    setGenId(null);
+    // 切项目默认清空当前出图,交给 seed-latest 重新播种。例外:若这次切项目来自
+    // URL 深链(presetProject 已等于新 projectId)且带了 ?gen=,尊重深链那张
+    // (通知/队列点到的是「另一个 Campaign 的某次出图」时,别被清成最近一次)。
+    const deep =
+      presetProject === projectId && presetGen ? presetGen : null;
+    setGenId(deep);
     setJobId(null);
     setTimedOut(false);
     setActiveVariant(0);
-  }, [projectId]);
+  }, [projectId, presetProject, presetGen]);
+
+  // E · 客户端导航到 ?gen=(已在工作台时点通知/队列) → 切到那次出图。整页加载走
+  // genId 初始值;这里只接 URL 变化(soft nav)。
+  useEffect(() => {
+    if (presetGen && presetGen !== genId) {
+      setGenId(presetGen);
+      setJobId(null);
+      setTimedOut(false);
+      setActiveVariant(0);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [presetGen]);
+
+  // E · 反向同步:把当前查看的出图写回 URL(?gen=),让刷新/分享落到精确那张。
+  // 实时出图/改图进行中(jobId 仅会话内存在)不写,避免把一次性 job 深链出去。
+  useEffect(() => {
+    if (jobId) return;
+    if (!genId) return;
+    if (search.get("gen") === genId) return;
+    const params = new URLSearchParams(Array.from(search.entries()));
+    params.set("gen", genId);
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+  }, [genId, jobId, search, pathname, router]);
 
   // 进入工作台默认展示该 Campaign 最近一次出图（history newest-first）。仅当本会话
   // 还没有选中/提交任何出图时播种 —— 不覆盖用户的实时提交，也不覆盖手动切换的历史。

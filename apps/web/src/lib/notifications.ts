@@ -66,6 +66,7 @@ export async function listWorkspaceNotifications(
       take: limit,
       select: {
         id: true,
+        projectId: true,
         status: true,
         sceneType: true,
         error: true,
@@ -112,7 +113,9 @@ export async function listWorkspaceNotifications(
           ? `生成 ${g._count.versions} 个变体`
           : null
         : (g.error ?? "AI 出图失败"),
-      href: "/workspace",
+      // E · 深链到具体那张出图 —— 点通知直接落到工作台对应 Campaign + 这次出图
+      // (workspace 读 ?gen= 回填查看态),不再只停在空白工作台。
+      href: `/workspace?gen=${g.id}&project=${g.projectId}`,
       createdAt: (g.finishedAt ?? g.createdAt).toISOString(),
     });
   }
