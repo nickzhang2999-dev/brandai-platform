@@ -37,10 +37,6 @@ export function BrandProvider({
 }) {
   const router = useRouter();
   const [knowledgeBases, setKnowledgeBases] = useState<BrandWorkspace[]>([]);
-  // Initial active id comes from the server (it resolved ACTIVE_BRAND_COOKIE and
-  // re-validated membership), so the cookie — not client state — is the single
-  // source of truth for "current tenant".
-  const [activeWorkspaceId, setActiveWorkspaceId] = useState(value.wsId);
 
   useEffect(() => {
     let cancelled = false;
@@ -57,32 +53,23 @@ export function BrandProvider({
     };
   }, []);
 
-  // Server is authoritative: whenever the layout re-resolves the active brand
-  // from ACTIVE_BRAND_COOKIE (an RSC refresh, another tab's switch, or a
-  // cleared/expired cookie), adopt the new server value so the client never
-  // stays pinned to a stale workspace from first mount (Bugbot: stale brand
-  // after cookie change). The optimistic set in switchKnowledgeBase still gives
-  // instant feedback before the refresh lands; this reconciles to the server.
-  useEffect(() => {
-    setActiveWorkspaceId(value.wsId);
-  }, [value.wsId]);
-
+  // Single source of truth for "current tenant" is the SERVER value (value.wsId):
+  // the layout resolved ACTIVE_BRAND_COOKIE and re-validated access, so we never
+  // keep a separate client-side active id that could shadow it. A switch just
+  // (re)writes the cookie and refreshes; the new brand surfaces only after the
+  // server confirms access. This kills a whole class of dual-source bugs:
+  //  - stale brand after an RSC refresh / another tab's switch (no client state);
+  //  - a rejected switch (revoked membership / stale list) can't pin the UI to an
+  //    inaccessible id — the server simply keeps the previous brand;
+  //  - same-brand re-select still re-establishes a cleared/expired cookie.
   const switchKnowledgeBase = useCallback(
     (workspaceId: string) => {
-      // Always (re)persist the cookie — even when the id is unchanged — so a
-      // cookie that was cleared/expired while the SPA stayed open gets
-      // re-established; otherwise a later hard reload would ignore the UI choice
-      // and resolve the default brand server-side (Bugbot: same-brand skipped
-      // the cookie write). The cookie is server-read + membership-validated.
       document.cookie = `${ACTIVE_BRAND_COOKIE}=${encodeURIComponent(
         workspaceId,
       )}; path=/; max-age=${ACTIVE_BRAND_COOKIE_MAX_AGE}; samesite=lax`;
-      // Only the state flip + SSR re-render are redundant when nothing changed.
-      if (workspaceId === activeWorkspaceId) return;
-      setActiveWorkspaceId(workspaceId);
       router.refresh();
     },
-    [activeWorkspaceId, router],
+    [router],
   );
 
   const createKnowledgeBase = useCallback(
@@ -98,19 +85,17 @@ export function BrandProvider({
     [switchKnowledgeBase],
   );
 
-  const activeBase =
-    knowledgeBases.find((base) => base.id === activeWorkspaceId) ??
-    knowledgeBases.find((base) => base.id === value.wsId);
+  const activeBase = knowledgeBases.find((base) => base.id === value.wsId);
   const context = useMemo<BrandCtx>(
     () => ({
       ...value,
-      wsId: activeBase?.id ?? activeWorkspaceId,
+      wsId: value.wsId,
       brandName: activeBase?.name ?? value.brandName,
       knowledgeBases,
       switchKnowledgeBase,
       createKnowledgeBase,
     }),
-    [activeBase, activeWorkspaceId, createKnowledgeBase, knowledgeBases, switchKnowledgeBase, value],
+    [value, activeBase, knowledgeBases, switchKnowledgeBase, createKnowledgeBase],
   );
 
   return <Ctx.Provider value={context}>{children}</Ctx.Provider>;
