@@ -1,8 +1,13 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import type { BrandWorkspace } from "@brandai/contracts";
 import { apiFetch } from "@/lib/client";
+import {
+  ACTIVE_BRAND_COOKIE,
+  ACTIVE_BRAND_COOKIE_MAX_AGE,
+} from "@/lib/brand-cookie";
 
 /**
  * 当前品牌（workspace）上下文。由 (brandai)/layout 服务端解析后注入，客户端
@@ -30,19 +35,18 @@ export function BrandProvider({
   value: InitialBrandCtx;
   children: React.ReactNode;
 }) {
+  const router = useRouter();
   const [knowledgeBases, setKnowledgeBases] = useState<BrandWorkspace[]>([]);
+  // Initial active id comes from the server (it resolved ACTIVE_BRAND_COOKIE and
+  // re-validated membership), so the cookie — not client state — is the single
+  // source of truth for "current tenant".
   const [activeWorkspaceId, setActiveWorkspaceId] = useState(value.wsId);
 
   useEffect(() => {
     let cancelled = false;
     apiFetch<BrandWorkspace[]>("/api/workspaces")
       .then((bases) => {
-        if (cancelled) return;
-        setKnowledgeBases(bases);
-        const saved = window.localStorage.getItem("brandai-active-knowledge-base");
-        if (saved && bases.some((base) => base.id === saved)) {
-          setActiveWorkspaceId(saved);
-        }
+        if (!cancelled) setKnowledgeBases(bases);
       })
       .catch(() => {
         // Keep the server-resolved workspace usable when the list is unavailable.
@@ -53,10 +57,20 @@ export function BrandProvider({
     };
   }, []);
 
-  const switchKnowledgeBase = useCallback((workspaceId: string) => {
-    setActiveWorkspaceId(workspaceId);
-    window.localStorage.setItem("brandai-active-knowledge-base", workspaceId);
-  }, []);
+  const switchKnowledgeBase = useCallback(
+    (workspaceId: string) => {
+      if (workspaceId === activeWorkspaceId) return;
+      // Persist server-readable so SSR / refresh / shared links resolve the same
+      // brand (the server re-validates membership before honoring it), then
+      // re-render server components so the layout-resolved brand stays in sync.
+      setActiveWorkspaceId(workspaceId);
+      document.cookie = `${ACTIVE_BRAND_COOKIE}=${encodeURIComponent(
+        workspaceId,
+      )}; path=/; max-age=${ACTIVE_BRAND_COOKIE_MAX_AGE}; samesite=lax`;
+      router.refresh();
+    },
+    [activeWorkspaceId, router],
+  );
 
   const createKnowledgeBase = useCallback(
     async (input: { name: string; industry?: string }) => {

@@ -29,6 +29,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 6. **Frontend = BrandAI 紫色设计语言（唯一品牌色 violet）.** `packages/ui/src/styles.css` 是 16 语义 token 系统，切换 `<html>` 上的 class 即整体换肤。**品牌色只有 violet `#7C5CFF`（`--primary`/`--accent`/`--ring`）；soft lavender `#F4F0FF`（`--accent-soft`）做选中/强调底；页面近白中性 `#FAFAFC`，白卡靠 violet 染色软阴影 + 中性 hairline `#ECECF3` 浮起。** 圆角偏大（卡片 24px、AI 输入 32px、chip/badge 全圆）。字体统一 **Inter**（无衬线，`font-serif` 已别名到 Inter）。**禁止** 重新引入 burgundy / 暖色 tan / cream；禁止硬编码 `bg-[#...]` / `text-yellow-600`，全部走语义 token。复用 `packages/ui` 的 primitives（Button / Card / Badge / Input / Panel）+ `Lightbox`，匹配其圆角/间距/边框风格。
    > 注：本规则取代了 openvisual 的 burgundy/中性约束——BrandAI 是新产品，紫色方案是新 SSOT（见 `docs/04_UI视觉规范文档.md`）。
 
+7. **交付门（binding，V0.02 复盘沉淀）—— 见 [`AGENTS.md`](./AGENTS.md) 跨工具门禁全文.** 两条不可违反：
+   - **未验证不交付**：push 前 `pnpm test && pnpm test:ai && pnpm -F web typecheck && pnpm -F web build` 必须全绿。**「沙箱无网/装不上依赖」不是放行理由**——换能联网环境跑，或把改动停在分支等门禁过。交付说明只写**已实测结果**，禁止「未完成校验」却同时标「已推送」（V0.02 犯过，`docs/10` #6）。
+   - **会被刷新/分享的状态必须服务端权威**：租户/品牌/当前项目落 cookie 或进 URL，让 SSR/刷新/深链解析同一值；**只存 `localStorage` = 双事实源，禁止**（V0.02 多品牌切换犯过，`docs/10` #5；活动品牌现走 `lib/brand-cookie.ts` + `getOrCreateActiveBrand` 成员校验）。
+
 ---
 
 ## §1 · 四个 canonical 操作

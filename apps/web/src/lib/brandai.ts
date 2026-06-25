@@ -9,10 +9,34 @@ import { prisma } from "@brandai/db";
  * 自动建一个默认品牌（含 owner 的 Membership，与 POST /api/workspaces 一致）。
  * 后续多品牌时换成品牌切换器即可，页面只依赖返回的 { id, name }。
  */
-export async function getOrCreateActiveBrand(userId: string): Promise<{
+export async function getOrCreateActiveBrand(
+  userId: string,
+  preferredWorkspaceId?: string,
+): Promise<{
   id: string;
   name: string;
 }> {
+  // Honor an explicit brand switch (persisted in the ACTIVE_BRAND_COOKIE) — but
+  // ONLY after verifying the user is a member of it. The cookie is client-set,
+  // so trusting its workspace id without an ownership check would be an IDOR
+  // (multi-tenant isolation §3.5). On any mismatch we fall through to the
+  // membership-first default below.
+  if (preferredWorkspaceId) {
+    const preferred = await prisma.membership.findUnique({
+      where: {
+        userId_workspaceId: { userId, workspaceId: preferredWorkspaceId },
+      },
+      select: { workspaceId: true },
+    });
+    if (preferred) {
+      const ws = await prisma.brandWorkspace.findUnique({
+        where: { id: preferred.workspaceId },
+        select: { id: true, name: true },
+      });
+      if (ws) return ws;
+    }
+  }
+
   // K2 / G6 — resolve an existing MEMBERSHIP first (covers both the owner, who
   // gets a Membership(OWNER) row, and invited collaborators), so an invited
   // member lands in the brand they were invited to instead of getting a fresh
