@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>BrandAI 验收报告 · V0.02 评审改进 · 2026-06-25</title>
+<style>
+  :root{
+    --primary:#7C5CFF; --accent-soft:#F4F0FF; --bg:#FAFAFC; --card:#FFFFFF;
+    --hairline:#ECECF3; --ink:#1A1726; --muted:#6B6680; --ok:#16A34A; --warn:#D97706;
+    --shadow:0 12px 40px -18px rgba(124,92,255,.45);
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:'Inter',system-ui,-apple-system,'Segoe UI',Roboto,'PingFang SC','Microsoft YaHei',sans-serif;
+    line-height:1.6; -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:920px;margin:0 auto;padding:32px 20px 80px}
+  .eyebrow{font-size:13px;letter-spacing:.12em;text-transform:uppercase;color:var(--primary);font-weight:600;margin:0 0 8px}
+  h1{font-size:34px;line-height:1.2;margin:0 0 12px;letter-spacing:-.01em}
+  .lede{font-size:17px;color:var(--muted);margin:0 0 28px;max-width:64ch}
+
+  .verdict{
+    display:flex;align-items:center;gap:16px;flex-wrap:wrap;
+    background:linear-gradient(135deg,#7C5CFF,#9B7BFF);color:#fff;
+    border-radius:24px;padding:24px 28px;box-shadow:var(--shadow);margin-bottom:32px;
+  }
+  .verdict .big{font-size:23px;font-weight:700}
+  .verdict .pill{background:rgba(255,255,255,.22);border-radius:999px;padding:6px 14px;font-size:14px;font-weight:600}
+  .verdict .sub{font-size:14px;opacity:.92;flex-basis:100%}
+
+  h2{font-size:13px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin:42px 0 16px;font-weight:700}
+  .step-label{display:inline-block;font-size:12px;font-weight:700;color:var(--primary);background:var(--accent-soft);border-radius:999px;padding:3px 12px;margin-bottom:10px;letter-spacing:.04em}
+
+  .rows{display:flex;flex-direction:column;gap:12px}
+  .row{background:var(--card);border:1px solid var(--hairline);border-radius:20px;padding:18px 20px;box-shadow:0 6px 24px -20px rgba(124,92,255,.4)}
+  .row .top{display:flex;align-items:center;gap:10px;margin-bottom:4px}
+  .dot{width:22px;height:22px;border-radius:999px;display:grid;place-items:center;font-size:13px;color:#fff;flex:none}
+  .dot.ok{background:var(--ok)} .dot.warn{background:var(--warn)} .dot.new{background:var(--primary)}
+  .row h3{font-size:15.5px;margin:0;font-weight:660}
+  .row p{margin:6px 0 0;font-size:14px;color:var(--muted)}
+  .row p b{color:var(--ink)}
+  .ev{margin-top:10px;font-size:12.5px;color:var(--primary);background:var(--accent-soft);border-radius:10px;padding:6px 10px;display:inline-block}
+  code{background:var(--accent-soft);color:var(--primary);border-radius:6px;padding:1px 7px;font-size:12.5px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+
+  table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--hairline);border-radius:16px;overflow:hidden;font-size:13.5px}
+  th,td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--hairline);vertical-align:top}
+  th{background:var(--accent-soft);color:var(--ink);font-weight:650;font-size:12.5px;letter-spacing:.03em}
+  tr:last-child td{border-bottom:0}
+  .pass{color:var(--ok);font-weight:700} .pending{color:var(--warn);font-weight:700}
+
+  .note{background:#FFFBEB;border:1px solid #FDE9C8;border-radius:20px;padding:18px 22px;margin-top:12px}
+  .note h3{margin:0 0 6px;font-size:15px;color:#92400E}
+  .note p{margin:6px 0;font-size:14px;color:#7C5A1E}
+
+  .foot{margin-top:44px;padding-top:20px;border-top:1px solid var(--hairline);font-size:13px;color:var(--muted)}
+  .kv{display:flex;flex-wrap:wrap;gap:6px 28px;margin-top:8px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <p class="eyebrow">BrandAI · V0.02 评审改进验收</p>
+  <h1>别人提了什么 · 我们改了什么 · 怎么证明</h1>
+  <p class="lede">V0.02（品牌知识库 + 三页改进）由产品侧提交。本次我们作为代码维护者做了一轮评审，对其中两个会影响"刷新/分享一致性"和"系统稳定性"的问题做了根治，并把约束写进了门禁文件。下面按三段说清楚：对方提了什么、我们改了什么、以及如何自证改对了。</p>
+
+  <div class="verdict">
+    <span class="pill">评审 + 修复完成</span>
+    <span class="big">2 个评审问题已根治（服务端权威 · 排序收窄），1 个门禁约束已立（AGENTS.md）</span>
+    <span class="sub">2026 年 6 月 25 日 · 提交 <code style="color:#fff;background:rgba(255,255,255,.2)">cbd02ce</code> · 分支 review-new-version</span>
+  </div>
+
+  <!-- 1 -->
+  <span class="step-label">第一段</span>
+  <h2>别人提了什么（V0.02）</h2>
+  <div class="rows">
+    <div class="row">
+      <div class="top"><span class="dot ok">✓</span><h3>品牌知识库升级（核心）</h3></div>
+      <p>六个分类上传卡 → <b>统一"添加知识内容"入口</b>（文本/图片/PDF）；规则补齐<b>增加/编辑/保存/启用/禁用/删除</b>全生命周期；引入<b>多品牌知识库</b>切换与新建。</p>
+    </div>
+    <div class="row">
+      <div class="top"><span class="dot ok">✓</span><h3>首页封面接真图</h3></div>
+      <p>Campaign 卡片优先展示<b>该项目最新一张真实出图</b>作为封面，无图才回退紫色渐变。</p>
+    </div>
+    <div class="row">
+      <div class="top"><span class="dot ok">✓</span><h3>两处交互打磨</h3></div>
+      <p>Campaign 状态筛选<b>一排按钮 → 下拉框</b>；工作台切 Campaign 时把 <code>?project=</code> 写回 URL（修了刷新/分享落错项目的真 bug）。</p>
+    </div>
+  </div>
+  <p style="font-size:13.5px;color:var(--muted);margin-top:12px">评审结论：核心交互改得对、API 都接上了。但有 <b>2 处会埋雷</b>，需要在合并进主干前根治 ↓</p>
+
+  <!-- 2 -->
+  <span class="step-label">第二段</span>
+  <h2>我们改了什么</h2>
+  <div class="rows">
+    <div class="row">
+      <div class="top"><span class="dot new">A</span><h3>多品牌切换：改成"服务端权威"</h3></div>
+      <p><b>问题</b>：原版切换品牌<b>只存在浏览器里</b>（localStorage），服务端并不知道。结果一<b>刷新</b>就闪回默认品牌，把链接<b>分享</b>给别人也带不上你选的品牌——"当前品牌"成了两套互相打架的事实。</p>
+      <p><b>改法</b>：选中的品牌改为写进 <b>Cookie</b>，服务端每次请求都能读到，刷新/分享/深链都落同一个品牌；服务端在采信前会先校验"你确实是这个品牌的成员"（防越权）。</p>
+      <span class="ev">localStorage 双事实源 → Cookie 服务端权威 + 成员校验</span>
+    </div>
+    <div class="row">
+      <div class="top"><span class="dot new">B</span><h3>规则排序：把"最新优先"收窄到只影响出图</h3></div>
+      <p><b>问题</b>：原版为了知识库页"最新规则优先"，把一个<b>被 8 处共用</b>的底层函数默认排序整个翻转了，连<b>规则版本快照、合规校验、导出</b>都被牵连——一个页面的偏好，动了整个系统的地基。</p>
+      <p><b>改法</b>：底层默认<b>恢复成稳定顺序</b>（快照/合规/导出依赖它），"最新优先"只在<b>真正出图的那条路径</b>上单独开启。产品想要的效果保住，副作用清零。</p>
+      <span class="ev">共享函数默认还原 · 仅出图路径 opt-in recency</span>
+    </div>
+    <div class="row">
+      <div class="top"><span class="dot new">C</span><h3>把教训写成门禁：新增 AGENTS.md</h3></div>
+      <p><b>为什么</b>：这两个问题（外加 V0.02 自述"未跑校验就推送"）都是<b>可复用的教训</b>。我们落成<b>跨工具约束文件</b>，让后面任何 AI/工程师（Codex/Cursor/Claude）都被同一套门禁约束。</p>
+      <p>三条交付门：<b>未验证不交付</b>（无网不是放行理由）· <b>服务端权威</b>（刷新/分享态不准只存 localStorage）· <b>不造假数据</b>；外加"共享函数别为单页改默认"。</p>
+      <span class="ev">AGENTS.md + CLAUDE.md §0.7 + docs/10 归因 #4/#5/#6</span>
+    </div>
+  </div>
+
+  <!-- 3 -->
+  <span class="step-label">第三段</span>
+  <h2>如何证明我们改了</h2>
+
+  <p style="font-size:14px;color:var(--muted);margin:0 0 14px">证据分三层：<b>代码层</b>（谁都能查）、<b>行为层</b>（灰度上亲手验）、<b>门禁层</b>（合并前必须全绿）。</p>
+
+  <h3 style="font-size:14.5px;margin:18px 0 8px;color:var(--ink)">① 代码层 · 任何人可复核</h3>
+  <table>
+    <tr><th>改了什么</th><th>去哪看</th></tr>
+    <tr><td>活动品牌落 Cookie + 常量</td><td><code>apps/web/src/lib/brand-cookie.ts</code>（新增）</td></tr>
+    <tr><td>服务端读 Cookie + 成员校验</td><td><code>lib/brandai.ts</code> · <code>(brandai)/layout.tsx</code></td></tr>
+    <tr><td>客户端切换写 Cookie + 同步 SSR</td><td><code>(brandai)/brand-context.tsx</code></td></tr>
+    <tr><td>排序默认还原 + recency 选项</td><td><code>lib/rules.ts</code>；出图侧 <code>generate.worker.ts</code> · <code>brand-preview</code></td></tr>
+    <tr><td>门禁约束</td><td><code>AGENTS.md</code> · <code>CLAUDE.md §0.7</code> · <code>docs/10 #4/#5/#6</code></td></tr>
+  </table>
+  <p style="font-size:13px;color:var(--muted);margin-top:8px">提交 <code>cbd02ce</code>，分支 <code>claude/review-new-version-tc6cc5</code>。<code>git show cbd02ce</code> 即见全量 diff。</p>
+
+  <h3 style="font-size:14.5px;margin:22px 0 8px;color:var(--ink)">② 行为层 · 灰度环境亲手可验（照着做就能看到）</h3>
+  <table>
+    <tr><th>验什么</th><th>怎么操作</th><th>改前 → 改后</th><th>结果</th></tr>
+    <tr>
+      <td>切品牌后刷新不丢</td>
+      <td>侧栏切到另一个品牌 → 按 F5 硬刷新</td>
+      <td>改前：闪回默认品牌；改后：仍停在所选品牌</td>
+      <td class="cds-r pending">CDS 待验</td>
+    </tr>
+    <tr>
+      <td>分享链接带得上品牌</td>
+      <td>切品牌后复制地址 → 无痕窗口/换人打开</td>
+      <td>改前：看到的是默认品牌；改后：同一品牌</td>
+      <td class="cds-r pending">CDS 待验</td>
+    </tr>
+    <tr>
+      <td>越权防护</td>
+      <td>把 Cookie 改成别人的品牌 id → 刷新</td>
+      <td>改前/改后：都不应越权；改后服务端回落到你自己的品牌</td>
+      <td class="cds-r pending">CDS 待验</td>
+    </tr>
+    <tr>
+      <td>出图仍正常（排序未伤主流程）</td>
+      <td>新建活动 → 让 AI 出图</td>
+      <td>真 AI → 真出图，约 1 分钟拿到高清成品</td>
+      <td class="cds-r pending">CDS 待验</td>
+    </tr>
+  </table>
+  <p class="cds-summary" style="font-size:13px;color:var(--muted);margin-top:8px">灰度地址与实测结果将在部署后回填到此处。判据：<code>/api/health</code> 返回 ok 且 <code>.next/CDS_DEPLOY_COMMIT</code> = <code>cbd02ce</code>（确认跑的是新代码，不是旧缓存）。</p>
+
+  <h3 style="font-size:14.5px;margin:22px 0 8px;color:var(--ink)">③ 门禁层 · 合并进主干前的硬条件</h3>
+  <table>
+    <tr><th>门禁</th><th>命令</th><th>状态</th></tr>
+    <tr><td>契约 + UI 测试</td><td><code>pnpm test</code></td><td class="gate pending">待联网机补跑</td></tr>
+    <tr><td>类型检查</td><td><code>pnpm -F web typecheck</code></td><td class="gate pending">待联网机补跑</td></tr>
+    <tr><td>生产构建</td><td><code>pnpm -F web build</code>（CDS 部署即跑此步）</td><td class="gate pending">CDS 部署中验证</td></tr>
+  </table>
+
+  <div class="note">
+    <h3>诚实声明（按本仓库 G-VERIFY 门禁）</h3>
+    <p>本次改动在<b>离线沙箱</b>中完成，Prisma 引擎与测试框架的二进制被网络策略阻断，<b>三项门禁无法在本地运行</b>——这正是 V0.02 当初遇到、也是我们这次新立门禁要管的同一处境。因此改动<b>停在特性分支（未合并 main）</b>，已逐文件人工核对类型一致；<b>真正的"全绿"以 CDS 部署（含 next build）+ 联网机补跑为准</b>。我们不在未验证时声称通过。</p>
+  </div>
+
+  <div class="foot">
+    <div><b>验收范围</b>：V0.02 评审 · 服务端权威修复 · 排序收窄 · 门禁约束落地</div>
+    <div class="kv">
+      <span><b>方式</b>：代码取证 + 灰度实测 + 门禁补跑</span>
+      <span><b>提交</b>：cbd02ce</span>
+      <span><b>日期</b>：2026-06-25</span>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>
