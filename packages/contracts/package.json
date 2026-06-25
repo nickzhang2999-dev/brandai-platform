@@ -14,11 +14,11 @@
     "lint": "echo 'no lint'"
   },
   "dependencies": {
-    "zod": "^4.4.3"
+    "zod": "^3.24.1"
   },
   "devDependencies": {
     "@brandai/config": "workspace:*",
-    "typescript": "^6.0.3",
-    "vitest": "^4.1.9"
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
   }
 }
