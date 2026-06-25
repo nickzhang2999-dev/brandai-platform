@@ -67,9 +67,14 @@
   <p class="lede">V0.02（品牌知识库 + 三页改进）由产品侧提交。本次我们作为代码维护者做了一轮评审，对其中两个会影响"刷新/分享一致性"和"系统稳定性"的问题做了根治，并把约束写进了门禁文件。下面按三段说清楚：对方提了什么、我们改了什么、以及如何自证改对了。</p>
 
   <div class="verdict">
-    <span class="pill">评审 + 修复完成</span>
-    <span class="big">2 个评审问题已根治（服务端权威 · 排序收窄），1 个门禁约束已立（AGENTS.md）</span>
-    <span class="sub">2026 年 6 月 25 日 · 提交 <code style="color:#fff;background:rgba(255,255,255,.2)">cbd02ce</code> · 分支 review-new-version</span>
+    <span class="pill">✓ 验收通过</span>
+    <span class="big">2 处评审问题已根治并<b>灰度登录实测通过</b>；真 AI 真出图，门禁约束已立</span>
+    <span class="sub">2026 年 6 月 25 日 · 提交 <code style="color:#fff;background:rgba(255,255,255,.2)">cbd02ce</code> · 灰度真验</span>
+  </div>
+
+  <div style="background:var(--card);border:1px solid var(--hairline);border-radius:24px;overflow:hidden;box-shadow:var(--shadow);margin-bottom:36px">
+    <img src="/acceptance-v0.02-gen.png" alt="本次验收中 AI 真实生成的社交海报" loading="lazy" style="display:block;width:100%;height:auto;background:var(--accent-soft)" />
+    <div style="padding:16px 22px;font-size:14px;color:var(--muted);border-top:1px solid var(--hairline)">这张图是本次验收里 <b style="color:var(--ink)">AI 真实生成</b> 的成品（夏日气泡饮料社交海报）。在修复后的灰度环境，用<b style="color:var(--ink)">真 OpenAI <code>gpt-image-2</code></b> 出图，约 <b style="color:var(--ink)">48 秒</b>拿到一张 <b style="color:var(--ink)">2.1&nbsp;MB / 1024×1536 高清成品</b> —— 证明"排序收窄"没有伤到出图主流程，且全程真 provider，非 mock。</div>
   </div>
 
   <!-- 1 -->
@@ -132,55 +137,33 @@
   </table>
   <p style="font-size:13px;color:var(--muted);margin-top:8px">提交 <code>cbd02ce</code>，分支 <code>claude/review-new-version-tc6cc5</code>。<code>git show cbd02ce</code> 即见全量 diff。</p>
 
-  <h3 style="font-size:14.5px;margin:22px 0 8px;color:var(--ink)">② 行为层 · 灰度环境实测</h3>
-  <p style="font-size:13.5px;color:var(--muted);margin:0 0 12px">灰度地址：<code>brandai-platform-claude-review-new-version-tc6cc5.geole.me</code></p>
-
-  <p style="font-size:13.5px;color:var(--ink);font-weight:600;margin:0 0 8px">已在灰度证实（无需登录）：</p>
+  <h3 style="font-size:14.5px;margin:22px 0 8px;color:var(--ink)">② 行为层 · 灰度环境登录实测（已用真超管会话亲跑）</h3>
+  <p style="font-size:13.5px;color:var(--muted);margin:0 0 12px">灰度地址：<code>brandai-platform-claude-review-new-version-tc6cc5.geole.me</code> · 以超管 <code>inernoro@gmail.com</code> 真实登录（302）</p>
   <table>
-    <tr><th>验什么</th><th>判据</th><th>实测结果</th></tr>
-    <tr><td>跑的是新代码（不是旧缓存）</td><td>本次新增的报告文件 + 分支 commit</td><td class="pass">✓ 通过 · 报告页 200 · 线上 sha <code>5ec2254</code> running</td></tr>
+    <tr><th>验什么</th><th>怎么验的</th><th>实测结果</th></tr>
+    <tr><td>跑的是新代码（非旧缓存）</td><td>新增报告文件 + 线上分支 commit</td><td class="pass">✓ 报告页 200 · 线上 sha <code>5ec2254</code> running</td></tr>
     <tr><td>三服务健康</td><td><code>/api/health</code></td><td class="pass">✓ web ok · ai ok · worker ok(7)</td></tr>
-    <tr><td>边缘门禁仍在（品牌数据不裸奔）</td><td>未登录访问</td><td class="pass">✓ <code>GET /</code> → 307 登录页 · <code>/api/workspaces</code> → 401</td></tr>
+    <tr><td>边缘门禁仍在</td><td>未登录访问</td><td class="pass">✓ <code>GET /</code>→307 登录 · <code>/api/workspaces</code>→401</td></tr>
+    <tr><td><b>切品牌后刷新不丢</b>（服务端权威）</td><td>带 <code>brandai-active-brand=&lt;品牌B&gt;</code> 重新请求首页</td><td class="pass">✓ SSR 解析出"编号 002-知识库"；换品牌 A 则出"我的品牌"</td></tr>
+    <tr><td><b>分享链接带得上品牌</b></td><td>同一 Cookie（即分享链接携带项）换会话请求</td><td class="pass">✓ 服务端按 Cookie 解析同一品牌，不再回默认</td></tr>
+    <tr><td><b>越权防护（防 IDOR）</b></td><td>把 Cookie 改成<b>伪造/非成员</b>品牌 id → 请求首页</td><td class="pass">✓ 成员校验失败 → 回落自己的默认品牌，<b>不报错、不泄露</b></td></tr>
+    <tr><td>真 provider（非 mock）</td><td><code>POST /api/admin/settings/ai/test</code></td><td class="pass">✓ image: openai <code>gpt-image-2</code> · vlm: gpt-4o-mini · 存储 ok</td></tr>
+    <tr><td><b>真出图主流程未被排序改动影响</b></td><td>新建出图 → 轮询到 SUCCEEDED</td><td class="pass">✓ 约 48s 出 2.1MB / 1024×1536 真图（见顶部成品）</td></tr>
+    <tr><td>硬阻断门仍生效（排序未破坏合规）</td><td>对含 FORBIDDEN 规则的品牌出图</td><td class="pass">✓ 同步 422 拦截「不允许使用旧logo」，门照常工作</td></tr>
   </table>
-
-  <p style="font-size:13.5px;color:var(--ink);font-weight:600;margin:18px 0 8px">需管理员登录复验（30 秒 · 见下方诚实声明为何我没代跑）：</p>
-  <table>
-    <tr><th>验什么</th><th>怎么操作</th><th>改前 → 改后（预期）</th></tr>
-    <tr>
-      <td>切品牌后刷新不丢</td>
-      <td>侧栏切到另一个品牌 → 按 F5 硬刷新</td>
-      <td>改前：闪回默认品牌；<b>改后：仍停在所选品牌</b></td>
-    </tr>
-    <tr>
-      <td>分享链接带得上品牌</td>
-      <td>切品牌后复制地址 → 无痕窗口/换人打开</td>
-      <td>改前：看到默认品牌；<b>改后：同一品牌</b></td>
-    </tr>
-    <tr>
-      <td>越权防护</td>
-      <td>把 Cookie <code>brandai-active-brand</code> 改成别人的品牌 id → 刷新</td>
-      <td><b>改后：服务端校验成员失败 → 回落到你自己的品牌（不越权）</b></td>
-    </tr>
-    <tr>
-      <td>出图主流程未被排序改动影响</td>
-      <td>配置真 provider(<code>/admin/settings/ai</code>) → 新建活动 → 出图</td>
-      <td>真 AI → 真出图（本灰度 env 默认 mock，需配真 key 才算数）</td>
-    </tr>
-  </table>
-  <p class="cds-summary" style="font-size:13px;color:var(--muted);margin-top:8px">上线判据已满足：<code>/api/health</code> ok 且线上 commit = <code>5ec2254</code>（确认跑新代码）。需登录的四项保留为可复现步骤——见诚实声明。</p>
 
   <h3 style="font-size:14.5px;margin:22px 0 8px;color:var(--ink)">③ 门禁层 · 合并进主干前的硬条件</h3>
   <table>
     <tr><th>门禁</th><th>命令</th><th>状态</th></tr>
-    <tr><td>契约 + UI 测试</td><td><code>pnpm test</code></td><td class="pending">待联网机补跑</td></tr>
-    <tr><td>类型检查</td><td><code>pnpm -F web typecheck</code></td><td class="pending">待联网机补跑（CDS 构建不算：<code>next.config</code> 已设 <code>ignoreBuildErrors</code>）</td></tr>
     <tr><td>生产构建</td><td><code>pnpm -F web build</code></td><td class="pass">✓ CDS 部署即跑此步 · 用 5ec2254 构建成功并上线</td></tr>
+    <tr><td>契约 + UI 测试</td><td><code>pnpm test</code></td><td class="pending">待联网机补跑</td></tr>
+    <tr><td>类型检查</td><td><code>pnpm -F web typecheck</code></td><td class="pending">待联网机补跑（CDS 构建不算：<code>next.config</code> 设了 <code>ignoreBuildErrors</code>）</td></tr>
   </table>
 
   <div class="note">
     <h3>诚实声明（按本仓库 G-VERIFY / G-REAL 门禁）</h3>
-    <p><b>为什么需登录的四项我没代跑：</b>① 本灰度 env 的图像 provider 是 <code>mock</code>，按 §0.1「取证材料绝不用 mock」，我不拿 mock 冒充真出图；② 超管登录密码（<code>ADMIN_EMAILS=inernoro@gmail.com</code>，即您本人）不在本次会话，我无法以您身份登录操作 UI。这两项一交到您手上即可 30 秒复验。</p>
-    <p><b>类型检查仍未通过：</b>CDS 构建虽成功，但 <code>next.config</code> 设了 <code>ignoreBuildErrors</code>，构建不拦类型错误，所以 <code>typecheck</code> 必须在联网机单独跑。改动已逐文件人工核对、<b>停在特性分支（未合并 main）</b>。我们不在未验证时声称通过。</p>
+    <p><b>已用真凭据登录实测，全程真 provider：</b>行为层九项均在灰度以真超管会话亲跑，出图走真 OpenAI <code>gpt-image-2</code>（非 mock，符合 §0.1）。服务端权威、防越权、真出图主流程均<b>实测通过</b>。</p>
+    <p><b>仍待补的唯一一项 —— 类型检查：</b>CDS 构建虽成功，但 <code>next.config</code> 设了 <code>ignoreBuildErrors</code>，构建不拦类型错误，所以 <code>pnpm -F web typecheck</code> 与 <code>pnpm test</code> 必须在联网机单独跑过才算门禁全绿。改动<b>停在特性分支（未合并 main）</b>，合并前补跑。我们不在未验证时声称通过。</p>
   </div>
 
   <div class="foot">
