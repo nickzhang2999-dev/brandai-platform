@@ -1,6 +1,13 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import type { BrandWorkspace } from "@brandai/contracts";
 import { apiFetch } from "@/lib/client";
 
@@ -14,10 +21,15 @@ export interface BrandCtx {
   user: { name: string; email: string; initial: string };
   knowledgeBases: BrandWorkspace[];
   switchKnowledgeBase: (workspaceId: string) => void;
+  refreshKnowledgeBases: () => Promise<void>;
   createKnowledgeBase: (input: {
     name: string;
     industry?: string;
   }) => Promise<BrandWorkspace>;
+  updateKnowledgeBase: (
+    workspaceId: string,
+    patch: { name?: string; industry?: string; disabled?: boolean },
+  ) => Promise<BrandWorkspace>;
 }
 
 const Ctx = createContext<BrandCtx | null>(null);
@@ -33,25 +45,27 @@ export function BrandProvider({
   const [knowledgeBases, setKnowledgeBases] = useState<BrandWorkspace[]>([]);
   const [activeWorkspaceId, setActiveWorkspaceId] = useState(value.wsId);
 
+  const refreshKnowledgeBases = useCallback(async () => {
+    const bases = await apiFetch<BrandWorkspace[]>("/api/workspaces");
+    setKnowledgeBases(bases);
+    const saved = window.localStorage.getItem("brandai-active-knowledge-base");
+    setActiveWorkspaceId((current) => {
+      if (saved && bases.some((base) => base.id === saved)) return saved;
+      if (bases.some((base) => base.id === current)) return current;
+      return bases[0]?.id ?? value.wsId;
+    });
+  }, [value.wsId]);
+
   useEffect(() => {
     let cancelled = false;
-    apiFetch<BrandWorkspace[]>("/api/workspaces")
-      .then((bases) => {
-        if (cancelled) return;
-        setKnowledgeBases(bases);
-        const saved = window.localStorage.getItem("brandai-active-knowledge-base");
-        if (saved && bases.some((base) => base.id === saved)) {
-          setActiveWorkspaceId(saved);
-        }
-      })
-      .catch(() => {
-        // Keep the server-resolved workspace usable when the list is unavailable.
-        if (!cancelled) setKnowledgeBases([]);
-      });
+    refreshKnowledgeBases().catch(() => {
+      // Keep the server-resolved workspace usable when the list is unavailable.
+      if (!cancelled) setKnowledgeBases([]);
+    });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [refreshKnowledgeBases]);
 
   const switchKnowledgeBase = useCallback((workspaceId: string) => {
     setActiveWorkspaceId(workspaceId);
@@ -71,6 +85,26 @@ export function BrandProvider({
     [switchKnowledgeBase],
   );
 
+  const updateKnowledgeBase = useCallback(
+    async (
+      workspaceId: string,
+      patch: { name?: string; industry?: string; disabled?: boolean },
+    ) => {
+      const updated = await apiFetch<BrandWorkspace>(
+        `/api/workspaces/${workspaceId}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify(patch),
+        },
+      );
+      setKnowledgeBases((bases) =>
+        bases.map((base) => (base.id === updated.id ? updated : base)),
+      );
+      return updated;
+    },
+    [],
+  );
+
   const activeBase =
     knowledgeBases.find((base) => base.id === activeWorkspaceId) ??
     knowledgeBases.find((base) => base.id === value.wsId);
@@ -81,9 +115,20 @@ export function BrandProvider({
       brandName: activeBase?.name ?? value.brandName,
       knowledgeBases,
       switchKnowledgeBase,
+      refreshKnowledgeBases,
       createKnowledgeBase,
+      updateKnowledgeBase,
     }),
-    [activeBase, activeWorkspaceId, createKnowledgeBase, knowledgeBases, switchKnowledgeBase, value],
+    [
+      activeBase,
+      activeWorkspaceId,
+      createKnowledgeBase,
+      knowledgeBases,
+      refreshKnowledgeBases,
+      switchKnowledgeBase,
+      updateKnowledgeBase,
+      value,
+    ],
   );
 
   return <Ctx.Provider value={context}>{children}</Ctx.Provider>;

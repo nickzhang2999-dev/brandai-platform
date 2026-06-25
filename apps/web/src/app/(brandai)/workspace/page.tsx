@@ -5,7 +5,6 @@ import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
-  BrandRule,
   Generation,
   GenerationVersion,
   ListMembersResponse,
@@ -51,7 +50,12 @@ const POLL_CAP_MS = 6 * 60 * 1000; // §2.2 有界中间态
 
 type JobState = {
   generation: Generation;
-  job: { jobId: string; status: string; progress: number; failedReason?: string };
+  job: {
+    jobId: string;
+    status: string;
+    progress: number;
+    failedReason?: string;
+  };
 };
 
 // F11 — read-only quota status (GET /api/workspaces/[wsId]/quota). -1 = 不限.
@@ -80,22 +84,15 @@ function parseStyleParam(raw: string | null): string[] {
 
 export default function WorkspacePage() {
   return (
-    <Suspense fallback={<div className="p-10 text-sm text-muted-foreground">加载中…</div>}>
+    <Suspense
+      fallback={
+        <div className="p-10 text-sm text-muted-foreground">加载中…</div>
+      }
+    >
       <Workspace />
     </Suspense>
   );
 }
-
-// F8 — readable labels for BrandKnowledge rule types (RuleType enum).
-const RULE_TYPE_LABELS: Record<string, string> = {
-  color: "色彩",
-  font: "字体",
-  layout: "版式",
-  imagery: "图像",
-  graphic: "图形",
-  copy: "文案",
-  logo: "Logo",
-};
 
 function Workspace() {
   const { wsId, brandName } = useBrand();
@@ -237,7 +234,15 @@ function Workspace() {
       textMode,
       styleKeywords,
     }),
-    [sellingPoint, scene, sceneType, versionCount, targetKeys, textMode, styleKeywords],
+    [
+      sellingPoint,
+      scene,
+      sceneType,
+      versionCount,
+      targetKeys,
+      textMode,
+      styleKeywords,
+    ],
   );
   const HISTORY_CAP = 50;
   const past = useRef<FormSnapshot[]>([]);
@@ -384,19 +389,6 @@ function Workspace() {
     }).catch(() => {});
   }
 
-  // F8 · 品牌约束 — 本品牌已确认（CONFIRMED）的知识库规则。出图 worker 正是加载
-  // 这套规则做受控生成（generate.worker.ts），所以在面板真实列出它们，而非一句
-  // 静态「已生效」。空集时给诚实空态。
-  const { data: allRules = [] } = useQuery<BrandRule[]>({
-    queryKey: ["brandai-rules", wsId],
-    queryFn: () => apiFetch<BrandRule[]>(`/api/workspaces/${wsId}/rules`),
-    enabled: !!wsId,
-  });
-  const confirmedRules = useMemo(
-    () => allRules.filter((r) => r.status === "CONFIRMED"),
-    [allRules],
-  );
-
   // F11 · 生成额度展示 — read-only quota status.
   const { data: quota } = useQuery<QuotaStatus>({
     queryKey: ["brandai-quota", wsId],
@@ -450,7 +442,9 @@ function Workspace() {
       const startMs =
         startedAt.current > 0
           ? startedAt.current
-          : Date.parse(d?.generation.startedAt ?? d?.generation.createdAt ?? "") || 0;
+          : Date.parse(
+              d?.generation.startedAt ?? d?.generation.createdAt ?? "",
+            ) || 0;
       if (startMs > 0 && Date.now() - startMs > POLL_CAP_MS) return false;
       return 2500;
     },
@@ -502,48 +496,10 @@ function Workspace() {
   }
 
   const status = poll?.job?.status ?? poll?.generation.status ?? null;
-  const versions = useMemo(
-    () => poll?.generation.versions ?? [],
-    [poll],
-  );
-  const running = !!genId && status !== "SUCCEEDED" && status !== "FAILED" && !timedOut;
+  const versions = useMemo(() => poll?.generation.versions ?? [], [poll]);
+  const running =
+    !!genId && status !== "SUCCEEDED" && status !== "FAILED" && !timedOut;
   const current = versions[activeVariant] ?? versions[0];
-
-  // F8 · 已应用规则 — 优先用「当前展示的这张图」实际记录的 appliedRuleIds
-  // （worker 在出图时把加载的规则写进 version.params.appliedRuleIds/appliedRules），
-  // 把 id 解析成可读 summary；若该图还没记录（如尚未出图），退化为本品牌
-  // CONFIRMED 规则集——即 worker 下次出图将加载的那批。
-  const appliedRules = useMemo(() => {
-    const byId = new Map(confirmedRules.map((r) => [r.id, r]));
-    const params = (current?.params ?? {}) as Record<string, unknown>;
-    const rawIds =
-      (Array.isArray(params.appliedRuleIds) && params.appliedRuleIds) ||
-      (Array.isArray(params.appliedRules) && params.appliedRules) ||
-      null;
-    if (rawIds) {
-      return (rawIds as string[]).map((id) => {
-        const r = byId.get(id);
-        return {
-          id,
-          type: r?.type ?? null,
-          summary: r?.summary ?? id,
-        };
-      });
-    }
-    // 退化：本品牌已确认规则集（下次出图将加载的）。
-    return confirmedRules.map((r) => ({
-      id: r.id,
-      type: r.type as string,
-      summary: r.summary,
-    }));
-  }, [current, confirmedRules]);
-  // 标题区分：是「这张图实际应用的」还是「下次出图将加载的」。
-  const appliedFromResult = useMemo(() => {
-    const params = (current?.params ?? {}) as Record<string, unknown>;
-    return (
-      Array.isArray(params.appliedRuleIds) || Array.isArray(params.appliedRules)
-    );
-  }, [current]);
 
   // —— 修改优化(改图)/ 终选 / 交付归档 ——
   const qc = useQueryClient();
@@ -584,7 +540,11 @@ function Workspace() {
   // 本周期/今日 用量 matches server-side enforcement without a manual reload.
   const quotaInvalidatedRef = useRef<string | null>(null);
   useEffect(() => {
-    if (status === "SUCCEEDED" && genId && quotaInvalidatedRef.current !== genId) {
+    if (
+      status === "SUCCEEDED" &&
+      genId &&
+      quotaInvalidatedRef.current !== genId
+    ) {
       quotaInvalidatedRef.current = genId;
       qc.invalidateQueries({ queryKey: ["brandai-quota", wsId] });
       // 让刚出图的这次进入历史缩略条（回看列表 newest-first）。
@@ -630,7 +590,10 @@ function Workspace() {
     }
   }
 
-  async function decideReview(decision: "APPROVED" | "REJECTED", note?: string) {
+  async function decideReview(
+    decision: "APPROVED" | "REJECTED",
+    note?: string,
+  ) {
     if (!current || !genId) return;
     setReviewErr(null);
     setReviewBusy(true);
@@ -878,7 +841,9 @@ function Workspace() {
                 running={running}
                 status={status}
                 timedOut={timedOut}
-                error={poll?.job?.failedReason ?? poll?.generation.error ?? undefined}
+                error={
+                  poll?.job?.failedReason ?? poll?.generation.error ?? undefined
+                }
               />
             )}
           </div>
@@ -1119,7 +1084,8 @@ function Workspace() {
             <div>
               <div className="mb-2 text-sm font-semibold">生成数量</div>
               <p className="rounded-2xl border border-primary/15 bg-accent-soft/50 px-3 py-2.5 text-xs leading-relaxed text-muted-foreground">
-                多尺寸模式：每个尺寸各出 1 张（共 {selectedTargets.length} 张）。
+                多尺寸模式：每个尺寸各出 1 张（共 {selectedTargets.length}{" "}
+                张）。
               </p>
             </div>
           ) : (
@@ -1180,7 +1146,8 @@ function Workspace() {
             </p>
             {multiSize ? (
               <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-                注：模型会就近匹配到支持的比例（如 1080×1440 → 1024×1536），出图后以实际尺寸为准。
+                注：模型会就近匹配到支持的比例（如 1080×1440 →
+                1024×1536），出图后以实际尺寸为准。
               </p>
             ) : null}
           </div>
@@ -1328,13 +1295,6 @@ function Workspace() {
             <QuotaBar quota={quota} onUpgrade={() => setShowUpgrade(true)} />
           ) : null}
 
-          {/* F8 · 品牌约束（显示已应用规则）— 真实列出已确认 / 本图实际应用的规则 */}
-          <BrandConstraintPanel
-            rules={appliedRules}
-            fromResult={appliedFromResult}
-            typeLabels={RULE_TYPE_LABELS}
-          />
-
           {submitErr ? (
             <p className="text-sm text-destructive">{submitErr}</p>
           ) : null}
@@ -1354,11 +1314,7 @@ function Workspace() {
               disabled={submitting || running}
               className="h-12 w-full rounded-[18px] bg-gradient-to-br from-primary to-accent text-sm font-medium text-primary-foreground shadow-[0_12px_28px_rgba(124,92,255,0.26)] disabled:opacity-70"
             >
-              {running
-                ? "AI 正在生成…"
-                : submitting
-                  ? "提交中…"
-                  : "提交制作"}
+              {running ? "AI 正在生成…" : submitting ? "提交中…" : "提交制作"}
             </button>
             <p className="mt-2 text-[11px] text-muted-foreground">
               内容由 AI 生成，请注意核对准确性。
@@ -1374,12 +1330,15 @@ function Workspace() {
             projectName:
               projects.find((p) => p.id === projectId)?.name ?? "未选择项目",
             sceneType:
-              SCENE_TYPES.find((s) => s.value === sceneType)?.label ?? sceneType,
+              SCENE_TYPES.find((s) => s.value === sceneType)?.label ??
+              sceneType,
             scene: scene.trim(),
             sellingPoint: sellingPoint.trim(),
             count: multiSize ? selectedTargets.length : versionCount,
             multiSize,
-            targets: selectedTargets.map((t) => `${t.label} ${t.width}×${t.height}`),
+            targets: selectedTargets.map(
+              (t) => `${t.label} ${t.width}×${t.height}`,
+            ),
             textMode,
             styleKeywords,
             referenceCount: references.length,
@@ -1527,9 +1486,7 @@ function ReviewPanel({
         </p>
       ) : null}
 
-      {error ? (
-        <p className="mt-2 text-xs text-destructive">{error}</p>
-      ) : null}
+      {error ? <p className="mt-2 text-xs text-destructive">{error}</p> : null}
     </div>
   );
 }
@@ -1838,7 +1795,9 @@ function UpgradeDialog({
           >
             知道了
           </button>
-          <a href={`mailto:${upgradeContactEmail}?subject=BrandAI 套餐升级咨询`}>
+          <a
+            href={`mailto:${upgradeContactEmail}?subject=BrandAI 套餐升级咨询`}
+          >
             <button
               type="button"
               className="rounded-full bg-gradient-to-br from-primary to-accent px-5 py-2 text-sm font-medium text-primary-foreground shadow-[0_8px_20px_rgba(124,92,255,0.24)]"
@@ -1961,8 +1920,7 @@ function StatusPill({
   status: string | null;
   timedOut: boolean;
 }) {
-  if (timedOut)
-    return <Pill tone="warning">超时，请重试</Pill>;
+  if (timedOut) return <Pill tone="warning">超时，请重试</Pill>;
   if (!status) return null;
   const map: Record<string, { tone: Tone; label: string }> = {
     PENDING: { tone: "muted", label: "已受理 · 排队中" },
@@ -2043,74 +2001,6 @@ function Center({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex flex-col items-center justify-center text-center">
       {children}
-    </div>
-  );
-}
-
-/**
- * F8 · 品牌约束（显示已应用规则）— 不再是静态「已生效」字串，而是真实列出：
- * - 当前展示图实际记录的 appliedRuleIds（`fromResult=true`），或
- * - 本品牌已确认（CONFIRMED）、worker 下次出图将加载的规则集（`fromResult=false`）。
- * 空集时给诚实空态（去知识库确认规则）。语义 token only。
- */
-function BrandConstraintPanel({
-  rules,
-  fromResult,
-  typeLabels,
-}: {
-  rules: { id: string; type: string | null; summary: string }[];
-  fromResult: boolean;
-  typeLabels: Record<string, string>;
-}) {
-  return (
-    <div className="rounded-2xl border border-primary/15 bg-accent-soft/50 p-3">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 text-sm font-medium text-primary">
-          <span>◎</span> 品牌约束
-        </div>
-        {rules.length ? (
-          <span className="rounded-full bg-card px-2 py-0.5 text-[10px] font-medium text-primary">
-            {fromResult ? "本图已应用" : "将应用"} {rules.length}
-          </span>
-        ) : null}
-      </div>
-      {rules.length ? (
-        <>
-          <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-            {fromResult
-              ? "下列规则已在 worker 中加载并应用到当前展示的这张图。"
-              : "下列已确认的知识库规则会在出图时由 worker 加载并受控生成。"}
-          </p>
-          <ul className="mt-2 flex flex-col gap-1.5">
-            {rules.map((r) => (
-              <li
-                key={r.id}
-                className="flex items-start gap-2 rounded-xl bg-card/70 px-2.5 py-1.5"
-              >
-                {r.type ? (
-                  <span className="mt-0.5 shrink-0 rounded-full bg-accent-soft px-2 py-0.5 text-[10px] font-medium text-primary">
-                    {typeLabels[r.type] ?? r.type}
-                  </span>
-                ) : null}
-                <span className="text-xs leading-relaxed text-foreground/80">
-                  {r.summary}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </>
-      ) : (
-        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-          本品牌暂无已确认（CONFIRMED）的知识库规则，出图将不附加品牌约束。去
-          <Link
-            href="/brand-knowledge"
-            className="mx-0.5 font-medium text-primary underline underline-offset-2"
-          >
-            品牌知识库
-          </Link>
-          确认规则后即在此生效。
-        </p>
-      )}
     </div>
   );
 }

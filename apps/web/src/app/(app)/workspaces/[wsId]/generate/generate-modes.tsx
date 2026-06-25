@@ -10,7 +10,6 @@ import type {
 import { GenerateWizard } from "./generate-wizard";
 import { CampaignKit } from "./campaign-kit";
 import { BrandSystemSidebar } from "./brand-system-sidebar";
-import { RuleConstraintsSidebar } from "./rule-constraints-sidebar";
 
 type Mode = "single" | "campaign";
 type ColorSystem = NonNullable<RecognizeResponse["colorSystem"]>;
@@ -21,7 +20,8 @@ type ColorSystem = NonNullable<RecognizeResponse["colorSystem"]>;
  * P3.3 — single mode is now wrapped in the §6.4 3-column layout:
  *   left:  BrandSystemSidebar   — live VI summary (colors / rules by type)
  *   center: GenerateWizard       — existing step flow, untouched
- *   right: RuleConstraintsSidebar — confirmed rules with strength badges
+ * The detailed rule constraints rail is hidden in the early workspace flow so
+ * generation parameters keep the primary screen space.
  *
  * Campaign Kit keeps the full-width layout (it already drives a wider
  * multi-scene × multi-channel grid that benefits from breathing room).
@@ -74,7 +74,7 @@ export function GenerateModes({
       </div>
 
       {mode === "single" ? (
-        <div className="grid gap-6 lg:grid-cols-[18rem_minmax(0,1fr)_20rem]">
+        <div className="grid gap-6 lg:grid-cols-[18rem_minmax(0,1fr)]">
           <aside className="lg:sticky lg:top-6 lg:self-start">
             <BrandSystemSidebar
               rules={confirmedRules}
@@ -92,12 +92,6 @@ export function GenerateModes({
               onBriefChange={onBriefChange}
             />
           </div>
-          <aside className="lg:sticky lg:top-6 lg:self-start">
-            <RuleConstraintsSidebar
-              rules={confirmedRules}
-              briefText={`${brief.sellingPoint} ${brief.scene}`}
-            />
-          </aside>
         </div>
       ) : (
         <CampaignKit
