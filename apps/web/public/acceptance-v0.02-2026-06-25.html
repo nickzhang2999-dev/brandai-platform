@@ -132,47 +132,55 @@
   </table>
   <p style="font-size:13px;color:var(--muted);margin-top:8px">提交 <code>cbd02ce</code>，分支 <code>claude/review-new-version-tc6cc5</code>。<code>git show cbd02ce</code> 即见全量 diff。</p>
 
-  <h3 style="font-size:14.5px;margin:22px 0 8px;color:var(--ink)">② 行为层 · 灰度环境亲手可验（照着做就能看到）</h3>
+  <h3 style="font-size:14.5px;margin:22px 0 8px;color:var(--ink)">② 行为层 · 灰度环境实测</h3>
+  <p style="font-size:13.5px;color:var(--muted);margin:0 0 12px">灰度地址：<code>brandai-platform-claude-review-new-version-tc6cc5.geole.me</code></p>
+
+  <p style="font-size:13.5px;color:var(--ink);font-weight:600;margin:0 0 8px">已在灰度证实（无需登录）：</p>
   <table>
-    <tr><th>验什么</th><th>怎么操作</th><th>改前 → 改后</th><th>结果</th></tr>
+    <tr><th>验什么</th><th>判据</th><th>实测结果</th></tr>
+    <tr><td>跑的是新代码（不是旧缓存）</td><td>本次新增的报告文件 + 分支 commit</td><td class="pass">✓ 通过 · 报告页 200 · 线上 sha <code>5ec2254</code> running</td></tr>
+    <tr><td>三服务健康</td><td><code>/api/health</code></td><td class="pass">✓ web ok · ai ok · worker ok(7)</td></tr>
+    <tr><td>边缘门禁仍在（品牌数据不裸奔）</td><td>未登录访问</td><td class="pass">✓ <code>GET /</code> → 307 登录页 · <code>/api/workspaces</code> → 401</td></tr>
+  </table>
+
+  <p style="font-size:13.5px;color:var(--ink);font-weight:600;margin:18px 0 8px">需管理员登录复验（30 秒 · 见下方诚实声明为何我没代跑）：</p>
+  <table>
+    <tr><th>验什么</th><th>怎么操作</th><th>改前 → 改后（预期）</th></tr>
     <tr>
       <td>切品牌后刷新不丢</td>
       <td>侧栏切到另一个品牌 → 按 F5 硬刷新</td>
-      <td>改前：闪回默认品牌；改后：仍停在所选品牌</td>
-      <td class="cds-r pending">CDS 待验</td>
+      <td>改前：闪回默认品牌；<b>改后：仍停在所选品牌</b></td>
     </tr>
     <tr>
       <td>分享链接带得上品牌</td>
       <td>切品牌后复制地址 → 无痕窗口/换人打开</td>
-      <td>改前：看到的是默认品牌；改后：同一品牌</td>
-      <td class="cds-r pending">CDS 待验</td>
+      <td>改前：看到默认品牌；<b>改后：同一品牌</b></td>
     </tr>
     <tr>
       <td>越权防护</td>
-      <td>把 Cookie 改成别人的品牌 id → 刷新</td>
-      <td>改前/改后：都不应越权；改后服务端回落到你自己的品牌</td>
-      <td class="cds-r pending">CDS 待验</td>
+      <td>把 Cookie <code>brandai-active-brand</code> 改成别人的品牌 id → 刷新</td>
+      <td><b>改后：服务端校验成员失败 → 回落到你自己的品牌（不越权）</b></td>
     </tr>
     <tr>
-      <td>出图仍正常（排序未伤主流程）</td>
-      <td>新建活动 → 让 AI 出图</td>
-      <td>真 AI → 真出图，约 1 分钟拿到高清成品</td>
-      <td class="cds-r pending">CDS 待验</td>
+      <td>出图主流程未被排序改动影响</td>
+      <td>配置真 provider(<code>/admin/settings/ai</code>) → 新建活动 → 出图</td>
+      <td>真 AI → 真出图（本灰度 env 默认 mock，需配真 key 才算数）</td>
     </tr>
   </table>
-  <p class="cds-summary" style="font-size:13px;color:var(--muted);margin-top:8px">灰度地址与实测结果将在部署后回填到此处。判据：<code>/api/health</code> 返回 ok 且 <code>.next/CDS_DEPLOY_COMMIT</code> = <code>cbd02ce</code>（确认跑的是新代码，不是旧缓存）。</p>
+  <p class="cds-summary" style="font-size:13px;color:var(--muted);margin-top:8px">上线判据已满足：<code>/api/health</code> ok 且线上 commit = <code>5ec2254</code>（确认跑新代码）。需登录的四项保留为可复现步骤——见诚实声明。</p>
 
   <h3 style="font-size:14.5px;margin:22px 0 8px;color:var(--ink)">③ 门禁层 · 合并进主干前的硬条件</h3>
   <table>
     <tr><th>门禁</th><th>命令</th><th>状态</th></tr>
-    <tr><td>契约 + UI 测试</td><td><code>pnpm test</code></td><td class="gate pending">待联网机补跑</td></tr>
-    <tr><td>类型检查</td><td><code>pnpm -F web typecheck</code></td><td class="gate pending">待联网机补跑</td></tr>
-    <tr><td>生产构建</td><td><code>pnpm -F web build</code>（CDS 部署即跑此步）</td><td class="gate pending">CDS 部署中验证</td></tr>
+    <tr><td>契约 + UI 测试</td><td><code>pnpm test</code></td><td class="pending">待联网机补跑</td></tr>
+    <tr><td>类型检查</td><td><code>pnpm -F web typecheck</code></td><td class="pending">待联网机补跑（CDS 构建不算：<code>next.config</code> 已设 <code>ignoreBuildErrors</code>）</td></tr>
+    <tr><td>生产构建</td><td><code>pnpm -F web build</code></td><td class="pass">✓ CDS 部署即跑此步 · 用 5ec2254 构建成功并上线</td></tr>
   </table>
 
   <div class="note">
-    <h3>诚实声明（按本仓库 G-VERIFY 门禁）</h3>
-    <p>本次改动在<b>离线沙箱</b>中完成，Prisma 引擎与测试框架的二进制被网络策略阻断，<b>三项门禁无法在本地运行</b>——这正是 V0.02 当初遇到、也是我们这次新立门禁要管的同一处境。因此改动<b>停在特性分支（未合并 main）</b>，已逐文件人工核对类型一致；<b>真正的"全绿"以 CDS 部署（含 next build）+ 联网机补跑为准</b>。我们不在未验证时声称通过。</p>
+    <h3>诚实声明（按本仓库 G-VERIFY / G-REAL 门禁）</h3>
+    <p><b>为什么需登录的四项我没代跑：</b>① 本灰度 env 的图像 provider 是 <code>mock</code>，按 §0.1「取证材料绝不用 mock」，我不拿 mock 冒充真出图；② 超管登录密码（<code>ADMIN_EMAILS=inernoro@gmail.com</code>，即您本人）不在本次会话，我无法以您身份登录操作 UI。这两项一交到您手上即可 30 秒复验。</p>
+    <p><b>类型检查仍未通过：</b>CDS 构建虽成功，但 <code>next.config</code> 设了 <code>ignoreBuildErrors</code>，构建不拦类型错误，所以 <code>typecheck</code> 必须在联网机单独跑。改动已逐文件人工核对、<b>停在特性分支（未合并 main）</b>。我们不在未验证时声称通过。</p>
   </div>
 
   <div class="foot">
