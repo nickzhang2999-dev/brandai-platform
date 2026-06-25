@@ -17,23 +17,27 @@ export async function getOrCreateActiveBrand(
   name: string;
 }> {
   // Honor an explicit brand switch (persisted in the ACTIVE_BRAND_COOKIE) — but
-  // ONLY after verifying the user is a member of it. The cookie is client-set,
-  // so trusting its workspace id without an ownership check would be an IDOR
-  // (multi-tenant isolation §3.5). On any mismatch we fall through to the
-  // membership-first default below.
+  // ONLY after verifying the user may access it. The cookie is client-set, so
+  // trusting its workspace id without an access check would be an IDOR
+  // (multi-tenant isolation §3.5). Access mirrors GET /api/workspaces exactly:
+  // owner (`ownerId`) OR a Membership row — so owner-only legacy workspaces
+  // (no Membership) that the list exposes don't get rejected here and revert on
+  // refresh (Codex P2). On any mismatch we fall through to the default below.
   if (preferredWorkspaceId) {
-    const preferred = await prisma.membership.findUnique({
-      where: {
-        userId_workspaceId: { userId, workspaceId: preferredWorkspaceId },
-      },
-      select: { workspaceId: true },
+    const ws = await prisma.brandWorkspace.findUnique({
+      where: { id: preferredWorkspaceId },
+      select: { id: true, name: true, ownerId: true },
     });
-    if (preferred) {
-      const ws = await prisma.brandWorkspace.findUnique({
-        where: { id: preferred.workspaceId },
-        select: { id: true, name: true },
-      });
-      if (ws) return ws;
+    if (ws) {
+      const canAccess =
+        ws.ownerId === userId ||
+        (await prisma.membership.findUnique({
+          where: {
+            userId_workspaceId: { userId, workspaceId: preferredWorkspaceId },
+          },
+          select: { workspaceId: true },
+        })) !== null;
+      if (canAccess) return { id: ws.id, name: ws.name };
     }
   }
 

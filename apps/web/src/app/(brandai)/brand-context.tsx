@@ -57,6 +57,16 @@ export function BrandProvider({
     };
   }, []);
 
+  // Server is authoritative: whenever the layout re-resolves the active brand
+  // from ACTIVE_BRAND_COOKIE (an RSC refresh, another tab's switch, or a
+  // cleared/expired cookie), adopt the new server value so the client never
+  // stays pinned to a stale workspace from first mount (Bugbot: stale brand
+  // after cookie change). The optimistic set in switchKnowledgeBase still gives
+  // instant feedback before the refresh lands; this reconciles to the server.
+  useEffect(() => {
+    setActiveWorkspaceId(value.wsId);
+  }, [value.wsId]);
+
   const switchKnowledgeBase = useCallback(
     (workspaceId: string) => {
       // Always (re)persist the cookie — even when the id is unchanged — so a
