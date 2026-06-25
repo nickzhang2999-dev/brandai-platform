@@ -59,14 +59,17 @@ export function BrandProvider({
 
   const switchKnowledgeBase = useCallback(
     (workspaceId: string) => {
-      if (workspaceId === activeWorkspaceId) return;
-      // Persist server-readable so SSR / refresh / shared links resolve the same
-      // brand (the server re-validates membership before honoring it), then
-      // re-render server components so the layout-resolved brand stays in sync.
-      setActiveWorkspaceId(workspaceId);
+      // Always (re)persist the cookie — even when the id is unchanged — so a
+      // cookie that was cleared/expired while the SPA stayed open gets
+      // re-established; otherwise a later hard reload would ignore the UI choice
+      // and resolve the default brand server-side (Bugbot: same-brand skipped
+      // the cookie write). The cookie is server-read + membership-validated.
       document.cookie = `${ACTIVE_BRAND_COOKIE}=${encodeURIComponent(
         workspaceId,
       )}; path=/; max-age=${ACTIVE_BRAND_COOKIE_MAX_AGE}; samesite=lax`;
+      // Only the state flip + SSR re-render are redundant when nothing changed.
+      if (workspaceId === activeWorkspaceId) return;
+      setActiveWorkspaceId(workspaceId);
       router.refresh();
     },
     [activeWorkspaceId, router],

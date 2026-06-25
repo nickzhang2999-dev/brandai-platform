@@ -73,7 +73,7 @@
   </div>
 
   <div style="background:var(--card);border:1px solid var(--hairline);border-radius:24px;overflow:hidden;box-shadow:var(--shadow);margin-bottom:36px">
-    <img src="/acceptance-v0.02-gen.png" alt="本次验收中 AI 真实生成的社交海报" loading="lazy" style="display:block;width:100%;height:auto;background:var(--accent-soft)" />
+    <img src="https://cdn.geole.me/generations/cmqt5ca510001pbao68ekgkle/5fc18dd8-a563-4605-aa5a-8654a57844d0.png" alt="本次验收中 AI 真实生成的社交海报" loading="lazy" style="display:block;width:100%;height:auto;background:var(--accent-soft)" />
     <div style="padding:16px 22px;font-size:14px;color:var(--muted);border-top:1px solid var(--hairline)">这张图是本次验收里 <b style="color:var(--ink)">AI 真实生成</b> 的成品（夏日气泡饮料社交海报）。在修复后的灰度环境，用<b style="color:var(--ink)">真 OpenAI <code>gpt-image-2</code></b> 出图，约 <b style="color:var(--ink)">48 秒</b>拿到一张 <b style="color:var(--ink)">2.1&nbsp;MB / 1024×1536 高清成品</b> —— 证明"排序收窄"没有伤到出图主流程，且全程真 provider，非 mock。</div>
   </div>
 
@@ -145,7 +145,8 @@
     <tr><td>三服务健康</td><td><code>/api/health</code></td><td class="pass">✓ web ok · ai ok · worker ok(7)</td></tr>
     <tr><td>边缘门禁仍在</td><td>未登录访问</td><td class="pass">✓ <code>GET /</code>→307 登录 · <code>/api/workspaces</code>→401</td></tr>
     <tr><td><b>切品牌后刷新不丢</b>（服务端权威）</td><td>带 <code>brandai-active-brand=&lt;品牌B&gt;</code> 重新请求首页</td><td class="pass">✓ SSR 解析出"编号 002-知识库"；换品牌 A 则出"我的品牌"</td></tr>
-    <tr><td><b>分享链接带得上品牌</b></td><td>同一 Cookie（即分享链接携带项）换会话请求</td><td class="pass">✓ 服务端按 Cookie 解析同一品牌，不再回默认</td></tr>
+    <tr><td><b>本人刷新/重开浏览器不丢品牌</b></td><td>同一 Cookie 换会话请求首页</td><td class="pass">✓ 服务端按 Cookie 解析同一品牌，不再回默认</td></tr>
+    <tr><td>跨<b>不同用户</b>的分享链接带品牌</td><td>把扁平链接发给另一个成员（无此 cookie）</td><td class="pending">⚠ 受限：cookie 是按浏览器存的，别人没有→仍解析其默认品牌。真正的跨用户分享需把 brand 写进 URL（<b>phase-2</b>，见下）</td></tr>
     <tr><td><b>越权防护（防 IDOR）</b></td><td>把 Cookie 改成<b>伪造/非成员</b>品牌 id → 请求首页</td><td class="pass">✓ 成员校验失败 → 回落自己的默认品牌，<b>不报错、不泄露</b></td></tr>
     <tr><td>真 provider（非 mock）</td><td><code>POST /api/admin/settings/ai/test</code></td><td class="pass">✓ image: openai <code>gpt-image-2</code> · vlm: gpt-4o-mini · 存储 ok</td></tr>
     <tr><td><b>真出图主流程未被排序改动影响</b></td><td>新建出图 → 轮询到 SUCCEEDED</td><td class="pass">✓ 约 48s 出 2.1MB / 1024×1536 真图（见顶部成品）</td></tr>
