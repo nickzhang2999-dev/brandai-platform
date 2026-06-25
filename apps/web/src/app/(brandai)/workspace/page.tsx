@@ -501,17 +501,26 @@ function Workspace() {
   }, [presetGen]);
 
   // E · 反向同步:把当前 Campaign 写回 URL(?project=),让刷新/分享落到同一项目。
-  // 用 <select> 切项目只改了 projectId,不碰 URL;若不同步,下面 ?gen= 反向同步会
-  // 把新项目的出图 id 写进仍带旧 ?project= 的 URL,刷新/分享就会用「另一个 Campaign
-  // 的出图」加载错上下文(Bugbot: stale project in deep link)。切项目时旧的 ?gen=
-  // 属于上一项目,一并抹掉,交给下面的 gen 反向同步按新项目重写。深链(URL 已带正确
-  // project)不进此分支,不会误删其 ?gen=。
+  // 用 ref 只在 projectId「真的变了」时写——手动切 <select>、默认选 projects[0]、
+  // 「加入项目」程序化导航都覆盖(Codex: 默认/侧边栏/模板入口选中的项目也必须进
+  // URL,否则出图成功后 ?gen= 反向同步会产出缺 project 的分享链,刷新/分享时把这
+  // 次出图绑到当前最新的 campaign,project 作用域的历史/引用/导出全落错项目)。
+  // 深链导航改 ?project= 时本 effect 因 search 变化触发,但此刻 projectId 尚未被
+  // 上面的同步 effect 更新(ref===projectId)→直接跳过,不会用旧 projectId 把深链
+  // 改回去(Bugbot: stale project in deep link)。
+  const lastUrlProjectRef = useRef<string | null>(projectId);
   useEffect(() => {
+    if (lastUrlProjectRef.current === projectId) return;
+    const prev = lastUrlProjectRef.current;
+    lastUrlProjectRef.current = projectId;
     if (!projectId) return;
     if (search.get("project") === projectId) return;
     const params = new URLSearchParams(Array.from(search.entries()));
     params.set("project", projectId);
-    params.delete("gen");
+    // 只有「从一个已同步项目切到另一个」才抹旧 ?gen=(交给下面 gen 反向同步按新
+    // 项目重写);首次播种(prev=null,如默认选 projects[0])不抹,避免清掉仅带
+    // ?gen= 的深链。
+    if (prev) params.delete("gen");
     router.replace(`${pathname}?${params.toString()}`, { scroll: false });
   }, [projectId, search, pathname, router]);
 
@@ -641,6 +650,14 @@ function Workspace() {
       });
     }
   }, [status, genId, wsId, projectId, qc]);
+  // E · 实时出图到达 SUCCEEDED 后清掉 jobId,让上面的 ?gen= 反向同步把这次出图写回
+  // URL(刷新/分享落到刚生成的这张)。否则 submit() 设的 jobId 整个会话不清,
+  // 反向同步的 `if (jobId) return` 永远挡住,新出的图分享不出去(Bugbot)。
+  // 只在 SUCCEEDED 清:FAILED 仍需保留 jobId,否则轮询会丢掉 ?jobId= 携带的
+  // failedReason。改图流同样在终态清 editJobId,此处对齐。
+  useEffect(() => {
+    if (jobId && status === "SUCCEEDED") setJobId(null);
+  }, [status, jobId]);
   const editing = !!editJobId;
 
   // G6 · 审阅 / 批准流 — 拿调用者在本空间的角色，决定显示哪些审核动作。
