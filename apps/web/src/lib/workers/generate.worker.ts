@@ -355,7 +355,10 @@ export async function runGenerateJob(
   }
 
   async function runGenerationInner(): Promise<GenerateJobResult> {
-    const brandRules = await getConfirmedRules(workspaceId);
+    // §V0.02 #6 — latest-first ONLY for the generation prompt: newly created /
+    // just re-enabled rules take precedence in the constraint. Snapshots and the
+    // hard-block gates keep the deterministic default order (docs/10 #4).
+    const brandRules = await getConfirmedRules(workspaceId, { order: "recency" });
     await job.updateProgress(20);
 
     // §2.2 — AI compliance precheck moved here from the POST handler (was

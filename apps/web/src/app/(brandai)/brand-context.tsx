@@ -1,8 +1,13 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import type { BrandWorkspace } from "@brandai/contracts";
 import { apiFetch } from "@/lib/client";
+import {
+  ACTIVE_BRAND_COOKIE,
+  ACTIVE_BRAND_COOKIE_MAX_AGE,
+} from "@/lib/brand-cookie";
 
 /**
  * 当前品牌（workspace）上下文。由 (brandai)/layout 服务端解析后注入，客户端
@@ -30,19 +35,14 @@ export function BrandProvider({
   value: InitialBrandCtx;
   children: React.ReactNode;
 }) {
+  const router = useRouter();
   const [knowledgeBases, setKnowledgeBases] = useState<BrandWorkspace[]>([]);
-  const [activeWorkspaceId, setActiveWorkspaceId] = useState(value.wsId);
 
   useEffect(() => {
     let cancelled = false;
     apiFetch<BrandWorkspace[]>("/api/workspaces")
       .then((bases) => {
-        if (cancelled) return;
-        setKnowledgeBases(bases);
-        const saved = window.localStorage.getItem("brandai-active-knowledge-base");
-        if (saved && bases.some((base) => base.id === saved)) {
-          setActiveWorkspaceId(saved);
-        }
+        if (!cancelled) setKnowledgeBases(bases);
       })
       .catch(() => {
         // Keep the server-resolved workspace usable when the list is unavailable.
@@ -53,10 +53,24 @@ export function BrandProvider({
     };
   }, []);
 
-  const switchKnowledgeBase = useCallback((workspaceId: string) => {
-    setActiveWorkspaceId(workspaceId);
-    window.localStorage.setItem("brandai-active-knowledge-base", workspaceId);
-  }, []);
+  // Single source of truth for "current tenant" is the SERVER value (value.wsId):
+  // the layout resolved ACTIVE_BRAND_COOKIE and re-validated access, so we never
+  // keep a separate client-side active id that could shadow it. A switch just
+  // (re)writes the cookie and refreshes; the new brand surfaces only after the
+  // server confirms access. This kills a whole class of dual-source bugs:
+  //  - stale brand after an RSC refresh / another tab's switch (no client state);
+  //  - a rejected switch (revoked membership / stale list) can't pin the UI to an
+  //    inaccessible id — the server simply keeps the previous brand;
+  //  - same-brand re-select still re-establishes a cleared/expired cookie.
+  const switchKnowledgeBase = useCallback(
+    (workspaceId: string) => {
+      document.cookie = `${ACTIVE_BRAND_COOKIE}=${encodeURIComponent(
+        workspaceId,
+      )}; path=/; max-age=${ACTIVE_BRAND_COOKIE_MAX_AGE}; samesite=lax`;
+      router.refresh();
+    },
+    [router],
+  );
 
   const createKnowledgeBase = useCallback(
     async (input: { name: string; industry?: string }) => {
@@ -71,19 +85,17 @@ export function BrandProvider({
     [switchKnowledgeBase],
   );
 
-  const activeBase =
-    knowledgeBases.find((base) => base.id === activeWorkspaceId) ??
-    knowledgeBases.find((base) => base.id === value.wsId);
+  const activeBase = knowledgeBases.find((base) => base.id === value.wsId);
   const context = useMemo<BrandCtx>(
     () => ({
       ...value,
-      wsId: activeBase?.id ?? activeWorkspaceId,
+      wsId: value.wsId,
       brandName: activeBase?.name ?? value.brandName,
       knowledgeBases,
       switchKnowledgeBase,
       createKnowledgeBase,
     }),
-    [activeBase, activeWorkspaceId, createKnowledgeBase, knowledgeBases, switchKnowledgeBase, value],
+    [value, activeBase, knowledgeBases, switchKnowledgeBase, createKnowledgeBase],
   );
 
   return <Ctx.Provider value={context}>{children}</Ctx.Provider>;
