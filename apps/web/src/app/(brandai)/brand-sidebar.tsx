@@ -31,11 +31,13 @@ export function BrandSidebar({
     <div className="flex min-h-screen bg-background text-foreground">
       <aside className="sticky top-0 flex h-screen w-[236px] shrink-0 flex-col border-r border-border bg-card px-4 py-6">
         {/* Logo */}
-        <Link href="/" className="mb-8 flex items-center gap-3 px-2">
-          <span className="flex h-9 w-9 items-center justify-center rounded-2xl bg-gradient-to-br from-primary to-accent text-base font-semibold text-primary-foreground shadow-[0_10px_24px_rgba(124,92,255,0.25)]">
-            B
-          </span>
-          <span className="text-lg font-semibold tracking-tight">BrandAI</span>
+        <Link href="/" className="mb-8 flex items-center px-2">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/brand/nova-art-lab-logo.png"
+            alt="NOVA ART LAB"
+            className="h-12 w-[156px] object-contain object-left"
+          />
         </Link>
 
         <div className="mb-5 flex flex-col gap-2 border-b border-border pb-5">
