@@ -40,7 +40,7 @@ export const navItems: {
   icon: string;
 }[] = [
   { key: "home", label: "首页", href: "/", icon: "✦" },
-  { key: "campaigns", label: "谈判项目", href: "/campaigns", icon: "◳" },
+  { key: "campaigns", label: "Campaign 项目", href: "/campaigns", icon: "◳" },
   { key: "assets", label: "素材库", href: "/assets", icon: "▦" },
   { key: "workspace", label: "AI 工作台", href: "/workspace", icon: "✸" },
   { key: "templates", label: "模板库", href: "/templates", icon: "▱" },
