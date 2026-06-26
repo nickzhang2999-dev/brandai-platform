@@ -38,27 +38,42 @@ export function BrandSidebar({
           <span className="text-lg font-semibold tracking-tight">BrandAI</span>
         </Link>
 
-        <label className="mb-5 flex flex-col gap-1.5 px-1">
-          <span className="text-[11px] font-medium text-muted-foreground">
-            当前品牌知识库
-          </span>
-          <select
-            value={wsId}
-            onChange={(event) => switchKnowledgeBase(event.target.value)}
-            aria-label="切换品牌知识库"
-            className="h-9 w-full rounded-lg border border-border bg-background px-2 text-sm outline-none focus:border-primary/40"
+        <div className="mb-5 flex flex-col gap-2 border-b border-border pb-5">
+          <Link
+            href="/brand-knowledge"
+            className={[
+              "flex items-center gap-3 rounded-2xl px-3 py-2.5 text-sm transition-colors",
+              isActive("/brand-knowledge")
+                ? "bg-accent-soft font-medium text-primary"
+                : "text-muted-foreground hover:bg-muted hover:text-foreground",
+            ].join(" ")}
           >
-            {knowledgeBases.length === 0 ? (
-              <option value={wsId}>{brandName}</option>
-            ) : (
-              knowledgeBases.map((base) => (
-                <option key={base.id} value={base.id}>
-                  {base.name}
-                </option>
-              ))
-            )}
-          </select>
-        </label>
+            <span className="w-5 text-center text-base">◎</span>
+            品牌知识库
+          </Link>
+
+          <label className="flex flex-col gap-1.5 px-1">
+            <span className="text-[11px] font-medium text-muted-foreground">
+              当前品牌知识库
+            </span>
+            <select
+              value={wsId}
+              onChange={(event) => switchKnowledgeBase(event.target.value)}
+              aria-label="切换品牌知识库"
+              className="h-10 w-full rounded-lg border border-border bg-background px-2 text-sm outline-none focus:border-primary/40"
+            >
+              {knowledgeBases.length === 0 ? (
+                <option value={wsId}>请先创建知识库</option>
+              ) : (
+                knowledgeBases.map((base) => (
+                  <option key={base.id} value={base.id}>
+                    {base.name}
+                  </option>
+                ))
+              )}
+            </select>
+          </label>
+        </div>
 
         {/* Nav */}
         <nav className="flex flex-1 flex-col gap-1.5">

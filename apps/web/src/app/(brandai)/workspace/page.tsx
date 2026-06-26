@@ -333,6 +333,39 @@ function Workspace() {
   function zoomFit() {
     setZoom(1);
     setFitMode(true);
+    setPan({ x: 0, y: 0 });
+  }
+  const [canvasTool, setCanvasTool] = useState<CanvasTool>("select");
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const dragRef = useRef<{
+    pointerId: number;
+    x: number;
+    y: number;
+    startX: number;
+    startY: number;
+  } | null>(null);
+
+  function onStagePointerDown(e: React.PointerEvent<HTMLDivElement>) {
+    if (canvasTool !== "pan" || !current?.imageUrl) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    dragRef.current = {
+      pointerId: e.pointerId,
+      x: e.clientX,
+      y: e.clientY,
+      startX: pan.x,
+      startY: pan.y,
+    };
+  }
+  function onStagePointerMove(e: React.PointerEvent<HTMLDivElement>) {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+    setPan({
+      x: drag.startX + e.clientX - drag.x,
+      y: drag.startY + e.clientY - drag.y,
+    });
+  }
+  function onStagePointerUp(e: React.PointerEvent<HTMLDivElement>) {
+    if (dragRef.current?.pointerId === e.pointerId) dragRef.current = null;
   }
 
   // F9 · 参考素材区 — localStorage-backed, scoped to (wsId, projectId), shared
@@ -500,6 +533,11 @@ function Workspace() {
   const running =
     !!genId && status !== "SUCCEEDED" && status !== "FAILED" && !timedOut;
   const current = versions[activeVariant] ?? versions[0];
+
+  useEffect(() => {
+    setPan({ x: 0, y: 0 });
+    setFitMode(true);
+  }, [current?.id]);
 
   // —— 修改优化(改图)/ 终选 / 交付归档 ——
   const qc = useQueryClient();
@@ -808,45 +846,30 @@ function Workspace() {
         </div>
       </div>
 
-      <div className="grid min-h-0 flex-1 grid-cols-[1fr_400px]">
+      <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_340px]">
         {/* Canvas */}
-        <div className="flex min-h-0 flex-col bg-background p-6">
-          <div
-            className={[
-              "flex flex-1 items-center justify-center rounded-3xl border border-border bg-card p-6",
-              current?.imageUrl && !fitMode
-                ? "overflow-auto"
-                : "overflow-hidden",
-            ].join(" ")}
-          >
-            {current?.imageUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={current.imageUrl}
-                alt="生成结果"
-                style={
-                  fitMode
-                    ? undefined
-                    : { transform: `scale(${zoom})`, transformOrigin: "center" }
-                }
-                className={[
-                  "rounded-2xl shadow-[0_26px_80px_rgba(124,92,255,0.24)]",
-                  fitMode
-                    ? "max-h-[560px] max-w-full object-contain"
-                    : "max-w-none transition-transform",
-                ].join(" ")}
-              />
-            ) : (
-              <CanvasPlaceholder
-                running={running}
-                status={status}
-                timedOut={timedOut}
-                error={
-                  poll?.job?.failedReason ?? poll?.generation.error ?? undefined
-                }
-              />
-            )}
-          </div>
+        <div className="flex min-h-0 flex-col bg-background p-4">
+          <CanvasStage
+            version={current}
+            zoom={zoom}
+            fitMode={fitMode}
+            tool={canvasTool}
+            pan={pan}
+            running={running}
+            status={status}
+            timedOut={timedOut}
+            error={
+              poll?.job?.failedReason ?? poll?.generation.error ?? undefined
+            }
+            onToolChange={setCanvasTool}
+            onZoomIn={zoomIn}
+            onZoomOut={zoomOut}
+            onZoomReset={zoomReset}
+            onZoomFit={zoomFit}
+            onPointerDown={onStagePointerDown}
+            onPointerMove={onStagePointerMove}
+            onPointerUp={onStagePointerUp}
+          />
           {versions.length > 0 ? (
             <div className="mt-4 flex flex-wrap gap-3">
               {versions.map((v, i) => (
@@ -1933,6 +1956,8 @@ function StatusPill({
 }
 
 type Tone = "muted" | "primary" | "success" | "danger" | "warning";
+type CanvasTool = "select" | "pan";
+
 function Pill({ tone, children }: { tone: Tone; children: React.ReactNode }) {
   const map: Record<Tone, string> = {
     muted: "bg-muted text-muted-foreground",
@@ -1945,6 +1970,203 @@ function Pill({ tone, children }: { tone: Tone; children: React.ReactNode }) {
     <span className={`rounded-full px-3 py-1 text-xs font-medium ${map[tone]}`}>
       {children}
     </span>
+  );
+}
+
+function CanvasStage({
+  version,
+  zoom,
+  fitMode,
+  tool,
+  pan,
+  running,
+  status,
+  timedOut,
+  error,
+  onToolChange,
+  onZoomIn,
+  onZoomOut,
+  onZoomReset,
+  onZoomFit,
+  onPointerDown,
+  onPointerMove,
+  onPointerUp,
+}: {
+  version?: GenerationVersion;
+  zoom: number;
+  fitMode: boolean;
+  tool: CanvasTool;
+  pan: { x: number; y: number };
+  running: boolean;
+  status: string | null;
+  timedOut: boolean;
+  error?: string;
+  onToolChange: (tool: CanvasTool) => void;
+  onZoomIn: () => void;
+  onZoomOut: () => void;
+  onZoomReset: () => void;
+  onZoomFit: () => void;
+  onPointerDown: (event: React.PointerEvent<HTMLDivElement>) => void;
+  onPointerMove: (event: React.PointerEvent<HTMLDivElement>) => void;
+  onPointerUp: (event: React.PointerEvent<HTMLDivElement>) => void;
+}) {
+  const hasImage = !!version?.imageUrl;
+  const transform = fitMode
+    ? `translate(${pan.x}px, ${pan.y}px)`
+    : `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`;
+  const disabled = !hasImage;
+  const toolButton = (name: CanvasTool, label: string, title: string) => (
+    <button
+      type="button"
+      title={title}
+      aria-label={title}
+      disabled={disabled}
+      onClick={() => onToolChange(name)}
+      className={[
+        "flex h-10 w-10 items-center justify-center rounded-xl text-base transition-colors disabled:opacity-35",
+        tool === name
+          ? "bg-primary text-primary-foreground"
+          : "text-muted-foreground hover:bg-muted hover:text-foreground",
+      ].join(" ")}
+    >
+      {label}
+    </button>
+  );
+  return (
+    <div
+      className={[
+        "relative flex min-h-[560px] flex-1 items-center justify-center overflow-hidden rounded-[28px] border border-border bg-card",
+        hasImage && tool === "pan" ? "cursor-grab active:cursor-grabbing" : "",
+      ].join(" ")}
+      style={{
+        backgroundImage:
+          "radial-gradient(circle at 1px 1px, rgba(124,92,255,0.12) 1px, transparent 0)",
+        backgroundSize: "18px 18px",
+      }}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
+    >
+      <div className="absolute left-1/2 top-4 z-20 flex -translate-x-1/2 items-center gap-2 rounded-2xl border border-border bg-card/95 px-3 py-2 text-xs text-foreground shadow-[0_14px_40px_rgba(30,30,60,0.12)] backdrop-blur">
+        <button
+          type="button"
+          onClick={onZoomOut}
+          disabled={disabled}
+          className="flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-35"
+          aria-label="缩小"
+          title="缩小"
+        >
+          −
+        </button>
+        <span className="min-w-12 text-center font-mono tabular-nums">
+          {fitMode ? "适配" : `${Math.round(zoom * 100)}%`}
+        </span>
+        <button
+          type="button"
+          onClick={onZoomIn}
+          disabled={disabled}
+          className="flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-35"
+          aria-label="放大"
+          title="放大"
+        >
+          +
+        </button>
+        <span className="h-5 w-px bg-border" />
+        <button
+          type="button"
+          onClick={onZoomFit}
+          disabled={disabled}
+          className="rounded-lg px-2 py-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-35"
+        >
+          适配
+        </button>
+        <button
+          type="button"
+          onClick={onZoomReset}
+          disabled={disabled}
+          className="rounded-lg px-2 py-1 font-mono text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-35"
+        >
+          100%
+        </button>
+      </div>
+
+      <div className="absolute left-4 top-1/2 z-20 flex -translate-y-1/2 flex-col gap-2 rounded-2xl border border-border bg-card/95 p-2 shadow-[0_14px_40px_rgba(30,30,60,0.12)] backdrop-blur">
+        {toolButton("select", "↖", "选择")}
+        {toolButton("pan", "✥", "移动画布")}
+        <span className="my-1 h-px bg-border" />
+        <span className="flex h-10 w-10 items-center justify-center rounded-xl text-muted-foreground/50">
+          ▢
+        </span>
+        <span className="flex h-10 w-10 items-center justify-center rounded-xl text-muted-foreground/50">
+          T
+        </span>
+      </div>
+
+      {hasImage ? (
+        <div
+          className="relative select-none"
+          style={{
+            transform,
+            transformOrigin: "center",
+            transition: tool === "pan" ? "none" : "transform 160ms ease",
+          }}
+        >
+          <div className="pointer-events-none absolute -inset-5 rounded-[32px] border border-border bg-background/35" />
+          <div className="relative rounded-sm border-2 border-[#4A9BFF] bg-[#4A9BFF]/5 shadow-[0_24px_70px_rgba(30,30,60,0.18)]">
+            <div className="absolute -left-0.5 -top-8 rounded-lg border border-border bg-card px-2 py-1 text-[11px] font-medium text-foreground shadow-sm">
+              选中图片
+            </div>
+            {version.width && version.height ? (
+              <div className="absolute -right-0.5 -top-8 rounded-lg border border-border bg-card px-2 py-1 font-mono text-[11px] text-foreground shadow-sm">
+                {version.width} × {version.height}
+              </div>
+            ) : null}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={version.imageUrl}
+              alt="生成结果"
+              draggable={false}
+              className={[
+                "block rounded-sm object-contain",
+                fitMode
+                  ? "max-h-[72vh] max-w-[min(92vw,1120px)]"
+                  : "max-w-none",
+              ].join(" ")}
+            />
+            {[
+              "-left-2 -top-2",
+              "-right-2 -top-2",
+              "-left-2 -bottom-2",
+              "-right-2 -bottom-2",
+            ].map((pos) => (
+              <span
+                key={pos}
+                className={`absolute h-4 w-4 rounded-full border-2 border-white bg-[#4A9BFF] shadow ${pos}`}
+              />
+            ))}
+            {[
+              "left-1/2 -top-2 -translate-x-1/2",
+              "left-1/2 -bottom-2 -translate-x-1/2",
+              "-left-2 top-1/2 -translate-y-1/2",
+              "-right-2 top-1/2 -translate-y-1/2",
+            ].map((pos) => (
+              <span
+                key={pos}
+                className={`absolute h-3 w-3 rounded-full border-2 border-white bg-[#4A9BFF] shadow ${pos}`}
+              />
+            ))}
+          </div>
+        </div>
+      ) : (
+        <CanvasPlaceholder
+          running={running}
+          status={status}
+          timedOut={timedOut}
+          error={error}
+        />
+      )}
+    </div>
   );
 }
 

@@ -28,16 +28,19 @@ export const currentUser: BrandUser = {
 export type NavKey =
   | "home"
   | "campaigns"
-  | "brand-knowledge"
   | "assets"
   | "workspace"
   | "templates"
   | "members";
 
-export const navItems: { key: NavKey; label: string; href: string; icon: string }[] = [
+export const navItems: {
+  key: NavKey;
+  label: string;
+  href: string;
+  icon: string;
+}[] = [
   { key: "home", label: "首页", href: "/", icon: "✦" },
-  { key: "campaigns", label: "Campaign 项目", href: "/campaigns", icon: "◳" },
-  { key: "brand-knowledge", label: "品牌知识库", href: "/brand-knowledge", icon: "◎" },
+  { key: "campaigns", label: "谈判项目", href: "/campaigns", icon: "◳" },
   { key: "assets", label: "素材库", href: "/assets", icon: "▦" },
   { key: "workspace", label: "AI 工作台", href: "/workspace", icon: "✸" },
   { key: "templates", label: "模板库", href: "/templates", icon: "▱" },
