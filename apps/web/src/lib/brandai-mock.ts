@@ -28,6 +28,7 @@ export const currentUser: BrandUser = {
 export type NavKey =
   | "home"
   | "campaigns"
+  | "brand-knowledge"
   | "assets"
   | "workspace"
   | "templates"
@@ -41,9 +42,10 @@ export const navItems: {
 }[] = [
   { key: "home", label: "首页", href: "/", icon: "✦" },
   { key: "campaigns", label: "Campaign 项目", href: "/campaigns", icon: "◳" },
-  { key: "assets", label: "素材库", href: "/assets", icon: "▦" },
+  { key: "brand-knowledge", label: "品牌知识库", href: "/brand-knowledge", icon: "◎" },
   { key: "workspace", label: "AI 工作台", href: "/workspace", icon: "✸" },
   { key: "templates", label: "模板库", href: "/templates", icon: "▱" },
+  { key: "assets", label: "素材库", href: "/assets", icon: "▦" },
   // G6 · 成员/协作管理 — 团队成员邀请 + 角色管理（接真实 /members BFF）。
   { key: "members", label: "成员协作", href: "/members", icon: "◍" },
 ];

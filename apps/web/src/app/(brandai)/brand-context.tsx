@@ -19,14 +19,14 @@ export interface BrandCtx {
   wsId: string;
   brandName: string;
   user: { name: string; email: string; initial: string };
-  knowledgeBases: BrandWorkspace[];
-  switchKnowledgeBase: (workspaceId: string) => void;
-  refreshKnowledgeBases: () => Promise<void>;
-  createKnowledgeBase: (input: {
+  brands: BrandWorkspace[];
+  switchBrand: (workspaceId: string) => void;
+  refreshBrands: () => Promise<void>;
+  createBrand: (input: {
     name: string;
     industry?: string;
   }) => Promise<BrandWorkspace>;
-  updateKnowledgeBase: (
+  updateBrand: (
     workspaceId: string,
     patch: { name?: string; industry?: string; disabled?: boolean },
   ) => Promise<BrandWorkspace>;
@@ -42,50 +42,52 @@ export function BrandProvider({
   value: InitialBrandCtx;
   children: React.ReactNode;
 }) {
-  const [knowledgeBases, setKnowledgeBases] = useState<BrandWorkspace[]>([]);
+  const [brands, setBrands] = useState<BrandWorkspace[]>([]);
   const [activeWorkspaceId, setActiveWorkspaceId] = useState(value.wsId);
 
-  const refreshKnowledgeBases = useCallback(async () => {
-    const bases = await apiFetch<BrandWorkspace[]>("/api/workspaces");
-    setKnowledgeBases(bases);
-    const saved = window.localStorage.getItem("brandai-active-knowledge-base");
+  const refreshBrands = useCallback(async () => {
+    const loadedBrands = await apiFetch<BrandWorkspace[]>("/api/workspaces");
+    setBrands(loadedBrands);
+    const saved = window.localStorage.getItem("brandai-active-brand");
     setActiveWorkspaceId((current) => {
-      if (saved && bases.some((base) => base.id === saved)) return saved;
-      if (bases.some((base) => base.id === current)) return current;
-      return bases[0]?.id ?? value.wsId;
+      if (saved && loadedBrands.some((brand) => brand.id === saved)) {
+        return saved;
+      }
+      if (loadedBrands.some((brand) => brand.id === current)) return current;
+      return loadedBrands[0]?.id ?? value.wsId;
     });
   }, [value.wsId]);
 
   useEffect(() => {
     let cancelled = false;
-    refreshKnowledgeBases().catch(() => {
+    refreshBrands().catch(() => {
       // Keep the server-resolved workspace usable when the list is unavailable.
-      if (!cancelled) setKnowledgeBases([]);
+      if (!cancelled) setBrands([]);
     });
     return () => {
       cancelled = true;
     };
-  }, [refreshKnowledgeBases]);
+  }, [refreshBrands]);
 
-  const switchKnowledgeBase = useCallback((workspaceId: string) => {
+  const switchBrand = useCallback((workspaceId: string) => {
     setActiveWorkspaceId(workspaceId);
-    window.localStorage.setItem("brandai-active-knowledge-base", workspaceId);
+    window.localStorage.setItem("brandai-active-brand", workspaceId);
   }, []);
 
-  const createKnowledgeBase = useCallback(
+  const createBrand = useCallback(
     async (input: { name: string; industry?: string }) => {
       const created = await apiFetch<BrandWorkspace>("/api/workspaces", {
         method: "POST",
         body: JSON.stringify(input),
       });
-      setKnowledgeBases((bases) => [created, ...bases]);
-      switchKnowledgeBase(created.id);
+      setBrands((currentBrands) => [created, ...currentBrands]);
+      switchBrand(created.id);
       return created;
     },
-    [switchKnowledgeBase],
+    [switchBrand],
   );
 
-  const updateKnowledgeBase = useCallback(
+  const updateBrand = useCallback(
     async (
       workspaceId: string,
       patch: { name?: string; industry?: string; disabled?: boolean },
@@ -97,8 +99,10 @@ export function BrandProvider({
           body: JSON.stringify(patch),
         },
       );
-      setKnowledgeBases((bases) =>
-        bases.map((base) => (base.id === updated.id ? updated : base)),
+      setBrands((currentBrands) =>
+        currentBrands.map((brand) =>
+          brand.id === updated.id ? updated : brand,
+        ),
       );
       return updated;
     },
@@ -106,27 +110,27 @@ export function BrandProvider({
   );
 
   const activeBase =
-    knowledgeBases.find((base) => base.id === activeWorkspaceId) ??
-    knowledgeBases.find((base) => base.id === value.wsId);
+    brands.find((brand) => brand.id === activeWorkspaceId) ??
+    brands.find((brand) => brand.id === value.wsId);
   const context = useMemo<BrandCtx>(
     () => ({
       ...value,
       wsId: activeBase?.id ?? activeWorkspaceId,
       brandName: activeBase?.name ?? value.brandName,
-      knowledgeBases,
-      switchKnowledgeBase,
-      refreshKnowledgeBases,
-      createKnowledgeBase,
-      updateKnowledgeBase,
+      brands,
+      switchBrand,
+      refreshBrands,
+      createBrand,
+      updateBrand,
     }),
     [
       activeBase,
       activeWorkspaceId,
-      createKnowledgeBase,
-      knowledgeBases,
-      refreshKnowledgeBases,
-      switchKnowledgeBase,
-      updateKnowledgeBase,
+      brands,
+      createBrand,
+      refreshBrands,
+      switchBrand,
+      updateBrand,
       value,
     ],
   );

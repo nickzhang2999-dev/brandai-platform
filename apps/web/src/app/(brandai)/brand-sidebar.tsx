@@ -22,7 +22,8 @@ export function BrandSidebar({
   user: { name: string; email: string; initial: string };
 }) {
   const pathname = usePathname() ?? "/";
-  const { brandName, knowledgeBases, switchKnowledgeBase, wsId } = useBrand();
+  const { brandName, brands, createBrand, switchBrand, wsId } = useBrand();
+  const [creatingBrand, setCreatingBrand] = useState(false);
 
   const isActive = (href: string) =>
     href === "/" ? pathname === "/" : pathname.startsWith(href);
@@ -40,41 +41,35 @@ export function BrandSidebar({
           />
         </Link>
 
-        <div className="mb-5 flex flex-col gap-2 border-b border-border pb-5">
-          <Link
-            href="/brand-knowledge"
-            className={[
-              "flex items-center gap-3 rounded-2xl px-3 py-2.5 text-sm transition-colors",
-              isActive("/brand-knowledge")
-                ? "bg-accent-soft font-medium text-primary"
-                : "text-muted-foreground hover:bg-muted hover:text-foreground",
-            ].join(" ")}
-          >
-            <span className="w-5 text-center text-base">◎</span>
-            品牌知识库
-          </Link>
-
+        <div className="mb-5 flex flex-col gap-3 border-b border-border pb-5">
           <label className="flex flex-col gap-1.5 px-1">
             <span className="text-[11px] font-medium text-muted-foreground">
-              当前品牌知识库
+              当前品牌
             </span>
             <select
               value={wsId}
-              onChange={(event) => switchKnowledgeBase(event.target.value)}
-              aria-label="切换品牌知识库"
+              onChange={(event) => switchBrand(event.target.value)}
+              aria-label="切换品牌"
               className="h-10 w-full rounded-lg border border-border bg-background px-2 text-sm outline-none focus:border-primary/40"
             >
-              {knowledgeBases.length === 0 ? (
-                <option value={wsId}>请先创建知识库</option>
+              {brands.length === 0 ? (
+                <option value={wsId}>请先创建品牌</option>
               ) : (
-                knowledgeBases.map((base) => (
-                  <option key={base.id} value={base.id}>
-                    {base.name}
+                brands.map((brand) => (
+                  <option key={brand.id} value={brand.id}>
+                    {brand.name}
                   </option>
                 ))
               )}
             </select>
           </label>
+          <button
+            type="button"
+            onClick={() => setCreatingBrand(true)}
+            className="mx-1 flex h-9 items-center justify-center rounded-lg border border-primary/25 bg-accent-soft text-sm font-medium text-primary transition-colors hover:bg-primary hover:text-primary-foreground"
+          >
+            ＋ 创建品牌
+          </button>
         </div>
 
         {/* Nav */}
@@ -125,6 +120,97 @@ export function BrandSidebar({
       {/* §2.3 — persistent cross-page queue widget (bottom-right). Reused from
           the (app) shell so BrandAI pages get the same observable surface. */}
       <QueueWidget wsId={wsId} />
+
+      {creatingBrand ? (
+        <CreateBrandDialog
+          creating={false}
+          onClose={() => setCreatingBrand(false)}
+          onCreate={async (input) => {
+            await createBrand(input);
+            setCreatingBrand(false);
+          }}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function CreateBrandDialog({
+  creating,
+  onClose,
+  onCreate,
+}: {
+  creating: boolean;
+  onClose: () => void;
+  onCreate: (input: { name: string; industry?: string }) => Promise<void>;
+}) {
+  const [name, setName] = useState("");
+  const [industry, setIndustry] = useState("");
+  const [saving, setSaving] = useState(false);
+  const busy = creating || saving;
+
+  async function submit() {
+    if (!name.trim() || busy) return;
+    setSaving(true);
+    try {
+      await onCreate({
+        name: name.trim(),
+        industry: industry.trim() || undefined,
+      });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
+      <div className="w-full max-w-sm overflow-hidden rounded-2xl border border-border bg-card shadow-[0_24px_70px_rgba(30,30,60,0.22)]">
+        <div className="border-b border-border px-5 py-4">
+          <h2 className="text-base font-semibold">创建品牌</h2>
+          <p className="mt-1 text-xs text-muted-foreground">
+            创建后，首页、Campaign、知识库、素材与模板都会归属于该品牌。
+          </p>
+        </div>
+        <div className="flex flex-col gap-4 px-5 py-4">
+          <label className="flex flex-col gap-1.5">
+            <span className="text-xs font-medium">品牌名称</span>
+            <input
+              autoFocus
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              placeholder="例如：耐克、阿迪、李宁"
+              className="h-10 rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-primary/40"
+            />
+          </label>
+          <label className="flex flex-col gap-1.5">
+            <span className="text-xs font-medium">所属行业</span>
+            <input
+              value={industry}
+              onChange={(event) => setIndustry(event.target.value)}
+              placeholder="例如：运动服饰"
+              className="h-10 rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-primary/40"
+            />
+          </label>
+        </div>
+        <div className="flex justify-end gap-2 border-t border-border px-5 py-4">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={onClose}
+            className="rounded-lg border border-border px-4 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted disabled:opacity-60"
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            disabled={!name.trim() || busy}
+            onClick={() => void submit()}
+            className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity disabled:opacity-60"
+          >
+            {busy ? "创建中…" : "创建"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

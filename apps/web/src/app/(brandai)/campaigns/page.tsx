@@ -2,12 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type {
-  BrandRule,
-  BrandWorkspace,
-  Project,
-  TaskState,
-} from "@brandai/contracts";
+import type { BrandRule, Project, TaskState } from "@brandai/contracts";
 import { Button } from "@brandai/ui";
 import { apiFetch } from "@/lib/client";
 import { useBrand } from "../brand-context";
@@ -46,27 +41,13 @@ const RANGES: { key: RangeKey; label: string; days?: number }[] = [
   { key: "90", label: "近 90 天", days: 90 },
 ];
 
-const KB_DISABLED_TAG = "__kb_disabled";
-
-function isKnowledgeBaseDisabled(base: BrandWorkspace): boolean {
-  return (base.tags ?? []).includes(KB_DISABLED_TAG);
-}
-
 export default function CampaignsPage() {
-  const {
-    wsId,
-    brandName,
-    knowledgeBases,
-    switchKnowledgeBase,
-    createKnowledgeBase,
-  } = useBrand();
+  const { wsId, brandName } = useBrand();
   const qc = useQueryClient();
   const [activeId, setActiveId] = useState<string | null>(null);
   const [filterKey, setFilterKey] = useState("all");
   const [sortKey, setSortKey] = useState<SortKey>("recent");
   const [rangeKey, setRangeKey] = useState<RangeKey>("all");
-  // C4 · 品牌筛选 — "all" = 全部品牌, otherwise a BrandWorkspace id.
-  const [brandFilter, setBrandFilter] = useState<string>("all");
   const [q, setQ] = useState("");
   const [creating, setCreating] = useState(false);
   // Lifecycle action target: which transition the confirm dialog is for.
@@ -88,48 +69,9 @@ export default function CampaignsPage() {
   };
 
   const { data: projects = [], isLoading } = useQuery({
-    queryKey: [
-      "brandai-projects-all",
-      knowledgeBases.map((base) => base.id).join("|") || wsId,
-    ],
-    queryFn: async () => {
-      const sources =
-        knowledgeBases.length > 0
-          ? knowledgeBases
-          : [{ id: wsId, name: brandName } as BrandWorkspace];
-      const groups = await Promise.all(
-        sources.map((base) =>
-          apiFetch<Project[]>(`/api/workspaces/${base.id}/projects`),
-        ),
-      );
-      return groups.flat();
-    },
+    queryKey: ["brandai-projects", wsId],
+    queryFn: () => apiFetch<Project[]>(`/api/workspaces/${wsId}/projects`),
   });
-
-  // C4 · 品牌筛选 — the user's real brands (owned or member of). Same endpoint
-  // the homepage 推荐品牌 uses; no mock rows. Phase-1 is single-brand, so this
-  // is usually [activeBrand] → "全部品牌" + that one brand. Honest, not faked:
-  // selecting a brand filters campaigns by their workspaceId (= brand id).
-  const brands = knowledgeBases;
-
-  // C2 · brand-name lookup for search — map each project's workspaceId to its
-  // brand name. The active brand (from context) always resolves even before the
-  // brands list loads, since every loaded project shares the active wsId.
-  const brandNameOf = useMemo(() => {
-    const map = new Map<string, string>();
-    map.set(wsId, brandName);
-    for (const b of brands) map.set(b.id, b.name);
-    return (id: string) => map.get(id) ?? "";
-  }, [brands, wsId, brandName]);
-
-  // C4 — only offer brands that actually have loaded campaigns. Projects come
-  // only from the active workspace's GET /projects, so listing every brand let
-  // a user pick one with no loaded rows → misleading empty list. Restricting to
-  // present brands keeps the filter honest (usually just the active brand).
-  const brandOptions = useMemo(() => {
-    const present = new Set(projects.map((p) => p.workspaceId));
-    return brands.filter((b) => present.has(b.id));
-  }, [brands, projects]);
 
   const filtered = useMemo(() => {
     const f = FILTERS.find((x) => x.key === filterKey);
@@ -140,14 +82,9 @@ export default function CampaignsPage() {
 
     const list = projects.filter((p) => {
       if (f?.status && (p.status ?? "DRAFT") !== f.status) return false;
-      // C4 — filter by selected brand (project.workspaceId === brand id).
-      if (brandFilter !== "all" && p.workspaceId !== brandFilter) return false;
-      // C2 — match project name OR its brand/workspace name.
       if (needle) {
         const inName = p.name.toLowerCase().includes(needle);
-        const inBrand = brandNameOf(p.workspaceId)
-          .toLowerCase()
-          .includes(needle);
+        const inBrand = brandName.toLowerCase().includes(needle);
         if (!inName && !inBrand) return false;
       }
       if (cutoff != null) {
@@ -172,7 +109,7 @@ export default function CampaignsPage() {
       }
     });
     return sorted;
-  }, [projects, filterKey, q, sortKey, rangeKey, brandFilter, brandNameOf]);
+  }, [projects, filterKey, q, sortKey, rangeKey, brandName]);
 
   // Only ever select from the FILTERED set — falling back to projects[0] when
   // filters match nothing would make the summary panel + lifecycle actions
@@ -186,7 +123,7 @@ export default function CampaignsPage() {
     <div className="mx-auto max-w-[1180px] px-10 py-10">
       <PageHeader
         title="Campaign 项目"
-        subtitle="集中管理所有品牌知识库下的营销项目"
+        subtitle={`集中管理「${brandName}」品牌下的营销项目`}
         action={
           <Button size="lg" onClick={() => setCreating(true)}>
             ＋ 创建新 Campaign
@@ -201,20 +138,6 @@ export default function CampaignsPage() {
           placeholder="搜索项目 / 品牌名称…"
           className="h-10 flex-1 rounded-full border border-border bg-card px-4 text-sm outline-none focus:border-primary/40 focus:shadow-[0_0_0_4px_rgba(124,92,255,0.08)]"
         />
-        {/* C4 · 品牌筛选 */}
-        <select
-          value={brandFilter}
-          onChange={(e) => setBrandFilter(e.target.value)}
-          aria-label="品牌筛选"
-          className="h-9 rounded-full border border-border bg-card px-4 text-sm text-muted-foreground outline-none transition-colors hover:bg-muted focus:border-primary/40 focus:shadow-[0_0_0_4px_rgba(124,92,255,0.08)]"
-        >
-          <option value="all">全部品牌</option>
-          {brandOptions.map((b) => (
-            <option key={b.id} value={b.id}>
-              {b.name}
-            </option>
-          ))}
-        </select>
         <select
           value={filterKey}
           onChange={(e) => setFilterKey(e.target.value)}
@@ -285,7 +208,7 @@ export default function CampaignsPage() {
                       <StatusBadge status={status} />
                       {c.archivedAt ? <Chip>已归档</Chip> : null}
                       <span className="text-xs text-muted-foreground">
-                        {brandNameOf(c.workspaceId)}
+                        {brandName}
                       </span>
                     </div>
                     <div className="text-[17px] font-semibold">{c.name}</div>
@@ -357,9 +280,6 @@ export default function CampaignsPage() {
             <div className="mt-5 flex flex-col gap-2">
               <a
                 href={active ? `/workspace?project=${active.id}` : "/workspace"}
-                onClick={() => {
-                  if (active) switchKnowledgeBase(active.workspaceId);
-                }}
               >
                 <Button variant="primary" className="w-full justify-center">
                   进入工作台出图
@@ -415,10 +335,8 @@ export default function CampaignsPage() {
 
       {creating ? (
         <CreateDialog
-          fallbackWsId={wsId}
-          knowledgeBases={knowledgeBases}
-          createKnowledgeBase={createKnowledgeBase}
-          switchKnowledgeBase={switchKnowledgeBase}
+          wsId={wsId}
+          brandName={brandName}
           onClose={() => setCreating(false)}
           onCreated={(p) => {
             invalidate();
@@ -456,9 +374,7 @@ export default function CampaignsPage() {
       {viewingRules ? (
         <RulesPanel
           wsId={active?.workspaceId ?? wsId}
-          brandName={
-            active ? brandNameOf(active.workspaceId) || brandName : brandName
-          }
+          brandName={brandName}
           onClose={() => setViewingRules(false)}
         />
       ) : null}
@@ -917,70 +833,35 @@ function EmptyState({ onCreate }: { onCreate: () => void }) {
 }
 
 function CreateDialog({
-  fallbackWsId,
-  knowledgeBases,
-  createKnowledgeBase,
-  switchKnowledgeBase,
+  wsId,
+  brandName,
   onClose,
   onCreated,
 }: {
-  fallbackWsId: string;
-  knowledgeBases: BrandWorkspace[];
-  createKnowledgeBase: (input: {
-    name: string;
-    industry?: string;
-  }) => Promise<BrandWorkspace>;
-  switchKnowledgeBase: (workspaceId: string) => void;
+  wsId: string;
+  brandName: string;
   onClose: () => void;
   onCreated: (p: Project) => void;
 }) {
-  const enabledBases = useMemo(
-    () => knowledgeBases.filter((base) => !isKnowledgeBaseDisabled(base)),
-    [knowledgeBases],
-  );
-  const [knowledgeBaseId, setKnowledgeBaseId] = useState(
-    enabledBases[0]?.id ?? "",
-  );
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [channels, setChannels] = useState("");
-  const [newBaseName, setNewBaseName] = useState("");
-
-  useEffect(() => {
-    if (!knowledgeBaseId && enabledBases[0]?.id) {
-      setKnowledgeBaseId(enabledBases[0].id);
-    }
-  }, [enabledBases, knowledgeBaseId]);
-
-  const createBase = useMutation({
-    mutationFn: () => createKnowledgeBase({ name: newBaseName.trim() }),
-    onSuccess: (base) => {
-      setKnowledgeBaseId(base.id);
-      setNewBaseName("");
-    },
-  });
 
   const mutation = useMutation({
     mutationFn: () =>
-      apiFetch<Project>(
-        `/api/workspaces/${knowledgeBaseId || fallbackWsId}/projects`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            name: name.trim(),
-            description: description.trim() || undefined,
-            channels: channels
-              .split(/[,，\s]+/)
-              .map((s) => s.trim())
-              .filter(Boolean),
-            status: "DRAFT",
-          }),
-        },
-      ),
-    onSuccess: (project) => {
-      switchKnowledgeBase(project.workspaceId);
-      onCreated(project);
-    },
+      apiFetch<Project>(`/api/workspaces/${wsId}/projects`, {
+        method: "POST",
+        body: JSON.stringify({
+          name: name.trim(),
+          description: description.trim() || undefined,
+          channels: channels
+            .split(/[,，\s]+/)
+            .map((s) => s.trim())
+            .filter(Boolean),
+          status: "DRAFT",
+        }),
+      }),
+    onSuccess: onCreated,
   });
 
   return (
@@ -994,45 +875,9 @@ function CreateDialog({
       >
         <div className="text-lg font-semibold">创建新 Campaign</div>
         <p className="mt-1 text-sm text-muted-foreground">
-          填写项目名称与简介，稍后可在工作台围绕它出图。
+          当前品牌：{brandName}。创建后项目、素材与出图记录都归属于该品牌。
         </p>
         <div className="mt-5 flex flex-col gap-4">
-          <Field label="所属品牌知识库">
-            {enabledBases.length > 0 ? (
-              <select
-                value={knowledgeBaseId}
-                onChange={(e) => setKnowledgeBaseId(e.target.value)}
-                className="h-11 w-full rounded-2xl border border-border bg-background px-3 text-sm outline-none focus:border-primary/40 focus:shadow-[0_0_0_4px_rgba(124,92,255,0.08)]"
-              >
-                {enabledBases.map((base) => (
-                  <option key={base.id} value={base.id}>
-                    {base.name}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <div className="rounded-2xl border border-dashed border-border p-3">
-                <p className="text-xs leading-relaxed text-muted-foreground">
-                  当前没有可用知识库。请先创建一套知识库，再创建 Campaign。
-                </p>
-                <div className="mt-3 flex gap-2">
-                  <input
-                    value={newBaseName}
-                    onChange={(e) => setNewBaseName(e.target.value)}
-                    placeholder="知识库名称"
-                    className="h-10 min-w-0 flex-1 rounded-xl border border-border bg-background px-3 text-sm outline-none focus:border-primary/40"
-                  />
-                  <Button
-                    variant="outline"
-                    disabled={!newBaseName.trim() || createBase.isPending}
-                    onClick={() => createBase.mutate()}
-                  >
-                    {createBase.isPending ? "创建中…" : "创建知识库"}
-                  </Button>
-                </div>
-              </div>
-            )}
-          </Field>
           <Field label="项目名称">
             <input
               autoFocus
@@ -1070,7 +915,7 @@ function CreateDialog({
             取消
           </Button>
           <Button
-            disabled={!name.trim() || !knowledgeBaseId || mutation.isPending}
+            disabled={!name.trim() || mutation.isPending}
             onClick={() => mutation.mutate()}
           >
             {mutation.isPending ? "创建中…" : "创建"}
