@@ -1,6 +1,13 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -24,6 +31,7 @@ import {
 } from "@/lib/reference-tray";
 import { useBrand } from "../brand-context";
 import { MaskPaintCanvas } from "./MaskPaintCanvas";
+import { OpenCanvas } from "./OpenCanvas";
 
 /**
  * P05 · AI 工作台 — 左画布 + 变体条，右 prompt 面板。真实出图（CLAUDE.md §2，
@@ -37,14 +45,6 @@ const SCENE_TYPES: { value: string; label: string }[] = [
   { value: "SCENE", label: "场景图" },
   { value: "CAMPAIGN_KV", label: "Campaign KV" },
   { value: "SELLING_POINT", label: "卖点图" },
-];
-
-const EDIT_OPS: { value: string; label: string }[] = [
-  { value: "REPLACE_BACKGROUND", label: "换背景" },
-  { value: "RECOLOR", label: "改色" },
-  { value: "EDIT_TEXT", label: "改文字" },
-  { value: "ADD_ELEMENT", label: "加元素" },
-  { value: "REMOVE_ELEMENT", label: "去元素" },
 ];
 
 // 迁移自 prd_agent 视觉创作 —— 选中图片上方的浮动操作工具条。「局部重画」是特殊项
@@ -330,63 +330,6 @@ function Workspace() {
   // Reference histVersion so the toolbar re-renders when stacks change.
   void histVersion;
 
-  // F3 / L6 — preview zoom (zoom in/out/reset/fit). `fit` lets the image scale
-  // to the canvas (object-contain default); a numeric zoom switches to scaled
-  // overflow-scroll so the operator can inspect detail.
-  const [zoom, setZoom] = useState(1);
-  const [fitMode, setFitMode] = useState(true);
-  const ZOOM_MIN = 0.2;
-  const ZOOM_MAX = 4;
-  function zoomIn() {
-    setFitMode(false);
-    setZoom((z) => Math.min(ZOOM_MAX, Math.round((z + 0.25) * 100) / 100));
-  }
-  function zoomOut() {
-    setFitMode(false);
-    setZoom((z) => Math.max(ZOOM_MIN, Math.round((z - 0.25) * 100) / 100));
-  }
-  function zoomReset() {
-    setZoom(1);
-    setFitMode(false);
-  }
-  function zoomFit() {
-    setZoom(1);
-    setFitMode(true);
-    setPan({ x: 0, y: 0 });
-  }
-  const [canvasTool, setCanvasTool] = useState<CanvasTool>("select");
-  const [pan, setPan] = useState({ x: 0, y: 0 });
-  const dragRef = useRef<{
-    pointerId: number;
-    x: number;
-    y: number;
-    startX: number;
-    startY: number;
-  } | null>(null);
-
-  function onStagePointerDown(e: React.PointerEvent<HTMLDivElement>) {
-    if (canvasTool !== "pan" || !current?.imageUrl) return;
-    e.currentTarget.setPointerCapture(e.pointerId);
-    dragRef.current = {
-      pointerId: e.pointerId,
-      x: e.clientX,
-      y: e.clientY,
-      startX: pan.x,
-      startY: pan.y,
-    };
-  }
-  function onStagePointerMove(e: React.PointerEvent<HTMLDivElement>) {
-    const drag = dragRef.current;
-    if (!drag || drag.pointerId !== e.pointerId) return;
-    setPan({
-      x: drag.startX + e.clientX - drag.x,
-      y: drag.startY + e.clientY - drag.y,
-    });
-  }
-  function onStagePointerUp(e: React.PointerEvent<HTMLDivElement>) {
-    if (dragRef.current?.pointerId === e.pointerId) dragRef.current = null;
-  }
-
   // F9 · 参考素材区 — localStorage-backed, scoped to (wsId, projectId), shared
   // with the assets page via reference-tray. Subscribe for cross-page updates.
   const [references, setReferences] = useState<RefAsset[]>([]);
@@ -605,14 +548,10 @@ function Workspace() {
     !!genId && status !== "SUCCEEDED" && status !== "FAILED" && !timedOut;
   const current = versions[activeVariant] ?? versions[0];
 
-  useEffect(() => {
-    setPan({ x: 0, y: 0 });
-    setFitMode(true);
-  }, [current?.id]);
-
   // —— 修改优化(改图)/ 终选 / 交付归档 ——
   const qc = useQueryClient();
-  const [editOp, setEditOp] = useState("REPLACE_BACKGROUND");
+  // 局部重画的目标版本(画布选中的那张出图变体);蒙版覆盖层对它出图。
+  const [maskTarget, setMaskTarget] = useState<GenerationVersion | null>(null);
   const [editInstr, setEditInstr] = useState("");
   const [editVid, setEditVid] = useState<string | null>(null);
   const [editJobId, setEditJobId] = useState<string | null>(null);
@@ -674,7 +613,6 @@ function Workspace() {
   useEffect(() => {
     if (jobId && status === "SUCCEEDED") setJobId(null);
   }, [status, jobId]);
-  const editing = !!editJobId;
 
   // G6 · 审阅 / 批准流 — 拿调用者在本空间的角色，决定显示哪些审核动作。
   // EDITOR/OWNER 可「提交审阅」；REVIEWER/OWNER 可「批准 / 驳回」。
@@ -741,19 +679,23 @@ function Workspace() {
 
   // 统一的改图提交入口：换背景/改色/局部重画(INPAINT+mask)/扩展(OUTPAINT) 全走这里
   // → POST /edit(202) → 轮询 edit job → 成功后新子版本(parentVersionId)浮现在变体条。
-  async function runEdit(op: string, payload: Record<string, unknown>) {
-    if (!current || !genId) return;
+  // 统一改图入口:换背景/改色/局部重画(INPAINT+mask)/扩展(OUTPAINT) 全走这里 →
+  // POST /edit(202) → 轮询 edit job → 成功后新子版本随 versions 浮现到画布。
+  async function runEdit(
+    op: string,
+    payload: Record<string, unknown>,
+    target?: GenerationVersion,
+  ) {
+    const v = target ?? current;
+    if (!v || !genId) return;
     setActionErr(null);
     setBusy("edit");
     try {
       const r = await apiFetch<{ jobId: string }>(
-        `/api/workspaces/${wsId}/generations/${genId}/versions/${current.id}/edit`,
-        {
-          method: "POST",
-          body: JSON.stringify({ op, payload }),
-        },
+        `/api/workspaces/${wsId}/generations/${genId}/versions/${v.id}/edit`,
+        { method: "POST", body: JSON.stringify({ op, payload }) },
       );
-      setEditVid(current.id);
+      setEditVid(v.id);
       setEditJobId(r.jobId);
     } catch (e) {
       setActionErr(e instanceof Error ? e.message : "改图提交失败");
@@ -762,23 +704,59 @@ function Workspace() {
     }
   }
 
-  // 快捷编辑 / 操作工具条：用当前选中的 op + 指令出图。局部重画走蒙版覆盖层，不经此。
-  function submitEdit() {
-    if (!editInstr.trim() || editOp === "INPAINT") return;
-    void runEdit(editOp, { prompt: editInstr.trim() });
-  }
-
-  // 局部重画浮动入口：选中图片有 imageUrl 才能打开蒙版绘制覆盖层。
-  function openMaskPaint() {
-    if (!current?.imageUrl) return;
+  // 局部重画浮动入口:对画布选中的出图变体打开蒙版绘制覆盖层。
+  function openMaskPaint(target?: GenerationVersion) {
+    const v = target ?? current;
+    if (!v?.imageUrl) return;
     setActionErr(null);
+    setMaskTarget(v);
     setMaskOpen(true);
   }
 
   // 蒙版确认 → op=INPAINT + payload.mask(涂抹蒙版 data-URI) + prompt(指令)。
   function confirmMaskEdit(maskDataUri: string, instruction: string) {
-    void runEdit("INPAINT", { prompt: instruction, mask: maskDataUri });
+    void runEdit(
+      "INPAINT",
+      { prompt: instruction, mask: maskDataUri },
+      maskTarget ?? current,
+    );
   }
+
+  // 画布单选某出图变体 → 同步 activeVariant(右下终选/导出/审阅对它生效)。
+  const onCanvasSelectVersion = useCallback(
+    (versionId: string | null) => {
+      if (!versionId) return;
+      setActiveVariant((prev) => {
+        const idx = versions.findIndex((x) => x.id === versionId);
+        return idx >= 0 ? idx : prev;
+      });
+    },
+    [versions],
+  );
+
+  // 上传图片到画布:走真实素材上传(R2)→ 公网 URL + 真实尺寸(从 resolution 串解析)。
+  const onCanvasUploadImage = useCallback(
+    async (file: File) => {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("category", "OTHER");
+      const res = await fetch(`/api/workspaces/${wsId}/assets/upload`, {
+        method: "POST",
+        body: fd,
+      });
+      if (!res.ok) throw new Error("上传失败");
+      const a = (await res.json()) as { url: string; resolution?: string };
+      let width: number | undefined;
+      let height: number | undefined;
+      const m = a.resolution?.match(/(\d+)\D+(\d+)/);
+      if (m) {
+        width = Number(m[1]);
+        height = Number(m[2]);
+      }
+      return { url: a.url, width, height };
+    },
+    [wsId],
+  );
 
   async function markFinal() {
     if (!current || !genId) return;
@@ -928,19 +906,12 @@ function Workspace() {
           <span className="font-medium text-foreground">工作台</span>
         </nav>
         <div className="flex items-center gap-3">
-          {/* F2 / L6 — undo/redo (generation-form state) + zoom (preview). */}
+          {/* F2 / L6 — undo/redo (生成表单快照)。缩放在画布内自带。 */}
           <Toolbar
             canUndo={canUndo}
             canRedo={canRedo}
             onUndo={undo}
             onRedo={redo}
-            zoom={zoom}
-            fitMode={fitMode}
-            onZoomIn={zoomIn}
-            onZoomOut={zoomOut}
-            onZoomReset={zoomReset}
-            onZoomFit={zoomFit}
-            zoomDisabled={!current?.imageUrl}
           />
           <StatusPill status={status} timedOut={timedOut} />
         </div>
@@ -949,41 +920,24 @@ function Workspace() {
       <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_340px]">
         {/* Canvas */}
         <div className="flex min-h-0 flex-col bg-background p-4">
-          <CanvasStage
-            version={current}
-            zoom={zoom}
-            fitMode={fitMode}
-            tool={canvasTool}
-            pan={pan}
+          <OpenCanvas
+            seedVersions={versions}
             running={running}
             status={status}
             timedOut={timedOut}
             error={
               poll?.job?.failedReason ?? poll?.generation.error ?? undefined
             }
-            zoomMin={ZOOM_MIN}
-            zoomMax={ZOOM_MAX}
-            onToolChange={setCanvasTool}
-            onZoomIn={zoomIn}
-            onZoomOut={zoomOut}
-            onZoomReset={zoomReset}
-            onZoomFit={zoomFit}
-            onSetZoom={setZoom}
-            onSetPan={setPan}
-            onSetFitMode={setFitMode}
-            onPointerDown={onStagePointerDown}
-            onPointerMove={onStagePointerMove}
-            onPointerUp={onStagePointerUp}
+            onSelectVersion={onCanvasSelectVersion}
+            onUploadImage={onCanvasUploadImage}
             edit={{
               ops: CANVAS_OPS,
-              op: editOp,
-              instr: editInstr,
               busy: !!editJobId || busy === "edit",
-              enabled: status === "SUCCEEDED" && !!current,
-              onSelectOp: (op) =>
-                op === "INPAINT" ? openMaskPaint() : setEditOp(op),
+              instr: editInstr,
               onInstrChange: setEditInstr,
-              onRun: submitEdit,
+              onRun: (version, op) =>
+                void runEdit(op, { prompt: editInstr.trim() }, version),
+              onOpenMask: (version) => openMaskPaint(version),
             }}
           />
           {versions.length > 0 ? (
@@ -1093,41 +1047,13 @@ function Workspace() {
           {/* 修改优化 / 终选 / 交付归档 —— 仅在已出图后对选中变体可用 */}
           {status === "SUCCEEDED" && current ? (
             <div className="mt-4 rounded-2xl border border-border bg-card p-4">
-              <div className="mb-2 text-xs font-semibold text-muted-foreground">
-                对选中图片
+              <div className="mb-1 text-xs font-semibold text-muted-foreground">
+                选中图片 · 终选与交付
               </div>
-              <div className="flex flex-wrap items-center gap-1.5">
-                {EDIT_OPS.map((o) => (
-                  <button
-                    key={o.value}
-                    onClick={() => setEditOp(o.value)}
-                    className={[
-                      "rounded-full px-2.5 py-1 text-xs transition-colors",
-                      editOp === o.value
-                        ? "bg-accent-soft font-medium text-primary"
-                        : "border border-border text-muted-foreground hover:bg-muted",
-                    ].join(" ")}
-                  >
-                    {o.label}
-                  </button>
-                ))}
-              </div>
-              <div className="mt-2 flex gap-2">
-                <input
-                  value={editInstr}
-                  onChange={(e) => setEditInstr(e.target.value)}
-                  placeholder="改图指令,如:把背景换成纯色米白、瓶身更通透…"
-                  className="h-10 flex-1 rounded-xl border border-border bg-background px-3 text-sm outline-none focus:border-primary/40"
-                />
-                <button
-                  onClick={submitEdit}
-                  disabled={!editInstr.trim() || busy === "edit" || editing}
-                  className="h-10 shrink-0 rounded-xl bg-gradient-to-br from-primary to-accent px-4 text-sm font-medium text-primary-foreground disabled:opacity-60"
-                >
-                  {editing ? "改图中…" : "改图"}
-                </button>
-              </div>
-              <div className="mt-3 flex flex-wrap gap-2">
+              <p className="mb-2 text-[11px] leading-relaxed text-muted-foreground">
+                改图操作(局部重画/换背景/扩展…)在画布上选中图片后从其上方工具条触发。
+              </p>
+              <div className="mt-1 flex flex-wrap gap-2">
                 <button
                   onClick={markFinal}
                   disabled={busy === "final" || current.isFinal}
@@ -1517,11 +1443,11 @@ function Workspace() {
 
       {/* 局部重画 · 蒙版绘制覆盖层（迁移自 prd_agent 视觉创作）。涂抹重绘区 + 指令 →
           op=INPAINT + payload.mask 走真实改图链路；提交中保持打开给出反馈，终态自动关闭。 */}
-      {maskOpen && current?.imageUrl ? (
+      {maskOpen && (maskTarget ?? current)?.imageUrl ? (
         <MaskPaintCanvas
-          imageSrc={current.imageUrl}
-          imageWidth={current.width || 1024}
-          imageHeight={current.height || 1024}
+          imageSrc={(maskTarget ?? current)!.imageUrl}
+          imageWidth={(maskTarget ?? current)!.width || 1024}
+          imageHeight={(maskTarget ?? current)!.height || 1024}
           submitting={!!editJobId || busy === "edit"}
           onConfirm={confirmMaskEdit}
           onCancel={() => setMaskOpen(false)}
@@ -1973,94 +1899,36 @@ function Toolbar({
   canRedo,
   onUndo,
   onRedo,
-  zoom,
-  fitMode,
-  onZoomIn,
-  onZoomOut,
-  onZoomReset,
-  onZoomFit,
-  zoomDisabled,
 }: {
   canUndo: boolean;
   canRedo: boolean;
   onUndo: () => void;
   onRedo: () => void;
-  zoom: number;
-  fitMode: boolean;
-  onZoomIn: () => void;
-  onZoomOut: () => void;
-  onZoomReset: () => void;
-  onZoomFit: () => void;
-  zoomDisabled: boolean;
 }) {
   const btn =
     "flex h-8 min-w-8 items-center justify-center rounded-lg px-2 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40";
   return (
-    <div className="flex items-center gap-2">
-      <div className="flex items-center gap-0.5 rounded-xl border border-border bg-background p-0.5">
-        <button
-          type="button"
-          onClick={onUndo}
-          disabled={!canUndo}
-          aria-label="撤销"
-          title="撤销 (表单)"
-          className={btn}
-        >
-          ↶
-        </button>
-        <button
-          type="button"
-          onClick={onRedo}
-          disabled={!canRedo}
-          aria-label="重做"
-          title="重做 (表单)"
-          className={btn}
-        >
-          ↷
-        </button>
-      </div>
-      <div className="flex items-center gap-0.5 rounded-xl border border-border bg-background p-0.5">
-        <button
-          type="button"
-          onClick={onZoomOut}
-          disabled={zoomDisabled}
-          aria-label="缩小"
-          title="缩小"
-          className={btn}
-        >
-          −
-        </button>
-        <button
-          type="button"
-          onClick={onZoomReset}
-          disabled={zoomDisabled}
-          aria-label="实际大小"
-          title="100%"
-          className={`${btn} tabular-nums text-xs`}
-        >
-          {fitMode ? "适应" : `${Math.round(zoom * 100)}%`}
-        </button>
-        <button
-          type="button"
-          onClick={onZoomIn}
-          disabled={zoomDisabled}
-          aria-label="放大"
-          title="放大"
-          className={btn}
-        >
-          ＋
-        </button>
-        <button
-          type="button"
-          onClick={onZoomFit}
-          disabled={zoomDisabled}
-          aria-label="适应窗口"
-          title="适应窗口"
-          className={`${btn} text-xs`}
-        >
-          ⤢
-        </button>
-      </div>
+    <div className="flex items-center gap-0.5 rounded-xl border border-border bg-background p-0.5">
+      <button
+        type="button"
+        onClick={onUndo}
+        disabled={!canUndo}
+        aria-label="撤销"
+        title="撤销 (表单)"
+        className={btn}
+      >
+        ↶
+      </button>
+      <button
+        type="button"
+        onClick={onRedo}
+        disabled={!canRedo}
+        aria-label="重做"
+        title="重做 (表单)"
+        className={btn}
+      >
+        ↷
+      </button>
     </div>
   );
 }
@@ -2085,19 +1953,6 @@ function StatusPill({
 }
 
 type Tone = "muted" | "primary" | "success" | "danger" | "warning";
-type CanvasTool = "select" | "pan";
-
-// 选中图片上方浮动操作工具条的 props（迁移自 prd_agent 视觉创作）。
-type CanvasEditProps = {
-  ops: { value: string; label: string; mask?: boolean }[];
-  op: string;
-  instr: string;
-  busy: boolean;
-  enabled: boolean;
-  onSelectOp: (op: string) => void;
-  onInstrChange: (v: string) => void;
-  onRun: () => void;
-};
 
 function Pill({ tone, children }: { tone: Tone; children: React.ReactNode }) {
   const map: Record<Tone, string> = {
@@ -2111,363 +1966,6 @@ function Pill({ tone, children }: { tone: Tone; children: React.ReactNode }) {
     <span className={`rounded-full px-3 py-1 text-xs font-medium ${map[tone]}`}>
       {children}
     </span>
-  );
-}
-
-function CanvasStage({
-  version,
-  zoom,
-  fitMode,
-  tool,
-  pan,
-  running,
-  status,
-  timedOut,
-  error,
-  zoomMin,
-  zoomMax,
-  onToolChange,
-  onZoomIn,
-  onZoomOut,
-  onZoomReset,
-  onZoomFit,
-  onSetZoom,
-  onSetPan,
-  onSetFitMode,
-  onPointerDown,
-  onPointerMove,
-  onPointerUp,
-  edit,
-}: {
-  version?: GenerationVersion;
-  zoom: number;
-  fitMode: boolean;
-  tool: CanvasTool;
-  pan: { x: number; y: number };
-  running: boolean;
-  status: string | null;
-  timedOut: boolean;
-  error?: string;
-  zoomMin: number;
-  zoomMax: number;
-  onToolChange: (tool: CanvasTool) => void;
-  onZoomIn: () => void;
-  onZoomOut: () => void;
-  onZoomReset: () => void;
-  onZoomFit: () => void;
-  onSetZoom: (z: number) => void;
-  onSetPan: (p: { x: number; y: number }) => void;
-  onSetFitMode: (b: boolean) => void;
-  onPointerDown: (event: React.PointerEvent<HTMLDivElement>) => void;
-  onPointerMove: (event: React.PointerEvent<HTMLDivElement>) => void;
-  onPointerUp: (event: React.PointerEvent<HTMLDivElement>) => void;
-  edit: CanvasEditProps;
-}) {
-  const hasImage = !!version?.imageUrl;
-  const containerRef = useRef<HTMLDivElement>(null);
-  const imgRef = useRef<HTMLImageElement>(null);
-  // 最新 viewport 放 ref，wheel 监听只绑一次（避免每次平移重绑、丢事件）。
-  const vpRef = useRef({ zoom, pan, fitMode });
-  vpRef.current = { zoom, pan, fitMode };
-
-  // ⌘/Ctrl+滚轮 = 缩放(光标定点) · 两指拖动/滚轮 = 平移。吞掉原生 wheel
-  // (passive:false)，与左侧 map 一致的手感。对齐 prd_agent
-  // .claude/rules/gesture-unification.md 标准 A（视觉创作自定义 DOM 画布）。
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el || !hasImage) return;
-    const onWheel = (ev: WheelEvent) => {
-      const { zoom: z0, pan: p0, fitMode: fm } = vpRef.current;
-      if (ev.ctrlKey || ev.metaKey) {
-        ev.preventDefault();
-        // 缩放基线：fitMode 下取图片实际显示缩放，切到显式缩放时不跳变。
-        const img = imgRef.current;
-        let z1 = z0;
-        if (fm && img && img.naturalWidth) {
-          z1 = img.offsetWidth / img.naturalWidth;
-        }
-        const z2 = Math.min(
-          zoomMax,
-          Math.max(zoomMin, z1 * Math.exp(-ev.deltaY * 0.003)),
-        );
-        if (z2 === z1) return;
-        // 光标相对容器中心（transformOrigin: center）。
-        const rect = el.getBoundingClientRect();
-        const cx = ev.clientX - (rect.left + rect.width / 2);
-        const cy = ev.clientY - (rect.top + rect.height / 2);
-        const ratio = z2 / z1;
-        if (fm) onSetFitMode(false);
-        onSetZoom(z2);
-        onSetPan({ x: cx - (cx - p0.x) * ratio, y: cy - (cy - p0.y) * ratio });
-      } else {
-        // 两指拖动 / 滚轮 = 平移（缩放档位不变）。
-        ev.preventDefault();
-        onSetPan({ x: p0.x - ev.deltaX, y: p0.y - ev.deltaY });
-      }
-    };
-    el.addEventListener("wheel", onWheel, { passive: false });
-    return () => el.removeEventListener("wheel", onWheel);
-  }, [hasImage, zoomMin, zoomMax, onSetZoom, onSetPan, onSetFitMode]);
-  const transform = fitMode
-    ? `translate(${pan.x}px, ${pan.y}px)`
-    : `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`;
-  const disabled = !hasImage;
-  const toolButton = (name: CanvasTool, label: string, title: string) => (
-    <button
-      type="button"
-      title={title}
-      aria-label={title}
-      disabled={disabled}
-      onClick={() => onToolChange(name)}
-      className={[
-        "flex h-10 w-10 items-center justify-center rounded-xl text-base transition-colors disabled:opacity-35",
-        tool === name
-          ? "bg-primary text-primary-foreground"
-          : "text-muted-foreground hover:bg-muted hover:text-foreground",
-      ].join(" ")}
-    >
-      {label}
-    </button>
-  );
-  return (
-    <div
-      ref={containerRef}
-      className={[
-        "relative flex min-h-[560px] flex-1 items-center justify-center overflow-hidden rounded-[28px] border border-border bg-card",
-        hasImage && tool === "pan" ? "cursor-grab active:cursor-grabbing" : "",
-      ].join(" ")}
-      style={{
-        backgroundImage:
-          "radial-gradient(circle at 1px 1px, rgba(124,92,255,0.12) 1px, transparent 0)",
-        backgroundSize: "18px 18px",
-      }}
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
-      onPointerCancel={onPointerUp}
-    >
-      <div className="absolute left-1/2 top-4 z-20 flex -translate-x-1/2 items-center gap-2 rounded-2xl border border-border bg-card/95 px-3 py-2 text-xs text-foreground shadow-[0_14px_40px_rgba(30,30,60,0.12)] backdrop-blur">
-        <button
-          type="button"
-          onClick={onZoomOut}
-          disabled={disabled}
-          className="flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-35"
-          aria-label="缩小"
-          title="缩小"
-        >
-          −
-        </button>
-        <span className="min-w-12 text-center font-mono tabular-nums">
-          {fitMode ? "适配" : `${Math.round(zoom * 100)}%`}
-        </span>
-        <button
-          type="button"
-          onClick={onZoomIn}
-          disabled={disabled}
-          className="flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-35"
-          aria-label="放大"
-          title="放大"
-        >
-          +
-        </button>
-        <span className="h-5 w-px bg-border" />
-        <button
-          type="button"
-          onClick={onZoomFit}
-          disabled={disabled}
-          className="rounded-lg px-2 py-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-35"
-        >
-          适配
-        </button>
-        <button
-          type="button"
-          onClick={onZoomReset}
-          disabled={disabled}
-          className="rounded-lg px-2 py-1 font-mono text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-35"
-        >
-          100%
-        </button>
-      </div>
-
-      <div className="absolute left-4 top-1/2 z-20 flex -translate-y-1/2 flex-col gap-2 rounded-2xl border border-border bg-card/95 p-2 shadow-[0_14px_40px_rgba(30,30,60,0.12)] backdrop-blur">
-        {toolButton("select", "↖", "选择")}
-        {toolButton("pan", "✥", "移动画布")}
-        <span className="my-1 h-px bg-border" />
-        <span className="flex h-10 w-10 items-center justify-center rounded-xl text-muted-foreground/50">
-          ▢
-        </span>
-        <span className="flex h-10 w-10 items-center justify-center rounded-xl text-muted-foreground/50">
-          T
-        </span>
-      </div>
-
-      {/* 选中图片上方的浮动操作工具条（迁移自 prd_agent 视觉创作）。局部重画走蒙版
-          覆盖层(op=INPAINT+mask)，其余项选中后用快捷编辑框补指令出图——全走真实改图链路。 */}
-      {edit.enabled ? (
-        <div className="absolute left-1/2 top-[4.25rem] z-20 flex max-w-[calc(100%-2rem)] -translate-x-1/2 flex-wrap items-center justify-center gap-1.5 rounded-2xl border border-border bg-card/95 px-2.5 py-2 shadow-[0_14px_40px_rgba(30,30,60,0.12)] backdrop-blur">
-          {edit.ops.map((o) => (
-            <button
-              key={o.value}
-              type="button"
-              onClick={() => edit.onSelectOp(o.value)}
-              disabled={edit.busy}
-              title={o.mask ? "在图片上涂抹要重绘的区域" : o.label}
-              className={[
-                "rounded-full px-2.5 py-1 text-xs transition-colors disabled:opacity-50",
-                o.mask
-                  ? "bg-gradient-to-br from-primary to-accent font-medium text-primary-foreground shadow-[0_6px_16px_rgba(124,92,255,0.24)]"
-                  : edit.op === o.value
-                    ? "bg-accent-soft font-medium text-primary"
-                    : "border border-border text-muted-foreground hover:bg-muted",
-              ].join(" ")}
-            >
-              {o.label}
-            </button>
-          ))}
-          <span className="mx-0.5 h-5 w-px bg-border" />
-          <input
-            value={edit.instr}
-            onChange={(e) => edit.onInstrChange(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") edit.onRun();
-            }}
-            placeholder="描述修改…"
-            disabled={edit.busy}
-            className="h-8 w-40 rounded-lg border border-border bg-background px-2.5 text-xs text-foreground outline-none focus:border-primary/40"
-          />
-          <button
-            type="button"
-            onClick={edit.onRun}
-            disabled={edit.busy || !edit.instr.trim() || edit.op === "INPAINT"}
-            className="h-8 shrink-0 rounded-lg bg-gradient-to-br from-primary to-accent px-3 text-xs font-medium text-primary-foreground disabled:opacity-50"
-          >
-            {edit.busy ? "改图中…" : "运行"}
-          </button>
-        </div>
-      ) : null}
-
-      {hasImage ? (
-        <div
-          className="relative select-none"
-          style={{
-            transform,
-            transformOrigin: "center",
-            transition: tool === "pan" ? "none" : "transform 160ms ease",
-          }}
-        >
-          <div className="pointer-events-none absolute -inset-5 rounded-[32px] border border-border bg-background/35" />
-          <div className="relative rounded-sm border-2 border-[#4A9BFF] bg-[#4A9BFF]/5 shadow-[0_24px_70px_rgba(30,30,60,0.18)]">
-            <div className="absolute -left-0.5 -top-8 rounded-lg border border-border bg-card px-2 py-1 text-[11px] font-medium text-foreground shadow-sm">
-              选中图片
-            </div>
-            {version.width && version.height ? (
-              <div className="absolute -right-0.5 -top-8 rounded-lg border border-border bg-card px-2 py-1 font-mono text-[11px] text-foreground shadow-sm">
-                {version.width} × {version.height}
-              </div>
-            ) : null}
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              ref={imgRef}
-              src={version.imageUrl}
-              alt="生成结果"
-              draggable={false}
-              className={[
-                "block rounded-sm object-contain",
-                fitMode
-                  ? "max-h-[72vh] max-w-[min(92vw,1120px)]"
-                  : "max-w-none",
-              ].join(" ")}
-            />
-            {[
-              "-left-2 -top-2",
-              "-right-2 -top-2",
-              "-left-2 -bottom-2",
-              "-right-2 -bottom-2",
-            ].map((pos) => (
-              <span
-                key={pos}
-                className={`absolute h-4 w-4 rounded-full border-2 border-white bg-[#4A9BFF] shadow ${pos}`}
-              />
-            ))}
-            {[
-              "left-1/2 -top-2 -translate-x-1/2",
-              "left-1/2 -bottom-2 -translate-x-1/2",
-              "-left-2 top-1/2 -translate-y-1/2",
-              "-right-2 top-1/2 -translate-y-1/2",
-            ].map((pos) => (
-              <span
-                key={pos}
-                className={`absolute h-3 w-3 rounded-full border-2 border-white bg-[#4A9BFF] shadow ${pos}`}
-              />
-            ))}
-          </div>
-        </div>
-      ) : (
-        <CanvasPlaceholder
-          running={running}
-          status={status}
-          timedOut={timedOut}
-          error={error}
-        />
-      )}
-    </div>
-  );
-}
-
-function CanvasPlaceholder({
-  running,
-  status,
-  timedOut,
-  error,
-}: {
-  running: boolean;
-  status: string | null;
-  timedOut: boolean;
-  error?: string;
-}) {
-  if (timedOut)
-    return (
-      <Center>
-        <div className="text-sm text-warning">生成超时</div>
-        <p className="mt-1 text-xs text-muted-foreground">
-          可能仍在后台处理或已失败，请点「提交制作」重试。
-        </p>
-      </Center>
-    );
-  if (status === "FAILED")
-    return (
-      <Center>
-        <div className="text-sm text-destructive">生成失败</div>
-        <p className="mt-1 max-w-sm text-xs text-muted-foreground">
-          {error || "请检查 AI provider 配置或稍后重试。"}
-        </p>
-      </Center>
-    );
-  if (running)
-    return (
-      <Center>
-        <div className="h-10 w-10 animate-spin rounded-full border-2 border-accent-soft border-t-primary" />
-        <div className="mt-3 text-sm text-muted-foreground">
-          {status === "PENDING" ? "已受理，排队中…" : "AI 正在生成…"}
-        </div>
-      </Center>
-    );
-  return (
-    <Center>
-      <div className="text-5xl text-accent-soft">✸</div>
-      <div className="mt-3 text-sm font-medium">填写需求并提交制作</div>
-      <p className="mt-1 max-w-sm text-xs text-muted-foreground">
-        提交后由 worker 调用真实 AI provider 受控出图，结果会浮现在这里。
-      </p>
-    </Center>
-  );
-}
-
-function Center({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="flex flex-col items-center justify-center text-center">
-      {children}
-    </div>
   );
 }
 
