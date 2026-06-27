@@ -795,7 +795,10 @@ export function OpenCanvas({
       ) : null}
 
       {/* 顶部缩放工具条 */}
-      <div className="absolute left-1/2 top-4 z-20 flex -translate-x-1/2 items-center gap-2 rounded-2xl border border-border bg-card/95 px-3 py-2 text-xs text-foreground shadow-[0_14px_40px_rgba(30,30,60,0.12)] backdrop-blur">
+      <div
+        onPointerDown={(e) => e.stopPropagation()}
+        className="absolute left-1/2 top-4 z-20 flex -translate-x-1/2 items-center gap-2 rounded-2xl border border-border bg-card/95 px-3 py-2 text-xs text-foreground shadow-[0_14px_40px_rgba(30,30,60,0.12)] backdrop-blur"
+      >
         <button
           type="button"
           onClick={() => zoomByButton(0.83)}
@@ -833,7 +836,10 @@ export function OpenCanvas({
       </div>
 
       {/* 左侧工具栏(真实工具) */}
-      <div className="absolute left-4 top-1/2 z-20 flex -translate-y-1/2 flex-col gap-1.5 rounded-2xl border border-border bg-card/95 p-2 shadow-[0_14px_40px_rgba(30,30,60,0.12)] backdrop-blur">
+      <div
+        onPointerDown={(e) => e.stopPropagation()}
+        className="absolute left-4 top-1/2 z-20 flex -translate-y-1/2 flex-col gap-1.5 rounded-2xl border border-border bg-card/95 p-2 shadow-[0_14px_40px_rgba(30,30,60,0.12)] backdrop-blur"
+      >
         <ToolBtn active={tool === "select" && !placing} title="选择" onClick={() => pickTool("select")}>
           <CursorIcon />
         </ToolBtn>
@@ -900,7 +906,10 @@ export function OpenCanvas({
 
       {/* 选中出图变体 → 操作条(局部重画/扩展/换背景…接真实改图) */}
       {soloVersion ? (
-        <div className="absolute left-1/2 top-[4.5rem] z-20 flex max-w-[calc(100%-8rem)] -translate-x-1/2 flex-wrap items-center justify-center gap-1.5 rounded-2xl border border-border bg-card/95 px-2.5 py-2 shadow-[0_14px_40px_rgba(30,30,60,0.12)] backdrop-blur">
+        <div
+          onPointerDown={(e) => e.stopPropagation()}
+          className="absolute left-1/2 top-[4.5rem] z-20 flex max-w-[calc(100%-8rem)] -translate-x-1/2 flex-wrap items-center justify-center gap-1.5 rounded-2xl border border-border bg-card/95 px-2.5 py-2 shadow-[0_14px_40px_rgba(30,30,60,0.12)] backdrop-blur"
+        >
           {edit.ops.map((o) => (
             <button
               key={o.value}
