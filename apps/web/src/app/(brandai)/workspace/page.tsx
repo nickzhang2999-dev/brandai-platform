@@ -8,7 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { useSearchParams, useRouter, usePathname } from "next/navigation";
+import { useSearchParams, usePathname } from "next/navigation";
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
@@ -111,7 +111,6 @@ export default function WorkspacePage() {
 function Workspace() {
   const { wsId, brandName } = useBrand();
   const search = useSearchParams();
-  const router = useRouter();
   const pathname = usePathname();
   const presetProject = search.get("project");
   // E · 深链/刷新恢复 —— ?gen= 指明当前查看的出图。通知中心与队列 widget 都跳到
@@ -416,6 +415,8 @@ function Workspace() {
   const [submitting, setSubmitting] = useState(false);
   const startedAt = useRef<number>(0);
   const [timedOut, setTimedOut] = useState(false);
+  // 改图(edit)中间态计时 —— §2.4 有界:改图轮询超过上界给明确出口,绝不无限「改图中…」。
+  const editStartedAt = useRef<number>(0);
 
   const { data: poll } = useQuery<JobState>({
     queryKey: ["brandai-gen", wsId, genId, jobId],
@@ -505,8 +506,13 @@ function Workspace() {
     // 项目重写);首次播种(prev=null,如默认选 projects[0])不抹,避免清掉仅带
     // ?gen= 的深链。
     if (prev) params.delete("gen");
-    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
-  }, [projectId, search, pathname, router]);
+    // 用 history.replaceState 做「浅层」URL 同步(只更新地址栏给刷新/分享用),
+    // 不走 router.replace —— 后者对同路由的 query 变更会发起 RSC 软导航,反复触发
+    // 本组件重渲 + useSearchParams 变更,与下面的 gen 同步互相激发成导航环(Network
+    // 满屏 /workspace?_rsc、画面「反复抖动」)。replaceState 不发导航、不重取 RSC,
+    // SSR/刷新仍从真实地址栏解析,深链/分享不受影响。
+    window.history.replaceState(null, "", `${pathname}?${params.toString()}`);
+  }, [projectId, search, pathname]);
 
   // E · 反向同步:把当前查看的出图写回 URL(?gen=),让刷新/分享落到精确那张。
   // 实时出图/改图进行中(jobId 仅会话内存在)不写,避免把一次性 job 深链出去。
@@ -516,8 +522,9 @@ function Workspace() {
     if (search.get("gen") === genId) return;
     const params = new URLSearchParams(Array.from(search.entries()));
     params.set("gen", genId);
-    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
-  }, [genId, jobId, search, pathname, router]);
+    // 同上:浅层 replaceState,避免 RSC 软导航环 + 抖动。
+    window.history.replaceState(null, "", `${pathname}?${params.toString()}`);
+  }, [genId, jobId, search, pathname]);
 
   // 进入工作台默认展示该项目最近一次出图（history newest-first）。仅当本会话
   // 还没有选中/提交任何出图时播种 —— 不覆盖用户的实时提交，也不覆盖手动切换的历史。
@@ -571,9 +578,32 @@ function Workspace() {
     enabled: !!editJobId && !!editVid && !!genId,
     refetchInterval: (q) => {
       const s = q.state.data?.job?.status;
-      return s === "SUCCEEDED" || s === "FAILED" ? false : 2500;
+      if (s === "SUCCEEDED" || s === "FAILED") return false;
+      // §2.4 6-min 上界:改图卡死就停轮询(下面的计时器给出口),不无限转「改图中…」。
+      if (
+        editStartedAt.current > 0 &&
+        Date.now() - editStartedAt.current > POLL_CAP_MS
+      )
+        return false;
+      return 2500;
     },
   });
+  // §2.4 改图中间态超时出口:超界则清掉 job(busy 解锁)+ 给可读出口,不卡死工具条。
+  useEffect(() => {
+    if (!editJobId) return;
+    const t = setInterval(() => {
+      if (
+        editStartedAt.current > 0 &&
+        Date.now() - editStartedAt.current > POLL_CAP_MS
+      ) {
+        setEditJobId(null);
+        setEditVid(null);
+        setMaskOpen(false);
+        setActionErr("改图超时:可能仍在后台,请稍后在变体条查看或重试。");
+      }
+    }, 3000);
+    return () => clearInterval(t);
+  }, [editJobId]);
   useEffect(() => {
     const s = editPoll?.job?.status;
     if (s === "SUCCEEDED") {
@@ -695,6 +725,7 @@ function Workspace() {
         `/api/workspaces/${wsId}/generations/${genId}/versions/${v.id}/edit`,
         { method: "POST", body: JSON.stringify({ op, payload }) },
       );
+      editStartedAt.current = Date.now();
       setEditVid(v.id);
       setEditJobId(r.jobId);
     } catch (e) {

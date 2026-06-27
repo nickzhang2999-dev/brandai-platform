@@ -159,6 +159,9 @@ export function OpenCanvas({
   }>(null);
   const [editingText, setEditingText] = useState<string | null>(null);
   const [space, setSpace] = useState(false);
+  // 选中出图变体后「待执行的改图操作」(arm)。点 op chip 只是选中操作(不立即发图),
+  // 输入指令后回车/点「出图」才真正改图——避免「点一下就锁死整条工具条」。
+  const [armedOp, setArmedOp] = useState<string | null>(null);
   const seededRef = useRef(false);
 
   // 最新 viewport 放 ref,wheel 监听只绑一次。
@@ -199,6 +202,10 @@ export function OpenCanvas({
   useEffect(() => {
     onSelectVersion(soloVersion?.id ?? null);
   }, [soloVersion, onSelectVersion]);
+  // 换选/取消选中 → 清掉待执行操作(避免把上一张的 armed op 带到下一张)。
+  useEffect(() => {
+    setArmedOp(null);
+  }, [soloVersion?.id]);
 
   // ---- 坐标转换 ----
   const toWorld = useCallback(
@@ -904,43 +911,75 @@ export function OpenCanvas({
         </div>
       ) : null}
 
-      {/* 选中出图变体 → 操作条(局部重画/扩展/换背景…接真实改图) */}
+      {/* 选中出图变体 → 操作条(局部重画/扩展/换背景…接真实改图)。
+          arm-then-confirm:点 op chip 只「选中操作」(高亮),输入指令后回车/点「出图」
+          才真正改图;局部重画(mask)点了直接开涂抹层(自带指令+确认)。布局固定不随
+          交互增减元素,避免居中工具条左右抖动。*/}
       {soloVersion ? (
         <div
           onPointerDown={(e) => e.stopPropagation()}
           className="absolute left-1/2 top-[4.5rem] z-20 flex max-w-[calc(100%-8rem)] -translate-x-1/2 flex-wrap items-center justify-center gap-1.5 rounded-2xl border border-border bg-card/95 px-2.5 py-2 shadow-[0_14px_40px_rgba(30,30,60,0.12)] backdrop-blur"
         >
-          {edit.ops.map((o) => (
-            <button
-              key={o.value}
-              type="button"
-              disabled={edit.busy}
-              onClick={() =>
-                o.mask ? edit.onOpenMask(soloVersion) : edit.onRun(soloVersion, o.value)
-              }
-              title={o.mask ? "在图片上涂抹要重绘的区域" : o.label}
-              className={[
-                "rounded-full px-2.5 py-1 text-xs transition-colors disabled:opacity-50",
-                o.mask
-                  ? "bg-gradient-to-br from-primary to-accent font-medium text-primary-foreground shadow-[0_6px_16px_rgba(124,92,255,0.24)]"
-                  : "border border-border text-muted-foreground hover:bg-muted",
-              ].join(" ")}
-            >
-              {o.label}
-            </button>
-          ))}
+          {edit.ops.map((o) => {
+            const active = o.mask ? false : armedOp === o.value;
+            return (
+              <button
+                key={o.value}
+                type="button"
+                disabled={edit.busy}
+                aria-pressed={active}
+                onClick={() => {
+                  if (o.mask) {
+                    edit.onOpenMask(soloVersion);
+                  } else {
+                    // 仅「选中」该操作,不立即改图(等指令 + 确认)。
+                    setArmedOp((prev) => (prev === o.value ? null : o.value));
+                  }
+                }}
+                title={o.mask ? "在图片上涂抹要重绘的区域" : `选「${o.label}」,再输入指令出图`}
+                className={[
+                  "rounded-full px-2.5 py-1 text-xs transition-colors disabled:opacity-50",
+                  o.mask
+                    ? "bg-gradient-to-br from-primary to-accent font-medium text-primary-foreground shadow-[0_6px_16px_rgba(124,92,255,0.24)]"
+                    : active
+                      ? "bg-accent-soft font-medium text-primary ring-1 ring-primary/40"
+                      : "border border-border text-muted-foreground hover:bg-muted",
+                ].join(" ")}
+              >
+                {o.label}
+              </button>
+            );
+          })}
           <span className="mx-0.5 h-5 w-px bg-border" />
           <input
             value={edit.instr}
             onChange={(e) => edit.onInstrChange(e.target.value)}
             onPointerDown={(e) => e.stopPropagation()}
-            placeholder="描述修改…(配合左侧操作选项)"
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && armedOp && !edit.busy) {
+                e.preventDefault();
+                edit.onRun(soloVersion, armedOp);
+              }
+            }}
+            placeholder={
+              armedOp
+                ? `描述「${edit.ops.find((o) => o.value === armedOp)?.label ?? "修改"}」细节,回车出图…`
+                : "先选上方操作,再描述修改…"
+            }
             disabled={edit.busy}
-            className="h-8 w-44 rounded-lg border border-border bg-background px-2.5 text-xs text-foreground outline-none focus:border-primary/40"
+            className="h-8 w-44 rounded-lg border border-border bg-background px-2.5 text-xs text-foreground outline-none focus:border-primary/40 disabled:opacity-50"
           />
-          <span className="text-[11px] text-muted-foreground">
-            {edit.busy ? "改图中…" : "点操作出图"}
-          </span>
+          <button
+            type="button"
+            disabled={edit.busy || !armedOp}
+            onClick={() => {
+              if (armedOp && !edit.busy) edit.onRun(soloVersion, armedOp);
+            }}
+            title={armedOp ? "用上方选中的操作 + 指令改图" : "先选一个操作"}
+            className="h-8 rounded-lg bg-gradient-to-br from-primary to-accent px-3 text-xs font-medium text-primary-foreground shadow-[0_6px_16px_rgba(124,92,255,0.24)] transition-opacity disabled:opacity-40"
+          >
+            {edit.busy ? "改图中…" : "出图"}
+          </button>
         </div>
       ) : null}
     </div>
