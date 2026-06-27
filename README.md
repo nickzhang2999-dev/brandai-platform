@@ -150,7 +150,7 @@
 | 编号 | 功能点 | 来源 | 状态 | 路径 | 备注 · 验收 | 变更 |
 |---|---|---|---|---|---|---|
 | F1 | 顶部项目路径（breadcrumb） | P05-M02 | ✅ | `workspace/page.tsx`（`?project=` 参数） | 接收 project，breadcrumb 富展示弱 | 接入 2026-06-21 |
-| F2 | 顶部基础操作（撤销/重做/缩放/通知） | P05-M03 | ✅ | `workspace/page.tsx` Toolbar（撤销/重做/缩放）+ 全局 notification-center（A3） | 表单快照有界历史（cap 50，redo 分支失效）+ 大图 zoom in/out/reset/fit；纯客户端 | 接入 2026-06-20 |
+| F2 | 顶部基础操作（撤销/重做/缩放/通知） | P05-M03 | ✅ | `workspace/page.tsx` Toolbar + `CanvasStage` wheel 手势 + 全局 notification-center（A3） | 表单快照有界历史（cap 50，redo 分支失效）+ 大图 zoom in/out/reset/fit；**画布缩放/平移迁移自 prd_agent 视觉创作**：⌘/Ctrl+滚轮缩放(光标定点)、两指/滚轮平移、手型工具拖动（对齐 prd_agent `gesture-unification` 标准 A，缩放区间 0.2–4，从 fit 切显式缩放不跳变）；纯客户端 | 接入 2026-06-20；画布手势迁移 2026-06-27 |
 | F3 | 大图展示区 | P05-M04 | ✅ | `page.tsx:289` | 当前变体大图 | 2026-06-20 |
 | F4 | 生成变体区（缩略图切换） | P05-M06 | ✅ | `page.tsx:300+` | 变体条+点击切换+终稿 badge | 2026-06-20 |
 | F5 | AI 提示词编辑(需求/卖点，500字) | P05-M08 | ✅ | `page.tsx:395` | 字段为 sellingPoint+scene（合后端契约） | 2026-06-20 |
@@ -161,7 +161,8 @@
 | F10 | 提交制作（真实出图 §2 异步） | P05-M15 | ✅ **已验收** | `page.tsx:230` → `POST /generations` 202 → 轮询 | 真 gpt-image-2→GenerationVersion | 2026-06-20 |
 | F11 | 生成额度展示 | doc02/05 | ✅ | `workspace/page.tsx` QuotaBar + `GET /quota` | 本周期/今日用量 + 进度条（-1=不限）；新增只读端点 | 接入 2026-06-20 |
 | F16 | 多尺寸渠道（targets）+ textMode | K5 | ✅ **已验收** | `workspace/page.tsx`（CHANNEL_SIZES 多选 + 直接/分层） | 渠道尺寸多选每尺寸各 1 张；textMode 直接/分层 + 持久化+regenerate 重建。灰度真验：1024²/1080×1440 出图 + `params.textMode=layered`；**记录 snap 真实尺寸已做**（K5：`params.actualWidth/Height` 由 apps/ai PIL 解码） | 新增+验收 2026-06-20；K5 补 2026-06-20 |
-| F12 | 修改优化（改图） | 一期闭环 | ✅ **已验收** | `page.tsx:145` → versions/[id]/edit（OpenAI multipart） | 子版本 parentVersionId | 2026-06-20 |
+| F12 | 修改优化（改图） | 一期闭环 | ✅ **已验收** | `page.tsx` → versions/[id]/edit（OpenAI multipart） | 子版本 parentVersionId | 2026-06-20 |
+| F19 | 选中图片操作工具条 + 局部重画（INPAINT 蒙版） | 迁移自 prd_agent 视觉创作 | ✅（待灰度真验真·蒙版出图） | `workspace/page.tsx`（`CanvasStage` 浮动操作条 + `MaskPaintCanvas.tsx` 蒙版覆盖层）+ `apps/ai/.../http_providers.py::_build_inpaint_mask`（Pillow 归一→OpenAI `/images/edits` mask 文件）+ `edit.worker.ts`（持久化剔除大 mask） | 选中图片上方浮动操作条（局部重画/扩展/换背景/改色/改文字/加元素/去元素 + 快捷编辑），全走现有真实改图链路（/edit→worker→`ai.edit`→真 provider）。**局部重画**：涂抹蒙版(白=重绘)+指令→op=`INPAINT`+`payload.mask`→AI 服务用 Pillow 把涂抹区转透明并缩放到底图真实像素→作为 `mask` 文件随 multipart 发 OpenAI `/images/edits`。蒙版导出只读蒙版画布像素(跨域底图不污染 canvas)。已过 typecheck/build/L1/pytest（含 4 个新 mask 用例）；真·蒙版出图待灰度真验 | 迁移 2026-06-27 |
 | F13 | 终选（设为终稿 isFinal） | 一期闭环 | ✅ **已验收** | `page.tsx`（PATCH /generations/[id]） | — | 2026-06-20 |
 | F14 | 交付归档（导出 ZIP） | 一期闭环 | ✅ **已验收** | `page.tsx:200` → projects/[id]/export | 真 ZIP | 2026-06-20 |
 | F15 | 中间态超时 + 出口（§2.4） | CLAUDE§0.3 | ✅ | `page.tsx` 轮询 6 分钟上界 | 超时给重试出口 | 2026-06-20 |

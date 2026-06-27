@@ -1,13 +1,17 @@
 """Provider adapter registry must degrade to mock with zero keys —
 the P0 'runs with no API key' guarantee."""
+import base64
+import io
 import json
 
 import httpx
 import pytest
+from PIL import Image
 
 from app.providers.http_providers import (
     HttpImageProvider,
     HttpVLMProvider,
+    _build_inpaint_mask,
     _coerce_describe,
     _coerce_ingest,
     _coerce_recognize,
@@ -112,6 +116,74 @@ async def test_generate_b64_becomes_data_url():
     p = HttpImageProvider(OPENAI, "k", transport=httpx.MockTransport(handler))
     out = await p.generate("x", width=1024, height=1024, n=1)
     assert out == ["data:image/png;base64,QUJD"]
+
+
+# --- 局部重画 (INPAINT) 蒙版归一 + multipart 透传到 /images/edits ---
+
+
+def _png_data_uri(img: Image.Image) -> str:
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+
+def test_build_inpaint_mask_makes_painted_area_transparent():
+    # 底图 8x4；前端黑白蒙版 4x2(故意不同尺寸)：左半白=重绘、右半黑=保留。
+    base_uri = _png_data_uri(Image.new("RGB", (8, 4), (120, 120, 120)))
+    base_bytes = base64.b64decode(base_uri.split(",", 1)[1])
+    mask = Image.new("L", (4, 2), 0)
+    for y in range(2):
+        for x in range(2):  # 左半涂白
+            mask.putpixel((x, y), 255)
+    out = _build_inpaint_mask(base_bytes, _png_data_uri(mask))
+    res = Image.open(io.BytesIO(out))
+    assert res.mode == "RGBA"
+    assert res.size == (8, 4)  # 缩放到底图真实像素尺寸
+    # 左侧(重绘) → alpha 0(透明,被编辑)；右侧(保留) → alpha 255。
+    assert res.getpixel((1, 1))[3] == 0
+    assert res.getpixel((6, 1))[3] == 255
+
+
+def test_build_inpaint_mask_accepts_bare_base64():
+    base_uri = _png_data_uri(Image.new("RGB", (4, 4), (0, 0, 0)))
+    base_bytes = base64.b64decode(base_uri.split(",", 1)[1])
+    bare = _png_data_uri(Image.new("L", (4, 4), 255)).split(",", 1)[1]
+    out = _build_inpaint_mask(base_bytes, bare)  # 裸 base64(无 data: 前缀)
+    res = Image.open(io.BytesIO(out))
+    assert res.getpixel((1, 1))[3] == 0  # 全白 → 全透明
+
+
+@pytest.mark.asyncio
+async def test_edit_sends_mask_part_when_present():
+    seen: dict[str, bool] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/images/edits")
+        body = request.content
+        seen["mask"] = b'name="mask"' in body
+        seen["image"] = b'name="image"' in body
+        return httpx.Response(200, json={"data": [{"b64_json": "QUJD"}]})
+
+    base_uri = _png_data_uri(Image.new("RGB", (16, 16), (200, 180, 160)))
+    mask_uri = _png_data_uri(Image.new("L", (16, 16), 255))
+    p = HttpImageProvider(OPENAI, "k", transport=httpx.MockTransport(handler))
+    out = await p.edit(base_uri, "INPAINT", {"prompt": "纯色米白", "mask": mask_uri})
+    assert out == "data:image/png;base64,QUJD"
+    assert seen == {"mask": True, "image": True}
+
+
+@pytest.mark.asyncio
+async def test_edit_without_mask_sends_no_mask_part():
+    seen: dict[str, bool] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["mask"] = b'name="mask"' in request.content
+        return httpx.Response(200, json={"data": [{"b64_json": "QUJD"}]})
+
+    base_uri = _png_data_uri(Image.new("RGB", (16, 16), (10, 10, 10)))
+    p = HttpImageProvider(OPENAI, "k", transport=httpx.MockTransport(handler))
+    await p.edit(base_uri, "REPLACE_BACKGROUND", {"prompt": "换背景"})
+    assert seen == {"mask": False}
 
 
 # --- env-default model injection (gateways like OpenRouter require a model) ---

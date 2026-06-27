@@ -149,7 +149,12 @@ export async function runEditJob(
         ...result.params,
         edit: {
           op,
-          payload,
+          // 局部重画的 mask 是大块 base64 data-URI(可达数百 KB),只用于本次出图,
+          // 不必落进 GenerationVersion.params 拖慢读取——持久化时剔除,留个标记。
+          payload:
+            payload && "mask" in payload
+              ? { ...payload, mask: "[mask omitted]" }
+              : payload,
           sourceVersionId: source.id,
           editedAt: new Date().toISOString(),
         },

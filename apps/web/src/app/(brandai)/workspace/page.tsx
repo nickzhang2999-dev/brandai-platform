@@ -23,6 +23,7 @@ import {
   type RefAsset,
 } from "@/lib/reference-tray";
 import { useBrand } from "../brand-context";
+import { MaskPaintCanvas } from "./MaskPaintCanvas";
 
 /**
  * P05 · AI 工作台 — 左画布 + 变体条，右 prompt 面板。真实出图（CLAUDE.md §2，
@@ -39,6 +40,19 @@ const SCENE_TYPES: { value: string; label: string }[] = [
 ];
 
 const EDIT_OPS: { value: string; label: string }[] = [
+  { value: "REPLACE_BACKGROUND", label: "换背景" },
+  { value: "RECOLOR", label: "改色" },
+  { value: "EDIT_TEXT", label: "改文字" },
+  { value: "ADD_ELEMENT", label: "加元素" },
+  { value: "REMOVE_ELEMENT", label: "去元素" },
+];
+
+// 迁移自 prd_agent 视觉创作 —— 选中图片上方的浮动操作工具条。「局部重画」是特殊项
+// （打开蒙版绘制覆盖层 → op=INPAINT + mask），其余项选中后用快捷编辑框补指令即出图。
+// 全部走真实 server-authoritative 改图链路（/edit → worker → ai.edit → 真 provider）。
+const CANVAS_OPS: { value: string; label: string; mask?: boolean }[] = [
+  { value: "INPAINT", label: "局部重画", mask: true },
+  { value: "OUTPAINT", label: "扩展" },
   { value: "REPLACE_BACKGROUND", label: "换背景" },
   { value: "RECOLOR", label: "改色" },
   { value: "EDIT_TEXT", label: "改文字" },
@@ -321,7 +335,7 @@ function Workspace() {
   // overflow-scroll so the operator can inspect detail.
   const [zoom, setZoom] = useState(1);
   const [fitMode, setFitMode] = useState(true);
-  const ZOOM_MIN = 0.5;
+  const ZOOM_MIN = 0.2;
   const ZOOM_MAX = 4;
   function zoomIn() {
     setFitMode(false);
@@ -604,6 +618,8 @@ function Workspace() {
   const [editJobId, setEditJobId] = useState<string | null>(null);
   const [actionErr, setActionErr] = useState<string | null>(null);
   const [busy, setBusy] = useState<null | "edit" | "final" | "export">(null);
+  // 局部重画 —— 蒙版绘制覆盖层开关（迁移自 prd_agent 视觉创作）。
+  const [maskOpen, setMaskOpen] = useState(false);
 
   // 改图 server-authoritative:POST→202→轮询 edit job→成功后刷新主 generation,
   // 新的子版本(parentVersionId)就会出现在变体条里。
@@ -625,9 +641,11 @@ function Workspace() {
       setEditJobId(null);
       setEditVid(null);
       setEditInstr("");
+      setMaskOpen(false); // 局部重画成功 → 关闭蒙版覆盖层，新子版本浮现在变体条
       qc.invalidateQueries({ queryKey: ["brandai-gen", wsId, genId] });
     } else if (s === "FAILED") {
       setEditJobId(null);
+      setMaskOpen(false);
       setActionErr("改图失败,请重试");
     }
   }, [editPoll, qc, wsId, genId]);
@@ -721,8 +739,10 @@ function Workspace() {
     }
   }
 
-  async function submitEdit() {
-    if (!current || !genId || !editInstr.trim()) return;
+  // 统一的改图提交入口：换背景/改色/局部重画(INPAINT+mask)/扩展(OUTPAINT) 全走这里
+  // → POST /edit(202) → 轮询 edit job → 成功后新子版本(parentVersionId)浮现在变体条。
+  async function runEdit(op: string, payload: Record<string, unknown>) {
+    if (!current || !genId) return;
     setActionErr(null);
     setBusy("edit");
     try {
@@ -730,10 +750,7 @@ function Workspace() {
         `/api/workspaces/${wsId}/generations/${genId}/versions/${current.id}/edit`,
         {
           method: "POST",
-          body: JSON.stringify({
-            op: editOp,
-            payload: { prompt: editInstr.trim() },
-          }),
+          body: JSON.stringify({ op, payload }),
         },
       );
       setEditVid(current.id);
@@ -743,6 +760,24 @@ function Workspace() {
     } finally {
       setBusy(null);
     }
+  }
+
+  // 快捷编辑 / 操作工具条：用当前选中的 op + 指令出图。局部重画走蒙版覆盖层，不经此。
+  function submitEdit() {
+    if (!editInstr.trim() || editOp === "INPAINT") return;
+    void runEdit(editOp, { prompt: editInstr.trim() });
+  }
+
+  // 局部重画浮动入口：选中图片有 imageUrl 才能打开蒙版绘制覆盖层。
+  function openMaskPaint() {
+    if (!current?.imageUrl) return;
+    setActionErr(null);
+    setMaskOpen(true);
+  }
+
+  // 蒙版确认 → op=INPAINT + payload.mask(涂抹蒙版 data-URI) + prompt(指令)。
+  function confirmMaskEdit(maskDataUri: string, instruction: string) {
+    void runEdit("INPAINT", { prompt: instruction, mask: maskDataUri });
   }
 
   async function markFinal() {
@@ -926,14 +961,30 @@ function Workspace() {
             error={
               poll?.job?.failedReason ?? poll?.generation.error ?? undefined
             }
+            zoomMin={ZOOM_MIN}
+            zoomMax={ZOOM_MAX}
             onToolChange={setCanvasTool}
             onZoomIn={zoomIn}
             onZoomOut={zoomOut}
             onZoomReset={zoomReset}
             onZoomFit={zoomFit}
+            onSetZoom={setZoom}
+            onSetPan={setPan}
+            onSetFitMode={setFitMode}
             onPointerDown={onStagePointerDown}
             onPointerMove={onStagePointerMove}
             onPointerUp={onStagePointerUp}
+            edit={{
+              ops: CANVAS_OPS,
+              op: editOp,
+              instr: editInstr,
+              busy: !!editJobId || busy === "edit",
+              enabled: status === "SUCCEEDED" && !!current,
+              onSelectOp: (op) =>
+                op === "INPAINT" ? openMaskPaint() : setEditOp(op),
+              onInstrChange: setEditInstr,
+              onRun: submitEdit,
+            }}
           />
           {versions.length > 0 ? (
             <div className="mt-4 flex flex-wrap gap-3">
@@ -1461,6 +1512,19 @@ function Workspace() {
             setReviewErr(null);
           }}
           onConfirm={() => void decideReview("REJECTED", rejectNote)}
+        />
+      ) : null}
+
+      {/* 局部重画 · 蒙版绘制覆盖层（迁移自 prd_agent 视觉创作）。涂抹重绘区 + 指令 →
+          op=INPAINT + payload.mask 走真实改图链路；提交中保持打开给出反馈，终态自动关闭。 */}
+      {maskOpen && current?.imageUrl ? (
+        <MaskPaintCanvas
+          imageSrc={current.imageUrl}
+          imageWidth={current.width || 1024}
+          imageHeight={current.height || 1024}
+          submitting={!!editJobId || busy === "edit"}
+          onConfirm={confirmMaskEdit}
+          onCancel={() => setMaskOpen(false)}
         />
       ) : null}
     </div>
@@ -2023,6 +2087,18 @@ function StatusPill({
 type Tone = "muted" | "primary" | "success" | "danger" | "warning";
 type CanvasTool = "select" | "pan";
 
+// 选中图片上方浮动操作工具条的 props（迁移自 prd_agent 视觉创作）。
+type CanvasEditProps = {
+  ops: { value: string; label: string; mask?: boolean }[];
+  op: string;
+  instr: string;
+  busy: boolean;
+  enabled: boolean;
+  onSelectOp: (op: string) => void;
+  onInstrChange: (v: string) => void;
+  onRun: () => void;
+};
+
 function Pill({ tone, children }: { tone: Tone; children: React.ReactNode }) {
   const map: Record<Tone, string> = {
     muted: "bg-muted text-muted-foreground",
@@ -2048,14 +2124,20 @@ function CanvasStage({
   status,
   timedOut,
   error,
+  zoomMin,
+  zoomMax,
   onToolChange,
   onZoomIn,
   onZoomOut,
   onZoomReset,
   onZoomFit,
+  onSetZoom,
+  onSetPan,
+  onSetFitMode,
   onPointerDown,
   onPointerMove,
   onPointerUp,
+  edit,
 }: {
   version?: GenerationVersion;
   zoom: number;
@@ -2066,16 +2148,66 @@ function CanvasStage({
   status: string | null;
   timedOut: boolean;
   error?: string;
+  zoomMin: number;
+  zoomMax: number;
   onToolChange: (tool: CanvasTool) => void;
   onZoomIn: () => void;
   onZoomOut: () => void;
   onZoomReset: () => void;
   onZoomFit: () => void;
+  onSetZoom: (z: number) => void;
+  onSetPan: (p: { x: number; y: number }) => void;
+  onSetFitMode: (b: boolean) => void;
   onPointerDown: (event: React.PointerEvent<HTMLDivElement>) => void;
   onPointerMove: (event: React.PointerEvent<HTMLDivElement>) => void;
   onPointerUp: (event: React.PointerEvent<HTMLDivElement>) => void;
+  edit: CanvasEditProps;
 }) {
   const hasImage = !!version?.imageUrl;
+  const containerRef = useRef<HTMLDivElement>(null);
+  const imgRef = useRef<HTMLImageElement>(null);
+  // 最新 viewport 放 ref，wheel 监听只绑一次（避免每次平移重绑、丢事件）。
+  const vpRef = useRef({ zoom, pan, fitMode });
+  vpRef.current = { zoom, pan, fitMode };
+
+  // ⌘/Ctrl+滚轮 = 缩放(光标定点) · 两指拖动/滚轮 = 平移。吞掉原生 wheel
+  // (passive:false)，与左侧 map 一致的手感。对齐 prd_agent
+  // .claude/rules/gesture-unification.md 标准 A（视觉创作自定义 DOM 画布）。
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || !hasImage) return;
+    const onWheel = (ev: WheelEvent) => {
+      const { zoom: z0, pan: p0, fitMode: fm } = vpRef.current;
+      if (ev.ctrlKey || ev.metaKey) {
+        ev.preventDefault();
+        // 缩放基线：fitMode 下取图片实际显示缩放，切到显式缩放时不跳变。
+        const img = imgRef.current;
+        let z1 = z0;
+        if (fm && img && img.naturalWidth) {
+          z1 = img.offsetWidth / img.naturalWidth;
+        }
+        const z2 = Math.min(
+          zoomMax,
+          Math.max(zoomMin, z1 * Math.exp(-ev.deltaY * 0.003)),
+        );
+        if (z2 === z1) return;
+        // 光标相对容器中心（transformOrigin: center）。
+        const rect = el.getBoundingClientRect();
+        const cx = ev.clientX - (rect.left + rect.width / 2);
+        const cy = ev.clientY - (rect.top + rect.height / 2);
+        const ratio = z2 / z1;
+        if (fm) onSetFitMode(false);
+        onSetZoom(z2);
+        onSetPan({ x: cx - (cx - p0.x) * ratio, y: cy - (cy - p0.y) * ratio });
+      } else {
+        // 两指拖动 / 滚轮 = 平移（缩放档位不变）。
+        ev.preventDefault();
+        onSetPan({ x: p0.x - ev.deltaX, y: p0.y - ev.deltaY });
+      }
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [hasImage, zoomMin, zoomMax, onSetZoom, onSetPan, onSetFitMode]);
   const transform = fitMode
     ? `translate(${pan.x}px, ${pan.y}px)`
     : `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`;
@@ -2099,6 +2231,7 @@ function CanvasStage({
   );
   return (
     <div
+      ref={containerRef}
       className={[
         "relative flex min-h-[560px] flex-1 items-center justify-center overflow-hidden rounded-[28px] border border-border bg-card",
         hasImage && tool === "pan" ? "cursor-grab active:cursor-grabbing" : "",
@@ -2168,6 +2301,51 @@ function CanvasStage({
         </span>
       </div>
 
+      {/* 选中图片上方的浮动操作工具条（迁移自 prd_agent 视觉创作）。局部重画走蒙版
+          覆盖层(op=INPAINT+mask)，其余项选中后用快捷编辑框补指令出图——全走真实改图链路。 */}
+      {edit.enabled ? (
+        <div className="absolute left-1/2 top-[4.25rem] z-20 flex max-w-[calc(100%-2rem)] -translate-x-1/2 flex-wrap items-center justify-center gap-1.5 rounded-2xl border border-border bg-card/95 px-2.5 py-2 shadow-[0_14px_40px_rgba(30,30,60,0.12)] backdrop-blur">
+          {edit.ops.map((o) => (
+            <button
+              key={o.value}
+              type="button"
+              onClick={() => edit.onSelectOp(o.value)}
+              disabled={edit.busy}
+              title={o.mask ? "在图片上涂抹要重绘的区域" : o.label}
+              className={[
+                "rounded-full px-2.5 py-1 text-xs transition-colors disabled:opacity-50",
+                o.mask
+                  ? "bg-gradient-to-br from-primary to-accent font-medium text-primary-foreground shadow-[0_6px_16px_rgba(124,92,255,0.24)]"
+                  : edit.op === o.value
+                    ? "bg-accent-soft font-medium text-primary"
+                    : "border border-border text-muted-foreground hover:bg-muted",
+              ].join(" ")}
+            >
+              {o.label}
+            </button>
+          ))}
+          <span className="mx-0.5 h-5 w-px bg-border" />
+          <input
+            value={edit.instr}
+            onChange={(e) => edit.onInstrChange(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") edit.onRun();
+            }}
+            placeholder="描述修改…"
+            disabled={edit.busy}
+            className="h-8 w-40 rounded-lg border border-border bg-background px-2.5 text-xs text-foreground outline-none focus:border-primary/40"
+          />
+          <button
+            type="button"
+            onClick={edit.onRun}
+            disabled={edit.busy || !edit.instr.trim() || edit.op === "INPAINT"}
+            className="h-8 shrink-0 rounded-lg bg-gradient-to-br from-primary to-accent px-3 text-xs font-medium text-primary-foreground disabled:opacity-50"
+          >
+            {edit.busy ? "改图中…" : "运行"}
+          </button>
+        </div>
+      ) : null}
+
       {hasImage ? (
         <div
           className="relative select-none"
@@ -2189,6 +2367,7 @@ function CanvasStage({
             ) : null}
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
+              ref={imgRef}
               src={version.imageUrl}
               alt="生成结果"
               draggable={false}
