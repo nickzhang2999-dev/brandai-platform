@@ -103,7 +103,7 @@ export default function AssetsPage() {
     projectName: string;
     result: AddReferenceResult;
   } | null>(null);
-  // H7 · 加入项目弹窗 — 打开后选择 Campaign 并确认（诚实：暂存为该 Campaign 的参考
+  // H7 · 加入项目弹窗 — 打开后选择项目并确认（诚实：暂存为该项目的参考
   // 素材，出图时带入；一期无 Project↔Asset DB 关系）。
   const [joinDialog, setJoinDialog] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
@@ -702,7 +702,7 @@ export default function AssetsPage() {
                     <p className="text-xs text-muted-foreground">加载中…</p>
                   ) : usage.length === 0 ? (
                     <p className="text-xs text-muted-foreground">
-                      暂无使用记录。把该素材设为某个 Campaign 的参考并出图后，这里会显示用在哪。
+                      暂无使用记录。把该素材设为某个项目的参考并出图后，这里会显示用在哪。
                     </p>
                   ) : (
                     <ul className="flex flex-col gap-2">
@@ -1005,7 +1005,7 @@ function JoinProjectDialog({
       >
         <div className="text-lg font-semibold">加入 Campaign</div>
         <p className="mt-1 text-sm text-muted-foreground">
-          把素材「{assetName}」作为参考加入一个 Campaign，进入工作台出图时自动带入。
+          把素材「{assetName}」作为参考加入一个项目，进入工作台出图时自动带入。
         </p>
 
         <div className="mt-5">
@@ -1027,7 +1027,7 @@ function JoinProjectDialog({
         </div>
 
         <p className="mt-3 rounded-2xl bg-accent-soft/60 p-3.5 text-xs leading-relaxed text-foreground/80">
-          素材将作为该 Campaign 的参考素材暂存，出图时随提交带入。确认后将进入工作台。
+          素材将作为该项目的参考素材暂存，出图时随提交带入。确认后将进入工作台。
         </p>
 
         {error ? (

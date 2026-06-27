@@ -115,7 +115,7 @@ function Workspace() {
   const [projectId, setProjectId] = useState<string | null>(presetProject);
   // React to client-side navigations that change `?project=` (E11/E12 「加入项目」
   // and the homepage brief flow router.push to /workspace?project=… without a
-  // remount). Without this the prior Campaign stays selected and reference-tray
+  // remount). Without this the prior project stays selected and reference-tray
   // assets + POST /generations would target the wrong project.
   useEffect(() => {
     if (presetProject) setProjectId(presetProject);
@@ -505,7 +505,7 @@ function Workspace() {
     setActiveVariant(0);
   }, [projectId]);
 
-  // 进入工作台默认展示该 Campaign 最近一次出图（history newest-first）。仅当本会话
+  // 进入工作台默认展示该项目最近一次出图（history newest-first）。仅当本会话
   // 还没有选中/提交任何出图时播种 —— 不覆盖用户的实时提交，也不覆盖手动切换的历史。
   useEffect(() => {
     if (genId) return;
@@ -733,7 +733,7 @@ function Workspace() {
 
   async function submit() {
     if (!projectId) {
-      setSubmitErr("请先选择一个 Campaign 项目（没有就去 Campaign 页创建）");
+      setSubmitErr("请先选择一个项目（没有就去项目页创建）");
       return;
     }
     setSubmitErr(null);
@@ -782,7 +782,7 @@ function Workspace() {
   return (
     <div className="flex h-screen flex-col">
       <div className="flex items-center justify-between border-b border-border bg-card px-6 py-3">
-        {/* F1 · 顶部项目路径 breadcrumb — 品牌 / Campaign 名（可切换 + 回项目列表）/ 工作台 */}
+        {/* F1 · 顶部项目路径 breadcrumb — 品牌 / 项目名（可切换 + 回项目列表）/ 工作台 */}
         <nav
           aria-label="项目路径"
           className="flex items-center gap-2 text-sm text-muted-foreground"
@@ -801,11 +801,11 @@ function Workspace() {
             <select
               value={projectId ?? ""}
               onChange={(e) => setProjectId(e.target.value || null)}
-              aria-label="当前 Campaign 项目"
+              aria-label="当前项目"
               className="max-w-[16rem] rounded-lg border border-border bg-background px-2 py-1 text-sm font-medium text-foreground outline-none focus:border-primary/40"
             >
               {projects.length === 0 ? (
-                <option value="">无项目，请先去 Campaign 创建</option>
+                <option value="">无项目，请先去项目页创建</option>
               ) : null}
               {projects.map((p) => (
                 <option key={p.id} value={p.id}>
@@ -1327,7 +1327,7 @@ function Workspace() {
               onClick={() => {
                 if (!projectId) {
                   setSubmitErr(
-                    "请先选择一个 Campaign 项目（没有就去 Campaign 页创建）",
+                    "请先选择一个项目（没有就去项目页创建）",
                   );
                   return;
                 }

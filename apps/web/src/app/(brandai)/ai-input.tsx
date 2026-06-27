@@ -7,7 +7,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
  *
  * 一处可复用的「AI 共创输入」原语：紫染软阴影圆角条 + 文本域 + 右侧动作槽，
  * 内建两个真实入口：
- *   • 附件按钮（file input）—— 把文件交回宿主（如品牌知识库把 PDF 当 VI 资料
+ *   • 附件按钮（file input）—— 把文件交回宿主（如品牌套件把 PDF 当 VI 资料
  *     上传后触发真实 parse-manual 解析）。
  *   • 语音按钮（浏览器 Web Speech API，真实 client-side 语音转文字）—— 识别结果
  *     追加进输入框；浏览器不支持时按钮自动隐藏（graceful degrade），绝不假装可用。

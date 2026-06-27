@@ -168,7 +168,7 @@ function CreateBrandDialog({
         <div className="border-b border-border px-5 py-4">
           <h2 className="text-base font-semibold">创建品牌</h2>
           <p className="mt-1 text-xs text-muted-foreground">
-            创建后，首页、Campaign、知识库、素材与模板都会归属于该品牌。
+            创建后，首页、项目、品牌套件、素材与模板都会归属于该品牌。
           </p>
         </div>
         <div className="flex flex-col gap-4 px-5 py-4">

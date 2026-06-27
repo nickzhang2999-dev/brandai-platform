@@ -197,7 +197,7 @@ export default function HomePage() {
         />
         <p className="mt-2 pl-6 text-xs text-muted-foreground">
           提交后 BrandAI 会用 AI 拆解出核心卖点、画面场景与风格关键词，立项为草稿
-          Campaign，并把拆解结果预填进工作台（服务端异步处理，可离开稍后查看）。
+          项目，并把拆解结果预填进工作台（服务端异步处理，可离开稍后查看）。
         </p>
         {busy ? (
           <p className="mt-2 pl-6 text-xs text-primary">
@@ -250,7 +250,7 @@ export default function HomePage() {
 
       <section className="mt-12">
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-2xl font-semibold">近期 Campaign</h2>
+          <h2 className="text-2xl font-semibold">近期项目</h2>
           <Link href="/campaigns" className="text-sm text-primary hover:underline">
             查看全部
           </Link>
@@ -263,7 +263,7 @@ export default function HomePage() {
             <span className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-accent-soft text-xl text-primary">
               ＋
             </span>
-            <span className="text-sm font-medium">创建第一个 Campaign</span>
+            <span className="text-sm font-medium">创建第一个项目</span>
             <span className="mt-1 text-xs text-muted-foreground">
               围绕营销项目管理需求、出图与交付
             </span>

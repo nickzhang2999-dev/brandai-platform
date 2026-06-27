@@ -41,43 +41,44 @@ const QUICK_PROMPTS: { type: string; text: string }[] = [
   { type: "font", text: "标题字体用…，正文字体用…，禁止使用系统默认衬线体。" },
   {
     type: "copy",
-    text: "品牌语气：专业而亲切、简洁有力；禁用词：最、第一、绝对。",
+    text: "品牌指南：专业而亲切、简洁有力；禁用词：最、第一、绝对。",
   },
   {
     type: "logo",
-    text: "Logo 须保留四周安全间距，最小宽度 24px；禁止拉伸、改色或加阴影。",
+    text: "logo 须保留四周安全间距，最小宽度 24px；禁止拉伸、改色或加阴影。",
   },
 ];
 
 /**
- * P03 · 品牌知识库 — 把品牌规则沉淀为 AI 可调用的结构化知识。真实数据：
+ * P03 · 品牌套件 — 把品牌规则沉淀为 AI 可调用的结构化知识。真实数据：
  * GET/POST/PATCH /api/workspaces/[wsId]/rules。已确认(CONFIRMED)的规则会在
  * 工作台出图时被 worker 加载用于受控生成。
  *
- * D4–D10 · 8 类知识从「通用规则卡」恢复为 RICH 结构化卡：色彩→真实色块，
- * Logo→do/don't，字体→字族预览，语调→禁用词，视觉/版式/设计→结构化要点。
+ * D4–D10 · 品牌套件 6 个维度从「通用规则卡」恢复为 RICH 结构化卡：
+ * logo→do/don't，字体→字族预览，颜色→真实色块，设计指南/图像→结构化要点，
+ * 品牌指南→禁用词。
  * 所有字段访问都对 value 缺字段降级（fall back 到 summary），绝不崩。
  */
 const TYPE_META: Record<
   string,
   { label: string; short: string; icon: string }
 > = {
-  logo: { label: "Logo 使用规范", short: "Logo", icon: "◐" },
-  color: { label: "品牌色彩系统", short: "色彩", icon: "◉" },
-  font: { label: "字体规范", short: "字体", icon: "Aa" },
-  copy: { label: "品牌语气 / 文案", short: "语调", icon: "❝" },
-  imagery: { label: "参考图 / 素材规范", short: "素材", icon: "▦" },
-  layout: { label: "版式规范", short: "版式", icon: "▤" },
+  logo: { label: "logo", short: "logo", icon: "◐" },
+  font: { label: "字体", short: "字体", icon: "Aa" },
+  color: { label: "颜色", short: "颜色", icon: "◉" },
+  layout: { label: "设计指南", short: "设计指南", icon: "▤" },
+  imagery: { label: "图像", short: "图像", icon: "▦" },
+  copy: { label: "品牌指南", short: "品牌指南", icon: "❝" },
   graphic: { label: "设计元素", short: "设计", icon: "✦" },
 };
-/** 卡片分组顺序（让 8 类读成结构化知识库而非平铺列表）。 */
+/** 卡片分组顺序（让品牌套件 6 个维度固定展示而非平铺列表）。 */
 const CATEGORY_ORDER: string[] = [
-  "color",
   "logo",
   "font",
-  "copy",
-  "imagery",
+  "color",
   "layout",
+  "imagery",
+  "copy",
 ];
 const TYPE_OPTIONS = Object.entries(TYPE_META).map(([value, m]) => ({
   value,
@@ -201,7 +202,7 @@ function previewFamily(name: string): string {
   return `'${name}', Inter, system-ui, sans-serif`;
 }
 
-/** copy 语调：tone + 禁用词列表（容忍 forbidden/banned/禁用词）。 */
+/** copy 品牌指南：tone + 禁用词列表（容忍 forbidden/banned/禁用词）。 */
 function extractTone(value: Val): { tone: string | null; banned: string[] } {
   const tone =
     asStr(value.tone) ?? asStr(value.voice) ?? asStr(value.style) ?? null;
@@ -503,7 +504,7 @@ function RuleBody({ rule }: { rule: BrandRule }) {
         {summary}
         {tone ? (
           <div className="flex items-center gap-2">
-            <SubHeading>语调</SubHeading>
+            <SubHeading>语气</SubHeading>
             <span className="rounded-full bg-accent-soft px-2.5 py-0.5 text-[11px] text-primary">
               {tone}
             </span>
@@ -734,7 +735,7 @@ function RuleEditorDialog({
   return (
     <ModalShell
       title={`编辑${TYPE_META[rule.type]?.label ?? "品牌规则"}`}
-      subtitle="修改后保存即可更新该知识库；禁用的内容也可以先编辑，再重新启用。"
+      subtitle="修改后保存即可更新该品牌套件；禁用的内容也可以先编辑，再重新启用。"
       onClose={onClose}
     >
       <div className="flex flex-col gap-4 overflow-y-auto px-6 py-5">
@@ -942,7 +943,7 @@ function RecognizeModal({
       title={multi ? "从素材识别品牌规则" : "解析 VI 手册 / PDF"}
       subtitle={
         multi
-          ? "选择品牌素材图，AI 将提取色彩、Logo、字体等规则草稿。"
+          ? "选择品牌素材图，AI 将提取 logo、字体、颜色等规则草稿。"
           : "选择一份 VI 手册（PDF），AI 将解析为结构化规则草稿。"
       }
       onClose={onClose}
@@ -1191,7 +1192,7 @@ function BrandPreview({
             <h2 className="text-base font-semibold">品牌预览</h2>
           </div>
           <p className="mt-1.5 max-w-xl text-xs leading-relaxed text-muted-foreground">
-            综合已确认的色彩 / 字体 / 语气 / 视觉规则，由真实 AI provider
+            综合已确认的 logo / 字体 / 颜色 / 设计指南 / 图像 / 品牌指南，由真实 AI provider
             合成一张 代表品牌整体调性的预览主视觉（受品牌约束）。
           </p>
         </div>
@@ -1257,7 +1258,7 @@ function BrandPreview({
             <div className="text-3xl text-accent-soft">✸</div>
             <p className="mt-2 text-sm font-medium">还没有品牌预览</p>
             <p className="mt-1 max-w-sm text-xs text-muted-foreground">
-              确认色彩、字体等品牌规则后，点「生成品牌预览」由 AI 合成。
+              确认 logo、字体、颜色等品牌规则后，点「生成品牌预览」由 AI 合成。
             </p>
           </div>
         )}
@@ -1538,7 +1539,7 @@ export default function BrandKnowledgePage() {
 
   const confirmedCount = rules.filter((r) => r.status === "CONFIRMED").length;
 
-  // group rules by the six rigid dimensions so every KB always shows the same
+  // group rules by the six rigid dimensions so every brand kit always shows the same
   // skeleton, even before a dimension has any rules.
   const grouped = CATEGORY_ORDER.map((cat) => ({
     cat,
@@ -1551,9 +1552,9 @@ export default function BrandKnowledgePage() {
   return (
     <div className="mx-auto max-w-[1180px] px-10 py-10">
       <section className="text-center">
-        <h1 className="text-[34px] font-semibold tracking-tight">品牌知识库</h1>
+        <h1 className="text-[34px] font-semibold tracking-tight">品牌套件</h1>
         <p className="mx-auto mt-2 max-w-xl text-sm text-muted-foreground">
-          当前品牌：{brandName}。每个品牌有且只有一套品牌知识库。
+          当前品牌：{brandName}。每个品牌有且只有一套品牌套件。
         </p>
       </section>
 
@@ -1563,7 +1564,7 @@ export default function BrandKnowledgePage() {
             {brandName}
           </h2>
           <p className="mx-auto mt-2 max-w-xl text-sm text-muted-foreground">
-            维护当前品牌唯一知识库的六个核心维度。每个维度可以保留多条规则，但同一时间有且只有一条处于启用状态。
+            维护当前品牌唯一品牌套件的六个核心维度。每个维度可以保留多条规则，但同一时间有且只有一条处于启用状态。
           </p>
           <div id="knowledge-source">
             {/* One unified source accepts text, images, and PDFs for this knowledge base. */}
@@ -1623,7 +1624,7 @@ export default function BrandKnowledgePage() {
 
         <section className="mt-12">
           <div className="mb-6 flex items-center justify-between">
-            <h2 className="text-2xl font-semibold">品牌核心知识</h2>
+            <h2 className="text-2xl font-semibold">品牌套件内容</h2>
             <span className="text-xs text-muted-foreground">
               共 {rules.length} 条 · 已确认 {confirmedCount} 条
             </span>
@@ -1785,7 +1786,7 @@ export default function BrandKnowledgePage() {
           </div>
           <p className="mt-3 max-w-3xl text-sm leading-relaxed text-foreground/80">
             {rules.length === 0
-              ? "尚未沉淀品牌规则。建议先确认色彩、字体、Logo 与品牌语气，AI 出图会据此受控生成。"
+              ? "尚未沉淀品牌规则。建议先确认 logo、字体、颜色与品牌指南，AI 出图会据此受控生成。"
               : `已沉淀 ${rules.length} 条品牌规则（${confirmedCount} 条已确认并生效）。已确认规则会在工作台每次出图时由 worker 加载，确保结果遵循品牌规范。`}
           </p>
           {rules.length > 0 ? (

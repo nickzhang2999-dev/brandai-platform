@@ -15,7 +15,7 @@ import {
 } from "../_ui";
 
 /**
- * P02 · Campaign 项目 — 左侧项目卡列表 + 右侧 AI 摘要面板。真实数据：
+ * P02 · 项目 — 左侧项目卡列表 + 右侧 AI 摘要面板。真实数据：
  * GET/POST /api/workspaces/[wsId]/projects（Project ↔ Campaign 映射）。
  */
 type Status = "DRAFT" | "IN_PROGRESS" | "COMPLETED";
@@ -122,11 +122,11 @@ export default function CampaignsPage() {
   return (
     <div className="mx-auto max-w-[1180px] px-10 py-10">
       <PageHeader
-        title="Campaign 项目"
+        title="项目"
         subtitle={`集中管理「${brandName}」品牌下的营销项目`}
         action={
           <Button size="lg" onClick={() => setCreating(true)}>
-            ＋ 创建新 Campaign
+            ＋ 创建新项目
           </Button>
         }
       />
@@ -501,21 +501,21 @@ function AutoSummaryButton({
 
 // H4 · 查看项目规范 — 规则类型展示元信息（对齐知识库页 TYPE_META）。
 const RULE_TYPE_META: Record<string, { label: string; icon: string }> = {
-  logo: { label: "Logo 使用规范", icon: "◐" },
-  color: { label: "品牌色彩系统", icon: "◉" },
-  font: { label: "字体规范", icon: "Aa" },
-  copy: { label: "品牌语气 / 文案", icon: "❝" },
-  imagery: { label: "视觉参考", icon: "▦" },
-  layout: { label: "版式规范", icon: "▤" },
+  logo: { label: "logo", icon: "◐" },
+  font: { label: "字体", icon: "Aa" },
+  color: { label: "颜色", icon: "◉" },
+  layout: { label: "设计指南", icon: "▤" },
+  imagery: { label: "图像", icon: "▦" },
+  copy: { label: "品牌指南", icon: "❝" },
   graphic: { label: "设计元素", icon: "✦" },
 };
 const RULE_TYPE_ORDER = [
   "logo",
-  "color",
   "font",
-  "copy",
-  "imagery",
+  "color",
   "layout",
+  "imagery",
+  "copy",
   "graphic",
 ];
 const STRENGTH_META: Record<string, { label: string; cls: string }> = {
@@ -526,10 +526,10 @@ const STRENGTH_META: Record<string, { label: string; cls: string }> = {
 
 /**
  * H4 · 查看项目规范（侧边面板）— read-only view of the brand's CONFIRMED brand
- * knowledge, grouped by rule type. Reuses GET /api/workspaces/[wsId]/rules
- * (same endpoint the 知识库 page + generate worker consume); shows only
+ * kit, grouped by rule type. Reuses GET /api/workspaces/[wsId]/rules
+ * (same endpoint the 品牌套件 page + generate worker consume); shows only
  * CONFIRMED rules (the ones that actually constrain出图). No editing here — the
- * 知识库 page owns rule authoring/confirmation.
+ * 品牌套件页 owns rule authoring/confirmation.
  */
 function RulesPanel({
   wsId,
@@ -564,7 +564,7 @@ function RulesPanel({
           <div>
             <div className="text-lg font-semibold">项目品牌规范</div>
             <p className="mt-1 text-sm text-muted-foreground">
-              「{brandName}」已确认的品牌知识库规则，出图时受控生效。
+              「{brandName}」已确认的品牌套件规则，出图时受控生效。
             </p>
           </div>
           <button
@@ -589,12 +589,12 @@ function RulesPanel({
               </div>
               <div className="text-sm font-semibold">暂无已确认规范</div>
               <p className="mx-auto mt-2 max-w-xs text-xs leading-relaxed text-muted-foreground">
-                去「品牌知识库」沉淀并确认 Logo / 色彩 / 字体 /
-                调性等规则，确认后 会在这里展示并约束出图。
+                去「品牌套件」沉淀并确认 logo / 字体 / 颜色 /
+                设计指南 / 图像 / 品牌指南，确认后会在这里展示并约束出图。
               </p>
               <a href="/brand-knowledge">
                 <Button variant="outline" className="mt-4">
-                  前往品牌知识库
+                  前往品牌套件
                 </Button>
               </a>
             </div>
@@ -646,7 +646,7 @@ function RulesPanel({
         <div className="border-t border-border p-4">
           <a href="/brand-knowledge">
             <Button variant="outline" className="w-full justify-center">
-              管理品牌知识库
+              管理品牌套件
             </Button>
           </a>
         </div>
@@ -761,7 +761,7 @@ function SummaryDialog({
     <ModalShell onClose={onClose}>
       <div className="text-lg font-semibold">补充需求 / 项目摘要</div>
       <p className="mt-1 text-sm text-muted-foreground">
-        补充这个 Campaign 的目标、进展与下一步，沉淀为 AI 项目摘要。
+        补充这个项目的目标、进展与下一步，沉淀为 AI 项目摘要。
       </p>
       <div className="mt-5">
         <Field label="项目摘要">
@@ -821,12 +821,12 @@ function EmptyState({ onCreate }: { onCreate: () => void }) {
       <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-accent-soft text-2xl text-primary">
         ◳
       </div>
-      <div className="text-lg font-semibold">还没有 Campaign</div>
+      <div className="text-lg font-semibold">还没有项目</div>
       <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
         创建你的第一个营销项目，围绕它管理需求、出图与交付。
       </p>
       <Button size="lg" className="mt-6" onClick={onCreate}>
-        ＋ 创建新 Campaign
+        ＋ 创建新项目
       </Button>
     </div>
   );
@@ -873,7 +873,7 @@ function CreateDialog({
         className="w-full max-w-md rounded-3xl border border-border bg-card p-6 shadow-[0_24px_70px_rgba(30,30,60,0.18)]"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="text-lg font-semibold">创建新 Campaign</div>
+        <div className="text-lg font-semibold">创建新项目</div>
         <p className="mt-1 text-sm text-muted-foreground">
           当前品牌：{brandName}。创建后项目、素材与出图记录都归属于该品牌。
         </p>
@@ -883,7 +883,7 @@ function CreateDialog({
               autoFocus
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="如：夏季新品上市 Campaign"
+              placeholder="如：夏季新品上市项目"
               className="h-11 w-full rounded-2xl border border-border bg-background px-3 text-sm outline-none focus:border-primary/40 focus:shadow-[0_0_0_4px_rgba(124,92,255,0.08)]"
             />
           </Field>
@@ -892,7 +892,7 @@ function CreateDialog({
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               rows={3}
-              placeholder="一句话描述这个 Campaign 的目标与方向"
+              placeholder="一句话描述这个项目的目标与方向"
               className="w-full resize-none rounded-2xl border border-border bg-background p-3 text-sm outline-none focus:border-primary/40 focus:shadow-[0_0_0_4px_rgba(124,92,255,0.08)]"
             />
           </Field>
