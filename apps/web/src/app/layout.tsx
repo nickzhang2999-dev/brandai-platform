@@ -4,7 +4,7 @@ import { Providers } from "./providers";
 
 export const metadata: Metadata = {
   title: "BrandAI · 品牌视觉 AI",
-  description: "以 Campaign 为中心,基于品牌知识库批量生成符合规范的商业视觉内容",
+  description: "以项目为中心,基于品牌套件批量生成符合规范的商业视觉内容",
 };
 
 /**

@@ -8,7 +8,7 @@ import { BrandProvider } from "./brand-context";
 import { BrandSidebar } from "./brand-sidebar";
 
 /**
- * BrandAI 产品页路由组布局：5 个核心页面（首页 / Campaign / 品牌知识库 /
+ * BrandAI 产品页路由组布局：核心页面（首页 / 项目 / 品牌套件 /
  * 素材库 / AI 工作台）共用紫色侧栏壳。
  *
  * 服务端守卫：未登录 → /login；登录后解析"当前品牌"(workspace) 注入

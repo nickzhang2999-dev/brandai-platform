@@ -35,7 +35,7 @@ export async function getOrCreatePreviewProject(
     data: {
       workspaceId,
       name: BRAND_PREVIEW_PROJECT_NAME,
-      description: "由品牌知识库自动合成的品牌视觉预览（D10）。",
+      description: "由品牌套件自动合成的品牌视觉预览（D10）。",
       status: "DRAFT",
     },
     select: { id: true },
@@ -97,7 +97,7 @@ export function composeBrandBrief(
   const toneHints = byType("copy")
     .map((r) => r.summary)
     .filter(Boolean);
-  if (toneHints.length) parts.push(`品牌语气：${toneHints[0]}`);
+  if (toneHints.length) parts.push(`品牌指南：${toneHints[0]}`);
 
   // Visual references / imagery + layout + graphic — fold their summaries.
   const visualHints = [

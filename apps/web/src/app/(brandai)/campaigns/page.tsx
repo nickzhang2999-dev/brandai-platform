@@ -2,19 +2,20 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type {
-  BrandRule,
-  BrandWorkspace,
-  Project,
-  TaskState,
-} from "@brandai/contracts";
+import type { BrandRule, Project, TaskState } from "@brandai/contracts";
 import { Button } from "@brandai/ui";
 import { apiFetch } from "@/lib/client";
 import { useBrand } from "../brand-context";
-import { Chip, gradientFor, PageHeader, ProgressBar, StatusBadge } from "../_ui";
+import {
+  Chip,
+  gradientFor,
+  PageHeader,
+  ProgressBar,
+  StatusBadge,
+} from "../_ui";
 
 /**
- * P02 · Campaign 项目 — 左侧项目卡列表 + 右侧 AI 摘要面板。真实数据：
+ * P02 · 项目 — 左侧项目卡列表 + 右侧 AI 摘要面板。真实数据：
  * GET/POST /api/workspaces/[wsId]/projects（Project ↔ Campaign 映射）。
  */
 type Status = "DRAFT" | "IN_PROGRESS" | "COMPLETED";
@@ -47,8 +48,6 @@ export default function CampaignsPage() {
   const [filterKey, setFilterKey] = useState("all");
   const [sortKey, setSortKey] = useState<SortKey>("recent");
   const [rangeKey, setRangeKey] = useState<RangeKey>("all");
-  // C4 · 品牌筛选 — "all" = 全部品牌, otherwise a BrandWorkspace id.
-  const [brandFilter, setBrandFilter] = useState<string>("all");
   const [q, setQ] = useState("");
   const [creating, setCreating] = useState(false);
   // Lifecycle action target: which transition the confirm dialog is for.
@@ -64,41 +63,15 @@ export default function CampaignsPage() {
   // to a different visible project.
   const [dialogProjectId, setDialogProjectId] = useState<string | null>(null);
 
-  const invalidate = () =>
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ["brandai-projects-all"] });
     qc.invalidateQueries({ queryKey: ["brandai-projects", wsId] });
+  };
 
   const { data: projects = [], isLoading } = useQuery({
     queryKey: ["brandai-projects", wsId],
     queryFn: () => apiFetch<Project[]>(`/api/workspaces/${wsId}/projects`),
   });
-
-  // C4 · 品牌筛选 — the user's real brands (owned or member of). Same endpoint
-  // the homepage 推荐品牌 uses; no mock rows. Phase-1 is single-brand, so this
-  // is usually [activeBrand] → "全部品牌" + that one brand. Honest, not faked:
-  // selecting a brand filters campaigns by their workspaceId (= brand id).
-  const { data: brands = [] } = useQuery({
-    queryKey: ["brandai-recommended-brands"],
-    queryFn: () => apiFetch<BrandWorkspace[]>(`/api/brands/recommended`),
-  });
-
-  // C2 · brand-name lookup for search — map each project's workspaceId to its
-  // brand name. The active brand (from context) always resolves even before the
-  // brands list loads, since every loaded project shares the active wsId.
-  const brandNameOf = useMemo(() => {
-    const map = new Map<string, string>();
-    map.set(wsId, brandName);
-    for (const b of brands) map.set(b.id, b.name);
-    return (id: string) => map.get(id) ?? "";
-  }, [brands, wsId, brandName]);
-
-  // C4 — only offer brands that actually have loaded campaigns. Projects come
-  // only from the active workspace's GET /projects, so listing every brand let
-  // a user pick one with no loaded rows → misleading empty list. Restricting to
-  // present brands keeps the filter honest (usually just the active brand).
-  const brandOptions = useMemo(() => {
-    const present = new Set(projects.map((p) => p.workspaceId));
-    return brands.filter((b) => present.has(b.id));
-  }, [brands, projects]);
 
   const filtered = useMemo(() => {
     const f = FILTERS.find((x) => x.key === filterKey);
@@ -109,14 +82,9 @@ export default function CampaignsPage() {
 
     const list = projects.filter((p) => {
       if (f?.status && (p.status ?? "DRAFT") !== f.status) return false;
-      // C4 — filter by selected brand (project.workspaceId === brand id).
-      if (brandFilter !== "all" && p.workspaceId !== brandFilter) return false;
-      // C2 — match project name OR its brand/workspace name.
       if (needle) {
         const inName = p.name.toLowerCase().includes(needle);
-        const inBrand = brandNameOf(p.workspaceId)
-          .toLowerCase()
-          .includes(needle);
+        const inBrand = brandName.toLowerCase().includes(needle);
         if (!inName && !inBrand) return false;
       }
       if (cutoff != null) {
@@ -135,11 +103,13 @@ export default function CampaignsPage() {
           return (b.progress ?? 0) - (a.progress ?? 0);
         case "recent":
         default:
-          return (Date.parse(b.createdAt) || 0) - (Date.parse(a.createdAt) || 0);
+          return (
+            (Date.parse(b.createdAt) || 0) - (Date.parse(a.createdAt) || 0)
+          );
       }
     });
     return sorted;
-  }, [projects, filterKey, q, sortKey, rangeKey, brandFilter, brandNameOf]);
+  }, [projects, filterKey, q, sortKey, rangeKey, brandName]);
 
   // Only ever select from the FILTERED set — falling back to projects[0] when
   // filters match nothing would make the summary panel + lifecycle actions
@@ -147,17 +117,16 @@ export default function CampaignsPage() {
   const active = filtered.find((p) => p.id === activeId) ?? filtered[0] ?? null;
   // Dialog target is the snapshotted id resolved against ALL projects, so it is
   // stable regardless of list filtering while the dialog is open.
-  const dialogProject =
-    projects.find((p) => p.id === dialogProjectId) ?? null;
+  const dialogProject = projects.find((p) => p.id === dialogProjectId) ?? null;
 
   return (
     <div className="mx-auto max-w-[1180px] px-10 py-10">
       <PageHeader
-        title="Campaign 项目"
-        subtitle={`集中管理「${brandName}」的所有营销项目`}
+        title="项目"
+        subtitle={`集中管理「${brandName}」品牌下的营销项目`}
         action={
           <Button size="lg" onClick={() => setCreating(true)}>
-            ＋ 创建新 Campaign
+            ＋ 创建新项目
           </Button>
         }
       />
@@ -169,20 +138,6 @@ export default function CampaignsPage() {
           placeholder="搜索项目 / 品牌名称…"
           className="h-10 flex-1 rounded-full border border-border bg-card px-4 text-sm outline-none focus:border-primary/40 focus:shadow-[0_0_0_4px_rgba(124,92,255,0.08)]"
         />
-        {/* C4 · 品牌筛选 */}
-        <select
-          value={brandFilter}
-          onChange={(e) => setBrandFilter(e.target.value)}
-          aria-label="品牌筛选"
-          className="h-9 rounded-full border border-border bg-card px-4 text-sm text-muted-foreground outline-none transition-colors hover:bg-muted focus:border-primary/40 focus:shadow-[0_0_0_4px_rgba(124,92,255,0.08)]"
-        >
-          <option value="all">全部品牌</option>
-          {brandOptions.map((b) => (
-            <option key={b.id} value={b.id}>
-              {b.name}
-            </option>
-          ))}
-        </select>
         <select
           value={filterKey}
           onChange={(e) => setFilterKey(e.target.value)}
@@ -295,7 +250,7 @@ export default function CampaignsPage() {
             </p>
             {active ? (
               <AutoSummaryButton
-                wsId={wsId}
+                wsId={active.workspaceId}
                 projectId={active.id}
                 onDone={invalidate}
               />
@@ -312,7 +267,9 @@ export default function CampaignsPage() {
             ) : null}
             {active?.channels && active.channels.length > 0 ? (
               <div className="mt-4">
-                <div className="mb-2 text-xs text-muted-foreground">投放渠道</div>
+                <div className="mb-2 text-xs text-muted-foreground">
+                  投放渠道
+                </div>
                 <div className="flex flex-wrap gap-1.5">
                   {active.channels.map((ch) => (
                     <Chip key={ch}>{ch}</Chip>
@@ -321,7 +278,9 @@ export default function CampaignsPage() {
               </div>
             ) : null}
             <div className="mt-5 flex flex-col gap-2">
-              <a href={active ? `/workspace?project=${active.id}` : "/workspace"}>
+              <a
+                href={active ? `/workspace?project=${active.id}` : "/workspace"}
+              >
                 <Button variant="primary" className="w-full justify-center">
                   进入工作台出图
                 </Button>
@@ -348,9 +307,7 @@ export default function CampaignsPage() {
               <Button
                 variant="outline"
                 className="w-full justify-center"
-                disabled={
-                  !active || (active.status ?? "DRAFT") !== "DRAFT"
-                }
+                disabled={!active || (active.status ?? "DRAFT") !== "DRAFT"}
                 onClick={() => {
                   if (!active) return;
                   setDialogProjectId(active.id);
@@ -362,9 +319,7 @@ export default function CampaignsPage() {
               <Button
                 variant="outline"
                 className="w-full justify-center"
-                disabled={
-                  !active || (active.status ?? "DRAFT") === "COMPLETED"
-                }
+                disabled={!active || (active.status ?? "DRAFT") === "COMPLETED"}
                 onClick={() => {
                   if (!active) return;
                   setDialogProjectId(active.id);
@@ -381,6 +336,7 @@ export default function CampaignsPage() {
       {creating ? (
         <CreateDialog
           wsId={wsId}
+          brandName={brandName}
           onClose={() => setCreating(false)}
           onCreated={(p) => {
             invalidate();
@@ -392,7 +348,7 @@ export default function CampaignsPage() {
 
       {dialogProject && confirmAction ? (
         <ConfirmActionDialog
-          wsId={wsId}
+          wsId={dialogProject.workspaceId}
           project={dialogProject}
           action={confirmAction}
           onClose={() => setConfirmAction(null)}
@@ -405,7 +361,7 @@ export default function CampaignsPage() {
 
       {dialogProject && editingSummary ? (
         <SummaryDialog
-          wsId={wsId}
+          wsId={dialogProject.workspaceId}
           project={dialogProject}
           onClose={() => setEditingSummary(false)}
           onDone={() => {
@@ -417,7 +373,7 @@ export default function CampaignsPage() {
 
       {viewingRules ? (
         <RulesPanel
-          wsId={wsId}
+          wsId={active?.workspaceId ?? wsId}
           brandName={brandName}
           onClose={() => setViewingRules(false)}
         />
@@ -468,7 +424,8 @@ function AutoSummaryButton({
 
   const { data: task } = useQuery<TaskState>({
     queryKey: ["brandai-task", wsId, taskId],
-    queryFn: () => apiFetch<TaskState>(`/api/workspaces/${wsId}/tasks/${taskId}`),
+    queryFn: () =>
+      apiFetch<TaskState>(`/api/workspaces/${wsId}/tasks/${taskId}`),
     enabled: !!taskId,
     refetchInterval: (q) => {
       const s = q.state.data?.status;
@@ -504,8 +461,7 @@ function AutoSummaryButton({
   // §2.4 — a SUCCEEDED that lands right around the 6-min cap must not be hidden
   // by the timedOut flag (the cap-interval can flip it on the same tick the poll
   // observes success), so let an observed success win over the timeout copy.
-  const failed =
-    status === "FAILED" || (timedOut && status !== "SUCCEEDED");
+  const failed = status === "FAILED" || (timedOut && status !== "SUCCEEDED");
 
   return (
     <div className="mt-2">
@@ -545,15 +501,23 @@ function AutoSummaryButton({
 
 // H4 · 查看项目规范 — 规则类型展示元信息（对齐知识库页 TYPE_META）。
 const RULE_TYPE_META: Record<string, { label: string; icon: string }> = {
-  logo: { label: "Logo 使用规范", icon: "◐" },
-  color: { label: "品牌色彩系统", icon: "◉" },
-  font: { label: "字体规范", icon: "Aa" },
-  copy: { label: "品牌语气 / 文案", icon: "❝" },
-  imagery: { label: "视觉参考", icon: "▦" },
-  layout: { label: "版式规范", icon: "▤" },
+  logo: { label: "logo", icon: "◐" },
+  font: { label: "字体", icon: "Aa" },
+  color: { label: "颜色", icon: "◉" },
+  layout: { label: "设计指南", icon: "▤" },
+  imagery: { label: "图像", icon: "▦" },
+  copy: { label: "品牌指南", icon: "❝" },
   graphic: { label: "设计元素", icon: "✦" },
 };
-const RULE_TYPE_ORDER = ["logo", "color", "font", "copy", "imagery", "layout", "graphic"];
+const RULE_TYPE_ORDER = [
+  "logo",
+  "font",
+  "color",
+  "layout",
+  "imagery",
+  "copy",
+  "graphic",
+];
 const STRENGTH_META: Record<string, { label: string; cls: string }> = {
   STRONG: { label: "强约束", cls: "bg-accent-soft text-primary" },
   WEAK: { label: "弱约束", cls: "bg-muted text-muted-foreground" },
@@ -562,10 +526,10 @@ const STRENGTH_META: Record<string, { label: string; cls: string }> = {
 
 /**
  * H4 · 查看项目规范（侧边面板）— read-only view of the brand's CONFIRMED brand
- * knowledge, grouped by rule type. Reuses GET /api/workspaces/[wsId]/rules
- * (same endpoint the 知识库 page + generate worker consume); shows only
+ * kit, grouped by rule type. Reuses GET /api/workspaces/[wsId]/rules
+ * (same endpoint the 品牌套件 page + generate worker consume); shows only
  * CONFIRMED rules (the ones that actually constrain出图). No editing here — the
- * 知识库 page owns rule authoring/confirmation.
+ * 品牌套件页 owns rule authoring/confirmation.
  */
 function RulesPanel({
   wsId,
@@ -600,7 +564,7 @@ function RulesPanel({
           <div>
             <div className="text-lg font-semibold">项目品牌规范</div>
             <p className="mt-1 text-sm text-muted-foreground">
-              「{brandName}」已确认的品牌知识库规则，出图时受控生效。
+              「{brandName}」已确认的品牌套件规则，出图时受控生效。
             </p>
           </div>
           <button
@@ -625,12 +589,12 @@ function RulesPanel({
               </div>
               <div className="text-sm font-semibold">暂无已确认规范</div>
               <p className="mx-auto mt-2 max-w-xs text-xs leading-relaxed text-muted-foreground">
-                去「品牌知识库」沉淀并确认 Logo / 色彩 / 字体 / 调性等规则，确认后
-                会在这里展示并约束出图。
+                去「品牌套件」沉淀并确认 logo / 字体 / 颜色 /
+                设计指南 / 图像 / 品牌指南，确认后会在这里展示并约束出图。
               </p>
               <a href="/brand-knowledge">
                 <Button variant="outline" className="mt-4">
-                  前往品牌知识库
+                  前往品牌套件
                 </Button>
               </a>
             </div>
@@ -645,14 +609,17 @@ function RulesPanel({
                     <span className="flex h-7 w-7 items-center justify-center rounded-xl bg-accent-soft text-sm text-primary">
                       {g.meta.icon}
                     </span>
-                    <span className="text-sm font-semibold">{g.meta.label}</span>
+                    <span className="text-sm font-semibold">
+                      {g.meta.label}
+                    </span>
                     <span className="ml-auto text-xs text-muted-foreground">
                       {g.items.length} 条
                     </span>
                   </div>
                   <ul className="flex flex-col gap-2.5">
                     {g.items.map((r) => {
-                      const s = STRENGTH_META[r.strength] ?? STRENGTH_META.WEAK!;
+                      const s =
+                        STRENGTH_META[r.strength] ?? STRENGTH_META.WEAK!;
                       return (
                         <li
                           key={r.id}
@@ -663,7 +630,9 @@ function RulesPanel({
                           >
                             {s.label}
                           </span>
-                          <span className="text-foreground/90">{r.summary}</span>
+                          <span className="text-foreground/90">
+                            {r.summary}
+                          </span>
                         </li>
                       );
                     })}
@@ -677,7 +646,7 @@ function RulesPanel({
         <div className="border-t border-border p-4">
           <a href="/brand-knowledge">
             <Button variant="outline" className="w-full justify-center">
-              管理品牌知识库
+              管理品牌套件
             </Button>
           </a>
         </div>
@@ -731,18 +700,15 @@ function ConfirmActionDialog({
   const meta = ACTION_META[action];
   const mutation = useMutation({
     mutationFn: () =>
-      apiFetch<Project>(
-        `/api/workspaces/${wsId}/projects/${project.id}`,
-        {
-          method: "PATCH",
-          // P02 归档 — archive 落 archivedAt（区别于普通「已完成」），提交终审仍走 status。
-          body: JSON.stringify(
-            action === "archive"
-              ? { archive: true }
-              : { status: meta.nextStatus },
-          ),
-        },
-      ),
+      apiFetch<Project>(`/api/workspaces/${wsId}/projects/${project.id}`, {
+        method: "PATCH",
+        // P02 归档 — archive 落 archivedAt（区别于普通「已完成」），提交终审仍走 status。
+        body: JSON.stringify(
+          action === "archive"
+            ? { archive: true }
+            : { status: meta.nextStatus },
+        ),
+      }),
     onSuccess: onDone,
   });
 
@@ -762,10 +728,7 @@ function ConfirmActionDialog({
         <Button variant="outline" onClick={onClose}>
           取消
         </Button>
-        <Button
-          disabled={mutation.isPending}
-          onClick={() => mutation.mutate()}
-        >
+        <Button disabled={mutation.isPending} onClick={() => mutation.mutate()}>
           {mutation.isPending ? "处理中…" : meta.cta}
         </Button>
       </div>
@@ -787,13 +750,10 @@ function SummaryDialog({
   const [summary, setSummary] = useState(project.aiSummary ?? "");
   const mutation = useMutation({
     mutationFn: () =>
-      apiFetch<Project>(
-        `/api/workspaces/${wsId}/projects/${project.id}`,
-        {
-          method: "PATCH",
-          body: JSON.stringify({ aiSummary: summary.trim() }),
-        },
-      ),
+      apiFetch<Project>(`/api/workspaces/${wsId}/projects/${project.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ aiSummary: summary.trim() }),
+      }),
     onSuccess: onDone,
   });
 
@@ -801,7 +761,7 @@ function SummaryDialog({
     <ModalShell onClose={onClose}>
       <div className="text-lg font-semibold">补充需求 / 项目摘要</div>
       <p className="mt-1 text-sm text-muted-foreground">
-        补充这个 Campaign 的目标、进展与下一步，沉淀为 AI 项目摘要。
+        补充这个项目的目标、进展与下一步，沉淀为 AI 项目摘要。
       </p>
       <div className="mt-5">
         <Field label="项目摘要">
@@ -824,10 +784,7 @@ function SummaryDialog({
         <Button variant="outline" onClick={onClose}>
           取消
         </Button>
-        <Button
-          disabled={mutation.isPending}
-          onClick={() => mutation.mutate()}
-        >
+        <Button disabled={mutation.isPending} onClick={() => mutation.mutate()}>
           {mutation.isPending ? "保存中…" : "保存"}
         </Button>
       </div>
@@ -864,12 +821,12 @@ function EmptyState({ onCreate }: { onCreate: () => void }) {
       <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-accent-soft text-2xl text-primary">
         ◳
       </div>
-      <div className="text-lg font-semibold">还没有 Campaign</div>
+      <div className="text-lg font-semibold">还没有项目</div>
       <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
         创建你的第一个营销项目，围绕它管理需求、出图与交付。
       </p>
       <Button size="lg" className="mt-6" onClick={onCreate}>
-        ＋ 创建新 Campaign
+        ＋ 创建新项目
       </Button>
     </div>
   );
@@ -877,10 +834,12 @@ function EmptyState({ onCreate }: { onCreate: () => void }) {
 
 function CreateDialog({
   wsId,
+  brandName,
   onClose,
   onCreated,
 }: {
   wsId: string;
+  brandName: string;
   onClose: () => void;
   onCreated: (p: Project) => void;
 }) {
@@ -914,9 +873,9 @@ function CreateDialog({
         className="w-full max-w-md rounded-3xl border border-border bg-card p-6 shadow-[0_24px_70px_rgba(30,30,60,0.18)]"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="text-lg font-semibold">创建新 Campaign</div>
+        <div className="text-lg font-semibold">创建新项目</div>
         <p className="mt-1 text-sm text-muted-foreground">
-          填写项目名称与简介，稍后可在工作台围绕它出图。
+          当前品牌：{brandName}。创建后项目、素材与出图记录都归属于该品牌。
         </p>
         <div className="mt-5 flex flex-col gap-4">
           <Field label="项目名称">
@@ -924,7 +883,7 @@ function CreateDialog({
               autoFocus
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="如：夏季新品上市 Campaign"
+              placeholder="如：夏季新品上市项目"
               className="h-11 w-full rounded-2xl border border-border bg-background px-3 text-sm outline-none focus:border-primary/40 focus:shadow-[0_0_0_4px_rgba(124,92,255,0.08)]"
             />
           </Field>
@@ -933,7 +892,7 @@ function CreateDialog({
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               rows={3}
-              placeholder="一句话描述这个 Campaign 的目标与方向"
+              placeholder="一句话描述这个项目的目标与方向"
               className="w-full resize-none rounded-2xl border border-border bg-background p-3 text-sm outline-none focus:border-primary/40 focus:shadow-[0_0_0_4px_rgba(124,92,255,0.08)]"
             />
           </Field>

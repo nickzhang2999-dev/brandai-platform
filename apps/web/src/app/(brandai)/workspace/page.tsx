@@ -5,7 +5,6 @@ import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
-  BrandRule,
   Generation,
   GenerationVersion,
   ListMembersResponse,
@@ -51,7 +50,12 @@ const POLL_CAP_MS = 6 * 60 * 1000; // §2.2 有界中间态
 
 type JobState = {
   generation: Generation;
-  job: { jobId: string; status: string; progress: number; failedReason?: string };
+  job: {
+    jobId: string;
+    status: string;
+    progress: number;
+    failedReason?: string;
+  };
 };
 
 // F11 — read-only quota status (GET /api/workspaces/[wsId]/quota). -1 = 不限.
@@ -80,22 +84,15 @@ function parseStyleParam(raw: string | null): string[] {
 
 export default function WorkspacePage() {
   return (
-    <Suspense fallback={<div className="p-10 text-sm text-muted-foreground">加载中…</div>}>
+    <Suspense
+      fallback={
+        <div className="p-10 text-sm text-muted-foreground">加载中…</div>
+      }
+    >
       <Workspace />
     </Suspense>
   );
 }
-
-// F8 — readable labels for BrandKnowledge rule types (RuleType enum).
-const RULE_TYPE_LABELS: Record<string, string> = {
-  color: "色彩",
-  font: "字体",
-  layout: "版式",
-  imagery: "图像",
-  graphic: "图形",
-  copy: "文案",
-  logo: "Logo",
-};
 
 function Workspace() {
   const { wsId, brandName } = useBrand();
@@ -123,7 +120,7 @@ function Workspace() {
   const [projectId, setProjectId] = useState<string | null>(presetProject);
   // React to client-side navigations that change `?project=` (E11/E12 「加入项目」
   // and the homepage brief flow router.push to /workspace?project=… without a
-  // remount). Without this the prior Campaign stays selected and reference-tray
+  // remount). Without this the prior project stays selected and reference-tray
   // assets + POST /generations would target the wrong project.
   useEffect(() => {
     if (presetProject) setProjectId(presetProject);
@@ -242,7 +239,15 @@ function Workspace() {
       textMode,
       styleKeywords,
     }),
-    [sellingPoint, scene, sceneType, versionCount, targetKeys, textMode, styleKeywords],
+    [
+      sellingPoint,
+      scene,
+      sceneType,
+      versionCount,
+      targetKeys,
+      textMode,
+      styleKeywords,
+    ],
   );
   const HISTORY_CAP = 50;
   const past = useRef<FormSnapshot[]>([]);
@@ -333,6 +338,39 @@ function Workspace() {
   function zoomFit() {
     setZoom(1);
     setFitMode(true);
+    setPan({ x: 0, y: 0 });
+  }
+  const [canvasTool, setCanvasTool] = useState<CanvasTool>("select");
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const dragRef = useRef<{
+    pointerId: number;
+    x: number;
+    y: number;
+    startX: number;
+    startY: number;
+  } | null>(null);
+
+  function onStagePointerDown(e: React.PointerEvent<HTMLDivElement>) {
+    if (canvasTool !== "pan" || !current?.imageUrl) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    dragRef.current = {
+      pointerId: e.pointerId,
+      x: e.clientX,
+      y: e.clientY,
+      startX: pan.x,
+      startY: pan.y,
+    };
+  }
+  function onStagePointerMove(e: React.PointerEvent<HTMLDivElement>) {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+    setPan({
+      x: drag.startX + e.clientX - drag.x,
+      y: drag.startY + e.clientY - drag.y,
+    });
+  }
+  function onStagePointerUp(e: React.PointerEvent<HTMLDivElement>) {
+    if (dragRef.current?.pointerId === e.pointerId) dragRef.current = null;
   }
 
   // F9 · 参考素材区 — localStorage-backed, scoped to (wsId, projectId), shared
@@ -389,19 +427,6 @@ function Workspace() {
     }).catch(() => {});
   }
 
-  // F8 · 品牌约束 — 本品牌已确认（CONFIRMED）的知识库规则。出图 worker 正是加载
-  // 这套规则做受控生成（generate.worker.ts），所以在面板真实列出它们，而非一句
-  // 静态「已生效」。空集时给诚实空态。
-  const { data: allRules = [] } = useQuery<BrandRule[]>({
-    queryKey: ["brandai-rules", wsId],
-    queryFn: () => apiFetch<BrandRule[]>(`/api/workspaces/${wsId}/rules`),
-    enabled: !!wsId,
-  });
-  const confirmedRules = useMemo(
-    () => allRules.filter((r) => r.status === "CONFIRMED"),
-    [allRules],
-  );
-
   // F11 · 生成额度展示 — read-only quota status.
   const { data: quota } = useQuery<QuotaStatus>({
     queryKey: ["brandai-quota", wsId],
@@ -455,7 +480,9 @@ function Workspace() {
       const startMs =
         startedAt.current > 0
           ? startedAt.current
-          : Date.parse(d?.generation.startedAt ?? d?.generation.createdAt ?? "") || 0;
+          : Date.parse(
+              d?.generation.startedAt ?? d?.generation.createdAt ?? "",
+            ) || 0;
       if (startMs > 0 && Date.now() - startMs > POLL_CAP_MS) return false;
       return 2500;
     },
@@ -535,7 +562,7 @@ function Workspace() {
     router.replace(`${pathname}?${params.toString()}`, { scroll: false });
   }, [genId, jobId, search, pathname, router]);
 
-  // 进入工作台默认展示该 Campaign 最近一次出图（history newest-first）。仅当本会话
+  // 进入工作台默认展示该项目最近一次出图（history newest-first）。仅当本会话
   // 还没有选中/提交任何出图时播种 —— 不覆盖用户的实时提交，也不覆盖手动切换的历史。
   useEffect(() => {
     if (genId) return;
@@ -559,48 +586,15 @@ function Workspace() {
   }
 
   const status = poll?.job?.status ?? poll?.generation.status ?? null;
-  const versions = useMemo(
-    () => poll?.generation.versions ?? [],
-    [poll],
-  );
-  const running = !!genId && status !== "SUCCEEDED" && status !== "FAILED" && !timedOut;
+  const versions = useMemo(() => poll?.generation.versions ?? [], [poll]);
+  const running =
+    !!genId && status !== "SUCCEEDED" && status !== "FAILED" && !timedOut;
   const current = versions[activeVariant] ?? versions[0];
 
-  // F8 · 已应用规则 — 优先用「当前展示的这张图」实际记录的 appliedRuleIds
-  // （worker 在出图时把加载的规则写进 version.params.appliedRuleIds/appliedRules），
-  // 把 id 解析成可读 summary；若该图还没记录（如尚未出图），退化为本品牌
-  // CONFIRMED 规则集——即 worker 下次出图将加载的那批。
-  const appliedRules = useMemo(() => {
-    const byId = new Map(confirmedRules.map((r) => [r.id, r]));
-    const params = (current?.params ?? {}) as Record<string, unknown>;
-    const rawIds =
-      (Array.isArray(params.appliedRuleIds) && params.appliedRuleIds) ||
-      (Array.isArray(params.appliedRules) && params.appliedRules) ||
-      null;
-    if (rawIds) {
-      return (rawIds as string[]).map((id) => {
-        const r = byId.get(id);
-        return {
-          id,
-          type: r?.type ?? null,
-          summary: r?.summary ?? id,
-        };
-      });
-    }
-    // 退化：本品牌已确认规则集（下次出图将加载的）。
-    return confirmedRules.map((r) => ({
-      id: r.id,
-      type: r.type as string,
-      summary: r.summary,
-    }));
-  }, [current, confirmedRules]);
-  // 标题区分：是「这张图实际应用的」还是「下次出图将加载的」。
-  const appliedFromResult = useMemo(() => {
-    const params = (current?.params ?? {}) as Record<string, unknown>;
-    return (
-      Array.isArray(params.appliedRuleIds) || Array.isArray(params.appliedRules)
-    );
-  }, [current]);
+  useEffect(() => {
+    setPan({ x: 0, y: 0 });
+    setFitMode(true);
+  }, [current?.id]);
 
   // —— 修改优化(改图)/ 终选 / 交付归档 ——
   const qc = useQueryClient();
@@ -641,7 +635,11 @@ function Workspace() {
   // 本周期/今日 用量 matches server-side enforcement without a manual reload.
   const quotaInvalidatedRef = useRef<string | null>(null);
   useEffect(() => {
-    if (status === "SUCCEEDED" && genId && quotaInvalidatedRef.current !== genId) {
+    if (
+      status === "SUCCEEDED" &&
+      genId &&
+      quotaInvalidatedRef.current !== genId
+    ) {
       quotaInvalidatedRef.current = genId;
       qc.invalidateQueries({ queryKey: ["brandai-quota", wsId] });
       // 让刚出图的这次进入历史缩略条（回看列表 newest-first）。
@@ -695,7 +693,10 @@ function Workspace() {
     }
   }
 
-  async function decideReview(decision: "APPROVED" | "REJECTED", note?: string) {
+  async function decideReview(
+    decision: "APPROVED" | "REJECTED",
+    note?: string,
+  ) {
     if (!current || !genId) return;
     setReviewErr(null);
     setReviewBusy(true);
@@ -797,7 +798,7 @@ function Workspace() {
 
   async function submit() {
     if (!projectId) {
-      setSubmitErr("请先选择一个 Campaign 项目（没有就去 Campaign 页创建）");
+      setSubmitErr("请先选择一个项目（没有就去项目页创建）");
       return;
     }
     setSubmitErr(null);
@@ -846,7 +847,7 @@ function Workspace() {
   return (
     <div className="flex h-screen flex-col">
       <div className="flex items-center justify-between border-b border-border bg-card px-6 py-3">
-        {/* F1 · 顶部项目路径 breadcrumb — 品牌 / Campaign 名（可切换 + 回项目列表）/ 工作台 */}
+        {/* F1 · 顶部项目路径 breadcrumb — 品牌 / 项目名（可切换 + 回项目列表）/ 工作台 */}
         <nav
           aria-label="项目路径"
           className="flex items-center gap-2 text-sm text-muted-foreground"
@@ -865,11 +866,11 @@ function Workspace() {
             <select
               value={projectId ?? ""}
               onChange={(e) => setProjectId(e.target.value || null)}
-              aria-label="当前 Campaign 项目"
+              aria-label="当前项目"
               className="max-w-[16rem] rounded-lg border border-border bg-background px-2 py-1 text-sm font-medium text-foreground outline-none focus:border-primary/40"
             >
               {projects.length === 0 ? (
-                <option value="">无项目，请先去 Campaign 创建</option>
+                <option value="">无项目，请先去项目页创建</option>
               ) : null}
               {projects.map((p) => (
                 <option key={p.id} value={p.id}>
@@ -910,43 +911,30 @@ function Workspace() {
         </div>
       </div>
 
-      <div className="grid min-h-0 flex-1 grid-cols-[1fr_400px]">
+      <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_340px]">
         {/* Canvas */}
-        <div className="flex min-h-0 flex-col bg-background p-6">
-          <div
-            className={[
-              "flex flex-1 items-center justify-center rounded-3xl border border-border bg-card p-6",
-              current?.imageUrl && !fitMode
-                ? "overflow-auto"
-                : "overflow-hidden",
-            ].join(" ")}
-          >
-            {current?.imageUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={current.imageUrl}
-                alt="生成结果"
-                style={
-                  fitMode
-                    ? undefined
-                    : { transform: `scale(${zoom})`, transformOrigin: "center" }
-                }
-                className={[
-                  "rounded-2xl shadow-[0_26px_80px_rgba(124,92,255,0.24)]",
-                  fitMode
-                    ? "max-h-[560px] max-w-full object-contain"
-                    : "max-w-none transition-transform",
-                ].join(" ")}
-              />
-            ) : (
-              <CanvasPlaceholder
-                running={running}
-                status={status}
-                timedOut={timedOut}
-                error={poll?.job?.failedReason ?? poll?.generation.error ?? undefined}
-              />
-            )}
-          </div>
+        <div className="flex min-h-0 flex-col bg-background p-4">
+          <CanvasStage
+            version={current}
+            zoom={zoom}
+            fitMode={fitMode}
+            tool={canvasTool}
+            pan={pan}
+            running={running}
+            status={status}
+            timedOut={timedOut}
+            error={
+              poll?.job?.failedReason ?? poll?.generation.error ?? undefined
+            }
+            onToolChange={setCanvasTool}
+            onZoomIn={zoomIn}
+            onZoomOut={zoomOut}
+            onZoomReset={zoomReset}
+            onZoomFit={zoomFit}
+            onPointerDown={onStagePointerDown}
+            onPointerMove={onStagePointerMove}
+            onPointerUp={onStagePointerUp}
+          />
           {versions.length > 0 ? (
             <div className="mt-4 flex flex-wrap gap-3">
               {versions.map((v, i) => (
@@ -1184,7 +1172,8 @@ function Workspace() {
             <div>
               <div className="mb-2 text-sm font-semibold">生成数量</div>
               <p className="rounded-2xl border border-primary/15 bg-accent-soft/50 px-3 py-2.5 text-xs leading-relaxed text-muted-foreground">
-                多尺寸模式：每个尺寸各出 1 张（共 {selectedTargets.length} 张）。
+                多尺寸模式：每个尺寸各出 1 张（共 {selectedTargets.length}{" "}
+                张）。
               </p>
             </div>
           ) : (
@@ -1245,7 +1234,8 @@ function Workspace() {
             </p>
             {multiSize ? (
               <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-                注：模型会就近匹配到支持的比例（如 1080×1440 → 1024×1536），出图后以实际尺寸为准。
+                注：模型会就近匹配到支持的比例（如 1080×1440 →
+                1024×1536），出图后以实际尺寸为准。
               </p>
             ) : null}
           </div>
@@ -1393,13 +1383,6 @@ function Workspace() {
             <QuotaBar quota={quota} onUpgrade={() => setShowUpgrade(true)} />
           ) : null}
 
-          {/* F8 · 品牌约束（显示已应用规则）— 真实列出已确认 / 本图实际应用的规则 */}
-          <BrandConstraintPanel
-            rules={appliedRules}
-            fromResult={appliedFromResult}
-            typeLabels={RULE_TYPE_LABELS}
-          />
-
           {submitErr ? (
             <p className="text-sm text-destructive">{submitErr}</p>
           ) : null}
@@ -1409,7 +1392,7 @@ function Workspace() {
               onClick={() => {
                 if (!projectId) {
                   setSubmitErr(
-                    "请先选择一个 Campaign 项目（没有就去 Campaign 页创建）",
+                    "请先选择一个项目（没有就去项目页创建）",
                   );
                   return;
                 }
@@ -1419,11 +1402,7 @@ function Workspace() {
               disabled={submitting || running}
               className="h-12 w-full rounded-[18px] bg-gradient-to-br from-primary to-accent text-sm font-medium text-primary-foreground shadow-[0_12px_28px_rgba(124,92,255,0.26)] disabled:opacity-70"
             >
-              {running
-                ? "AI 正在生成…"
-                : submitting
-                  ? "提交中…"
-                  : "提交制作"}
+              {running ? "AI 正在生成…" : submitting ? "提交中…" : "提交制作"}
             </button>
             <p className="mt-2 text-[11px] text-muted-foreground">
               内容由 AI 生成，请注意核对准确性。
@@ -1439,12 +1418,15 @@ function Workspace() {
             projectName:
               projects.find((p) => p.id === projectId)?.name ?? "未选择项目",
             sceneType:
-              SCENE_TYPES.find((s) => s.value === sceneType)?.label ?? sceneType,
+              SCENE_TYPES.find((s) => s.value === sceneType)?.label ??
+              sceneType,
             scene: scene.trim(),
             sellingPoint: sellingPoint.trim(),
             count: multiSize ? selectedTargets.length : versionCount,
             multiSize,
-            targets: selectedTargets.map((t) => `${t.label} ${t.width}×${t.height}`),
+            targets: selectedTargets.map(
+              (t) => `${t.label} ${t.width}×${t.height}`,
+            ),
             textMode,
             styleKeywords,
             referenceCount: references.length,
@@ -1592,9 +1574,7 @@ function ReviewPanel({
         </p>
       ) : null}
 
-      {error ? (
-        <p className="mt-2 text-xs text-destructive">{error}</p>
-      ) : null}
+      {error ? <p className="mt-2 text-xs text-destructive">{error}</p> : null}
     </div>
   );
 }
@@ -1903,7 +1883,9 @@ function UpgradeDialog({
           >
             知道了
           </button>
-          <a href={`mailto:${upgradeContactEmail}?subject=BrandAI 套餐升级咨询`}>
+          <a
+            href={`mailto:${upgradeContactEmail}?subject=BrandAI 套餐升级咨询`}
+          >
             <button
               type="button"
               className="rounded-full bg-gradient-to-br from-primary to-accent px-5 py-2 text-sm font-medium text-primary-foreground shadow-[0_8px_20px_rgba(124,92,255,0.24)]"
@@ -2026,8 +2008,7 @@ function StatusPill({
   status: string | null;
   timedOut: boolean;
 }) {
-  if (timedOut)
-    return <Pill tone="warning">超时，请重试</Pill>;
+  if (timedOut) return <Pill tone="warning">超时，请重试</Pill>;
   if (!status) return null;
   const map: Record<string, { tone: Tone; label: string }> = {
     PENDING: { tone: "muted", label: "已受理 · 排队中" },
@@ -2040,6 +2021,8 @@ function StatusPill({
 }
 
 type Tone = "muted" | "primary" | "success" | "danger" | "warning";
+type CanvasTool = "select" | "pan";
+
 function Pill({ tone, children }: { tone: Tone; children: React.ReactNode }) {
   const map: Record<Tone, string> = {
     muted: "bg-muted text-muted-foreground",
@@ -2052,6 +2035,203 @@ function Pill({ tone, children }: { tone: Tone; children: React.ReactNode }) {
     <span className={`rounded-full px-3 py-1 text-xs font-medium ${map[tone]}`}>
       {children}
     </span>
+  );
+}
+
+function CanvasStage({
+  version,
+  zoom,
+  fitMode,
+  tool,
+  pan,
+  running,
+  status,
+  timedOut,
+  error,
+  onToolChange,
+  onZoomIn,
+  onZoomOut,
+  onZoomReset,
+  onZoomFit,
+  onPointerDown,
+  onPointerMove,
+  onPointerUp,
+}: {
+  version?: GenerationVersion;
+  zoom: number;
+  fitMode: boolean;
+  tool: CanvasTool;
+  pan: { x: number; y: number };
+  running: boolean;
+  status: string | null;
+  timedOut: boolean;
+  error?: string;
+  onToolChange: (tool: CanvasTool) => void;
+  onZoomIn: () => void;
+  onZoomOut: () => void;
+  onZoomReset: () => void;
+  onZoomFit: () => void;
+  onPointerDown: (event: React.PointerEvent<HTMLDivElement>) => void;
+  onPointerMove: (event: React.PointerEvent<HTMLDivElement>) => void;
+  onPointerUp: (event: React.PointerEvent<HTMLDivElement>) => void;
+}) {
+  const hasImage = !!version?.imageUrl;
+  const transform = fitMode
+    ? `translate(${pan.x}px, ${pan.y}px)`
+    : `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`;
+  const disabled = !hasImage;
+  const toolButton = (name: CanvasTool, label: string, title: string) => (
+    <button
+      type="button"
+      title={title}
+      aria-label={title}
+      disabled={disabled}
+      onClick={() => onToolChange(name)}
+      className={[
+        "flex h-10 w-10 items-center justify-center rounded-xl text-base transition-colors disabled:opacity-35",
+        tool === name
+          ? "bg-primary text-primary-foreground"
+          : "text-muted-foreground hover:bg-muted hover:text-foreground",
+      ].join(" ")}
+    >
+      {label}
+    </button>
+  );
+  return (
+    <div
+      className={[
+        "relative flex min-h-[560px] flex-1 items-center justify-center overflow-hidden rounded-[28px] border border-border bg-card",
+        hasImage && tool === "pan" ? "cursor-grab active:cursor-grabbing" : "",
+      ].join(" ")}
+      style={{
+        backgroundImage:
+          "radial-gradient(circle at 1px 1px, rgba(124,92,255,0.12) 1px, transparent 0)",
+        backgroundSize: "18px 18px",
+      }}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
+    >
+      <div className="absolute left-1/2 top-4 z-20 flex -translate-x-1/2 items-center gap-2 rounded-2xl border border-border bg-card/95 px-3 py-2 text-xs text-foreground shadow-[0_14px_40px_rgba(30,30,60,0.12)] backdrop-blur">
+        <button
+          type="button"
+          onClick={onZoomOut}
+          disabled={disabled}
+          className="flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-35"
+          aria-label="缩小"
+          title="缩小"
+        >
+          −
+        </button>
+        <span className="min-w-12 text-center font-mono tabular-nums">
+          {fitMode ? "适配" : `${Math.round(zoom * 100)}%`}
+        </span>
+        <button
+          type="button"
+          onClick={onZoomIn}
+          disabled={disabled}
+          className="flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-35"
+          aria-label="放大"
+          title="放大"
+        >
+          +
+        </button>
+        <span className="h-5 w-px bg-border" />
+        <button
+          type="button"
+          onClick={onZoomFit}
+          disabled={disabled}
+          className="rounded-lg px-2 py-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-35"
+        >
+          适配
+        </button>
+        <button
+          type="button"
+          onClick={onZoomReset}
+          disabled={disabled}
+          className="rounded-lg px-2 py-1 font-mono text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-35"
+        >
+          100%
+        </button>
+      </div>
+
+      <div className="absolute left-4 top-1/2 z-20 flex -translate-y-1/2 flex-col gap-2 rounded-2xl border border-border bg-card/95 p-2 shadow-[0_14px_40px_rgba(30,30,60,0.12)] backdrop-blur">
+        {toolButton("select", "↖", "选择")}
+        {toolButton("pan", "✥", "移动画布")}
+        <span className="my-1 h-px bg-border" />
+        <span className="flex h-10 w-10 items-center justify-center rounded-xl text-muted-foreground/50">
+          ▢
+        </span>
+        <span className="flex h-10 w-10 items-center justify-center rounded-xl text-muted-foreground/50">
+          T
+        </span>
+      </div>
+
+      {hasImage ? (
+        <div
+          className="relative select-none"
+          style={{
+            transform,
+            transformOrigin: "center",
+            transition: tool === "pan" ? "none" : "transform 160ms ease",
+          }}
+        >
+          <div className="pointer-events-none absolute -inset-5 rounded-[32px] border border-border bg-background/35" />
+          <div className="relative rounded-sm border-2 border-[#4A9BFF] bg-[#4A9BFF]/5 shadow-[0_24px_70px_rgba(30,30,60,0.18)]">
+            <div className="absolute -left-0.5 -top-8 rounded-lg border border-border bg-card px-2 py-1 text-[11px] font-medium text-foreground shadow-sm">
+              选中图片
+            </div>
+            {version.width && version.height ? (
+              <div className="absolute -right-0.5 -top-8 rounded-lg border border-border bg-card px-2 py-1 font-mono text-[11px] text-foreground shadow-sm">
+                {version.width} × {version.height}
+              </div>
+            ) : null}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={version.imageUrl}
+              alt="生成结果"
+              draggable={false}
+              className={[
+                "block rounded-sm object-contain",
+                fitMode
+                  ? "max-h-[72vh] max-w-[min(92vw,1120px)]"
+                  : "max-w-none",
+              ].join(" ")}
+            />
+            {[
+              "-left-2 -top-2",
+              "-right-2 -top-2",
+              "-left-2 -bottom-2",
+              "-right-2 -bottom-2",
+            ].map((pos) => (
+              <span
+                key={pos}
+                className={`absolute h-4 w-4 rounded-full border-2 border-white bg-[#4A9BFF] shadow ${pos}`}
+              />
+            ))}
+            {[
+              "left-1/2 -top-2 -translate-x-1/2",
+              "left-1/2 -bottom-2 -translate-x-1/2",
+              "-left-2 top-1/2 -translate-y-1/2",
+              "-right-2 top-1/2 -translate-y-1/2",
+            ].map((pos) => (
+              <span
+                key={pos}
+                className={`absolute h-3 w-3 rounded-full border-2 border-white bg-[#4A9BFF] shadow ${pos}`}
+              />
+            ))}
+          </div>
+        </div>
+      ) : (
+        <CanvasPlaceholder
+          running={running}
+          status={status}
+          timedOut={timedOut}
+          error={error}
+        />
+      )}
+    </div>
   );
 }
 
@@ -2108,74 +2288,6 @@ function Center({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex flex-col items-center justify-center text-center">
       {children}
-    </div>
-  );
-}
-
-/**
- * F8 · 品牌约束（显示已应用规则）— 不再是静态「已生效」字串，而是真实列出：
- * - 当前展示图实际记录的 appliedRuleIds（`fromResult=true`），或
- * - 本品牌已确认（CONFIRMED）、worker 下次出图将加载的规则集（`fromResult=false`）。
- * 空集时给诚实空态（去知识库确认规则）。语义 token only。
- */
-function BrandConstraintPanel({
-  rules,
-  fromResult,
-  typeLabels,
-}: {
-  rules: { id: string; type: string | null; summary: string }[];
-  fromResult: boolean;
-  typeLabels: Record<string, string>;
-}) {
-  return (
-    <div className="rounded-2xl border border-primary/15 bg-accent-soft/50 p-3">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 text-sm font-medium text-primary">
-          <span>◎</span> 品牌约束
-        </div>
-        {rules.length ? (
-          <span className="rounded-full bg-card px-2 py-0.5 text-[10px] font-medium text-primary">
-            {fromResult ? "本图已应用" : "将应用"} {rules.length}
-          </span>
-        ) : null}
-      </div>
-      {rules.length ? (
-        <>
-          <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-            {fromResult
-              ? "下列规则已在 worker 中加载并应用到当前展示的这张图。"
-              : "下列已确认的知识库规则会在出图时由 worker 加载并受控生成。"}
-          </p>
-          <ul className="mt-2 flex flex-col gap-1.5">
-            {rules.map((r) => (
-              <li
-                key={r.id}
-                className="flex items-start gap-2 rounded-xl bg-card/70 px-2.5 py-1.5"
-              >
-                {r.type ? (
-                  <span className="mt-0.5 shrink-0 rounded-full bg-accent-soft px-2 py-0.5 text-[10px] font-medium text-primary">
-                    {typeLabels[r.type] ?? r.type}
-                  </span>
-                ) : null}
-                <span className="text-xs leading-relaxed text-foreground/80">
-                  {r.summary}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </>
-      ) : (
-        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-          本品牌暂无已确认（CONFIRMED）的知识库规则，出图将不附加品牌约束。去
-          <Link
-            href="/brand-knowledge"
-            className="mx-0.5 font-medium text-primary underline underline-offset-2"
-          >
-            品牌知识库
-          </Link>
-          确认规则后即在此生效。
-        </p>
-      )}
     </div>
   );
 }

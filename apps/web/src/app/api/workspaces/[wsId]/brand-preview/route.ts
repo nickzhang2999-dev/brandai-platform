@@ -82,7 +82,7 @@ export async function POST(
     if (!brief) {
       throw new ApiException(
         422,
-        "请先在品牌知识库中确认至少一条品牌规则（色彩/字体/语气/视觉），再生成品牌预览。",
+        "请先在品牌套件中确认至少一条品牌规则（logo/字体/颜色/设计指南/图像/品牌指南），再生成品牌预览。",
       );
     }
 

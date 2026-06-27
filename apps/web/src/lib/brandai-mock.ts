@@ -34,20 +34,25 @@ export type NavKey =
   | "templates"
   | "members";
 
-export const navItems: { key: NavKey; label: string; href: string; icon: string }[] = [
+export const navItems: {
+  key: NavKey;
+  label: string;
+  href: string;
+  icon: string;
+}[] = [
   { key: "home", label: "首页", href: "/", icon: "✦" },
-  { key: "campaigns", label: "Campaign 项目", href: "/campaigns", icon: "◳" },
-  { key: "brand-knowledge", label: "品牌知识库", href: "/brand-knowledge", icon: "◎" },
-  { key: "assets", label: "素材库", href: "/assets", icon: "▦" },
+  { key: "campaigns", label: "项目", href: "/campaigns", icon: "◳" },
+  { key: "brand-knowledge", label: "品牌套件", href: "/brand-knowledge", icon: "◎" },
   { key: "workspace", label: "AI 工作台", href: "/workspace", icon: "✸" },
   { key: "templates", label: "模板库", href: "/templates", icon: "▱" },
+  { key: "assets", label: "素材库", href: "/assets", icon: "▦" },
   // G6 · 成员/协作管理 — 团队成员邀请 + 角色管理（接真实 /members BFF）。
   { key: "members", label: "成员协作", href: "/members", icon: "◍" },
 ];
 
 export const quickActions = [
-  { title: "创建新 Campaign", desc: "用一句话描述需求，AI 帮你拆解立项", href: "/campaigns", icon: "✚" },
-  { title: "导入品牌知识库", desc: "上传 Logo、色彩、调性，沉淀品牌规范", href: "/brand-knowledge", icon: "◎" },
+  { title: "创建新项目", desc: "用一句话描述需求，AI 帮你拆解立项", href: "/campaigns", icon: "✚" },
+  { title: "导入品牌套件", desc: "上传 logo、字体、颜色与品牌指南，沉淀品牌规范", href: "/brand-knowledge", icon: "◎" },
   { title: "生成广告视觉", desc: "进入工作台，按品牌规范受控出图", href: "/workspace", icon: "✸" },
   { title: "优化已有设计", desc: "对现有素材做改写、扩展与再创作", href: "/workspace", icon: "✎" },
 ];
@@ -164,7 +169,7 @@ export const planTiers: PlanTier[] = [
     planKey: "FREE",
     name: "体验版",
     priceLabel: "免费",
-    features: ["每日少量出图额度", "单品牌知识库", "基础模板库"],
+    features: ["每日少量出图额度", "单品牌套件", "基础模板库"],
   },
   {
     planKey: "PRO",
@@ -286,42 +291,42 @@ export const brandKnowledge = {
     "LUMINA 是一个聚焦科学护肤的高端品牌，主张高效安全、纯净配方与专业可信。视觉上以紫色为主色、清透水光质感为核心，传递温柔关怀与科学理性的双重气质。",
   keywords: ["科学护肤", "高效安全", "纯净配方", "专业可信", "清透水光"],
   uploadCards: [
-    { title: "Logo", desc: "PNG / SVG / JPG", icon: "◐" },
-    { title: "品牌介绍", desc: "文档 / 文字", icon: "✎" },
-    { title: "色彩值", desc: "HEX / 色卡", icon: "◉" },
-    { title: "参考图", desc: "视觉风格参考", icon: "▦" },
-    { title: "设计元素", desc: "图标 / 纹理", icon: "✦" },
-    { title: "内容文案", desc: "口吻 / 话术", icon: "❝" },
+    { title: "logo", desc: "PNG / SVG / JPG", icon: "◐" },
+    { title: "字体", desc: "字体文件 / 字体说明", icon: "Aa" },
+    { title: "颜色", desc: "HEX / 色卡", icon: "◉" },
+    { title: "设计指南", desc: "版式 / 构图 / 组件", icon: "▤" },
+    { title: "图像", desc: "参考图 / 视觉风格", icon: "▦" },
+    { title: "品牌指南", desc: "文案 / 语气 / 品牌说明", icon: "❝" },
   ],
   modules: [
     {
-      title: "Logo 使用规范",
+      title: "logo",
       icon: "◐",
       body: "标准组合 + 安全空间；最小尺寸 48px；禁止拉伸、禁止改色、禁止描边。",
     },
     {
-      title: "品牌色彩系统",
+      title: "颜色",
       icon: "◉",
       body: "主色紫 #7C5CFF，点缀粉 #FFC8D6，中性深灰 #1A1A1F。",
       swatches: ["#7C5CFF", "#FFC8D6", "#1A1A1F", "#F4F0FF"],
     },
     {
-      title: "字体规范",
+      title: "字体",
       icon: "Aa",
       body: "标题：宋体风格；正文：黑体。中英文混排保持统一字重与行距。",
     },
     {
-      title: "品牌语气",
+      title: "品牌指南",
       icon: "❝",
       body: "专业可信、科学为本、温柔关怀、清晰优雅、追求品质。",
     },
     {
-      title: "视觉参考",
+      title: "图像",
       icon: "▦",
       body: "自然光、清透水光质感、留白构图、低饱和点缀色。",
     },
     {
-      title: "设计规范",
+      title: "设计指南",
       icon: "✦",
       body: "栅格化版式、统一圆角、克制的图标系统与一致的质感语言。",
     },

@@ -51,9 +51,12 @@ export default function LoginPage() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-6 py-12">
       <CreamCard className="w-full max-w-sm p-8">
-        <div className="font-mono text-[11px] uppercase tracking-[0.25em] text-accent">
-          Brand Visual AI
-        </div>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/brand/nova-art-lab-logo.png"
+          alt="NOVA ART LAB"
+          className="h-20 w-full object-contain"
+        />
         <h1 className="mt-3 font-serif text-3xl leading-tight text-foreground">
           {mode === "login" ? "登录 BrandAI" : "创建账号"}
         </h1>

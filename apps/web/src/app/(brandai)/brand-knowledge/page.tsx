@@ -34,39 +34,51 @@ type JobState = {
 
 // D2 · 快捷提示词 — pure client convenience, fills the rule textarea. text only.
 const QUICK_PROMPTS: { type: string; text: string }[] = [
-  { type: "color", text: "我们的主色是 #7C5CFF，辅助色是…，禁止使用其他高饱和色或描边。" },
+  {
+    type: "color",
+    text: "我们的主色是 #7C5CFF，辅助色是…，禁止使用其他高饱和色或描边。",
+  },
   { type: "font", text: "标题字体用…，正文字体用…，禁止使用系统默认衬线体。" },
-  { type: "copy", text: "品牌语气：专业而亲切、简洁有力；禁用词：最、第一、绝对。" },
-  { type: "logo", text: "Logo 须保留四周安全间距，最小宽度 24px；禁止拉伸、改色或加阴影。" },
+  {
+    type: "copy",
+    text: "品牌指南：专业而亲切、简洁有力；禁用词：最、第一、绝对。",
+  },
+  {
+    type: "logo",
+    text: "logo 须保留四周安全间距，最小宽度 24px；禁止拉伸、改色或加阴影。",
+  },
 ];
 
 /**
- * P03 · 品牌知识库 — 把品牌规则沉淀为 AI 可调用的结构化知识。真实数据：
+ * P03 · 品牌套件 — 把品牌规则沉淀为 AI 可调用的结构化知识。真实数据：
  * GET/POST/PATCH /api/workspaces/[wsId]/rules。已确认(CONFIRMED)的规则会在
  * 工作台出图时被 worker 加载用于受控生成。
  *
- * D4–D10 · 8 类知识从「通用规则卡」恢复为 RICH 结构化卡：色彩→真实色块，
- * Logo→do/don't，字体→字族预览，语调→禁用词，视觉/版式/设计→结构化要点。
+ * D4–D10 · 品牌套件 6 个维度从「通用规则卡」恢复为 RICH 结构化卡：
+ * logo→do/don't，字体→字族预览，颜色→真实色块，设计指南/图像→结构化要点，
+ * 品牌指南→禁用词。
  * 所有字段访问都对 value 缺字段降级（fall back 到 summary），绝不崩。
  */
-const TYPE_META: Record<string, { label: string; short: string; icon: string }> = {
-  logo: { label: "Logo 使用规范", short: "Logo", icon: "◐" },
-  color: { label: "品牌色彩系统", short: "色彩", icon: "◉" },
-  font: { label: "字体规范", short: "字体", icon: "Aa" },
-  copy: { label: "品牌语气 / 文案", short: "语调", icon: "❝" },
-  imagery: { label: "参考图 / 素材规范", short: "素材", icon: "▦" },
-  layout: { label: "版式规范", short: "版式", icon: "▤" },
+const TYPE_META: Record<
+  string,
+  { label: string; short: string; icon: string }
+> = {
+  logo: { label: "logo", short: "logo", icon: "◐" },
+  font: { label: "字体", short: "字体", icon: "Aa" },
+  color: { label: "颜色", short: "颜色", icon: "◉" },
+  layout: { label: "设计指南", short: "设计指南", icon: "▤" },
+  imagery: { label: "图像", short: "图像", icon: "▦" },
+  copy: { label: "品牌指南", short: "品牌指南", icon: "❝" },
   graphic: { label: "设计元素", short: "设计", icon: "✦" },
 };
-/** 卡片分组顺序（让 8 类读成结构化知识库而非平铺列表）。 */
+/** 卡片分组顺序（让品牌套件 6 个维度固定展示而非平铺列表）。 */
 const CATEGORY_ORDER: string[] = [
-  "color",
   "logo",
   "font",
-  "copy",
-  "imagery",
+  "color",
   "layout",
-  "graphic",
+  "imagery",
+  "copy",
 ];
 const TYPE_OPTIONS = Object.entries(TYPE_META).map(([value, m]) => ({
   value,
@@ -142,7 +154,8 @@ function extractSwatches(value: Val): Swatch[] {
       neutral: "中性",
     };
     for (const [k, v] of Object.entries(value)) {
-      if (typeof v === "string" && isHex(v)) eat(v, roleMap[k.toLowerCase()] ?? k);
+      if (typeof v === "string" && isHex(v))
+        eat(v, roleMap[k.toLowerCase()] ?? k);
     }
   }
   return out;
@@ -173,7 +186,8 @@ function extractFonts(value: Val): { name: string; role?: string }[] {
     else if (f && typeof f === "object") {
       const o = f as Val;
       const name = asStr(o.name) ?? asStr(o.family);
-      if (name) out.push({ name, ...(asStr(o.role) ? { role: asStr(o.role)! } : {}) });
+      if (name)
+        out.push({ name, ...(asStr(o.role) ? { role: asStr(o.role)! } : {}) });
     }
   });
   return out;
@@ -181,13 +195,14 @@ function extractFonts(value: Val): { name: string; role?: string }[] {
 /** 把 serif/sans 这类抽象族名映射到可预览的 CSS font-family。 */
 function previewFamily(name: string): string {
   const n = name.toLowerCase();
-  if (n.includes("serif") && !n.includes("sans")) return "Georgia, 'Noto Serif SC', serif";
+  if (n.includes("serif") && !n.includes("sans"))
+    return "Georgia, 'Noto Serif SC', serif";
   if (n === "sans" || n.includes("sans")) return "Inter, system-ui, sans-serif";
   if (n.includes("mono")) return "ui-monospace, monospace";
   return `'${name}', Inter, system-ui, sans-serif`;
 }
 
-/** copy 语调：tone + 禁用词列表（容忍 forbidden/banned/禁用词）。 */
+/** copy 品牌指南：tone + 禁用词列表（容忍 forbidden/banned/禁用词）。 */
 function extractTone(value: Val): { tone: string | null; banned: string[] } {
   const tone =
     asStr(value.tone) ?? asStr(value.voice) ?? asStr(value.style) ?? null;
@@ -258,7 +273,9 @@ function genericBullets(value: Val): { label: string; text: string }[] {
 function StrengthBadge({ strength }: { strength: string }) {
   const m = STRENGTH_META[strength] ?? STRENGTH_META.WEAK!;
   return (
-    <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium ${m.cls}`}>
+    <span
+      className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium ${m.cls}`}
+    >
       {m.label}
     </span>
   );
@@ -333,7 +350,11 @@ function EvidenceThumbs({
   return (
     <div className="flex flex-wrap items-center gap-2 pt-1">
       {shown.map((ev, i) => (
-        <EvidenceItem key={`${ev.assetId ?? "note"}-${i}`} wsId={wsId} ev={ev} />
+        <EvidenceItem
+          key={`${ev.assetId ?? "note"}-${i}`}
+          wsId={wsId}
+          ev={ev}
+        />
       ))}
     </div>
   );
@@ -351,7 +372,9 @@ function SubHeading({ children }: { children: React.ReactNode }) {
 function RuleBody({ rule }: { rule: BrandRule }) {
   const value = (rule.value ?? {}) as Val;
   const summary = (
-    <p className="text-xs leading-relaxed text-muted-foreground">{rule.summary}</p>
+    <p className="text-xs leading-relaxed text-muted-foreground">
+      {rule.summary}
+    </p>
   );
 
   if (rule.type === "color") {
@@ -375,7 +398,9 @@ function RuleBody({ rule }: { rule: BrandRule }) {
                 {sw.hex}
               </span>
               {sw.role ? (
-                <span className="text-[10px] text-muted-foreground">{sw.role}</span>
+                <span className="text-[10px] text-muted-foreground">
+                  {sw.role}
+                </span>
               ) : null}
             </div>
           ))}
@@ -383,7 +408,10 @@ function RuleBody({ rule }: { rule: BrandRule }) {
         {restrictions.length ? (
           <ul className="mt-0.5 flex flex-col gap-1">
             {restrictions.map((r, i) => (
-              <li key={i} className="flex gap-1.5 text-[11px] text-muted-foreground">
+              <li
+                key={i}
+                className="flex gap-1.5 text-[11px] text-muted-foreground"
+              >
                 <span className="text-primary">·</span>
                 {r}
               </li>
@@ -404,7 +432,10 @@ function RuleBody({ rule }: { rule: BrandRule }) {
           <div className="flex flex-col gap-1">
             <SubHeading>推荐</SubHeading>
             {dos.map((d, i) => (
-              <span key={i} className="flex gap-1.5 text-[11px] text-foreground/80">
+              <span
+                key={i}
+                className="flex gap-1.5 text-[11px] text-foreground/80"
+              >
                 <span className="text-success">✓</span>
                 {d}
               </span>
@@ -415,7 +446,10 @@ function RuleBody({ rule }: { rule: BrandRule }) {
           <div className="flex flex-col gap-1">
             <SubHeading>禁止</SubHeading>
             {donts.map((d, i) => (
-              <span key={i} className="flex gap-1.5 text-[11px] text-foreground/80">
+              <span
+                key={i}
+                className="flex gap-1.5 text-[11px] text-foreground/80"
+              >
                 <span className="text-destructive">✕</span>
                 {d}
               </span>
@@ -445,7 +479,9 @@ function RuleBody({ rule }: { rule: BrandRule }) {
               className="rounded-2xl border border-border bg-muted/40 px-3 py-2"
             >
               {f.role ? (
-                <span className="text-[10px] text-muted-foreground">{f.role}</span>
+                <span className="text-[10px] text-muted-foreground">
+                  {f.role}
+                </span>
               ) : null}
               <div
                 className="text-lg leading-tight text-foreground"
@@ -468,7 +504,7 @@ function RuleBody({ rule }: { rule: BrandRule }) {
         {summary}
         {tone ? (
           <div className="flex items-center gap-2">
-            <SubHeading>语调</SubHeading>
+            <SubHeading>语气</SubHeading>
             <span className="rounded-full bg-accent-soft px-2.5 py-0.5 text-[11px] text-primary">
               {tone}
             </span>
@@ -530,7 +566,11 @@ function RuleCard({
   onDelete: (rule: BrandRule) => void;
   busy: boolean;
 }) {
-  const meta = TYPE_META[rule.type] ?? { label: rule.type, short: rule.type, icon: "✦" };
+  const meta = TYPE_META[rule.type] ?? {
+    label: rule.type,
+    short: rule.type,
+    icon: "✦",
+  };
   return (
     <div className="flex flex-col gap-3 rounded-3xl border border-border bg-card p-5 shadow-[0_8px_24px_rgba(30,30,60,0.06)]">
       <div className="flex items-start justify-between gap-2">
@@ -661,7 +701,9 @@ function RuleEditorDialog({
   }) => void;
 }) {
   const [summary, setSummary] = useState(rule.summary);
-  const [strength, setStrength] = useState<BrandRule["strength"]>(rule.strength);
+  const [strength, setStrength] = useState<BrandRule["strength"]>(
+    rule.strength,
+  );
   const [valueText, setValueText] = useState(() =>
     JSON.stringify(rule.value ?? {}, null, 2),
   );
@@ -693,7 +735,7 @@ function RuleEditorDialog({
   return (
     <ModalShell
       title={`编辑${TYPE_META[rule.type]?.label ?? "品牌规则"}`}
-      subtitle="修改后保存即可更新该知识库；禁用的内容也可以先编辑，再重新启用。"
+      subtitle="修改后保存即可更新该品牌套件；禁用的内容也可以先编辑，再重新启用。"
       onClose={onClose}
     >
       <div className="flex flex-col gap-4 overflow-y-auto px-6 py-5">
@@ -710,7 +752,9 @@ function RuleEditorDialog({
           <span className="text-xs font-medium">约束强度</span>
           <select
             value={strength}
-            onChange={(event) => setStrength(event.target.value as BrandRule["strength"])}
+            onChange={(event) =>
+              setStrength(event.target.value as BrandRule["strength"])
+            }
             className="h-10 rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-primary/40"
           >
             <option value="WEAK">弱约束</option>
@@ -754,16 +798,15 @@ function TaskProgress({
   timedOut: boolean;
   error?: string | null;
 }) {
-  const label =
-    timedOut
-      ? "处理超时"
-      : status === "PENDING"
-        ? "已受理，排队中…"
-        : status === "RUNNING"
-          ? "AI 正在分析素材…"
-          : status === "FAILED"
-            ? "处理失败"
-            : "处理中…";
+  const label = timedOut
+    ? "处理超时"
+    : status === "PENDING"
+      ? "已受理，排队中…"
+      : status === "RUNNING"
+        ? "AI 正在分析素材…"
+        : status === "FAILED"
+          ? "处理失败"
+          : "处理中…";
   return (
     <div className="flex flex-col gap-2 rounded-2xl border border-primary/15 bg-accent-soft/40 px-4 py-3">
       <div className="flex items-center justify-between text-xs">
@@ -838,7 +881,8 @@ function RecognizeModal({
 
   const { data: task } = useQuery<TaskState>({
     queryKey: ["brandai-task", wsId, taskId],
-    queryFn: () => apiFetch<TaskState>(`/api/workspaces/${wsId}/tasks/${taskId}`),
+    queryFn: () =>
+      apiFetch<TaskState>(`/api/workspaces/${wsId}/tasks/${taskId}`),
     enabled: !!taskId,
     refetchInterval: (q) => {
       const s = q.state.data?.status;
@@ -899,7 +943,7 @@ function RecognizeModal({
       title={multi ? "从素材识别品牌规则" : "解析 VI 手册 / PDF"}
       subtitle={
         multi
-          ? "选择品牌素材图，AI 将提取色彩、Logo、字体等规则草稿。"
+          ? "选择品牌素材图，AI 将提取 logo、字体、颜色等规则草稿。"
           : "选择一份 VI 手册（PDF），AI 将解析为结构化规则草稿。"
       }
       onClose={onClose}
@@ -1025,7 +1069,11 @@ function RecognizeModal({
       ) : (
         <div className="flex justify-end gap-2 border-t border-border px-6 py-4">
           <Button variant="outline" onClick={onClose}>
-            {status === "SUCCEEDED" ? "完成" : running ? "后台运行并关闭" : "关闭"}
+            {status === "SUCCEEDED"
+              ? "完成"
+              : running
+                ? "后台运行并关闭"
+                : "关闭"}
           </Button>
         </div>
       )}
@@ -1144,17 +1192,15 @@ function BrandPreview({
             <h2 className="text-base font-semibold">品牌预览</h2>
           </div>
           <p className="mt-1.5 max-w-xl text-xs leading-relaxed text-muted-foreground">
-            综合已确认的色彩 / 字体 / 语气 / 视觉规则，由真实 AI provider 合成一张
-            代表品牌整体调性的预览主视觉（受品牌约束）。
+            综合已确认的 logo / 字体 / 颜色 / 设计指南 / 图像 / 品牌指南，由真实 AI provider
+            合成一张 代表品牌整体调性的预览主视觉（受品牌约束）。
           </p>
         </div>
         <button
           type="button"
           onClick={() => start.mutate()}
           disabled={start.isPending || running || confirmedCount === 0}
-          title={
-            confirmedCount === 0 ? "请先确认至少一条品牌规则" : undefined
-          }
+          title={confirmedCount === 0 ? "请先确认至少一条品牌规则" : undefined}
           className="h-10 shrink-0 self-start rounded-[16px] bg-gradient-to-br from-primary to-accent px-5 text-sm font-medium text-primary-foreground shadow-[0_12px_28px_rgba(124,92,255,0.26)] disabled:opacity-60"
         >
           {running
@@ -1195,7 +1241,9 @@ function BrandPreview({
           <div className="flex flex-col items-center gap-3 text-center">
             <div className="h-9 w-9 animate-spin rounded-full border-2 border-accent-soft border-t-primary" />
             <p className="text-xs text-muted-foreground">
-              {status === "PENDING" ? "已受理，排队中…" : "AI 正在合成品牌预览…"}
+              {status === "PENDING"
+                ? "已受理，排队中…"
+                : "AI 正在合成品牌预览…"}
             </p>
           </div>
         ) : image ? (
@@ -1210,7 +1258,7 @@ function BrandPreview({
             <div className="text-3xl text-accent-soft">✸</div>
             <p className="mt-2 text-sm font-medium">还没有品牌预览</p>
             <p className="mt-1 max-w-sm text-xs text-muted-foreground">
-              确认色彩、字体等品牌规则后，点「生成品牌预览」由 AI 合成。
+              确认 logo、字体、颜色等品牌规则后，点「生成品牌预览」由 AI 合成。
             </p>
           </div>
         )}
@@ -1267,7 +1315,8 @@ function AICoCreate({
       setAttachErr(null);
       setTimedOut(false);
       const isPdf =
-        file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+        file.type === "application/pdf" ||
+        file.name.toLowerCase().endsWith(".pdf");
       const imageCategory: Record<string, AssetCategory> = {
         logo: "LOGO",
         imagery: "KV",
@@ -1275,7 +1324,10 @@ function AICoCreate({
       };
       const fd = new FormData();
       fd.append("file", file);
-      fd.append("category", isPdf ? "VI_DOC" : imageCategory[type] ?? "OTHER");
+      fd.append(
+        "category",
+        isPdf ? "VI_DOC" : (imageCategory[type] ?? "OTHER"),
+      );
       const upRes = await fetch(`/api/workspaces/${wsId}/assets/upload`, {
         method: "POST",
         body: fd,
@@ -1292,7 +1344,9 @@ function AICoCreate({
           : `/api/workspaces/${wsId}/rules/recognize`,
         {
           method: "POST",
-          body: JSON.stringify(isPdf ? { assetId: asset.id } : { assetIds: [asset.id] }),
+          body: JSON.stringify(
+            isPdf ? { assetId: asset.id } : { assetIds: [asset.id] },
+          ),
         },
       );
     },
@@ -1302,7 +1356,8 @@ function AICoCreate({
 
   const { data: task } = useQuery<TaskState>({
     queryKey: ["brandai-task", wsId, taskId],
-    queryFn: () => apiFetch<TaskState>(`/api/workspaces/${wsId}/tasks/${taskId}`),
+    queryFn: () =>
+      apiFetch<TaskState>(`/api/workspaces/${wsId}/tasks/${taskId}`),
     enabled: !!taskId,
     refetchInterval: (q) => {
       const s = q.state.data?.status;
@@ -1403,7 +1458,8 @@ function AICoCreate({
         <div className="mx-auto mt-3 max-w-2xl">
           {status === "SUCCEEDED" ? (
             <div className="rounded-2xl border border-success/20 bg-success/5 px-4 py-3 text-left text-sm text-success">
-              AI 已从上传内容生成 {task?.refCount ?? 0} 条规则草稿，可在下方编辑后启用。
+              AI 已从上传内容生成 {task?.refCount ?? 0}{" "}
+              条规则草稿，可在下方编辑后启用。
             </div>
           ) : (
             <TaskProgress
@@ -1434,73 +1490,12 @@ function AICoCreate({
   );
 }
 
-function CreateKnowledgeBaseDialog({
-  creating,
-  onClose,
-  onCreate,
-}: {
-  creating: boolean;
-  onClose: () => void;
-  onCreate: (input: { name: string; industry?: string }) => void;
-}) {
-  const [name, setName] = useState("");
-  const [industry, setIndustry] = useState("");
-
-  return (
-    <ModalShell
-      title="新建品牌知识库"
-      subtitle="一个知识库对应一个品牌，规则、素材、Campaign 与出图都会保持隔离。"
-      onClose={onClose}
-    >
-      <div className="flex flex-col gap-4 px-6 py-5">
-        <label className="flex flex-col gap-1.5">
-          <span className="text-xs font-medium">知识库名称</span>
-          <input
-            autoFocus
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            placeholder="例如：春日护肤品牌"
-            className="h-10 rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-primary/40"
-          />
-        </label>
-        <label className="flex flex-col gap-1.5">
-          <span className="text-xs font-medium">所属行业（可选）</span>
-          <input
-            value={industry}
-            onChange={(event) => setIndustry(event.target.value)}
-            placeholder="例如：美妆护肤"
-            className="h-10 rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-primary/40"
-          />
-        </label>
-        <div className="flex justify-end gap-2">
-          <Button variant="outline" disabled={creating} onClick={onClose}>
-            取消
-          </Button>
-          <Button
-            disabled={!name.trim() || creating}
-            onClick={() => onCreate({ name: name.trim(), industry: industry.trim() || undefined })}
-          >
-            {creating ? "创建中…" : "创建知识库"}
-          </Button>
-        </div>
-      </div>
-    </ModalShell>
-  );
-}
-
 export default function BrandKnowledgePage() {
-  const {
-    wsId,
-    brandName,
-    knowledgeBases,
-    switchKnowledgeBase,
-    createKnowledgeBase,
-  } = useBrand();
+  const { wsId, brandName } = useBrand();
   const qc = useQueryClient();
   const [aiModal, setAiModal] = useState<null | "recognize" | "parse-manual">(
     null,
   );
-  const [creatingKnowledgeBase, setCreatingKnowledgeBase] = useState(false);
   const [suggestedType, setSuggestedType] = useState<string | null>(null);
   const [editingRule, setEditingRule] = useState<BrandRule | null>(null);
 
@@ -1521,20 +1516,20 @@ export default function BrandKnowledgePage() {
         method: "PATCH",
         body: JSON.stringify(patch),
       }),
-    onSuccess: () =>
-      qc.invalidateQueries({ queryKey: ["brandai-rules", wsId] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["brandai-rules", wsId] });
+      qc.invalidateQueries({ queryKey: ["brandai-knowledge-overview"] });
+    },
   });
   const deleteRule = useMutation({
     mutationFn: (id: string) =>
       apiFetch<{ ok: true }>(`/api/workspaces/${wsId}/rules/${id}`, {
         method: "DELETE",
       }),
-    onSuccess: () =>
-      qc.invalidateQueries({ queryKey: ["brandai-rules", wsId] }),
-  });
-  const createBase = useMutation({
-    mutationFn: createKnowledgeBase,
-    onSuccess: () => setCreatingKnowledgeBase(false),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["brandai-rules", wsId] });
+      qc.invalidateQueries({ queryKey: ["brandai-knowledge-overview"] });
+    },
   });
 
   useEffect(() => {
@@ -1544,251 +1539,276 @@ export default function BrandKnowledgePage() {
 
   const confirmedCount = rules.filter((r) => r.status === "CONFIRMED").length;
 
-  // group rules by category so the 8 categories read as a structured KB
+  // group rules by the six rigid dimensions so every brand kit always shows the same
+  // skeleton, even before a dimension has any rules.
   const grouped = CATEGORY_ORDER.map((cat) => ({
     cat,
     meta: TYPE_META[cat]!,
     items: rules.filter((r) => r.type === cat),
-  })).filter((g) => g.items.length > 0);
+  }));
   // any rule whose type isn't in CATEGORY_ORDER (defensive)
   const others = rules.filter((r) => !CATEGORY_ORDER.includes(r.type));
 
   return (
     <div className="mx-auto max-w-[1180px] px-10 py-10">
       <section className="text-center">
-        <h1 className="text-[34px] font-semibold tracking-tight">
-          AI 助手 · 共创你的品牌知识库
-        </h1>
+        <h1 className="text-[34px] font-semibold tracking-tight">品牌套件</h1>
         <p className="mx-auto mt-2 max-w-xl text-sm text-muted-foreground">
-          沉淀「{brandName}」的品牌规范，确认后的规则会在每次出图时被自动应用。
+          当前品牌：{brandName}。每个品牌有且只有一套品牌套件。
         </p>
-        <div className="mx-auto mt-5 flex max-w-2xl flex-wrap items-center justify-center gap-2">
-          <select
-            value={wsId}
-            onChange={(event) => switchKnowledgeBase(event.target.value)}
-            aria-label="当前品牌知识库"
-            className="h-10 min-w-[190px] rounded-lg border border-border bg-card px-3 text-sm outline-none focus:border-primary/40"
-          >
-            {knowledgeBases.length === 0 ? (
-              <option value={wsId}>{brandName}</option>
-            ) : (
-              knowledgeBases.map((base) => (
-                <option key={base.id} value={base.id}>
-                  {base.name}
-                </option>
-              ))
-            )}
-          </select>
-          <Button variant="outline" onClick={() => setCreatingKnowledgeBase(true)}>
-            新建知识库
-          </Button>
-        </div>
-        <div id="knowledge-source">
-          {/* One unified source accepts text, images, and PDFs for this knowledge base. */}
-          <AICoCreate wsId={wsId} suggestedType={suggestedType} />
-        </div>
-
-        {/* D13/D14 · AI 驱动入口 — 从素材识别规则 / 解析 VI 手册（server-authoritative）。 */}
-        <div className="mx-auto mt-4 flex max-w-2xl flex-wrap items-center justify-center gap-2">
-          <button
-            type="button"
-            onClick={() => setAiModal("recognize")}
-            className="flex items-center gap-2 rounded-full border border-primary/30 bg-card px-4 py-2 text-sm font-medium text-primary transition-colors hover:bg-accent-soft"
-          >
-            <span>✦</span> 从素材识别品牌规则
-          </button>
-          <button
-            type="button"
-            onClick={() => setAiModal("parse-manual")}
-            className="flex items-center gap-2 rounded-full border border-primary/30 bg-card px-4 py-2 text-sm font-medium text-primary transition-colors hover:bg-accent-soft"
-          >
-            <span>▦</span> 解析 VI 手册 / PDF
-          </button>
-        </div>
       </section>
 
-      {aiModal ? (
-        <RecognizeModal
-          wsId={wsId}
-          mode={aiModal}
-          onClose={() => {
-            // Safety net: a recognize/parse-manual job can finish just AFTER
-            // the UI's bounded poll gives up (timeout). Always refresh rules on
-            // close so a late-completing job's new rules still surface without a
-            // manual page reload.
-            qc.invalidateQueries({ queryKey: ["brandai-rules", wsId] });
-            setAiModal(null);
-          }}
-          onDone={() =>
-            qc.invalidateQueries({ queryKey: ["brandai-rules", wsId] })
-          }
-        />
-      ) : null}
-
-      {creatingKnowledgeBase ? (
-        <CreateKnowledgeBaseDialog
-          creating={createBase.isPending}
-          onClose={() => setCreatingKnowledgeBase(false)}
-          onCreate={(input) => createBase.mutate(input)}
-        />
-      ) : null}
-
-      {editingRule ? (
-        <RuleEditorDialog
-          rule={editingRule}
-          saving={updateRule.isPending}
-          onClose={() => setEditingRule(null)}
-          onSave={(patch) =>
-            updateRule.mutate(
-              { id: editingRule.id, patch },
-              { onSuccess: () => setEditingRule(null) },
-            )
-          }
-        />
-      ) : null}
-
-      <section className="mt-12">
-        <div className="mb-6 flex items-center justify-between">
-          <h2 className="text-2xl font-semibold">品牌核心知识</h2>
-          <span className="text-xs text-muted-foreground">
-            共 {rules.length} 条 · 已确认 {confirmedCount} 条
-          </span>
-        </div>
-
-        {isLoading ? (
-          <div className="rounded-3xl border border-border bg-card p-12 text-center text-sm text-muted-foreground">
-            加载中…
+      <>
+        <section className="mt-10 text-center">
+          <h2 className="text-[28px] font-semibold tracking-tight">
+            {brandName}
+          </h2>
+          <p className="mx-auto mt-2 max-w-xl text-sm text-muted-foreground">
+            维护当前品牌唯一品牌套件的六个核心维度。每个维度可以保留多条规则，但同一时间有且只有一条处于启用状态。
+          </p>
+          <div id="knowledge-source">
+            {/* One unified source accepts text, images, and PDFs for this knowledge base. */}
+            <AICoCreate wsId={wsId} suggestedType={suggestedType} />
           </div>
-        ) : rules.length === 0 ? (
-          <div className="rounded-3xl border border-dashed border-border bg-card p-12 text-center text-sm text-muted-foreground">
-            还没有品牌规则。在上方输入第一条，AI 出图时即可遵循它。
-          </div>
-        ) : (
-          <div className="flex flex-col gap-10">
-            {grouped.map((g) => (
-              <div key={g.cat}>
-                <div className="mb-3 flex items-center gap-2">
-                  <span className="flex h-7 w-7 items-center justify-center rounded-xl bg-accent-soft text-sm text-primary">
-                    {g.meta.icon}
-                  </span>
-                  <h3 className="text-base font-semibold">{g.meta.label}</h3>
-                  <span className="text-[11px] text-muted-foreground">
-                    {g.items.length} 条
-                  </span>
-                </div>
-                <div className="grid gap-[18px] md:grid-cols-2 lg:grid-cols-3">
-                  {g.items.map((r) => (
-                    <RuleCard
-                      key={r.id}
-                      rule={r}
-                      wsId={wsId}
-                      busy={updateRule.isPending || deleteRule.isPending}
-                      onAddSimilar={(type) => {
-                        setSuggestedType(type);
-                        document
-                          .getElementById("knowledge-source")
-                          ?.scrollIntoView({ behavior: "smooth", block: "center" });
-                      }}
-                      onEdit={setEditingRule}
-                      onToggle={(rule) =>
-                        updateRule.mutate({
-                          id: rule.id,
-                          patch: {
-                            status:
-                              rule.status === "CONFIRMED"
-                                ? "REJECTED"
-                                : "CONFIRMED",
-                          },
-                        })
-                      }
-                      onDelete={(rule) => {
-                        if (window.confirm(`删除「${rule.summary}」？此操作不可恢复。`)) {
-                          deleteRule.mutate(rule.id);
-                        }
-                      }}
-                    />
-                  ))}
-                </div>
-              </div>
-            ))}
-            {others.length ? (
-              <div>
-                <div className="mb-3 flex items-center gap-2">
-                  <span className="flex h-7 w-7 items-center justify-center rounded-xl bg-accent-soft text-sm text-primary">
-                    ✦
-                  </span>
-                  <h3 className="text-base font-semibold">其他</h3>
-                </div>
-                <div className="grid gap-[18px] md:grid-cols-2 lg:grid-cols-3">
-                  {others.map((r) => (
-                    <RuleCard
-                      key={r.id}
-                      rule={r}
-                      wsId={wsId}
-                      busy={updateRule.isPending || deleteRule.isPending}
-                      onAddSimilar={(type) => {
-                        setSuggestedType(type);
-                        document
-                          .getElementById("knowledge-source")
-                          ?.scrollIntoView({ behavior: "smooth", block: "center" });
-                      }}
-                      onEdit={setEditingRule}
-                      onToggle={(rule) =>
-                        updateRule.mutate({
-                          id: rule.id,
-                          patch: {
-                            status:
-                              rule.status === "CONFIRMED"
-                                ? "REJECTED"
-                                : "CONFIRMED",
-                          },
-                        })
-                      }
-                      onDelete={(rule) => {
-                        if (window.confirm(`删除「${rule.summary}」？此操作不可恢复。`)) {
-                          deleteRule.mutate(rule.id);
-                        }
-                      }}
-                    />
-                  ))}
-                </div>
-              </div>
-            ) : null}
-          </div>
-        )}
-      </section>
 
-      <section className="mt-12 rounded-3xl border border-primary/15 bg-gradient-to-br from-accent-soft/70 to-card p-7 shadow-[0_8px_24px_rgba(30,30,60,0.06)]">
-        <div className="flex items-center gap-2">
-          <span className="flex h-7 w-7 items-center justify-center rounded-xl bg-card text-sm text-primary">
-            ✦
-          </span>
-          <span className="text-sm font-semibold">AI 知识摘要 · {brandName}</span>
-        </div>
-        <p className="mt-3 max-w-3xl text-sm leading-relaxed text-foreground/80">
-          {rules.length === 0
-            ? "尚未沉淀品牌规则。建议先确认色彩、字体、Logo 与品牌语气，AI 出图会据此受控生成。"
-            : `已沉淀 ${rules.length} 条品牌规则（${confirmedCount} 条已确认并生效）。已确认规则会在工作台每次出图时由 worker 加载，确保结果遵循品牌规范。`}
-        </p>
-        {rules.length > 0 ? (
-          <div className="mt-4 flex flex-wrap gap-2">
-            {Array.from(
-              new Set(rules.map((r) => TYPE_META[r.type]?.label ?? r.type)),
-            ).map((k) => (
-              <Chip key={k}>{k}</Chip>
-            ))}
+          {/* D13/D14 · AI 驱动入口 — 从素材识别规则 / 解析 VI 手册（server-authoritative）。 */}
+          <div className="mx-auto mt-4 flex max-w-2xl flex-wrap items-center justify-center gap-2">
+            <button
+              type="button"
+              onClick={() => setAiModal("recognize")}
+              className="flex items-center gap-2 rounded-full border border-primary/30 bg-card px-4 py-2 text-sm font-medium text-primary transition-colors hover:bg-accent-soft"
+            >
+              <span>✦</span> 从素材识别品牌规则
+            </button>
+            <button
+              type="button"
+              onClick={() => setAiModal("parse-manual")}
+              className="flex items-center gap-2 rounded-full border border-primary/30 bg-card px-4 py-2 text-sm font-medium text-primary transition-colors hover:bg-accent-soft"
+            >
+              <span>▦</span> 解析 VI 手册 / PDF
+            </button>
           </div>
+        </section>
+
+        {aiModal ? (
+          <RecognizeModal
+            wsId={wsId}
+            mode={aiModal}
+            onClose={() => {
+              // Safety net: a recognize/parse-manual job can finish just AFTER
+              // the UI's bounded poll gives up (timeout). Always refresh rules on
+              // close so a late-completing job's new rules still surface without a
+              // manual page reload.
+              qc.invalidateQueries({ queryKey: ["brandai-rules", wsId] });
+              setAiModal(null);
+            }}
+            onDone={() =>
+              qc.invalidateQueries({ queryKey: ["brandai-rules", wsId] })
+            }
+          />
         ) : null}
-      </section>
 
-      {/* D10 · 品牌预览 — composite visual auto-generation from confirmed KB. */}
-      <BrandPreview
-        wsId={wsId}
-        confirmedCount={confirmedCount}
-        hasForbidden={rules.some(
-          (r) => r.status === "CONFIRMED" && r.strength === "FORBIDDEN",
-        )}
-      />
+        {editingRule ? (
+          <RuleEditorDialog
+            rule={editingRule}
+            saving={updateRule.isPending}
+            onClose={() => setEditingRule(null)}
+            onSave={(patch) =>
+              updateRule.mutate(
+                { id: editingRule.id, patch },
+                { onSuccess: () => setEditingRule(null) },
+              )
+            }
+          />
+        ) : null}
+
+        <section className="mt-12">
+          <div className="mb-6 flex items-center justify-between">
+            <h2 className="text-2xl font-semibold">品牌套件内容</h2>
+            <span className="text-xs text-muted-foreground">
+              共 {rules.length} 条 · 已确认 {confirmedCount} 条
+            </span>
+          </div>
+
+          {isLoading ? (
+            <div className="rounded-3xl border border-border bg-card p-12 text-center text-sm text-muted-foreground">
+              加载中…
+            </div>
+          ) : rules.length === 0 ? (
+            <div className="rounded-3xl border border-dashed border-border bg-card p-12 text-center text-sm text-muted-foreground">
+              还没有品牌规则。在上方输入第一条，AI 出图时即可遵循它。
+            </div>
+          ) : (
+            <div className="flex flex-col gap-10">
+              {grouped.map((g) => (
+                <div key={g.cat}>
+                  <div className="mb-3 flex items-center gap-2">
+                    <span className="flex h-7 w-7 items-center justify-center rounded-xl bg-accent-soft text-sm text-primary">
+                      {g.meta.icon}
+                    </span>
+                    <h3 className="text-base font-semibold">{g.meta.label}</h3>
+                    <span className="text-[11px] text-muted-foreground">
+                      {g.items.length} 条
+                    </span>
+                  </div>
+                  <div className="grid gap-[18px] md:grid-cols-2 lg:grid-cols-3">
+                    {g.items.length === 0 ? (
+                      <div className="rounded-3xl border border-dashed border-border bg-card p-6 text-sm text-muted-foreground">
+                        <div className="font-medium text-foreground">
+                          暂无{g.meta.label}
+                        </div>
+                        <p className="mt-2 text-xs leading-relaxed">
+                          可通过一次性输入、上传图片 /
+                          PDF，或手动增加同类规则来补充。
+                        </p>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="mt-4"
+                          onClick={() => {
+                            setSuggestedType(g.cat);
+                            document
+                              .getElementById("knowledge-source")
+                              ?.scrollIntoView({
+                                behavior: "smooth",
+                                block: "center",
+                              });
+                          }}
+                        >
+                          增加内容
+                        </Button>
+                      </div>
+                    ) : (
+                      g.items.map((r) => (
+                        <RuleCard
+                          key={r.id}
+                          rule={r}
+                          wsId={wsId}
+                          busy={updateRule.isPending || deleteRule.isPending}
+                          onAddSimilar={(type) => {
+                            setSuggestedType(type);
+                            document
+                              .getElementById("knowledge-source")
+                              ?.scrollIntoView({
+                                behavior: "smooth",
+                                block: "center",
+                              });
+                          }}
+                          onEdit={setEditingRule}
+                          onToggle={(rule) =>
+                            updateRule.mutate({
+                              id: rule.id,
+                              patch: {
+                                status:
+                                  rule.status === "CONFIRMED"
+                                    ? "REJECTED"
+                                    : "CONFIRMED",
+                              },
+                            })
+                          }
+                          onDelete={(rule) => {
+                            if (
+                              window.confirm(
+                                `删除「${rule.summary}」？此操作不可恢复。`,
+                              )
+                            ) {
+                              deleteRule.mutate(rule.id);
+                            }
+                          }}
+                        />
+                      ))
+                    )}
+                  </div>
+                </div>
+              ))}
+              {others.length ? (
+                <div>
+                  <div className="mb-3 flex items-center gap-2">
+                    <span className="flex h-7 w-7 items-center justify-center rounded-xl bg-accent-soft text-sm text-primary">
+                      ✦
+                    </span>
+                    <h3 className="text-base font-semibold">其他</h3>
+                  </div>
+                  <div className="grid gap-[18px] md:grid-cols-2 lg:grid-cols-3">
+                    {others.map((r) => (
+                      <RuleCard
+                        key={r.id}
+                        rule={r}
+                        wsId={wsId}
+                        busy={updateRule.isPending || deleteRule.isPending}
+                        onAddSimilar={(type) => {
+                          setSuggestedType(type);
+                          document
+                            .getElementById("knowledge-source")
+                            ?.scrollIntoView({
+                              behavior: "smooth",
+                              block: "center",
+                            });
+                        }}
+                        onEdit={setEditingRule}
+                        onToggle={(rule) =>
+                          updateRule.mutate({
+                            id: rule.id,
+                            patch: {
+                              status:
+                                rule.status === "CONFIRMED"
+                                  ? "REJECTED"
+                                  : "CONFIRMED",
+                            },
+                          })
+                        }
+                        onDelete={(rule) => {
+                          if (
+                            window.confirm(
+                              `删除「${rule.summary}」？此操作不可恢复。`,
+                            )
+                          ) {
+                            deleteRule.mutate(rule.id);
+                          }
+                        }}
+                      />
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          )}
+        </section>
+
+        <section className="mt-12 rounded-3xl border border-primary/15 bg-gradient-to-br from-accent-soft/70 to-card p-7 shadow-[0_8px_24px_rgba(30,30,60,0.06)]">
+          <div className="flex items-center gap-2">
+            <span className="flex h-7 w-7 items-center justify-center rounded-xl bg-card text-sm text-primary">
+              ✦
+            </span>
+            <span className="text-sm font-semibold">
+              AI 知识摘要 · {brandName}
+            </span>
+          </div>
+          <p className="mt-3 max-w-3xl text-sm leading-relaxed text-foreground/80">
+            {rules.length === 0
+              ? "尚未沉淀品牌规则。建议先确认 logo、字体、颜色与品牌指南，AI 出图会据此受控生成。"
+              : `已沉淀 ${rules.length} 条品牌规则（${confirmedCount} 条已确认并生效）。已确认规则会在工作台每次出图时由 worker 加载，确保结果遵循品牌规范。`}
+          </p>
+          {rules.length > 0 ? (
+            <div className="mt-4 flex flex-wrap gap-2">
+              {Array.from(
+                new Set(rules.map((r) => TYPE_META[r.type]?.label ?? r.type)),
+              ).map((k) => (
+                <Chip key={k}>{k}</Chip>
+              ))}
+            </div>
+          ) : null}
+        </section>
+
+        {/* D10 · 品牌预览 — composite visual auto-generation from confirmed KB. */}
+        <BrandPreview
+          wsId={wsId}
+          confirmedCount={confirmedCount}
+          hasForbidden={rules.some(
+            (r) => r.status === "CONFIRMED" && r.strength === "FORBIDDEN",
+          )}
+        />
+      </>
     </div>
   );
 }

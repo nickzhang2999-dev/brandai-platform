@@ -55,18 +55,34 @@ export async function PATCH(
       structured = parsed.data as unknown as Prisma.InputJsonValue;
     }
 
-    const updated = await prisma.brandRule.update({
-      where: { id: ruleId },
-      data: {
-        ...(input.status ? { status: input.status } : {}),
-        ...(input.strength ? { strength: input.strength } : {}),
-        ...(input.summary ? { summary: input.summary } : {}),
-        ...(input.value
-          ? { value: input.value as Prisma.InputJsonValue }
-          : {}),
-        ...(structured !== undefined ? { structured } : {}),
-      },
-    });
+    const data = {
+      ...(input.status ? { status: input.status } : {}),
+      ...(input.strength ? { strength: input.strength } : {}),
+      ...(input.summary ? { summary: input.summary } : {}),
+      ...(input.value ? { value: input.value as Prisma.InputJsonValue } : {}),
+      ...(structured !== undefined ? { structured } : {}),
+    };
+    const updated =
+      input.status === "CONFIRMED"
+        ? await prisma.$transaction(async (tx) => {
+            await tx.brandRule.updateMany({
+              where: {
+                workspaceId: wsId,
+                type: existing.type,
+                status: "CONFIRMED",
+                NOT: { id: ruleId },
+              },
+              data: { status: "REJECTED" },
+            });
+            return tx.brandRule.update({
+              where: { id: ruleId },
+              data,
+            });
+          })
+        : await prisma.brandRule.update({
+            where: { id: ruleId },
+            data,
+          });
     return ok(serializeRule(updated));
   } catch (err) {
     return handleError(err);
