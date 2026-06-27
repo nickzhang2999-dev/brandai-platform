@@ -1,7 +1,7 @@
 "use client";
 
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
@@ -97,7 +97,12 @@ export default function WorkspacePage() {
 function Workspace() {
   const { wsId, brandName } = useBrand();
   const search = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
   const presetProject = search.get("project");
+  // E · 深链/刷新恢复 —— ?gen= 指明当前查看的出图。通知中心与队列 widget 都跳到
+  // /workspace?gen=<id>&project=<pid>;刷新也带着它,落到精确那张而非空白/最近。
+  const presetGen = search.get("gen");
   // B2 · 首页 brief 透传 — 把首页输入的描述作为出图卖点初始值（仅首屏播种，
   // 不在每次渲染时覆盖用户后续编辑）。
   const presetBrief = search.get("brief");
@@ -447,7 +452,7 @@ function Workspace() {
   // H12 · 额度升级弹窗（信息性，无真实计费）。
   const [showUpgrade, setShowUpgrade] = useState(false);
 
-  const [genId, setGenId] = useState<string | null>(null);
+  const [genId, setGenId] = useState<string | null>(presetGen);
   const [jobId, setJobId] = useState<string | null>(null);
   const [activeVariant, setActiveVariant] = useState(0);
   const [submitErr, setSubmitErr] = useState<string | null>(null);
@@ -499,11 +504,63 @@ function Workspace() {
   useEffect(() => {
     if (prevProjectRef.current === projectId) return;
     prevProjectRef.current = projectId;
-    setGenId(null);
+    // 切项目默认清空当前出图,交给 seed-latest 重新播种。例外:若这次切项目来自
+    // URL 深链(presetProject 已等于新 projectId)且带了 ?gen=,尊重深链那张
+    // (通知/队列点到的是「另一个 Campaign 的某次出图」时,别被清成最近一次)。
+    const deep =
+      presetProject === projectId && presetGen ? presetGen : null;
+    setGenId(deep);
     setJobId(null);
     setTimedOut(false);
     setActiveVariant(0);
-  }, [projectId]);
+  }, [projectId, presetProject, presetGen]);
+
+  // E · 客户端导航到 ?gen=(已在工作台时点通知/队列) → 切到那次出图。整页加载走
+  // genId 初始值;这里只接 URL 变化(soft nav)。
+  useEffect(() => {
+    if (presetGen && presetGen !== genId) {
+      setGenId(presetGen);
+      setJobId(null);
+      setTimedOut(false);
+      setActiveVariant(0);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [presetGen]);
+
+  // E · 反向同步:把当前 Campaign 写回 URL(?project=),让刷新/分享落到同一项目。
+  // 用 ref 只在 projectId「真的变了」时写——手动切 <select>、默认选 projects[0]、
+  // 「加入项目」程序化导航都覆盖(Codex: 默认/侧边栏/模板入口选中的项目也必须进
+  // URL,否则出图成功后 ?gen= 反向同步会产出缺 project 的分享链,刷新/分享时把这
+  // 次出图绑到当前最新的 campaign,project 作用域的历史/引用/导出全落错项目)。
+  // 深链导航改 ?project= 时本 effect 因 search 变化触发,但此刻 projectId 尚未被
+  // 上面的同步 effect 更新(ref===projectId)→直接跳过,不会用旧 projectId 把深链
+  // 改回去(Bugbot: stale project in deep link)。
+  const lastUrlProjectRef = useRef<string | null>(projectId);
+  useEffect(() => {
+    if (lastUrlProjectRef.current === projectId) return;
+    const prev = lastUrlProjectRef.current;
+    lastUrlProjectRef.current = projectId;
+    if (!projectId) return;
+    if (search.get("project") === projectId) return;
+    const params = new URLSearchParams(Array.from(search.entries()));
+    params.set("project", projectId);
+    // 只有「从一个已同步项目切到另一个」才抹旧 ?gen=(交给下面 gen 反向同步按新
+    // 项目重写);首次播种(prev=null,如默认选 projects[0])不抹,避免清掉仅带
+    // ?gen= 的深链。
+    if (prev) params.delete("gen");
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+  }, [projectId, search, pathname, router]);
+
+  // E · 反向同步:把当前查看的出图写回 URL(?gen=),让刷新/分享落到精确那张。
+  // 实时出图/改图进行中(jobId 仅会话内存在)不写,避免把一次性 job 深链出去。
+  useEffect(() => {
+    if (jobId) return;
+    if (!genId) return;
+    if (search.get("gen") === genId) return;
+    const params = new URLSearchParams(Array.from(search.entries()));
+    params.set("gen", genId);
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+  }, [genId, jobId, search, pathname, router]);
 
   // 进入工作台默认展示该项目最近一次出图（history newest-first）。仅当本会话
   // 还没有选中/提交任何出图时播种 —— 不覆盖用户的实时提交，也不覆盖手动切换的历史。
@@ -591,6 +648,14 @@ function Workspace() {
       });
     }
   }, [status, genId, wsId, projectId, qc]);
+  // E · 实时出图到达 SUCCEEDED 后清掉 jobId,让上面的 ?gen= 反向同步把这次出图写回
+  // URL(刷新/分享落到刚生成的这张)。否则 submit() 设的 jobId 整个会话不清,
+  // 反向同步的 `if (jobId) return` 永远挡住,新出的图分享不出去(Bugbot)。
+  // 只在 SUCCEEDED 清:FAILED 仍需保留 jobId,否则轮询会丢掉 ?jobId= 携带的
+  // failedReason。改图流同样在终态清 editJobId,此处对齐。
+  useEffect(() => {
+    if (jobId && status === "SUCCEEDED") setJobId(null);
+  }, [status, jobId]);
   const editing = !!editJobId;
 
   // G6 · 审阅 / 批准流 — 拿调用者在本空间的角色，决定显示哪些审核动作。

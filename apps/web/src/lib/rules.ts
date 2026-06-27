@@ -8,17 +8,32 @@ import type { BrandRule } from "@brandai/contracts";
  * shaped to the frozen `@brandai/contracts` `BrandRule` schema (dates
  * serialised to ISO strings, `evidence` always an array). M3 should call
  * this to assemble generation parameters — do not read the table directly.
- * Newer revisions are emitted first so newly enabled content takes precedence
- * when the generation prompt is assembled.
+ *
+ * Ordering is a deliberate, explicit choice — do NOT flip the default:
+ *  - `"created"` (default, `createdAt asc`) is **deterministic** and is what
+ *    snapshot freezing (`rule-snapshots`), compliance checks, export manifests
+ *    and the synchronous hard-block gates depend on. A stable order keeps
+ *    snapshot contents and 422 blocker lists reproducible.
+ *  - `"recency"` (`updatedAt desc`) puts newly created / just re-enabled rules
+ *    first so they take precedence when an **AI generation prompt** is
+ *    assembled. Only the image-output paths (generate worker / brand preview)
+ *    opt into this; flipping the shared default would silently re-order
+ *    snapshots and compliance (V0.02 did exactly that — see docs/10 #4).
  *
  * @param workspaceId owning workspace id (callers must enforce ownership)
+ * @param options.order `"created"` (deterministic, default) | `"recency"`
+ *   (latest-first, generation prompt assembly only)
  */
 export async function getConfirmedRules(
   workspaceId: string,
+  options: { order?: "created" | "recency" } = {},
 ): Promise<BrandRule[]> {
   const rows = await prisma.brandRule.findMany({
     where: { workspaceId, status: "CONFIRMED" },
-    orderBy: { updatedAt: "desc" },
+    orderBy:
+      options.order === "recency"
+        ? { updatedAt: "desc" }
+        : { createdAt: "asc" },
   });
   return rows.map(serializeRule);
 }

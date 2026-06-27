@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import type { QueueItem, QueueResponse } from "@brandai/contracts";
 import { Badge } from "@brandai/ui";
@@ -103,8 +104,8 @@ function QueueRow({ item, nowTs }: { item: QueueItem; nowTs: number }) {
     : (item.durationMs ?? null);
   const stale = isActive && liveElapsed > 6 * 60_000;
 
-  return (
-    <li className="border-b border-foreground/10 px-4 py-3 last:border-b-0">
+  const inner = (
+    <>
       <div className="flex items-center justify-between gap-2">
         <span className="truncate text-foreground/80">{item.sceneType}</span>
         <StatusBadge status={item.status} stale={stale} />
@@ -137,6 +138,22 @@ function QueueRow({ item, nowTs }: { item: QueueItem; nowTs: number }) {
         <p className="mt-1.5 text-[10px] text-warning">
           已超过 6 分钟未完成,可能已失败
         </p>
+      )}
+    </>
+  );
+
+  // E · 看得到完成→点得进图 —— 行可点时深链到该出图的工作台(带 Campaign)。
+  return (
+    <li className="border-b border-foreground/10 last:border-b-0">
+      {item.projectId ? (
+        <Link
+          href={`/workspace?gen=${item.id}&project=${item.projectId}`}
+          className="block px-4 py-3 transition-colors hover:bg-muted/40"
+        >
+          {inner}
+        </Link>
+      ) : (
+        <div className="px-4 py-3">{inner}</div>
       )}
     </li>
   );

@@ -8,8 +8,13 @@ import {
   useMemo,
   useState,
 } from "react";
+import { useRouter } from "next/navigation";
 import type { BrandWorkspace } from "@brandai/contracts";
 import { apiFetch } from "@/lib/client";
+import {
+  ACTIVE_BRAND_COOKIE,
+  ACTIVE_BRAND_COOKIE_MAX_AGE,
+} from "@/lib/brand-cookie";
 
 /**
  * 当前品牌（workspace）上下文。由 (brandai)/layout 服务端解析后注入，客户端
@@ -42,37 +47,40 @@ export function BrandProvider({
   value: InitialBrandCtx;
   children: React.ReactNode;
 }) {
+  const router = useRouter();
   const [brands, setBrands] = useState<BrandWorkspace[]>([]);
-  const [activeWorkspaceId, setActiveWorkspaceId] = useState(value.wsId);
 
   const refreshBrands = useCallback(async () => {
     const loadedBrands = await apiFetch<BrandWorkspace[]>("/api/workspaces");
     setBrands(loadedBrands);
-    const saved = window.localStorage.getItem("brandai-active-brand");
-    setActiveWorkspaceId((current) => {
-      if (saved && loadedBrands.some((brand) => brand.id === saved)) {
-        return saved;
-      }
-      if (loadedBrands.some((brand) => brand.id === current)) return current;
-      return loadedBrands[0]?.id ?? value.wsId;
-    });
-  }, [value.wsId]);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
-    refreshBrands().catch(() => {
-      // Keep the server-resolved workspace usable when the list is unavailable.
-      if (!cancelled) setBrands([]);
-    });
+    apiFetch<BrandWorkspace[]>("/api/workspaces")
+      .then((loadedBrands) => {
+        if (!cancelled) setBrands(loadedBrands);
+      })
+      .catch(() => {
+        // Keep the server-resolved workspace usable when the list is unavailable.
+        if (!cancelled) setBrands([]);
+      });
     return () => {
       cancelled = true;
     };
-  }, [refreshBrands]);
-
-  const switchBrand = useCallback((workspaceId: string) => {
-    setActiveWorkspaceId(workspaceId);
-    window.localStorage.setItem("brandai-active-brand", workspaceId);
   }, []);
+
+  // 当前品牌以服务端解析出的 cookie 为准。切换品牌时只写 cookie 并刷新，
+  // 防止客户端本地状态把 UI 固定到一个服务端已拒绝访问的 workspace。
+  const switchBrand = useCallback(
+    (workspaceId: string) => {
+      document.cookie = `${ACTIVE_BRAND_COOKIE}=${encodeURIComponent(
+        workspaceId,
+      )}; path=/; max-age=${ACTIVE_BRAND_COOKIE_MAX_AGE}; samesite=lax`;
+      router.refresh();
+    },
+    [router],
+  );
 
   const createBrand = useCallback(
     async (input: { name: string; industry?: string }) => {
@@ -109,13 +117,11 @@ export function BrandProvider({
     [],
   );
 
-  const activeBase =
-    brands.find((brand) => brand.id === activeWorkspaceId) ??
-    brands.find((brand) => brand.id === value.wsId);
+  const activeBase = brands.find((brand) => brand.id === value.wsId);
   const context = useMemo<BrandCtx>(
     () => ({
       ...value,
-      wsId: activeBase?.id ?? activeWorkspaceId,
+      wsId: value.wsId,
       brandName: activeBase?.name ?? value.brandName,
       brands,
       switchBrand,
@@ -125,7 +131,6 @@ export function BrandProvider({
     }),
     [
       activeBase,
-      activeWorkspaceId,
       brands,
       createBrand,
       refreshBrands,

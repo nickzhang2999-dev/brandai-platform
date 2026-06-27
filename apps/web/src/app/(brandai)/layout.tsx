@@ -1,7 +1,9 @@
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { prisma } from "@brandai/db";
 import { auth } from "@/auth";
 import { getOrCreateActiveBrand } from "@/lib/brandai";
+import { ACTIVE_BRAND_COOKIE } from "@/lib/brand-cookie";
 import { BrandProvider } from "./brand-context";
 import { BrandSidebar } from "./brand-sidebar";
 
@@ -29,7 +31,12 @@ export default async function BrandaiLayout({
   });
   if (!dbUser || dbUser.isActive === false) redirect("/login");
 
-  const brand = await getOrCreateActiveBrand(session.user.id);
+  // Server-authoritative active brand: the client switcher writes the chosen
+  // workspace id into ACTIVE_BRAND_COOKIE; we re-validate membership before
+  // honoring it (see getOrCreateActiveBrand), so SSR / refresh / deep links all
+  // resolve the same brand the user picked.
+  const preferredWsId = (await cookies()).get(ACTIVE_BRAND_COOKIE)?.value;
+  const brand = await getOrCreateActiveBrand(session.user.id, preferredWsId);
   const email = session.user.email ?? "";
   const name = session.user.name ?? email.split("@")[0] ?? "用户";
   const initial = (name || email || "U").trim().slice(0, 1).toUpperCase();

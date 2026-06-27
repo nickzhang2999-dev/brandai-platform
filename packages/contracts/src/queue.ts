@@ -15,6 +15,10 @@ import { SceneType, JobStatus } from "./enums";
  */
 export const QueueItem = z.object({
   id: z.string(),
+  /** Owning Campaign (project) id — lets the queue widget deep-link the row to
+   *  `/workspace?gen=<id>&project=<projectId>` so a finished row is one click
+   *  from the image (E · 看得到完成→点得进图). Optional for forward-compat. */
+  projectId: z.string().optional(),
   status: JobStatus,
   /** Coarse status-derived progress (0=PENDING, 50=RUNNING, 100=SUCCEEDED,
    *  last-known/0=FAILED). See file-level comment. */

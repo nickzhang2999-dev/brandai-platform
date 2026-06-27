@@ -185,6 +185,58 @@ describe("compileAIConstraints — semantics", () => {
     });
   });
 
+  it("does NOT hard-block on a FORBIDDEN logo guideline, but still steers the generator (docs/10 #3)", () => {
+    const out = compileAIConstraints(
+      [
+        rule({
+          id: "logo-safe-area",
+          type: "logo",
+          strength: "FORBIDDEN",
+          status: "CONFIRMED",
+          summary: "Logo 周围保留不少于 1x 高度的安全留白",
+        }),
+      ],
+      [],
+    );
+    // a logo *usage guideline* must never gate the whole brand …
+    expect(out.blockers).toHaveLength(0);
+    // … yet its guidance is preserved (folded into prompt + negativePrompt).
+    expect(out.aiConstraints.promptAdditions).toContain(
+      "Logo 周围保留不少于 1x 高度的安全留白",
+    );
+    expect(out.aiConstraints.negativePrompt).toContain(
+      "Logo 周围保留不少于 1x 高度的安全留白",
+    );
+  });
+
+  it("still hard-blocks on a FORBIDDEN imagery/graphic content prohibition", () => {
+    const out = compileAIConstraints(
+      [
+        rule({
+          id: "no-alcohol",
+          type: "imagery",
+          strength: "FORBIDDEN",
+          status: "CONFIRMED",
+          summary: "禁止出现酒精饮品",
+        }),
+        rule({
+          id: "no-motif",
+          type: "graphic",
+          strength: "FORBIDDEN",
+          status: "CONFIRMED",
+          summary: "禁止使用竞品图形母题",
+        }),
+      ],
+      [],
+    );
+    expect(out.blockers).toEqual(
+      expect.arrayContaining([
+        { reason: "禁止出现酒精饮品", source: "brand_rule:no-alcohol" },
+        { reason: "禁止使用竞品图形母题", source: "brand_rule:no-motif" },
+      ]),
+    );
+  });
+
   it("compiles prohibition example assets into referenceImages (D5)", () => {
     const out = compileAIConstraints(
       [],

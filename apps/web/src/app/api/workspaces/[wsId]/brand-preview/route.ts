@@ -75,7 +75,9 @@ export async function POST(
     });
     if (!ws) throw new ApiException(404, "Workspace not found");
 
-    const rules = await getConfirmedRules(wsId);
+    // Brand preview is an AI image output → latest-first (V0.02 #6); other
+    // callers keep the deterministic default order (docs/10 #4).
+    const rules = await getConfirmedRules(wsId, { order: "recency" });
     const brief = composeBrandBrief(ws.name, rules);
     if (!brief) {
       throw new ApiException(

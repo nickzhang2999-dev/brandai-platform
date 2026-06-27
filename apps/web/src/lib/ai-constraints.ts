@@ -103,12 +103,20 @@ export function compileAIConstraints(
     .map((p) => ({ reason: p.description, source: `prohibition:${p.id}` }));
 
   // CONFIRMED + FORBIDDEN brand rules become hard-blocks only when they
-  // describe a *visual* prohibition (forbidden imagery / competing logos /
-  // disallowed graphic motifs). Copy/font/layout guidelines flagged FORBIDDEN
-  // are advisory — they shape the generator via negativePrompt below but
-  // shouldn't gate the whole workspace (otherwise a single "禁止使用复杂或长句"
-  // rule blocks every generation regardless of input). De-duped by source.
-  const HARD_BLOCK_RULE_TYPES = new Set(["imagery", "graphic", "logo"]);
+  // describe a *content prohibition* — forbidden imagery / disallowed graphic
+  // motifs that must never appear in the output. Everything else (copy / font /
+  // layout AND logo) is advisory: it shapes the generator via promptAdditions /
+  // negativePrompt below but must NOT gate the whole brand.
+  //
+  // `logo` was removed from this set: logo rules are overwhelmingly *usage
+  // guidelines* (safe-area / sizing / placement / color variants), e.g.
+  // "Logo 周围保留不少于 1x 高度的安全留白". Phrased as a guideline yet flagged
+  // FORBIDDEN, a single logo rule would block EVERY generation for the brand
+  // regardless of input (it harmed real output during 2026-06-24 灰度验收; see
+  // docs/10 #3). True "never render competing logos" prohibitions belong in the
+  // dedicated ProhibitionRule entity (still hard-blocks above), or as `imagery`.
+  // De-duped by source.
+  const HARD_BLOCK_RULE_TYPES = new Set(["imagery", "graphic"]);
   const blockerSources = new Set(blockers.map((b) => b.source));
   for (const rule of rules) {
     if (rule.status !== "CONFIRMED" || rule.strength !== "FORBIDDEN") continue;

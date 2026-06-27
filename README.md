@@ -31,7 +31,8 @@
 >
 > **二轮更新**：2026-06-20 · 分支 `claude/cool-pascal-ao72o3`。补齐设计稿缺口（L4 富卡片 / L5 工作台三右栏 / L8 素材联动 / L12 知识库真 AI 入口 / C5-C6 排序筛选 / Campaign 终审归档 / 模板库占位 + 6 项 nav）与 Phase-2 后端正确性（K4 recognize 证据 / K6 admin bootstrap 原子化 / K5 多尺寸+textMode）。全程 `pnpm test`(L1 83)+`typecheck`+`build`+`pytest`(77) 全绿。
 >
-> **灰度端到端真验收（No-mock，2026-06-21 更新）**：真 provider（`openai · gpt-image-2`【铁律】/ `gpt-4o-mini`）→真 API→真 DB。**已真验**：登录门禁、真出图（R2 1.5MB PNG, gpt-image-2）、`actualWidth/Height` 落库(K5)、配额计数(K1, periodUsed 8→12)、通知中心(A3)、网站采集异步真爬(K3/I14)、推荐品牌(L2)、素材文件夹建/移(E3)、R2 存储读写、素材 AI 标注 describe 早前曾真验出真标签(E9)。
+> **灰度端到端真验收（No-mock，2026-06-24 更新）**：真 provider（`openai · gpt-image-2`【铁律】/ `gpt-4o-mini`）→真 API→真 DB。**已真验**：登录门禁、真出图（R2 1.5MB PNG, gpt-image-2）、`actualWidth/Height` 落库(K5)、配额计数(K1, periodUsed 8→12)、通知中心(A3)、网站采集异步真爬(K3/I14)、推荐品牌(L2)、素材文件夹建/移(E3)、R2 存储读写、素材 AI 标注 describe 早前曾真验出真标签(E9)。
+> **2026-06-24 灰度真验（分支 wonderful-clarke，合并 main 后）**：边缘门禁(未登录 `/`→307 `/login`、API→401)、真 provider 自测 `openai OK · model=gpt-image-2`、**真出图端到端**（建 Campaign→202→轮询 54s→SUCCEEDED→R2 CDN **2.00MB PNG 1024×1536**）、**B 历史回看**(F17)、**C 出图回流素材库**(E14)、**E 出图深链**(F18 深链页 200 + 队列项 `id`+`projectId` 双要素)。**D「线上创建无效」证伪**：Campaign 创建在线上正常（422 仅因前端传错枚举 `ACTIVE`，正确 `IN_PROGRESS` 即 201）——归 S（前端枚举）非 E。**发现并已根治**：一条 type=logo 的 FORBIDDEN 品牌指引会无条件硬阻断全品牌出图（docs/10 #3，S 叠 O）——`ai-constraints.ts` 的 `HARD_BLOCK_RULE_TYPES` 去掉 `logo`（只留 imagery/graphic 真禁令），logo 类降为建议仍折入 prompt；补 2 回归用例；灰度复验：规则保持 FORBIDDEN 不动数据、同一出图直接成功。
 > **✅ AI 路由全部灰度真验通过（E9/E10 describe、B2/C8 summarize）**：真 VLM `gpt-4o-mini`。B2 8/8、describe 5/5、C8 写入真 `Project.aiSummary`。
 > **本轮发现并修复 2 个真·跨分支隔离 bug（I28 类）**——CDS 灰度 **Redis 与 docker 网络在同项目多分支间共享**：
 > 1. **Redis 队列共享**：BullMQ 队列名无前缀 → 别的分支(main 旧代码)worker 抢本分支 job 并静默丢字段。修复：分支级 `BULLMQ_PREFIX`。
@@ -142,7 +143,7 @@
 | E11 | 加入项目（→Campaign） | P04-M16 | ✅ | `assets/page.tsx::JoinProjectDialog` + `projects/[id]/assets`(POST kind=MEMBER) | 真弹窗选 Campaign→加入并跳工作台；**服务端 `ProjectAsset` 真关系**（取代纯客户端暂存，跨设备/协作可续），tray 退化为同 tab 即时反馈 | 服务端化 2026-06-22 |
 | E12 | 设为参考（→工作台参考区） | P04-M17 | ✅ | `assets/page.tsx` + `projects/[id]/assets`(kind=REFERENCE) ↔ 工作台 F9 | 设为参考→落 `ProjectAsset(REFERENCE)`；工作台 F9 合并服务端参考（真校验归属+留痕 version.params）。**注**：OpenAI generate API 不收图，当前为 prompt 级引导，真视觉条件化需经 edits 路由（phase-2） | 服务端化 2026-06-22 |
 | E13 | 收藏切换 / 使用记录 / 查看来源 | doc02/05 | ✅ | 收藏 toggle(PATCH isFavorite)+筛选、使用记录(generation 引用派生)、查看来源弹窗(H8) | 灰度真验 | 接入 2026-06-21 |
-| E14 | 出图回流素材库（AI 生成图 → 素材） | 心智断层修复 | ✅ | `lib/asset-mirror.ts`（generate/edit worker 出图落库后镜像 Asset）+ `assets/page.tsx`「✦ AI 生成」标识 + 历史回填 `api/admin/backfill-generated-assets` | 修复「出图只在工作台、素材库看不到」：每次真出图/改图产出 `GenerationVersion` 后**镜像一条真实 Asset**（`url` 指向同一张真图，加性可空列 `generationVersionId` 标识 AI 来源——**不改 AssetSource 枚举**避共享库其它分支崩；source 仍 UPLOAD）。素材库即列出、可收藏/归档/设为参考；来源显示「AI 生成」。best-effort 不阻断出图；唯一约束幂等。历史出图经 admin 回填端点补镜像 | 新增 2026-06-23 |
+| E14 | 出图回流素材库（AI 生成图 → 素材） | 心智断层修复 | ✅ **已验收** | `lib/asset-mirror.ts`（generate/edit worker 出图落库后镜像 Asset）+ `assets/page.tsx`「✦ AI 生成」标识 + 历史回填 `api/admin/backfill-generated-assets`（游标分页越过不可镜像行，`mirrorGenerationVersionToAsset` 返回 boolean 计数） | 修复「出图只在工作台、素材库看不到」：每次真出图/改图产出 `GenerationVersion` 后**镜像一条真实 Asset**（`url` 指向同一张真图，加性可空列 `generationVersionId` 标识 AI 来源——**不改 AssetSource 枚举**避共享库其它分支崩；source 仍 UPLOAD）。素材库即列出、可收藏/归档/设为参考；来源显示「AI 生成」。best-effort 不阻断出图；唯一约束幂等。历史出图经 admin 回填端点补镜像。**灰度真验 2026-06-24**：新出图即镜像成 Asset（同一张真图 URL，aiDescription=场景），库内 31 张回流素材 | 新增 2026-06-23；真验 2026-06-24 |
 
 ## F · P05 工作台
 
@@ -164,7 +165,8 @@
 | F13 | 终选（设为终稿 isFinal） | 一期闭环 | ✅ **已验收** | `page.tsx`（PATCH /generations/[id]） | — | 2026-06-20 |
 | F14 | 交付归档（导出 ZIP） | 一期闭环 | ✅ **已验收** | `page.tsx:200` → projects/[id]/export | 真 ZIP | 2026-06-20 |
 | F15 | 中间态超时 + 出口（§2.4） | CLAUDE§0.3 | ✅ | `page.tsx` 轮询 6 分钟上界 | 超时给重试出口 | 2026-06-20 |
-| F17 | 历史出图回看（进入工作台展示该项目历史出图） | 心智断层修复 | ✅ | `workspace/page.tsx`（`GET /generations?projectId=` → `listProjectGenerations`） | 修复「产出蒸发」：进入工作台默认展示该项目最近一次出图（newest-first），底部「历史出图」缩略条可切换回看任意一次，复用改图/终选/导出/审阅全套；切项目自动重置+重新播种。刷新/换设备后历史不再消失 | V0.06 命名对齐 2026-06-27 |
+| F17 | 历史出图回看（进入工作台展示该项目历史出图） | 心智断层修复 | ✅ **已验收** | `workspace/page.tsx`（`GET /generations?projectId=` → `listProjectGenerations`） | 修复「产出蒸发」：进入工作台默认展示该项目最近一次出图（newest-first），底部「历史出图」缩略条可切换回看任意一次，复用改图/终选/导出/审阅全套；切项目自动重置+重新播种。刷新/换设备后历史不再消失。**轮询修复**：回看历史出图（jobId=null）改用服务端 startedAt 计时，避免被瞬间判超时停轮询。**灰度真验 2026-06-24**：新项目历史端点返回 SUCCEEDED 出图供回看 | V0.06 命名对齐 2026-06-27；真验 2026-06-24 |
+| F18 | 出图深链（通知/队列点得进具体那张图 + `?gen=` URL 态） | 心智断层修复（E） | ✅ **已验收** | `workspace/page.tsx`（读 `?gen=&project=` 回填查看态 + 反向写回 URL）+ `lib/notifications.ts`（href 深链）+ `contracts/queue.ts`（队列项加 `projectId`） | 修复「看得到完成→点不进图」：完成通知 href=`/workspace?gen=<id>&project=<pid>`、队列项带 `projectId`，点击直达工作台对应项目 + 这次出图；当前查看的出图反向同步进 URL（`?gen=`），刷新/分享落到精确那张。**灰度真验 2026-06-24**：深链页 200；队列项含 `id`(→`?gen=`)+`projectId`(→`&project=`)双要素 | 新增 2026-06-24；真验 2026-06-24 |
 
 ## G · P06 模板库
 
