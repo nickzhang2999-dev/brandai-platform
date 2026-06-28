@@ -139,8 +139,12 @@ export function OpenCanvas({
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const editTextRef = useRef<HTMLTextAreaElement>(null);
   const gestureRef = useRef<Gesture>(null);
   const movedRef = useRef(false);
+  // 手动双击检测:item 在容器上 setPointerCapture 后,原生 dblclick 会被重定向到
+  // 容器、item 的 onDoubleClick 永不触发(文字双击进编辑因此失效)。改用计时检测。
+  const lastTapRef = useRef<{ key: string; t: number }>({ key: "", t: 0 });
 
   const [items, setItems] = useState<CanvasItem[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -206,6 +210,27 @@ export function OpenCanvas({
   useEffect(() => {
     setArmedOp(null);
   }, [soloVersion?.id]);
+
+  // 文字编辑「点击空白处提交」—— 点画布(普通 div,不可聚焦)不会让 textarea 失焦,
+  // 于是 onBlur 不触发、编辑永远提交不掉(用户点别处文字也不会改)。这里在编辑期
+  // 监听全局 pointerdown:只要按在 textarea 之外,就主动 blur 它 → 触发 onBlur 提交。
+  useEffect(() => {
+    if (!editingText) return;
+    // 延后一帧聚焦:进编辑由 pointerdown 触发,若用 autoFocus 同步聚焦,正在进行的
+    // click 焦点结算会立刻把 textarea blur 掉 → onBlur 立即把 editingText 清空、编辑
+    // 框一闪而过。等当前事件结算完(下一 tick)再聚焦,就稳了。
+    const focusTimer = setTimeout(() => editTextRef.current?.focus(), 0);
+    // 点 textarea 之外的任意处 → 主动 blur 提交(点普通 div 不会自动失焦)。
+    const onDocDown = (e: PointerEvent) => {
+      const ta = editTextRef.current;
+      if (ta && e.target !== ta) ta.blur();
+    };
+    document.addEventListener("pointerdown", onDocDown, true);
+    return () => {
+      clearTimeout(focusTimer);
+      document.removeEventListener("pointerdown", onDocDown, true);
+    };
+  }, [editingText]);
 
   // ---- 坐标转换 ----
   const toWorld = useCallback(
@@ -481,6 +506,18 @@ export function OpenCanvas({
       beginPan(e);
       return;
     }
+    // 文字 item:手动双击检测 → 进编辑(绕开被 pointer-capture 吞掉的原生 dblclick)。
+    const tappedItem = items.find((i) => i.key === key);
+    if (tappedItem?.kind === "text") {
+      const prev = lastTapRef.current;
+      if (prev.key === key && Date.now() - prev.t < 350) {
+        lastTapRef.current = { key: "", t: 0 };
+        setSelected(new Set([key]));
+        setEditingText(key);
+        return; // 进编辑,不开拖拽
+      }
+      lastTapRef.current = { key, t: Date.now() };
+    }
     containerRef.current?.setPointerCapture(e.pointerId);
     let nextSel = selected;
     if (e.shiftKey) {
@@ -675,6 +712,9 @@ export function OpenCanvas({
         return (
           <div
             key={it.key}
+            data-testid="canvas-item"
+            data-kind={it.kind}
+            data-selected={isSel ? "1" : "0"}
             onPointerDown={(e) => beginItemDrag(e, it.key)}
             onDoubleClick={(e) => {
               if (it.kind === "text") {
@@ -721,9 +761,20 @@ export function OpenCanvas({
               <ShapeView item={it} />
             ) : editingText === it.key ? (
               <textarea
-                autoFocus
+                ref={editTextRef}
                 defaultValue={it.text}
                 onPointerDown={(e) => e.stopPropagation()}
+                onKeyDown={(e) => {
+                  // Esc / ⌘·Ctrl+Enter 提交退出编辑(Enter 仍是换行)。
+                  if (
+                    e.key === "Escape" ||
+                    (e.key === "Enter" && (e.metaKey || e.ctrlKey))
+                  ) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    e.currentTarget.blur();
+                  }
+                }}
                 onBlur={(e) => {
                   const v = e.target.value;
                   setItems((prev) =>
