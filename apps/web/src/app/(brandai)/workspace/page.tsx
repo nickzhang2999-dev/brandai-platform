@@ -62,6 +62,24 @@ const CANVAS_OPS: { value: string; label: string; mask?: boolean }[] = [
 
 const POLL_CAP_MS = 6 * 60 * 1000; // §2.2 有界中间态
 
+// 版本的“真实像素尺寸”。OpenAI 会把请求画布 snap 到最近的支持档(如 1920×1080 →
+// 1536×1024)，generate.worker 把 snap 后的真实字节尺寸落进 params.actualWidth/Height
+// (见 generate.worker.ts K5)。局部重画蒙版必须按真实字节尺寸绘制/导出——否则蒙版在
+// object-contain 的 <img> 里被拉伸/偏移，_build_inpaint_mask 再 resize 到真实字节时
+// 涂抹区错位、provider 改错地方(Codex P2)。缺 actual 时回退请求 width/height。
+function versionPixelSize(v: GenerationVersion): {
+  width: number;
+  height: number;
+} {
+  const p = (v.params ?? {}) as Record<string, unknown>;
+  const aw = typeof p.actualWidth === "number" ? p.actualWidth : null;
+  const ah = typeof p.actualHeight === "number" ? p.actualHeight : null;
+  return {
+    width: aw && ah ? aw : v.width || 1024,
+    height: aw && ah ? ah : v.height || 1024,
+  };
+}
+
 type JobState = {
   generation: Generation;
   job: {
@@ -533,6 +551,31 @@ function Workspace() {
     window.history.replaceState(null, "", `${pathname}?${cur.toString()}`);
   }, [genId, jobId, pathname]);
 
+  // E · 浏览器前进/后退(popstate)→ 让 in-app 状态跟随地址栏。上面用 replaceState 做
+  // 浅层 URL 同步,这些 URL 变更 Next 的路由/useSearchParams 并不知情;用户 back/forward
+  // 到这些历史项时,地址栏是一套值、genId/projectId 仍停在上一次 in-app 选择 → 画布/变体/
+  // 分享链三者不一致(Bugbot Medium)。这里监听 popstate,直接从实时地址栏重解析并应用,
+  // 同步 prevProjectRef/lastUrlProjectRef 避免「切项目重置 genId」「project 反向同步」两个
+  // effect 回头覆盖。
+  useEffect(() => {
+    const onPop = () => {
+      const q = new URLSearchParams(window.location.search);
+      const p = q.get("project");
+      const g = q.get("gen");
+      if (p) {
+        lastUrlProjectRef.current = p; // 别让 project 反向同步 effect 再写
+        prevProjectRef.current = p; // 别让「切项目重置 genId」effect 清掉下面的 gen
+        setProjectId(p);
+      }
+      setJobId(null);
+      setTimedOut(false);
+      setActiveVariant(0);
+      setGenId(g || null); // g 为空则回落到「展示最近一次」
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
   // 进入工作台默认展示该项目最近一次出图（history newest-first）。仅当本会话
   // 还没有选中/提交任何出图时播种 —— 不覆盖用户的实时提交，也不覆盖手动切换的历史。
   useEffect(() => {
@@ -736,11 +779,15 @@ function Workspace() {
     setActionErr(null);
     setBusy("edit");
     try {
-      // 带上源版本真实尺寸 —— 否则 AI /v1/edit 缺 width/height 会默认 1024²,非方图
+      // 带上源版本“真实像素尺寸” —— 否则 AI /v1/edit 缺 width/height 会默认 1024²,非方图
       // (小红书封面/Banner)会被改成方图却按原比例存/导出,子版本尺寸对不上(Codex P2)。
-      // payload 显式给的尺寸优先(目前没有,留作扩展)。
+      // 且必须用 params.actualWidth/Height(OpenAI snap 后的真实字节尺寸)而非请求 width/
+      // height,否则局部重画蒙版按请求尺寸导出、_build_inpaint_mask 再 resize 到真实字节
+      // 会错位(Codex P2)。payload 显式给的尺寸优先(目前没有,留作扩展)。
+      const px = versionPixelSize(v);
       const sized: Record<string, unknown> = {
-        ...(v.width && v.height ? { width: v.width, height: v.height } : {}),
+        width: px.width,
+        height: px.height,
         ...payload,
       };
       const r = await apiFetch<{ jobId: string }>(
@@ -1500,8 +1547,8 @@ function Workspace() {
       {maskOpen && (maskTarget ?? current)?.imageUrl ? (
         <MaskPaintCanvas
           imageSrc={(maskTarget ?? current)!.imageUrl}
-          imageWidth={(maskTarget ?? current)!.width || 1024}
-          imageHeight={(maskTarget ?? current)!.height || 1024}
+          imageWidth={versionPixelSize((maskTarget ?? current)!).width}
+          imageHeight={versionPixelSize((maskTarget ?? current)!).height}
           submitting={!!editJobId || busy === "edit"}
           onConfirm={confirmMaskEdit}
           onCancel={() => setMaskOpen(false)}

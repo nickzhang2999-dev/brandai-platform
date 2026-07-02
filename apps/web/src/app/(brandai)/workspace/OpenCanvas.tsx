@@ -180,8 +180,29 @@ export function OpenCanvas({
   // 移除已不在的版本;改图新子版本自动作为新 item 浮现)。
   useEffect(() => {
     setItems((prev) => {
-      const vids = new Set(seedVersions.map((v) => v.id));
-      const kept = prev.filter((it) => !it.versionId || vids.has(it.versionId));
+      const byId = new Map(seedVersions.map((v) => [v.id, v]));
+      const kept = prev
+        .filter((it) => !it.versionId || byId.has(it.versionId))
+        .map((it) => {
+          // 版本 id 不变但 imageUrl/尺寸后续可能被轮询更新(如占位→真图) → 同步到
+          // 已存在的画布 tile,否则会停在旧值/空白(Bugbot)。只同步图源与自然尺寸,
+          // 保留用户手工的位置/显示大小(x/y/w/h)。
+          if (!it.versionId) return it;
+          const v = byId.get(it.versionId);
+          if (
+            !v ||
+            (v.imageUrl === it.imageUrl &&
+              v.width === it.naturalW &&
+              v.height === it.naturalH)
+          )
+            return it;
+          return {
+            ...it,
+            imageUrl: v.imageUrl,
+            naturalW: v.width,
+            naturalH: v.height,
+          };
+        });
       const have = new Set(
         kept.filter((it) => it.versionId).map((it) => it.versionId),
       );
