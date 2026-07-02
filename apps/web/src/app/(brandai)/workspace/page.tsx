@@ -628,12 +628,21 @@ function Workspace() {
     // 命中三者 = popstate/深链到 ?gen=(缺/错 ?project=)或点跨项目历史出图,才跟随。
     if (poll?.generation.id !== genId) return;
     if (!loadedGenProject || loadedGenProject === projectId) return;
-    const urlGen = new URLSearchParams(window.location.search).get("gen");
-    if (urlGen !== genId) return;
+    const cur = new URLSearchParams(window.location.search);
+    if (cur.get("gen") !== genId) return;
+    // 自己把 ?project= 补进地址栏(保留 ?gen=)—— 深链只带 ?gen= 时,这条 effect 若只
+    // setProjectId 并把 lastUrlProjectRef 设成新值,下面的 project 反向同步 effect 会因
+    // 「ref===projectId」直接早退、永远不写 ?project=,分享/刷新丢了 project 那一半
+    // (Bugbot Medium)。这里直接写全 ?project=&gen= 再对齐 ref,project 同步 effect 保持
+    // no-op(且不会走 `if(prev) delete gen` 把深链 gen 抹掉)。
+    if (cur.get("project") !== loadedGenProject) {
+      cur.set("project", loadedGenProject);
+      window.history.replaceState(null, "", `${pathname}?${cur.toString()}`);
+    }
     lastUrlProjectRef.current = loadedGenProject;
     prevProjectRef.current = loadedGenProject;
     setProjectId(loadedGenProject);
-  }, [loadedGenProject, projectId, genId, poll]);
+  }, [loadedGenProject, projectId, genId, poll, pathname]);
 
   // —— 修改优化(改图)/ 终选 / 交付归档 ——
   const qc = useQueryClient();
