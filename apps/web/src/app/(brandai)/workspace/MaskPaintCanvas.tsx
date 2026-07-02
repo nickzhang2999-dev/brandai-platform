@@ -90,6 +90,10 @@ export function MaskPaintCanvas({
     cvs.height = displaySize.h;
     const ctx = cvs.getContext("2d");
     if (ctx) ctx.clearRect(0, 0, cvs.width, cvs.height);
+    // 赋 cvs.width/height 会重建并清空画布 —— 若之前涂过、又因窗口/devtools/横竖屏 resize
+    // 触发这里,画布已清空但 hasPaint 仍为 true,配合已填指令会让「运行」保持可点,
+    // handleConfirm 导出一张全黑蒙版、发起无有效区域的 INPAINT(Codex P2)。清空即回落。
+    setHasPaint(false);
   }, [displaySize.w, displaySize.h]);
 
   const getPos = useCallback((e: React.PointerEvent) => {

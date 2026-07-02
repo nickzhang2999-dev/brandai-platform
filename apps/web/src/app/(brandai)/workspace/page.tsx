@@ -691,6 +691,12 @@ function Workspace() {
     setEditWatchUntil(0);
     setMaskOpen(false);
     setMaskTarget(null);
+    // 同时停掉上一张的改图轮询 —— 否则 editVid/editJobId 仍指旧 gen 的版本,轮询会拿旧
+    // jobId 打到当前 genId 的版本 URL(打错 generation),UI 卡「改图中…」到超时、成功
+    // 回调还可能刷错 generation(Bugbot High)。改图 server-authoritative,离开后照常在
+    // 后台完成,回到该 gen 时子版本随 generation 轮询自然浮现。
+    setEditJobId(null);
+    setEditVid(null);
   }, [genId]);
   // F11 — refresh the quota bar once a generation completes so the displayed
   // 本周期/今日 用量 matches server-side enforcement without a manual reload.
