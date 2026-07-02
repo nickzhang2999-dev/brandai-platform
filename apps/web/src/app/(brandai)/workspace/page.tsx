@@ -429,6 +429,13 @@ function Workspace() {
   const [genId, setGenId] = useState<string | null>(presetGen);
   const [jobId, setJobId] = useState<string | null>(null);
   const [activeVariant, setActiveVariant] = useState(0);
+  // 画布上是否正有一张「当前变体 tile」被选中。点画布空白清选后画布无版本选中,但
+  // activeVariant/current 仍保留(终选/导出仍有目标)——用它让变体条高亮跟随画布选择,
+  // 清选即熄灭高亮,不出现「条高亮而画布空」的割裂(Bugbot Medium)。
+  const [canvasSel, setCanvasSel] = useState(true);
+  // 点变体缩略图的显式信号:即便点的是「已是当前」的变体(activeVersionId 不变、同步
+  // effect 不会重触发),也强制画布重新选中该 tile,消除「清选后点缩略图无反应」死锁。
+  const [selectNonce, setSelectNonce] = useState(0);
   const [submitErr, setSubmitErr] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const startedAt = useRef<number>(0);
@@ -868,7 +875,12 @@ function Workspace() {
   // 画布单选某出图变体 → 同步 activeVariant(右下终选/导出/审阅对它生效)。
   const onCanvasSelectVersion = useCallback(
     (versionId: string | null) => {
-      if (!versionId) return;
+      // 画布清掉版本选择(点空白/多选)→ 熄灭变体条高亮(current 仍保留),避免割裂。
+      if (!versionId) {
+        setCanvasSel(false);
+        return;
+      }
+      setCanvasSel(true);
       setActiveVariant((prev) => {
         const idx = versions.findIndex((x) => x.id === versionId);
         return idx >= 0 ? idx : prev;
@@ -1080,6 +1092,8 @@ function Workspace() {
             }
             onSelectVersion={onCanvasSelectVersion}
             activeVersionId={current?.id ?? null}
+            selectNonce={selectNonce}
+            fitKey={genId ?? undefined}
             onUploadImage={onCanvasUploadImage}
             edit={{
               ops: CANVAS_OPS,
@@ -1096,10 +1110,16 @@ function Workspace() {
               {versions.map((v, i) => (
                 <button
                   key={v.id}
-                  onClick={() => setActiveVariant(i)}
+                  onClick={() => {
+                    setActiveVariant(i);
+                    setCanvasSel(true);
+                    // 强制画布重新选中该变体 tile(即便 i 已是 activeVariant),
+                    // 让清选后点缩略图也能一键回到「条↔画布同步」状态。
+                    setSelectNonce((n) => n + 1);
+                  }}
                   className={[
                     "relative h-[82px] w-[118px] overflow-hidden rounded-[18px] border-2 transition-colors",
-                    i === activeVariant
+                    i === activeVariant && canvasSel
                       ? "border-primary"
                       : "border-transparent hover:border-border",
                   ].join(" ")}

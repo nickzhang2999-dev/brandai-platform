@@ -120,6 +120,8 @@ export function OpenCanvas({
   error,
   onSelectVersion,
   activeVersionId,
+  selectNonce,
+  fitKey,
   onUploadImage,
   edit,
 }: {
@@ -133,6 +135,12 @@ export function OpenCanvas({
   /** 外部「当前变体」(变体缩略图/终选条)—— 变化时把画布选择同步过来,保证画布改图
    *  工具条(soloVersion)与终选/导出/审阅(activeVariant)永远指向同一版本。 */
   activeVersionId?: string | null;
+  /** 点变体缩略图的显式信号:每次 +1 都强制把 activeVersionId 的 tile 重新选中 ——
+   *  即便 activeVersionId 未变(点的是已选变体),也能从「清选」态一键回到选中。 */
+  selectNonce?: number;
+  /** 触发「自动适配」的 key(= 当前 generation id):变化=切了 generation,重新适配一次
+   *  取景;同一 generation 内新增改图子版本不重置(不夺走用户手动缩放/平移)。 */
+  fitKey?: string;
   /** 上传图片到画布:返回公网 URL + 真实尺寸。 */
   onUploadImage: (file: File) => Promise<{
     url: string;
@@ -170,7 +178,6 @@ export function OpenCanvas({
   // 选中出图变体后「待执行的改图操作」(arm)。点 op chip 只是选中操作(不立即发图),
   // 输入指令后回车/点「出图」才真正改图——避免「点一下就锁死整条工具条」。
   const [armedOp, setArmedOp] = useState<string | null>(null);
-  const seededRef = useRef(false);
 
   // 最新 viewport 放 ref,wheel 监听只绑一次。
   const vpRef = useRef({ zoom, camera });
@@ -289,6 +296,21 @@ export function OpenCanvas({
       });
     }
   }, [activeVersionId, items]);
+  // 点变体缩略图的显式重选:每次 selectNonce +1(用户点了缩略图)都把 activeVersionId 的
+  // tile 重新选中——即便 activeVersionId 未变(点的是已选变体、上面 ref 守卫会跳过),也能
+  // 从「点空白清选」态一键回到条↔画布同步,消除「清选后点缩略图无反应」死锁(Bugbot Med)。
+  useEffect(() => {
+    if (!selectNonce) return; // 初值 0(未点过)不触发,保留入场默认行为
+    if (activeVersionId == null) return;
+    const it = items.find((i) => i.versionId === activeVersionId);
+    if (!it) return;
+    appliedActiveVerRef.current = activeVersionId;
+    setSelected((prev) =>
+      prev.size === 1 && prev.has(it.key) ? prev : new Set([it.key]),
+    );
+    // 仅由缩略图点击信号驱动;不把 items/activeVersionId 放 deps,避免它们变化时误重选。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectNonce]);
 
   // 文字编辑「点击空白处提交」—— 点画布(普通 div,不可聚焦)不会让 textarea 失焦,
   // 于是 onBlur 不触发、编辑永远提交不掉(用户点别处文字也不会改)。这里在编辑期
@@ -369,13 +391,17 @@ export function OpenCanvas({
     });
   }, [items]);
 
-  // 首批 item 落地后自动适配一次。
+  // 自动适配取景:首批 item 落地时、以及每次切 generation(fitKey 变)后各适配一次。
+  // 用 lastFitKeyRef 记录「上次已适配的 fitKey」——切 generation 会换一批变体 tile,若不
+  // 重适配,新出图可能落在视口外要手动点「适配」(Bugbot Low);而同一 generation 内新增
+  // 改图子版本 fitKey 不变 → 不重适配,不夺走用户已调好的缩放/平移。
+  const lastFitKeyRef = useRef<string | null | undefined>(undefined);
   useEffect(() => {
-    if (!seededRef.current && items.length > 0) {
-      seededRef.current = true;
-      fitToContent();
-    }
-  }, [items, fitToContent]);
+    if (items.length === 0) return;
+    if (lastFitKeyRef.current === fitKey) return;
+    lastFitKeyRef.current = fitKey;
+    fitToContent();
+  }, [items, fitKey, fitToContent]);
 
   // ---- wheel 手势(passive:false,只绑一次) ----
   useEffect(() => {
