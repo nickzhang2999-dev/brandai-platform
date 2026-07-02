@@ -721,9 +721,16 @@ function Workspace() {
     setActionErr(null);
     setBusy("edit");
     try {
+      // 带上源版本真实尺寸 —— 否则 AI /v1/edit 缺 width/height 会默认 1024²,非方图
+      // (小红书封面/Banner)会被改成方图却按原比例存/导出,子版本尺寸对不上(Codex P2)。
+      // payload 显式给的尺寸优先(目前没有,留作扩展)。
+      const sized: Record<string, unknown> = {
+        ...(v.width && v.height ? { width: v.width, height: v.height } : {}),
+        ...payload,
+      };
       const r = await apiFetch<{ jobId: string }>(
         `/api/workspaces/${wsId}/generations/${genId}/versions/${v.id}/edit`,
-        { method: "POST", body: JSON.stringify({ op, payload }) },
+        { method: "POST", body: JSON.stringify({ op, payload: sized }) },
       );
       editStartedAt.current = Date.now();
       setEditVid(v.id);
@@ -960,6 +967,7 @@ function Workspace() {
               poll?.job?.failedReason ?? poll?.generation.error ?? undefined
             }
             onSelectVersion={onCanvasSelectVersion}
+            activeVersionId={current?.id ?? null}
             onUploadImage={onCanvasUploadImage}
             edit={{
               ops: CANVAS_OPS,

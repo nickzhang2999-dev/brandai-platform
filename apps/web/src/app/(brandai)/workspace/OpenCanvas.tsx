@@ -119,6 +119,7 @@ export function OpenCanvas({
   timedOut,
   error,
   onSelectVersion,
+  activeVersionId,
   onUploadImage,
   edit,
 }: {
@@ -129,6 +130,9 @@ export function OpenCanvas({
   error?: string;
   /** 单选某张出图变体时回传 versionId(null=未选),让右下表单/终选条同步 activeVariant。 */
   onSelectVersion: (versionId: string | null) => void;
+  /** 外部「当前变体」(变体缩略图/终选条)—— 变化时把画布选择同步过来,保证画布改图
+   *  工具条(soloVersion)与终选/导出/审阅(activeVariant)永远指向同一版本。 */
+  activeVersionId?: string | null;
   /** 上传图片到画布:返回公网 URL + 真实尺寸。 */
   onUploadImage: (file: File) => Promise<{
     url: string;
@@ -210,6 +214,26 @@ export function OpenCanvas({
   useEffect(() => {
     setArmedOp(null);
   }, [soloVersion?.id]);
+
+  // 外部当前变体(点缩略图/终选条切版本) → 同步画布选择,消除「缩略图选 B、画布仍选
+  // A → 改图打 A、终选/导出打 B」的分叉(Bugbot High)。只在 activeVersionId「真的变了」
+  // 时应用一次(用 ref 判),避免 items 变化(拖拽/新子版本)时反复覆盖用户对形状/文字
+  // 的选择;`undefined` 哨兵让首屏只采用初值、不自动选中(保持「进入不自动选中」)。
+  const appliedActiveVerRef = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (activeVersionId == null) return;
+    if (appliedActiveVerRef.current === undefined) {
+      appliedActiveVerRef.current = activeVersionId; // 首屏采用初值,不强制选中
+      return;
+    }
+    if (appliedActiveVerRef.current === activeVersionId) return;
+    const it = items.find((i) => i.versionId === activeVersionId);
+    if (!it) return;
+    appliedActiveVerRef.current = activeVersionId;
+    setSelected((prev) =>
+      prev.size === 1 && prev.has(it.key) ? prev : new Set([it.key]),
+    );
+  }, [activeVersionId, items]);
 
   // 文字编辑「点击空白处提交」—— 点画布(普通 div,不可聚焦)不会让 textarea 失焦,
   // 于是 onBlur 不触发、编辑永远提交不掉(用户点别处文字也不会改)。这里在编辑期
@@ -1007,7 +1031,7 @@ export function OpenCanvas({
             onChange={(e) => edit.onInstrChange(e.target.value)}
             onPointerDown={(e) => e.stopPropagation()}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && armedOp && !edit.busy) {
+              if (e.key === "Enter" && armedOp && edit.instr.trim() && !edit.busy) {
                 e.preventDefault();
                 edit.onRun(soloVersion, armedOp);
               }
@@ -1022,11 +1046,20 @@ export function OpenCanvas({
           />
           <button
             type="button"
-            disabled={edit.busy || !armedOp}
+            // 必须先选操作 + 有非空指令才可出图 —— 否则空 prompt 会触发一次真实 provider
+            // 改图,白烧配额且结果含糊(Codex P2:旧表单原本 guard 了 !instr.trim())。
+            disabled={edit.busy || !armedOp || !edit.instr.trim()}
             onClick={() => {
-              if (armedOp && !edit.busy) edit.onRun(soloVersion, armedOp);
+              if (armedOp && edit.instr.trim() && !edit.busy)
+                edit.onRun(soloVersion, armedOp);
             }}
-            title={armedOp ? "用上方选中的操作 + 指令改图" : "先选一个操作"}
+            title={
+              !armedOp
+                ? "先选一个操作"
+                : !edit.instr.trim()
+                  ? "先输入修改指令"
+                  : "用上方选中的操作 + 指令改图"
+            }
             className="h-8 rounded-lg bg-gradient-to-br from-primary to-accent px-3 text-xs font-medium text-primary-foreground shadow-[0_6px_16px_rgba(124,92,255,0.24)] transition-opacity disabled:opacity-40"
           >
             {edit.busy ? "改图中…" : "出图"}

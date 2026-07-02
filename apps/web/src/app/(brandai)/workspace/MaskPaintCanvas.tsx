@@ -159,10 +159,28 @@ export function MaskPaintCanvas({
     [isDrawing, getPos, drawLine],
   );
 
+  // 一笔结束后按「真实像素」重算 hasPaint —— 橡皮擦把可见笔迹全擦掉时必须回落到
+  // false,否则确认按钮仍可点、会提交一张全黑蒙版触发「无重绘区」的空 INPAINT。
+  const recomputeHasPaint = useCallback(() => {
+    const cvs = canvasRef.current;
+    const ctx = cvs?.getContext("2d");
+    if (!ctx || !cvs) return;
+    const d = ctx.getImageData(0, 0, cvs.width, cvs.height).data;
+    let painted = false;
+    for (let i = 3; i < d.length; i += 4) {
+      if (d[i]! > 10) {
+        painted = true;
+        break;
+      }
+    }
+    setHasPaint(painted);
+  }, []);
+
   const handleUp = useCallback(() => {
     setIsDrawing(false);
     lastPosRef.current = null;
-  }, []);
+    recomputeHasPaint();
+  }, [recomputeHasPaint]);
 
   const handleClear = useCallback(() => {
     const cvs = canvasRef.current;
