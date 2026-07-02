@@ -697,6 +697,9 @@ function Workspace() {
     // 后台完成,回到该 gen 时子版本随 generation 轮询自然浮现。
     setEditJobId(null);
     setEditVid(null);
+    // 快捷编辑指令也清 —— 否则切到别的 generation 后工具条还留着上一张的指令文本,
+    // 对新图 arm 一个操作时可能带着旧 prompt 出图(Bugbot Low)。
+    setEditInstr("");
   }, [genId]);
   // F11 — refresh the quota bar once a generation completes so the displayed
   // 本周期/今日 用量 matches server-side enforcement without a manual reload.

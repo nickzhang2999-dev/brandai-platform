@@ -218,6 +218,23 @@ export function OpenCanvas({
     });
   }, [seedVersions]);
 
+  // items 变化后(尤其切 generation 时版本 tile 被裁剪)把 selected 收敛到仍存在的 key ——
+  // 否则被移除版本的 key 残留在 selected 里,图层/删除条仍高亮可点、键盘操作打到「幽灵
+  // 选择」(Bugbot Medium)。手动加的上传图/形状/文字 key 仍在 items 中,其选择不受影响。
+  useEffect(() => {
+    setSelected((sel) => {
+      if (sel.size === 0) return sel;
+      const keys = new Set(items.map((it) => it.key));
+      let changed = false;
+      const next = new Set<string>();
+      for (const k of sel) {
+        if (keys.has(k)) next.add(k);
+        else changed = true;
+      }
+      return changed ? next : sel;
+    });
+  }, [items]);
+
   const versionById = useMemo(() => {
     const m = new Map<string, GenerationVersion>();
     for (const v of seedVersions) m.set(v.id, v);
