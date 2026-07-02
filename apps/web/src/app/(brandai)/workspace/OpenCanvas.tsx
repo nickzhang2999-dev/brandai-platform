@@ -176,6 +176,10 @@ export function OpenCanvas({
   const vpRef = useRef({ zoom, camera });
   vpRef.current = { zoom, camera };
 
+  // 用户从画布删掉的出图变体 tile —— 记住其 versionId,防止下面的 seedVersions 合并
+  // 在轮询刷新/新子版本到达时把它当「缺失版本」再加回来(Delete 白删)(Bugbot Medium)。
+  const removedVersionIdsRef = useRef<Set<string>>(new Set());
+
   // 出图变体 → 画布图片 item:增量合并(保留手工布局/形状/文字;切 generation 时
   // 移除已不在的版本;改图新子版本自动作为新 item 浮现)。
   useEffect(() => {
@@ -208,7 +212,7 @@ export function OpenCanvas({
       );
       const base = kept.length;
       const add = seedVersions
-        .filter((v) => !have.has(v.id))
+        .filter((v) => !have.has(v.id) && !removedVersionIdsRef.current.has(v.id))
         .map((v, i) => imageItemFromVersion(v, base + i));
       return add.length ? [...kept, ...add] : kept;
     });
@@ -382,7 +386,12 @@ export function OpenCanvas({
       } else if (e.key === "Delete" || e.key === "Backspace") {
         if (selected.size) {
           e.preventDefault();
-          setItems((p) => p.filter((it) => !selected.has(it.key)));
+          setItems((p) => {
+            for (const it of p)
+              if (selected.has(it.key) && it.versionId)
+                removedVersionIdsRef.current.add(it.versionId);
+            return p.filter((it) => !selected.has(it.key));
+          });
           setSelected(new Set());
         }
       } else if (e.key === "Escape") {
@@ -992,7 +1001,12 @@ export function OpenCanvas({
           title="删除选中"
           disabled={!selected.size}
           onClick={() => {
-            setItems((p) => p.filter((it) => !selected.has(it.key)));
+            setItems((p) => {
+            for (const it of p)
+              if (selected.has(it.key) && it.versionId)
+                removedVersionIdsRef.current.add(it.versionId);
+            return p.filter((it) => !selected.has(it.key));
+          });
             setSelected(new Set());
           }}
         >

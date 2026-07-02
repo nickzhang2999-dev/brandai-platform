@@ -605,6 +605,18 @@ function Workspace() {
     !!genId && status !== "SUCCEEDED" && status !== "FAILED" && !timedOut;
   const current = versions[activeVariant] ?? versions[0];
 
+  // popstate/缩略图切到「只有 ?gen= 没有 ?project=」或跨项目的历史出图时,加载出的
+  // generation 自带 projectId → 让 projectId 跟随,否则 campaign 作用域/历史/参考区
+  // 停在旧 project 与正在看的出图错位(Bugbot Medium)。同步两个 ref,避免「切项目重置
+  // genId」「project 反向同步」两个 effect 回头清掉这次 gen。
+  const loadedGenProject = poll?.generation.projectId ?? null;
+  useEffect(() => {
+    if (!loadedGenProject || loadedGenProject === projectId) return;
+    lastUrlProjectRef.current = loadedGenProject;
+    prevProjectRef.current = loadedGenProject;
+    setProjectId(loadedGenProject);
+  }, [loadedGenProject, projectId]);
+
   // —— 修改优化(改图)/ 终选 / 交付归档 ——
   const qc = useQueryClient();
   // 局部重画的目标版本(画布选中的那张出图变体);蒙版覆盖层对它出图。
@@ -672,9 +684,13 @@ function Workspace() {
       setActionErr("改图失败,请重试");
     }
   }, [editPoll, qc, wsId, genId]);
-  // 切换查看的出图 → 关掉上一张的续观察,避免跨 generation 无谓慢轮询。
+  // 切换查看的出图 → 关掉上一张的续观察,避免跨 generation 无谓慢轮询;并关闭还开着的
+  // 蒙版覆盖层 —— 否则 maskTarget 仍钉在旧 gen 的版本,确认时 runEdit 会拿旧 versionId
+  // 打到当前 genId(打错 generation / 报错,覆盖层还显示旧图)(Bugbot High)。
   useEffect(() => {
     setEditWatchUntil(0);
+    setMaskOpen(false);
+    setMaskTarget(null);
   }, [genId]);
   // F11 — refresh the quota bar once a generation completes so the displayed
   // 本周期/今日 用量 matches server-side enforcement without a manual reload.
@@ -776,6 +792,13 @@ function Workspace() {
   ) {
     const v = target ?? current;
     if (!v || !genId) return;
+    // 目标版本必须属于当前 genId —— 缩略图/历史/popstate 切了 generation 后,钉住的
+    // maskTarget 或迟到的 target 可能仍指向旧 gen 的版本,若照发会打到 /generations/
+    // {当前genId}/versions/{旧versionId}(打错 generation / 404)(Bugbot High)。
+    if (v.generationId !== genId) {
+      setActionErr("已切换到其他出图,请重新选中目标版本再改图。");
+      return;
+    }
     setActionErr(null);
     setBusy("edit");
     try {
@@ -845,7 +868,11 @@ function Workspace() {
         body: fd,
       });
       if (!res.ok) throw new Error("上传失败");
-      const a = (await res.json()) as { url: string; resolution?: string };
+      const a = (await res.json()) as {
+        id: string;
+        url: string;
+        resolution?: string;
+      };
       let width: number | undefined;
       let height: number | undefined;
       const m = a.resolution?.match(/(\d+)\D+(\d+)/);
@@ -853,7 +880,10 @@ function Workspace() {
         width = Number(m[1]);
         height = Number(m[2]);
       }
-      return { url: a.url, width, height };
+      // 走同源代理 URL(/assets/:id/raw)而非存储对象 URL —— 配了 browser 不可达/内网
+      // origin 的对象存储时,直接用 a.url 会往画布塞一张打不开的 <img>;全站素材都经
+      // assetThumbUrl 代理正是为此(Codex P2)。
+      return { url: assetThumbUrl(wsId, a.id, a.url), width, height };
     },
     [wsId],
   );
