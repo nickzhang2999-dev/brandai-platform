@@ -35,6 +35,23 @@ pnpm -F web build      # 生产 build
   伪造 `Generation*/Asset`；不用 `public/` 占位 SVG 冒充生成结果。
 - 验收 = 真 provider → 真 API → 真 DB。静态 Demo（`demo/*.html`）只能当**交互草图审阅件**，
   不得当验收证据，也别和真页面混在主干长期漂。
+- 例外：**交互自测**（点按钮/拖拽/编辑是否工作，见 G-INTERACT）允许用 mock provider 在本地跑——
+  那是测「交互行为」不是测「生成质量」。但**对外取证截图**仍禁 mock。
+
+### G-INTERACT · 交互类 UI 必须真浏览器点过（编译绿 ≠ 能用）
+改动**自定义画布 / 可拖拽 / 可缩放 / 可就地编辑 / 浮层工具条**类 UI（典型 `workspace/OpenCanvas.tsx`、
+`page.tsx`、`MaskPaintCanvas.tsx`）时，**`typecheck/build/L1` 三绿不算完成**——它们一个都不碰指针事件、
+焦点结算、`setPointerCapture`、RSC 软导航。这类 bug 只有**真浏览器逐功能点一遍**才暴露（本仓库
+2026-06-27/28 一轮连续 4 个交互 bug 全部漏过三绿，根因见 `docs/11`）。
+
+- **完成判据**：本地起栈 + headless Chromium **直连 `127.0.0.1`**（沙箱 MITM 代理会关掉到外网预览域的
+  浏览器连接，但 `localhost` 在 noProxy → 这是沙箱内唯一能自测交互的路径），逐功能点过且断言通过。
+- **现成 harness**：[`tests/interaction/canvas-functions.mjs`](./tests/interaction/canvas-functions.mjs)
+  （+ 同目录 README 一键起栈/造数/跑测）。改画布**先把它跑绿**，别从零写。
+- **四类必查反模式**（详见 `docs/11` §A）：① 画布内浮层外层 `onPointerDown` 必 `stopPropagation`；
+  ② 浅层 URL 同步用 `history.replaceState` 不用 `router.replace`；③ 长异步操作 arm→confirm + 有界
+  超时出口（§0.3/§2.4）；④ `setPointerCapture` 会吞原生 `dblclick`（手动双击检测）、`autoFocus` 会被
+  in-flight click 立刻 blur（延后一帧聚焦）、点普通 `div` 不 blur input（点框外主动 blur 提交）。
 
 ---
 

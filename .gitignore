@@ -24,3 +24,7 @@ prisma/*.db
 
 # build info
 *.tsbuildinfo
+
+# Redis runtime snapshot (local stack artifact — never commit)
+dump.rdb
+*.rdb

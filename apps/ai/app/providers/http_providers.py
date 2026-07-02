@@ -14,6 +14,7 @@ Two facts shape the VLM impl:
 mock stays the registry default, so the service runs with zero keys.
 """
 import base64
+import io
 import json
 import logging
 import math
@@ -164,6 +165,29 @@ _EDIT_OP_PROMPTS = {
     "INPAINT": "Inpaint and refine the masked region",
     "RESIZE": "Re-render the image at the requested size",
 }
+
+
+def _build_inpaint_mask(image_bytes: bytes, mask_ref: str) -> bytes:
+    """局部重画(INPAINT)蒙版归一。前端 MaskPaintCanvas 导出黑白蒙版(白=重绘、
+    黑=保留)；OpenAI /images/edits 需要 RGBA 蒙版且「透明区=被编辑、不透明区=保留」、
+    尺寸与底图一致。这里把白区转成透明、缩放到底图真实像素尺寸，返回 PNG 字节。
+    """
+    from PIL import Image
+
+    if mask_ref.startswith("data:"):
+        mask_ref = mask_ref.split(",", 1)[1]
+    mask_raw = base64.b64decode(mask_ref)
+    with Image.open(io.BytesIO(image_bytes)) as base_im:
+        size = base_im.size  # (W, H)
+    with Image.open(io.BytesIO(mask_raw)) as m:
+        gray = m.convert("L").resize(size)
+    # 白(>128)=重绘 → alpha 0(透明,被编辑); 其余 → alpha 255(保留)。向量化,无逐像素循环。
+    alpha = gray.point(lambda v: 0 if v > 128 else 255)
+    out = Image.new("RGBA", size, (0, 0, 0, 0))
+    out.putalpha(alpha)
+    buf = io.BytesIO()
+    out.save(buf, format="PNG")
+    return buf.getvalue()
 
 
 def _edit_prompt(op: str, payload: dict[str, Any]) -> str:
@@ -430,10 +454,22 @@ class HttpImageProvider(ImageProvider):
                         int(payload.get("width", 1024) or 1024),
                         int(payload.get("height", 1024) or 1024),
                     )
+                    files: dict[str, Any] = {
+                        "image": ("image.png", img_bytes, "image/png"),
+                    }
+                    # 局部重画:payload 带 mask(前端涂抹的黑白蒙版 data-URI)时,归一成
+                    # OpenAI 需要的 RGBA 蒙版(涂抹区透明=编辑)并作为 multipart 文件上传。
+                    mask_ref = payload.get("mask")
+                    if mask_ref:
+                        files["mask"] = (
+                            "mask.png",
+                            _build_inpaint_mask(img_bytes, str(mask_ref)),
+                            "image/png",
+                        )
                     r = await c.post(
                         f"{self.base_url}/images/edits",
                         headers={"Authorization": f"Bearer {self.api_key}"},
-                        files={"image": ("image.png", img_bytes, "image/png")},
+                        files=files,
                         data={
                             "prompt": _edit_prompt(op, payload),
                             "model": self.model or "gpt-image-2",

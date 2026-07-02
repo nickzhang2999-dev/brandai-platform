@@ -1,7 +1,14 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams, useRouter, usePathname } from "next/navigation";
+import {
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { useSearchParams, usePathname } from "next/navigation";
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
@@ -23,6 +30,8 @@ import {
   type RefAsset,
 } from "@/lib/reference-tray";
 import { useBrand } from "../brand-context";
+import { MaskPaintCanvas } from "./MaskPaintCanvas";
+import { OpenCanvas } from "./OpenCanvas";
 
 /**
  * P05 · AI 工作台 — 左画布 + 变体条，右 prompt 面板。真实出图（CLAUDE.md §2，
@@ -38,7 +47,12 @@ const SCENE_TYPES: { value: string; label: string }[] = [
   { value: "SELLING_POINT", label: "卖点图" },
 ];
 
-const EDIT_OPS: { value: string; label: string }[] = [
+// 迁移自 prd_agent 视觉创作 —— 选中图片上方的浮动操作工具条。「局部重画」是特殊项
+// （打开蒙版绘制覆盖层 → op=INPAINT + mask），其余项选中后用快捷编辑框补指令即出图。
+// 全部走真实 server-authoritative 改图链路（/edit → worker → ai.edit → 真 provider）。
+const CANVAS_OPS: { value: string; label: string; mask?: boolean }[] = [
+  { value: "INPAINT", label: "局部重画", mask: true },
+  { value: "OUTPAINT", label: "扩展" },
   { value: "REPLACE_BACKGROUND", label: "换背景" },
   { value: "RECOLOR", label: "改色" },
   { value: "EDIT_TEXT", label: "改文字" },
@@ -47,6 +61,24 @@ const EDIT_OPS: { value: string; label: string }[] = [
 ];
 
 const POLL_CAP_MS = 6 * 60 * 1000; // §2.2 有界中间态
+
+// 版本的“真实像素尺寸”。OpenAI 会把请求画布 snap 到最近的支持档(如 1920×1080 →
+// 1536×1024)，generate.worker 把 snap 后的真实字节尺寸落进 params.actualWidth/Height
+// (见 generate.worker.ts K5)。局部重画蒙版必须按真实字节尺寸绘制/导出——否则蒙版在
+// object-contain 的 <img> 里被拉伸/偏移，_build_inpaint_mask 再 resize 到真实字节时
+// 涂抹区错位、provider 改错地方(Codex P2)。缺 actual 时回退请求 width/height。
+function versionPixelSize(v: GenerationVersion): {
+  width: number;
+  height: number;
+} {
+  const p = (v.params ?? {}) as Record<string, unknown>;
+  const aw = typeof p.actualWidth === "number" ? p.actualWidth : null;
+  const ah = typeof p.actualHeight === "number" ? p.actualHeight : null;
+  return {
+    width: aw && ah ? aw : v.width || 1024,
+    height: aw && ah ? ah : v.height || 1024,
+  };
+}
 
 type JobState = {
   generation: Generation;
@@ -97,7 +129,6 @@ export default function WorkspacePage() {
 function Workspace() {
   const { wsId, brandName } = useBrand();
   const search = useSearchParams();
-  const router = useRouter();
   const pathname = usePathname();
   const presetProject = search.get("project");
   // E · 深链/刷新恢复 —— ?gen= 指明当前查看的出图。通知中心与队列 widget 都跳到
@@ -316,63 +347,6 @@ function Workspace() {
   // Reference histVersion so the toolbar re-renders when stacks change.
   void histVersion;
 
-  // F3 / L6 — preview zoom (zoom in/out/reset/fit). `fit` lets the image scale
-  // to the canvas (object-contain default); a numeric zoom switches to scaled
-  // overflow-scroll so the operator can inspect detail.
-  const [zoom, setZoom] = useState(1);
-  const [fitMode, setFitMode] = useState(true);
-  const ZOOM_MIN = 0.5;
-  const ZOOM_MAX = 4;
-  function zoomIn() {
-    setFitMode(false);
-    setZoom((z) => Math.min(ZOOM_MAX, Math.round((z + 0.25) * 100) / 100));
-  }
-  function zoomOut() {
-    setFitMode(false);
-    setZoom((z) => Math.max(ZOOM_MIN, Math.round((z - 0.25) * 100) / 100));
-  }
-  function zoomReset() {
-    setZoom(1);
-    setFitMode(false);
-  }
-  function zoomFit() {
-    setZoom(1);
-    setFitMode(true);
-    setPan({ x: 0, y: 0 });
-  }
-  const [canvasTool, setCanvasTool] = useState<CanvasTool>("select");
-  const [pan, setPan] = useState({ x: 0, y: 0 });
-  const dragRef = useRef<{
-    pointerId: number;
-    x: number;
-    y: number;
-    startX: number;
-    startY: number;
-  } | null>(null);
-
-  function onStagePointerDown(e: React.PointerEvent<HTMLDivElement>) {
-    if (canvasTool !== "pan" || !current?.imageUrl) return;
-    e.currentTarget.setPointerCapture(e.pointerId);
-    dragRef.current = {
-      pointerId: e.pointerId,
-      x: e.clientX,
-      y: e.clientY,
-      startX: pan.x,
-      startY: pan.y,
-    };
-  }
-  function onStagePointerMove(e: React.PointerEvent<HTMLDivElement>) {
-    const drag = dragRef.current;
-    if (!drag || drag.pointerId !== e.pointerId) return;
-    setPan({
-      x: drag.startX + e.clientX - drag.x,
-      y: drag.startY + e.clientY - drag.y,
-    });
-  }
-  function onStagePointerUp(e: React.PointerEvent<HTMLDivElement>) {
-    if (dragRef.current?.pointerId === e.pointerId) dragRef.current = null;
-  }
-
   // F9 · 参考素材区 — localStorage-backed, scoped to (wsId, projectId), shared
   // with the assets page via reference-tray. Subscribe for cross-page updates.
   const [references, setReferences] = useState<RefAsset[]>([]);
@@ -455,10 +429,23 @@ function Workspace() {
   const [genId, setGenId] = useState<string | null>(presetGen);
   const [jobId, setJobId] = useState<string | null>(null);
   const [activeVariant, setActiveVariant] = useState(0);
+  // 画布上是否正有一张「当前变体 tile」被选中。点画布空白清选后画布无版本选中,但
+  // activeVariant/current 仍保留(终选/导出仍有目标)——用它让变体条高亮跟随画布选择,
+  // 清选即熄灭高亮,不出现「条高亮而画布空」的割裂(Bugbot Medium)。
+  const [canvasSel, setCanvasSel] = useState(true);
+  // 点变体缩略图的显式信号:即便点的是「已是当前」的变体(activeVersionId 不变、同步
+  // effect 不会重触发),也强制画布重新选中该 tile,消除「清选后点缩略图无反应」死锁。
+  const [selectNonce, setSelectNonce] = useState(0);
   const [submitErr, setSubmitErr] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const startedAt = useRef<number>(0);
   const [timedOut, setTimedOut] = useState(false);
+  // 改图(edit)中间态计时 —— §2.4 有界:改图轮询超过上界给明确出口,绝不无限「改图中…」。
+  const editStartedAt = useRef<number>(0);
+  // 改图客户端超时后,worker 可能仍在后台完成 —— 记一个有界的「继续观察到」时刻,让
+  // 主 generation 查询在此期间即便已 SUCCEEDED 也慢速续轮询,迟到的改图子版本才能
+  // 自动浮现,不必整页刷新(Bugbot Medium)。
+  const [editWatchUntil, setEditWatchUntil] = useState(0);
 
   const { data: poll } = useQuery<JobState>({
     queryKey: ["brandai-gen", wsId, genId, jobId],
@@ -472,7 +459,10 @@ function Workspace() {
     refetchInterval: (q) => {
       const d = q.state.data;
       const s = d?.job?.status ?? d?.generation.status;
-      if (s === "SUCCEEDED" || s === "FAILED") return false;
+      if (s === "SUCCEEDED" || s === "FAILED") {
+        // 改图超时后的有界续观察:generation 虽已终态,仍慢速轮询以捞回迟到的改图子版本。
+        return editWatchUntil > Date.now() ? 8000 : false;
+      }
       // §2.4 6-min 上界。实时出图(有 jobId)用本地 startedAt;回看历史出图
       // (jobId=null → startedAt=0)改用该 generation 的服务端起始时间
       // (startedAt→createdAt),否则 0 会让仍在跑的历史出图被瞬间判超时而停轮询,
@@ -541,26 +531,57 @@ function Workspace() {
     const prev = lastUrlProjectRef.current;
     lastUrlProjectRef.current = projectId;
     if (!projectId) return;
-    if (search.get("project") === projectId) return;
-    const params = new URLSearchParams(Array.from(search.entries()));
-    params.set("project", projectId);
-    // 只有「从一个已同步项目切到另一个」才抹旧 ?gen=(交给下面 gen 反向同步按新
-    // 项目重写);首次播种(prev=null,如默认选 projects[0])不抹,避免清掉仅带
-    // ?gen= 的深链。
-    if (prev) params.delete("gen");
-    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
-  }, [projectId, search, pathname, router]);
+    // 关键:从「实时地址栏」(window.location.search)读当前 query,而非 useSearchParams()。
+    // 用 history.replaceState 做浅层 URL 同步(避免 router.replace 的 RSC 软导航环/抖动),
+    // 但 Next 的 useSearchParams() 在 replaceState 后【不会】刷新——若仍从它读旧值,gen
+    // 同步会把过时的 ?project= 又写回去,刷新/分享打开错误 Campaign(Bugbot High)。
+    // window.location.search 始终反映上一次 replaceState 的真实结果,读它才不串味。
+    const cur = new URLSearchParams(window.location.search);
+    if (cur.get("project") === projectId) return;
+    cur.set("project", projectId);
+    // 只有「从一个已同步项目切到另一个」才抹旧 ?gen=(交给下面 gen 反向同步按新项目
+    // 重写);首次播种(prev=null,如默认选 projects[0])不抹,避免清掉仅带 ?gen= 的深链。
+    if (prev) cur.delete("gen");
+    window.history.replaceState(null, "", `${pathname}?${cur.toString()}`);
+  }, [projectId, pathname]);
 
   // E · 反向同步:把当前查看的出图写回 URL(?gen=),让刷新/分享落到精确那张。
   // 实时出图/改图进行中(jobId 仅会话内存在)不写,避免把一次性 job 深链出去。
   useEffect(() => {
     if (jobId) return;
     if (!genId) return;
-    if (search.get("gen") === genId) return;
-    const params = new URLSearchParams(Array.from(search.entries()));
-    params.set("gen", genId);
-    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
-  }, [genId, jobId, search, pathname, router]);
+    // 同上:读实时地址栏(而非 useSearchParams,后者在 replaceState 后不刷新),这样
+    // 上面 project 同步刚写入的 ?project= 会被带上,不会用旧 project 覆盖(Bugbot High)。
+    const cur = new URLSearchParams(window.location.search);
+    if (cur.get("gen") === genId) return;
+    cur.set("gen", genId);
+    window.history.replaceState(null, "", `${pathname}?${cur.toString()}`);
+  }, [genId, jobId, pathname]);
+
+  // E · 浏览器前进/后退(popstate)→ 让 in-app 状态跟随地址栏。上面用 replaceState 做
+  // 浅层 URL 同步,这些 URL 变更 Next 的路由/useSearchParams 并不知情;用户 back/forward
+  // 到这些历史项时,地址栏是一套值、genId/projectId 仍停在上一次 in-app 选择 → 画布/变体/
+  // 分享链三者不一致(Bugbot Medium)。这里监听 popstate,直接从实时地址栏重解析并应用,
+  // 同步 prevProjectRef/lastUrlProjectRef 避免「切项目重置 genId」「project 反向同步」两个
+  // effect 回头覆盖。
+  useEffect(() => {
+    const onPop = () => {
+      const q = new URLSearchParams(window.location.search);
+      const p = q.get("project");
+      const g = q.get("gen");
+      if (p) {
+        lastUrlProjectRef.current = p; // 别让 project 反向同步 effect 再写
+        prevProjectRef.current = p; // 别让「切项目重置 genId」effect 清掉下面的 gen
+        setProjectId(p);
+      }
+      setJobId(null);
+      setTimedOut(false);
+      setActiveVariant(0);
+      setGenId(g || null); // g 为空则回落到「展示最近一次」
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
 
   // 进入工作台默认展示该项目最近一次出图（history newest-first）。仅当本会话
   // 还没有选中/提交任何出图时播种 —— 不覆盖用户的实时提交，也不覆盖手动切换的历史。
@@ -591,19 +612,49 @@ function Workspace() {
     !!genId && status !== "SUCCEEDED" && status !== "FAILED" && !timedOut;
   const current = versions[activeVariant] ?? versions[0];
 
+  // popstate/缩略图切到「只有 ?gen= 没有 ?project=」或跨项目的历史出图时,加载出的
+  // generation 自带 projectId → 让 projectId 跟随,否则 campaign 作用域/历史/参考区
+  // 停在旧 project 与正在看的出图错位(Bugbot Medium)。同步两个 ref,避免「切项目重置
+  // genId」「project 反向同步」两个 effect 回头清掉这次 gen。
+  const loadedGenProject = poll?.generation.projectId ?? null;
   useEffect(() => {
-    setPan({ x: 0, y: 0 });
-    setFitMode(true);
-  }, [current?.id]);
+    // 仅当这条 gen 是「URL/深链驱动」且数据确凿时,才让 projectId 跟随它的 projectId。
+    // 三重闸门缺一不可,否则会与「手动切 Campaign」相互踩踏(url-test 回归根因):
+    // ① poll 必须确为当前 genId 的数据(poll.generation.id===genId)——切项目重播种时
+    //    genId 已变但 poll 滞后,用滞后的旧项目 projectId 会把刚切到的新项目又拽回去;
+    // ② 地址栏 ?gen 必须正好等于 genId——手动切项目时 project 反向同步已把 ?gen 删掉
+    //    (≠ genId),此刻 genId 只是短暂停在旧项目出图上、即将被重播种,不该跟随;
+    // ③ 该 gen 的 projectId 确实与当前 projectId 不同才需要跟随。
+    // 命中三者 = popstate/深链到 ?gen=(缺/错 ?project=)或点跨项目历史出图,才跟随。
+    if (poll?.generation.id !== genId) return;
+    if (!loadedGenProject || loadedGenProject === projectId) return;
+    const cur = new URLSearchParams(window.location.search);
+    if (cur.get("gen") !== genId) return;
+    // 自己把 ?project= 补进地址栏(保留 ?gen=)—— 深链只带 ?gen= 时,这条 effect 若只
+    // setProjectId 并把 lastUrlProjectRef 设成新值,下面的 project 反向同步 effect 会因
+    // 「ref===projectId」直接早退、永远不写 ?project=,分享/刷新丢了 project 那一半
+    // (Bugbot Medium)。这里直接写全 ?project=&gen= 再对齐 ref,project 同步 effect 保持
+    // no-op(且不会走 `if(prev) delete gen` 把深链 gen 抹掉)。
+    if (cur.get("project") !== loadedGenProject) {
+      cur.set("project", loadedGenProject);
+      window.history.replaceState(null, "", `${pathname}?${cur.toString()}`);
+    }
+    lastUrlProjectRef.current = loadedGenProject;
+    prevProjectRef.current = loadedGenProject;
+    setProjectId(loadedGenProject);
+  }, [loadedGenProject, projectId, genId, poll, pathname]);
 
   // —— 修改优化(改图)/ 终选 / 交付归档 ——
   const qc = useQueryClient();
-  const [editOp, setEditOp] = useState("REPLACE_BACKGROUND");
+  // 局部重画的目标版本(画布选中的那张出图变体);蒙版覆盖层对它出图。
+  const [maskTarget, setMaskTarget] = useState<GenerationVersion | null>(null);
   const [editInstr, setEditInstr] = useState("");
   const [editVid, setEditVid] = useState<string | null>(null);
   const [editJobId, setEditJobId] = useState<string | null>(null);
   const [actionErr, setActionErr] = useState<string | null>(null);
   const [busy, setBusy] = useState<null | "edit" | "final" | "export">(null);
+  // 局部重画 —— 蒙版绘制覆盖层开关（迁移自 prd_agent 视觉创作）。
+  const [maskOpen, setMaskOpen] = useState(false);
 
   // 改图 server-authoritative:POST→202→轮询 edit job→成功后刷新主 generation,
   // 新的子版本(parentVersionId)就会出现在变体条里。
@@ -616,21 +667,67 @@ function Workspace() {
     enabled: !!editJobId && !!editVid && !!genId,
     refetchInterval: (q) => {
       const s = q.state.data?.job?.status;
-      return s === "SUCCEEDED" || s === "FAILED" ? false : 2500;
+      if (s === "SUCCEEDED" || s === "FAILED") return false;
+      // §2.4 6-min 上界:改图卡死就停轮询(下面的计时器给出口),不无限转「改图中…」。
+      if (
+        editStartedAt.current > 0 &&
+        Date.now() - editStartedAt.current > POLL_CAP_MS
+      )
+        return false;
+      return 2500;
     },
   });
+  // §2.4 改图中间态超时出口:超界则清掉 job(busy 解锁)+ 给可读出口,不卡死工具条。
+  useEffect(() => {
+    if (!editJobId) return;
+    const t = setInterval(() => {
+      if (
+        editStartedAt.current > 0 &&
+        Date.now() - editStartedAt.current > POLL_CAP_MS
+      ) {
+        setEditJobId(null);
+        setEditVid(null);
+        setMaskOpen(false);
+        setActionErr("改图超时:可能仍在后台,请稍后在变体条查看或重试。");
+        // 立即捞一次(可能刚好在超时边界完成)+ 开启有界续观察,让迟到子版本自动浮现。
+        qc.invalidateQueries({ queryKey: ["brandai-gen", wsId, genId] });
+        setEditWatchUntil(Date.now() + POLL_CAP_MS);
+      }
+    }, 3000);
+    return () => clearInterval(t);
+  }, [editJobId, qc, wsId, genId]);
   useEffect(() => {
     const s = editPoll?.job?.status;
     if (s === "SUCCEEDED") {
       setEditJobId(null);
       setEditVid(null);
       setEditInstr("");
+      setMaskOpen(false); // 局部重画成功 → 关闭蒙版覆盖层，新子版本浮现在变体条
+      setEditWatchUntil(0); // 正常完成 → 关掉续观察
       qc.invalidateQueries({ queryKey: ["brandai-gen", wsId, genId] });
     } else if (s === "FAILED") {
       setEditJobId(null);
+      setMaskOpen(false);
       setActionErr("改图失败,请重试");
     }
   }, [editPoll, qc, wsId, genId]);
+  // 切换查看的出图 → 关掉上一张的续观察,避免跨 generation 无谓慢轮询;并关闭还开着的
+  // 蒙版覆盖层 —— 否则 maskTarget 仍钉在旧 gen 的版本,确认时 runEdit 会拿旧 versionId
+  // 打到当前 genId(打错 generation / 报错,覆盖层还显示旧图)(Bugbot High)。
+  useEffect(() => {
+    setEditWatchUntil(0);
+    setMaskOpen(false);
+    setMaskTarget(null);
+    // 同时停掉上一张的改图轮询 —— 否则 editVid/editJobId 仍指旧 gen 的版本,轮询会拿旧
+    // jobId 打到当前 genId 的版本 URL(打错 generation),UI 卡「改图中…」到超时、成功
+    // 回调还可能刷错 generation(Bugbot High)。改图 server-authoritative,离开后照常在
+    // 后台完成,回到该 gen 时子版本随 generation 轮询自然浮现。
+    setEditJobId(null);
+    setEditVid(null);
+    // 快捷编辑指令也清 —— 否则切到别的 generation 后工具条还留着上一张的指令文本,
+    // 对新图 arm 一个操作时可能带着旧 prompt 出图(Bugbot Low)。
+    setEditInstr("");
+  }, [genId]);
   // F11 — refresh the quota bar once a generation completes so the displayed
   // 本周期/今日 用量 matches server-side enforcement without a manual reload.
   const quotaInvalidatedRef = useRef<string | null>(null);
@@ -656,7 +753,6 @@ function Workspace() {
   useEffect(() => {
     if (jobId && status === "SUCCEEDED") setJobId(null);
   }, [status, jobId]);
-  const editing = !!editJobId;
 
   // G6 · 审阅 / 批准流 — 拿调用者在本空间的角色，决定显示哪些审核动作。
   // EDITOR/OWNER 可「提交审阅」；REVIEWER/OWNER 可「批准 / 驳回」。
@@ -721,22 +817,44 @@ function Workspace() {
     }
   }
 
-  async function submitEdit() {
-    if (!current || !genId || !editInstr.trim()) return;
+  // 统一的改图提交入口：换背景/改色/局部重画(INPAINT+mask)/扩展(OUTPAINT) 全走这里
+  // → POST /edit(202) → 轮询 edit job → 成功后新子版本(parentVersionId)浮现在变体条。
+  // 统一改图入口:换背景/改色/局部重画(INPAINT+mask)/扩展(OUTPAINT) 全走这里 →
+  // POST /edit(202) → 轮询 edit job → 成功后新子版本随 versions 浮现到画布。
+  async function runEdit(
+    op: string,
+    payload: Record<string, unknown>,
+    target?: GenerationVersion,
+  ) {
+    const v = target ?? current;
+    if (!v || !genId) return;
+    // 目标版本必须属于当前 genId —— 缩略图/历史/popstate 切了 generation 后,钉住的
+    // maskTarget 或迟到的 target 可能仍指向旧 gen 的版本,若照发会打到 /generations/
+    // {当前genId}/versions/{旧versionId}(打错 generation / 404)(Bugbot High)。
+    if (v.generationId !== genId) {
+      setActionErr("已切换到其他出图,请重新选中目标版本再改图。");
+      return;
+    }
     setActionErr(null);
     setBusy("edit");
     try {
+      // 带上源版本“真实像素尺寸” —— 否则 AI /v1/edit 缺 width/height 会默认 1024²,非方图
+      // (小红书封面/Banner)会被改成方图却按原比例存/导出,子版本尺寸对不上(Codex P2)。
+      // 且必须用 params.actualWidth/Height(OpenAI snap 后的真实字节尺寸)而非请求 width/
+      // height,否则局部重画蒙版按请求尺寸导出、_build_inpaint_mask 再 resize 到真实字节
+      // 会错位(Codex P2)。payload 显式给的尺寸优先(目前没有,留作扩展)。
+      const px = versionPixelSize(v);
+      const sized: Record<string, unknown> = {
+        width: px.width,
+        height: px.height,
+        ...payload,
+      };
       const r = await apiFetch<{ jobId: string }>(
-        `/api/workspaces/${wsId}/generations/${genId}/versions/${current.id}/edit`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            op: editOp,
-            payload: { prompt: editInstr.trim() },
-          }),
-        },
+        `/api/workspaces/${wsId}/generations/${genId}/versions/${v.id}/edit`,
+        { method: "POST", body: JSON.stringify({ op, payload: sized }) },
       );
-      setEditVid(current.id);
+      editStartedAt.current = Date.now();
+      setEditVid(v.id);
       setEditJobId(r.jobId);
     } catch (e) {
       setActionErr(e instanceof Error ? e.message : "改图提交失败");
@@ -744,6 +862,72 @@ function Workspace() {
       setBusy(null);
     }
   }
+
+  // 局部重画浮动入口:对画布选中的出图变体打开蒙版绘制覆盖层。
+  function openMaskPaint(target?: GenerationVersion) {
+    const v = target ?? current;
+    if (!v?.imageUrl) return;
+    setActionErr(null);
+    setMaskTarget(v);
+    setMaskOpen(true);
+  }
+
+  // 蒙版确认 → op=INPAINT + payload.mask(涂抹蒙版 data-URI) + prompt(指令)。
+  function confirmMaskEdit(maskDataUri: string, instruction: string) {
+    void runEdit(
+      "INPAINT",
+      { prompt: instruction, mask: maskDataUri },
+      maskTarget ?? current,
+    );
+  }
+
+  // 画布单选某出图变体 → 同步 activeVariant(右下终选/导出/审阅对它生效)。
+  const onCanvasSelectVersion = useCallback(
+    (versionId: string | null) => {
+      // 画布清掉版本选择(点空白/多选)→ 熄灭变体条高亮(current 仍保留),避免割裂。
+      if (!versionId) {
+        setCanvasSel(false);
+        return;
+      }
+      setCanvasSel(true);
+      setActiveVariant((prev) => {
+        const idx = versions.findIndex((x) => x.id === versionId);
+        return idx >= 0 ? idx : prev;
+      });
+    },
+    [versions],
+  );
+
+  // 上传图片到画布:走真实素材上传(R2)→ 公网 URL + 真实尺寸(从 resolution 串解析)。
+  const onCanvasUploadImage = useCallback(
+    async (file: File) => {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("category", "OTHER");
+      const res = await fetch(`/api/workspaces/${wsId}/assets/upload`, {
+        method: "POST",
+        body: fd,
+      });
+      if (!res.ok) throw new Error("上传失败");
+      const a = (await res.json()) as {
+        id: string;
+        url: string;
+        resolution?: string;
+      };
+      let width: number | undefined;
+      let height: number | undefined;
+      const m = a.resolution?.match(/(\d+)\D+(\d+)/);
+      if (m) {
+        width = Number(m[1]);
+        height = Number(m[2]);
+      }
+      // 走同源代理 URL(/assets/:id/raw)而非存储对象 URL —— 配了 browser 不可达/内网
+      // origin 的对象存储时,直接用 a.url 会往画布塞一张打不开的 <img>;全站素材都经
+      // assetThumbUrl 代理正是为此(Codex P2)。
+      return { url: assetThumbUrl(wsId, a.id, a.url), width, height };
+    },
+    [wsId],
+  );
 
   async function markFinal() {
     if (!current || !genId) return;
@@ -893,19 +1077,12 @@ function Workspace() {
           <span className="font-medium text-foreground">工作台</span>
         </nav>
         <div className="flex items-center gap-3">
-          {/* F2 / L6 — undo/redo (generation-form state) + zoom (preview). */}
+          {/* F2 / L6 — undo/redo (生成表单快照)。缩放在画布内自带。 */}
           <Toolbar
             canUndo={canUndo}
             canRedo={canRedo}
             onUndo={undo}
             onRedo={redo}
-            zoom={zoom}
-            fitMode={fitMode}
-            onZoomIn={zoomIn}
-            onZoomOut={zoomOut}
-            onZoomReset={zoomReset}
-            onZoomFit={zoomFit}
-            zoomDisabled={!current?.imageUrl}
           />
           <StatusPill status={status} timedOut={timedOut} />
         </div>
@@ -914,36 +1091,44 @@ function Workspace() {
       <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_340px]">
         {/* Canvas */}
         <div className="flex min-h-0 flex-col bg-background p-4">
-          <CanvasStage
-            version={current}
-            zoom={zoom}
-            fitMode={fitMode}
-            tool={canvasTool}
-            pan={pan}
+          <OpenCanvas
+            seedVersions={versions}
             running={running}
             status={status}
             timedOut={timedOut}
             error={
               poll?.job?.failedReason ?? poll?.generation.error ?? undefined
             }
-            onToolChange={setCanvasTool}
-            onZoomIn={zoomIn}
-            onZoomOut={zoomOut}
-            onZoomReset={zoomReset}
-            onZoomFit={zoomFit}
-            onPointerDown={onStagePointerDown}
-            onPointerMove={onStagePointerMove}
-            onPointerUp={onStagePointerUp}
+            onSelectVersion={onCanvasSelectVersion}
+            activeVersionId={current?.id ?? null}
+            selectNonce={selectNonce}
+            fitKey={genId ?? undefined}
+            onUploadImage={onCanvasUploadImage}
+            edit={{
+              ops: CANVAS_OPS,
+              busy: !!editJobId || busy === "edit",
+              instr: editInstr,
+              onInstrChange: setEditInstr,
+              onRun: (version, op) =>
+                void runEdit(op, { prompt: editInstr.trim() }, version),
+              onOpenMask: (version) => openMaskPaint(version),
+            }}
           />
           {versions.length > 0 ? (
             <div className="mt-4 flex flex-wrap gap-3">
               {versions.map((v, i) => (
                 <button
                   key={v.id}
-                  onClick={() => setActiveVariant(i)}
+                  onClick={() => {
+                    setActiveVariant(i);
+                    setCanvasSel(true);
+                    // 强制画布重新选中该变体 tile(即便 i 已是 activeVariant),
+                    // 让清选后点缩略图也能一键回到「条↔画布同步」状态。
+                    setSelectNonce((n) => n + 1);
+                  }}
                   className={[
                     "relative h-[82px] w-[118px] overflow-hidden rounded-[18px] border-2 transition-colors",
-                    i === activeVariant
+                    i === activeVariant && canvasSel
                       ? "border-primary"
                       : "border-transparent hover:border-border",
                   ].join(" ")}
@@ -1042,41 +1227,13 @@ function Workspace() {
           {/* 修改优化 / 终选 / 交付归档 —— 仅在已出图后对选中变体可用 */}
           {status === "SUCCEEDED" && current ? (
             <div className="mt-4 rounded-2xl border border-border bg-card p-4">
-              <div className="mb-2 text-xs font-semibold text-muted-foreground">
-                对选中图片
+              <div className="mb-1 text-xs font-semibold text-muted-foreground">
+                选中图片 · 终选与交付
               </div>
-              <div className="flex flex-wrap items-center gap-1.5">
-                {EDIT_OPS.map((o) => (
-                  <button
-                    key={o.value}
-                    onClick={() => setEditOp(o.value)}
-                    className={[
-                      "rounded-full px-2.5 py-1 text-xs transition-colors",
-                      editOp === o.value
-                        ? "bg-accent-soft font-medium text-primary"
-                        : "border border-border text-muted-foreground hover:bg-muted",
-                    ].join(" ")}
-                  >
-                    {o.label}
-                  </button>
-                ))}
-              </div>
-              <div className="mt-2 flex gap-2">
-                <input
-                  value={editInstr}
-                  onChange={(e) => setEditInstr(e.target.value)}
-                  placeholder="改图指令,如:把背景换成纯色米白、瓶身更通透…"
-                  className="h-10 flex-1 rounded-xl border border-border bg-background px-3 text-sm outline-none focus:border-primary/40"
-                />
-                <button
-                  onClick={submitEdit}
-                  disabled={!editInstr.trim() || busy === "edit" || editing}
-                  className="h-10 shrink-0 rounded-xl bg-gradient-to-br from-primary to-accent px-4 text-sm font-medium text-primary-foreground disabled:opacity-60"
-                >
-                  {editing ? "改图中…" : "改图"}
-                </button>
-              </div>
-              <div className="mt-3 flex flex-wrap gap-2">
+              <p className="mb-2 text-[11px] leading-relaxed text-muted-foreground">
+                改图操作(局部重画/换背景/扩展…)在画布上选中图片后从其上方工具条触发。
+              </p>
+              <div className="mt-1 flex flex-wrap gap-2">
                 <button
                   onClick={markFinal}
                   disabled={busy === "final" || current.isFinal}
@@ -1461,6 +1618,19 @@ function Workspace() {
             setReviewErr(null);
           }}
           onConfirm={() => void decideReview("REJECTED", rejectNote)}
+        />
+      ) : null}
+
+      {/* 局部重画 · 蒙版绘制覆盖层（迁移自 prd_agent 视觉创作）。涂抹重绘区 + 指令 →
+          op=INPAINT + payload.mask 走真实改图链路；提交中保持打开给出反馈，终态自动关闭。 */}
+      {maskOpen && (maskTarget ?? current)?.imageUrl ? (
+        <MaskPaintCanvas
+          imageSrc={(maskTarget ?? current)!.imageUrl}
+          imageWidth={versionPixelSize((maskTarget ?? current)!).width}
+          imageHeight={versionPixelSize((maskTarget ?? current)!).height}
+          submitting={!!editJobId || busy === "edit"}
+          onConfirm={confirmMaskEdit}
+          onCancel={() => setMaskOpen(false)}
         />
       ) : null}
     </div>
@@ -1909,94 +2079,36 @@ function Toolbar({
   canRedo,
   onUndo,
   onRedo,
-  zoom,
-  fitMode,
-  onZoomIn,
-  onZoomOut,
-  onZoomReset,
-  onZoomFit,
-  zoomDisabled,
 }: {
   canUndo: boolean;
   canRedo: boolean;
   onUndo: () => void;
   onRedo: () => void;
-  zoom: number;
-  fitMode: boolean;
-  onZoomIn: () => void;
-  onZoomOut: () => void;
-  onZoomReset: () => void;
-  onZoomFit: () => void;
-  zoomDisabled: boolean;
 }) {
   const btn =
     "flex h-8 min-w-8 items-center justify-center rounded-lg px-2 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40";
   return (
-    <div className="flex items-center gap-2">
-      <div className="flex items-center gap-0.5 rounded-xl border border-border bg-background p-0.5">
-        <button
-          type="button"
-          onClick={onUndo}
-          disabled={!canUndo}
-          aria-label="撤销"
-          title="撤销 (表单)"
-          className={btn}
-        >
-          ↶
-        </button>
-        <button
-          type="button"
-          onClick={onRedo}
-          disabled={!canRedo}
-          aria-label="重做"
-          title="重做 (表单)"
-          className={btn}
-        >
-          ↷
-        </button>
-      </div>
-      <div className="flex items-center gap-0.5 rounded-xl border border-border bg-background p-0.5">
-        <button
-          type="button"
-          onClick={onZoomOut}
-          disabled={zoomDisabled}
-          aria-label="缩小"
-          title="缩小"
-          className={btn}
-        >
-          −
-        </button>
-        <button
-          type="button"
-          onClick={onZoomReset}
-          disabled={zoomDisabled}
-          aria-label="实际大小"
-          title="100%"
-          className={`${btn} tabular-nums text-xs`}
-        >
-          {fitMode ? "适应" : `${Math.round(zoom * 100)}%`}
-        </button>
-        <button
-          type="button"
-          onClick={onZoomIn}
-          disabled={zoomDisabled}
-          aria-label="放大"
-          title="放大"
-          className={btn}
-        >
-          ＋
-        </button>
-        <button
-          type="button"
-          onClick={onZoomFit}
-          disabled={zoomDisabled}
-          aria-label="适应窗口"
-          title="适应窗口"
-          className={`${btn} text-xs`}
-        >
-          ⤢
-        </button>
-      </div>
+    <div className="flex items-center gap-0.5 rounded-xl border border-border bg-background p-0.5">
+      <button
+        type="button"
+        onClick={onUndo}
+        disabled={!canUndo}
+        aria-label="撤销"
+        title="撤销 (表单)"
+        className={btn}
+      >
+        ↶
+      </button>
+      <button
+        type="button"
+        onClick={onRedo}
+        disabled={!canRedo}
+        aria-label="重做"
+        title="重做 (表单)"
+        className={btn}
+      >
+        ↷
+      </button>
     </div>
   );
 }
@@ -2021,7 +2133,6 @@ function StatusPill({
 }
 
 type Tone = "muted" | "primary" | "success" | "danger" | "warning";
-type CanvasTool = "select" | "pan";
 
 function Pill({ tone, children }: { tone: Tone; children: React.ReactNode }) {
   const map: Record<Tone, string> = {
@@ -2035,260 +2146,6 @@ function Pill({ tone, children }: { tone: Tone; children: React.ReactNode }) {
     <span className={`rounded-full px-3 py-1 text-xs font-medium ${map[tone]}`}>
       {children}
     </span>
-  );
-}
-
-function CanvasStage({
-  version,
-  zoom,
-  fitMode,
-  tool,
-  pan,
-  running,
-  status,
-  timedOut,
-  error,
-  onToolChange,
-  onZoomIn,
-  onZoomOut,
-  onZoomReset,
-  onZoomFit,
-  onPointerDown,
-  onPointerMove,
-  onPointerUp,
-}: {
-  version?: GenerationVersion;
-  zoom: number;
-  fitMode: boolean;
-  tool: CanvasTool;
-  pan: { x: number; y: number };
-  running: boolean;
-  status: string | null;
-  timedOut: boolean;
-  error?: string;
-  onToolChange: (tool: CanvasTool) => void;
-  onZoomIn: () => void;
-  onZoomOut: () => void;
-  onZoomReset: () => void;
-  onZoomFit: () => void;
-  onPointerDown: (event: React.PointerEvent<HTMLDivElement>) => void;
-  onPointerMove: (event: React.PointerEvent<HTMLDivElement>) => void;
-  onPointerUp: (event: React.PointerEvent<HTMLDivElement>) => void;
-}) {
-  const hasImage = !!version?.imageUrl;
-  const transform = fitMode
-    ? `translate(${pan.x}px, ${pan.y}px)`
-    : `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`;
-  const disabled = !hasImage;
-  const toolButton = (name: CanvasTool, label: string, title: string) => (
-    <button
-      type="button"
-      title={title}
-      aria-label={title}
-      disabled={disabled}
-      onClick={() => onToolChange(name)}
-      className={[
-        "flex h-10 w-10 items-center justify-center rounded-xl text-base transition-colors disabled:opacity-35",
-        tool === name
-          ? "bg-primary text-primary-foreground"
-          : "text-muted-foreground hover:bg-muted hover:text-foreground",
-      ].join(" ")}
-    >
-      {label}
-    </button>
-  );
-  return (
-    <div
-      className={[
-        "relative flex min-h-[560px] flex-1 items-center justify-center overflow-hidden rounded-[28px] border border-border bg-card",
-        hasImage && tool === "pan" ? "cursor-grab active:cursor-grabbing" : "",
-      ].join(" ")}
-      style={{
-        backgroundImage:
-          "radial-gradient(circle at 1px 1px, rgba(124,92,255,0.12) 1px, transparent 0)",
-        backgroundSize: "18px 18px",
-      }}
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
-      onPointerCancel={onPointerUp}
-    >
-      <div className="absolute left-1/2 top-4 z-20 flex -translate-x-1/2 items-center gap-2 rounded-2xl border border-border bg-card/95 px-3 py-2 text-xs text-foreground shadow-[0_14px_40px_rgba(30,30,60,0.12)] backdrop-blur">
-        <button
-          type="button"
-          onClick={onZoomOut}
-          disabled={disabled}
-          className="flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-35"
-          aria-label="缩小"
-          title="缩小"
-        >
-          −
-        </button>
-        <span className="min-w-12 text-center font-mono tabular-nums">
-          {fitMode ? "适配" : `${Math.round(zoom * 100)}%`}
-        </span>
-        <button
-          type="button"
-          onClick={onZoomIn}
-          disabled={disabled}
-          className="flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-35"
-          aria-label="放大"
-          title="放大"
-        >
-          +
-        </button>
-        <span className="h-5 w-px bg-border" />
-        <button
-          type="button"
-          onClick={onZoomFit}
-          disabled={disabled}
-          className="rounded-lg px-2 py-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-35"
-        >
-          适配
-        </button>
-        <button
-          type="button"
-          onClick={onZoomReset}
-          disabled={disabled}
-          className="rounded-lg px-2 py-1 font-mono text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-35"
-        >
-          100%
-        </button>
-      </div>
-
-      <div className="absolute left-4 top-1/2 z-20 flex -translate-y-1/2 flex-col gap-2 rounded-2xl border border-border bg-card/95 p-2 shadow-[0_14px_40px_rgba(30,30,60,0.12)] backdrop-blur">
-        {toolButton("select", "↖", "选择")}
-        {toolButton("pan", "✥", "移动画布")}
-        <span className="my-1 h-px bg-border" />
-        <span className="flex h-10 w-10 items-center justify-center rounded-xl text-muted-foreground/50">
-          ▢
-        </span>
-        <span className="flex h-10 w-10 items-center justify-center rounded-xl text-muted-foreground/50">
-          T
-        </span>
-      </div>
-
-      {hasImage ? (
-        <div
-          className="relative select-none"
-          style={{
-            transform,
-            transformOrigin: "center",
-            transition: tool === "pan" ? "none" : "transform 160ms ease",
-          }}
-        >
-          <div className="pointer-events-none absolute -inset-5 rounded-[32px] border border-border bg-background/35" />
-          <div className="relative rounded-sm border-2 border-[#4A9BFF] bg-[#4A9BFF]/5 shadow-[0_24px_70px_rgba(30,30,60,0.18)]">
-            <div className="absolute -left-0.5 -top-8 rounded-lg border border-border bg-card px-2 py-1 text-[11px] font-medium text-foreground shadow-sm">
-              选中图片
-            </div>
-            {version.width && version.height ? (
-              <div className="absolute -right-0.5 -top-8 rounded-lg border border-border bg-card px-2 py-1 font-mono text-[11px] text-foreground shadow-sm">
-                {version.width} × {version.height}
-              </div>
-            ) : null}
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={version.imageUrl}
-              alt="生成结果"
-              draggable={false}
-              className={[
-                "block rounded-sm object-contain",
-                fitMode
-                  ? "max-h-[72vh] max-w-[min(92vw,1120px)]"
-                  : "max-w-none",
-              ].join(" ")}
-            />
-            {[
-              "-left-2 -top-2",
-              "-right-2 -top-2",
-              "-left-2 -bottom-2",
-              "-right-2 -bottom-2",
-            ].map((pos) => (
-              <span
-                key={pos}
-                className={`absolute h-4 w-4 rounded-full border-2 border-white bg-[#4A9BFF] shadow ${pos}`}
-              />
-            ))}
-            {[
-              "left-1/2 -top-2 -translate-x-1/2",
-              "left-1/2 -bottom-2 -translate-x-1/2",
-              "-left-2 top-1/2 -translate-y-1/2",
-              "-right-2 top-1/2 -translate-y-1/2",
-            ].map((pos) => (
-              <span
-                key={pos}
-                className={`absolute h-3 w-3 rounded-full border-2 border-white bg-[#4A9BFF] shadow ${pos}`}
-              />
-            ))}
-          </div>
-        </div>
-      ) : (
-        <CanvasPlaceholder
-          running={running}
-          status={status}
-          timedOut={timedOut}
-          error={error}
-        />
-      )}
-    </div>
-  );
-}
-
-function CanvasPlaceholder({
-  running,
-  status,
-  timedOut,
-  error,
-}: {
-  running: boolean;
-  status: string | null;
-  timedOut: boolean;
-  error?: string;
-}) {
-  if (timedOut)
-    return (
-      <Center>
-        <div className="text-sm text-warning">生成超时</div>
-        <p className="mt-1 text-xs text-muted-foreground">
-          可能仍在后台处理或已失败，请点「提交制作」重试。
-        </p>
-      </Center>
-    );
-  if (status === "FAILED")
-    return (
-      <Center>
-        <div className="text-sm text-destructive">生成失败</div>
-        <p className="mt-1 max-w-sm text-xs text-muted-foreground">
-          {error || "请检查 AI provider 配置或稍后重试。"}
-        </p>
-      </Center>
-    );
-  if (running)
-    return (
-      <Center>
-        <div className="h-10 w-10 animate-spin rounded-full border-2 border-accent-soft border-t-primary" />
-        <div className="mt-3 text-sm text-muted-foreground">
-          {status === "PENDING" ? "已受理，排队中…" : "AI 正在生成…"}
-        </div>
-      </Center>
-    );
-  return (
-    <Center>
-      <div className="text-5xl text-accent-soft">✸</div>
-      <div className="mt-3 text-sm font-medium">填写需求并提交制作</div>
-      <p className="mt-1 max-w-sm text-xs text-muted-foreground">
-        提交后由 worker 调用真实 AI provider 受控出图，结果会浮现在这里。
-      </p>
-    </Center>
-  );
-}
-
-function Center({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="flex flex-col items-center justify-center text-center">
-      {children}
-    </div>
   );
 }
 

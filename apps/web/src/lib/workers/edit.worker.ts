@@ -133,6 +133,19 @@ export async function runEditJob(
   const editedWidth = hasExplicitSize ? result.width : source.width;
   const editedHeight = hasExplicitSize ? result.height : source.height;
 
+  // AI /v1/edit 回显 params = {"op": op, **payload},对局部重画会把整块 base64
+  // mask 原样带回 → 若直接 spread 进 GenerationVersion.params 顶层,mask 仍被持久化
+  // (下面 edit.payload 的剔除白做了),拖慢 generation 读取、撑大 DB 行(Codex P2)。
+  // 顶层 params 里也把 mask 剔掉。
+  const resultParams =
+    result.params && typeof result.params === "object"
+      ? (result.params as Record<string, unknown>)
+      : {};
+  const resultParamsNoMask =
+    "mask" in resultParams
+      ? { ...resultParams, mask: "[mask omitted]" }
+      : resultParams;
+
   const created = await prisma.generationVersion.create({
     data: {
       generationId,
@@ -146,10 +159,15 @@ export async function runEditJob(
         // Carry forward the source params (applied rules / scene) then
         // record this edit so M6 can trace the lineage and what changed.
         ...sourceParams,
-        ...result.params,
+        ...resultParamsNoMask,
         edit: {
           op,
-          payload,
+          // 局部重画的 mask 是大块 base64 data-URI(可达数百 KB),只用于本次出图,
+          // 不必落进 GenerationVersion.params 拖慢读取——持久化时剔除,留个标记。
+          payload:
+            payload && "mask" in payload
+              ? { ...payload, mask: "[mask omitted]" }
+              : payload,
           sourceVersionId: source.id,
           editedAt: new Date().toISOString(),
         },
