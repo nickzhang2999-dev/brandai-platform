@@ -611,11 +611,22 @@ function Workspace() {
   // genId」「project 反向同步」两个 effect 回头清掉这次 gen。
   const loadedGenProject = poll?.generation.projectId ?? null;
   useEffect(() => {
+    // 仅当这条 gen 是「URL/深链驱动」且数据确凿时,才让 projectId 跟随它的 projectId。
+    // 三重闸门缺一不可,否则会与「手动切 Campaign」相互踩踏(url-test 回归根因):
+    // ① poll 必须确为当前 genId 的数据(poll.generation.id===genId)——切项目重播种时
+    //    genId 已变但 poll 滞后,用滞后的旧项目 projectId 会把刚切到的新项目又拽回去;
+    // ② 地址栏 ?gen 必须正好等于 genId——手动切项目时 project 反向同步已把 ?gen 删掉
+    //    (≠ genId),此刻 genId 只是短暂停在旧项目出图上、即将被重播种,不该跟随;
+    // ③ 该 gen 的 projectId 确实与当前 projectId 不同才需要跟随。
+    // 命中三者 = popstate/深链到 ?gen=(缺/错 ?project=)或点跨项目历史出图,才跟随。
+    if (poll?.generation.id !== genId) return;
     if (!loadedGenProject || loadedGenProject === projectId) return;
+    const urlGen = new URLSearchParams(window.location.search).get("gen");
+    if (urlGen !== genId) return;
     lastUrlProjectRef.current = loadedGenProject;
     prevProjectRef.current = loadedGenProject;
     setProjectId(loadedGenProject);
-  }, [loadedGenProject, projectId]);
+  }, [loadedGenProject, projectId, genId, poll]);
 
   // —— 修改优化(改图)/ 终选 / 交付归档 ——
   const qc = useQueryClient();
