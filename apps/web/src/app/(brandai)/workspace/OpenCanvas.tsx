@@ -257,24 +257,37 @@ export function OpenCanvas({
     setArmedOp(null);
   }, [soloVersion?.id]);
 
-  // 外部当前变体(点缩略图/终选条切版本) → 同步画布选择,消除「缩略图选 B、画布仍选
-  // A → 改图打 A、终选/导出打 B」的分叉(Bugbot High)。只在 activeVersionId「真的变了」
-  // 时应用一次(用 ref 判),避免 items 变化(拖拽/新子版本)时反复覆盖用户对形状/文字
-  // 的选择;`undefined` 哨兵让首屏只采用初值、不自动选中(保持「进入不自动选中」)。
+  // 外部当前变体(缩略图条默认高亮第 0 张 / 点缩略图 / 终选条切版本) → 同步画布选择,
+  // 消除「缩略图选 B、画布仍选 A → 改图打 A、终选/导出打 B」的分叉(Bugbot High)。
+  // 用 ref 记「已对哪个 activeVersionId 应用过」,避免 items 变化(拖拽/新子版本)时反复
+  // 覆盖用户对形状/文字的选择——只在 activeVersionId 真的变、或它的 tile 刚挂载时应用一次。
   const appliedActiveVerRef = useRef<string | null | undefined>(undefined);
   useEffect(() => {
     if (activeVersionId == null) return;
-    if (appliedActiveVerRef.current === undefined) {
-      appliedActiveVerRef.current = activeVersionId; // 首屏采用初值,不强制选中
-      return;
-    }
     if (appliedActiveVerRef.current === activeVersionId) return;
     const it = items.find((i) => i.versionId === activeVersionId);
-    if (!it) return;
-    appliedActiveVerRef.current = activeVersionId;
-    setSelected((prev) =>
-      prev.size === 1 && prev.has(it.key) ? prev : new Set([it.key]),
-    );
+    if (it) {
+      // 命中 tile → 选中它。首屏 seedVersions 合并后 tile 一挂载即在此选中当前变体(缩略图
+      // 条本就默认高亮它),不再出现「缩略图高亮却画布空选、浮动改图条不出」的死锁(Bugbot Med)。
+      appliedActiveVerRef.current = activeVersionId;
+      setSelected((prev) =>
+        prev.size === 1 && prev.has(it.key) ? prev : new Set([it.key]),
+      );
+      return;
+    }
+    // 无匹配 tile。区分两种:①该版本被用户从画布删了(removedVersionIdsRef 命中) →
+    // 清掉画布上残留的「其它版本 tile」选择,避免缩略图选已删版本、画布仍选旧版本 tile
+    // 的分叉(Bugbot High);手动加的形状/文字选择不动(它们无 versionId,不构成版本分叉)。
+    // ②只是首屏 tile 还没挂载 → 不动、不推进 ref,等 tile 出现再在上面命中选中。
+    if (removedVersionIdsRef.current.has(activeVersionId)) {
+      appliedActiveVerRef.current = activeVersionId;
+      setSelected((prev) => {
+        const hasVersionTile = [...prev].some(
+          (k) => items.find((i) => i.key === k)?.versionId != null,
+        );
+        return hasVersionTile ? new Set<string>() : prev;
+      });
+    }
   }, [activeVersionId, items]);
 
   // 文字编辑「点击空白处提交」—— 点画布(普通 div,不可聚焦)不会让 textarea 失焦,
