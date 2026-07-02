@@ -417,6 +417,10 @@ function Workspace() {
   const [timedOut, setTimedOut] = useState(false);
   // 改图(edit)中间态计时 —— §2.4 有界:改图轮询超过上界给明确出口,绝不无限「改图中…」。
   const editStartedAt = useRef<number>(0);
+  // 改图客户端超时后,worker 可能仍在后台完成 —— 记一个有界的「继续观察到」时刻,让
+  // 主 generation 查询在此期间即便已 SUCCEEDED 也慢速续轮询,迟到的改图子版本才能
+  // 自动浮现,不必整页刷新(Bugbot Medium)。
+  const [editWatchUntil, setEditWatchUntil] = useState(0);
 
   const { data: poll } = useQuery<JobState>({
     queryKey: ["brandai-gen", wsId, genId, jobId],
@@ -430,7 +434,10 @@ function Workspace() {
     refetchInterval: (q) => {
       const d = q.state.data;
       const s = d?.job?.status ?? d?.generation.status;
-      if (s === "SUCCEEDED" || s === "FAILED") return false;
+      if (s === "SUCCEEDED" || s === "FAILED") {
+        // 改图超时后的有界续观察:generation 虽已终态,仍慢速轮询以捞回迟到的改图子版本。
+        return editWatchUntil > Date.now() ? 8000 : false;
+      }
       // §2.4 6-min 上界。实时出图(有 jobId)用本地 startedAt;回看历史出图
       // (jobId=null → startedAt=0)改用该 generation 的服务端起始时间
       // (startedAt→createdAt),否则 0 会让仍在跑的历史出图被瞬间判超时而停轮询,
@@ -499,32 +506,32 @@ function Workspace() {
     const prev = lastUrlProjectRef.current;
     lastUrlProjectRef.current = projectId;
     if (!projectId) return;
-    if (search.get("project") === projectId) return;
-    const params = new URLSearchParams(Array.from(search.entries()));
-    params.set("project", projectId);
-    // 只有「从一个已同步项目切到另一个」才抹旧 ?gen=(交给下面 gen 反向同步按新
-    // 项目重写);首次播种(prev=null,如默认选 projects[0])不抹,避免清掉仅带
-    // ?gen= 的深链。
-    if (prev) params.delete("gen");
-    // 用 history.replaceState 做「浅层」URL 同步(只更新地址栏给刷新/分享用),
-    // 不走 router.replace —— 后者对同路由的 query 变更会发起 RSC 软导航,反复触发
-    // 本组件重渲 + useSearchParams 变更,与下面的 gen 同步互相激发成导航环(Network
-    // 满屏 /workspace?_rsc、画面「反复抖动」)。replaceState 不发导航、不重取 RSC,
-    // SSR/刷新仍从真实地址栏解析,深链/分享不受影响。
-    window.history.replaceState(null, "", `${pathname}?${params.toString()}`);
-  }, [projectId, search, pathname]);
+    // 关键:从「实时地址栏」(window.location.search)读当前 query,而非 useSearchParams()。
+    // 用 history.replaceState 做浅层 URL 同步(避免 router.replace 的 RSC 软导航环/抖动),
+    // 但 Next 的 useSearchParams() 在 replaceState 后【不会】刷新——若仍从它读旧值,gen
+    // 同步会把过时的 ?project= 又写回去,刷新/分享打开错误 Campaign(Bugbot High)。
+    // window.location.search 始终反映上一次 replaceState 的真实结果,读它才不串味。
+    const cur = new URLSearchParams(window.location.search);
+    if (cur.get("project") === projectId) return;
+    cur.set("project", projectId);
+    // 只有「从一个已同步项目切到另一个」才抹旧 ?gen=(交给下面 gen 反向同步按新项目
+    // 重写);首次播种(prev=null,如默认选 projects[0])不抹,避免清掉仅带 ?gen= 的深链。
+    if (prev) cur.delete("gen");
+    window.history.replaceState(null, "", `${pathname}?${cur.toString()}`);
+  }, [projectId, pathname]);
 
   // E · 反向同步:把当前查看的出图写回 URL(?gen=),让刷新/分享落到精确那张。
   // 实时出图/改图进行中(jobId 仅会话内存在)不写,避免把一次性 job 深链出去。
   useEffect(() => {
     if (jobId) return;
     if (!genId) return;
-    if (search.get("gen") === genId) return;
-    const params = new URLSearchParams(Array.from(search.entries()));
-    params.set("gen", genId);
-    // 同上:浅层 replaceState,避免 RSC 软导航环 + 抖动。
-    window.history.replaceState(null, "", `${pathname}?${params.toString()}`);
-  }, [genId, jobId, search, pathname]);
+    // 同上:读实时地址栏(而非 useSearchParams,后者在 replaceState 后不刷新),这样
+    // 上面 project 同步刚写入的 ?project= 会被带上,不会用旧 project 覆盖(Bugbot High)。
+    const cur = new URLSearchParams(window.location.search);
+    if (cur.get("gen") === genId) return;
+    cur.set("gen", genId);
+    window.history.replaceState(null, "", `${pathname}?${cur.toString()}`);
+  }, [genId, jobId, pathname]);
 
   // 进入工作台默认展示该项目最近一次出图（history newest-first）。仅当本会话
   // 还没有选中/提交任何出图时播种 —— 不覆盖用户的实时提交，也不覆盖手动切换的历史。
@@ -600,10 +607,13 @@ function Workspace() {
         setEditVid(null);
         setMaskOpen(false);
         setActionErr("改图超时:可能仍在后台,请稍后在变体条查看或重试。");
+        // 立即捞一次(可能刚好在超时边界完成)+ 开启有界续观察,让迟到子版本自动浮现。
+        qc.invalidateQueries({ queryKey: ["brandai-gen", wsId, genId] });
+        setEditWatchUntil(Date.now() + POLL_CAP_MS);
       }
     }, 3000);
     return () => clearInterval(t);
-  }, [editJobId]);
+  }, [editJobId, qc, wsId, genId]);
   useEffect(() => {
     const s = editPoll?.job?.status;
     if (s === "SUCCEEDED") {
@@ -611,6 +621,7 @@ function Workspace() {
       setEditVid(null);
       setEditInstr("");
       setMaskOpen(false); // 局部重画成功 → 关闭蒙版覆盖层，新子版本浮现在变体条
+      setEditWatchUntil(0); // 正常完成 → 关掉续观察
       qc.invalidateQueries({ queryKey: ["brandai-gen", wsId, genId] });
     } else if (s === "FAILED") {
       setEditJobId(null);
@@ -618,6 +629,10 @@ function Workspace() {
       setActionErr("改图失败,请重试");
     }
   }, [editPoll, qc, wsId, genId]);
+  // 切换查看的出图 → 关掉上一张的续观察,避免跨 generation 无谓慢轮询。
+  useEffect(() => {
+    setEditWatchUntil(0);
+  }, [genId]);
   // F11 — refresh the quota bar once a generation completes so the displayed
   // 本周期/今日 用量 matches server-side enforcement without a manual reload.
   const quotaInvalidatedRef = useRef<string | null>(null);
