@@ -97,6 +97,11 @@ export interface AdminWork {
   }[];
 }
 
+export function adminWorkImageUrl(versionId: string, imageUrl: string): string {
+  if (!imageUrl.startsWith("data:")) return imageUrl;
+  return `/api/admin/works/${encodeURIComponent(versionId)}/image`;
+}
+
 export async function listAllWorks(limit = 60): Promise<AdminWork[]> {
   const versions = await prisma.generationVersion.findMany({
     take: limit,
@@ -192,7 +197,7 @@ export async function listAllWorks(limit = 60): Promise<AdminWork[]> {
       sceneType: v.generation.sceneType,
       sellingPoint: v.generation.sellingPoint,
       scene: v.generation.scene,
-      imageUrl: v.imageUrl,
+      imageUrl: adminWorkImageUrl(v.id, v.imageUrl),
       width: v.width,
       height: v.height,
       index: v.index,
