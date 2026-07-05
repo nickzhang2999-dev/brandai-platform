@@ -86,6 +86,15 @@ export async function POST(
         ].map((item) => [item.assetId, item]),
       ).values(),
     );
+    const strictReferences = normalizedReferenceAssets.filter(
+      (item) => item.mode === "STRICT",
+    );
+    if (strictReferences.length > 1) {
+      throw new ApiException(
+        400,
+        "V0.0.8 当前仅支持 1 张素材使用「必须 100% 调用」。请保留一张主素材，其余素材改为「仿制借鉴」。",
+      );
+    }
 
     const project = await prisma.project.findUnique({
       where: { id: input.projectId },

@@ -275,6 +275,7 @@ async def generate(
     reference_images: list[dict[str, Any]] = []
     positive_refs: list[dict[str, Any]] = []
     negative_refs: list[dict[str, Any]] = []
+    strict_refs: list[dict[str, Any]] = []
     if req.aiConstraints is not None:
         negative = list(req.aiConstraints.negativePrompt or [])
         prompt_additions = list(req.aiConstraints.promptAdditions or [])
@@ -287,6 +288,21 @@ async def generate(
         ]
         positive_refs = [r for r in reference_images if r.get("polarity") == "positive"]
         negative_refs = [r for r in reference_images if r.get("polarity") == "negative"]
+        strict_refs = [
+            r
+            for r in positive_refs
+            if str(r.get("mode") or "").upper() == "STRICT"
+            or str(r.get("note") or "").startswith("STRICT_USE:")
+        ]
+        if len(strict_refs) > 1:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "V0.0.8 currently supports one STRICT reference asset per "
+                    "generation. Keep one mandatory asset and set the others to "
+                    "INSPIRATION."
+                ),
+            )
         if positive_refs:
             prompt_parts.append(
                 "Match the visual style, palette, composition and treatment of "
@@ -350,7 +366,8 @@ async def generate(
     # D5 — forward reference image URLs to the provider via `extra`. The basic
     # OpenAI images endpoint drops them (best-effort, like negative_prompt); an
     # img2img-capable gateway can read `reference_images`. The textual steer
-    # above is the portable signal.
+    # above is the portable signal. V0.0.8 handles STRICT references separately
+    # below with provider.edit(), so STRICT no longer silently degrades here.
     provider_extra: dict[str, Any] = dict(machine_rules)
     if reference_images:
         provider_extra["reference_images"] = [r["url"] for r in reference_images]
@@ -394,6 +411,57 @@ async def generate(
             params.update(extra)
         return params
 
+    strict_ref = strict_refs[0] if strict_refs else None
+
+    async def _strict_edit_version(
+        *,
+        width: int,
+        height: int,
+        extra_params: dict[str, Any] | None = None,
+    ) -> GeneratedVersion:
+        if not strict_ref:
+            raise RuntimeError("STRICT reference missing")
+        strict_prompt = (
+            "Use the input image as a mandatory locked asset. Preserve the "
+            "input asset's identity, shape, marks, product details and visible "
+            "content exactly. You may only resize, reposition, preserve aspect "
+            "ratio, and apply requested color treatment. Do not replace, redraw, "
+            "reinterpret, omit, crop away, or invent a substitute for the input "
+            f"asset.\n\nGeneration brief: {prompt}"
+        )
+        if negative:
+            strict_prompt += "\n\nAvoid: " + "; ".join(s for s in negative if s)
+        image_url = await provider.edit(
+            strict_ref["url"],
+            "STRICT_REFERENCE_GENERATE",
+            {
+                "prompt": strict_prompt,
+                "width": width,
+                "height": height,
+            },
+        )
+        actual = await _probe_image_size(image_url)
+        params_extra: dict[str, Any] = {
+            "generationPath": "strict_image_input",
+            "strictReferenceImage": strict_ref,
+            "strictReferencePolicy": "provider.edit image input; no text-only fallback",
+            **(
+                {"actualWidth": actual[0], "actualHeight": actual[1]}
+                if actual
+                else {}
+            ),
+        }
+        if extra_params:
+            params_extra.update(extra_params)
+        return GeneratedVersion(
+            imageUrl=image_url,
+            width=width,
+            height=height,
+            actualWidth=actual[0] if actual else None,
+            actualHeight=actual[1] if actual else None,
+            params=_echo_params(params_extra),
+        )
+
     # T-conn-b — usage/cost for the dashboard. `kind`/`model` are read off the
     # resolved provider (absent on mock).
     kind = getattr(provider, "kind", "mock")
@@ -410,46 +478,55 @@ async def generate(
         tok_sum = 0
         any_tok = False
         for t in req.targets:
-            urls = await provider.generate(
-                prompt,
-                width=t.width,
-                height=t.height,
-                n=1,
-                negative=negative or None,
-                extra=provider_extra or None,
-            )
-            # A provider may return no image for a target (filtered/empty
-            # response). Surface a controlled 502 with the failing target rather
-            # than an opaque 500 IndexError on urls[0].
-            if not urls:
-                raise HTTPException(
-                    status_code=502,
-                    detail=(
-                        f"AI provider returned no image for target "
-                        f"{t.key} ({t.width}x{t.height})"
-                    ),
+            if strict_ref:
+                versions.append(
+                    await _strict_edit_version(
+                        width=t.width,
+                        height=t.height,
+                        extra_params={"targetKey": t.key, "targetLabel": t.label},
+                    )
                 )
-            actual = await _probe_image_size(urls[0])
-            versions.append(
-                GeneratedVersion(
-                    imageUrl=urls[0],
+            else:
+                urls = await provider.generate(
+                    prompt,
                     width=t.width,
                     height=t.height,
-                    actualWidth=actual[0] if actual else None,
-                    actualHeight=actual[1] if actual else None,
-                    params=_echo_params(
-                        {
-                            "targetKey": t.key,
-                            "targetLabel": t.label,
-                            **(
-                                {"actualWidth": actual[0], "actualHeight": actual[1]}
-                                if actual
-                                else {}
-                            ),
-                        }
-                    ),
+                    n=1,
+                    negative=negative or None,
+                    extra=provider_extra or None,
                 )
-            )
+                # A provider may return no image for a target (filtered/empty
+                # response). Surface a controlled 502 with the failing target rather
+                # than an opaque 500 IndexError on urls[0].
+                if not urls:
+                    raise HTTPException(
+                        status_code=502,
+                        detail=(
+                            f"AI provider returned no image for target "
+                            f"{t.key} ({t.width}x{t.height})"
+                        ),
+                    )
+                actual = await _probe_image_size(urls[0])
+                versions.append(
+                    GeneratedVersion(
+                        imageUrl=urls[0],
+                        width=t.width,
+                        height=t.height,
+                        actualWidth=actual[0] if actual else None,
+                        actualHeight=actual[1] if actual else None,
+                        params=_echo_params(
+                            {
+                                "targetKey": t.key,
+                                "targetLabel": t.label,
+                                **(
+                                    {"actualWidth": actual[0], "actualHeight": actual[1]}
+                                    if actual
+                                    else {}
+                                ),
+                            }
+                        ),
+                    )
+                )
             c = _call_cost(kind, t.width, t.height, 1)
             if c is not None:
                 total_cost += c
@@ -470,6 +547,23 @@ async def generate(
         return GenerateResponse(versions=versions, usage=usage)
 
     started = time.perf_counter()
+    if strict_ref:
+        versions = [
+            await _strict_edit_version(width=w, height=h)
+            for _ in range(req.versionCount)
+        ]
+        return GenerateResponse(
+            versions=versions,
+            usage=GenerateUsage(
+                provider=kind,
+                model=model,
+                size=f"{w}x{h}",
+                imageCount=len(versions),
+                costUsd=_call_cost(kind, w, h, len(versions)),
+                latencyMs=int((time.perf_counter() - started) * 1000),
+                totalTokens=getattr(provider, "last_total_tokens", None),
+            ),
+        )
     urls = await provider.generate(
         prompt,
         width=w,

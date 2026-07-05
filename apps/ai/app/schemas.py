@@ -149,6 +149,8 @@ class ReferenceImage(BaseModel):
     url: str
     polarity: str  # "positive" | "negative"
     source: str
+    # V0.0.8 — "STRICT" must use an image-input path; "INSPIRATION" remains soft.
+    mode: Optional[str] = None
     note: Optional[str] = None
     # K7 — provenance of the URL for SSRF policy ("UPLOAD" | "WEBSITE").
     sourceHint: Optional[str] = None

@@ -210,6 +210,12 @@ export const ReferenceImage = z.object({
   url: z.string(),
   polarity: z.enum(["positive", "negative"]),
   source: z.string(),
+  /**
+   * V0.0.8 — explicit usage semantics for workspace-picked assets.
+   * STRICT means the image must be provided to an image-input path; callers must
+   * not silently degrade it into text-only prompt steering.
+   */
+  mode: z.enum(["STRICT", "INSPIRATION"]).optional(),
   note: z.string().optional(),
   /**
    * K7 — provenance of the reference image's URL so the AI service applies the

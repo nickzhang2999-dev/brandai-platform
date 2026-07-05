@@ -497,6 +497,7 @@ export async function runGenerateJob(
             url: a.url,
             polarity: "positive" as const,
             source: `asset:${id}`,
+            mode,
             note:
               mode === "STRICT"
                 ? `STRICT_USE: must preserve the referenced asset content exactly; only scale, placement, proportion and color treatment may change. Asset: ${a.fileName}`

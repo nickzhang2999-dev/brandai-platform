@@ -29,6 +29,7 @@ import {
   getReferences,
   removeReference,
   subscribeReferences,
+  updateReferenceMode,
   type ReferenceUseMode,
   type RefAsset,
 } from "@/lib/reference-tray";
@@ -409,6 +410,15 @@ function Workspace() {
     setReferences((prev) =>
       prev.map((r) => (r.id === assetId ? { ...r, mode } : r)),
     );
+    if (projectId) {
+      updateReferenceMode(
+        wsId,
+        projectId,
+        assetId,
+        mode,
+        references.find((r) => r.id === assetId),
+      );
+    }
   }
   function addPickedReferences(items: RefAsset[]) {
     if (!projectId) return;

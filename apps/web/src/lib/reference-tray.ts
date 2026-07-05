@@ -95,6 +95,22 @@ export function removeReference(
   if (next.length !== list.length) write(key, next);
 }
 
+export function updateReferenceMode(
+  wsId: string,
+  projectId: string,
+  assetId: string,
+  mode: ReferenceUseMode,
+  asset?: RefAsset,
+): void {
+  const key = keyFor(wsId, projectId);
+  const list = read(key);
+  const found = list.some((a) => a.id === assetId);
+  const next = found
+    ? list.map((a) => (a.id === assetId ? { ...a, mode } : a))
+    : [...list, { ...asset, id: assetId, mode }];
+  write(key, next);
+}
+
 export function clearReferences(wsId: string, projectId: string): void {
   const key = keyFor(wsId, projectId);
   if (typeof window === "undefined") return;
