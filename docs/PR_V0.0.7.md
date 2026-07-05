@@ -23,11 +23,12 @@
 
 - 已通过：`git diff --check`。
 - 已通过：package JSON 解析检查。
-- 已执行但未通过：`apps/web/node_modules/.bin/tsc --noEmit -p apps/web/tsconfig.json`。
-  - 阻塞原因：仓库既有 `@brandai/db` Prisma 导出问题与旧页面 / 旧接口隐式 `any` 问题仍存在。
-  - 本次修正：已清理 V0.0.7 新增 `referenceAssets` 链路中出现的类型不匹配与局部隐式类型噪音。
-- 已执行但未进入测试主体：`pnpm test`、`pnpm test:ai`、`pnpm -F web typecheck`、`pnpm -F web build`。
-  - 阻塞原因：pnpm 安装校验阶段要求审批 Prisma、esbuild、sharp 等依赖构建脚本，命令在进入测试主体前退出。
+- 已通过：`pnpm test`。
+- 已通过：`pnpm test:ai`。
+- 已通过：`pnpm -F web typecheck`。
+- 已通过：`pnpm -F web build`。
+  - 构建过程中出现既有 `url.parse()` deprecation 与静态收集阶段 `ECONNREFUSED` 警告，但命令退出码为 0，生产构建完成。
+- 已补充：`pnpm-workspace.yaml` 写入 pnpm 11 的依赖构建脚本审批配置，允许 Prisma、esbuild、sharp 等依赖在安装校验阶段运行必要脚本。
 - 未执行：端到端浏览器手动验收。
 
 ## 风险与说明
