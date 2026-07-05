@@ -238,6 +238,7 @@ model Asset {
   createdAt              DateTime          @default(now())
   // BrandAI 素材库智能字段（frozen-additive）：识别 worker 自动打标 / AI 描述 /
   // 收藏 / 分辨率展示串。
+  tags                   String[]          @default([])
   aiTags                 String[]          @default([])
   aiDescription          String?
   isFavorite             Boolean           @default(false)

@@ -13,6 +13,7 @@ import { serializeAsset } from "@/lib/assets";
  */
 const UpdateAssetInput = z.object({
   category: AssetCategory.optional(),
+  tags: z.array(z.string().min(1).max(32)).max(50).optional(),
   availableForGeneration: z.boolean().optional(),
   deprecatedAt: z.string().datetime().nullable().optional(),
   replacementAssetId: z.string().nullable().optional(),
@@ -43,6 +44,8 @@ export async function PATCH(
     const input = parse(UpdateAssetInput, await req.json());
     const data: Record<string, unknown> = {};
     if (input.category !== undefined) data.category = input.category;
+    if (input.tags !== undefined)
+      data.tags = Array.from(new Set(input.tags.map((t) => t.trim()).filter(Boolean)));
     if (input.availableForGeneration !== undefined)
       data.availableForGeneration = input.availableForGeneration;
     if (input.isFavorite !== undefined) data.isFavorite = input.isFavorite;

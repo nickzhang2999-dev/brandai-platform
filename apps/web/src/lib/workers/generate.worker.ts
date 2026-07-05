@@ -168,6 +168,15 @@ export interface GenerateJobData {
    * into the compiled `AIConstraints`. Optional for backward compat.
    */
   referenceAssetIds?: string[];
+  /**
+   * V0.0.7 — per-generation reference assets with explicit usage mode.
+   * STRICT = 必须 100% 调用；INSPIRATION = 仿制借鉴。 `referenceAssetIds`
+   * remains a legacy shorthand for INSPIRATION.
+   */
+  referenceAssets?: {
+    assetId: string;
+    mode: "STRICT" | "INSPIRATION";
+  }[];
 }
 
 /** P2.0 feature flag. Default on; set MULTI_SIZE_V1=0 to fall back to the
@@ -449,10 +458,21 @@ export async function runGenerateJob(
       };
       hasExplicitPicks = true;
     }
-    const referenceAssetIds = [
-      ...new Set((job.data.referenceAssetIds ?? []).filter((x) => !!x)),
-    ];
-    if (referenceAssetIds.length > 0) {
+    const referenceItems = Array.from(
+      new Map(
+        [
+          ...(job.data.referenceAssetIds ?? []).map((assetId) => ({
+            assetId,
+            mode: "INSPIRATION" as const,
+          })),
+          ...(job.data.referenceAssets ?? []),
+        ]
+          .filter((x) => !!x.assetId)
+          .map((x) => [x.assetId, x]),
+      ).values(),
+    );
+    const referenceAssetIds = referenceItems.map((r) => r.assetId);
+    if (referenceItems.length > 0) {
       const refAssets = await prisma.asset.findMany({
         // Only feed generatable IMAGE assets as visual references — mirror the
         // recognize path's lifecycle guard (skip deprecated/disabled) and
@@ -464,16 +484,23 @@ export async function runGenerateJob(
           deprecatedAt: null,
           mimeType: { startsWith: "image/" },
         },
-        select: { id: true, url: true, source: true },
+        select: { id: true, url: true, source: true, fileName: true },
       });
       const refImages = referenceAssetIds
         .map((id) => {
           const a = refAssets.find((r) => r.id === id);
           if (!a?.url) return null;
+          const mode =
+            referenceItems.find((r) => r.assetId === id)?.mode ??
+            "INSPIRATION";
           return {
             url: a.url,
             polarity: "positive" as const,
             source: `asset:${id}`,
+            note:
+              mode === "STRICT"
+                ? `STRICT_USE: must preserve the referenced asset content exactly; only scale, placement, proportion and color treatment may change. Asset: ${a.fileName}`
+                : `INSPIRATION: use as visual inspiration; composition, style and content may be adapted. Asset: ${a.fileName}`,
             // K7 — thread the asset's provenance so the AI service applies the
             // strict initial-host SSRF check to WEBSITE-harvested references
             // (DNS-rebinding guard). UPLOAD/storage keeps the trusting default.
@@ -483,8 +510,25 @@ export async function runGenerateJob(
         })
         .filter((r): r is NonNullable<typeof r> => r !== null);
       if (refImages.length > 0) {
+        const strictCount = referenceItems.filter(
+          (r) => r.mode === "STRICT",
+        ).length;
+        const inspirationCount = referenceItems.length - strictCount;
         aiConstraints = {
           ...aiConstraints,
+          promptAdditions: [
+            ...aiConstraints.promptAdditions,
+            ...(strictCount
+              ? [
+                  `Use ${strictCount} selected asset(s) as mandatory locked assets: preserve their original content exactly; only resize, reposition, keep aspect ratio, and adjust color treatment if requested.`,
+                ]
+              : []),
+            ...(inspirationCount
+              ? [
+                  `Use ${inspirationCount} selected asset(s) as inspiration references: borrow style, composition or visual language, but allow creative adaptation.`,
+                ]
+              : []),
+          ],
           referenceImages: [...aiConstraints.referenceImages, ...refImages],
         };
         hasExplicitPicks = true;
@@ -603,6 +647,9 @@ export async function runGenerateJob(
             // they display and so 重新生成 can reconstruct them from prior roots.
             ...(styleKeywords.length > 0 ? { styleKeywords } : {}),
             ...(referenceAssetIds.length > 0 ? { referenceAssetIds } : {}),
+            ...(referenceItems.length > 0
+              ? { referenceAssets: referenceItems }
+              : {}),
           } as Prisma.InputJsonValue,
           // complianceReport / parentVersionId / isFinal left null/default
           // for M5 / M4 / M6 to fill in.

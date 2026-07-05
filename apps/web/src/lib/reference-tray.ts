@@ -11,7 +11,13 @@
  * 空数组 / no-op。
  */
 
-export type RefAsset = { id: string; fileName?: string; thumbUrl?: string };
+export type ReferenceUseMode = "STRICT" | "INSPIRATION";
+export type RefAsset = {
+  id: string;
+  fileName?: string;
+  thumbUrl?: string;
+  mode?: ReferenceUseMode;
+};
 
 const PREFIX = "brandai:reftray:";
 /** 每个项目最多暂存这么多参考素材；满了拒绝新增（no-op）。 */

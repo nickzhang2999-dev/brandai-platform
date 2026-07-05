@@ -38,8 +38,9 @@ export const Asset = z.object({
   source: z.enum(["UPLOAD", "WEBSITE"]).default("UPLOAD"),
   createdAt: z.string(),
   // BrandAI 素材库智能字段（frozen-additive：全部 optional——省略而非 null，
-  // 旧读端/旧序列化器零改动）。aiTags = 识别 worker 自动打标；
+  // 旧读端/旧序列化器零改动）。tags = 人工业务标签；aiTags = 识别 worker 自动打标；
   // aiDescription = AI 生成描述；isFavorite = 收藏；resolution = 展示串。
+  tags: z.array(z.string()).optional(),
   aiTags: z.array(z.string()).optional(),
   aiDescription: z.string().optional(),
   isFavorite: z.boolean().optional(),
