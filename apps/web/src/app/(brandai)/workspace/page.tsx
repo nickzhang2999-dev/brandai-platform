@@ -12,6 +12,7 @@ import { useSearchParams, usePathname } from "next/navigation";
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
+  Asset,
   Generation,
   GenerationVersion,
   ListMembersResponse,
@@ -24,9 +25,11 @@ import { CHANNEL_SIZES } from "@brandai/contracts";
 import { apiFetch, assetThumbUrl } from "@/lib/client";
 import { planTiers, upgradeContactEmail } from "@/lib/brandai-mock";
 import {
+  addReference,
   getReferences,
   removeReference,
   subscribeReferences,
+  type ReferenceUseMode,
   type RefAsset,
 } from "@/lib/reference-tray";
 import { useBrand } from "../brand-context";
@@ -350,6 +353,7 @@ function Workspace() {
   // F9 · 参考素材区 — localStorage-backed, scoped to (wsId, projectId), shared
   // with the assets page via reference-tray. Subscribe for cross-page updates.
   const [references, setReferences] = useState<RefAsset[]>([]);
+  const [assetPickerOpen, setAssetPickerOpen] = useState(false);
   useEffect(() => {
     if (!projectId) {
       setReferences([]);
@@ -374,6 +378,7 @@ function Workspace() {
               id: l.asset.id,
               fileName: l.asset.fileName,
               thumbUrl: assetThumbUrl(wsId, l.asset.id, l.asset.url),
+              mode: "INSPIRATION",
             }));
           if (fromServer.length > 0) {
             setReferences((prev) => [...prev, ...fromServer]);
@@ -399,6 +404,26 @@ function Workspace() {
       method: "DELETE",
       body: JSON.stringify({ assetId, kind: "REFERENCE" }),
     }).catch(() => {});
+  }
+  function setReferenceMode(assetId: string, mode: ReferenceUseMode) {
+    setReferences((prev) =>
+      prev.map((r) => (r.id === assetId ? { ...r, mode } : r)),
+    );
+  }
+  function addPickedReferences(items: RefAsset[]) {
+    if (!projectId) return;
+    const next = [...references];
+    for (const item of items) {
+      if (next.some((r) => r.id === item.id)) continue;
+      if (next.length >= 8) break;
+      next.push(item);
+      addReference(wsId, projectId, item);
+      apiFetch(`/api/workspaces/${wsId}/projects/${projectId}/assets`, {
+        method: "POST",
+        body: JSON.stringify({ assetId: item.id, kind: "REFERENCE" }),
+      }).catch(() => {});
+    }
+    setReferences(next);
   }
 
   // F11 · 生成额度展示 — read-only quota status.
@@ -1008,9 +1033,14 @@ function Workspace() {
             ...(selectedTargets.length ? { targets: selectedTargets } : {}),
             // F7 — only send when non-empty (frozen-additive optional field).
             ...(styleKeywords.length ? { styleKeywords } : {}),
-            // F9 — current project's staged reference asset ids.
+            // V0.0.7 — current project's selected reference assets + usage mode.
             ...(references.length
-              ? { referenceAssetIds: references.map((r) => r.id) }
+              ? {
+                  referenceAssets: references.map((r) => ({
+                    assetId: r.id,
+                    mode: r.mode ?? "INSPIRATION",
+                  })),
+                }
               : {}),
           }),
         },
@@ -1491,36 +1521,74 @@ function Workspace() {
             <div>
               <div className="mb-2 flex items-center justify-between text-sm font-semibold">
                 <span>参考素材</span>
-                {references.length ? (
-                  <span className="text-xs font-normal text-muted-foreground">
-                    {references.length}/8
-                  </span>
-                ) : null}
+                <div className="flex items-center gap-2">
+                  {references.length ? (
+                    <span className="text-xs font-normal text-muted-foreground">
+                      {references.length}/8
+                    </span>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => setAssetPickerOpen(true)}
+                    className="rounded-full border border-primary/30 px-2.5 py-1 text-xs text-primary transition-colors hover:bg-accent-soft"
+                  >
+                    选择素材
+                  </button>
+                </div>
               </div>
               {references.length ? (
-                <div className="flex flex-wrap gap-2">
+                <div className="flex flex-col gap-2">
                   {references.map((r) => (
                     <div
                       key={r.id}
-                      className="group relative h-16 w-16 overflow-hidden rounded-xl border border-border bg-background"
+                      className="flex items-center gap-2 rounded-2xl border border-border bg-background p-2"
                     >
-                      {r.thumbUrl ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={r.thumbUrl}
-                          alt={r.fileName ?? "参考素材"}
-                          className="h-full w-full object-cover"
-                        />
-                      ) : (
-                        <div className="flex h-full w-full items-center justify-center text-muted-foreground">
-                          ◇
+                      <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-xl border border-border">
+                        {r.thumbUrl ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={r.thumbUrl}
+                            alt={r.fileName ?? "参考素材"}
+                            className="h-full w-full object-cover"
+                          />
+                        ) : (
+                          <div className="flex h-full w-full items-center justify-center text-muted-foreground">
+                            ◇
+                          </div>
+                        )}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-xs font-medium">
+                          {r.fileName ?? "素材"}
                         </div>
-                      )}
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {(
+                            [
+                              { value: "STRICT", label: "100% 调用" },
+                              { value: "INSPIRATION", label: "仿制借鉴" },
+                            ] as const
+                          ).map((mode) => (
+                            <button
+                              key={mode.value}
+                              type="button"
+                              onClick={() => setReferenceMode(r.id, mode.value)}
+                              className={[
+                                "rounded-full px-2 py-0.5 text-[10px] transition-colors",
+                                (r.mode ?? "INSPIRATION") === mode.value
+                                  ? "bg-accent-soft font-medium text-primary"
+                                  : "border border-border text-muted-foreground hover:bg-muted",
+                              ].join(" ")}
+                            >
+                              {mode.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
                       <button
                         type="button"
                         onClick={() => dropReference(r.id)}
                         aria-label="移除参考素材"
-                        className="absolute right-0.5 top-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-card/90 text-xs text-muted-foreground shadow-sm transition-colors hover:text-destructive"
+                        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-destructive"
                       >
                         ✕
                       </button>
@@ -1532,6 +1600,9 @@ function Workspace() {
                   从素材库『设为参考』添加
                 </p>
               )}
+              <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+                100% 调用用于 Logo/固定产品图；仿制借鉴用于风格、构图和氛围参考。
+              </p>
             </div>
           ) : null}
 
@@ -1606,6 +1677,18 @@ function Workspace() {
         />
       ) : null}
 
+      {assetPickerOpen ? (
+        <WorkspaceAssetPicker
+          wsId={wsId}
+          existingIds={references.map((r) => r.id)}
+          onClose={() => setAssetPickerOpen(false)}
+          onAdd={(items) => {
+            addPickedReferences(items);
+            setAssetPickerOpen(false);
+          }}
+        />
+      ) : null}
+
       {/* G6 · 驳回弹窗 — 可选附理由（reviewNote），走真实 review 端点。 */}
       {rejectOpen ? (
         <RejectDialog
@@ -1633,6 +1716,199 @@ function Workspace() {
           onCancel={() => setMaskOpen(false)}
         />
       ) : null}
+    </div>
+  );
+}
+
+function WorkspaceAssetPicker({
+  wsId,
+  existingIds,
+  onClose,
+  onAdd,
+}: {
+  wsId: string;
+  existingIds: string[];
+  onClose: () => void;
+  onAdd: (items: RefAsset[]) => void;
+}) {
+  const [q, setQ] = useState("");
+  const [mode, setMode] = useState<ReferenceUseMode>("INSPIRATION");
+  const [selected, setSelected] = useState<string[]>([]);
+  const { data: assets = [], isLoading } = useQuery({
+    queryKey: ["brandai-assets", wsId, "workspace-picker"],
+    queryFn: () => apiFetch<Asset[]>(`/api/workspaces/${wsId}/assets`),
+  });
+  const existing = new Set(existingIds);
+  const needle = q.trim().toLowerCase();
+  const candidates = assets.filter((asset) => {
+    if (!(asset.mimeType ?? "").startsWith("image/")) return false;
+    if (asset.availableForGeneration === false || asset.deprecatedAt)
+      return false;
+    if (!needle) return true;
+    return [
+      asset.fileName,
+      asset.aiDescription ?? "",
+      ...(asset.tags ?? []),
+      ...(asset.aiTags ?? []),
+    ]
+      .join(" ")
+      .toLowerCase()
+      .includes(needle);
+  });
+  function toggle(id: string) {
+    if (existing.has(id)) return;
+    setSelected((ids) =>
+      ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id],
+    );
+  }
+  const picked = candidates.filter((asset) => selected.includes(asset.id));
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/30 p-4 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="flex max-h-[86vh] w-full max-w-3xl flex-col overflow-hidden rounded-3xl border border-border bg-card shadow-[0_24px_70px_rgba(30,30,60,0.18)]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="border-b border-border px-6 py-5">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="text-lg font-semibold">选择素材</div>
+              <p className="mt-1 text-sm text-muted-foreground">
+                从素材库选择一个或多个图片，并指定本次生成的调用方式。
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="关闭"
+              className="flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted"
+            >
+              ✕
+            </button>
+          </div>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="搜索名称、标签或描述…"
+              className="h-10 flex-1 rounded-full border border-border bg-background px-4 text-sm outline-none focus:border-primary/40"
+            />
+            {(
+              [
+                { value: "STRICT", label: "必须 100% 调用" },
+                { value: "INSPIRATION", label: "仿制借鉴" },
+              ] as const
+            ).map((item) => (
+              <button
+                key={item.value}
+                type="button"
+                onClick={() => setMode(item.value)}
+                className={[
+                  "h-10 rounded-full px-4 text-sm transition-colors",
+                  mode === item.value
+                    ? "bg-accent-soft font-medium text-primary"
+                    : "border border-border text-muted-foreground hover:bg-muted",
+                ].join(" ")}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="flex-1 overflow-y-auto p-6">
+          {isLoading ? (
+            <div className="py-12 text-center text-sm text-muted-foreground">
+              加载中…
+            </div>
+          ) : candidates.length === 0 ? (
+            <div className="rounded-3xl border border-dashed border-border p-10 text-center text-sm text-muted-foreground">
+              没有可用于出图的图片素材
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+              {candidates.map((asset) => {
+                const disabled = existing.has(asset.id);
+                const on = selected.includes(asset.id);
+                return (
+                  <button
+                    key={asset.id}
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => toggle(asset.id)}
+                    className={[
+                      "overflow-hidden rounded-2xl border bg-background text-left transition-colors disabled:cursor-not-allowed disabled:opacity-45",
+                      on
+                        ? "border-primary shadow-[0_8px_24px_rgba(124,92,255,0.14)]"
+                        : "border-border hover:border-primary/30",
+                    ].join(" ")}
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={assetThumbUrl(wsId, asset.id, asset.url)}
+                      alt={asset.fileName}
+                      className="h-28 w-full object-cover"
+                    />
+                    <div className="p-3">
+                      <div className="truncate text-xs font-medium">
+                        {asset.fileName}
+                      </div>
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {(asset.tags ?? []).slice(0, 3).map((tag) => (
+                          <span
+                            key={tag}
+                            className="rounded-full bg-accent-soft px-2 py-0.5 text-[10px] text-primary"
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                        {disabled ? (
+                          <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
+                            已添加
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+        <div className="flex items-center justify-between gap-3 border-t border-border px-6 py-4">
+          <span className="text-xs text-muted-foreground">
+            已选 {picked.length} 个 · 调用方式：
+            {mode === "STRICT" ? "必须 100% 调用" : "仿制借鉴"}
+          </span>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="h-10 rounded-full border border-border px-4 text-sm text-muted-foreground transition-colors hover:bg-muted"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              disabled={picked.length === 0}
+              onClick={() =>
+                onAdd(
+                  picked.map((asset) => ({
+                    id: asset.id,
+                    fileName: asset.fileName,
+                    thumbUrl: assetThumbUrl(wsId, asset.id, asset.url),
+                    mode,
+                  })),
+                )
+              }
+              className="h-10 rounded-full bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-50"
+            >
+              添加到工作台
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

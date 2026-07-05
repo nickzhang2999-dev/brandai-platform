@@ -72,6 +72,20 @@ export async function POST(
     await requireWorkspaceRole(wsId, user.id, "EDITOR");
 
     const input = parse(CreateGenerationInput, await req.json());
+    const normalizedReferenceAssets = Array.from(
+      new Map(
+        [
+          ...(input.referenceAssetIds ?? []).map((assetId) => ({
+            assetId,
+            mode: "INSPIRATION" as const,
+          })),
+          ...(input.referenceAssets ?? []).map((item) => ({
+            assetId: item.assetId,
+            mode: item.mode ?? ("INSPIRATION" as const),
+          })),
+        ].map((item) => [item.assetId, item]),
+      ).values(),
+    );
 
     const project = await prisma.project.findUnique({
       where: { id: input.projectId },
@@ -83,12 +97,12 @@ export async function POST(
     // F9 / L8 — every reference asset must belong to THIS workspace (IDOR
     // guard, same pattern as prohibition example assets). 400 on mismatch,
     // consistent with assertExampleAssetsInWorkspace's error style.
-    if (input.referenceAssetIds && input.referenceAssetIds.length > 0) {
-      await assertExampleAssetsInWorkspace(wsId, input.referenceAssetIds);
+    if (normalizedReferenceAssets.length > 0) {
+      const refIds = normalizedReferenceAssets.map((r) => r.assetId);
+      await assertExampleAssetsInWorkspace(wsId, refIds);
       // Reference assets must be generatable IMAGES (mirror the worker's
       // lifecycle/type filter) so an unusable pick fails fast with a clear 400
       // instead of being accepted here and silently dropped from the AI job.
-      const refIds = [...new Set(input.referenceAssetIds)];
       const usable = await prisma.asset.findMany({
         where: {
           id: { in: refIds },
@@ -100,8 +114,8 @@ export async function POST(
         select: { id: true },
       });
       if (usable.length !== refIds.length) {
-        const ok = new Set(usable.map((a) => a.id));
-        const bad = refIds.filter((id) => !ok.has(id));
+        const ok = new Set(usable.map((a: { id: string }) => a.id));
+        const bad = refIds.filter((id: string) => !ok.has(id));
         throw new ApiException(
           400,
           `参考素材不可用于生成（需为未停用、未弃用的图片素材）：${bad.join(", ")}`,
@@ -201,6 +215,9 @@ export async function POST(
         : {}),
       ...(input.referenceAssetIds && input.referenceAssetIds.length > 0
         ? { referenceAssetIds: input.referenceAssetIds }
+        : {}),
+      ...(normalizedReferenceAssets.length > 0
+        ? { referenceAssets: normalizedReferenceAssets }
         : {}),
     };
     const job = await generateQueue.add("generate", jobData, {

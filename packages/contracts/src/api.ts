@@ -31,6 +31,18 @@ export const CreateAssetInput = z.object({
 });
 export type CreateAssetInput = z.infer<typeof CreateAssetInput>;
 
+export const UpdateAssetTagsMode = z.enum(["append", "remove", "replace"]);
+export type UpdateAssetTagsMode = z.infer<typeof UpdateAssetTagsMode>;
+
+export const BatchUpdateAssetTagsInput = z.object({
+  assetIds: z.array(z.string()).min(1).max(200),
+  tags: z.array(z.string().min(1).max(32)).max(50),
+  mode: UpdateAssetTagsMode.default("append"),
+});
+export type BatchUpdateAssetTagsInput = z.infer<
+  typeof BatchUpdateAssetTagsInput
+>;
+
 export const PresignUploadInput = z.object({
   workspaceId: z.string(),
   fileName: z.string(),
@@ -115,6 +127,21 @@ export const CreateGenerationInput = z.object({
    * compiled `AIConstraints`. Frozen-additive: optional, no default, bounded.
    */
   referenceAssetIds: z.array(z.string()).max(8).optional(),
+  /**
+   * V0.0.7 — reference assets with explicit usage mode:
+   * STRICT = 必须 100% 调用（内容不可改，仅尺寸/颜色可调）；
+   * INSPIRATION = 仿制借鉴（允许改写与再创作）。 `referenceAssetIds`
+   * stays as a legacy shorthand and is treated as INSPIRATION.
+   */
+  referenceAssets: z
+    .array(
+      z.object({
+        assetId: z.string(),
+        mode: z.enum(["STRICT", "INSPIRATION"]).default("INSPIRATION"),
+      }),
+    )
+    .max(8)
+    .optional(),
 });
 export type CreateGenerationInput = z.infer<typeof CreateGenerationInput>;
 

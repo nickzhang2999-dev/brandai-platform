@@ -42,6 +42,18 @@ type UsageRecord = {
   usedAt: string;
 };
 
+type BulkTagMode = "append" | "remove" | "replace";
+
+function normalizeTags(tags: string[]): string[] {
+  return Array.from(
+    new Set(tags.map((t) => t.trim()).filter((t) => t.length > 0)),
+  ).slice(0, 50);
+}
+
+function parseTagInput(raw: string): string[] {
+  return normalizeTags(raw.split(/[,，\n\s]+/));
+}
+
 function fmtDate(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
@@ -111,6 +123,8 @@ export default function AssetsPage() {
   // folderFilter: "all" = 全部, "none" = 未归档, 否则为文件夹 id。
   const [folderFilter, setFolderFilter] = useState("all");
   const [creatingFolder, setCreatingFolder] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [bulkTagDialog, setBulkTagDialog] = useState(false);
 
   // Deep-link: /assets?category=LOGO preselects the type filter — e.g. the
   // brand-knowledge upload dialog's "在素材库查看该分类" link. Read once on
@@ -165,6 +179,35 @@ export default function AssetsPage() {
         body: JSON.stringify({ folderId }),
       }),
     onSuccess: invalidateFolders,
+  });
+  const updateTags = useMutation({
+    mutationFn: ({ assetId, tags }: { assetId: string; tags: string[] }) =>
+      apiFetch<Asset>(`/api/workspaces/${wsId}/assets/${assetId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ tags: normalizeTags(tags) }),
+      }),
+    onSuccess: () =>
+      qc.invalidateQueries({ queryKey: ["brandai-assets", wsId] }),
+  });
+  const batchUpdateTags = useMutation({
+    mutationFn: ({
+      assetIds,
+      tags,
+      mode,
+    }: {
+      assetIds: string[];
+      tags: string[];
+      mode: BulkTagMode;
+    }) =>
+      apiFetch<Asset[]>(`/api/workspaces/${wsId}/assets/tags`, {
+        method: "PATCH",
+        body: JSON.stringify({ assetIds, tags: normalizeTags(tags), mode }),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["brandai-assets", wsId] });
+      setSelectedIds([]);
+      setBulkTagDialog(false);
+    },
   });
 
   const upload = useMutation({
@@ -221,6 +264,7 @@ export default function AssetsPage() {
         const haystack = [
           a.fileName,
           a.aiDescription ?? "",
+          ...(a.tags ?? []),
           ...(a.aiTags ?? []),
         ]
           .join(" ")
@@ -241,6 +285,25 @@ export default function AssetsPage() {
   // Detail pane must track the FILTERED grid — falling back to assets[0] would
   // show a sidebar asset that isn't visible under the active filter/search.
   const active = filtered.find((a) => a.id === activeId) ?? filtered[0];
+  const allVisibleSelected =
+    filtered.length > 0 && filtered.every((a) => selectedIds.includes(a.id));
+  const selectedCount = selectedIds.length;
+  function toggleSelected(assetId: string) {
+    setSelectedIds((ids) =>
+      ids.includes(assetId)
+        ? ids.filter((id) => id !== assetId)
+        : [...ids, assetId],
+    );
+  }
+  function toggleAllVisible() {
+    setSelectedIds((ids) => {
+      if (allVisibleSelected) {
+        const visible = new Set(filtered.map((a) => a.id));
+        return ids.filter((id) => !visible.has(id));
+      }
+      return Array.from(new Set([...ids, ...filtered.map((a) => a.id)]));
+    });
+  }
 
   // E13 · 使用记录 — real linkage derived from generation versions referencing
   // this asset (see assets/[assetId]/usage route). Empty list → honest
@@ -396,8 +459,8 @@ export default function AssetsPage() {
     { label: "图片", value: String(assets.filter(isImage).length) },
     { label: "已收藏", value: String(assets.filter((a) => a.isFavorite).length) },
     {
-      label: "AI 已标注",
-      value: String(assets.filter((a) => (a.aiTags?.length ?? 0) > 0).length),
+      label: "已打标签",
+      value: String(assets.filter((a) => (a.tags?.length ?? 0) > 0).length),
     },
   ];
 
@@ -477,7 +540,7 @@ export default function AssetsPage() {
         <input
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="搜索名称、AI 标签或描述…"
+          placeholder="搜索名称、标签、AI 标签或描述…"
           className="h-10 flex-1 rounded-full border border-border bg-card px-4 text-sm outline-none focus:border-primary/40 focus:shadow-[0_0_0_4px_rgba(124,92,255,0.08)]"
         />
         {/* E13 — favorites-only filter */}
@@ -508,6 +571,43 @@ export default function AssetsPage() {
           </button>
         ))}
       </div>
+
+      {filtered.length > 0 ? (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-border bg-card px-4 py-3 shadow-[0_8px_24px_rgba(30,30,60,0.04)]">
+          <label className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+            <input
+              type="checkbox"
+              checked={allVisibleSelected}
+              onChange={toggleAllVisible}
+              className="h-4 w-4 accent-primary"
+            />
+            选择当前结果
+          </label>
+          <div className="flex items-center gap-2">
+            {selectedCount ? (
+              <span className="text-xs text-muted-foreground">
+                已选 {selectedCount} 个素材
+              </span>
+            ) : null}
+            <Button
+              variant="outline"
+              disabled={selectedCount === 0}
+              onClick={() => setBulkTagDialog(true)}
+            >
+              批量打标签
+            </Button>
+            {selectedCount ? (
+              <button
+                type="button"
+                onClick={() => setSelectedIds([])}
+                className="rounded-full px-3 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted"
+              >
+                清空选择
+              </button>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
 
       {isLoading ? (
         <div className="rounded-3xl border border-border bg-card p-16 text-center text-sm text-muted-foreground">
@@ -558,6 +658,18 @@ export default function AssetsPage() {
                   ].join(" ")}
                 >
                   <div className="relative">
+                    <label
+                      className="absolute left-1.5 top-1.5 z-10 flex h-7 w-7 items-center justify-center rounded-full bg-card/90 shadow-[0_4px_12px_rgba(30,30,60,0.12)]"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.includes(a.id)}
+                        onChange={() => toggleSelected(a.id)}
+                        aria-label={`选择 ${a.fileName}`}
+                        className="h-4 w-4 accent-primary"
+                      />
+                    </label>
                     {isImage(a) ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img
@@ -580,12 +692,12 @@ export default function AssetsPage() {
                       </div>
                     )}
                     {!isAvailable(a) ? (
-                      <span className="absolute left-1.5 top-1.5 rounded-full bg-foreground/70 px-2 py-0.5 text-[10px] font-medium text-background">
+                      <span className="absolute left-10 top-1.5 rounded-full bg-foreground/70 px-2 py-0.5 text-[10px] font-medium text-background">
                         已停用
                       </span>
                     ) : isGenerated(a) ? (
                       // F18 · AI 出图回流标识
-                      <span className="absolute left-1.5 top-1.5 rounded-full bg-accent-soft px-2 py-0.5 text-[10px] font-medium text-primary shadow-[0_2px_8px_rgba(124,92,255,0.18)]">
+                      <span className="absolute left-10 top-1.5 rounded-full bg-accent-soft px-2 py-0.5 text-[10px] font-medium text-primary shadow-[0_2px_8px_rgba(124,92,255,0.18)]">
                         ✦ AI 生成
                       </span>
                     ) : null}
@@ -615,6 +727,12 @@ export default function AssetsPage() {
                     </div>
                     <div className="flex flex-wrap gap-1">
                       <Chip>{CAT_LABEL[a.category] ?? a.category}</Chip>
+                      {(a.tags ?? []).slice(0, 3).map((t) => (
+                        <Chip key={t}>{t}</Chip>
+                      ))}
+                      {(a.tags?.length ?? 0) > 3 ? (
+                        <Chip>+{(a.tags?.length ?? 0) - 3}</Chip>
+                      ) : null}
                     </div>
                   </div>
                 </div>
@@ -683,6 +801,14 @@ export default function AssetsPage() {
                   <dt className="text-muted-foreground">来源</dt>
                   <dd>{provenanceLabel(active)}</dd>
                 </dl>
+
+                <AssetTagEditor
+                  tags={active.tags ?? []}
+                  pending={updateTags.isPending}
+                  onSave={(tags) =>
+                    updateTags.mutate({ assetId: active.id, tags })
+                  }
+                />
 
                 {/* H8 · 查看来源 */}
                 <Button
@@ -967,6 +1093,168 @@ export default function AssetsPage() {
           }}
         />
       ) : null}
+
+      {bulkTagDialog ? (
+        <BatchTagDialog
+          count={selectedCount}
+          pending={batchUpdateTags.isPending}
+          error={
+            batchUpdateTags.isError
+              ? (batchUpdateTags.error as Error).message
+              : null
+          }
+          onClose={() => {
+            if (!batchUpdateTags.isPending) {
+              batchUpdateTags.reset();
+              setBulkTagDialog(false);
+            }
+          }}
+          onSave={(tags, mode) =>
+            batchUpdateTags.mutate({ assetIds: selectedIds, tags, mode })
+          }
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function AssetTagEditor({
+  tags,
+  pending,
+  onSave,
+}: {
+  tags: string[];
+  pending: boolean;
+  onSave: (tags: string[]) => void;
+}) {
+  const [draft, setDraft] = useState(tags.join(" "));
+  useEffect(() => {
+    setDraft(tags.join(" "));
+  }, [tags]);
+  const parsed = parseTagInput(draft);
+  return (
+    <div className="mt-5 border-t border-border pt-4">
+      <div className="mb-2 flex items-center justify-between text-xs font-medium text-muted-foreground">
+        <span>标签</span>
+        <span>{parsed.length}/50</span>
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {parsed.length ? (
+          parsed.map((t) => (
+            <span
+              key={t}
+              className="rounded-full bg-accent-soft px-2.5 py-1 text-[11px] text-primary"
+            >
+              {t}
+            </span>
+          ))
+        ) : (
+          <span className="text-xs text-muted-foreground">暂无标签</span>
+        )}
+      </div>
+      <textarea
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        rows={2}
+        placeholder="输入标签，用空格、逗号或换行分隔"
+        className="mt-2 w-full resize-none rounded-2xl border border-border bg-background p-3 text-xs outline-none focus:border-primary/40"
+      />
+      <Button
+        variant="outline"
+        className="mt-2 w-full rounded-full"
+        disabled={pending}
+        onClick={() => onSave(parsed)}
+      >
+        {pending ? "保存中…" : "保存标签"}
+      </Button>
+    </div>
+  );
+}
+
+function BatchTagDialog({
+  count,
+  pending,
+  error,
+  onClose,
+  onSave,
+}: {
+  count: number;
+  pending: boolean;
+  error: string | null;
+  onClose: () => void;
+  onSave: (tags: string[], mode: BulkTagMode) => void;
+}) {
+  const [mode, setMode] = useState<BulkTagMode>("append");
+  const [draft, setDraft] = useState("");
+  const tags = parseTagInput(draft);
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/30 p-4 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-md rounded-3xl border border-border bg-card p-6 shadow-[0_24px_70px_rgba(30,30,60,0.18)]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="text-lg font-semibold">批量打标签</div>
+        <p className="mt-1 text-sm text-muted-foreground">
+          将对已选择的 {count} 个素材执行标签操作。
+        </p>
+        <div className="mt-5 grid grid-cols-3 gap-2">
+          {(
+            [
+              { value: "append", label: "追加" },
+              { value: "remove", label: "移除" },
+              { value: "replace", label: "覆盖" },
+            ] as const
+          ).map((item) => (
+            <button
+              key={item.value}
+              type="button"
+              onClick={() => setMode(item.value)}
+              className={[
+                "h-9 rounded-full text-sm transition-colors",
+                mode === item.value
+                  ? "bg-accent-soft font-medium text-primary"
+                  : "border border-border text-muted-foreground hover:bg-muted",
+              ].join(" ")}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+        <textarea
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          rows={4}
+          placeholder="输入标签，用空格、逗号或换行分隔"
+          className="mt-4 w-full resize-none rounded-2xl border border-border bg-background p-3 text-sm outline-none focus:border-primary/40"
+        />
+        {tags.length ? (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {tags.map((t) => (
+              <span
+                key={t}
+                className="rounded-full bg-accent-soft px-2.5 py-1 text-[11px] text-primary"
+              >
+                {t}
+              </span>
+            ))}
+          </div>
+        ) : null}
+        {error ? <p className="mt-3 text-sm text-destructive">{error}</p> : null}
+        <div className="mt-6 flex justify-end gap-2">
+          <Button variant="outline" onClick={onClose}>
+            取消
+          </Button>
+          <Button
+            disabled={pending || tags.length === 0 || count === 0}
+            onClick={() => onSave(tags, mode)}
+          >
+            {pending ? "处理中…" : "确认"}
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }

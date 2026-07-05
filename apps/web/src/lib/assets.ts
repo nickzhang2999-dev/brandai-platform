@@ -20,6 +20,7 @@ export function serializeAsset(a: PrismaAsset): Asset {
     sizeBytes: a.sizeBytes,
     source: a.source,
     createdAt: a.createdAt.toISOString(),
+    tags: a.tags ?? [],
     aiTags: a.aiTags ?? [],
     ...(a.aiDescription ? { aiDescription: a.aiDescription } : {}),
     isFavorite: a.isFavorite,
