@@ -1,82 +1,128 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import type { Asset } from "@brandai/contracts";
 import { Button } from "@brandai/ui";
-import { generationTemplates } from "@/lib/brandai-mock";
-import { gradientFor, PageHeader } from "../_ui";
+import { apiFetch, assetThumbUrl } from "@/lib/client";
+import { PageHeader } from "../_ui";
+import { useBrand } from "../brand-context";
 
 /**
- * P06 · 模板库（G1）— 把高频出图配置（场景 / 画面类型 / 风格关键词 / 卖点起手式）
- * 沉淀为可复用模板，一键带入工作台。模板是产品常量（lib/brandai-mock.ts::
- * generationTemplates），不是伪造数据，也不是假"生成结果"——点击只把配置经 query
- * 参数带进 `/workspace`，由用户在真实 worker→apps/ai→真 provider 管线里出图。
+ * V0.0.9 · 模板库 = 参考图图库。这里的图片只用于 AI 工作台的风格、色系、
+ * 比例、构图参考，不会作为水印/素材叠加到最终图。
  */
 export default function TemplatesPage() {
-  const router = useRouter();
+  const { wsId } = useBrand();
+  const qc = useQueryClient();
+  const fileRef = useRef<HTMLInputElement | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const { data: templates = [], isLoading } = useQuery({
+    queryKey: ["brandai-assets", wsId, "templates"],
+    queryFn: () =>
+      apiFetch<Asset[]>(`/api/workspaces/${wsId}/assets?libraryKind=TEMPLATE`),
+  });
 
-  function useTemplate(key: string) {
-    const t = generationTemplates.find((x) => x.key === key);
-    if (!t) return;
-    const qs = new URLSearchParams({
-      sceneType: t.sceneType,
-      scene: t.scene,
-      brief: t.sellingPoint,
-      style: t.styleKeywords.join(","),
-    });
-    router.push(`/workspace?${qs.toString()}`);
+  async function upload(file: File) {
+    setUploading(true);
+    setErr(null);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("category", "OTHER");
+      fd.append("libraryKind", "TEMPLATE");
+      const res = await fetch(`/api/workspaces/${wsId}/assets/upload`, {
+        method: "POST",
+        body: fd,
+      });
+      if (!res.ok) {
+        const b = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(b.error ?? "上传失败");
+      }
+      qc.invalidateQueries({ queryKey: ["brandai-assets", wsId] });
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "上传失败");
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
   }
 
   return (
     <div className="mx-auto max-w-[1180px] px-10 py-10">
       <PageHeader
         title="模板库"
-        subtitle="把高频出图配置沉淀为可复用模板，一键带入工作台出图"
+        subtitle="沉淀参考图；在 AI 工作台中只参考风格、色系、比例与构图"
+        action={
+          <Button onClick={() => fileRef.current?.click()} disabled={uploading}>
+            {uploading ? "上传中…" : "+ 上传参考图"}
+          </Button>
+        }
+      />
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) void upload(file);
+        }}
       />
 
       <div className="mb-6 rounded-2xl border border-primary/15 bg-accent-soft/50 px-4 py-3 text-xs leading-relaxed text-muted-foreground">
-        模板预填场景、画面类型、风格关键词与卖点起手式；带入工作台后仍可自由编辑，
-        再由真实 AI 受控出图。模板本身不含生成图片，仅作为配置起点。
+        模板库与素材库分离：模板图不会被放到最终画面上，只作为 AI 出图的视觉参考。
       </div>
 
-      <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-        {generationTemplates.map((t) => (
-          <div
-            key={t.key}
-            className="flex flex-col overflow-hidden rounded-3xl border border-border bg-card shadow-[0_8px_24px_rgba(30,30,60,0.06)] transition-all hover:border-primary/25 hover:shadow-[0_18px_50px_rgba(124,92,255,0.12)]"
-          >
+      {err ? <p className="mb-4 text-sm text-destructive">{err}</p> : null}
+
+      {isLoading ? (
+        <div className="rounded-3xl border border-border bg-card p-10 text-center text-sm text-muted-foreground">
+          加载中…
+        </div>
+      ) : templates.length === 0 ? (
+        <div className="rounded-3xl border border-dashed border-border bg-card p-12 text-center">
+          <div className="text-lg font-semibold">模板库还是空的</div>
+          <p className="mt-2 text-sm text-muted-foreground">
+            上传参考图后，就可以在 AI 工作台中作为风格参考调用。
+          </p>
+        </div>
+      ) : (
+        <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+          {templates.map((asset) => (
             <div
-              className="flex h-32 items-center justify-center text-4xl text-primary-foreground"
-              style={{ background: gradientFor(t.key) }}
+              key={asset.id}
+              className="overflow-hidden rounded-3xl border border-border bg-card shadow-[0_8px_24px_rgba(30,30,60,0.06)]"
             >
-              {t.icon}
-            </div>
-            <div className="flex flex-1 flex-col p-5">
-              <div className="text-[15px] font-semibold">{t.name}</div>
-              <p className="mt-1.5 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
-                {t.desc}
-              </p>
-              <div className="mt-3 flex flex-wrap gap-1.5">
-                {t.styleKeywords.slice(0, 4).map((k) => (
-                  <span
-                    key={k}
-                    className="rounded-full bg-accent-soft px-2.5 py-1 text-[11px] text-primary"
-                  >
-                    {k}
-                  </span>
-                ))}
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={assetThumbUrl(wsId, asset.id, asset.url)}
+                alt={asset.fileName}
+                className="h-44 w-full object-cover"
+              />
+              <div className="p-5">
+                <div className="truncate text-sm font-semibold">
+                  {asset.fileName}
+                </div>
+                <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
+                  {asset.aiDescription || "参考图：用于风格、色系、比例与构图参考。"}
+                </p>
+                <div className="mt-3 flex flex-wrap gap-1.5">
+                  {(asset.tags ?? []).slice(0, 4).map((tag) => (
+                    <span
+                      key={tag}
+                      className="rounded-full bg-accent-soft px-2.5 py-1 text-[11px] text-primary"
+                    >
+                      {tag}
+                    </span>
+                  ))}
+                </div>
               </div>
-              <div className="mt-5">
-                <Button
-                  className="w-full justify-center"
-                  onClick={() => useTemplate(t.key)}
-                >
-                  用此模板出图
-                </Button>
-              </div>
             </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

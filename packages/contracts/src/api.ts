@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   AssetCategory,
+  AssetLibraryKind,
   ComplianceTermType,
   EditOp,
   RuleStatus,
@@ -22,6 +23,7 @@ export type CreateWorkspaceInput = z.infer<typeof CreateWorkspaceInput>;
 export const CreateAssetInput = z.object({
   workspaceId: z.string(),
   category: AssetCategory,
+  libraryKind: AssetLibraryKind.default("MATERIAL"),
   fileName: z.string(),
   mimeType: z.string(),
   sizeBytes: z.number().int().nonnegative(),
@@ -56,6 +58,46 @@ export const PresignUploadOutput = z.object({
   publicUrl: z.string(),
 });
 export type PresignUploadOutput = z.infer<typeof PresignUploadOutput>;
+
+export const WatermarkAnchor = z.enum([
+  "top-left",
+  "top-right",
+  "bottom-left",
+  "bottom-right",
+]);
+export type WatermarkAnchor = z.infer<typeof WatermarkAnchor>;
+
+export const WatermarkPositionMode = z.enum(["pixel", "ratio"]);
+export type WatermarkPositionMode = z.infer<typeof WatermarkPositionMode>;
+
+export const WatermarkOverlayInput = z.object({
+  assetId: z.string().optional(),
+  text: z.string().max(120).optional(),
+  enabled: z.boolean().default(true),
+  anchor: WatermarkAnchor.default("bottom-right"),
+  positionMode: WatermarkPositionMode.default("pixel"),
+  offsetX: z.number().finite().default(24),
+  offsetY: z.number().finite().default(24),
+  widthPx: z.number().finite().positive().max(4096).default(120),
+  fontFamily: z.string().max(80).default("Inter"),
+  fontSizePx: z.number().finite().positive().max(512).default(28),
+  opacity: z.number().finite().min(0).max(1).default(0.6),
+  textColor: z.string().max(32).default("#111827"),
+  backgroundEnabled: z.boolean().default(false),
+  backgroundColor: z.string().max(32).default("#FFFFFF"),
+  borderEnabled: z.boolean().default(false),
+  borderColor: z.string().max(32).default("#7C5CFF"),
+  borderWidth: z.number().finite().min(0).max(40).default(1),
+  cornerRadius: z.number().finite().min(0).max(160).default(0),
+});
+export type WatermarkOverlayInput = z.infer<typeof WatermarkOverlayInput>;
+
+export const WatermarkPresetInput = z.object({
+  name: z.string().min(1).max(80).default("默认水印"),
+  isActive: z.boolean().default(false),
+  config: WatermarkOverlayInput,
+});
+export type WatermarkPresetInput = z.infer<typeof WatermarkPresetInput>;
 
 export const IngestWebsiteInput = z.object({
   workspaceId: z.string(),
@@ -142,6 +184,16 @@ export const CreateGenerationInput = z.object({
     )
     .max(8)
     .optional(),
+  /**
+   * V0.0.9 — template library references. These are style/proportion/color
+   * inspiration only and must never be deterministically overlaid.
+   */
+  templateReferenceAssetIds: z.array(z.string()).max(8).optional(),
+  /**
+   * V0.0.9 — material library overlays. These are not sent to the AI provider;
+   * the web worker composites them after the base image is generated.
+   */
+  watermarkOverlays: z.array(WatermarkOverlayInput).max(8).optional(),
 });
 export type CreateGenerationInput = z.infer<typeof CreateGenerationInput>;
 

@@ -19,6 +19,7 @@ export function serializeAsset(a: PrismaAsset): Asset {
     mimeType: a.mimeType,
     sizeBytes: a.sizeBytes,
     source: a.source,
+    libraryKind: a.libraryKind as Asset["libraryKind"],
     createdAt: a.createdAt.toISOString(),
     tags: a.tags ?? [],
     aiTags: a.aiTags ?? [],

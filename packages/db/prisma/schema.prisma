@@ -207,6 +207,7 @@ model BrandWorkspace {
   slogan         String?
   assets       Asset[]
   assetFolders AssetFolder[]
+  watermarkPresets WatermarkPreset[]
   rules        BrandRule[]
   ruleSnapshots RuleSnapshot[]
   terms        ComplianceTerm[]
@@ -227,6 +228,10 @@ model Asset {
   mimeType               String
   sizeBytes              Int               @default(0)
   source                 AssetSource       @default(UPLOAD)
+  // V0.0.9 · 平台图片三分法。用 String 而非 enum，避免共享 CDS
+  // Postgres 上新增 enum value 影响其它分支 Prisma client。
+  // MATERIAL=素材库；TEMPLATE=模板库参考图；GENERATED=AI 生成图镜像。
+  libraryKind            String            @default("MATERIAL")
   // P1.3 — asset availability lifecycle.
   availableForGeneration Boolean           @default(true)
   deprecatedAt           DateTime?
@@ -257,8 +262,25 @@ model Asset {
   generationVersion      GenerationVersion? @relation("GenerationVersionMirror", fields: [generationVersionId], references: [id], onDelete: Cascade)
 
   @@index([workspaceId, category])
+  @@index([workspaceId, libraryKind])
   @@index([workspaceId, availableForGeneration])
   @@index([workspaceId, folderId])
+}
+
+// V0.0.9 · workspace 级水印配置。配置本身可持续编辑；每次生成会把当时的
+// overlay 快照写入 GenerationVersion.params，保证历史图可追溯。
+model WatermarkPreset {
+  id          String         @id @default(cuid())
+  workspaceId String
+  workspace   BrandWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name        String         @default("默认水印")
+  isActive    Boolean        @default(false)
+  config      Json           @default("{}")
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@index([workspaceId])
+  @@index([workspaceId, isActive])
 }
 
 // E11/E12 · Project↔Asset 关联 — 「加入项目」(kind=MEMBER) 与「设为参考」

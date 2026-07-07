@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   AssetCategory,
+  AssetLibraryKind,
   CampaignStatus,
   ComplianceLevel,
   ComplianceTermType,
@@ -36,6 +37,8 @@ export const Asset = z.object({
   mimeType: z.string(),
   sizeBytes: z.number().int().nonnegative(),
   source: z.enum(["UPLOAD", "WEBSITE"]).default("UPLOAD"),
+  // V0.0.9 · 图片三分法。可选以兼容旧序列化器；新读端会收到明确值。
+  libraryKind: AssetLibraryKind.optional(),
   createdAt: z.string(),
   // BrandAI 素材库智能字段（frozen-additive：全部 optional——省略而非 null，
   // 旧读端/旧序列化器零改动）。tags = 人工业务标签；aiTags = 识别 worker 自动打标；

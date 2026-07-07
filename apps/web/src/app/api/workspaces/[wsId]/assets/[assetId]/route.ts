@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { prisma } from "@brandai/db";
-import { AssetCategory } from "@brandai/contracts";
+import { AssetCategory, AssetLibraryKind } from "@brandai/contracts";
 import { ApiException, handleError, ok, parse, requireUser } from "@/lib/api";
 import { requireWorkspaceRole } from "@/lib/workspace";
 import { serializeAsset } from "@/lib/assets";
@@ -13,6 +13,7 @@ import { serializeAsset } from "@/lib/assets";
  */
 const UpdateAssetInput = z.object({
   category: AssetCategory.optional(),
+  libraryKind: AssetLibraryKind.optional(),
   tags: z.array(z.string().min(1).max(32)).max(50).optional(),
   availableForGeneration: z.boolean().optional(),
   deprecatedAt: z.string().datetime().nullable().optional(),
@@ -44,6 +45,7 @@ export async function PATCH(
     const input = parse(UpdateAssetInput, await req.json());
     const data: Record<string, unknown> = {};
     if (input.category !== undefined) data.category = input.category;
+    if (input.libraryKind !== undefined) data.libraryKind = input.libraryKind;
     if (input.tags !== undefined)
       data.tags = Array.from(new Set(input.tags.map((t) => t.trim()).filter(Boolean)));
     if (input.availableForGeneration !== undefined)

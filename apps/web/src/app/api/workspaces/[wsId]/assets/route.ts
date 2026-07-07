@@ -1,5 +1,9 @@
 import { prisma } from "@brandai/db";
-import { AssetCategory, CreateAssetInput } from "@brandai/contracts";
+import {
+  AssetCategory,
+  AssetLibraryKind,
+  CreateAssetInput,
+} from "@brandai/contracts";
 import { handleError, ok, parse, requireUser } from "@/lib/api";
 import { getEffectiveStorage } from "@/lib/settings";
 import { requireOwnedWorkspace, requireWorkspaceRole } from "@/lib/workspace";
@@ -20,9 +24,20 @@ export async function GET(
       categoryParam && AssetCategory.safeParse(categoryParam).success
         ? (categoryParam as AssetCategory)
         : undefined;
+    const libraryKindParam = url.searchParams.get("libraryKind");
+    const libraryKind =
+      libraryKindParam && AssetLibraryKind.safeParse(libraryKindParam).success
+        ? (libraryKindParam as AssetLibraryKind)
+        : libraryKindParam === "ALL"
+          ? undefined
+          : "MATERIAL";
 
     const assets = await prisma.asset.findMany({
-      where: { workspaceId: wsId, ...(category ? { category } : {}) },
+      where: {
+        workspaceId: wsId,
+        ...(category ? { category } : {}),
+        ...(libraryKind ? { libraryKind } : {}),
+      },
       orderBy: { createdAt: "desc" },
     });
     return ok(assets.map(serializeAsset));
@@ -59,6 +74,7 @@ export async function POST(
       data: {
         workspaceId: wsId,
         category: input.category,
+        libraryKind: input.libraryKind,
         fileName: input.fileName,
         storageKey: input.storageKey,
         url: `${publicBase}/${input.storageKey}`,
