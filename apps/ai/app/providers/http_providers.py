@@ -182,8 +182,15 @@ def _edit_image_part(raw: bytes, idx: int) -> tuple[str, tuple[str, bytes, str]]
         buf = io.BytesIO()
         im.save(buf, format="PNG")
         return ("image[]", (f"ref{idx}.png", buf.getvalue(), "image/png"))
-    except Exception:  # noqa: BLE001 — unreadable bytes: let the API surface it
-        return ("image[]", (f"ref{idx}.png", raw, "image/png"))
+    except Exception as exc:  # noqa: BLE001
+        # Undecodable (e.g. an SVG or corrupt file) — do NOT relabel the raw
+        # bytes as PNG; /images/edits would reject them with an opaque provider
+        # error. Fail with a clear, actionable reason instead, so a STRICT pick
+        # that can't be rasterized surfaces as a readable generation failure.
+        raise ValueError(
+            f"STRICT reference #{idx + 1} is not a raster image the model can "
+            "use (e.g. SVG or a corrupt file); use a PNG / JPEG / WebP asset."
+        ) from exc
 
 
 # 改图 op → 自然语言 prompt 前缀(OpenAI /images/edits 只吃文字 prompt)。

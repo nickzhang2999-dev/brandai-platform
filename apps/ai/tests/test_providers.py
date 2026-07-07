@@ -254,16 +254,30 @@ def test_edit_image_part_reencodes_unsupported_to_png():
     assert data[:8] == b"\x89PNG\r\n\x1a\n"  # actually re-encoded, not raw GIF
 
 
+def test_edit_image_part_rejects_undecodable():
+    """An undecodable STRICT ref (e.g. SVG) must raise, not get relabeled as PNG
+    — otherwise /images/edits fails with an opaque provider error instead of a
+    readable reason."""
+    from app.providers.http_providers import _edit_image_part
+
+    svg = b'<svg xmlns="http://www.w3.org/2000/svg"><rect width="4" height="4"/></svg>'
+    with pytest.raises(ValueError):
+        _edit_image_part(svg, 0)
+
+
 @pytest.mark.asyncio
 async def test_generate_with_references_honors_website_ssrf_policy(monkeypatch):
     """K7 — a WEBSITE-sourced STRICT ref is fetched with the strict initial-host
     check (allow_private_initial=False); UPLOAD keeps the trusting default. This
     guards the new img2img fetch against DNS-rebinding to private services."""
     calls: list[tuple[str, bool]] = []
+    pbuf = io.BytesIO()
+    Image.new("RGB", (4, 4), (1, 2, 3)).save(pbuf, format="PNG")
+    png_bytes = pbuf.getvalue()
 
     async def fake_load(self, url, *, allow_private_initial=True):
         calls.append((url, allow_private_initial))
-        return b"\x89PNG-bytes"
+        return png_bytes
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"data": [{"url": "http://img/out.png"}]})
