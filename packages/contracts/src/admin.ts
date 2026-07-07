@@ -177,3 +177,41 @@ export const UpdateRegistrationInput = z.object({
   registrationOpen: z.boolean(),
 });
 export type UpdateRegistrationInput = z.infer<typeof UpdateRegistrationInput>;
+
+/**
+ * Platform admin — subscription plan (tier) management (/admin/plans). One row
+ * per SaaS tier with the operator-editable quota knobs. Users with no active
+ * subscription resolve to STARTER (lib/quota.ts#resolvePlan), so raising the
+ * STARTER limits here opens quota for every default-tier user at once — this is
+ * the "改默认额度" surface. `-1` means unlimited (mirrors Plan quota semantics).
+ */
+export const AdminPlanSummary = z.object({
+  tier: z.string(),
+  name: z.string(),
+  priceCentsMonthly: z.number().int().nonnegative(),
+  /** -1 = unlimited. */
+  monthlyGenerationQuota: z.number().int(),
+  dailyGenerationLimit: z.number().int(),
+  maxWorkspaces: z.number().int(),
+});
+export type AdminPlanSummary = z.infer<typeof AdminPlanSummary>;
+
+export const AdminListPlansResponse = z.object({
+  plans: z.array(AdminPlanSummary),
+});
+export type AdminListPlansResponse = z.infer<typeof AdminListPlansResponse>;
+
+/**
+ * PATCH /api/admin/plans/[tier] — edit a tier's quota knobs. Every field is an
+ * integer ≥ -1 (with -1 meaning unlimited); a sane upper bound guards against
+ * fat-finger values. `name` is trimmed and non-empty. All fields required so the
+ * write is a full, unambiguous replacement of the editable columns.
+ */
+const quotaInt = z.number().int().gte(-1).lte(1_000_000);
+export const AdminUpdatePlanInput = z.object({
+  name: z.string().trim().min(1).max(60),
+  monthlyGenerationQuota: quotaInt,
+  dailyGenerationLimit: quotaInt,
+  maxWorkspaces: quotaInt,
+});
+export type AdminUpdatePlanInput = z.infer<typeof AdminUpdatePlanInput>;
