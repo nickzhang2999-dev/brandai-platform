@@ -239,6 +239,21 @@ async def test_generate_with_references_labels_jpeg_by_real_format():
     assert seen == {"jpg_name": True, "jpeg_type": True, "no_png_name": True}
 
 
+def test_edit_image_part_reencodes_unsupported_to_png():
+    """A GIF/BMP STRICT ref must be re-encoded to real PNG bytes (not the raw
+    bytes mislabeled) — guards against the Pillow import being out of scope and
+    the NameError silently falling back to sending unsupported bytes."""
+    from app.providers.http_providers import _edit_image_part
+
+    gbuf = io.BytesIO()
+    Image.new("P", (8, 8)).save(gbuf, format="GIF")
+    assert gbuf.getvalue()[:3] == b"GIF"  # input really is a GIF
+    field, (filename, data, mime) = _edit_image_part(gbuf.getvalue(), 0)
+    assert field == "image[]"
+    assert filename == "ref0.png" and mime == "image/png"
+    assert data[:8] == b"\x89PNG\r\n\x1a\n"  # actually re-encoded, not raw GIF
+
+
 @pytest.mark.asyncio
 async def test_generate_with_references_honors_website_ssrf_policy(monkeypatch):
     """K7 — a WEBSITE-sourced STRICT ref is fetched with the strict initial-host

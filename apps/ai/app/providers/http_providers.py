@@ -176,6 +176,8 @@ def _edit_image_part(raw: bytes, idx: int) -> tuple[str, tuple[str, bytes, str]]
     if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
         return ("image[]", (f"ref{idx}.webp", raw, "image/webp"))
     try:
+        from PIL import Image  # local import — matches _build_inpaint_mask
+
         im = Image.open(io.BytesIO(raw))
         buf = io.BytesIO()
         im.save(buf, format="PNG")
