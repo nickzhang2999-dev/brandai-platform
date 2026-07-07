@@ -17,9 +17,11 @@ import { useBrand } from "./brand-context";
 export function BrandSidebar({
   children,
   user,
+  isAdmin,
 }: {
   children: React.ReactNode;
   user: { name: string; email: string; initial: string };
+  isAdmin: boolean;
 }) {
   const pathname = usePathname() ?? "/";
   const { brandName, brands, createBrand, switchBrand, wsId } = useBrand();
@@ -97,14 +99,14 @@ export function BrandSidebar({
         {/* Settings + user */}
         <div className="mt-4 flex flex-col gap-2">
           <Link
-            href="/admin/settings"
+            href="/account"
             className="flex items-center gap-3 rounded-2xl px-3 py-2.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           >
             <span className="w-5 text-center text-base">⚙</span>
-            设置
+            账号设置
           </Link>
           {/* A2 · 用户信息区 — avatar / name / position(email) + 个人菜单 */}
-          <UserMenu user={user} brandName={brandName} />
+          <UserMenu user={user} brandName={brandName} isAdmin={isAdmin} />
         </div>
       </aside>
 
@@ -224,9 +226,11 @@ function CreateBrandDialog({
 function UserMenu({
   user,
   brandName,
+  isAdmin,
 }: {
   user: { name: string; email: string; initial: string };
   brandName: string;
+  isAdmin: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
@@ -295,14 +299,25 @@ function UserMenu({
           </div>
           <div className="flex flex-col py-1">
             <Link
-              href="/admin/settings"
+              href="/account"
               role="menuitem"
               onClick={() => setOpen(false)}
               className="flex items-center gap-2.5 px-4 py-2.5 text-sm text-foreground/90 transition-colors hover:bg-muted"
             >
               <span className="w-4 text-center text-base">⚙</span>
-              管理后台设置
+              账号设置
             </Link>
+            {isAdmin ? (
+              <Link
+                href="/admin"
+                role="menuitem"
+                onClick={() => setOpen(false)}
+                className="flex items-center gap-2.5 px-4 py-2.5 text-sm text-foreground/90 transition-colors hover:bg-muted"
+              >
+                <span className="w-4 text-center text-base">🛡</span>
+                管理后台
+              </Link>
+            ) : null}
             <button
               type="button"
               role="menuitem"

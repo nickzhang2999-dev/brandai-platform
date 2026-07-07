@@ -31,6 +31,8 @@
 >
 > **二轮更新**：2026-06-20 · 分支 `claude/cool-pascal-ao72o3`。补齐设计稿缺口（L4 富卡片 / L5 工作台三右栏 / L8 素材联动 / L12 知识库真 AI 入口 / C5-C6 排序筛选 / Campaign 终审归档 / 模板库占位 + 6 项 nav）与 Phase-2 后端正确性（K4 recognize 证据 / K6 admin bootstrap 原子化 / K5 多尺寸+textMode）。全程 `pnpm test`(L1 83)+`typecheck`+`build`+`pytest`(77) 全绿。
 >
+> **界面修订（2026-07-07 · 分支 `claude/dark-mode-admin-panel-fixes-qzp7h9`）**：① **黑夜模式修复** —— `CreamCard` 之前在暗色下 `dark:bg-cream/text-ink` 渲染成近白卡，内部输入/标签却按 token 翻黑 → 登录 / 管理设置 / 用户管理面板不可读；改走语义 token（`dark:bg-card/text-card-foreground/border-border`），一处修复覆盖全部 CreamCard 页。② **皮肤只留白天/黑夜** —— 删掉 Mono Graphite / Tech Indigo（二者在 `styles.css` 本无 token 块，选中即静默回退 light）。③ **管理后台独立壳 + 页签** —— admin 路由从 `(app)` 迁到独立 `(admin)` 组，不再套用 openvisual 侧栏；新增置顶栏（**返回首页**按钮 + `管理后台` 标题）+ 6 段横向页签（平台设置/用户管理/订阅额度/全部空间/用量看板/运行日志），`/admin` 索引重定向到首个页签，免长页下滑。④ **个人 vs 管理入口分离** —— 侧栏齿轮改指 `/account`；用户菜单「管理后台」仅 admin 可见。安全：admin 页与 `/api/admin/*` 逐一 `isAdminUser`/`requireAdmin` 服务端校验、密钥加密+掩码，普通用户无法进入或篡改。全程 `pnpm test`+`typecheck`+`build` 全绿。
+>
 > **灰度端到端真验收（No-mock，2026-06-24 更新）**：真 provider（`openai · gpt-image-2`【铁律】/ `gpt-4o-mini`）→真 API→真 DB。**已真验**：登录门禁、真出图（R2 1.5MB PNG, gpt-image-2）、`actualWidth/Height` 落库(K5)、配额计数(K1, periodUsed 8→12)、通知中心(A3)、网站采集异步真爬(K3/I14)、推荐品牌(L2)、素材文件夹建/移(E3)、R2 存储读写、素材 AI 标注 describe 早前曾真验出真标签(E9)。
 > **2026-06-24 灰度真验（分支 wonderful-clarke，合并 main 后）**：边缘门禁(未登录 `/`→307 `/login`、API→401)、真 provider 自测 `openai OK · model=gpt-image-2`、**真出图端到端**（建 Campaign→202→轮询 54s→SUCCEEDED→R2 CDN **2.00MB PNG 1024×1536**）、**B 历史回看**(F17)、**C 出图回流素材库**(E14)、**E 出图深链**(F18 深链页 200 + 队列项 `id`+`projectId` 双要素)。**D「线上创建无效」证伪**：Campaign 创建在线上正常（422 仅因前端传错枚举 `ACTIVE`，正确 `IN_PROGRESS` 即 201）——归 S（前端枚举）非 E。**发现并已根治**：一条 type=logo 的 FORBIDDEN 品牌指引会无条件硬阻断全品牌出图（docs/10 #3，S 叠 O）——`ai-constraints.ts` 的 `HARD_BLOCK_RULE_TYPES` 去掉 `logo`（只留 imagery/graphic 真禁令），logo 类降为建议仍折入 prompt；补 2 回归用例；灰度复验：规则保持 FORBIDDEN 不动数据、同一出图直接成功。
 > **✅ AI 路由全部灰度真验通过（E9/E10 describe、B2/C8 summarize）**：真 VLM `gpt-4o-mini`。B2 8/8、describe 5/5、C8 写入真 `Project.aiSummary`。
@@ -38,7 +40,9 @@
 > 1. **Redis 队列共享**：BullMQ 队列名无前缀 → 别的分支(main 旧代码)worker 抢本分支 job 并静默丢字段。修复：分支级 `BULLMQ_PREFIX`。
 > 2. **AI 服务 DNS 共享（本轮根因）**：main 与本分支的 ai 容器**同挂一个 docker 网络且都用裸别名 `ai`** → 本分支 worker 的 `http://ai:8000` round-robin 命中 main 的旧 ai（无新路由）→ `/v1/describe`、`/v1/summarize` 间歇 404。**用 cdscli `branch exec` 进 worker 容器 `getent hosts ai` 实证到两个 IP(本分支 .8 + main .18)**。修复：分支级 `AI_SERVICE_URL` 指向唯一容器名 `cds-<branchId>-ai:8000`（compose 改 `${AI_SERVICE_URL:-http://ai:8000}`，其他分支回退裸别名）。修复后 worker 只命中本分支 ai，全部真验通过。
 > （这也纠正了中途一个错误假设——曾以为是「ai 容器陈旧/不重建」，用容器内 `/openapi.json` 实证后确认 ai 代码其实是新的，真凶是 DNS 串台。）
-> **未补冒烟**：真 recognize（D13）/ 参考图视觉条件化（F9，受 OpenAI generate API 限制，详见 L8）。
+> **未补冒烟**：真 recognize（D13）/ STRICT 参考图真图生图落地后的灰度真出图 eyeball（F9，代码+单测+部署已就绪，需鉴权跑一次真出图确认 logo 原样落图）。
+>
+> **参考图「100% 调用」真图生图（2026-07-07 · 分支 `claude/dark-mode-admin-panel-fixes-qzp7h9`）**：根因——工作台参考图选 STRICT 后像素从未进模型（真 `gpt-image-2` 的 generate 走 `/images/generations` 文生图不吃图，且 `_build_body` 对 openai 丢弃 extra），只剩一句文字描述→logo 画不出。**已修**：ReferenceImage 增 `mode`，worker 透传；apps/ai 新增 `generate_with_references()` 把 STRICT 参考图字节经 `/images/edits`（multipart，复用改图管线）送进模型，logo 原样落图；仅 STRICT，INSPIRATION 维持文字借鉴。Codex P1 SSRF 一并修（WEBSITE 参考图按 K7 走 `allow_private_initial=False`）。gate 全绿（L1 142 · L2 99 · typecheck · build），灰度已部署健康。
 > （评审：本轮处理 Bugbot/Codex 共 ~12 条，安全/正确性/UX 类已逐条修复并重验；计费/配额/协作类按 §3.5 留 phase-2。）
 
 ## 进度总览（更新 2026-06-21 · phase-1 全量 + phase-2 G6 协作）
@@ -75,7 +79,7 @@
 | 编号 | 功能点 | 来源 | 状态 | 路径 / 入口 | 备注 · 验收 | 变更 |
 |---|---|---|---|---|---|---|
 | A1 | 左侧导航栏 | doc01§1.9 / doc05§6.4 | ✅ | `app/(brandai)/brand-sidebar.tsx`、`lib/brandai-mock.ts::navItems` | 现 **6 项**（首页/项目/品牌套件/素材库/AI工作台/**模板库**）。侧栏动态渲染 navItems | V0.06 命名对齐 2026-06-27 |
-| A2 | 用户信息区（头像/姓名/职位/个人菜单） | P01-M02 | ✅ | `brand-sidebar.tsx`（注入 `user.name`） | 姓名已显示；个人菜单/退出入口待核验 | 接入 2026-06-21 |
+| A2 | 用户信息区（头像/姓名/职位/个人菜单） | P01-M02 | ✅ | `brand-sidebar.tsx`（注入 `user.name`） | 姓名已显示；个人菜单：**账号设置**（`/account`，全员）+ **管理后台**（`/admin`，仅 admin 可见，`isAdmin` 由布局注入）+ 退出。侧栏齿轮由 `/admin/settings` 改指 `/account`，个人 vs 管理入口分离 | 接入 2026-06-21；菜单分离 2026-07-07 |
 | A3 | 顶部通知入口 | P01-M03 | ✅ | `(brandai)/notification-center.tsx`（bell+未读 badge+收件箱）+ `GET .../notifications` | 从真实终态（Generation + AsyncTask）派生通知，无伪造无新表；未读用 localStorage `lastSeenAt`（phase-2 转服务端） | 接入 2026-06-20 |
 | A4 | 紫色视觉 token 系统（16 语义 token） | doc04§5.4 | ✅ | `packages/ui/src/styles.css` | violet SSOT，L1 快照守 | 2026-06-20 |
 | A5 | 圆角/阴影/字体(Inter)规范 | doc04§5.5-5.6 | ✅ | `packages/config/tailwind-preset.js` | — | 2026-06-20 |
@@ -141,7 +145,7 @@
 | E9 | AI 智能标签 | P04-M13 | ✅ | `assets/page.tsx` 详情「AI 智能标注」→`POST .../describe`→worker→真 VLM `/v1/describe`→写 `Asset.aiTags` | `assets/page.tsx` 详情「AI 智能标注」→worker→真 VLM `/v1/describe`→写 `Asset.aiTags`；灰度真验通过(worker→分支唯一 ai 容器) | 真验 5/5 2026-06-21 |
 | E10 | AI 生成描述 | P04-M14 | ✅ | 同 E9（`/v1/describe` 返回 `aiDescription`，worker 写 `Asset.aiDescription`） | 同 E9（`/v1/describe` 返回 `aiDescription`→写 `Asset.aiDescription`）；灰度真验通过(worker→分支唯一 ai 容器) | 真验 2026-06-21 |
 | E11 | 加入项目（→Campaign） | P04-M16 | ✅ | `assets/page.tsx::JoinProjectDialog` + `projects/[id]/assets`(POST kind=MEMBER) | 真弹窗选 Campaign→加入并跳工作台；**服务端 `ProjectAsset` 真关系**（取代纯客户端暂存，跨设备/协作可续），tray 退化为同 tab 即时反馈 | 服务端化 2026-06-22 |
-| E12 | 设为参考（→工作台参考区） | P04-M17 | ✅ | `assets/page.tsx` + `projects/[id]/assets`(kind=REFERENCE) ↔ 工作台 F9 | 设为参考→落 `ProjectAsset(REFERENCE)`；工作台 F9 合并服务端参考（真校验归属+留痕 version.params）。**注**：OpenAI generate API 不收图，当前为 prompt 级引导，真视觉条件化需经 edits 路由（phase-2） | 服务端化 2026-06-22 |
+| E12 | 设为参考（→工作台参考区） | P04-M17 | ✅ | `assets/page.tsx` + `projects/[id]/assets`(kind=REFERENCE) ↔ 工作台 F9 | 设为参考→落 `ProjectAsset(REFERENCE)`；工作台 F9 合并服务端参考（真校验归属+留痕 version.params）。**注**：STRICT 参考图真视觉条件化经 `/images/edits` 已落地（2026-07-07）；INSPIRATION 仍 prompt 级引导 | 服务端化 2026-06-22；STRICT 图生图 2026-07-07 |
 | E13 | 收藏切换 / 使用记录 / 查看来源 | doc02/05 | ✅ | 收藏 toggle(PATCH isFavorite)+筛选、使用记录(generation 引用派生)、查看来源弹窗(H8) | 灰度真验 | 接入 2026-06-21 |
 | E14 | 出图回流素材库（AI 生成图 → 素材） | 心智断层修复 | ✅ **已验收** | `lib/asset-mirror.ts`（generate/edit worker 出图落库后镜像 Asset）+ `assets/page.tsx`「✦ AI 生成」标识 + 历史回填 `api/admin/backfill-generated-assets`（游标分页越过不可镜像行，`mirrorGenerationVersionToAsset` 返回 boolean 计数） | 修复「出图只在工作台、素材库看不到」：每次真出图/改图产出 `GenerationVersion` 后**镜像一条真实 Asset**（`url` 指向同一张真图，加性可空列 `generationVersionId` 标识 AI 来源——**不改 AssetSource 枚举**避共享库其它分支崩；source 仍 UPLOAD）。素材库即列出、可收藏/归档/设为参考；来源显示「AI 生成」。best-effort 不阻断出图；唯一约束幂等。历史出图经 admin 回填端点补镜像。**灰度真验 2026-06-24**：新出图即镜像成 Asset（同一张真图 URL，aiDescription=场景），库内 31 张回流素材 | 新增 2026-06-23；真验 2026-06-24 |
 
@@ -157,7 +161,7 @@
 | F6 | 场景 / sceneType / 生成数量 | doc02 | ✅ | `page.tsx:414/425/443` | — | 2026-06-20 |
 | F7 | 风格关键词（标签增删） | P05-M10 | ✅ **已验收** | `workspace/page.tsx` tag 输入 | 增删 chip + 建议词；进 `styleKeywords`→worker 折入 promptAdditions。灰度真验：`params.styleKeywords`+`appliedPromptAdditions` 落库 | 接入+验收 2026-06-20 |
 | F8 | 品牌约束（显示已应用规则） | P05-M12 | ✅ | `page.tsx:464`「品牌约束已生效」 | 仅状态行，非逐条规则展示 | 接入 2026-06-21 |
-| F9 | 参考素材区 | P05-M13 | ✅ | `workspace/page.tsx`（读 reference-tray） | 显示本项目参考缩略图（来自 E12）+ 可删；进 `referenceAssetIds`→worker 解析为 referenceImages（**OpenAI generate 仅 prompt 级引导；真视觉条件化经 edits phase-2**）；**素材生命周期上线**：`availableForGeneration=false` 的素材在参考暂存/识别 picker 灰掉禁选（wire 暴露 `availableForGeneration/deprecatedAt`） | 接入 2026-06-21 |
+| F9 | 参考素材区 | P05-M13 | ✅ | `workspace/page.tsx`（读 reference-tray） | 显示本项目参考缩略图（来自 E12）+ 可删；进 `referenceAssets{assetId,mode}`→worker 解析为 referenceImages；**STRICT「100% 调用」真图生图已落地**（apps/ai `generate_with_references()`→`/images/edits` 送参考图字节，logo 原样落图，2026-07-07）；INSPIRATION 仍 prompt 级引导；**素材生命周期上线**：`availableForGeneration=false` 的素材在参考暂存/识别 picker 灰掉禁选（wire 暴露 `availableForGeneration/deprecatedAt`） | 接入 2026-06-21 |
 | F10 | 提交制作（真实出图 §2 异步） | P05-M15 | ✅ **已验收** | `page.tsx:230` → `POST /generations` 202 → 轮询 | 真 gpt-image-2→GenerationVersion | 2026-06-20 |
 | F11 | 生成额度展示 | doc02/05 | ✅ | `workspace/page.tsx` QuotaBar + `GET /quota` | 本周期/今日用量 + 进度条（-1=不限）；新增只读端点 | 接入 2026-06-20 |
 | F16 | 多尺寸渠道（targets）+ textMode | K5 | ✅ **已验收** | `workspace/page.tsx`（CHANNEL_SIZES 多选 + 直接/分层） | 渠道尺寸多选每尺寸各 1 张；textMode 直接/分层 + 持久化+regenerate 重建。灰度真验：1024²/1080×1440 出图 + `params.textMode=layered`；**记录 snap 真实尺寸已做**（K5：`params.actualWidth/Height` 由 apps/ai PIL 解码） | 新增+验收 2026-06-20；K5 补 2026-06-20 |
@@ -270,7 +274,7 @@
 | L5 | ~~工作台三右栏模块无~~ → 风格词/参考素材/额度三模块已接 | 设计有·**已补** | F7/F9/F11 | ✅ 三模块全接（后端 frozen-additive 解锁） |
 | L6 | ~~工作台顶部 撤销/重做/缩放 无~~ → 已补 | 设计有·**已补** | F2 | ✅ Toolbar 撤销/重做（表单快照历史）+ 大图 zoom in/out/reset/fit |
 | L7 | ~~项目操作只做了进入工作台~~ → 全部已补 | 设计有·**全补** | C9/H4 | ✅ 进入工作台/补充需求/查看规范(H4 侧栏)/提交终审/归档 全接入 |
-| L8 | ~~素材↔工作台/Campaign 无联动~~ → 设为参考/加入项目已接（reference-tray 暂存 ↔ 工作台 F9，出图真校验+持久化） | 设计有·**已补**(客户端暂存) | E11/E12/F9/H7 | ✅ UI 联动通；2 点 phase-2：①服务端 Project↔Asset 持久关系（多设备/协作）②参考图真视觉条件化（经 edits，OpenAI generate API 不收图） |
+| L8 | ~~素材↔工作台/Campaign 无联动~~ → 设为参考/加入项目已接（reference-tray 暂存 ↔ 工作台 F9，出图真校验+持久化） | 设计有·**已补**(客户端暂存) | E11/E12/F9/H7 | ✅ UI 联动通；phase-2 遗留：服务端 Project↔Asset 持久关系（多设备/协作）。②参考图真视觉条件化**已落地**（STRICT→`/images/edits` 图生图，2026-07-07） |
 | L9 | ~~通用弹窗体系：仅「新建 Campaign」是弹窗~~ → 弹窗体系已补 | 设计有·**已补** | H2-H12 | ✅ H4 查看规范/H7 加入项目/H9 提交确认/H12 额度升级 + 既有创建/上传/补充需求弹窗，复用统一 dialog 范式 |
 | L10 | ~~AI 输入框未抽象；语音/附件仅视觉~~ → 已补 | 设计有·**已补** | B2/D1/H1 | ✅ `AIInput` 组件(附件+Web Speech 语音)；brief 拆解(B2)/打标(E9)/解析(D1) 真 AI 接入 |
 | L11 | ~~品牌筛选/时间筛选/排序无~~ → 已补 | 设计有·**已补** | C4/C5/C6 | ✅ 品牌筛选 + 时间范围 + 排序全接入 |

@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { prisma } from "@brandai/db";
 import { auth } from "@/auth";
+import { isAdminUser } from "@/lib/admin";
 import { getOrCreateActiveBrand } from "@/lib/brandai";
 import { ACTIVE_BRAND_COOKIE } from "@/lib/brand-cookie";
 import { BrandProvider } from "./brand-context";
@@ -42,9 +43,14 @@ export default async function BrandaiLayout({
   const initial = (name || email || "U").trim().slice(0, 1).toUpperCase();
   const user = { name, email, initial };
 
+  // Only platform admins get the 管理后台 entry in the user menu; everyone else
+  // sees personal 账号设置 only. The admin console + its APIs re-check this, so
+  // this just hides an entry non-admins can't use.
+  const isAdmin = await isAdminUser(session.user.id, session.user.email);
+
   return (
     <BrandProvider value={{ wsId: brand.id, brandName: brand.name, user }}>
-      <BrandSidebar user={user}>
+      <BrandSidebar user={user} isAdmin={isAdmin}>
         {children}
       </BrandSidebar>
     </BrandProvider>

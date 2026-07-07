@@ -152,6 +152,9 @@ class ReferenceImage(BaseModel):
     note: Optional[str] = None
     # K7 — provenance of the URL for SSRF policy ("UPLOAD" | "WEBSITE").
     sourceHint: Optional[str] = None
+    # V0.0.7+ — "STRICT" (100%-use → image-to-image) | "INSPIRATION" (text steer).
+    # Absent → INSPIRATION (unchanged behavior).
+    mode: Optional[str] = None
 
 
 class AIConstraints(BaseModel):

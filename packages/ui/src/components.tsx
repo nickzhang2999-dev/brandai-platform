@@ -71,8 +71,11 @@ export function Card({
 
 /**
  * "CreamCard" is the high-contrast editorial card.
- * In light theme it renders as Off White (top layer above warm-sand).
- * In dark theme it renders as the legacy cream surface.
+ * It renders on the neutral page surface in light, and lifts onto the dark
+ * card surface in dark — both via semantic tokens so nested inputs/labels
+ * (which also use tokens) stay legible. The previous `dark:bg-cream
+ * dark:text-ink` painted a near-white card in dark mode while its contents
+ * flipped to dark, producing unreadable panels on the login / admin pages.
  */
 export function CreamCard({
   className,
@@ -81,7 +84,7 @@ export function CreamCard({
   return (
     <div
       className={cn(
-        "rounded-2xl bg-background text-foreground p-6 shadow-sm border border-foreground/10 dark:bg-cream dark:text-ink dark:border-transparent",
+        "rounded-2xl bg-background text-foreground p-6 shadow-sm border border-foreground/10 dark:bg-card dark:text-card-foreground dark:border-border",
         className,
       )}
       {...props}

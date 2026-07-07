@@ -118,6 +118,11 @@ _MAX_SCRAPE_TEXT = 6000
 # hard 400. We snap the requested canvas to the nearest by aspect ratio.
 _OPENAI_SIZES = ("1024x1024", "1024x1536", "1536x1024")
 _DEFAULT_IMAGE_QUALITY = "medium"
+# Max STRICT reference images forwarded to /images/edits. Matches the web
+# contract's `CreateGenerationInput.referenceAssets` max (8) so the full allowed
+# set of "100% 调用" assets reaches the model — never silently dropped. OpenAI's
+# edit API itself documents up to 16 GPT-image inputs, so 8 leaves headroom.
+_MAX_IMG2IMG_REFS = 8
 
 # Best-effort USD price per generated image, by provider kind → quality → size.
 # gpt-image-1 is token-priced (image output $40/1M tokens); these are OpenAI's
@@ -151,6 +156,41 @@ def _snap_openai_size(width: int, height: int) -> str:
     if ar > 1.18:
         return "1536x1024"
     return "1024x1024"
+
+
+def _edit_image_part(raw: bytes, idx: int) -> tuple[str, tuple[str, bytes, str]]:
+    """Build a `/images/edits` multipart `image[]` part, labelling it by the
+    reference's REAL format (magic-byte sniff), not a hardcoded PNG.
+
+    Uploads are accepted as any `image/*`, so a STRICT logo is often JPEG/WebP;
+    posting those bytes as `refN.png`/`image/png` can be rejected by the edit
+    API. OpenAI accepts png/jpeg/webp directly → pass through with correct
+    filename+type; anything else (gif/bmp/…) is re-encoded to PNG via Pillow so
+    it's still usable rather than dropped.
+    """
+    head = raw[:12]
+    if head[:8] == b"\x89PNG\r\n\x1a\n":
+        return ("image[]", (f"ref{idx}.png", raw, "image/png"))
+    if head[:3] == b"\xff\xd8\xff":
+        return ("image[]", (f"ref{idx}.jpg", raw, "image/jpeg"))
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return ("image[]", (f"ref{idx}.webp", raw, "image/webp"))
+    try:
+        from PIL import Image  # local import — matches _build_inpaint_mask
+
+        im = Image.open(io.BytesIO(raw))
+        buf = io.BytesIO()
+        im.save(buf, format="PNG")
+        return ("image[]", (f"ref{idx}.png", buf.getvalue(), "image/png"))
+    except Exception as exc:  # noqa: BLE001
+        # Undecodable (e.g. an SVG or corrupt file) — do NOT relabel the raw
+        # bytes as PNG; /images/edits would reject them with an opaque provider
+        # error. Fail with a clear, actionable reason instead, so a STRICT pick
+        # that can't be rasterized surfaces as a readable generation failure.
+        raise ValueError(
+            f"STRICT reference #{idx + 1} is not a raster image the model can "
+            "use (e.g. SVG or a corrupt file); use a PNG / JPEG / WebP asset."
+        ) from exc
 
 
 # 改图 op → 自然语言 prompt 前缀(OpenAI /images/edits 只吃文字 prompt)。
@@ -428,14 +468,113 @@ class HttpImageProvider(ImageProvider):
             )
 
     @_retry
-    async def _load_image_bytes(self, image_url: str) -> bytes:
-        """取源图字节:data: URL 直接 base64 解码;http(s) 经 SSRF 安全取流。"""
+    async def _load_image_bytes(
+        self, image_url: str, *, allow_private_initial: bool = True
+    ) -> bytes:
+        """取源图字节:data: URL 直接 base64 解码;http(s) 经 SSRF 安全取流。
+        `allow_private_initial` 默认信任(改图源图/内部存储/上传);WEBSITE 采集的
+        参考图须传 False,让初始 host 也过私网校验(K7 防 DNS-rebinding)。"""
         if image_url.startswith("data:"):
             return base64.b64decode(image_url.split(",", 1)[1])
         async with self._client() as c:
-            r = await safe_get(c, image_url, allow_private_initial=True)
+            r = await safe_get(
+                c, image_url, allow_private_initial=allow_private_initial
+            )
             r.raise_for_status()
             return r.content
+
+    @_retry
+    async def generate_with_references(
+        self,
+        prompt: str,
+        references: list[dict[str, Any]],
+        *,
+        width: int,
+        height: int,
+        n: int,
+        quality: str | None = None,
+        model: str | None = None,
+    ) -> list[str]:
+        """gpt-image /images/edits with STRICT reference image(s) as visual
+        input, so a 100%-use asset (e.g. a logo) lands in the output verbatim.
+
+        Only meaningful for kind == "openai": the /images/generations
+        text-to-image endpoint cannot accept input pixels, so a STRICT
+        reference would otherwise be dropped and only survive as a text steer
+        (the model has no idea what the logo looks like). Callers guard on
+        kind == "openai" + hasattr; other gateways keep the text-to-image path.
+
+        Each reference is a dict with `url` and (optional) `sourceHint`. K7 —
+        a WEBSITE-harvested URL is fetched with the strict initial-host SSRF
+        check (`allow_private_initial=False`, DNS-rebinding guard); UPLOAD /
+        internal-storage URLs keep the trusting default. Mirrors the policy the
+        rest of the reference-inlining paths already apply.
+        """
+        # Forward the full allowed set of STRICT refs (bounded by the contract's
+        # max, not an arbitrary 4) — dropping any would leave a "100% 调用" asset
+        # out of the composited image.
+        refs = [r for r in references if r.get("url")][:_MAX_IMG2IMG_REFS]
+        size = _snap_openai_size(width, height)
+        started = time.perf_counter()
+        status = 0
+        error: str | None = None
+        self.last_total_tokens = None
+        try:
+            # OpenAI /images/edits takes multiple inputs via repeated `image[]`
+            # multipart parts; the scene prompt guides how they're composited.
+            img_files: list[tuple[str, tuple[str, bytes, str]]] = []
+            for i, ref in enumerate(refs):
+                b = await self._load_image_bytes(
+                    ref["url"],
+                    allow_private_initial=ref.get("sourceHint") != "WEBSITE",
+                )
+                # Label by the ref's real format (JPEG/WebP logos are common);
+                # a hardcoded .png/image/png could be rejected by /images/edits.
+                img_files.append(_edit_image_part(b, i))
+            if not img_files:
+                raise ValueError("no loadable reference images for img2img")
+            async with self._client() as c:
+                r = await c.post(
+                    f"{self.base_url}/images/edits",
+                    headers={"Authorization": f"Bearer {self.api_key}"},
+                    files=img_files,
+                    data={
+                        "prompt": prompt,
+                        "model": model or self.model or "gpt-image-2",
+                        "size": size,
+                        "n": str(n),
+                        "quality": quality or _DEFAULT_IMAGE_QUALITY,
+                    },
+                )
+                status = r.status_code
+                r.raise_for_status()
+                data = r.json()
+                try:
+                    tok = (data.get("usage") or {}).get("total_tokens")
+                    self.last_total_tokens = int(tok) if tok is not None else None
+                except Exception:  # noqa: BLE001 — token capture must never break gen
+                    self.last_total_tokens = None
+                out = _extract_image_refs(data)
+                if not out:
+                    raise ValueError("provider returned no image refs")
+                return out
+        except Exception as exc:  # noqa: BLE001 — logged then re-raised
+            error = type(exc).__name__
+            raise
+        finally:
+            logger.info(
+                "image.generate.img2img",
+                extra={
+                    "provider": self.kind,
+                    "model": model or self.model,
+                    "n": n,
+                    "refs": len(refs),
+                    "size": size,
+                    "latency_ms": round((time.perf_counter() - started) * 1000),
+                    "status": status,
+                    "error": error,
+                },
+            )
 
     async def edit(
         self, image_url: str, op: str, payload: dict[str, Any]

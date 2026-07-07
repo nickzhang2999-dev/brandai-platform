@@ -186,6 +186,118 @@ async def test_edit_without_mask_sends_no_mask_part():
     assert seen == {"mask": False}
 
 
+# --- STRICT 参考图 → 图生图：像素经 multipart 送进 /images/edits ---
+
+
+@pytest.mark.asyncio
+async def test_generate_with_references_posts_images_to_edits():
+    seen: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/images/edits")
+        body = request.content
+        # Two STRICT refs → two repeated `image[]` multipart parts + the prompt.
+        seen["image_parts"] = body.count(b'name="image[]"')
+        seen["has_prompt"] = b'name="prompt"' in body
+        seen["size"] = b"1536x1024" in body  # wide target snaps here
+        return httpx.Response(200, json={"data": [{"url": "http://img/out.png"}]})
+
+    ref_a = _png_data_uri(Image.new("RGB", (8, 8), (10, 20, 30)))
+    ref_b = _png_data_uri(Image.new("RGB", (8, 8), (40, 50, 60)))
+    p = HttpImageProvider(OPENAI, "k", transport=httpx.MockTransport(handler))
+    out = await p.generate_with_references(
+        "compose a poster around the locked logo",
+        [{"url": ref_a}, {"url": ref_b}],
+        width=1920,
+        height=1080,
+        n=1,
+    )
+    assert out == ["http://img/out.png"]
+    assert seen == {"image_parts": 2, "has_prompt": True, "size": True}
+
+
+@pytest.mark.asyncio
+async def test_generate_with_references_labels_jpeg_by_real_format():
+    """A STRICT upload is often JPEG/WebP; the img2img part must be labelled by
+    the real format, not a hardcoded .png/image/png that /images/edits rejects."""
+    seen: dict[str, bool] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = request.content
+        seen["jpg_name"] = b'filename="ref0.jpg"' in body
+        seen["jpeg_type"] = b"image/jpeg" in body
+        seen["no_png_name"] = b'filename="ref0.png"' not in body
+        return httpx.Response(200, json={"data": [{"url": "http://img/out.png"}]})
+
+    jbuf = io.BytesIO()
+    Image.new("RGB", (12, 12), (200, 30, 30)).save(jbuf, format="JPEG")
+    jpeg_uri = "data:image/jpeg;base64," + base64.b64encode(jbuf.getvalue()).decode()
+    p = HttpImageProvider(OPENAI, "k", transport=httpx.MockTransport(handler))
+    await p.generate_with_references(
+        "poster", [{"url": jpeg_uri}], width=1024, height=1024, n=1
+    )
+    assert seen == {"jpg_name": True, "jpeg_type": True, "no_png_name": True}
+
+
+def test_edit_image_part_reencodes_unsupported_to_png():
+    """A GIF/BMP STRICT ref must be re-encoded to real PNG bytes (not the raw
+    bytes mislabeled) — guards against the Pillow import being out of scope and
+    the NameError silently falling back to sending unsupported bytes."""
+    from app.providers.http_providers import _edit_image_part
+
+    gbuf = io.BytesIO()
+    Image.new("P", (8, 8)).save(gbuf, format="GIF")
+    assert gbuf.getvalue()[:3] == b"GIF"  # input really is a GIF
+    field, (filename, data, mime) = _edit_image_part(gbuf.getvalue(), 0)
+    assert field == "image[]"
+    assert filename == "ref0.png" and mime == "image/png"
+    assert data[:8] == b"\x89PNG\r\n\x1a\n"  # actually re-encoded, not raw GIF
+
+
+def test_edit_image_part_rejects_undecodable():
+    """An undecodable STRICT ref (e.g. SVG) must raise, not get relabeled as PNG
+    — otherwise /images/edits fails with an opaque provider error instead of a
+    readable reason."""
+    from app.providers.http_providers import _edit_image_part
+
+    svg = b'<svg xmlns="http://www.w3.org/2000/svg"><rect width="4" height="4"/></svg>'
+    with pytest.raises(ValueError):
+        _edit_image_part(svg, 0)
+
+
+@pytest.mark.asyncio
+async def test_generate_with_references_honors_website_ssrf_policy(monkeypatch):
+    """K7 — a WEBSITE-sourced STRICT ref is fetched with the strict initial-host
+    check (allow_private_initial=False); UPLOAD keeps the trusting default. This
+    guards the new img2img fetch against DNS-rebinding to private services."""
+    calls: list[tuple[str, bool]] = []
+    pbuf = io.BytesIO()
+    Image.new("RGB", (4, 4), (1, 2, 3)).save(pbuf, format="PNG")
+    png_bytes = pbuf.getvalue()
+
+    async def fake_load(self, url, *, allow_private_initial=True):
+        calls.append((url, allow_private_initial))
+        return png_bytes
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": [{"url": "http://img/out.png"}]})
+
+    monkeypatch.setattr(HttpImageProvider, "_load_image_bytes", fake_load)
+    p = HttpImageProvider(OPENAI, "k", transport=httpx.MockTransport(handler))
+    await p.generate_with_references(
+        "poster",
+        [
+            {"url": "https://cdn.example.com/logo.png", "sourceHint": "UPLOAD"},
+            {"url": "https://evil.example.com/x.png", "sourceHint": "WEBSITE"},
+        ],
+        width=1024,
+        height=1024,
+        n=1,
+    )
+    assert ("https://cdn.example.com/logo.png", True) in calls
+    assert ("https://evil.example.com/x.png", False) in calls
+
+
 # --- env-default model injection (gateways like OpenRouter require a model) ---
 
 

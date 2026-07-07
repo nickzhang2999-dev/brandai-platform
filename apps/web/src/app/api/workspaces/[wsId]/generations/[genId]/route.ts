@@ -205,6 +205,32 @@ export async function POST(
       }
       return undefined;
     })();
+    // Prefer the mode-carrying referenceAssets (persisted by the worker) so a
+    // STRICT ("100% 调用") pick survives a regenerate and still routes through
+    // image-to-image. Fall back to the legacy id list (all INSPIRATION) for
+    // versions produced before referenceAssets was persisted.
+    const reconstructedReferenceAssets = (() => {
+      for (const v of priorRoots) {
+        const p = (v.params ?? {}) as { referenceAssets?: unknown };
+        if (
+          Array.isArray(p.referenceAssets) &&
+          p.referenceAssets.every(
+            (r) =>
+              !!r &&
+              typeof r === "object" &&
+              typeof (r as { assetId?: unknown }).assetId === "string" &&
+              ((r as { mode?: unknown }).mode === "STRICT" ||
+                (r as { mode?: unknown }).mode === "INSPIRATION"),
+          )
+        ) {
+          return p.referenceAssets as {
+            assetId: string;
+            mode: "STRICT" | "INSPIRATION";
+          }[];
+        }
+      }
+      return undefined;
+    })();
     const reconstructedReferenceAssetIds = (() => {
       for (const v of priorRoots) {
         const p = (v.params ?? {}) as { referenceAssetIds?: unknown };
@@ -231,24 +257,51 @@ export async function POST(
       return undefined;
     })();
 
+    // Unify into mode-carrying items (STRICT preserved); legacy id-only params
+    // map to INSPIRATION, matching the original enqueue semantics.
+    const reconstructedRefItems: {
+      assetId: string;
+      mode: "STRICT" | "INSPIRATION";
+    }[] =
+      reconstructedReferenceAssets ??
+      (reconstructedReferenceAssetIds ?? []).map((assetId) => ({
+        assetId,
+        mode: "INSPIRATION" as const,
+      }));
+
     // Re-validate the reconstructed references against CURRENT state (a prior
     // pick may since have been deprecated/disabled/deleted or be a non-image).
     // Filter to still-usable images rather than 400 — the user isn't actively
-    // re-choosing on a regenerate; we just don't re-thread stale/invalid ids.
-    const validReferenceAssetIds =
-      reconstructedReferenceAssetIds && reconstructedReferenceAssetIds.length > 0
-        ? (
-            await prisma.asset.findMany({
-              where: {
-                id: { in: [...new Set(reconstructedReferenceAssetIds)] },
-                workspaceId: wsId,
-                availableForGeneration: true,
-                deprecatedAt: null,
-                mimeType: { startsWith: "image/" },
-              },
-              select: { id: true },
-            })
-          ).map((a) => a.id)
+    // re-choosing on a regenerate; we just don't re-thread stale/invalid picks.
+    // Dedupe by assetId, preserve order, keep each pick's mode.
+    const validReferenceAssets =
+      reconstructedRefItems.length > 0
+        ? await (async () => {
+            const usable = new Set(
+              (
+                await prisma.asset.findMany({
+                  where: {
+                    id: {
+                      in: [
+                        ...new Set(reconstructedRefItems.map((r) => r.assetId)),
+                      ],
+                    },
+                    workspaceId: wsId,
+                    availableForGeneration: true,
+                    deprecatedAt: null,
+                    mimeType: { startsWith: "image/" },
+                  },
+                  select: { id: true },
+                })
+              ).map((a) => a.id),
+            );
+            const seen = new Set<string>();
+            return reconstructedRefItems.filter((r) => {
+              if (!usable.has(r.assetId) || seen.has(r.assetId)) return false;
+              seen.add(r.assetId);
+              return true;
+            });
+          })()
         : undefined;
 
     const jobData: GenerateJobData = {
@@ -260,8 +313,8 @@ export async function POST(
       ...(reconstructedStyleKeywords && reconstructedStyleKeywords.length > 0
         ? { styleKeywords: reconstructedStyleKeywords }
         : {}),
-      ...(validReferenceAssetIds && validReferenceAssetIds.length > 0
-        ? { referenceAssetIds: validReferenceAssetIds }
+      ...(validReferenceAssets && validReferenceAssets.length > 0
+        ? { referenceAssets: validReferenceAssets }
         : {}),
     };
     const job = await generateQueue.add("generate", jobData, {

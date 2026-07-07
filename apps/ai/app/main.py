@@ -329,6 +329,17 @@ async def generate(
 
     prompt = " ".join(prompt_parts)
 
+    # V0.0.7+ — positive refs the caller marked STRICT (100% 调用). Their pixels
+    # must reach the model via image-to-image (resolved once provider kind is
+    # known, below); INSPIRATION refs stay a text steer only. Carry sourceHint
+    # so the provider applies the K7 SSRF policy per reference (WEBSITE → strict
+    # initial-host check).
+    strict_refs = [
+        {"url": r["url"], "sourceHint": r.get("sourceHint")}
+        for r in positive_refs
+        if r.get("mode") == "STRICT" and r.get("url")
+    ]
+
     # aspect_ratio override: "W:H" → derive a matched (w,h) keeping base area.
     w, h = base_w, base_h
     ar = machine_rules.get("aspect_ratio")
@@ -399,6 +410,42 @@ async def generate(
     kind = getattr(provider, "kind", "mock")
     model = getattr(provider, "model", "") or None
 
+    # V0.0.7+ — when the caller marked ≥1 positive reference STRICT (100% 调用),
+    # route through image-to-image (/images/edits) so the asset's pixels reach
+    # the model (a logo lands verbatim) instead of a text steer the plain
+    # text-to-image endpoint would drop. Only OpenAI gpt-image supports this;
+    # other gateways / mock keep the text-to-image path (INSPIRATION unchanged).
+    use_img2img = (
+        bool(strict_refs)
+        and kind == "openai"
+        and hasattr(provider, "generate_with_references")
+    )
+
+    async def _emit(gw: int, gh: int, gn: int) -> list[str]:
+        if use_img2img:
+            p = prompt
+            if negative:
+                avoid = "; ".join(s for s in negative if s)
+                if avoid:
+                    p = f"{prompt}\n\nAvoid: {avoid}"
+            return await provider.generate_with_references(
+                p,
+                strict_refs,
+                width=gw,
+                height=gh,
+                n=gn,
+                quality=(provider_extra or {}).get("quality"),
+                model=(provider_extra or {}).get("model"),
+            )
+        return await provider.generate(
+            prompt,
+            width=gw,
+            height=gh,
+            n=gn,
+            negative=negative or None,
+            extra=provider_extra or None,
+        )
+
     # P2.0 — multi-size fan-out. When targets are present, ignore versionCount
     # and the sceneType default size: emit exactly one image per target at its
     # own W×H, stamping targetKey/targetLabel into params.
@@ -410,14 +457,7 @@ async def generate(
         tok_sum = 0
         any_tok = False
         for t in req.targets:
-            urls = await provider.generate(
-                prompt,
-                width=t.width,
-                height=t.height,
-                n=1,
-                negative=negative or None,
-                extra=provider_extra or None,
-            )
+            urls = await _emit(t.width, t.height, 1)
             # A provider may return no image for a target (filtered/empty
             # response). Surface a controlled 502 with the failing target rather
             # than an opaque 500 IndexError on urls[0].
@@ -470,14 +510,7 @@ async def generate(
         return GenerateResponse(versions=versions, usage=usage)
 
     started = time.perf_counter()
-    urls = await provider.generate(
-        prompt,
-        width=w,
-        height=h,
-        n=req.versionCount,
-        negative=negative or None,
-        extra=provider_extra or None,
-    )
+    urls = await _emit(w, h, req.versionCount)
     usage = GenerateUsage(
         provider=kind,
         model=model,
