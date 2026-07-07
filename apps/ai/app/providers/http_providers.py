@@ -118,6 +118,11 @@ _MAX_SCRAPE_TEXT = 6000
 # hard 400. We snap the requested canvas to the nearest by aspect ratio.
 _OPENAI_SIZES = ("1024x1024", "1024x1536", "1536x1024")
 _DEFAULT_IMAGE_QUALITY = "medium"
+# Max STRICT reference images forwarded to /images/edits. Matches the web
+# contract's `CreateGenerationInput.referenceAssets` max (8) so the full allowed
+# set of "100% 调用" assets reaches the model — never silently dropped. OpenAI's
+# edit API itself documents up to 16 GPT-image inputs, so 8 leaves headroom.
+_MAX_IMG2IMG_REFS = 8
 
 # Best-effort USD price per generated image, by provider kind → quality → size.
 # gpt-image-1 is token-priced (image output $40/1M tokens); these are OpenAI's
@@ -470,8 +475,10 @@ class HttpImageProvider(ImageProvider):
         internal-storage URLs keep the trusting default. Mirrors the policy the
         rest of the reference-inlining paths already apply.
         """
-        # Cap input images (multipart + model limits); STRICT sets are tiny.
-        refs = [r for r in references if r.get("url")][:4]
+        # Forward the full allowed set of STRICT refs (bounded by the contract's
+        # max, not an arbitrary 4) — dropping any would leave a "100% 调用" asset
+        # out of the composited image.
+        refs = [r for r in references if r.get("url")][:_MAX_IMG2IMG_REFS]
         size = _snap_openai_size(width, height)
         started = time.perf_counter()
         status = 0
