@@ -211,7 +211,7 @@
 | I9 | Admin·AI provider 配置（DB>env，热切换） | ✅ | `api/admin/settings/ai`、`/admin/settings` | — | 2026-06-20 |
 | I10 | Admin·用户管理（启停/删除级联） | ✅ | `api/admin/users` | — | 2026-06-20 |
 | I11 | Admin·注册开关 / 活动日志 / 用量 | ✅ | `api/admin/registration|activity|usage` | — | 2026-06-20 |
-| I11b | Admin·订阅额度编辑面板（改套餐 日/月/品牌上限） | ✅ | `/admin/plans` + `api/admin/plans[/tier]`、`lib/admin-plans.ts` | 内联编辑各档 `Plan` 行,即时生效(resolvePlan 直读)；改 STARTER=改所有默认档设计师额度；-1=不限。STARTER 默认由 5/日·20/月 提到 **30/日·600/月**(seed + `20260707000000_starter_quota_bump` 迁移,仅当仍是旧默认才改,不覆盖已定制) | 新增 2026-07-07 |
+| I11b | Admin·订阅额度编辑面板（改套餐 日/月/品牌上限） | ✅ | `/admin/plans` + `api/admin/plans[/tier]`、`lib/admin-plans.ts` | 内联编辑各档 `Plan` 行,即时生效(resolvePlan 直读)；改 STARTER=改所有默认档设计师额度；-1=不限。STARTER 默认由 5/日·20/月 提到 **30/日·600/月**(seed + `20260707000000_starter_quota_bump` 迁移,仅当仍是旧默认才改,不覆盖已定制)。为保档位序(STARTER<PRO<TEAM),PRO 同提到 100/日·3000/月、TEAM 400/日·12000/月(`20260707010000_paid_tier_quota_bump`,同样仅改旧默认) | 新增 2026-07-07 |
 | I12 | Workers（generate/edit/recognize/parse-manual） | ✅ | `lib/workers/*.worker.ts` | BullMQ，独立容器 | 2026-06-20 |
 | I13 | AI 服务 /v1（generate/edit/recognize/parse-manual/compliance/diag） | ✅ | `apps/ai/app/main.py` | 内部网，不出公网 | 2026-06-20 |
 | I14 | AI /v1/ingest/website（网站采集） | ✅ | `apps/ai` 端点 + `ingest.worker.ts` + `website-ingest.tsx`（K3 §2 异步：202→轮询） | 异步接入 2026-06-20 |

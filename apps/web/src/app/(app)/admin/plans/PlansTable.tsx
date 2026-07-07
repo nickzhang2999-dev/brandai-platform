@@ -13,6 +13,20 @@ function fmtPrice(cents: number): string {
   return cents === 0 ? "免费" : `$${(cents / 100).toFixed(0)}/月`;
 }
 
+/**
+ * Coerce a quota input string to an integer ≥ -1, or null when it is blank /
+ * whitespace / non-integer / below -1. Returning null for "" (rather than
+ * letting `Number("")` collapse to 0) is what stops a cleared field from
+ * silently saving a tier-wide 0 quota.
+ */
+function parseField(raw: string): number | null {
+  const s = raw.trim();
+  if (s === "") return null;
+  const v = Number(s);
+  if (!Number.isInteger(v) || v < -1) return null;
+  return v;
+}
+
 interface Draft {
   name: string;
   dailyGenerationLimit: string;
@@ -50,23 +64,27 @@ export function PlansTable({ initial }: { initial: AdminPlanSummary[] }) {
 
   async function save(tier: string) {
     if (!draft) return;
-    // Parse the three numeric fields; blank / non-integer is rejected before we
-    // hit the network so the admin gets an immediate, local error.
-    const nums = {
-      dailyGenerationLimit: Number(draft.dailyGenerationLimit),
-      monthlyGenerationQuota: Number(draft.monthlyGenerationQuota),
-      maxWorkspaces: Number(draft.maxWorkspaces),
-    };
-    for (const [k, v] of Object.entries(nums)) {
-      if (!Number.isInteger(v) || v < -1) {
-        setError(`「${k}」需为 ≥ -1 的整数(-1 = 不限)`);
-        return;
-      }
+    // Parse the three numeric fields; a blank / whitespace / non-integer input
+    // is rejected BEFORE we hit the network so the admin gets an immediate,
+    // local error. `parseField` returns null for an empty string — critical,
+    // because `Number("")` is `0`, and a silent 0 would be a *valid* quota that
+    // instantly disables generation for the whole tier.
+    const daily = parseField(draft.dailyGenerationLimit);
+    const monthly = parseField(draft.monthlyGenerationQuota);
+    const workspaces = parseField(draft.maxWorkspaces);
+    if (daily === null || monthly === null || workspaces === null) {
+      setError("日额度 / 月额度 / 品牌上限均需填 ≥ -1 的整数(-1 = 不限,不能留空)");
+      return;
     }
     if (!draft.name.trim()) {
       setError("套餐名不能为空");
       return;
     }
+    const nums = {
+      dailyGenerationLimit: daily,
+      monthlyGenerationQuota: monthly,
+      maxWorkspaces: workspaces,
+    };
 
     setBusy(true);
     setError(null);
