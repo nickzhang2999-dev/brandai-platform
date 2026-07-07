@@ -12,7 +12,7 @@ async function main() {
   // M-D — plans are seeded by the migration in prod; mirror them here so
   // `db push`-based local dev (which skips migration SQL) also has them.
   const PLANS = [
-    { tier: "STARTER" as const, name: "Starter", priceCentsMonthly: 0, monthlyGenerationQuota: 20, dailyGenerationLimit: 5, maxWorkspaces: 1 },
+    { tier: "STARTER" as const, name: "Starter", priceCentsMonthly: 0, monthlyGenerationQuota: 600, dailyGenerationLimit: 30, maxWorkspaces: 1 },
     { tier: "PRO" as const, name: "Pro", priceCentsMonthly: 2900, monthlyGenerationQuota: 300, dailyGenerationLimit: 50, maxWorkspaces: 3 },
     { tier: "TEAM" as const, name: "Team", priceCentsMonthly: 9900, monthlyGenerationQuota: 1500, dailyGenerationLimit: 200, maxWorkspaces: 10 },
     { tier: "ENTERPRISE" as const, name: "Enterprise", priceCentsMonthly: 0, monthlyGenerationQuota: -1, dailyGenerationLimit: -1, maxWorkspaces: -1 },

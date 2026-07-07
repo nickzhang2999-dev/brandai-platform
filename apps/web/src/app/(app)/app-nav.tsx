@@ -20,6 +20,11 @@ function buildNav(pathname: string, isAdmin: boolean): NavItem[] {
           active: pathname.startsWith("/admin/users"),
         },
         {
+          href: "/admin/plans",
+          label: "⚙ 订阅额度",
+          active: pathname.startsWith("/admin/plans"),
+        },
+        {
           href: "/admin/workspaces",
           label: "⚙ 全部空间",
           active: pathname.startsWith("/admin/workspaces"),
