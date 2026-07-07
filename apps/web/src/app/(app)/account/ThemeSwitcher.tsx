@@ -5,26 +5,25 @@ import { useEffect, useState } from "react";
 /**
  * P3.1 · Skin switcher.
  *
- * 4 palettes share the same 16 semantic tokens (see packages/ui/src/styles.css):
- *   - light      → :root default, no class on <html>
- *   - dark       → .dark
- *   - theme-mono → .theme-mono
- *   - theme-tech → .theme-tech
+ * Two palettes share the same 16 semantic tokens (see packages/ui/src/styles.css):
+ *   - light → :root default, no class on <html>
+ *   - dark  → .dark
+ *
+ * (The earlier Mono Graphite / Tech Indigo options were removed — they had no
+ * token block in styles.css, so selecting them silently fell back to light.)
  *
  * Persisted in localStorage under THEME_KEY. The pre-paint inline script in
  * app/layout.tsx reads the same key to avoid FOUC on reload.
  */
 
 export const THEME_KEY = "brandai-theme";
-export const THEME_CLASSES = ["dark", "theme-mono", "theme-tech"] as const;
+export const THEME_CLASSES = ["dark"] as const;
 
 type ThemeValue = "light" | (typeof THEME_CLASSES)[number];
 
 const OPTIONS: { value: ThemeValue; label: string; desc: string }[] = [
-  { value: "light", label: "Editorial Light", desc: "默认 · 奶白 + 勃艮第" },
-  { value: "dark", label: "Editorial Dark", desc: "深墨 + 暖金" },
-  { value: "theme-mono", label: "Mono Graphite", desc: "零彩度 · 纸感印刷" },
-  { value: "theme-tech", label: "Tech Indigo", desc: "冷靛蓝 · 产品科技感" },
+  { value: "light", label: "白天模式", desc: "默认 · 近白中性 + 紫" },
+  { value: "dark", label: "黑夜模式", desc: "深墨 + 提亮紫" },
 ];
 
 function applyTheme(value: ThemeValue) {

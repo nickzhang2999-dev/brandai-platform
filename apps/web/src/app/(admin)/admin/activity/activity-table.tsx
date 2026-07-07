@@ -5,7 +5,7 @@ import { useInfiniteQuery } from "@tanstack/react-query";
 import type { ActivityResponse, ActivityRow } from "@brandai/contracts";
 import { Badge, Button } from "@brandai/ui";
 import { apiFetch } from "@/lib/client";
-import { formatElapsed } from "../../queue-widget";
+import { formatElapsed } from "@/app/(app)/queue-widget";
 import { Lightbox } from "@/components/lightbox";
 
 const PAGE_SIZE = 50;

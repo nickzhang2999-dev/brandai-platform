@@ -31,6 +31,8 @@
 >
 > **二轮更新**：2026-06-20 · 分支 `claude/cool-pascal-ao72o3`。补齐设计稿缺口（L4 富卡片 / L5 工作台三右栏 / L8 素材联动 / L12 知识库真 AI 入口 / C5-C6 排序筛选 / Campaign 终审归档 / 模板库占位 + 6 项 nav）与 Phase-2 后端正确性（K4 recognize 证据 / K6 admin bootstrap 原子化 / K5 多尺寸+textMode）。全程 `pnpm test`(L1 83)+`typecheck`+`build`+`pytest`(77) 全绿。
 >
+> **界面修订（2026-07-07 · 分支 `claude/dark-mode-admin-panel-fixes-qzp7h9`）**：① **黑夜模式修复** —— `CreamCard` 之前在暗色下 `dark:bg-cream/text-ink` 渲染成近白卡，内部输入/标签却按 token 翻黑 → 登录 / 管理设置 / 用户管理面板不可读；改走语义 token（`dark:bg-card/text-card-foreground/border-border`），一处修复覆盖全部 CreamCard 页。② **皮肤只留白天/黑夜** —— 删掉 Mono Graphite / Tech Indigo（二者在 `styles.css` 本无 token 块，选中即静默回退 light）。③ **管理后台独立壳 + 页签** —— admin 路由从 `(app)` 迁到独立 `(admin)` 组，不再套用 openvisual 侧栏；新增置顶栏（**返回首页**按钮 + `管理后台` 标题）+ 6 段横向页签（平台设置/用户管理/订阅额度/全部空间/用量看板/运行日志），`/admin` 索引重定向到首个页签，免长页下滑。④ **个人 vs 管理入口分离** —— 侧栏齿轮改指 `/account`；用户菜单「管理后台」仅 admin 可见。安全：admin 页与 `/api/admin/*` 逐一 `isAdminUser`/`requireAdmin` 服务端校验、密钥加密+掩码，普通用户无法进入或篡改。全程 `pnpm test`+`typecheck`+`build` 全绿。
+>
 > **灰度端到端真验收（No-mock，2026-06-24 更新）**：真 provider（`openai · gpt-image-2`【铁律】/ `gpt-4o-mini`）→真 API→真 DB。**已真验**：登录门禁、真出图（R2 1.5MB PNG, gpt-image-2）、`actualWidth/Height` 落库(K5)、配额计数(K1, periodUsed 8→12)、通知中心(A3)、网站采集异步真爬(K3/I14)、推荐品牌(L2)、素材文件夹建/移(E3)、R2 存储读写、素材 AI 标注 describe 早前曾真验出真标签(E9)。
 > **2026-06-24 灰度真验（分支 wonderful-clarke，合并 main 后）**：边缘门禁(未登录 `/`→307 `/login`、API→401)、真 provider 自测 `openai OK · model=gpt-image-2`、**真出图端到端**（建 Campaign→202→轮询 54s→SUCCEEDED→R2 CDN **2.00MB PNG 1024×1536**）、**B 历史回看**(F17)、**C 出图回流素材库**(E14)、**E 出图深链**(F18 深链页 200 + 队列项 `id`+`projectId` 双要素)。**D「线上创建无效」证伪**：Campaign 创建在线上正常（422 仅因前端传错枚举 `ACTIVE`，正确 `IN_PROGRESS` 即 201）——归 S（前端枚举）非 E。**发现并已根治**：一条 type=logo 的 FORBIDDEN 品牌指引会无条件硬阻断全品牌出图（docs/10 #3，S 叠 O）——`ai-constraints.ts` 的 `HARD_BLOCK_RULE_TYPES` 去掉 `logo`（只留 imagery/graphic 真禁令），logo 类降为建议仍折入 prompt；补 2 回归用例；灰度复验：规则保持 FORBIDDEN 不动数据、同一出图直接成功。
 > **✅ AI 路由全部灰度真验通过（E9/E10 describe、B2/C8 summarize）**：真 VLM `gpt-4o-mini`。B2 8/8、describe 5/5、C8 写入真 `Project.aiSummary`。
@@ -75,7 +77,7 @@
 | 编号 | 功能点 | 来源 | 状态 | 路径 / 入口 | 备注 · 验收 | 变更 |
 |---|---|---|---|---|---|---|
 | A1 | 左侧导航栏 | doc01§1.9 / doc05§6.4 | ✅ | `app/(brandai)/brand-sidebar.tsx`、`lib/brandai-mock.ts::navItems` | 现 **6 项**（首页/项目/品牌套件/素材库/AI工作台/**模板库**）。侧栏动态渲染 navItems | V0.06 命名对齐 2026-06-27 |
-| A2 | 用户信息区（头像/姓名/职位/个人菜单） | P01-M02 | ✅ | `brand-sidebar.tsx`（注入 `user.name`） | 姓名已显示；个人菜单/退出入口待核验 | 接入 2026-06-21 |
+| A2 | 用户信息区（头像/姓名/职位/个人菜单） | P01-M02 | ✅ | `brand-sidebar.tsx`（注入 `user.name`） | 姓名已显示；个人菜单：**账号设置**（`/account`，全员）+ **管理后台**（`/admin`，仅 admin 可见，`isAdmin` 由布局注入）+ 退出。侧栏齿轮由 `/admin/settings` 改指 `/account`，个人 vs 管理入口分离 | 接入 2026-06-21；菜单分离 2026-07-07 |
 | A3 | 顶部通知入口 | P01-M03 | ✅ | `(brandai)/notification-center.tsx`（bell+未读 badge+收件箱）+ `GET .../notifications` | 从真实终态（Generation + AsyncTask）派生通知，无伪造无新表；未读用 localStorage `lastSeenAt`（phase-2 转服务端） | 接入 2026-06-20 |
 | A4 | 紫色视觉 token 系统（16 语义 token） | doc04§5.4 | ✅ | `packages/ui/src/styles.css` | violet SSOT，L1 快照守 | 2026-06-20 |
 | A5 | 圆角/阴影/字体(Inter)规范 | doc04§5.5-5.6 | ✅ | `packages/config/tailwind-preset.js` | — | 2026-06-20 |
