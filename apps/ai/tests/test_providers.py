@@ -217,6 +217,29 @@ async def test_generate_with_references_posts_images_to_edits():
 
 
 @pytest.mark.asyncio
+async def test_generate_with_references_labels_jpeg_by_real_format():
+    """A STRICT upload is often JPEG/WebP; the img2img part must be labelled by
+    the real format, not a hardcoded .png/image/png that /images/edits rejects."""
+    seen: dict[str, bool] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = request.content
+        seen["jpg_name"] = b'filename="ref0.jpg"' in body
+        seen["jpeg_type"] = b"image/jpeg" in body
+        seen["no_png_name"] = b'filename="ref0.png"' not in body
+        return httpx.Response(200, json={"data": [{"url": "http://img/out.png"}]})
+
+    jbuf = io.BytesIO()
+    Image.new("RGB", (12, 12), (200, 30, 30)).save(jbuf, format="JPEG")
+    jpeg_uri = "data:image/jpeg;base64," + base64.b64encode(jbuf.getvalue()).decode()
+    p = HttpImageProvider(OPENAI, "k", transport=httpx.MockTransport(handler))
+    await p.generate_with_references(
+        "poster", [{"url": jpeg_uri}], width=1024, height=1024, n=1
+    )
+    assert seen == {"jpg_name": True, "jpeg_type": True, "no_png_name": True}
+
+
+@pytest.mark.asyncio
 async def test_generate_with_references_honors_website_ssrf_policy(monkeypatch):
     """K7 — a WEBSITE-sourced STRICT ref is fetched with the strict initial-host
     check (allow_private_initial=False); UPLOAD keeps the trusting default. This

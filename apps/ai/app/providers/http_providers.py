@@ -158,6 +158,32 @@ def _snap_openai_size(width: int, height: int) -> str:
     return "1024x1024"
 
 
+def _edit_image_part(raw: bytes, idx: int) -> tuple[str, tuple[str, bytes, str]]:
+    """Build a `/images/edits` multipart `image[]` part, labelling it by the
+    reference's REAL format (magic-byte sniff), not a hardcoded PNG.
+
+    Uploads are accepted as any `image/*`, so a STRICT logo is often JPEG/WebP;
+    posting those bytes as `refN.png`/`image/png` can be rejected by the edit
+    API. OpenAI accepts png/jpeg/webp directly → pass through with correct
+    filename+type; anything else (gif/bmp/…) is re-encoded to PNG via Pillow so
+    it's still usable rather than dropped.
+    """
+    head = raw[:12]
+    if head[:8] == b"\x89PNG\r\n\x1a\n":
+        return ("image[]", (f"ref{idx}.png", raw, "image/png"))
+    if head[:3] == b"\xff\xd8\xff":
+        return ("image[]", (f"ref{idx}.jpg", raw, "image/jpeg"))
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return ("image[]", (f"ref{idx}.webp", raw, "image/webp"))
+    try:
+        im = Image.open(io.BytesIO(raw))
+        buf = io.BytesIO()
+        im.save(buf, format="PNG")
+        return ("image[]", (f"ref{idx}.png", buf.getvalue(), "image/png"))
+    except Exception:  # noqa: BLE001 — unreadable bytes: let the API surface it
+        return ("image[]", (f"ref{idx}.png", raw, "image/png"))
+
+
 # 改图 op → 自然语言 prompt 前缀(OpenAI /images/edits 只吃文字 prompt)。
 _EDIT_OP_PROMPTS = {
     "REPLACE_BACKGROUND": "Replace the background of the product image",
@@ -493,7 +519,9 @@ class HttpImageProvider(ImageProvider):
                     ref["url"],
                     allow_private_initial=ref.get("sourceHint") != "WEBSITE",
                 )
-                img_files.append(("image[]", (f"ref{i}.png", b, "image/png")))
+                # Label by the ref's real format (JPEG/WebP logos are common);
+                # a hardcoded .png/image/png could be rejected by /images/edits.
+                img_files.append(_edit_image_part(b, i))
             if not img_files:
                 raise ValueError("no loadable reference images for img2img")
             async with self._client() as c:
