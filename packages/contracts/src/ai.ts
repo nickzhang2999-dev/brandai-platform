@@ -217,6 +217,14 @@ export const ReferenceImage = z.object({
    * optional, absent → trusting UPLOAD policy (unchanged behavior).
    */
   sourceHint: AssetSourceHint.optional(),
+  /**
+   * V0.0.7+ — reference usage mode for workspace-picked assets.
+   * STRICT = 必须 100% 调用（logo 等内容不可改）→ the AI service feeds the
+   * pixels through image-to-image (`/images/edits`) so the asset lands in the
+   * output verbatim; INSPIRATION = 借鉴 → text steer only. Absent → treated as
+   * INSPIRATION (unchanged behavior; prohibition-derived refs never set it).
+   */
+  mode: z.enum(["STRICT", "INSPIRATION"]).optional(),
 });
 export type ReferenceImage = z.infer<typeof ReferenceImage>;
 

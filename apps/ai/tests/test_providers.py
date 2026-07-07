@@ -186,6 +186,36 @@ async def test_edit_without_mask_sends_no_mask_part():
     assert seen == {"mask": False}
 
 
+# --- STRICT 参考图 → 图生图：像素经 multipart 送进 /images/edits ---
+
+
+@pytest.mark.asyncio
+async def test_generate_with_references_posts_images_to_edits():
+    seen: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/images/edits")
+        body = request.content
+        # Two STRICT refs → two repeated `image[]` multipart parts + the prompt.
+        seen["image_parts"] = body.count(b'name="image[]"')
+        seen["has_prompt"] = b'name="prompt"' in body
+        seen["size"] = b"1536x1024" in body  # wide target snaps here
+        return httpx.Response(200, json={"data": [{"url": "http://img/out.png"}]})
+
+    ref_a = _png_data_uri(Image.new("RGB", (8, 8), (10, 20, 30)))
+    ref_b = _png_data_uri(Image.new("RGB", (8, 8), (40, 50, 60)))
+    p = HttpImageProvider(OPENAI, "k", transport=httpx.MockTransport(handler))
+    out = await p.generate_with_references(
+        "compose a poster around the locked logo",
+        [ref_a, ref_b],
+        width=1920,
+        height=1080,
+        n=1,
+    )
+    assert out == ["http://img/out.png"]
+    assert seen == {"image_parts": 2, "has_prompt": True, "size": True}
+
+
 # --- env-default model injection (gateways like OpenRouter require a model) ---
 
 

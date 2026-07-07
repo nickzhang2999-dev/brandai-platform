@@ -437,6 +437,86 @@ class HttpImageProvider(ImageProvider):
             r.raise_for_status()
             return r.content
 
+    @_retry
+    async def generate_with_references(
+        self,
+        prompt: str,
+        reference_urls: list[str],
+        *,
+        width: int,
+        height: int,
+        n: int,
+        quality: str | None = None,
+        model: str | None = None,
+    ) -> list[str]:
+        """gpt-image /images/edits with STRICT reference image(s) as visual
+        input, so a 100%-use asset (e.g. a logo) lands in the output verbatim.
+
+        Only meaningful for kind == "openai": the /images/generations
+        text-to-image endpoint cannot accept input pixels, so a STRICT
+        reference would otherwise be dropped and only survive as a text steer
+        (the model has no idea what the logo looks like). Callers guard on
+        kind == "openai" + hasattr; other gateways keep the text-to-image path.
+        """
+        # Cap input images (multipart + model limits); STRICT sets are tiny.
+        refs = [u for u in reference_urls if u][:4]
+        size = _snap_openai_size(width, height)
+        started = time.perf_counter()
+        status = 0
+        error: str | None = None
+        self.last_total_tokens = None
+        try:
+            # OpenAI /images/edits takes multiple inputs via repeated `image[]`
+            # multipart parts; the scene prompt guides how they're composited.
+            img_files: list[tuple[str, tuple[str, bytes, str]]] = []
+            for i, url in enumerate(refs):
+                b = await self._load_image_bytes(url)
+                img_files.append(("image[]", (f"ref{i}.png", b, "image/png")))
+            if not img_files:
+                raise ValueError("no loadable reference images for img2img")
+            async with self._client() as c:
+                r = await c.post(
+                    f"{self.base_url}/images/edits",
+                    headers={"Authorization": f"Bearer {self.api_key}"},
+                    files=img_files,
+                    data={
+                        "prompt": prompt,
+                        "model": model or self.model or "gpt-image-2",
+                        "size": size,
+                        "n": str(n),
+                        "quality": quality or _DEFAULT_IMAGE_QUALITY,
+                    },
+                )
+                status = r.status_code
+                r.raise_for_status()
+                data = r.json()
+                try:
+                    tok = (data.get("usage") or {}).get("total_tokens")
+                    self.last_total_tokens = int(tok) if tok is not None else None
+                except Exception:  # noqa: BLE001 — token capture must never break gen
+                    self.last_total_tokens = None
+                out = _extract_image_refs(data)
+                if not out:
+                    raise ValueError("provider returned no image refs")
+                return out
+        except Exception as exc:  # noqa: BLE001 — logged then re-raised
+            error = type(exc).__name__
+            raise
+        finally:
+            logger.info(
+                "image.generate.img2img",
+                extra={
+                    "provider": self.kind,
+                    "model": model or self.model,
+                    "n": n,
+                    "refs": len(refs),
+                    "size": size,
+                    "latency_ms": round((time.perf_counter() - started) * 1000),
+                    "status": status,
+                    "error": error,
+                },
+            )
+
     async def edit(
         self, image_url: str, op: str, payload: dict[str, Any]
     ) -> str:

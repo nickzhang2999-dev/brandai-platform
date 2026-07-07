@@ -497,6 +497,10 @@ export async function runGenerateJob(
             url: a.url,
             polarity: "positive" as const,
             source: `asset:${id}`,
+            // V0.0.7+ — thread the usage mode so the AI service can route STRICT
+            // refs through image-to-image (/images/edits) instead of only a
+            // textual steer, making a locked asset (e.g. logo) actually land.
+            mode,
             note:
               mode === "STRICT"
                 ? `STRICT_USE: must preserve the referenced asset content exactly; only scale, placement, proportion and color treatment may change. Asset: ${a.fileName}`
