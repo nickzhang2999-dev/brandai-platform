@@ -49,8 +49,8 @@ export async function listAdminUsers(): Promise<AdminUserSummary[]> {
   const starterPlan = {
     tier: "STARTER",
     name: starter?.name ?? "Starter",
-    monthlyGenerationQuota: starter?.monthlyGenerationQuota ?? 20,
-    dailyGenerationLimit: starter?.dailyGenerationLimit ?? 5,
+    monthlyGenerationQuota: starter?.monthlyGenerationQuota ?? 600,
+    dailyGenerationLimit: starter?.dailyGenerationLimit ?? 30,
   };
   const enterprisePlan = {
     tier: "ENTERPRISE",

@@ -34,6 +34,17 @@ export default async function AdminUsersPage() {
         平台所有注册账号。可启用 / 禁用 / 删除。禁用后该账号无法登录、并被请出工作台;
         删除会连同其品牌空间、资产、规则与生成记录一并移除,不可恢复。
       </p>
+      <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
+        「订阅额度」列显示的是该账号所在订阅档的额度。要改额度(如把默认档从 5/日 提到
+        30/日),去{" "}
+        <a
+          className="font-medium text-primary underline underline-offset-2 hover:text-primary/80"
+          href="/admin/plans"
+        >
+          订阅额度设置
+        </a>
+        。
+      </p>
       <div className="mt-8">
         <RegistrationToggle initialOpen={registrationOpen} />
       </div>
