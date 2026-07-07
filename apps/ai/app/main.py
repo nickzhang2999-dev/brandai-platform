@@ -331,9 +331,11 @@ async def generate(
 
     # V0.0.7+ — positive refs the caller marked STRICT (100% 调用). Their pixels
     # must reach the model via image-to-image (resolved once provider kind is
-    # known, below); INSPIRATION refs stay a text steer only.
-    strict_ref_urls = [
-        r["url"]
+    # known, below); INSPIRATION refs stay a text steer only. Carry sourceHint
+    # so the provider applies the K7 SSRF policy per reference (WEBSITE → strict
+    # initial-host check).
+    strict_refs = [
+        {"url": r["url"], "sourceHint": r.get("sourceHint")}
         for r in positive_refs
         if r.get("mode") == "STRICT" and r.get("url")
     ]
@@ -414,7 +416,7 @@ async def generate(
     # text-to-image endpoint would drop. Only OpenAI gpt-image supports this;
     # other gateways / mock keep the text-to-image path (INSPIRATION unchanged).
     use_img2img = (
-        bool(strict_ref_urls)
+        bool(strict_refs)
         and kind == "openai"
         and hasattr(provider, "generate_with_references")
     )
@@ -428,7 +430,7 @@ async def generate(
                     p = f"{prompt}\n\nAvoid: {avoid}"
             return await provider.generate_with_references(
                 p,
-                strict_ref_urls,
+                strict_refs,
                 width=gw,
                 height=gh,
                 n=gn,

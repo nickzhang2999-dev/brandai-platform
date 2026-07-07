@@ -207,13 +207,43 @@ async def test_generate_with_references_posts_images_to_edits():
     p = HttpImageProvider(OPENAI, "k", transport=httpx.MockTransport(handler))
     out = await p.generate_with_references(
         "compose a poster around the locked logo",
-        [ref_a, ref_b],
+        [{"url": ref_a}, {"url": ref_b}],
         width=1920,
         height=1080,
         n=1,
     )
     assert out == ["http://img/out.png"]
     assert seen == {"image_parts": 2, "has_prompt": True, "size": True}
+
+
+@pytest.mark.asyncio
+async def test_generate_with_references_honors_website_ssrf_policy(monkeypatch):
+    """K7 — a WEBSITE-sourced STRICT ref is fetched with the strict initial-host
+    check (allow_private_initial=False); UPLOAD keeps the trusting default. This
+    guards the new img2img fetch against DNS-rebinding to private services."""
+    calls: list[tuple[str, bool]] = []
+
+    async def fake_load(self, url, *, allow_private_initial=True):
+        calls.append((url, allow_private_initial))
+        return b"\x89PNG-bytes"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": [{"url": "http://img/out.png"}]})
+
+    monkeypatch.setattr(HttpImageProvider, "_load_image_bytes", fake_load)
+    p = HttpImageProvider(OPENAI, "k", transport=httpx.MockTransport(handler))
+    await p.generate_with_references(
+        "poster",
+        [
+            {"url": "https://cdn.example.com/logo.png", "sourceHint": "UPLOAD"},
+            {"url": "https://evil.example.com/x.png", "sourceHint": "WEBSITE"},
+        ],
+        width=1024,
+        height=1024,
+        n=1,
+    )
+    assert ("https://cdn.example.com/logo.png", True) in calls
+    assert ("https://evil.example.com/x.png", False) in calls
 
 
 # --- env-default model injection (gateways like OpenRouter require a model) ---

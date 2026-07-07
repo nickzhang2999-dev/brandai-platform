@@ -428,12 +428,18 @@ class HttpImageProvider(ImageProvider):
             )
 
     @_retry
-    async def _load_image_bytes(self, image_url: str) -> bytes:
-        """取源图字节:data: URL 直接 base64 解码;http(s) 经 SSRF 安全取流。"""
+    async def _load_image_bytes(
+        self, image_url: str, *, allow_private_initial: bool = True
+    ) -> bytes:
+        """取源图字节:data: URL 直接 base64 解码;http(s) 经 SSRF 安全取流。
+        `allow_private_initial` 默认信任(改图源图/内部存储/上传);WEBSITE 采集的
+        参考图须传 False,让初始 host 也过私网校验(K7 防 DNS-rebinding)。"""
         if image_url.startswith("data:"):
             return base64.b64decode(image_url.split(",", 1)[1])
         async with self._client() as c:
-            r = await safe_get(c, image_url, allow_private_initial=True)
+            r = await safe_get(
+                c, image_url, allow_private_initial=allow_private_initial
+            )
             r.raise_for_status()
             return r.content
 
@@ -441,7 +447,7 @@ class HttpImageProvider(ImageProvider):
     async def generate_with_references(
         self,
         prompt: str,
-        reference_urls: list[str],
+        references: list[dict[str, Any]],
         *,
         width: int,
         height: int,
@@ -457,9 +463,15 @@ class HttpImageProvider(ImageProvider):
         reference would otherwise be dropped and only survive as a text steer
         (the model has no idea what the logo looks like). Callers guard on
         kind == "openai" + hasattr; other gateways keep the text-to-image path.
+
+        Each reference is a dict with `url` and (optional) `sourceHint`. K7 —
+        a WEBSITE-harvested URL is fetched with the strict initial-host SSRF
+        check (`allow_private_initial=False`, DNS-rebinding guard); UPLOAD /
+        internal-storage URLs keep the trusting default. Mirrors the policy the
+        rest of the reference-inlining paths already apply.
         """
         # Cap input images (multipart + model limits); STRICT sets are tiny.
-        refs = [u for u in reference_urls if u][:4]
+        refs = [r for r in references if r.get("url")][:4]
         size = _snap_openai_size(width, height)
         started = time.perf_counter()
         status = 0
@@ -469,8 +481,11 @@ class HttpImageProvider(ImageProvider):
             # OpenAI /images/edits takes multiple inputs via repeated `image[]`
             # multipart parts; the scene prompt guides how they're composited.
             img_files: list[tuple[str, tuple[str, bytes, str]]] = []
-            for i, url in enumerate(refs):
-                b = await self._load_image_bytes(url)
+            for i, ref in enumerate(refs):
+                b = await self._load_image_bytes(
+                    ref["url"],
+                    allow_private_initial=ref.get("sourceHint") != "WEBSITE",
+                )
                 img_files.append(("image[]", (f"ref{i}.png", b, "image/png")))
             if not img_files:
                 raise ValueError("no loadable reference images for img2img")
