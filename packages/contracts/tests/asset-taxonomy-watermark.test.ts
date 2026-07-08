@@ -4,6 +4,7 @@ import {
   AssetLibraryKind,
   CreateAssetInput,
   CreateGenerationInput,
+  GeneratedAsset,
   WatermarkOverlayInput,
 } from "../src/index";
 
@@ -48,6 +49,31 @@ describe("Asset taxonomy — V0.0.9", () => {
     expect(Asset.safeParse({ ...base, libraryKind: "BRAND_KIT" }).success).toBe(
       false,
     );
+  });
+
+  it("adds project metadata to generated-image library rows", () => {
+    const parsed = GeneratedAsset.parse({
+      id: "a-generated",
+      workspaceId: "w1",
+      category: "OTHER",
+      libraryKind: "GENERATED",
+      fileName: "kv-final.png",
+      url: "https://example.com/kv-final.png",
+      mimeType: "image/png",
+      sizeBytes: 1024,
+      createdAt: new Date(0).toISOString(),
+      generationVersionId: "gv1",
+      generationId: "g1",
+      generationCreatedAt: new Date(1).toISOString(),
+      projectId: "p1",
+      projectName: "夏日新品项目",
+      projectStatus: "IN_PROGRESS",
+      sceneType: "CAMPAIGN_KV",
+    });
+
+    expect(parsed.libraryKind).toBe("GENERATED");
+    expect(parsed.projectName).toBe("夏日新品项目");
+    expect(parsed.projectStatus).toBe("IN_PROGRESS");
   });
 });
 

@@ -63,6 +63,18 @@ export const Asset = z.object({
 });
 export type Asset = z.infer<typeof Asset>;
 
+// V0.10 · 生成图库读模型。Asset 仍是图片镜像本体；这里加上所属项目和
+// Generation 元信息，供生成图页面按项目维度检索、过滤和回跳工作台。
+export const GeneratedAsset = Asset.extend({
+  projectId: z.string().optional(),
+  projectName: z.string().optional(),
+  projectStatus: CampaignStatus.optional(),
+  generationId: z.string().optional(),
+  generationCreatedAt: z.string().optional(),
+  sceneType: SceneType.optional(),
+});
+export type GeneratedAsset = z.infer<typeof GeneratedAsset>;
+
 /** E3 · 素材文件夹（workspace 作用域素材分组）。 */
 export const AssetFolder = z.object({
   id: z.string(),

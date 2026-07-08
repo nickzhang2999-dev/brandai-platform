@@ -1,8 +1,8 @@
 # BrandAI — 品牌项目视觉 AI 生成平台
 
-> **当前功能版本：V0.0.9**（2026-07-07）
+> **当前功能版本：V0.10**（2026-07-08）
 
-以 **项目** 为中心，围绕 **品牌套件 / 素材库 / 模板库 / AI 工作台** 组织品牌广告物料的生成、修改与归档。品牌套件由 **logo / 字体 / 颜色 / 设计指南 / 图像 / 品牌指南** 6 个维度组成。V0.0.9 将平台图片统一为 **素材库 / 模板库 / 生成图** 三类，并把工作台素材调用升级为服务端确定性水印叠加。
+以 **项目** 为中心，围绕 **品牌套件 / 素材库 / 模板库 / AI 工作台 / 生成图** 组织品牌广告物料的生成、修改与归档。品牌套件由 **logo / 字体 / 颜色 / 设计指南 / 图像 / 品牌指南** 6 个维度组成。V0.10 延续 V0.0.9 的 **素材库 / 模板库 / 生成图** 三分法，并为生成图入口补齐查询、项目筛选、项目状态筛选、时间筛选和排序能力。
 
 ---
 
@@ -74,7 +74,7 @@
 
 | 编号 | 功能点 | 来源 | 状态 | 路径 / 入口 | 备注 · 验收 | 变更 |
 |---|---|---|---|---|---|---|
-| A1 | 左侧导航栏 | doc01§1.9 / doc05§6.4 | ✅ | `app/(brandai)/brand-sidebar.tsx`、`lib/brandai-mock.ts::navItems` | 现 **8 项**（首页/项目/品牌套件/AI工作台/生成图/模板库/素材库/成员协作）。V0.0.9 补齐「生成图」一级入口 | V0.0.9 补齐 2026-07-08 |
+| A1 | 左侧导航栏 | doc01§1.9 / doc05§6.4 | ✅ | `app/(brandai)/brand-sidebar.tsx`、`lib/brandai-mock.ts::navItems` | 现 **8 项**（首页/项目/品牌套件/AI工作台/生成图/模板库/素材库/成员协作）。V0.0.9 补齐「生成图」一级入口，V0.10 为该入口补齐检索与项目维度过滤 | V0.10 筛选 2026-07-08 |
 | A2 | 用户信息区（头像/姓名/职位/个人菜单） | P01-M02 | ✅ | `brand-sidebar.tsx`（注入 `user.name`） | 姓名已显示；个人菜单/退出入口待核验 | 接入 2026-06-21 |
 | A3 | 顶部通知入口 | P01-M03 | ✅ | `(brandai)/notification-center.tsx`（bell+未读 badge+收件箱）+ `GET .../notifications` | 从真实终态（Generation + AsyncTask）派生通知，无伪造无新表；未读用 localStorage `lastSeenAt`（phase-2 转服务端） | 接入 2026-06-20 |
 | A4 | 紫色视觉 token 系统（16 语义 token） | doc04§5.4 | ✅ | `packages/ui/src/styles.css` | violet SSOT，L1 快照守 | 2026-06-20 |
@@ -143,7 +143,7 @@
 | E11 | 加入项目（→Campaign） | P04-M16 | ✅ | `assets/page.tsx::JoinProjectDialog` + `projects/[id]/assets`(POST kind=MEMBER) | 真弹窗选 Campaign→加入并跳工作台；**服务端 `ProjectAsset` 真关系**（取代纯客户端暂存，跨设备/协作可续），tray 退化为同 tab 即时反馈 | 服务端化 2026-06-22 |
 | E12 | 设为参考（→工作台参考区） | P04-M17 | ✅ | `assets/page.tsx` + `projects/[id]/assets`(kind=REFERENCE) ↔ 工作台 F9 | 历史 `ProjectAsset(REFERENCE)` 继续兼容；V0.0.9 起新工作台把素材库文件作为「素材（水印使用）」处理，模板库图片作为「参考图（模板库）」处理，二者在生成链路中明确分流 | V0.0.9 分流 2026-07-07 |
 | E13 | 收藏切换 / 使用记录 / 查看来源 | doc02/05 | ✅ | 收藏 toggle(PATCH isFavorite)+筛选、使用记录(generation 引用派生)、查看来源弹窗(H8) | 灰度真验 | 接入 2026-06-21 |
-| E14 | 出图回流生成图（AI 生成图 → Asset 镜像） | 心智断层修复 | ✅ **已验收** | `lib/asset-mirror.ts`（generate/edit worker 出图落库后镜像 Asset）+ `Asset.libraryKind=GENERATED` + 历史回填 `api/admin/backfill-generated-assets` | 修复「出图只在工作台、素材库看不到」：每次真出图/改图产出 `GenerationVersion` 后**镜像一条真实 Asset**，但 V0.0.9 起标记为 `GENERATED`，不再混入素材库默认列表；生成图继续用于历史出图、终稿、导出和后续镜像查询。best-effort 不阻断出图；唯一约束幂等 | V0.0.9 三分法 2026-07-07 |
+| E14 | 出图回流生成图（AI 生成图 → Asset 镜像） | 心智断层修复 | ✅ **已验收** | `lib/asset-mirror.ts`（generate/edit worker 出图落库后镜像 Asset）+ `Asset.libraryKind=GENERATED` + 历史回填 `api/admin/backfill-generated-assets` + `api/workspaces/[wsId]/generated-assets` | 修复「出图只在工作台、素材库看不到」：每次真出图/改图产出 `GenerationVersion` 后**镜像一条真实 Asset**，但 V0.0.9 起标记为 `GENERATED`，不再混入素材库默认列表；V0.10 生成图页面可按文件名/描述/项目/项目状态/时间检索，并展示项目回跳入口。best-effort 不阻断出图；唯一约束幂等 | V0.10 检索 2026-07-08 |
 
 ## F · P05 工作台
 
@@ -270,7 +270,7 @@
 | L5 | ~~工作台三右栏模块无~~ → 风格词/参考素材/额度三模块已接 | 设计有·**已补** | F7/F9/F11 | ✅ 三模块全接（后端 frozen-additive 解锁） |
 | L6 | ~~工作台顶部 撤销/重做/缩放 无~~ → 已补 | 设计有·**已补** | F2 | ✅ Toolbar 撤销/重做（表单快照历史）+ 大图 zoom in/out/reset/fit |
 | L7 | ~~项目操作只做了进入工作台~~ → 全部已补 | 设计有·**全补** | C9/H4 | ✅ 进入工作台/补充需求/查看规范(H4 侧栏)/提交终审/归档 全接入 |
-| L8 | ~~素材↔工作台/Campaign 无联动~~ → 素材水印 / 模板参考 / 生成图三分法已接 | 设计有·**已补** | E11/E12/E14/F9/H7/G1/A1 | ✅ V0.0.9 明确三类图片：素材库 `MATERIAL` 只做水印叠加；模板库 `TEMPLATE` 只做 AI inspiration；生成图 `GENERATED` 进入独立「生成图」入口，不混入素材库默认列表 |
+| L8 | ~~素材↔工作台/Campaign 无联动~~ → 素材水印 / 模板参考 / 生成图三分法已接 | 设计有·**已补** | E11/E12/E14/F9/H7/G1/A1 | ✅ V0.0.9 明确三类图片：素材库 `MATERIAL` 只做水印叠加；模板库 `TEMPLATE` 只做 AI inspiration；生成图 `GENERATED` 进入独立「生成图」入口，不混入素材库默认列表；V0.10 补齐生成图检索和项目维度过滤 |
 | L9 | ~~通用弹窗体系：仅「新建 Campaign」是弹窗~~ → 弹窗体系已补 | 设计有·**已补** | H2-H12 | ✅ H4 查看规范/H7 加入项目/H9 提交确认/H12 额度升级 + 既有创建/上传/补充需求弹窗，复用统一 dialog 范式 |
 | L10 | ~~AI 输入框未抽象；语音/附件仅视觉~~ → 已补 | 设计有·**已补** | B2/D1/H1 | ✅ `AIInput` 组件(附件+Web Speech 语音)；brief 拆解(B2)/打标(E9)/解析(D1) 真 AI 接入 |
 | L11 | ~~品牌筛选/时间筛选/排序无~~ → 已补 | 设计有·**已补** | C4/C5/C6 | ✅ 品牌筛选 + 时间范围 + 排序全接入 |
