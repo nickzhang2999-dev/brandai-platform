@@ -216,6 +216,13 @@ export type CampaignKitInput = z.infer<typeof CampaignKitInput>;
 export const EditVersionInput = z.object({
   op: EditOp,
   payload: z.record(z.unknown()).default({}),
+  /**
+   * V0.0.11 — material library overlays for edited images. Same semantics as
+   * CreateGenerationInput.watermarkOverlays: these are not sent to the AI
+   * provider; the edit worker composites them after the edited base image is
+   * returned.
+   */
+  watermarkOverlays: z.array(WatermarkOverlayInput).max(8).optional(),
 });
 export type EditVersionInput = z.infer<typeof EditVersionInput>;
 

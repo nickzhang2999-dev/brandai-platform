@@ -937,7 +937,20 @@ function Workspace() {
       };
       const r = await apiFetch<{ jobId: string }>(
         `/api/workspaces/${wsId}/generations/${genId}/versions/${v.id}/edit`,
-        { method: "POST", body: JSON.stringify({ op, payload: sized }) },
+        {
+          method: "POST",
+          body: JSON.stringify({
+            op,
+            payload: sized,
+            ...(watermarkOverlays.length
+              ? {
+                  watermarkOverlays: watermarkOverlays.filter(
+                    (overlay) => overlay.enabled !== false,
+                  ),
+                }
+              : {}),
+          }),
+        },
       );
       editStartedAt.current = Date.now();
       setEditVid(v.id);

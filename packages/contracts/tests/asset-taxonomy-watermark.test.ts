@@ -3,6 +3,7 @@ import {
   Asset,
   AssetLibraryKind,
   CreateAssetInput,
+  EditVersionInput,
   CreateGenerationInput,
   GeneratedAsset,
   WatermarkOverlayInput,
@@ -111,6 +112,24 @@ describe("Watermark generation contract — V0.0.9", () => {
 
     expect(parsed.referenceAssets?.[0]?.mode).toBe("STRICT");
     expect(parsed.templateReferenceAssetIds).toEqual(["template-1"]);
+    expect(parsed.watermarkOverlays?.[0]?.assetId).toBe("material-logo");
+    expect(parsed.watermarkOverlays?.[0]?.enabled).toBe(true);
+  });
+
+  it("accepts watermark overlays on edit requests for V0.0.11", () => {
+    const parsed = EditVersionInput.parse({
+      op: "INPAINT",
+      payload: { prompt: "补充产品高光", mask: "data:image/png;base64,xx" },
+      watermarkOverlays: [
+        {
+          assetId: "material-logo",
+          anchor: "top-right",
+          opacity: 1,
+          widthPx: 180,
+        },
+      ],
+    });
+
     expect(parsed.watermarkOverlays?.[0]?.assetId).toBe("material-logo");
     expect(parsed.watermarkOverlays?.[0]?.enabled).toBe(true);
   });

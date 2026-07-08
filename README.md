@@ -1,8 +1,8 @@
 # BrandAI — 品牌项目视觉 AI 生成平台
 
-> **当前功能版本：V0.10**（2026-07-08）
+> **当前功能版本：V0.0.11**（2026-07-08）
 
-以 **项目** 为中心，围绕 **品牌套件 / 素材库 / 模板库 / AI 工作台 / 生成图** 组织品牌广告物料的生成、修改与归档。品牌套件由 **logo / 字体 / 颜色 / 设计指南 / 图像 / 品牌指南** 6 个维度组成。V0.10 延续 V0.0.9 的 **素材库 / 模板库 / 生成图** 三分法，并为生成图入口补齐查询、项目筛选、项目状态筛选、时间筛选和排序能力。
+以 **项目** 为中心，围绕 **品牌套件 / 素材库 / 模板库 / AI 工作台 / 生成图** 组织品牌广告物料的生成、修改与归档。品牌套件由 **logo / 字体 / 颜色 / 设计指南 / 图像 / 品牌指南** 6 个维度组成。V0.0.11 延续 **素材库 / 模板库 / 生成图** 三分法，并补齐 AI 工作台二次编辑后的水印确定性叠加。
 
 ---
 
@@ -157,7 +157,7 @@
 | F6 | 场景 / sceneType / 生成数量 | doc02 | ✅ | `page.tsx:414/425/443` | — | 2026-06-20 |
 | F7 | 风格关键词（标签增删） | P05-M10 | ✅ **已验收** | `workspace/page.tsx` tag 输入 | 增删 chip + 建议词；进 `styleKeywords`→worker 折入 promptAdditions。灰度真验：`params.styleKeywords`+`appliedPromptAdditions` 落库 | 接入+验收 2026-06-20 |
 | F8 | 品牌约束（显示已应用规则） | P05-M12 | ✅ | `page.tsx:464`「品牌约束已生效」 | 仅状态行，非逐条规则展示 | 接入 2026-06-21 |
-| F9 | 素材水印与模板参考区 | P05-M13 | ✅ | `workspace/page.tsx` + `watermark-presets` API + `lib/watermark.ts` | 右侧输入区拆成「素材（水印使用）」与「参考图（模板库）」：素材库 `MATERIAL` 文件保存为 `watermarkOverlays`，worker 在 AI 底图返回后用 `sharp` 确定性叠加；模板库 `TEMPLATE` 图片进入 `templateReferenceAssetIds`，仅作为风格、色系、比例、构图 inspiration。旧 `STRICT` 兼容映射为默认水印，旧 `INSPIRATION` 兼容映射为模板参考 | V0.0.9 改造 2026-07-07 |
+| F9 | 素材水印与模板参考区 | P05-M13 | ✅ | `workspace/page.tsx` + `watermark-presets` API + `lib/watermark.ts` | 右侧输入区拆成「素材（水印使用）」与「参考图（模板库）」：素材库 `MATERIAL` 文件保存为 `watermarkOverlays`，worker 在 AI 底图返回后用 `sharp` 确定性叠加；模板库 `TEMPLATE` 图片进入 `templateReferenceAssetIds`，仅作为风格、色系、比例、构图 inspiration。V0.0.11 补齐二次编辑链路：换背景/局部重画/改字/加元素等 edit job 返回后同样按当前水印规则合成最终图 | V0.0.11 编辑水印 2026-07-08 |
 | F10 | 提交制作（真实出图 §2 异步） | P05-M15 | ✅ **已验收** | `page.tsx:230` → `POST /generations` 202 → 轮询 | 真 gpt-image-2→GenerationVersion | 2026-06-20 |
 | F11 | 生成额度展示 | doc02/05 | ✅ | `workspace/page.tsx` QuotaBar + `GET /quota` | 本周期/今日用量 + 进度条（-1=不限）；新增只读端点 | 接入 2026-06-20 |
 | F16 | 多尺寸渠道（targets）+ textMode | K5 | ✅ **已验收** | `workspace/page.tsx`（CHANNEL_SIZES 多选 + 直接/分层） | 渠道尺寸多选每尺寸各 1 张；textMode 直接/分层 + 持久化+regenerate 重建。灰度真验：1024²/1080×1440 出图 + `params.textMode=layered`；**记录 snap 真实尺寸已做**（K5：`params.actualWidth/Height` 由 apps/ai PIL 解码） | 新增+验收 2026-06-20；K5 补 2026-06-20 |
