@@ -74,7 +74,7 @@
 
 | 编号 | 功能点 | 来源 | 状态 | 路径 / 入口 | 备注 · 验收 | 变更 |
 |---|---|---|---|---|---|---|
-| A1 | 左侧导航栏 | doc01§1.9 / doc05§6.4 | ✅ | `app/(brandai)/brand-sidebar.tsx`、`lib/brandai-mock.ts::navItems` | 现 **6 项**（首页/项目/品牌套件/素材库/AI工作台/**模板库**）。侧栏动态渲染 navItems | V0.06 命名对齐 2026-06-27 |
+| A1 | 左侧导航栏 | doc01§1.9 / doc05§6.4 | ✅ | `app/(brandai)/brand-sidebar.tsx`、`lib/brandai-mock.ts::navItems` | 现 **8 项**（首页/项目/品牌套件/AI工作台/生成图/模板库/素材库/成员协作）。V0.0.9 补齐「生成图」一级入口 | V0.0.9 补齐 2026-07-08 |
 | A2 | 用户信息区（头像/姓名/职位/个人菜单） | P01-M02 | ✅ | `brand-sidebar.tsx`（注入 `user.name`） | 姓名已显示；个人菜单/退出入口待核验 | 接入 2026-06-21 |
 | A3 | 顶部通知入口 | P01-M03 | ✅ | `(brandai)/notification-center.tsx`（bell+未读 badge+收件箱）+ `GET .../notifications` | 从真实终态（Generation + AsyncTask）派生通知，无伪造无新表；未读用 localStorage `lastSeenAt`（phase-2 转服务端） | 接入 2026-06-20 |
 | A4 | 紫色视觉 token 系统（16 语义 token） | doc04§5.4 | ✅ | `packages/ui/src/styles.css` | violet SSOT，L1 快照守 | 2026-06-20 |
@@ -270,7 +270,7 @@
 | L5 | ~~工作台三右栏模块无~~ → 风格词/参考素材/额度三模块已接 | 设计有·**已补** | F7/F9/F11 | ✅ 三模块全接（后端 frozen-additive 解锁） |
 | L6 | ~~工作台顶部 撤销/重做/缩放 无~~ → 已补 | 设计有·**已补** | F2 | ✅ Toolbar 撤销/重做（表单快照历史）+ 大图 zoom in/out/reset/fit |
 | L7 | ~~项目操作只做了进入工作台~~ → 全部已补 | 设计有·**全补** | C9/H4 | ✅ 进入工作台/补充需求/查看规范(H4 侧栏)/提交终审/归档 全接入 |
-| L8 | ~~素材↔工作台/Campaign 无联动~~ → 素材水印 / 模板参考 / 生成图三分法已接 | 设计有·**已补** | E11/E12/E14/F9/H7/G1 | ✅ V0.0.9 明确三类图片：素材库 `MATERIAL` 只做水印叠加；模板库 `TEMPLATE` 只做 AI inspiration；生成图 `GENERATED` 不混入素材库默认列表 |
+| L8 | ~~素材↔工作台/Campaign 无联动~~ → 素材水印 / 模板参考 / 生成图三分法已接 | 设计有·**已补** | E11/E12/E14/F9/H7/G1/A1 | ✅ V0.0.9 明确三类图片：素材库 `MATERIAL` 只做水印叠加；模板库 `TEMPLATE` 只做 AI inspiration；生成图 `GENERATED` 进入独立「生成图」入口，不混入素材库默认列表 |
 | L9 | ~~通用弹窗体系：仅「新建 Campaign」是弹窗~~ → 弹窗体系已补 | 设计有·**已补** | H2-H12 | ✅ H4 查看规范/H7 加入项目/H9 提交确认/H12 额度升级 + 既有创建/上传/补充需求弹窗，复用统一 dialog 范式 |
 | L10 | ~~AI 输入框未抽象；语音/附件仅视觉~~ → 已补 | 设计有·**已补** | B2/D1/H1 | ✅ `AIInput` 组件(附件+Web Speech 语音)；brief 拆解(B2)/打标(E9)/解析(D1) 真 AI 接入 |
 | L11 | ~~品牌筛选/时间筛选/排序无~~ → 已补 | 设计有·**已补** | C4/C5/C6 | ✅ 品牌筛选 + 时间范围 + 排序全接入 |

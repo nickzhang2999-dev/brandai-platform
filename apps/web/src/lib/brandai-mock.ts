@@ -31,6 +31,7 @@ export type NavKey =
   | "brand-knowledge"
   | "assets"
   | "workspace"
+  | "generated"
   | "templates"
   | "members";
 
@@ -44,6 +45,7 @@ export const navItems: {
   { key: "campaigns", label: "项目", href: "/campaigns", icon: "◳" },
   { key: "brand-knowledge", label: "品牌套件", href: "/brand-knowledge", icon: "◎" },
   { key: "workspace", label: "AI 工作台", href: "/workspace", icon: "✸" },
+  { key: "generated", label: "生成图", href: "/generated", icon: "▧" },
   { key: "templates", label: "模板库", href: "/templates", icon: "▱" },
   { key: "assets", label: "素材库", href: "/assets", icon: "▦" },
   // G6 · 成员/协作管理 — 团队成员邀请 + 角色管理（接真实 /members BFF）。

@@ -3,6 +3,7 @@
 ## Summary
 
 - 新增 `Asset.libraryKind`，将平台图片统一为素材库、模板库、生成图三类。
+- 左侧导航新增「生成图」入口，页面独立展示 `libraryKind=GENERATED`。
 - 新增 `WatermarkPreset` 和水印配置 API，AI 工作台支持白紫风格的 LOGO 与水印配置弹窗。
 - 将素材库「必须出现」从模型语义复现改为 worker 端 `sharp` 确定性叠加。
 - 模板库升级为参考图库，只作为 AI 风格、色系、比例、构图参考。
@@ -11,7 +12,7 @@
 
 - `MATERIAL`：素材库默认列表、上传素材、工作台水印叠加。
 - `TEMPLATE`：模板库参考图、工作台 inspiration。
-- `GENERATED`：生成图镜像，不混入素材库默认列表。
+- `GENERATED`：生成图镜像，进入独立「生成图」页面，不混入素材库默认列表。
 - 旧 `STRICT` 兼容映射为默认水印，旧 `INSPIRATION` 兼容映射为模板参考。
 
 ## Tests
@@ -31,5 +32,6 @@
 
 - 素材库只显示 `MATERIAL`。
 - 模板库只显示 `TEMPLATE`。
+- 左侧导航显示「生成图」，页面只显示 `GENERATED`。
 - AI 工作台水印配置弹窗可打开、拖拽、保存。
 - 生成结果中 `MATERIAL` 素材以水印方式真实出现。
