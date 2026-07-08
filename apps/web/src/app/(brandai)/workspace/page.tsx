@@ -442,8 +442,12 @@ function Workspace() {
   }, [wsId, projectId]);
   useEffect(() => {
     setWatermarkOverlays((prev) => {
-      const byAsset = new Map(prev.filter((o) => o.assetId).map((o) => [o.assetId!, o]));
-      return references.map((r) => byAsset.get(r.id) ?? defaultWatermarkOverlay(r.id));
+      const byAsset = new Map(
+        prev.filter((o) => o.assetId).map((o) => [o.assetId!, o]),
+      );
+      return references.map(
+        (r) => byAsset.get(r.id) ?? defaultWatermarkOverlay(r.id),
+      );
     });
   }, [references]);
   function dropReference(assetId: string) {
@@ -580,8 +584,7 @@ function Workspace() {
     // 切项目默认清空当前出图,交给 seed-latest 重新播种。例外:若这次切项目来自
     // URL 深链(presetProject 已等于新 projectId)且带了 ?gen=,尊重深链那张
     // (通知/队列点到的是「另一个 Campaign 的某次出图」时,别被清成最近一次)。
-    const deep =
-      presetProject === projectId && presetGen ? presetGen : null;
+    const deep = presetProject === projectId && presetGen ? presetGen : null;
     setGenId(deep);
     setJobId(null);
     setTimedOut(false);
@@ -1092,10 +1095,18 @@ function Workspace() {
             // F7 — only send when non-empty (frozen-additive optional field).
             ...(styleKeywords.length ? { styleKeywords } : {}),
             ...(templateReferences.length
-              ? { templateReferenceAssetIds: templateReferences.map((r) => r.id) }
+              ? {
+                  templateReferenceAssetIds: templateReferences.map(
+                    (r) => r.id,
+                  ),
+                }
               : {}),
             ...(watermarkOverlays.length
-              ? { watermarkOverlays: watermarkOverlays.filter((o) => o.enabled !== false) }
+              ? {
+                  watermarkOverlays: watermarkOverlays.filter(
+                    (o) => o.enabled !== false,
+                  ),
+                }
               : {}),
           }),
         },
@@ -1690,9 +1701,7 @@ function Workspace() {
             <button
               onClick={() => {
                 if (!projectId) {
-                  setSubmitErr(
-                    "请先选择一个项目（没有就去项目页创建）",
-                  );
+                  setSubmitErr("请先选择一个项目（没有就去项目页创建）");
                   return;
                 }
                 setSubmitErr(null);
@@ -1824,7 +1833,11 @@ function AssetThumb({ asset, alt }: { asset: RefAsset; alt: string }) {
     <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-xl border border-border">
       {asset.thumbUrl ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={asset.thumbUrl} alt={alt} className="h-full w-full object-cover" />
+        <img
+          src={asset.thumbUrl}
+          alt={alt}
+          className="h-full w-full object-cover"
+        />
       ) : (
         <div className="flex h-full w-full items-center justify-center text-muted-foreground">
           ◇
@@ -1851,20 +1864,31 @@ function WatermarkEditorDialog({
     overlays[0]?.assetId ?? null,
   );
   const [presetName, setPresetName] = useState("默认水印");
+  const [editingPresetId, setEditingPresetId] = useState<string | null>(null);
   const previewRef = useRef<HTMLDivElement | null>(null);
+  const presetBootstrapped = useRef(false);
   const activeIndex = Math.max(
     0,
     overlays.findIndex((o) => o.assetId === activeId),
   );
-  const active = overlays[activeIndex] ?? defaultWatermarkOverlay(activeId ?? undefined);
+  const active =
+    overlays[activeIndex] ?? defaultWatermarkOverlay(activeId ?? undefined);
   const activeAsset = assets.find((a) => a.id === active.assetId) ?? assets[0];
   const { data: presets = [], refetch } = useQuery({
     queryKey: ["brandai-watermark-presets", wsId],
     queryFn: () =>
-      apiFetch<WatermarkPreset[]>(
-        `/api/workspaces/${wsId}/watermark-presets`,
-      ),
+      apiFetch<WatermarkPreset[]>(`/api/workspaces/${wsId}/watermark-presets`),
   });
+  useEffect(() => {
+    if (presetBootstrapped.current || editingPresetId || presets.length === 0)
+      return;
+    const firstEditable =
+      presets.find((preset) => preset.isActive) ?? presets[0];
+    if (!firstEditable) return;
+    presetBootstrapped.current = true;
+    setEditingPresetId(firstEditable.id);
+    setPresetName(firstEditable.name);
+  }, [editingPresetId, presets]);
 
   function patchActive(patch: Partial<WatermarkOverlayInput>) {
     const next = overlays.map((overlay, idx) =>
@@ -1876,18 +1900,34 @@ function WatermarkEditorDialog({
   function applyPreset(preset: WatermarkPreset) {
     patchActive({ ...preset.config, assetId: active.assetId });
     setPresetName(preset.name);
+    setEditingPresetId(preset.id);
   }
 
   async function savePreset() {
-    await apiFetch(`/api/workspaces/${wsId}/watermark-presets`, {
-      method: "POST",
-      body: JSON.stringify({
-        name: presetName.trim() || "默认水印",
-        isActive: true,
-        config: active,
-      }),
-    });
+    const payload = {
+      name: presetName.trim() || "默认水印",
+      isActive: true,
+      config: active,
+    };
+    const saved = await apiFetch<WatermarkPreset>(
+      editingPresetId
+        ? `/api/workspaces/${wsId}/watermark-presets/${editingPresetId}`
+        : `/api/workspaces/${wsId}/watermark-presets`,
+      {
+        method: editingPresetId ? "PATCH" : "POST",
+        body: JSON.stringify(payload),
+      },
+    );
+    setEditingPresetId(saved.id);
+    setPresetName(saved.name);
     await refetch();
+  }
+
+  function newPresetDraft() {
+    presetBootstrapped.current = true;
+    setEditingPresetId(null);
+    setPresetName("默认水印");
+    patchActive(defaultWatermarkOverlay(active.assetId));
   }
 
   function onPreviewPointerDown(e: ReactPointerEvent<HTMLDivElement>) {
@@ -1993,8 +2033,17 @@ function WatermarkEditorDialog({
             })}
           </div>
           <div className="mt-5 border-t border-border pt-4">
-            <div className="mb-2 text-xs font-semibold text-muted-foreground">
-              已保存配置
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <span className="text-xs font-semibold text-muted-foreground">
+                已保存配置
+              </span>
+              <button
+                type="button"
+                onClick={newPresetDraft}
+                className="rounded-full border border-border px-2 py-0.5 text-[10px] font-medium text-muted-foreground transition-colors hover:border-primary/30 hover:text-primary"
+              >
+                新建
+              </button>
             </div>
             <div className="space-y-2">
               {presets.map((preset) => (
@@ -2002,7 +2051,12 @@ function WatermarkEditorDialog({
                   key={preset.id}
                   type="button"
                   onClick={() => applyPreset(preset)}
-                  className="w-full rounded-xl border border-border bg-card px-3 py-2 text-left text-xs transition-colors hover:border-primary/30 hover:bg-accent-soft"
+                  className={[
+                    "w-full rounded-xl border px-3 py-2 text-left text-xs transition-colors hover:border-primary/30 hover:bg-accent-soft",
+                    editingPresetId === preset.id
+                      ? "border-primary bg-accent-soft text-primary"
+                      : "border-border bg-card",
+                  ].join(" ")}
                 >
                   <span className="font-medium">{preset.name}</span>
                   {preset.isActive ? (
@@ -2027,32 +2081,33 @@ function WatermarkEditorDialog({
             className="relative min-h-[360px] flex-1 overflow-hidden rounded-3xl border border-border bg-[linear-gradient(#ECECF3_1px,transparent_1px),linear-gradient(90deg,#ECECF3_1px,transparent_1px)] bg-[size:24px_24px]"
           >
             <div className="absolute inset-6 rounded-[28px] border border-dashed border-primary/25 bg-card/70" />
-            {(["top-left", "top-right", "bottom-left", "bottom-right"] as const).map(
-              (anchor) => (
-                <div
-                  key={anchor}
-                  className={[
-                    "absolute flex h-1/2 w-1/2 items-center justify-center text-xs text-muted-foreground/50",
-                    anchor.includes("top") ? "top-0" : "bottom-0",
-                    anchor.includes("left") ? "left-0" : "right-0",
-                  ].join(" ")}
-                >
-                  {anchor === "top-left"
-                    ? "左上"
-                    : anchor === "top-right"
-                      ? "右上"
-                      : anchor === "bottom-left"
-                        ? "左下"
-                        : "右下"}
-                </div>
-              ),
-            )}
+            {(
+              ["top-left", "top-right", "bottom-left", "bottom-right"] as const
+            ).map((anchor) => (
+              <div
+                key={anchor}
+                className={[
+                  "absolute flex h-1/2 w-1/2 items-center justify-center text-xs text-muted-foreground/50",
+                  anchor.includes("top") ? "top-0" : "bottom-0",
+                  anchor.includes("left") ? "left-0" : "right-0",
+                ].join(" ")}
+              >
+                {anchor === "top-left"
+                  ? "左上"
+                  : anchor === "top-right"
+                    ? "右上"
+                    : anchor === "bottom-left"
+                      ? "左下"
+                      : "右下"}
+              </div>
+            ))}
             <div
               role="button"
               tabIndex={0}
               onPointerDown={onPreviewPointerDown}
               onPointerMove={(e) => {
-                if (e.buttons === 1) updatePositionFromPointer(e.clientX, e.clientY);
+                if (e.buttons === 1)
+                  updatePositionFromPointer(e.clientX, e.clientY);
               }}
               className="absolute z-10 flex cursor-move items-center justify-center overflow-hidden rounded-xl border border-primary bg-card shadow-[0_12px_26px_rgba(124,92,255,0.18)]"
               style={{ ...previewStyle, opacity: active.opacity }}
@@ -2074,7 +2129,8 @@ function WatermarkEditorDialog({
           </div>
           <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
             <span>
-              {active.anchor} · {active.positionMode === "pixel" ? "像素" : "比例"}
+              {active.anchor} ·{" "}
+              {active.positionMode === "pixel" ? "像素" : "比例"}
             </span>
             <span>
               X {Math.round(active.offsetX)} · Y {Math.round(active.offsetY)}
@@ -2091,15 +2147,39 @@ function WatermarkEditorDialog({
               className="mt-2 h-10 w-full rounded-xl border border-border bg-background px-3 text-sm font-normal text-foreground outline-none focus:border-primary/40"
             />
           </label>
-          <ControlInput label="水印文字" value={active.text ?? ""} onChange={(v) => patchActive({ text: v })} />
-          <ControlRange label="大小" min={40} max={360} value={active.widthPx} onChange={(v) => patchActive({ widthPx: v })} />
-          <ControlRange label="透明度" min={0.1} max={1} step={0.05} value={active.opacity} onChange={(v) => patchActive({ opacity: v })} />
+          <ControlInput
+            label="水印文字"
+            value={active.text ?? ""}
+            onChange={(v) => patchActive({ text: v })}
+          />
+          <ControlRange
+            label="大小"
+            min={40}
+            max={360}
+            value={active.widthPx}
+            onChange={(v) => patchActive({ widthPx: v })}
+          />
+          <ControlRange
+            label="透明度"
+            min={0.1}
+            max={1}
+            step={0.05}
+            value={active.opacity}
+            onChange={(v) => patchActive({ opacity: v })}
+          />
           <div>
             <div className="mb-2 text-xs font-semibold text-muted-foreground">
               锚点
             </div>
             <div className="grid grid-cols-2 gap-2">
-              {(["top-left", "top-right", "bottom-left", "bottom-right"] as const).map((anchor) => (
+              {(
+                [
+                  "top-left",
+                  "top-right",
+                  "bottom-left",
+                  "bottom-right",
+                ] as const
+              ).map((anchor) => (
                 <button
                   key={anchor}
                   type="button"
@@ -2116,10 +2196,30 @@ function WatermarkEditorDialog({
               ))}
             </div>
           </div>
-          <ControlRange label="X 偏移" min={0} max={260} value={active.offsetX} onChange={(v) => patchActive({ offsetX: v })} />
-          <ControlRange label="Y 偏移" min={0} max={260} value={active.offsetY} onChange={(v) => patchActive({ offsetY: v })} />
-          <ToggleControl label="填充" checked={active.backgroundEnabled} onChange={(v) => patchActive({ backgroundEnabled: v })} />
-          <ToggleControl label="边框" checked={active.borderEnabled} onChange={(v) => patchActive({ borderEnabled: v })} />
+          <ControlRange
+            label="X 偏移"
+            min={0}
+            max={260}
+            value={active.offsetX}
+            onChange={(v) => patchActive({ offsetX: v })}
+          />
+          <ControlRange
+            label="Y 偏移"
+            min={0}
+            max={260}
+            value={active.offsetY}
+            onChange={(v) => patchActive({ offsetY: v })}
+          />
+          <ToggleControl
+            label="填充"
+            checked={active.backgroundEnabled}
+            onChange={(v) => patchActive({ backgroundEnabled: v })}
+          />
+          <ToggleControl
+            label="边框"
+            checked={active.borderEnabled}
+            onChange={(v) => patchActive({ borderEnabled: v })}
+          />
           <button
             type="button"
             onClick={() => void savePreset()}
