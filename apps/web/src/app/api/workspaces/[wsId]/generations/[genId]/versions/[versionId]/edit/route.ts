@@ -1,12 +1,6 @@
 import { prisma } from "@brandai/db";
-import { EditVersionInput } from "@brandai/contracts";
-import {
-  ApiException,
-  handleError,
-  ok,
-  parse,
-  requireUser,
-} from "@/lib/api";
+import { EditVersionInput, WatermarkOverlayInput } from "@brandai/contracts";
+import { ApiException, handleError, ok, parse, requireUser } from "@/lib/api";
 import { requireOwnedWorkspace, requireWorkspaceRole } from "@/lib/workspace";
 import { editQueue } from "@/lib/queue";
 import { createTask } from "@/lib/async-tasks";
@@ -82,6 +76,9 @@ export async function POST(
     await requireWorkspaceRole(wsId, user.id, "EDITOR");
 
     const input = parse(EditVersionInput, await req.json());
+    const watermarkOverlays = (input.watermarkOverlays ?? []).map((overlay) =>
+      WatermarkOverlayInput.parse(overlay),
+    );
 
     const task = await createTask({ workspaceId: wsId, kind: "EDIT" });
     const jobData: EditJobData = {
@@ -90,6 +87,7 @@ export async function POST(
       sourceVersionId: versionId,
       op: input.op,
       payload: input.payload ?? {},
+      watermarkOverlays,
       taskId: task.id,
     };
     const job = await editQueue.add("edit", jobData, {
@@ -138,18 +136,14 @@ export async function GET(
       | undefined;
     if (jobId) {
       const j = await editQueue.getJob(jobId);
-      if (
-        j &&
-        (j.data as EditJobData)?.sourceVersionId === versionId
-      ) {
+      if (j && (j.data as EditJobData)?.sourceVersionId === versionId) {
         const state = await j.getState();
         const status = JOB_STATE_MAP[state] ?? "PENDING";
         job = {
           jobId: String(j.id),
           status,
           progress: typeof j.progress === "number" ? j.progress : 0,
-          failedReason:
-            status === "FAILED" ? j.failedReason : undefined,
+          failedReason: status === "FAILED" ? j.failedReason : undefined,
         };
       }
     }

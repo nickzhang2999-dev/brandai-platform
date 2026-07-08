@@ -1,5 +1,8 @@
 import { prisma } from "@brandai/db";
-import { CreateGenerationInput } from "@brandai/contracts";
+import {
+  CreateGenerationInput,
+  WatermarkOverlayInput,
+} from "@brandai/contracts";
 import {
   ApiException,
   handleError,
@@ -72,7 +75,7 @@ export async function POST(
     await requireWorkspaceRole(wsId, user.id, "EDITOR");
 
     const input = parse(CreateGenerationInput, await req.json());
-    const normalizedReferenceAssets = Array.from(
+    const legacyReferenceAssets = Array.from(
       new Map(
         [
           ...(input.referenceAssetIds ?? []).map((assetId) => ({
@@ -86,6 +89,39 @@ export async function POST(
         ].map((item) => [item.assetId, item]),
       ).values(),
     );
+    const legacyStrictIds = legacyReferenceAssets
+      .filter((item) => item.mode === "STRICT")
+      .map((item) => item.assetId);
+    const legacyInspirationIds = legacyReferenceAssets
+      .filter((item) => item.mode !== "STRICT")
+      .map((item) => item.assetId);
+    const templateReferenceAssetIds = Array.from(
+      new Set([...(input.templateReferenceAssetIds ?? []), ...legacyInspirationIds]),
+    );
+    const watermarkOverlays = [
+      ...(input.watermarkOverlays ?? []).map((overlay) =>
+        WatermarkOverlayInput.parse(overlay),
+      ),
+      ...legacyStrictIds.map((assetId) => ({
+        assetId,
+        enabled: true,
+        anchor: "bottom-right" as const,
+        positionMode: "pixel" as const,
+        offsetX: 24,
+        offsetY: 24,
+        widthPx: 120,
+        fontFamily: "Inter",
+        fontSizePx: 28,
+        opacity: 0.85,
+        textColor: "#111827",
+        backgroundEnabled: false,
+        backgroundColor: "#FFFFFF",
+        borderEnabled: false,
+        borderColor: "#7C5CFF",
+        borderWidth: 1,
+        cornerRadius: 0,
+      })),
+    ].map((overlay) => WatermarkOverlayInput.parse(overlay));
 
     const project = await prisma.project.findUnique({
       where: { id: input.projectId },
@@ -94,11 +130,8 @@ export async function POST(
       throw new ApiException(404, "Project not found in this workspace");
     }
 
-    // F9 / L8 — every reference asset must belong to THIS workspace (IDOR
-    // guard, same pattern as prohibition example assets). 400 on mismatch,
-    // consistent with assertExampleAssetsInWorkspace's error style.
-    if (normalizedReferenceAssets.length > 0) {
-      const refIds = normalizedReferenceAssets.map((r) => r.assetId);
+    if (templateReferenceAssetIds.length > 0) {
+      const refIds = templateReferenceAssetIds;
       await assertExampleAssetsInWorkspace(wsId, refIds);
       // Reference assets must be generatable IMAGES (mirror the worker's
       // lifecycle/type filter) so an unusable pick fails fast with a clear 400
@@ -110,6 +143,7 @@ export async function POST(
           availableForGeneration: true,
           deprecatedAt: null,
           mimeType: { startsWith: "image/" },
+          libraryKind: { in: ["TEMPLATE", "MATERIAL"] },
         },
         select: { id: true },
       });
@@ -119,6 +153,35 @@ export async function POST(
         throw new ApiException(
           400,
           `参考素材不可用于生成（需为未停用、未弃用的图片素材）：${bad.join(", ")}`,
+        );
+      }
+    }
+    const watermarkAssetIds = Array.from(
+      new Set(
+        watermarkOverlays
+          .map((overlay) => overlay.assetId)
+          .filter((id): id is string => !!id),
+      ),
+    );
+    if (watermarkAssetIds.length > 0) {
+      await assertExampleAssetsInWorkspace(wsId, watermarkAssetIds);
+      const usable = await prisma.asset.findMany({
+        where: {
+          id: { in: watermarkAssetIds },
+          workspaceId: wsId,
+          availableForGeneration: true,
+          deprecatedAt: null,
+          mimeType: { startsWith: "image/" },
+          libraryKind: "MATERIAL",
+        },
+        select: { id: true },
+      });
+      if (usable.length !== watermarkAssetIds.length) {
+        const ok = new Set(usable.map((a: { id: string }) => a.id));
+        const bad = watermarkAssetIds.filter((id: string) => !ok.has(id));
+        throw new ApiException(
+          400,
+          `水印素材不可用于生成（需为素材库内未停用、未弃用的图片）：${bad.join(", ")}`,
         );
       }
     }
@@ -213,12 +276,10 @@ export async function POST(
       ...(input.styleKeywords && input.styleKeywords.length > 0
         ? { styleKeywords: input.styleKeywords }
         : {}),
-      ...(input.referenceAssetIds && input.referenceAssetIds.length > 0
-        ? { referenceAssetIds: input.referenceAssetIds }
+      ...(templateReferenceAssetIds.length > 0
+        ? { templateReferenceAssetIds }
         : {}),
-      ...(normalizedReferenceAssets.length > 0
-        ? { referenceAssets: normalizedReferenceAssets }
-        : {}),
+      ...(watermarkOverlays.length > 0 ? { watermarkOverlays } : {}),
     };
     const job = await generateQueue.add("generate", jobData, {
       removeOnComplete: 50,

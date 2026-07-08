@@ -98,6 +98,7 @@ export async function mirrorGenerationVersionToAsset(opts: {
         sizeBytes,
         // 见上：不改枚举，AI 来源由 generationVersionId 标识。
         source: "UPLOAD",
+        libraryKind: "GENERATED",
         generationVersionId: opts.generationVersionId,
         availableForGeneration: true,
         ...(opts.width > 0 && opts.height > 0

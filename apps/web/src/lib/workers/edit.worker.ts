@@ -4,12 +4,17 @@ import {
   EditOp,
   EditRequest,
   EditResponse,
+  type WatermarkOverlayInput,
 } from "@brandai/contracts";
 import { connection, queuePrefix } from "@/lib/queue";
 import { ai } from "@/lib/ai";
 import { recordUsage } from "@/lib/usage";
 import { uploadDataUrlImage } from "@/lib/s3";
 import { mirrorGenerationVersionToAsset } from "@/lib/asset-mirror";
+import {
+  applyWatermarksToImage,
+  type ResolvedWatermarkOverlay,
+} from "@/lib/watermark";
 import {
   markRunning,
   setProgress,
@@ -31,6 +36,8 @@ export interface EditJobData {
   sourceVersionId: string;
   op: EditOp;
   payload: Record<string, unknown>;
+  /** V0.0.11 — deterministic overlays to apply after AI edit returns. */
+  watermarkOverlays?: WatermarkOverlayInput[];
   /** H-async — server-authoritative task row to mirror progress/status into. */
   taskId?: string;
 }
@@ -53,153 +60,217 @@ export interface EditJobResult {
 export async function runEditJob(
   job: Job<EditJobData>,
 ): Promise<EditJobResult> {
-  const { generationId, sourceVersionId, op, payload, taskId, workspaceId } =
-    job.data;
-  try {
-  await job.updateProgress(5);
-  await markRunning(taskId, 5);
-
-  const source = await prisma.generationVersion.findUnique({
-    where: { id: sourceVersionId },
-  });
-  if (!source || source.generationId !== generationId) {
-    throw new Error(
-      `Source version ${sourceVersionId} not found in generation ${generationId}`,
-    );
-  }
-  await job.updateProgress(20);
-  await setProgress(taskId, 20);
-
-  const request = EditRequest.parse({
-    imageUrl: source.imageUrl,
+  const {
+    generationId,
+    sourceVersionId,
     op,
     payload,
-  });
-  // §2.3 — log every AI call's wall-clock latency for the activity log.
-  const _t0 = Date.now();
-  let raw: unknown;
+    taskId,
+    workspaceId,
+    watermarkOverlays = [],
+  } = job.data;
   try {
-    raw = await ai.edit(request);
-  } catch (aiErr) {
+    await job.updateProgress(5);
+    await markRunning(taskId, 5);
+
+    const source = await prisma.generationVersion.findUnique({
+      where: { id: sourceVersionId },
+    });
+    if (!source || source.generationId !== generationId) {
+      throw new Error(
+        `Source version ${sourceVersionId} not found in generation ${generationId}`,
+      );
+    }
+    await job.updateProgress(20);
+    await setProgress(taskId, 20);
+
+    const request = EditRequest.parse({
+      imageUrl: source.imageUrl,
+      op,
+      payload,
+    });
+    // §2.3 — log every AI call's wall-clock latency for the activity log.
+    const _t0 = Date.now();
+    let raw: unknown;
+    try {
+      raw = await ai.edit(request);
+    } catch (aiErr) {
+      await recordUsage({
+        workspaceId,
+        kind: "EDIT",
+        status: "FAILED",
+        latencyMs: Date.now() - _t0,
+      });
+      throw aiErr;
+    }
+    // Re-validate AI output against the frozen contract before persisting.
+    const result = EditResponse.parse(raw);
     await recordUsage({
       workspaceId,
       kind: "EDIT",
-      status: "FAILED",
+      status: "SUCCEEDED",
+      imageCount: 1,
       latencyMs: Date.now() - _t0,
     });
-    throw aiErr;
-  }
-  // Re-validate AI output against the frozen contract before persisting.
-  const result = EditResponse.parse(raw);
-  await recordUsage({
-    workspaceId,
-    kind: "EDIT",
-    status: "SUCCEEDED",
-    imageCount: 1,
-    latencyMs: Date.now() - _t0,
-  });
-  await job.updateProgress(70);
+    await job.updateProgress(70);
 
-  // New index = max(index)+1 within the generation so ordering stays clean
-  // and queryable; the original root version is never overwritten.
-  const agg = await prisma.generationVersion.aggregate({
-    where: { generationId },
-    _max: { index: true },
-  });
-  const nextIndex = (agg._max.index ?? -1) + 1;
+    const watermarkAssetIds = Array.from(
+      new Set(
+        watermarkOverlays
+          .map((overlay) => overlay.assetId)
+          .filter((id): id is string => !!id),
+      ),
+    );
+    const watermarkAssets =
+      watermarkAssetIds.length > 0
+        ? await prisma.asset.findMany({
+            where: {
+              id: { in: watermarkAssetIds },
+              workspaceId,
+              availableForGeneration: true,
+              deprecatedAt: null,
+              mimeType: { startsWith: "image/" },
+              libraryKind: "MATERIAL",
+            },
+            select: { id: true, url: true, mimeType: true },
+          })
+        : [];
+    const watermarkAssetMap = new Map(watermarkAssets.map((a) => [a.id, a]));
+    const missingWatermarkIds = watermarkAssetIds.filter(
+      (id) => !watermarkAssetMap.has(id),
+    );
+    if (missingWatermarkIds.length > 0) {
+      throw new Error(
+        `watermark asset unavailable: ${missingWatermarkIds.join(", ")}`,
+      );
+    }
+    const resolvedWatermarkOverlays: ResolvedWatermarkOverlay[] =
+      watermarkOverlays.map((overlay) => {
+        const asset = overlay.assetId
+          ? watermarkAssetMap.get(overlay.assetId)
+          : null;
+        return {
+          ...overlay,
+          ...(asset
+            ? { assetUrl: asset.url, assetMimeType: asset.mimeType }
+            : {}),
+        };
+      });
 
-  const sourceParams =
-    source.params && typeof source.params === "object"
-      ? (source.params as Record<string, unknown>)
-      : {};
+    // New index = max(index)+1 within the generation so ordering stays clean
+    // and queryable; the original root version is never overwritten.
+    const agg = await prisma.generationVersion.aggregate({
+      where: { generationId },
+      _max: { index: true },
+    });
+    const nextIndex = (agg._max.index ?? -1) + 1;
 
-  // 与 generate.worker 一致:真实 provider 返回的 b64 会被 AI 服务转成多 MB 的
-  // data: URL。配了对象存储就上传换公网 URL,避免把大图塞进 Postgres/JSON 拖慢
-  // project/version 读取;未配存储时透传 data: URL。
-  const editedImageUrl = await uploadDataUrlImage(
-    result.imageUrl,
-    `generations/${workspaceId}`,
-  );
+    const sourceParams =
+      source.params && typeof source.params === "object"
+        ? (source.params as Record<string, unknown>)
+        : {};
 
-  // 尺寸:仅当本次编辑显式指定了 width/height(RESIZE / OUTPAINT 等改变画布的操作
-  // 会在 payload 里带上)才采用 AI 返回的尺寸;否则 RECOLOR/INPAINT/EDIT_TEXT 等
-  // 不改尺寸的操作沿用源版本尺寸——AI /v1/edit 对无尺寸 payload 默认 1024×1024,
-  // 直接采用会污染非正方形源的 lineage/导出标签/文字图层画布。
-  const payloadObj =
-    payload && typeof payload === "object"
-      ? (payload as Record<string, unknown>)
-      : {};
-  const hasExplicitSize = "width" in payloadObj || "height" in payloadObj;
-  const editedWidth = hasExplicitSize ? result.width : source.width;
-  const editedHeight = hasExplicitSize ? result.height : source.height;
+    // 与 generate.worker 一致:真实 provider 返回的 b64 会被 AI 服务转成多 MB 的
+    // data: URL。配了对象存储就上传换公网 URL,避免把大图塞进 Postgres/JSON 拖慢
+    // project/version 读取;未配存储时透传 data: URL。
+    const watermarked =
+      resolvedWatermarkOverlays.length > 0
+        ? await applyWatermarksToImage(
+            result.imageUrl,
+            resolvedWatermarkOverlays,
+          )
+        : { imageUrl: result.imageUrl, appliedAssetIds: [] };
+    const finalEditImageUrl = watermarked.imageUrl;
 
-  // AI /v1/edit 回显 params = {"op": op, **payload},对局部重画会把整块 base64
-  // mask 原样带回 → 若直接 spread 进 GenerationVersion.params 顶层,mask 仍被持久化
-  // (下面 edit.payload 的剔除白做了),拖慢 generation 读取、撑大 DB 行(Codex P2)。
-  // 顶层 params 里也把 mask 剔掉。
-  const resultParams =
-    result.params && typeof result.params === "object"
-      ? (result.params as Record<string, unknown>)
-      : {};
-  const resultParamsNoMask =
-    "mask" in resultParams
-      ? { ...resultParams, mask: "[mask omitted]" }
-      : resultParams;
+    const editedImageUrl = await uploadDataUrlImage(
+      finalEditImageUrl,
+      `generations/${workspaceId}`,
+    );
 
-  const created = await prisma.generationVersion.create({
-    data: {
-      generationId,
-      index: nextIndex,
+    // 尺寸:仅当本次编辑显式指定了 width/height(RESIZE / OUTPAINT 等改变画布的操作
+    // 会在 payload 里带上)才采用 AI 返回的尺寸;否则 RECOLOR/INPAINT/EDIT_TEXT 等
+    // 不改尺寸的操作沿用源版本尺寸——AI /v1/edit 对无尺寸 payload 默认 1024×1024,
+    // 直接采用会污染非正方形源的 lineage/导出标签/文字图层画布。
+    const payloadObj =
+      payload && typeof payload === "object"
+        ? (payload as Record<string, unknown>)
+        : {};
+    const hasExplicitSize = "width" in payloadObj || "height" in payloadObj;
+    const editedWidth = hasExplicitSize ? result.width : source.width;
+    const editedHeight = hasExplicitSize ? result.height : source.height;
+
+    // AI /v1/edit 回显 params = {"op": op, **payload},对局部重画会把整块 base64
+    // mask 原样带回 → 若直接 spread 进 GenerationVersion.params 顶层,mask 仍被持久化
+    // (下面 edit.payload 的剔除白做了),拖慢 generation 读取、撑大 DB 行(Codex P2)。
+    // 顶层 params 里也把 mask 剔掉。
+    const resultParams =
+      result.params && typeof result.params === "object"
+        ? (result.params as Record<string, unknown>)
+        : {};
+    const resultParamsNoMask =
+      "mask" in resultParams
+        ? { ...resultParams, mask: "[mask omitted]" }
+        : resultParams;
+
+    const created = await prisma.generationVersion.create({
+      data: {
+        generationId,
+        index: nextIndex,
+        imageUrl: editedImageUrl,
+        width: editedWidth,
+        height: editedHeight,
+        parentVersionId: source.id,
+        isFinal: false,
+        params: {
+          // Carry forward the source params (applied rules / scene) then
+          // record this edit so M6 can trace the lineage and what changed.
+          ...sourceParams,
+          ...resultParamsNoMask,
+          ...(watermarkOverlays.length > 0 ? { watermarkOverlays } : {}),
+          ...(watermarked.appliedAssetIds.length > 0
+            ? { appliedWatermarkAssetIds: watermarked.appliedAssetIds }
+            : {}),
+          imageKind: "GENERATED",
+          edit: {
+            op,
+            // 局部重画的 mask 是大块 base64 data-URI(可达数百 KB),只用于本次出图,
+            // 不必落进 GenerationVersion.params 拖慢读取——持久化时剔除,留个标记。
+            payload:
+              payload && "mask" in payload
+                ? { ...payload, mask: "[mask omitted]" }
+                : payload,
+            sourceVersionId: source.id,
+            editedAt: new Date().toISOString(),
+          },
+        } as Prisma.InputJsonValue,
+        // complianceReport left null for M5 to (re)fill on edited versions.
+      },
+    });
+
+    // F18 · 出图回流素材库 — 改图子版本同样镜像成素材，使改图产物也进素材库。
+    // sceneType 沿用源版本 params 里 generate.worker 盖的戳；best-effort，不阻断改图。
+    await mirrorGenerationVersionToAsset({
+      workspaceId,
+      generationVersionId: created.id,
       imageUrl: editedImageUrl,
+      dataUrl: finalEditImageUrl,
       width: editedWidth,
       height: editedHeight,
-      parentVersionId: source.id,
-      isFinal: false,
-      params: {
-        // Carry forward the source params (applied rules / scene) then
-        // record this edit so M6 can trace the lineage and what changed.
-        ...sourceParams,
-        ...resultParamsNoMask,
-        edit: {
-          op,
-          // 局部重画的 mask 是大块 base64 data-URI(可达数百 KB),只用于本次出图,
-          // 不必落进 GenerationVersion.params 拖慢读取——持久化时剔除,留个标记。
-          payload:
-            payload && "mask" in payload
-              ? { ...payload, mask: "[mask omitted]" }
-              : payload,
-          sourceVersionId: source.id,
-          editedAt: new Date().toISOString(),
-        },
-      } as Prisma.InputJsonValue,
-      // complianceReport left null for M5 to (re)fill on edited versions.
-    },
-  });
+      sceneType:
+        typeof sourceParams.sceneType === "string"
+          ? sourceParams.sceneType
+          : null,
+      fileLabel: `改图_${op}_${nextIndex}`,
+      aiDescription: `由出图改图生成（${op}）`,
+    });
 
-  // F18 · 出图回流素材库 — 改图子版本同样镜像成素材，使改图产物也进素材库。
-  // sceneType 沿用源版本 params 里 generate.worker 盖的戳；best-effort，不阻断改图。
-  await mirrorGenerationVersionToAsset({
-    workspaceId,
-    generationVersionId: created.id,
-    imageUrl: editedImageUrl,
-    dataUrl: result.imageUrl,
-    width: editedWidth,
-    height: editedHeight,
-    sceneType:
-      typeof sourceParams.sceneType === "string"
-        ? sourceParams.sceneType
-        : null,
-    fileLabel: `改图_${op}_${nextIndex}`,
-    aiDescription: `由出图改图生成（${op}）`,
-  });
-
-  await job.updateProgress(100);
-  await markSucceeded(taskId, { refId: created.id, refCount: 1 });
-  return {
-    generationId,
-    sourceVersionId: source.id,
-    versionId: created.id,
-  };
+    await job.updateProgress(100);
+    await markSucceeded(taskId, { refId: created.id, refCount: 1 });
+    return {
+      generationId,
+      sourceVersionId: source.id,
+      versionId: created.id,
+    };
   } catch (err) {
     await markFailed(taskId, String(err));
     throw err;
@@ -207,11 +278,11 @@ export async function runEditJob(
 }
 
 export function createEditWorker() {
-  const worker = new Worker<EditJobData, EditJobResult>(
-    "edit",
-    runEditJob,
-    { connection, prefix: queuePrefix, concurrency: 2 },
-  );
+  const worker = new Worker<EditJobData, EditJobResult>("edit", runEditJob, {
+    connection,
+    prefix: queuePrefix,
+    concurrency: 2,
+  });
   worker.on("failed", (job, err) => {
     console.error(`[edit] job ${job?.id} failed:`, err);
   });

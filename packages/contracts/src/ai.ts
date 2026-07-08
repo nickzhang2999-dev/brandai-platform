@@ -210,6 +210,12 @@ export const ReferenceImage = z.object({
   url: z.string(),
   polarity: z.enum(["positive", "negative"]),
   source: z.string(),
+  /**
+   * V0.0.8 — explicit usage semantics for workspace-picked assets.
+   * STRICT means the image must be provided to an image-input path; callers must
+   * not silently degrade it into text-only prompt steering.
+   */
+  mode: z.enum(["STRICT", "INSPIRATION"]).optional(),
   note: z.string().optional(),
   /**
    * K7 — provenance of the reference image's URL so the AI service applies the
@@ -217,14 +223,6 @@ export const ReferenceImage = z.object({
    * optional, absent → trusting UPLOAD policy (unchanged behavior).
    */
   sourceHint: AssetSourceHint.optional(),
-  /**
-   * V0.0.7+ — reference usage mode for workspace-picked assets.
-   * STRICT = 必须 100% 调用（logo 等内容不可改）→ the AI service feeds the
-   * pixels through image-to-image (`/images/edits`) so the asset lands in the
-   * output verbatim; INSPIRATION = 借鉴 → text steer only. Absent → treated as
-   * INSPIRATION (unchanged behavior; prohibition-derived refs never set it).
-   */
-  mode: z.enum(["STRICT", "INSPIRATION"]).optional(),
 });
 export type ReferenceImage = z.infer<typeof ReferenceImage>;
 

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   AssetCategory,
+  AssetLibraryKind,
   CampaignStatus,
   ComplianceLevel,
   ComplianceTermType,
@@ -36,6 +37,8 @@ export const Asset = z.object({
   mimeType: z.string(),
   sizeBytes: z.number().int().nonnegative(),
   source: z.enum(["UPLOAD", "WEBSITE"]).default("UPLOAD"),
+  // V0.0.9 · 图片三分法。可选以兼容旧序列化器；新读端会收到明确值。
+  libraryKind: AssetLibraryKind.optional(),
   createdAt: z.string(),
   // BrandAI 素材库智能字段（frozen-additive：全部 optional——省略而非 null，
   // 旧读端/旧序列化器零改动）。tags = 人工业务标签；aiTags = 识别 worker 自动打标；
@@ -59,6 +62,18 @@ export const Asset = z.object({
   generationVersionId: z.string().optional(),
 });
 export type Asset = z.infer<typeof Asset>;
+
+// V0.10 · 生成图库读模型。Asset 仍是图片镜像本体；这里加上所属项目和
+// Generation 元信息，供生成图页面按项目维度检索、过滤和回跳工作台。
+export const GeneratedAsset = Asset.extend({
+  projectId: z.string().optional(),
+  projectName: z.string().optional(),
+  projectStatus: CampaignStatus.optional(),
+  generationId: z.string().optional(),
+  generationCreatedAt: z.string().optional(),
+  sceneType: SceneType.optional(),
+});
+export type GeneratedAsset = z.infer<typeof GeneratedAsset>;
 
 /** E3 · 素材文件夹（workspace 作用域素材分组）。 */
 export const AssetFolder = z.object({

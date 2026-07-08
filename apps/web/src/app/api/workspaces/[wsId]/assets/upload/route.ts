@@ -1,5 +1,5 @@
 import { prisma } from "@brandai/db";
-import { AssetCategory } from "@brandai/contracts";
+import { AssetCategory, AssetLibraryKind } from "@brandai/contracts";
 import { ApiException, handleError, ok, requireUser } from "@/lib/api";
 import { uploadBuffer } from "@/lib/s3";
 import { requireWorkspaceRole } from "@/lib/workspace";
@@ -24,6 +24,7 @@ export async function POST(
     const form = await req.formData();
     const file = form.get("file");
     const categoryRaw = form.get("category");
+    const libraryKindRaw = form.get("libraryKind");
     const folderRaw = form.get("folderId");
 
     if (!(file instanceof File)) {
@@ -34,6 +35,10 @@ export async function POST(
       throw new ApiException(400, "Invalid category");
     }
     const category = parsedCategory.data;
+    const parsedLibraryKind = AssetLibraryKind.safeParse(libraryKindRaw);
+    const libraryKind = parsedLibraryKind.success
+      ? parsedLibraryKind.data
+      : "MATERIAL";
 
     // H6 — optional folder selected in the upload dialog. Validate ownership so
     // a cross-workspace folder id can't be filed against (§3.5 isolation rule 2,
@@ -63,6 +68,7 @@ export async function POST(
       data: {
         workspaceId: wsId,
         category,
+        libraryKind,
         fileName: file.name,
         storageKey: key,
         url,

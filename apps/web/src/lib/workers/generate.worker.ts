@@ -13,6 +13,10 @@ import { connection, queuePrefix } from "@/lib/queue";
 import { ai } from "@/lib/ai";
 import { uploadDataUrlImage } from "@/lib/s3";
 import { mirrorGenerationVersionToAsset } from "@/lib/asset-mirror";
+import {
+  applyWatermarksToImage,
+  type ResolvedWatermarkOverlay,
+} from "@/lib/watermark";
 import { getConfirmedRules } from "@/lib/rules";
 import { runPrecheck, type PrecheckResult } from "@/lib/precheck";
 import {
@@ -176,6 +180,34 @@ export interface GenerateJobData {
   referenceAssets?: {
     assetId: string;
     mode: "STRICT" | "INSPIRATION";
+  }[];
+  /**
+   * V0.0.9 — template library references. These steer the AI only.
+   */
+  templateReferenceAssetIds?: string[];
+  /**
+   * V0.0.9 — material library deterministic overlays. These are composited
+   * after the base image returns from the AI provider.
+   */
+  watermarkOverlays?: {
+    assetId?: string;
+    text?: string;
+    enabled: boolean;
+    anchor: "top-left" | "top-right" | "bottom-left" | "bottom-right";
+    positionMode: "pixel" | "ratio";
+    offsetX: number;
+    offsetY: number;
+    widthPx: number;
+    fontFamily: string;
+    fontSizePx: number;
+    opacity: number;
+    textColor: string;
+    backgroundEnabled: boolean;
+    backgroundColor: string;
+    borderEnabled: boolean;
+    borderColor: string;
+    borderWidth: number;
+    cornerRadius: number;
   }[];
 }
 
@@ -458,7 +490,7 @@ export async function runGenerateJob(
       };
       hasExplicitPicks = true;
     }
-    const referenceItems = Array.from(
+    const legacyReferenceItems = Array.from(
       new Map(
         [
           ...(job.data.referenceAssetIds ?? []).map((assetId) => ({
@@ -471,40 +503,65 @@ export async function runGenerateJob(
           .map((x) => [x.assetId, x]),
       ).values(),
     );
-    const referenceAssetIds = referenceItems.map((r) => r.assetId);
-    if (referenceItems.length > 0) {
+    const templateReferenceAssetIds = Array.from(
+      new Set([
+        ...(job.data.templateReferenceAssetIds ?? []),
+        ...legacyReferenceItems
+          .filter((r) => r.mode !== "STRICT")
+          .map((r) => r.assetId),
+      ]),
+    );
+    const legacyWatermarkOverlays =
+      legacyReferenceItems
+        .filter((r) => r.mode === "STRICT")
+        .map((r) => ({
+          assetId: r.assetId,
+          enabled: true,
+          anchor: "bottom-right" as const,
+          positionMode: "pixel" as const,
+          offsetX: 24,
+          offsetY: 24,
+          widthPx: 120,
+          fontFamily: "Inter",
+          fontSizePx: 28,
+          opacity: 0.85,
+          textColor: "#111827",
+          backgroundEnabled: false,
+          backgroundColor: "#FFFFFF",
+          borderEnabled: false,
+          borderColor: "#7C5CFF",
+          borderWidth: 1,
+          cornerRadius: 0,
+        })) ?? [];
+    const watermarkOverlays = [
+      ...(job.data.watermarkOverlays ?? []),
+      ...legacyWatermarkOverlays,
+    ];
+    if (templateReferenceAssetIds.length > 0) {
       const refAssets = await prisma.asset.findMany({
         // Only feed generatable IMAGE assets as visual references — mirror the
         // recognize path's lifecycle guard (skip deprecated/disabled) and
         // exclude non-image assets (e.g. VI_DOC/PDF) that can't steer image gen.
         where: {
-          id: { in: referenceAssetIds },
+          id: { in: templateReferenceAssetIds },
           workspaceId,
           availableForGeneration: true,
           deprecatedAt: null,
           mimeType: { startsWith: "image/" },
+          libraryKind: { in: ["TEMPLATE", "MATERIAL"] },
         },
         select: { id: true, url: true, source: true, fileName: true },
       });
-      const refImages = referenceAssetIds
+      const refImages = templateReferenceAssetIds
         .map((id) => {
           const a = refAssets.find((r) => r.id === id);
           if (!a?.url) return null;
-          const mode =
-            referenceItems.find((r) => r.assetId === id)?.mode ??
-            "INSPIRATION";
           return {
             url: a.url,
             polarity: "positive" as const,
             source: `asset:${id}`,
-            // V0.0.7+ — thread the usage mode so the AI service can route STRICT
-            // refs through image-to-image (/images/edits) instead of only a
-            // textual steer, making a locked asset (e.g. logo) actually land.
-            mode,
-            note:
-              mode === "STRICT"
-                ? `STRICT_USE: must preserve the referenced asset content exactly; only scale, placement, proportion and color treatment may change. Asset: ${a.fileName}`
-                : `INSPIRATION: use as visual inspiration; composition, style and content may be adapted. Asset: ${a.fileName}`,
+            mode: "INSPIRATION" as const,
+            note: `TEMPLATE_REFERENCE: use as style, composition, color or proportion inspiration only. Asset: ${a.fileName}`,
             // K7 — thread the asset's provenance so the AI service applies the
             // strict initial-host SSRF check to WEBSITE-harvested references
             // (DNS-rebinding guard). UPLOAD/storage keeps the trusting default.
@@ -514,30 +571,59 @@ export async function runGenerateJob(
         })
         .filter((r): r is NonNullable<typeof r> => r !== null);
       if (refImages.length > 0) {
-        const strictCount = referenceItems.filter(
-          (r) => r.mode === "STRICT",
-        ).length;
-        const inspirationCount = referenceItems.length - strictCount;
         aiConstraints = {
           ...aiConstraints,
           promptAdditions: [
             ...aiConstraints.promptAdditions,
-            ...(strictCount
-              ? [
-                  `Use ${strictCount} selected asset(s) as mandatory locked assets: preserve their original content exactly; only resize, reposition, keep aspect ratio, and adjust color treatment if requested.`,
-                ]
-              : []),
-            ...(inspirationCount
-              ? [
-                  `Use ${inspirationCount} selected asset(s) as inspiration references: borrow style, composition or visual language, but allow creative adaptation.`,
-                ]
-              : []),
+            `Use ${refImages.length} selected template image(s) only as inspiration references: borrow style, composition, color or visual language, but do not copy them as final content.`,
           ],
           referenceImages: [...aiConstraints.referenceImages, ...refImages],
         };
         hasExplicitPicks = true;
       }
     }
+    const watermarkAssetIds = Array.from(
+      new Set(
+        watermarkOverlays
+          .map((overlay) => overlay.assetId)
+          .filter((id): id is string => !!id),
+      ),
+    );
+    const watermarkAssets =
+      watermarkAssetIds.length > 0
+        ? await prisma.asset.findMany({
+            where: {
+              id: { in: watermarkAssetIds },
+              workspaceId,
+              availableForGeneration: true,
+              deprecatedAt: null,
+              mimeType: { startsWith: "image/" },
+              libraryKind: "MATERIAL",
+            },
+            select: { id: true, url: true, mimeType: true },
+          })
+        : [];
+    const watermarkAssetMap = new Map(watermarkAssets.map((a) => [a.id, a]));
+    const missingWatermarkIds = watermarkAssetIds.filter(
+      (id) => !watermarkAssetMap.has(id),
+    );
+    if (missingWatermarkIds.length > 0) {
+      throw new Error(
+        `watermark asset unavailable: ${missingWatermarkIds.join(", ")}`,
+      );
+    }
+    const resolvedWatermarkOverlays: ResolvedWatermarkOverlay[] =
+      watermarkOverlays.map((overlay) => {
+        const asset = overlay.assetId
+          ? watermarkAssetMap.get(overlay.assetId)
+          : null;
+        return {
+          ...overlay,
+          ...(asset
+            ? { assetUrl: asset.url, assetMimeType: asset.mimeType }
+            : {}),
+        };
+      });
 
     const appliedRuleIds = brandRules.map((r) => r.id);
     const sceneType = generation.sceneType;
@@ -613,8 +699,13 @@ export async function runGenerateJob(
       // K5 — prefer the AI service's probed size; fall back to a local
       // header read of the original data: URL (the AI probe is unreliable on
       // the gray container, but the worker always has the raw bytes here).
+      const watermarked =
+        resolvedWatermarkOverlays.length > 0
+          ? await applyWatermarksToImage(v.imageUrl, resolvedWatermarkOverlays)
+          : { imageUrl: v.imageUrl, appliedAssetIds: [] };
+      const finalImageUrl = watermarked.imageUrl;
       const localSize =
-        v.actualWidth && v.actualHeight ? null : decodeImageSize(v.imageUrl);
+        v.actualWidth && v.actualHeight ? null : decodeImageSize(finalImageUrl);
       const actualSize =
         v.actualWidth && v.actualHeight
           ? { actualWidth: v.actualWidth, actualHeight: v.actualHeight }
@@ -622,7 +713,7 @@ export async function runGenerateJob(
             ? { actualWidth: localSize.width, actualHeight: localSize.height }
             : {};
       const imageUrl = await uploadDataUrlImage(
-        v.imageUrl,
+        finalImageUrl,
         `generations/${workspaceId}`,
       );
       const created = await prisma.generationVersion.create({
@@ -650,9 +741,16 @@ export async function runGenerateJob(
             // F7 / F9 / L8 — stamp the per-generation picks onto each version so
             // they display and so 重新生成 can reconstruct them from prior roots.
             ...(styleKeywords.length > 0 ? { styleKeywords } : {}),
-            ...(referenceAssetIds.length > 0 ? { referenceAssetIds } : {}),
-            ...(referenceItems.length > 0
-              ? { referenceAssets: referenceItems }
+            ...(templateReferenceAssetIds.length > 0
+              ? { templateReferenceAssetIds }
+              : {}),
+            ...(watermarkOverlays.length > 0 ? { watermarkOverlays } : {}),
+            ...(watermarked.appliedAssetIds.length > 0
+              ? { appliedWatermarkAssetIds: watermarked.appliedAssetIds }
+              : {}),
+            imageKind: "GENERATED",
+            ...(legacyReferenceItems.length > 0
+              ? { referenceAssets: legacyReferenceItems }
               : {}),
           } as Prisma.InputJsonValue,
           // complianceReport / parentVersionId / isFinal left null/default
@@ -669,7 +767,7 @@ export async function runGenerateJob(
         workspaceId,
         generationVersionId: created.id,
         imageUrl,
-        dataUrl: v.imageUrl,
+        dataUrl: finalImageUrl,
         width: mWidth,
         height: mHeight,
         sceneType,

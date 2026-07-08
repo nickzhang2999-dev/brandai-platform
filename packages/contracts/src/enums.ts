@@ -12,6 +12,13 @@ export const AssetCategory = z.enum([
 ]);
 export type AssetCategory = z.infer<typeof AssetCategory>;
 
+// V0.0.9 — platform-level image taxonomy:
+// MATERIAL = 素材库（会被确定性使用/水印叠加）
+// TEMPLATE = 模板库参考图（只影响风格、色系、比例、构图）
+// GENERATED = AI 工作台确认后的生成图镜像
+export const AssetLibraryKind = z.enum(["MATERIAL", "TEMPLATE", "GENERATED"]);
+export type AssetLibraryKind = z.infer<typeof AssetLibraryKind>;
+
 export const RuleType = z.enum([
   "color",
   "font",

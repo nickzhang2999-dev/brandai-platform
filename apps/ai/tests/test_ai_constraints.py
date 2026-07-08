@@ -9,6 +9,9 @@ contract is narrower:
   3. translate `machineRules.aspect_ratio` into the version's width/height.
 """
 
+from app.main import app
+from app.providers import resolve_image_provider
+
 
 def _payload(**overrides):
     base = {
@@ -20,6 +23,36 @@ def _payload(**overrides):
     }
     base.update(overrides)
     return base
+
+
+class _RecordingImageProvider:
+    kind = "fake"
+    model = "recorder"
+    last_total_tokens = None
+
+    def __init__(self):
+        self.generate_calls = []
+        self.edit_calls = []
+
+    async def generate(self, prompt, *, width, height, n, negative=None, extra=None):
+        self.generate_calls.append(
+            {
+                "prompt": prompt,
+                "width": width,
+                "height": height,
+                "n": n,
+                "negative": negative,
+                "extra": extra,
+            }
+        )
+        return ["data:image/png;base64,iVBORw0KGgo=" for _ in range(n)]
+
+    async def edit(self, image_url, op, payload):
+        self.edit_calls.append({"image_url": image_url, "op": op, "payload": payload})
+        return "data:image/png;base64,iVBORw0KGgo="
+
+    async def check(self):
+        return type("ProviderCheck", (), {"ok": True, "detail": "fake"})()
 
 
 def test_generate_echoes_negative_prompt(client):
@@ -134,6 +167,73 @@ def test_generate_echoes_reference_images(client):
     # The negative example's note is folded into the negative prompt so even
     # image-blind providers receive the avoidance signal.
     assert "禁止低对比" in p["appliedNegativePrompt"]
+
+
+def test_generate_strict_reference_uses_image_input_edit_path(client):
+    provider = _RecordingImageProvider()
+    app.dependency_overrides[resolve_image_provider] = lambda: provider
+    try:
+        r = client.post(
+            "/v1/generate",
+            json=_payload(
+                versionCount=2,
+                aiConstraints={
+                    "negativePrompt": [],
+                    "promptAdditions": [],
+                    "hardBlocks": [],
+                    "referenceImages": [
+                        {
+                            "url": "https://cdn/logo.png",
+                            "polarity": "positive",
+                            "source": "asset:a1",
+                            "mode": "STRICT",
+                            "note": "STRICT_USE: preserve the logo",
+                        }
+                    ],
+                },
+            ),
+        )
+    finally:
+        app.dependency_overrides.clear()
+    assert r.status_code == 200
+    assert provider.generate_calls == []
+    assert len(provider.edit_calls) == 2
+    assert provider.edit_calls[0]["image_url"] == "https://cdn/logo.png"
+    assert provider.edit_calls[0]["op"] == "STRICT_REFERENCE_GENERATE"
+    assert "mandatory locked asset" in provider.edit_calls[0]["payload"]["prompt"]
+    p = r.json()["versions"][0]["params"]
+    assert p["generationPath"] == "strict_image_input"
+    assert p["strictReferencePolicy"] == "provider.edit image input; no text-only fallback"
+    assert p["strictReferenceImage"]["mode"] == "STRICT"
+
+
+def test_generate_rejects_multiple_strict_references(client):
+    r = client.post(
+        "/v1/generate",
+        json=_payload(
+            aiConstraints={
+                "negativePrompt": [],
+                "promptAdditions": [],
+                "hardBlocks": [],
+                "referenceImages": [
+                    {
+                        "url": "https://cdn/a.png",
+                        "polarity": "positive",
+                        "source": "asset:a",
+                        "mode": "STRICT",
+                    },
+                    {
+                        "url": "https://cdn/b.png",
+                        "polarity": "positive",
+                        "source": "asset:b",
+                        "mode": "STRICT",
+                    },
+                ],
+            },
+        ),
+    )
+    assert r.status_code == 400
+    assert "one STRICT reference asset" in r.json()["detail"]
 
 
 def test_generate_passes_hardblocks_through_without_aborting(client):
