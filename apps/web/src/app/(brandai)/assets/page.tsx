@@ -7,6 +7,11 @@ import type { Asset, AssetFolder, Project, TaskState } from "@brandai/contracts"
 import { Button } from "@brandai/ui";
 import { apiFetch, assetThumbUrl } from "@/lib/client";
 import {
+  MAX_BATCH_IMAGE_UPLOAD_FILES,
+  imageUploadLimitError,
+  validateImageUploadFile,
+} from "@/lib/upload-limits";
+import {
   addReference,
   REFERENCE_CAP,
   type AddReferenceResult,
@@ -43,6 +48,13 @@ type UsageRecord = {
 };
 
 type BulkTagMode = "append" | "remove" | "replace";
+
+type UploadBatchResult = {
+  fileName: string;
+  status: "success" | "failed";
+  asset?: Asset;
+  error?: string;
+};
 
 function normalizeTags(tags: string[]): string[] {
   return Array.from(
@@ -125,6 +137,7 @@ export default function AssetsPage() {
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [bulkTagDialog, setBulkTagDialog] = useState(false);
+  const [bulkOrganizeDialog, setBulkOrganizeDialog] = useState(false);
 
   // Deep-link: /assets?category=LOGO preselects the type filter — e.g. the
   // brand-knowledge upload dialog's "在素材库查看该分类" link. Read once on
@@ -210,26 +223,29 @@ export default function AssetsPage() {
     },
   });
 
+  async function uploadAsset(args: {
+    file: File;
+    category: string;
+    folderId: string | null;
+  }): Promise<Asset> {
+    validateImageUploadFile(args.file);
+    const fd = new FormData();
+    fd.append("file", args.file);
+    fd.append("category", args.category);
+    if (args.folderId) fd.append("folderId", args.folderId);
+    const res = await fetch(`/api/workspaces/${wsId}/assets/upload`, {
+      method: "POST",
+      body: fd,
+    });
+    if (!res.ok) {
+      const b = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new Error(b.error ?? "上传失败");
+    }
+    return (await res.json()) as Asset;
+  }
+
   const upload = useMutation({
-    mutationFn: async (args: {
-      file: File;
-      category: string;
-      folderId: string | null;
-    }) => {
-      const fd = new FormData();
-      fd.append("file", args.file);
-      fd.append("category", args.category);
-      if (args.folderId) fd.append("folderId", args.folderId);
-      const res = await fetch(`/api/workspaces/${wsId}/assets/upload`, {
-        method: "POST",
-        body: fd,
-      });
-      if (!res.ok) {
-        const b = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(b.error ?? "上传失败");
-      }
-      return (await res.json()) as Asset;
-    },
+    mutationFn: uploadAsset,
     onSuccess: (a) => {
       qc.invalidateQueries({ queryKey: ["brandai-assets", wsId] });
       qc.invalidateQueries({ queryKey: ["brandai-folders", wsId] });
@@ -238,6 +254,80 @@ export default function AssetsPage() {
       setUploadDialog(false);
     },
     onError: (e) => setUploadErr((e as Error).message),
+  });
+  async function uploadBatch(files: File[]): Promise<UploadBatchResult[]> {
+    if (files.length > MAX_BATCH_IMAGE_UPLOAD_FILES) {
+      throw new Error(`一次最多上传 ${MAX_BATCH_IMAGE_UPLOAD_FILES} 张图片。`);
+    }
+    const results: UploadBatchResult[] = [];
+    for (const file of files) {
+      try {
+        if (!file.type.startsWith("image/")) {
+          throw new Error("批量上传仅支持图片。");
+        }
+        const asset = await uploadAsset({
+          file,
+          category: "OTHER",
+          folderId: null,
+        });
+        results.push({ fileName: file.name, status: "success", asset });
+      } catch (err) {
+        results.push({
+          fileName: file.name,
+          status: "failed",
+          error: err instanceof Error ? err.message : "上传失败",
+        });
+      }
+    }
+    const successAssets = results
+      .map((r) => r.asset)
+      .filter((a): a is Asset => !!a);
+    if (successAssets.length > 0) {
+      qc.invalidateQueries({ queryKey: ["brandai-assets", wsId] });
+      qc.invalidateQueries({ queryKey: ["brandai-folders", wsId] });
+      setSelectedIds(successAssets.map((a) => a.id));
+      setActiveId(successAssets[0].id);
+      setUploadErr(null);
+    }
+    return results;
+  }
+  const updateAssetCategory = useMutation({
+    mutationFn: ({ assetId, category }: { assetId: string; category: string }) =>
+      apiFetch<Asset>(`/api/workspaces/${wsId}/assets/${assetId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ category }),
+      }),
+    onSuccess: () =>
+      qc.invalidateQueries({ queryKey: ["brandai-assets", wsId] }),
+  });
+  const batchOrganizeAssets = useMutation({
+    mutationFn: async ({
+      assetIds,
+      category,
+      folderId,
+    }: {
+      assetIds: string[];
+      category: string;
+      folderId: string;
+    }) => {
+      const body: Record<string, string | null> = {};
+      if (category) body.category = category;
+      if (folderId !== "__keep") body.folderId = folderId || null;
+      if (Object.keys(body).length === 0) return [];
+      return Promise.all(
+        assetIds.map((assetId) =>
+          apiFetch<Asset>(`/api/workspaces/${wsId}/assets/${assetId}`, {
+            method: "PATCH",
+            body: JSON.stringify(body),
+          }),
+        ),
+      );
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["brandai-assets", wsId] });
+      qc.invalidateQueries({ queryKey: ["brandai-folders", wsId] });
+      setBulkOrganizeDialog(false);
+    },
   });
 
   // E13 · 收藏 toggle — PATCH Asset.isFavorite (field exists in schema). Optimism
@@ -592,6 +682,13 @@ export default function AssetsPage() {
             <Button
               variant="outline"
               disabled={selectedCount === 0}
+              onClick={() => setBulkOrganizeDialog(true)}
+            >
+              批量整理
+            </Button>
+            <Button
+              variant="outline"
+              disabled={selectedCount === 0}
               onClick={() => setBulkTagDialog(true)}
             >
               批量打标签
@@ -789,7 +886,25 @@ export default function AssetsPage() {
                 ) : null}
                 <dl className="mt-4 grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-xs">
                   <dt className="text-muted-foreground">类型</dt>
-                  <dd>{CAT_LABEL[active.category] ?? active.category}</dd>
+                  <dd>
+                    <select
+                      value={active.category}
+                      disabled={updateAssetCategory.isPending}
+                      onChange={(e) =>
+                        updateAssetCategory.mutate({
+                          assetId: active.id,
+                          category: e.target.value,
+                        })
+                      }
+                      className="h-8 w-full rounded-full border border-border bg-background px-3 text-xs outline-none focus:border-primary/40"
+                    >
+                      {CATEGORIES.filter((c) => c.value !== "all").map((c) => (
+                        <option key={c.value} value={c.value}>
+                          {c.label}
+                        </option>
+                      ))}
+                    </select>
+                  </dd>
                   {active.resolution ? (
                     <>
                       <dt className="text-muted-foreground">尺寸</dt>
@@ -1054,6 +1169,11 @@ export default function AssetsPage() {
             if (!upload.isPending) setUploadDialog(false);
           }}
           onUpload={(args) => upload.mutate(args)}
+          onBatchUpload={uploadBatch}
+          onOrganizeUploaded={() => {
+            setUploadDialog(false);
+            setBulkOrganizeDialog(true);
+          }}
         />
       ) : null}
 
@@ -1111,6 +1231,32 @@ export default function AssetsPage() {
           }}
           onSave={(tags, mode) =>
             batchUpdateTags.mutate({ assetIds: selectedIds, tags, mode })
+          }
+        />
+      ) : null}
+
+      {bulkOrganizeDialog ? (
+        <BatchOrganizeDialog
+          count={selectedCount}
+          folders={folders}
+          pending={batchOrganizeAssets.isPending}
+          error={
+            batchOrganizeAssets.isError
+              ? (batchOrganizeAssets.error as Error).message
+              : null
+          }
+          onClose={() => {
+            if (!batchOrganizeAssets.isPending) {
+              batchOrganizeAssets.reset();
+              setBulkOrganizeDialog(false);
+            }
+          }}
+          onSave={(category, folderId) =>
+            batchOrganizeAssets.mutate({
+              assetIds: selectedIds,
+              category,
+              folderId,
+            })
           }
         />
       ) : null}
@@ -1252,6 +1398,93 @@ function BatchTagDialog({
             onClick={() => onSave(tags, mode)}
           >
             {pending ? "处理中…" : "确认"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BatchOrganizeDialog({
+  count,
+  folders,
+  pending,
+  error,
+  onClose,
+  onSave,
+}: {
+  count: number;
+  folders: AssetFolder[];
+  pending: boolean;
+  error: string | null;
+  onClose: () => void;
+  onSave: (category: string, folderId: string) => void;
+}) {
+  const [category, setCategory] = useState("");
+  const [folderId, setFolderId] = useState("__keep");
+  const hasChange = category !== "" || folderId !== "__keep";
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/30 p-4 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-md rounded-3xl border border-border bg-card p-6 shadow-[0_24px_70px_rgba(30,30,60,0.18)]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="text-lg font-semibold">批量整理素材</div>
+        <p className="mt-1 text-sm text-muted-foreground">
+          将对已选择的 {count} 个素材批量设置分类和/或文件夹。
+        </p>
+
+        <div className="mt-5 grid gap-3">
+          <div>
+            <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
+              分类
+            </label>
+            <select
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              className="h-11 w-full rounded-2xl border border-border bg-background px-3 text-sm outline-none focus:border-primary/40"
+            >
+              <option value="">保持不变</option>
+              {CATEGORIES.filter((c) => c.value !== "all").map((c) => (
+                <option key={c.value} value={c.value}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
+              文件夹
+            </label>
+            <select
+              value={folderId}
+              onChange={(e) => setFolderId(e.target.value)}
+              className="h-11 w-full rounded-2xl border border-border bg-background px-3 text-sm outline-none focus:border-primary/40"
+            >
+              <option value="__keep">保持不变</option>
+              <option value="">未归档</option>
+              {folders.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {error ? <p className="mt-3 text-sm text-destructive">{error}</p> : null}
+        <div className="mt-6 flex justify-end gap-2">
+          <Button variant="outline" disabled={pending} onClick={onClose}>
+            取消
+          </Button>
+          <Button
+            disabled={pending || count === 0 || !hasChange}
+            onClick={() => onSave(category, folderId)}
+          >
+            {pending ? "整理中…" : "确认整理"}
           </Button>
         </div>
       </div>
@@ -1411,6 +1644,8 @@ function UploadDialog({
   error,
   onClose,
   onUpload,
+  onBatchUpload,
+  onOrganizeUploaded,
 }: {
   folders: AssetFolder[];
   pending: boolean;
@@ -1421,28 +1656,96 @@ function UploadDialog({
     category: string;
     folderId: string | null;
   }) => void;
+  onBatchUpload: (files: File[]) => Promise<UploadBatchResult[]>;
+  onOrganizeUploaded: () => void;
 }) {
+  const [mode, setMode] = useState<"single" | "batch">("single");
   const [category, setCategory] = useState("OTHER");
   const [folderId, setFolderId] = useState("");
   const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
   const [dragOver, setDragOver] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
+  const [batchPending, setBatchPending] = useState(false);
+  const [batchResults, setBatchResults] = useState<UploadBatchResult[]>([]);
   const fileInput = useRef<HTMLInputElement>(null);
-  const accept = category === "VI_DOC" ? "application/pdf" : "image/*";
+  const accept =
+    mode === "batch"
+      ? "image/*"
+      : category === "VI_DOC"
+        ? "application/pdf"
+        : "image/*";
 
   function accepts(f: File): boolean {
+    if (mode === "batch") return f.type.startsWith("image/");
     if (category === "VI_DOC") return f.type === "application/pdf";
     return f.type.startsWith("image/");
   }
   function pick(f: File | undefined) {
     if (!f) return;
-    setFile(accepts(f) ? f : null);
+    setLocalError(null);
+    setBatchResults([]);
+    if (!accepts(f)) {
+      setFile(null);
+      setLocalError(category === "VI_DOC" ? "VI 文档仅支持 PDF。" : "请选择图片文件。");
+      return;
+    }
+    const sizeErr = imageUploadLimitError(f);
+    if (sizeErr) {
+      setFile(null);
+      setLocalError(sizeErr);
+      return;
+    }
+    setFile(f);
   }
+  function pickMany(list: FileList | File[]) {
+    const next = Array.from(list);
+    setLocalError(null);
+    setBatchResults([]);
+    if (next.length === 0) return;
+    if (next.length > MAX_BATCH_IMAGE_UPLOAD_FILES) {
+      setFiles([]);
+      setLocalError(`一次最多上传 ${MAX_BATCH_IMAGE_UPLOAD_FILES} 张图片。`);
+      return;
+    }
+    const nonImage = next.find((f) => !f.type.startsWith("image/"));
+    if (nonImage) {
+      setFiles([]);
+      setLocalError(`「${nonImage.name}」不是图片，批量上传仅支持图片。`);
+      return;
+    }
+    const overSized = next.map(imageUploadLimitError).find(Boolean);
+    if (overSized) {
+      setFiles([]);
+      setLocalError(overSized);
+      return;
+    }
+    setFiles(next);
+  }
+  async function runBatchUpload() {
+    setBatchPending(true);
+    setLocalError(null);
+    setBatchResults(
+      files.map((f) => ({ fileName: f.name, status: "failed" as const, error: "等待上传…" })),
+    );
+    try {
+      const results = await onBatchUpload(files);
+      setBatchResults(results);
+    } catch (err) {
+      setLocalError(err instanceof Error ? err.message : "批量上传失败");
+      setBatchResults([]);
+    } finally {
+      setBatchPending(false);
+    }
+  }
+  const currentError = localError || error;
+  const successfulCount = batchResults.filter((r) => r.status === "success").length;
 
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/30 p-4 backdrop-blur-sm"
       onClick={() => {
-        if (!pending) onClose();
+        if (!pending && !batchPending) onClose();
       }}
     >
       <div
@@ -1454,13 +1757,45 @@ function UploadDialog({
           上传产品图、Logo、参考图或 VI 手册（PDF）。上传后 AI 可自动标注，供工作台出图引用。
         </p>
 
+        <div className="mt-5 grid grid-cols-2 gap-2 rounded-full bg-muted p-1">
+          {(
+            [
+              { value: "single", label: "单个上传" },
+              { value: "batch", label: "批量图片" },
+            ] as const
+          ).map((item) => (
+            <button
+              key={item.value}
+              type="button"
+              disabled={pending || batchPending}
+              onClick={() => {
+                setMode(item.value);
+                setLocalError(null);
+                setBatchResults([]);
+                setFile(null);
+                setFiles([]);
+              }}
+              className={[
+                "h-9 rounded-full text-sm transition-colors",
+                mode === item.value
+                  ? "bg-card font-medium text-primary shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
+              ].join(" ")}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+
         <input
           ref={fileInput}
           type="file"
           accept={accept}
+          multiple={mode === "batch"}
           className="hidden"
           onChange={(e) => {
-            pick(e.target.files?.[0]);
+            if (mode === "batch" && e.target.files) pickMany(e.target.files);
+            else pick(e.target.files?.[0]);
             e.target.value = "";
           }}
         />
@@ -1484,7 +1819,8 @@ function UploadDialog({
           onDrop={(e) => {
             e.preventDefault();
             setDragOver(false);
-            pick(e.dataTransfer.files?.[0]);
+            if (mode === "batch") pickMany(e.dataTransfer.files);
+            else pick(e.dataTransfer.files?.[0]);
           }}
           className={[
             "mt-5 flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed px-4 py-8 text-center transition-colors",
@@ -1496,7 +1832,11 @@ function UploadDialog({
           <div className="mb-2 flex h-11 w-11 items-center justify-center rounded-2xl bg-accent-soft text-xl text-primary">
             ⬆
           </div>
-          {file ? (
+          {mode === "batch" && files.length > 0 ? (
+            <span className="truncate text-sm font-medium text-foreground">
+              已选择 {files.length} 张图片
+            </span>
+          ) : file ? (
             <span className="truncate text-sm font-medium text-foreground">
               {file.name}
             </span>
@@ -1506,11 +1846,16 @@ function UploadDialog({
             </span>
           )}
           <span className="mt-1 text-xs text-muted-foreground">
-            {category === "VI_DOC" ? "仅 PDF" : "图片格式"}
+            {mode === "batch"
+              ? `图片格式 · 最多 ${MAX_BATCH_IMAGE_UPLOAD_FILES} 张 · 单张不超过 8MB`
+              : category === "VI_DOC"
+                ? "仅 PDF"
+                : "图片格式 · 不超过 8MB"}
           </span>
         </div>
 
-        <div className="mt-4 grid grid-cols-2 gap-3">
+        {mode === "single" ? (
+          <div className="mt-4 grid grid-cols-2 gap-3">
           <div>
             <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
               分类
@@ -1552,25 +1897,76 @@ function UploadDialog({
               ))}
             </select>
           </div>
-        </div>
+          </div>
+        ) : (
+          <div className="mt-4 rounded-2xl bg-accent-soft/60 p-3 text-xs leading-relaxed text-foreground/80">
+            批量上传会先放入「其他 / 未归档」，成功后自动选中这些素材，你可以马上点「去整理」统一设置分类和文件夹。
+          </div>
+        )}
 
-        {error ? (
-          <p className="mt-3 text-sm text-destructive">{error}</p>
+        {mode === "batch" && files.length > 0 ? (
+          <div className="mt-3 max-h-32 overflow-auto rounded-2xl border border-border bg-background p-3">
+            <ul className="space-y-1.5 text-xs">
+              {files.map((f) => {
+                const result = batchResults.find((r) => r.fileName === f.name);
+                return (
+                  <li key={`${f.name}-${f.size}`} className="flex items-center justify-between gap-3">
+                    <span className="truncate">{f.name}</span>
+                    <span
+                      className={
+                        result?.status === "success"
+                          ? "shrink-0 text-success"
+                          : result?.status === "failed" && result.error !== "等待上传…"
+                            ? "shrink-0 text-destructive"
+                            : "shrink-0 text-muted-foreground"
+                      }
+                    >
+                      {result
+                        ? result.status === "success"
+                          ? "成功"
+                          : result.error
+                        : "待上传"}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        ) : null}
+
+        {currentError ? (
+          <p className="mt-3 text-sm text-destructive">{currentError}</p>
+        ) : null}
+        {mode === "batch" && successfulCount > 0 ? (
+          <p className="mt-3 text-sm text-success">
+            已成功上传 {successfulCount} 张，并自动选中。
+          </p>
         ) : null}
 
         <div className="mt-6 flex justify-end gap-2">
-          <Button variant="outline" disabled={pending} onClick={onClose}>
+          <Button variant="outline" disabled={pending || batchPending} onClick={onClose}>
             取消
           </Button>
-          <Button
-            disabled={!file || pending}
-            onClick={() =>
-              file &&
-              onUpload({ file, category, folderId: folderId || null })
-            }
-          >
-            {pending ? "上传中…" : "上传"}
-          </Button>
+          {mode === "batch" && successfulCount > 0 ? (
+            <Button onClick={onOrganizeUploaded}>去整理</Button>
+          ) : mode === "batch" ? (
+            <Button
+              disabled={files.length === 0 || batchPending}
+              onClick={() => void runBatchUpload()}
+            >
+              {batchPending ? "上传中…" : "批量上传"}
+            </Button>
+          ) : (
+            <Button
+              disabled={!file || pending}
+              onClick={() =>
+                file &&
+                onUpload({ file, category, folderId: folderId || null })
+              }
+            >
+              {pending ? "上传中…" : "上传"}
+            </Button>
+          )}
         </div>
       </div>
     </div>

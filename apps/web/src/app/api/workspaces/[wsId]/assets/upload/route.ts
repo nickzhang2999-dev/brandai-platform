@@ -4,6 +4,7 @@ import { ApiException, handleError, ok, requireUser } from "@/lib/api";
 import { uploadBuffer } from "@/lib/s3";
 import { requireWorkspaceRole } from "@/lib/workspace";
 import { serializeAsset, decodeImageResolution } from "@/lib/assets";
+import { imageUploadLimitError } from "@/lib/upload-limits";
 
 /**
  * Server-side brand-asset upload. The browser POSTs a `multipart/form-data` body
@@ -28,11 +29,20 @@ export async function POST(
     const folderRaw = form.get("folderId");
 
     if (!(file instanceof File)) {
-      throw new ApiException(400, "Missing file");
+      throw new ApiException(400, "缺少文件");
+    }
+    const mimeType = file.type || "application/octet-stream";
+    const sizeErr = imageUploadLimitError({
+      name: file.name,
+      size: file.size,
+      type: mimeType,
+    });
+    if (sizeErr) {
+      throw new ApiException(413, sizeErr);
     }
     const parsedCategory = AssetCategory.safeParse(categoryRaw);
     if (!parsedCategory.success) {
-      throw new ApiException(400, "Invalid category");
+      throw new ApiException(400, "素材分类无效");
     }
     const category = parsedCategory.data;
     const parsedLibraryKind = AssetLibraryKind.safeParse(libraryKindRaw);
@@ -50,13 +60,12 @@ export async function POST(
         select: { workspaceId: true },
       });
       if (!folder || folder.workspaceId !== wsId) {
-        throw new ApiException(404, "Folder not found");
+        throw new ApiException(404, "文件夹不存在");
       }
       folderId = folderRaw;
     }
 
     const buf = Buffer.from(await file.arrayBuffer());
-    const mimeType = file.type || "application/octet-stream";
     const { key, url } = await uploadBuffer(buf, mimeType, wsId);
 
     // P04-M12 — persist the pixel dimensions so the detail panel's 尺寸 row

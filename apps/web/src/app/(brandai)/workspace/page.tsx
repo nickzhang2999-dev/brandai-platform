@@ -27,6 +27,7 @@ import type {
 import { CHANNEL_SIZES } from "@brandai/contracts";
 import { apiFetch, assetThumbUrl } from "@/lib/client";
 import { planTiers, upgradeContactEmail } from "@/lib/brandai-mock";
+import { validateImageUploadFile } from "@/lib/upload-limits";
 import {
   addReference,
   getReferences,
@@ -1000,6 +1001,7 @@ function Workspace() {
   // 上传图片到画布:走真实素材上传(R2)→ 公网 URL + 真实尺寸(从 resolution 串解析)。
   const onCanvasUploadImage = useCallback(
     async (file: File) => {
+      validateImageUploadFile(file);
       const fd = new FormData();
       fd.append("file", file);
       fd.append("category", "OTHER");
@@ -1007,7 +1009,10 @@ function Workspace() {
         method: "POST",
         body: fd,
       });
-      if (!res.ok) throw new Error("上传失败");
+      if (!res.ok) {
+        const b = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(b.error ?? "上传失败");
+      }
       const a = (await res.json()) as {
         id: string;
         url: string;
