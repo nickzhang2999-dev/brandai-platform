@@ -40,6 +40,7 @@ export const navItems: {
   label: string;
   href: string;
   icon: string;
+  hidden?: boolean;
 }[] = [
   { key: "home", label: "首页", href: "/", icon: "✦" },
   { key: "campaigns", label: "项目", href: "/campaigns", icon: "◳" },
@@ -49,7 +50,7 @@ export const navItems: {
   { key: "templates", label: "模板库", href: "/templates", icon: "▱" },
   { key: "assets", label: "素材库", href: "/assets", icon: "▦" },
   // G6 · 成员/协作管理 — 团队成员邀请 + 角色管理（接真实 /members BFF）。
-  { key: "members", label: "成员协作", href: "/members", icon: "◍" },
+  { key: "members", label: "成员协作", href: "/members", icon: "◍", hidden: true },
 ];
 
 export const quickActions = [
