@@ -1,6 +1,7 @@
 import { prisma } from "@brandai/db";
 import {
   CreateGenerationInput,
+  resolveGenerationDefaults,
   WatermarkOverlayInput,
 } from "@brandai/contracts";
 import {
@@ -129,6 +130,17 @@ export async function POST(
     if (!project || project.workspaceId !== wsId) {
       throw new ApiException(404, "Project not found in this workspace");
     }
+    const workspace = await prisma.brandWorkspace.findUnique({
+      where: { id: wsId },
+      select: { name: true, industry: true },
+    });
+    const resolvedBrief = resolveGenerationDefaults({
+      project,
+      brand: workspace,
+      sceneType: input.sceneType,
+      sellingPoint: input.sellingPoint,
+      scene: input.scene,
+    });
 
     if (templateReferenceAssetIds.length > 0) {
       const refIds = templateReferenceAssetIds;
@@ -218,8 +230,8 @@ export async function POST(
             projectId: input.projectId,
             workspaceId: wsId,
             sceneType: input.sceneType,
-            sellingPoint: input.sellingPoint,
-            scene: input.scene,
+            sellingPoint: resolvedBrief.sellingPoint,
+            scene: resolvedBrief.scene,
             status: "FAILED",
             error:
               "AI constraint hard-block: " +
@@ -252,8 +264,8 @@ export async function POST(
         projectId: input.projectId,
         workspaceId: wsId,
         sceneType: input.sceneType,
-        sellingPoint: input.sellingPoint,
-        scene: input.scene,
+        sellingPoint: resolvedBrief.sellingPoint,
+        scene: resolvedBrief.scene,
         status: "PENDING",
       }),
     });

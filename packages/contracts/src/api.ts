@@ -138,8 +138,8 @@ export type CreateProjectInput = z.infer<typeof CreateProjectInput>;
 export const CreateGenerationInput = z.object({
   projectId: z.string(),
   sceneType: SceneType,
-  sellingPoint: z.string().min(1),
-  scene: z.string().min(1),
+  sellingPoint: z.string().optional().default(""),
+  scene: z.string().optional().default(""),
   versionCount: z.number().int().min(1).max(8).default(2),
   /**
    * P2.0 — when set, generate one image per target size (each at its own
@@ -205,8 +205,8 @@ export type CreateGenerationInput = z.infer<typeof CreateGenerationInput>;
  */
 export const CampaignKitInput = z.object({
   projectId: z.string(),
-  sellingPoint: z.string().min(1),
-  scene: z.string().min(1),
+  sellingPoint: z.string().optional().default(""),
+  scene: z.string().optional().default(""),
   scenes: z.array(SceneType).min(1).max(5),
   targets: z.array(SizeSpec).min(1).max(12),
   textMode: z.enum(["direct", "layered"]).default("direct"),

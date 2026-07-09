@@ -1,5 +1,8 @@
 import { prisma } from "@brandai/db";
-import { CreateGenerationInput } from "@brandai/contracts";
+import {
+  CreateGenerationInput,
+  resolveGenerationDefaults,
+} from "@brandai/contracts";
 import {
   ApiException,
   handleError,
@@ -38,11 +41,22 @@ export async function POST(
     if (!project || project.workspaceId !== wsId) {
       throw new ApiException(404, "Project not found in this workspace");
     }
+    const workspace = await prisma.brandWorkspace.findUnique({
+      where: { id: wsId },
+      select: { name: true, industry: true },
+    });
+    const resolvedBrief = resolveGenerationDefaults({
+      project,
+      brand: workspace,
+      sceneType: input.sceneType,
+      sellingPoint: input.sellingPoint,
+      scene: input.scene,
+    });
 
     const origin = new URL(req.url).origin;
     const result = await runPrecheck({
       workspaceId: wsId,
-      text: input.sellingPoint,
+      text: resolvedBrief.sellingPoint,
       baseUrl: origin,
     });
     return ok(result);

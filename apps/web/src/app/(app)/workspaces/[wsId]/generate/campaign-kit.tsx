@@ -129,9 +129,7 @@ export function CampaignKit({
   const canRun =
     !!projectId &&
     scenes.size > 0 &&
-    targets.length > 0 &&
-    sellingPoint.trim().length > 0 &&
-    scene.trim().length > 0;
+    targets.length > 0;
   const totalImages = scenes.size * targets.length;
 
   const allDone =

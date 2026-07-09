@@ -17,6 +17,27 @@ describe("CampaignKitInput", () => {
     if (r.success) expect(r.data.textMode).toBe("direct");
   });
 
+  it("allows sellingPoint and scene to be omitted or empty for server defaults", () => {
+    const omitted = CampaignKitInput.safeParse({
+      projectId: "p1",
+      scenes: ["ECOM_MAIN"],
+      targets: base.targets,
+    });
+    expect(omitted.success).toBe(true);
+    if (omitted.success) {
+      expect(omitted.data.sellingPoint).toBe("");
+      expect(omitted.data.scene).toBe("");
+    }
+
+    expect(
+      CampaignKitInput.safeParse({
+        ...base,
+        sellingPoint: "",
+        scene: "",
+      }).success,
+    ).toBe(true);
+  });
+
   it("requires at least one scene and one target", () => {
     expect(CampaignKitInput.safeParse({ ...base, scenes: [] }).success).toBe(false);
     expect(CampaignKitInput.safeParse({ ...base, targets: [] }).success).toBe(false);
