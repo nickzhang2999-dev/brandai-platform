@@ -286,7 +286,8 @@ export default function AssetsPage() {
       qc.invalidateQueries({ queryKey: ["brandai-assets", wsId] });
       qc.invalidateQueries({ queryKey: ["brandai-folders", wsId] });
       setSelectedIds(successAssets.map((a) => a.id));
-      setActiveId(successAssets[0].id);
+      const firstAsset = successAssets[0];
+      if (firstAsset) setActiveId(firstAsset.id);
       setUploadErr(null);
     }
     return results;
