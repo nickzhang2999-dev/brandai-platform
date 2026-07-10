@@ -76,7 +76,7 @@ export function BrandSidebar({
 
         {/* Nav */}
         <nav className="flex flex-1 flex-col gap-1.5">
-          {navItems.map((item) => {
+          {navItems.filter((item) => !item.hidden).map((item) => {
             const active = isActive(item.href);
             return (
               <Link

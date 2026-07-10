@@ -23,10 +23,12 @@ import type {
   SizeSpec,
   WatermarkOverlayInput,
   WorkspaceRole,
+  GenerationDefaultSource,
 } from "@brandai/contracts";
-import { CHANNEL_SIZES } from "@brandai/contracts";
+import { CHANNEL_SIZES, resolveGenerationDefaults } from "@brandai/contracts";
 import { apiFetch, assetThumbUrl } from "@/lib/client";
 import { planTiers, upgradeContactEmail } from "@/lib/brandai-mock";
+import { validateImageUploadFile } from "@/lib/upload-limits";
 import {
   addReference,
   getReferences,
@@ -164,7 +166,7 @@ export default function WorkspacePage() {
 }
 
 function Workspace() {
-  const { wsId, brandName } = useBrand();
+  const { wsId, brandName, brands } = useBrand();
   const search = useSearchParams();
   const pathname = usePathname();
   const presetProject = search.get("project");
@@ -198,9 +200,7 @@ function Workspace() {
   }, [projects, projectId]);
 
   const [sellingPoint, setSellingPoint] = useState(
-    presetBrief?.trim()
-      ? presetBrief.trim().slice(0, 500)
-      : "高端、清透、具有自然光感的护肤新品社交广告主视觉，紫色瓶身为主体，搭配花卉与水光质感。",
+    presetBrief?.trim() ? presetBrief.trim().slice(0, 500) : "",
   );
   // F2 / L6 — undo/redo for the generation-form state. We track a snapshot of
   // every editable field in a bounded history stack and expose undo/redo that
@@ -213,7 +213,7 @@ function Workspace() {
   useEffect(() => {
     if (presetBrief?.trim()) setSellingPoint(presetBrief.trim().slice(0, 500));
   }, [presetBrief]);
-  const [scene, setScene] = useState(presetScene?.trim() || "夏日自然光场景");
+  const [scene, setScene] = useState(presetScene?.trim() || "");
   // Only honor a sceneType the workspace actually offers (avoid a dangling value
   // from a hand-edited URL); otherwise fall back to the default.
   const SCENE_TYPE_VALUES = SCENE_TYPES.map((s) => s.value);
@@ -223,6 +223,25 @@ function Workspace() {
       : "SOCIAL_POSTER",
   );
   const [versionCount, setVersionCount] = useState(4);
+  const activeProject = useMemo(
+    () => projects.find((p) => p.id === projectId) ?? projects[0] ?? null,
+    [projectId, projects],
+  );
+  const activeBrand = useMemo(
+    () => brands.find((brand) => brand.id === wsId) ?? { name: brandName },
+    [brandName, brands, wsId],
+  );
+  const resolvedGenerationBrief = useMemo(
+    () =>
+      resolveGenerationDefaults({
+        project: activeProject,
+        brand: activeBrand,
+        sceneType,
+        sellingPoint,
+        scene,
+      }),
+    [activeProject, activeBrand, sceneType, sellingPoint, scene],
+  );
 
   // K5 · P2.0 多尺寸 — 选中的渠道尺寸档位（按 CHANNEL_SIZES.key 跟踪）。≥1 个时
   // POST body 带 targets（每尺寸各出 1 张，AI 服务忽略 versionCount）。
@@ -1000,6 +1019,7 @@ function Workspace() {
   // 上传图片到画布:走真实素材上传(R2)→ 公网 URL + 真实尺寸(从 resolution 串解析)。
   const onCanvasUploadImage = useCallback(
     async (file: File) => {
+      validateImageUploadFile(file);
       const fd = new FormData();
       fd.append("file", file);
       fd.append("category", "OTHER");
@@ -1007,7 +1027,10 @@ function Workspace() {
         method: "POST",
         body: fd,
       });
-      if (!res.ok) throw new Error("上传失败");
+      if (!res.ok) {
+        const b = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(b.error ?? "上传失败");
+      }
       const a = (await res.json()) as {
         id: string;
         url: string;
@@ -1096,8 +1119,8 @@ function Workspace() {
           body: JSON.stringify({
             projectId,
             sceneType,
-            sellingPoint: sellingPoint.trim(),
-            scene: scene.trim(),
+            sellingPoint: resolvedGenerationBrief.sellingPoint,
+            scene: resolvedGenerationBrief.scene,
             versionCount,
             // K5 / M3 — text rendering strategy ("direct" default | "layered").
             textMode,
@@ -1398,6 +1421,7 @@ function Workspace() {
             <textarea
               value={sellingPoint}
               maxLength={500}
+              placeholder="可留空。系统会基于项目摘要、产品/活动、品牌名和行业自动补全。"
               onChange={(e) => setSellingPoint(e.target.value)}
               rows={5}
               className="w-full resize-none rounded-2xl border border-border bg-background p-3 text-sm outline-none focus:border-primary/40 focus:shadow-[0_0_0_4px_rgba(124,92,255,0.08)]"
@@ -1408,6 +1432,7 @@ function Workspace() {
             <div className="mb-2 text-sm font-semibold">场景</div>
             <input
               value={scene}
+              placeholder="可留空。系统会基于投放渠道、活动和画面类型自动补全。"
               onChange={(e) => setScene(e.target.value)}
               className="h-11 w-full rounded-2xl border border-border bg-background px-3 text-sm outline-none focus:border-primary/40 focus:shadow-[0_0_0_4px_rgba(124,92,255,0.08)]"
             />
@@ -1741,8 +1766,10 @@ function Workspace() {
             sceneType:
               SCENE_TYPES.find((s) => s.value === sceneType)?.label ??
               sceneType,
-            scene: scene.trim(),
-            sellingPoint: sellingPoint.trim(),
+            scene: resolvedGenerationBrief.scene,
+            sceneSource: resolvedGenerationBrief.sceneSource,
+            sellingPoint: resolvedGenerationBrief.sellingPoint,
+            sellingPointSource: resolvedGenerationBrief.sellingPointSource,
             count: multiSize ? selectedTargets.length : versionCount,
             multiSize,
             targets: selectedTargets.map(
@@ -2703,7 +2730,9 @@ function ConfirmSubmitDialog({
     projectName: string;
     sceneType: string;
     scene: string;
+    sceneSource: GenerationDefaultSource;
     sellingPoint: string;
+    sellingPointSource: GenerationDefaultSource;
     count: number;
     multiSize: boolean;
     targets: string[];
@@ -2745,7 +2774,14 @@ function ConfirmSubmitDialog({
           <dt className="text-muted-foreground">画面类型</dt>
           <dd>{summary.sceneType}</dd>
           <dt className="text-muted-foreground">场景</dt>
-          <dd>{summary.scene || "—"}</dd>
+          <dd>
+            {summary.scene || "—"}
+            {summary.sceneSource === "system" ? (
+              <span className="ml-2 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
+                系统补全
+              </span>
+            ) : null}
+          </dd>
           <dt className="text-muted-foreground">生成数量</dt>
           <dd>
             {summary.multiSize
@@ -2778,6 +2814,11 @@ function ConfirmSubmitDialog({
           <p className="line-clamp-3">
             <span className="font-medium text-foreground">需求 / 卖点：</span>
             {summary.sellingPoint || "（未填写）"}
+            {summary.sellingPointSource === "system" ? (
+              <span className="ml-2 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
+                系统补全
+              </span>
+            ) : null}
           </p>
         </div>
 

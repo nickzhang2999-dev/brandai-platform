@@ -300,8 +300,6 @@ export function GenerateWizard({
   const canGenerate =
     !!projectId &&
     !!sceneType &&
-    sellingPoint.trim().length > 0 &&
-    scene.trim().length > 0 &&
     !(precheck && precheck.blocking);
 
   function reset() {
@@ -493,10 +491,6 @@ export function GenerateWizard({
             </Button>
             <Button
               size="sm"
-              disabled={
-                sellingPoint.trim().length === 0 ||
-                scene.trim().length === 0
-              }
               onClick={() => setStep(3)}
             >
               下一步

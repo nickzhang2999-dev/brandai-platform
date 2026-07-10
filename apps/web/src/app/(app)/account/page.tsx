@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { prisma } from "@brandai/db";
 import { CreamCard } from "@brandai/ui";
 import { auth } from "@/auth";
+import { AccountNavActions } from "./AccountNavActions";
 import { ChangePasswordForm } from "./ChangePasswordForm";
 import { ThemeSwitcher } from "./ThemeSwitcher";
 
@@ -30,6 +31,7 @@ export default async function AccountPage() {
         {user?.email}
         {user?.name ? ` · ${user.name}` : ""}
       </p>
+      <AccountNavActions />
 
       <section className="mt-8">
         <h2 className="font-serif text-xl text-foreground">界面外观</h2>

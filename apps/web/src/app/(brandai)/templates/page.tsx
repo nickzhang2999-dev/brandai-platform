@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Asset } from "@brandai/contracts";
 import { Button } from "@brandai/ui";
 import { apiFetch, assetThumbUrl } from "@/lib/client";
+import { validateImageUploadFile } from "@/lib/upload-limits";
 import { PageHeader } from "../_ui";
 import { useBrand } from "../brand-context";
 
@@ -28,6 +29,7 @@ export default function TemplatesPage() {
     setUploading(true);
     setErr(null);
     try {
+      validateImageUploadFile(file);
       const fd = new FormData();
       fd.append("file", file);
       fd.append("category", "OTHER");

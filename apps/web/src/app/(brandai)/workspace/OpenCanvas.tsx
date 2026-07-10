@@ -175,6 +175,7 @@ export function OpenCanvas({
   }>(null);
   const [editingText, setEditingText] = useState<string | null>(null);
   const [space, setSpace] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   // 选中出图变体后「待执行的改图操作」(arm)。点 op chip 只是选中操作(不立即发图),
   // 输入指令后回车/点「出图」才真正改图——避免「点一下就锁死整条工具条」。
   const [armedOp, setArmedOp] = useState<string | null>(null);
@@ -545,6 +546,7 @@ export function OpenCanvas({
     e.target.value = "";
     if (!f) return;
     try {
+      setUploadError(null);
       const { url, width, height } = await onUploadImage(f);
       const ratio = width && height ? width / height : 1;
       const w = 280;
@@ -564,8 +566,8 @@ export function OpenCanvas({
       };
       setItems((prev) => [...prev, item]);
       setSelected(new Set([item.key]));
-    } catch {
-      /* 上传失败:静默(操作条会有错误出口);P1 不阻断画布 */
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : "上传失败");
     }
   };
 
@@ -811,6 +813,23 @@ export function OpenCanvas({
         className="hidden"
         onChange={onFile}
       />
+
+      {uploadError ? (
+        <div
+          onPointerDown={(e) => e.stopPropagation()}
+          className="absolute left-4 top-4 z-30 max-w-xs rounded-2xl border border-destructive/20 bg-card px-3.5 py-2 text-xs text-destructive shadow-[0_10px_30px_rgba(30,30,60,0.12)]"
+        >
+          {uploadError}
+          <button
+            type="button"
+            onClick={() => setUploadError(null)}
+            className="ml-2 text-muted-foreground hover:text-foreground"
+            aria-label="关闭上传错误提示"
+          >
+            ×
+          </button>
+        </div>
+      ) : null}
 
       {/* items */}
       {items.map((it) => {

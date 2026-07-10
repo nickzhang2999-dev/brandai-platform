@@ -83,6 +83,29 @@ describe("GenerateRequest / CreateGenerationInput — targets", () => {
     expect(r.success).toBe(true);
   });
 
+  it("CreateGenerationInput allows sellingPoint and scene to be omitted or empty", () => {
+    const omitted = CreateGenerationInput.safeParse({
+      projectId: "p1",
+      sceneType: "ECOM_MAIN",
+      versionCount: 1,
+    });
+    expect(omitted.success).toBe(true);
+    if (omitted.success) {
+      expect(omitted.data.sellingPoint).toBe("");
+      expect(omitted.data.scene).toBe("");
+    }
+
+    expect(
+      CreateGenerationInput.safeParse({
+        projectId: "p1",
+        sceneType: "ECOM_MAIN",
+        sellingPoint: "",
+        scene: "",
+        versionCount: 1,
+      }).success,
+    ).toBe(true);
+  });
+
   it("rejects targets with an invalid size entry", () => {
     const r = GenerateRequest.safeParse({
       ...base,

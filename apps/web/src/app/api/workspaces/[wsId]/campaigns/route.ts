@@ -1,5 +1,9 @@
 import { prisma } from "@brandai/db";
-import { CampaignKitInput } from "@brandai/contracts";
+import {
+  CampaignKitInput,
+  dedupedSceneCount,
+  resolveGenerationDefaults,
+} from "@brandai/contracts";
 import {
   ApiException,
   handleError,
@@ -15,7 +19,6 @@ import { getConfirmedRules } from "@/lib/rules";
 import { serializeProhibition } from "@/lib/prohibitions";
 import { compileAIConstraints, constraintsEnabled } from "@/lib/ai-constraints";
 import { reserveGenerationQuota } from "@/lib/quota";
-import { dedupedSceneCount } from "@brandai/contracts";
 
 /**
  * E8 Campaign Kit · POST /api/workspaces/[wsId]/campaigns
@@ -49,6 +52,10 @@ export async function POST(
     if (!project || project.workspaceId !== wsId) {
       throw new ApiException(404, "Project not found in this workspace");
     }
+    const workspace = await prisma.brandWorkspace.findUnique({
+      where: { id: wsId },
+      select: { name: true, industry: true },
+    });
 
     // K3 / §2 — the compliance precheck (a slow AI call) used to be `await`-ed
     // HERE in the HTTP handler, violating the "no slow AI in a request handler"
@@ -87,6 +94,15 @@ export async function POST(
     // a user never gets a half-finished set then a 402 mid-way, and concurrent
     // kits can't over-spend. Metered against the workspace OWNER (tenant).
     const sceneTypes = [...new Set(input.scenes)];
+    const resolvedBriefs = sceneTypes.map((sceneType) =>
+      resolveGenerationDefaults({
+        project,
+        brand: workspace,
+        sceneType,
+        sellingPoint: input.sellingPoint,
+        scene: input.scene,
+      }),
+    );
     const reserved = await reserveGenerationQuota({
       workspaceId: wsId,
       count: dedupedSceneCount(input.scenes),
@@ -94,8 +110,8 @@ export async function POST(
         projectId: input.projectId,
         workspaceId: wsId,
         sceneType: sceneTypes[i]!,
-        sellingPoint: input.sellingPoint,
-        scene: input.scene,
+        sellingPoint: resolvedBriefs[i]!.sellingPoint,
+        scene: resolvedBriefs[i]!.scene,
         status: "PENDING",
       }),
     });

@@ -70,7 +70,6 @@ function buildNav(pathname: string, isAdmin: boolean): NavItem[] {
     { href: `${base}/generate`, label: "图片生成" },
     { href: `${base}/compliance`, label: "合规词库" },
     { href: `${base}/projects`, label: "项目与版本" },
-    { href: `${base}/members`, label: "团队成员" },
   ];
 
   return [
