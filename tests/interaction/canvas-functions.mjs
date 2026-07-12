@@ -77,7 +77,13 @@ await step("双击编辑文字", async () => {
   await page.mouse.dblclick(bb.x + bb.width / 2, bb.y + bb.height / 2); await page.waitForTimeout(400);
   if (!(await page.locator("[data-testid=canvas-item] textarea").count())) return { ok: false, detail: "未进编辑" };
   await page.locator("[data-testid=canvas-item] textarea").first().fill("改后文字OK");
-  const s = await stage(); await page.mouse.click(s.x + s.width * 0.85, s.y + s.height * 0.85); await page.waitForTimeout(400);
+  const s = await stage();
+  const editBox = await page.locator("[data-testid=canvas-item] textarea").first().boundingBox();
+  await page.mouse.click(
+    Math.min(s.x + s.width - 24, editBox.x + editBox.width + 80),
+    Math.min(s.y + s.height - 24, editBox.y + editBox.height + 80),
+  );
+  await page.waitForTimeout(400);
   const has = await page.locator("[data-testid=canvas-item][data-kind=text]").filter({ hasText: "改后文字OK" }).count();
   return { ok: has > 0, detail: `写回=${has > 0}` };
 });

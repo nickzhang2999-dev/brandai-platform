@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   AssetCategory,
+  AssetInvocationMode,
   AssetLibraryKind,
   ComplianceTermType,
   EditOp,
@@ -73,6 +74,9 @@ export type WatermarkPositionMode = z.infer<typeof WatermarkPositionMode>;
 export const WatermarkOverlayInput = z.object({
   assetId: z.string().optional(),
   text: z.string().max(120).optional(),
+  invocationMode: AssetInvocationMode.default("EXACT"),
+  lockAspectRatio: z.boolean().default(true),
+  allowRecolor: z.boolean().default(false),
   enabled: z.boolean().default(true),
   anchor: WatermarkAnchor.default("bottom-right"),
   positionMode: WatermarkPositionMode.default("pixel"),
@@ -243,6 +247,11 @@ export const ChangePasswordInput = z.object({
   newPassword: z.string().min(8),
 });
 export type ChangePasswordInput = z.infer<typeof ChangePasswordInput>;
+
+export const UpdateProfileInput = z.object({
+  name: z.string().trim().min(1).max(40),
+});
+export type UpdateProfileInput = z.infer<typeof UpdateProfileInput>;
 
 /**
  * E11/E12 — durable Project↔Asset link. `MEMBER` = 加入项目（素材属于该

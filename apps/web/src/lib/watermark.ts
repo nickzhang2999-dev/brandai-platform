@@ -1,9 +1,17 @@
-import type { WatermarkOverlayInput } from "@brandai/contracts";
+import {
+  WatermarkOverlayInput as WatermarkOverlaySchema,
+  type WatermarkOverlayInput,
+} from "@brandai/contracts";
 import type sharp from "sharp";
 
 type SharpFactory = typeof sharp;
 
-export type ResolvedWatermarkOverlay = WatermarkOverlayInput & {
+export type ResolvedWatermarkOverlay = Partial<WatermarkOverlayInput> & {
+  assetUrl?: string;
+  assetMimeType?: string;
+};
+
+type NormalizedWatermarkOverlay = WatermarkOverlayInput & {
   assetUrl?: string;
   assetMimeType?: string;
 };
@@ -113,7 +121,7 @@ function textOverlaySvg(overlay: WatermarkOverlayInput): {
 
 async function imageOverlaySvg(
   sharp: SharpFactory,
-  overlay: ResolvedWatermarkOverlay,
+  overlay: NormalizedWatermarkOverlay,
 ): Promise<{ buffer: Buffer; width: number; height: number } | null> {
   if (!overlay.assetUrl) return null;
   const source = await loadImageBytes(overlay.assetUrl);
@@ -133,7 +141,11 @@ export async function applyWatermarksToImage(
   imageUrl: string,
   overlays: ResolvedWatermarkOverlay[],
 ): Promise<{ imageUrl: string; appliedAssetIds: string[] }> {
-  const enabled = overlays.filter(
+  const enabled = overlays.map((overlay) => ({
+    ...WatermarkOverlaySchema.parse(overlay),
+    ...(overlay.assetUrl ? { assetUrl: overlay.assetUrl } : {}),
+    ...(overlay.assetMimeType ? { assetMimeType: overlay.assetMimeType } : {}),
+  })).filter(
     (o) => o.enabled !== false && (o.assetUrl || (o.text ?? "").trim().length > 0),
   );
   if (enabled.length === 0) return { imageUrl, appliedAssetIds: [] };

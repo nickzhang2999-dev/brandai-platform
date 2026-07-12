@@ -47,6 +47,14 @@ export type CanvasItem = {
   color?: string;
 };
 
+type DraggedAsset = {
+  id: string;
+  url?: string;
+  fileName?: string;
+  width?: number;
+  height?: number;
+};
+
 const ZOOM_MIN = 0.1;
 const ZOOM_MAX = 4;
 const MIN_SIZE = 32;
@@ -179,6 +187,13 @@ export function OpenCanvas({
   // 选中出图变体后「待执行的改图操作」(arm)。点 op chip 只是选中操作(不立即发图),
   // 输入指令后回车/点「出图」才真正改图——避免「点一下就锁死整条工具条」。
   const [armedOp, setArmedOp] = useState<string | null>(null);
+
+  const commitTextEdit = useCallback((key: string, value: string) => {
+    setItems((prev) =>
+      prev.map((p) => (p.key === key ? { ...p, text: value } : p)),
+    );
+    setEditingText(null);
+  }, []);
 
   // 最新 viewport 放 ref,wheel 监听只绑一次。
   const vpRef = useRef({ zoom, camera });
@@ -325,14 +340,14 @@ export function OpenCanvas({
     // 点 textarea 之外的任意处 → 主动 blur 提交(点普通 div 不会自动失焦)。
     const onDocDown = (e: PointerEvent) => {
       const ta = editTextRef.current;
-      if (ta && e.target !== ta) ta.blur();
+      if (ta && e.target !== ta) commitTextEdit(editingText, ta.value);
     };
     document.addEventListener("pointerdown", onDocDown, true);
     return () => {
       clearTimeout(focusTimer);
       document.removeEventListener("pointerdown", onDocDown, true);
     };
-  }, [editingText]);
+  }, [commitTextEdit, editingText]);
 
   // ---- 坐标转换 ----
   const toWorld = useCallback(
@@ -606,6 +621,30 @@ export function OpenCanvas({
     if (!e.shiftKey) setSelected(new Set());
   };
 
+  const addImageAtScreenPoint = useCallback(
+    (asset: DraggedAsset, sx: number, sy: number) => {
+      if (!asset.url) return;
+      const ratio = asset.width && asset.height ? asset.width / asset.height : 1;
+      const w = 240;
+      const h = Math.round(w / (ratio || 1));
+      const wp = toWorld(sx, sy);
+      const item: CanvasItem = {
+        key: uid("asset"),
+        kind: "image",
+        imageUrl: asset.url,
+        naturalW: asset.width,
+        naturalH: asset.height,
+        x: wp.x - w / 2,
+        y: wp.y - h / 2,
+        w,
+        h,
+      };
+      setItems((prev) => [...prev, item]);
+      setSelected(new Set([item.key]));
+    },
+    [toWorld],
+  );
+
   const beginItemDrag = (e: React.PointerEvent, key: string) => {
     if (e.button !== 0) return;
     e.stopPropagation();
@@ -796,6 +835,24 @@ export function OpenCanvas({
       onPointerMove={onStageMove}
       onPointerUp={onStageUp}
       onPointerCancel={onStageUp}
+      onDragOver={(e) => {
+        if (e.dataTransfer.types.includes("application/x-brandai-asset")) {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "copy";
+        }
+      }}
+      onDrop={(e) => {
+        const raw = e.dataTransfer.getData("application/x-brandai-asset");
+        if (!raw) return;
+        e.preventDefault();
+        try {
+          const asset = JSON.parse(raw) as DraggedAsset;
+          const lp = localPoint(e);
+          addImageAtScreenPoint(asset, lp.x, lp.y);
+        } catch {
+          setUploadError("素材拖入失败");
+        }
+      }}
       className="relative min-h-[560px] flex-1 select-none overflow-hidden rounded-[28px] border border-border bg-card"
       style={{
         backgroundImage:
@@ -905,11 +962,7 @@ export function OpenCanvas({
                   }
                 }}
                 onBlur={(e) => {
-                  const v = e.target.value;
-                  setItems((prev) =>
-                    prev.map((p) => (p.key === it.key ? { ...p, text: v } : p)),
-                  );
-                  setEditingText(null);
+                  commitTextEdit(it.key, e.target.value);
                 }}
                 className="h-full w-full resize-none rounded-[6px] border border-primary/40 bg-card p-1 outline-none"
                 style={{ fontSize: (it.fontSize ?? 18) * zoom, color: it.color }}

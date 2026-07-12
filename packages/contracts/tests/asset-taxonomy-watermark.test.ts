@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   Asset,
+  AssetInvocationMode,
   AssetLibraryKind,
   CreateAssetInput,
   EditVersionInput,
@@ -79,6 +80,14 @@ describe("Asset taxonomy — V0.0.9", () => {
 });
 
 describe("Watermark generation contract — V0.0.9", () => {
+  it("defines the V0.0.12 invocation modes", () => {
+    expect(AssetInvocationMode.options).toEqual([
+      "REFERENCE",
+      "EXACT",
+      "ADAPTIVE",
+    ]);
+  });
+
   it("accepts deterministic watermark overlays with defaults", () => {
     const parsed = WatermarkOverlayInput.parse({
       assetId: "asset-1",
@@ -90,6 +99,21 @@ describe("Watermark generation contract — V0.0.9", () => {
     expect(parsed.anchor).toBe("bottom-right");
     expect(parsed.positionMode).toBe("pixel");
     expect(parsed.assetId).toBe("asset-1");
+    expect(parsed.invocationMode).toBe("EXACT");
+    expect(parsed.lockAspectRatio).toBe(true);
+    expect(parsed.allowRecolor).toBe(false);
+  });
+
+  it("accepts adaptive invocation overlays", () => {
+    const parsed = WatermarkOverlayInput.parse({
+      assetId: "asset-1",
+      invocationMode: "ADAPTIVE",
+      allowRecolor: true,
+      lockAspectRatio: true,
+    });
+
+    expect(parsed.invocationMode).toBe("ADAPTIVE");
+    expect(parsed.allowRecolor).toBe(true);
   });
 
   it("keeps legacy referenceAssets while adding template refs and watermarks", () => {
@@ -116,10 +140,10 @@ describe("Watermark generation contract — V0.0.9", () => {
     expect(parsed.watermarkOverlays?.[0]?.enabled).toBe(true);
   });
 
-  it("accepts watermark overlays on edit requests for V0.0.11", () => {
+  it("accepts watermark overlays and whole-image edits for V0.0.12", () => {
     const parsed = EditVersionInput.parse({
-      op: "INPAINT",
-      payload: { prompt: "补充产品高光", mask: "data:image/png;base64,xx" },
+      op: "IMAGE_EDIT",
+      payload: { prompt: "整体增强产品高光" },
       watermarkOverlays: [
         {
           assetId: "material-logo",

@@ -5,6 +5,7 @@ import {
   ChangePasswordInput,
   RegistrationState,
   UpdateRegistrationInput,
+  UpdateProfileInput,
 } from "../src/index";
 
 /**
@@ -95,5 +96,16 @@ describe("ChangePasswordInput", () => {
         newPassword: "longenough",
       }).success,
     ).toBe(false);
+  });
+});
+
+describe("UpdateProfileInput", () => {
+  it("accepts a trimmed display nickname", () => {
+    const parsed = UpdateProfileInput.parse({ name: "  Nova  " });
+    expect(parsed.name).toBe("Nova");
+  });
+
+  it("rejects empty display nicknames", () => {
+    expect(UpdateProfileInput.safeParse({ name: "   " }).success).toBe(false);
   });
 });

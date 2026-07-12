@@ -4,6 +4,7 @@ import { CreamCard } from "@brandai/ui";
 import { auth } from "@/auth";
 import { AccountNavActions } from "./AccountNavActions";
 import { ChangePasswordForm } from "./ChangePasswordForm";
+import { ProfileForm } from "./ProfileForm";
 import { ThemeSwitcher } from "./ThemeSwitcher";
 
 /**
@@ -32,6 +33,16 @@ export default async function AccountPage() {
         {user?.name ? ` · ${user.name}` : ""}
       </p>
       <AccountNavActions />
+
+      <section className="mt-8">
+        <h2 className="font-serif text-xl text-foreground">个人昵称</h2>
+        <div className="mt-3">
+          <ProfileForm
+            email={user?.email ?? ""}
+            initialName={user?.name ?? user?.email?.split("@")[0] ?? "用户"}
+          />
+        </div>
+      </section>
 
       <section className="mt-8">
         <h2 className="font-serif text-xl text-foreground">界面外观</h2>
