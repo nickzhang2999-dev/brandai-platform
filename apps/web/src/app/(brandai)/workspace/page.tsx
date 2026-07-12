@@ -24,6 +24,7 @@ import type {
   WatermarkOverlayInput,
   WorkspaceRole,
   GenerationDefaultSource,
+  AssetInvocationMode,
 } from "@brandai/contracts";
 import { CHANNEL_SIZES, resolveGenerationDefaults } from "@brandai/contracts";
 import { apiFetch, assetThumbUrl } from "@/lib/client";
@@ -59,6 +60,7 @@ const SCENE_TYPES: { value: string; label: string }[] = [
 // 全部走真实 server-authoritative 改图链路（/edit → worker → ai.edit → 真 provider）。
 const CANVAS_OPS: { value: string; label: string; mask?: boolean }[] = [
   { value: "INPAINT", label: "局部重画", mask: true },
+  { value: "IMAGE_EDIT", label: "整图修改" },
   { value: "OUTPAINT", label: "扩展" },
   { value: "REPLACE_BACKGROUND", label: "换背景" },
   { value: "RECOLOR", label: "改色" },
@@ -68,6 +70,72 @@ const CANVAS_OPS: { value: string; label: string; mask?: boolean }[] = [
 ];
 
 const POLL_CAP_MS = 6 * 60 * 1000; // §2.2 有界中间态
+
+type WorkspaceMode = "TEXT_TO_IMAGE" | "IMAGE_EDIT" | "INPAINT" | "OUTPAINT";
+type OutpaintDirection = "left" | "right" | "top" | "bottom" | "all";
+const WORKSPACE_MODES: {
+  value: WorkspaceMode;
+  label: string;
+  hint: string;
+}[] = [
+  {
+    value: "TEXT_TO_IMAGE",
+    label: "文字生图",
+    hint: "从项目、品牌套件与文字描述生成新图。",
+  },
+  {
+    value: "IMAGE_EDIT",
+    label: "整图修改",
+    hint: "基于当前/历史图继续迭代，不重新开始。",
+  },
+  {
+    value: "INPAINT",
+    label: "局部修改",
+    hint: "框选或涂抹局部区域，只改选区。",
+  },
+  {
+    value: "OUTPAINT",
+    label: "扩图",
+    hint: "向指定方向延展画布并自然补全。",
+  },
+];
+
+const OUTPAINT_DIRECTIONS: {
+  value: OutpaintDirection;
+  label: string;
+  hint: string;
+}[] = [
+  { value: "right", label: "向右", hint: "增加右侧留白或延展场景" },
+  { value: "left", label: "向左", hint: "扩展左侧画面" },
+  { value: "top", label: "向上", hint: "增加天空、背景或上方空间" },
+  { value: "bottom", label: "向下", hint: "延展地面、产品台面或下方信息区" },
+  { value: "all", label: "四周", hint: "按比例扩展整张画布" },
+];
+
+const INVOCATION_MODES: {
+  value: AssetInvocationMode;
+  label: string;
+  hint: string;
+}[] = [
+  {
+    value: "REFERENCE",
+    label: "只参考",
+    hint: "不保证进入最终画面，只参考风格、色系、构图。",
+  },
+  {
+    value: "EXACT",
+    label: "绝对调用",
+    hint: "素材内容不被 AI 修改，可手动调整位置和显示尺寸。",
+  },
+  {
+    value: "ADAPTIVE",
+    label: "适配调用",
+    hint: "必须出现，可锁比例缩放，可按品牌色系调整。",
+  },
+];
+const WATERMARK_INVOCATION_MODES = INVOCATION_MODES.filter(
+  (mode) => mode.value !== "REFERENCE",
+);
 
 // 版本的“真实像素尺寸”。OpenAI 会把请求画布 snap 到最近的支持档(如 1920×1080 →
 // 1536×1024)，generate.worker 把 snap 后的真实字节尺寸落进 params.actualWidth/Height
@@ -123,6 +191,9 @@ type WatermarkPreset = {
 function defaultWatermarkOverlay(assetId?: string): WatermarkOverlayInput {
   return {
     ...(assetId ? { assetId } : {}),
+    invocationMode: "EXACT",
+    lockAspectRatio: true,
+    allowRecolor: false,
     enabled: true,
     anchor: "bottom-right",
     positionMode: "pixel",
@@ -231,6 +302,15 @@ function Workspace() {
     () => brands.find((brand) => brand.id === wsId) ?? { name: brandName },
     [brandName, brands, wsId],
   );
+  const [workspaceMode, setWorkspaceMode] =
+    useState<WorkspaceMode>("TEXT_TO_IMAGE");
+  const [editBaseVersionId, setEditBaseVersionId] = useState<string | null>(
+    null,
+  );
+  const [outpaintDirection, setOutpaintDirection] =
+    useState<OutpaintDirection>("right");
+  const [outpaintScale, setOutpaintScale] = useState(35);
+  const [draftNotice, setDraftNotice] = useState<string | null>(null);
   const resolvedGenerationBrief = useMemo(
     () =>
       resolveGenerationDefaults({
@@ -308,6 +388,10 @@ function Workspace() {
   // pushes it onto the past stack (debounced via a shallow-equality check) so
   // typing coalesces into discrete steps. Undo/redo restore a whole snapshot.
   type FormSnapshot = {
+    workspaceMode: WorkspaceMode;
+    editBaseVersionId: string | null;
+    outpaintDirection: OutpaintDirection;
+    outpaintScale: number;
     sellingPoint: string;
     scene: string;
     sceneType: string;
@@ -318,6 +402,10 @@ function Workspace() {
   };
   const snapshot: FormSnapshot = useMemo(
     () => ({
+      workspaceMode,
+      editBaseVersionId,
+      outpaintDirection,
+      outpaintScale,
       sellingPoint,
       scene,
       sceneType,
@@ -327,6 +415,10 @@ function Workspace() {
       styleKeywords,
     }),
     [
+      workspaceMode,
+      editBaseVersionId,
+      outpaintDirection,
+      outpaintScale,
       sellingPoint,
       scene,
       sceneType,
@@ -344,6 +436,10 @@ function Workspace() {
 
   function snapEqual(a: FormSnapshot, b: FormSnapshot): boolean {
     return (
+      a.workspaceMode === b.workspaceMode &&
+      a.editBaseVersionId === b.editBaseVersionId &&
+      a.outpaintDirection === b.outpaintDirection &&
+      a.outpaintScale === b.outpaintScale &&
       a.sellingPoint === b.sellingPoint &&
       a.scene === b.scene &&
       a.sceneType === b.sceneType &&
@@ -358,6 +454,10 @@ function Workspace() {
 
   function restoreSnapshot(s: FormSnapshot) {
     applyingHistory.current = true;
+    setWorkspaceMode(s.workspaceMode);
+    setEditBaseVersionId(s.editBaseVersionId);
+    setOutpaintDirection(s.outpaintDirection);
+    setOutpaintScale(s.outpaintScale);
     setSellingPoint(s.sellingPoint);
     setScene(s.scene);
     setSceneType(s.sceneType);
@@ -414,6 +514,15 @@ function Workspace() {
   const [watermarkOverlays, setWatermarkOverlays] = useState<
     WatermarkOverlayInput[]
   >([]);
+  const activeWatermarkOverlays = useMemo(
+    () =>
+      watermarkOverlays.filter(
+        (overlay) =>
+          overlay.enabled !== false &&
+          (overlay.invocationMode ?? "EXACT") !== "REFERENCE",
+      ),
+    [watermarkOverlays],
+  );
   useEffect(() => {
     if (!projectId) {
       setReferences([]);
@@ -505,6 +614,95 @@ function Workspace() {
   }
   function dropTemplateReference(assetId: string) {
     setTemplateReferences((prev) => prev.filter((r) => r.id !== assetId));
+  }
+
+  type WorkspaceDraft = FormSnapshot & {
+    projectId: string | null;
+    references: RefAsset[];
+    templateReferences: RefAsset[];
+    watermarkOverlays: WatermarkOverlayInput[];
+    savedAt: string;
+  };
+  const draftKey = `brandai:workspace-draft:v0.0.12:${wsId}`;
+  const draftRestored = useRef(false);
+  const draftReady = useRef(false);
+  const hasIncomingSeed =
+    !!presetBrief?.trim() ||
+    !!presetScene?.trim() ||
+    !!presetStyle?.trim() ||
+    !!presetSceneType ||
+    !!presetGen;
+
+  useEffect(() => {
+    if (draftRestored.current || hasIncomingSeed) {
+      draftReady.current = true;
+      return;
+    }
+    draftRestored.current = true;
+    try {
+      const raw = window.localStorage.getItem(draftKey);
+      if (!raw) return;
+      const draft = JSON.parse(raw) as Partial<WorkspaceDraft>;
+      if (draft.projectId) setProjectId(draft.projectId);
+      if (draft.workspaceMode) setWorkspaceMode(draft.workspaceMode);
+      if ("editBaseVersionId" in draft)
+        setEditBaseVersionId(draft.editBaseVersionId ?? null);
+      if (draft.outpaintDirection)
+        setOutpaintDirection(draft.outpaintDirection);
+      if (typeof draft.outpaintScale === "number")
+        setOutpaintScale(draft.outpaintScale);
+      if (typeof draft.sellingPoint === "string")
+        setSellingPoint(draft.sellingPoint);
+      if (typeof draft.scene === "string") setScene(draft.scene);
+      if (draft.sceneType) setSceneType(draft.sceneType);
+      if (typeof draft.versionCount === "number")
+        setVersionCount(draft.versionCount);
+      if (Array.isArray(draft.targetKeys)) setTargetKeys(draft.targetKeys);
+      if (draft.textMode) setTextMode(draft.textMode);
+      if (Array.isArray(draft.styleKeywords))
+        setStyleKeywords(draft.styleKeywords.slice(0, MAX_KEYWORDS));
+      if (Array.isArray(draft.references)) setReferences(draft.references);
+      if (Array.isArray(draft.templateReferences))
+        setTemplateReferences(draft.templateReferences);
+      if (Array.isArray(draft.watermarkOverlays))
+        setWatermarkOverlays(draft.watermarkOverlays);
+      setDraftNotice("已恢复上次未提交的工作台草稿。");
+      window.setTimeout(() => setDraftNotice(null), 4000);
+    } catch {
+      window.localStorage.removeItem(draftKey);
+    } finally {
+      draftReady.current = true;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftKey, hasIncomingSeed]);
+
+  useEffect(() => {
+    if (!draftReady.current) return;
+    const timer = window.setTimeout(() => {
+      const draft: WorkspaceDraft = {
+        ...snapshot,
+        projectId,
+        references,
+        templateReferences,
+        watermarkOverlays,
+        savedAt: new Date().toISOString(),
+      };
+      window.localStorage.setItem(draftKey, JSON.stringify(draft));
+    }, 500);
+    return () => window.clearTimeout(timer);
+  }, [
+    draftKey,
+    projectId,
+    references,
+    snapshot,
+    templateReferences,
+    watermarkOverlays,
+  ]);
+
+  function clearWorkspaceDraft() {
+    window.localStorage.removeItem(draftKey);
+    setDraftNotice("已清空工作台草稿。");
+    window.setTimeout(() => setDraftNotice(null), 3000);
   }
 
   // F11 · 生成额度展示 — read-only quota status.
@@ -716,6 +914,8 @@ function Workspace() {
   const running =
     !!genId && status !== "SUCCEEDED" && status !== "FAILED" && !timedOut;
   const current = versions[activeVariant] ?? versions[0];
+  const editBaseVersion =
+    versions.find((v) => v.id === editBaseVersionId) ?? current ?? null;
 
   // popstate/缩略图切到「只有 ?gen= 没有 ?project=」或跨项目的历史出图时,加载出的
   // generation 自带 projectId → 让 projectId 跟随,否则 campaign 作用域/历史/参考区
@@ -859,6 +1059,13 @@ function Workspace() {
     if (jobId && status === "SUCCEEDED") setJobId(null);
   }, [status, jobId]);
 
+  useEffect(() => {
+    if (!current?.id) return;
+    if (!editBaseVersionId || !versions.some((v) => v.id === editBaseVersionId)) {
+      setEditBaseVersionId(current.id);
+    }
+  }, [current?.id, editBaseVersionId, versions]);
+
   // G6 · 审阅 / 批准流 — 拿调用者在本空间的角色，决定显示哪些审核动作。
   // EDITOR/OWNER 可「提交审阅」；REVIEWER/OWNER 可「批准 / 驳回」。
   const { data: membersData } = useQuery<ListMembersResponse>({
@@ -961,11 +1168,9 @@ function Workspace() {
           body: JSON.stringify({
             op,
             payload: sized,
-            ...(watermarkOverlays.length
+            ...(activeWatermarkOverlays.length
               ? {
-                  watermarkOverlays: watermarkOverlays.filter(
-                    (overlay) => overlay.enabled !== false,
-                  ),
+                  watermarkOverlays: activeWatermarkOverlays,
                 }
               : {}),
           }),
@@ -974,6 +1179,7 @@ function Workspace() {
       editStartedAt.current = Date.now();
       setEditVid(v.id);
       setEditJobId(r.jobId);
+      window.localStorage.removeItem(draftKey);
     } catch (e) {
       setActionErr(e instanceof Error ? e.message : "改图提交失败");
     } finally {
@@ -1008,6 +1214,7 @@ function Workspace() {
         return;
       }
       setCanvasSel(true);
+      setEditBaseVersionId(versionId);
       setActiveVariant((prev) => {
         const idx = versions.findIndex((x) => x.id === versionId);
         return idx >= 0 ? idx : prev;
@@ -1137,11 +1344,9 @@ function Workspace() {
                   ),
                 }
               : {}),
-            ...(watermarkOverlays.length
+            ...(activeWatermarkOverlays.length
               ? {
-                  watermarkOverlays: watermarkOverlays.filter(
-                    (o) => o.enabled !== false,
-                  ),
+                  watermarkOverlays: activeWatermarkOverlays,
                 }
               : {}),
           }),
@@ -1150,6 +1355,7 @@ function Workspace() {
       startedAt.current = Date.now();
       setGenId(res.generation.id);
       setJobId(res.jobId);
+      window.localStorage.removeItem(draftKey);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "提交失败";
       setSubmitErr(msg);
@@ -1158,6 +1364,74 @@ function Workspace() {
     } finally {
       setSubmitting(false);
     }
+  }
+
+  async function submitByMode() {
+    if (workspaceMode === "TEXT_TO_IMAGE") {
+      await submit();
+      return;
+    }
+    const prompt = [
+      resolvedGenerationBrief.sellingPoint,
+      resolvedGenerationBrief.scene,
+    ]
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .join("\n");
+    const target = editBaseVersion;
+    if (!target) {
+      setSubmitErr("请先选择一张已生成图片作为修改底图。");
+      return;
+    }
+    if (!prompt) {
+      setSubmitErr("请输入修改指令。");
+      return;
+    }
+    if (workspaceMode === "INPAINT") {
+      openMaskPaint(target);
+      setSubmitErr(null);
+      return;
+    }
+    if (workspaceMode === "OUTPAINT") {
+      const size = versionPixelSize(target);
+      const scale = 1 + outpaintScale / 100;
+      const width =
+        outpaintDirection === "left" ||
+        outpaintDirection === "right" ||
+        outpaintDirection === "all"
+          ? Math.round(size.width * scale)
+          : size.width;
+      const height =
+        outpaintDirection === "top" ||
+        outpaintDirection === "bottom" ||
+        outpaintDirection === "all"
+          ? Math.round(size.height * scale)
+          : size.height;
+      setSubmitErr(null);
+      await runEdit(
+        "OUTPAINT",
+        {
+          prompt,
+          width,
+          height,
+          outpaintDirection,
+          outpaintScale,
+          preserveOriginal: true,
+        },
+        target,
+      );
+      return;
+    }
+    setSubmitErr(null);
+    await runEdit(
+      "IMAGE_EDIT",
+      {
+        prompt,
+        editMode: "whole-image",
+        preserveStructure: true,
+      },
+      target,
+    );
   }
 
   return (
@@ -1251,8 +1525,17 @@ function Workspace() {
               {versions.map((v, i) => (
                 <button
                   key={v.id}
+                  draggable
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData(
+                      "application/x-brandai-version",
+                      v.id,
+                    );
+                    e.dataTransfer.effectAllowed = "copy";
+                  }}
                   onClick={() => {
                     setActiveVariant(i);
+                    setEditBaseVersionId(v.id);
                     setCanvasSel(true);
                     // 强制画布重新选中该变体 tile(即便 i 已是 activeVariant),
                     // 让清选后点缩略图也能一键回到「条↔画布同步」状态。
@@ -1411,6 +1694,142 @@ function Workspace() {
 
         {/* Prompt panel */}
         <aside className="flex min-h-0 flex-col gap-5 overflow-y-auto border-l border-border bg-card p-6">
+          {draftNotice ? (
+            <div className="flex items-center justify-between gap-3 rounded-2xl border border-primary/15 bg-accent-soft/60 px-3 py-2 text-xs text-primary">
+              <span>{draftNotice}</span>
+              <button
+                type="button"
+                onClick={clearWorkspaceDraft}
+                className="shrink-0 rounded-full border border-primary/20 px-2 py-0.5"
+              >
+                清空草稿
+              </button>
+            </div>
+          ) : null}
+
+          <div>
+            <div className="mb-2 text-sm font-semibold">制作模式</div>
+            <div className="grid grid-cols-2 gap-2">
+              {WORKSPACE_MODES.map((mode) => {
+                const active = workspaceMode === mode.value;
+                return (
+                  <button
+                    key={mode.value}
+                    type="button"
+                    onClick={() => setWorkspaceMode(mode.value)}
+                    className={[
+                      "rounded-2xl border px-3 py-2 text-left transition-colors",
+                      active
+                        ? "border-primary bg-accent-soft text-primary"
+                        : "border-border bg-background text-muted-foreground hover:bg-muted",
+                    ].join(" ")}
+                  >
+                    <span className="block text-xs font-semibold">
+                      {mode.label}
+                    </span>
+                    <span className="mt-1 block text-[10px] leading-relaxed">
+                      {mode.hint}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {workspaceMode !== "TEXT_TO_IMAGE" ? (
+            <div
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                e.preventDefault();
+                const versionId = e.dataTransfer.getData(
+                  "application/x-brandai-version",
+                );
+                if (versionId && versions.some((v) => v.id === versionId)) {
+                  setEditBaseVersionId(versionId);
+                }
+              }}
+              className="rounded-2xl border border-dashed border-primary/25 bg-background p-3"
+            >
+              <div className="mb-2 flex items-center justify-between text-sm font-semibold">
+                <span>修改底图</span>
+                {current ? (
+                  <button
+                    type="button"
+                    onClick={() => setEditBaseVersionId(current.id)}
+                    className="rounded-full border border-primary/30 px-2.5 py-1 text-xs text-primary hover:bg-accent-soft"
+                  >
+                    使用当前图
+                  </button>
+                ) : null}
+              </div>
+              {editBaseVersion ? (
+                <div className="flex items-center gap-2">
+                  <AssetThumb
+                    asset={{
+                      id: editBaseVersion.id,
+                      fileName: "当前修改底图",
+                      thumbUrl: editBaseVersion.imageUrl,
+                    }}
+                    alt="修改底图"
+                  />
+                  <div className="min-w-0 text-xs text-muted-foreground">
+                    <div className="font-medium text-foreground">
+                      基于上一版继续修改
+                    </div>
+                    <div className="mt-1">
+                      可从下方变体缩略图拖入这里切换底图。
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  先生成或选择一张历史图，再基于它继续整图修改、局部修改或扩图。
+                </p>
+              )}
+            </div>
+          ) : null}
+
+          {workspaceMode === "OUTPAINT" ? (
+            <div>
+              <div className="mb-2 flex items-center justify-between text-sm font-semibold">
+                <span>扩图方向与范围</span>
+                <span className="text-xs font-normal text-muted-foreground">
+                  +{outpaintScale}%
+                </span>
+              </div>
+              <div className="grid grid-cols-3 gap-1.5">
+                {OUTPAINT_DIRECTIONS.map((item) => (
+                  <button
+                    key={item.value}
+                    type="button"
+                    title={item.hint}
+                    onClick={() => setOutpaintDirection(item.value)}
+                    className={[
+                      "rounded-xl border px-2 py-1.5 text-xs transition-colors",
+                      outpaintDirection === item.value
+                        ? "border-primary bg-accent-soft text-primary"
+                        : "border-border text-muted-foreground hover:bg-muted",
+                    ].join(" ")}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+              <input
+                type="range"
+                min={10}
+                max={100}
+                step={5}
+                value={outpaintScale}
+                onChange={(e) => setOutpaintScale(Number(e.target.value))}
+                className="mt-3 w-full accent-primary"
+              />
+              <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+                扩图会保留原图主体，在画布边界外补全新区域；文字描述里可继续写“右侧增加干净留白”等细节。
+              </p>
+            </div>
+          ) : null}
+
           <div>
             <div className="mb-2 flex items-center justify-between text-sm font-semibold">
               <span>需求描述 / 卖点</span>
@@ -1650,6 +2069,18 @@ function Workspace() {
                     {references.map((r) => (
                       <div
                         key={r.id}
+                        draggable
+                        onDragStart={(e) => {
+                          e.dataTransfer.setData(
+                            "application/x-brandai-asset",
+                            JSON.stringify({
+                              id: r.id,
+                              url: r.thumbUrl,
+                              fileName: r.fileName ?? "素材",
+                            }),
+                          );
+                          e.dataTransfer.effectAllowed = "copy";
+                        }}
                         className="flex items-center gap-2 rounded-2xl border border-border bg-background p-2"
                       >
                         <AssetThumb asset={r} alt="水印素材" />
@@ -1658,7 +2089,7 @@ function Workspace() {
                             {r.fileName ?? "素材"}
                           </div>
                           <div className="mt-1 text-[11px] text-muted-foreground">
-                            生成后按水印配置叠加，保证画面中真实出现。
+                            绝对调用：不改内容，可拖到画布，也会按水印配置叠加。
                           </div>
                         </div>
                         <button
@@ -1743,12 +2174,23 @@ function Workspace() {
                   return;
                 }
                 setSubmitErr(null);
-                setConfirmSubmit(true);
+                if (workspaceMode === "TEXT_TO_IMAGE") setConfirmSubmit(true);
+                else void submitByMode();
               }}
-              disabled={submitting || running}
+              disabled={submitting || running || !!editJobId}
               className="h-12 w-full rounded-[18px] bg-gradient-to-br from-primary to-accent text-sm font-medium text-primary-foreground shadow-[0_12px_28px_rgba(124,92,255,0.26)] disabled:opacity-70"
             >
-              {running ? "AI 正在生成…" : submitting ? "提交中…" : "提交制作"}
+              {running
+                ? "AI 正在生成…"
+                : submitting || editJobId
+                  ? "提交中…"
+                  : workspaceMode === "IMAGE_EDIT"
+                    ? "基于此图修改"
+                    : workspaceMode === "INPAINT"
+                      ? "打开局部修改"
+                      : workspaceMode === "OUTPAINT"
+                        ? "开始扩图"
+                        : "提交制作"}
             </button>
             <p className="mt-2 text-[11px] text-muted-foreground">
               内容由 AI 生成，请注意核对准确性。
@@ -1906,6 +2348,7 @@ function WatermarkEditorDialog({
   const [presetName, setPresetName] = useState("默认水印");
   const [editingPresetId, setEditingPresetId] = useState<string | null>(null);
   const previewRef = useRef<HTMLDivElement | null>(null);
+  const watermarkResizeRef = useRef<{ x: number; width: number } | null>(null);
   const presetBootstrapped = useRef(false);
   const activeIndex = Math.max(
     0,
@@ -1975,6 +2418,19 @@ function WatermarkEditorDialog({
     if (!box) return;
     e.currentTarget.setPointerCapture(e.pointerId);
     updatePositionFromPointer(e.clientX, e.clientY);
+  }
+
+  function beginWatermarkResize(e: ReactPointerEvent<HTMLSpanElement>) {
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    watermarkResizeRef.current = { x: e.clientX, width: active.widthPx };
+  }
+
+  function moveWatermarkResize(e: ReactPointerEvent<HTMLSpanElement>) {
+    const start = watermarkResizeRef.current;
+    if (!start) return;
+    const delta = e.clientX - start.x;
+    patchActive({ widthPx: Math.max(40, Math.min(360, start.width + delta)) });
   }
 
   function updatePositionFromPointer(clientX: number, clientY: number) {
@@ -2165,6 +2621,21 @@ function WatermarkEditorDialog({
                   {active.text}
                 </span>
               ) : null}
+              <span
+                role="presentation"
+                onPointerDown={beginWatermarkResize}
+                onPointerMove={moveWatermarkResize}
+                onPointerUp={(e) => {
+                  watermarkResizeRef.current = null;
+                  try {
+                    e.currentTarget.releasePointerCapture(e.pointerId);
+                  } catch {
+                    /* noop */
+                  }
+                }}
+                className="absolute -bottom-1.5 -right-1.5 h-4 w-4 cursor-nwse-resize rounded-full border-2 border-card bg-primary shadow"
+                title="拖拽调整大小"
+              />
             </div>
           </div>
           <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
@@ -2176,6 +2647,9 @@ function WatermarkEditorDialog({
               X {Math.round(active.offsetX)} · Y {Math.round(active.offsetY)}
             </span>
           </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            直接拖动画布里的水印调整位置，拖右下角圆点调整显示尺寸。
+          </p>
         </main>
 
         <aside className="space-y-4 overflow-y-auto border-l border-border p-5">
@@ -2192,6 +2666,42 @@ function WatermarkEditorDialog({
             value={active.text ?? ""}
             onChange={(v) => patchActive({ text: v })}
           />
+          <div>
+            <div className="mb-2 text-xs font-semibold text-muted-foreground">
+              调用方式
+            </div>
+            <div className="space-y-2">
+              {WATERMARK_INVOCATION_MODES.map((mode) => {
+                const on = (active.invocationMode ?? "EXACT") === mode.value;
+                return (
+                  <button
+                    key={mode.value}
+                    type="button"
+                    onClick={() =>
+                      patchActive({
+                        invocationMode: mode.value,
+                        allowRecolor: mode.value === "ADAPTIVE",
+                        lockAspectRatio: mode.value !== "REFERENCE",
+                      })
+                    }
+                    className={[
+                      "w-full rounded-xl border px-3 py-2 text-left transition-colors",
+                      on
+                        ? "border-primary bg-accent-soft text-primary"
+                        : "border-border text-muted-foreground hover:bg-muted",
+                    ].join(" ")}
+                  >
+                    <span className="block text-xs font-semibold">
+                      {mode.label}
+                    </span>
+                    <span className="mt-1 block text-[10px] leading-relaxed">
+                      {mode.hint}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
           <ControlRange
             label="大小"
             min={40}

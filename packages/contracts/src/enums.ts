@@ -87,6 +87,7 @@ export const ReviewStatus = z.enum([
 export type ReviewStatus = z.infer<typeof ReviewStatus>;
 
 export const EditOp = z.enum([
+  "IMAGE_EDIT",
   "REPLACE_BACKGROUND",
   "MOVE_PRODUCT",
   "EDIT_TEXT",
@@ -98,3 +99,9 @@ export const EditOp = z.enum([
   "RESIZE",
 ]);
 export type EditOp = z.infer<typeof EditOp>;
+
+// V0.0.12 — asset invocation semantics in the workspace. REFERENCE only steers
+// style/composition; EXACT is deterministic composition with content unchanged;
+// ADAPTIVE must appear but may be resized/recolored within the same silhouette.
+export const AssetInvocationMode = z.enum(["REFERENCE", "EXACT", "ADAPTIVE"]);
+export type AssetInvocationMode = z.infer<typeof AssetInvocationMode>;

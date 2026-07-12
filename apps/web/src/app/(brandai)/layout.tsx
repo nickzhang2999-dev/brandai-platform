@@ -28,7 +28,7 @@ export default async function BrandaiLayout({
   // 避免为停用用户创建 workspace。
   const dbUser = await prisma.user.findUnique({
     where: { id: session.user.id },
-    select: { isActive: true },
+    select: { email: true, isActive: true, name: true },
   });
   if (!dbUser || dbUser.isActive === false) redirect("/login");
 
@@ -38,8 +38,8 @@ export default async function BrandaiLayout({
   // resolve the same brand the user picked.
   const preferredWsId = (await cookies()).get(ACTIVE_BRAND_COOKIE)?.value;
   const brand = await getOrCreateActiveBrand(session.user.id, preferredWsId);
-  const email = session.user.email ?? "";
-  const name = session.user.name ?? email.split("@")[0] ?? "用户";
+  const email = dbUser.email ?? session.user.email ?? "";
+  const name = dbUser.name ?? email.split("@")[0] ?? "用户";
   const initial = (name || email || "U").trim().slice(0, 1).toUpperCase();
   const user = { name, email, initial };
 

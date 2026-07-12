@@ -195,6 +195,7 @@ def _edit_image_part(raw: bytes, idx: int) -> tuple[str, tuple[str, bytes, str]]
 
 # 改图 op → 自然语言 prompt 前缀(OpenAI /images/edits 只吃文字 prompt)。
 _EDIT_OP_PROMPTS = {
+    "IMAGE_EDIT": "Edit the whole image according to the instruction while preserving the main structure",
     "REPLACE_BACKGROUND": "Replace the background of the product image",
     "MOVE_PRODUCT": "Reposition the main product within the frame",
     "EDIT_TEXT": "Edit the text shown in the image",
