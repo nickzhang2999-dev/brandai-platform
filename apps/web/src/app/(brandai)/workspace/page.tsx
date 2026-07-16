@@ -225,6 +225,13 @@ function parseStyleParam(raw: string | null): string[] {
   return out;
 }
 
+function userFacingError(message: string): string {
+  if (/Project not found/i.test(message)) {
+    return "当前项目不属于这个品牌套件，已为你重新同步项目。请再点一次发送。";
+  }
+  return message;
+}
+
 export default function WorkspacePage() {
   return (
     <Suspense
@@ -254,7 +261,7 @@ function Workspace() {
   const presetSceneType = search.get("sceneType");
   const presetStyle = search.get("style");
 
-  const { data: projects = [] } = useQuery({
+  const { data: projects = [], isFetched: projectsFetched } = useQuery({
     queryKey: ["brandai-projects", wsId],
     queryFn: () => apiFetch<Project[]>(`/api/workspaces/${wsId}/projects`),
   });
@@ -268,8 +275,19 @@ function Workspace() {
     if (presetProject) setProjectId(presetProject);
   }, [presetProject]);
   useEffect(() => {
-    if (!projectId && projects.length > 0) setProjectId(projects[0]!.id);
-  }, [projects, projectId]);
+    if (!projectsFetched) return;
+    const fallbackProjectId = projects[0]?.id ?? null;
+    if (!projectId) {
+      if (fallbackProjectId) setProjectId(fallbackProjectId);
+      return;
+    }
+    if (!projects.some((project) => project.id === projectId)) {
+      setProjectId(fallbackProjectId);
+      setGenId(null);
+      setJobId(null);
+      setTimedOut(false);
+    }
+  }, [projects, projectsFetched, projectId]);
 
   const [sellingPoint, setSellingPoint] = useState(
     presetBrief?.trim() ? presetBrief.trim().slice(0, 500) : "",
@@ -299,6 +317,7 @@ function Workspace() {
     () => projects.find((p) => p.id === projectId) ?? projects[0] ?? null,
     [projectId, projects],
   );
+  const activeProjectId = activeProject?.id ?? null;
   const activeBrand = useMemo(
     () => brands.find((brand) => brand.id === wsId) ?? { name: brandName },
     [brandName, brands, wsId],
@@ -1278,10 +1297,11 @@ function Workspace() {
   }
 
   async function submit() {
-    if (!projectId) {
+    if (!activeProjectId) {
       setSubmitErr("请先选择一个项目（没有就去项目页创建）");
       return;
     }
+    if (projectId !== activeProjectId) setProjectId(activeProjectId);
     setSubmitErr(null);
     setSubmitting(true);
     setTimedOut(false);
@@ -1292,7 +1312,7 @@ function Workspace() {
         {
           method: "POST",
           body: JSON.stringify({
-            projectId,
+            projectId: activeProjectId,
             sceneType,
             sellingPoint: resolvedGenerationBrief.sellingPoint,
             scene: resolvedGenerationBrief.scene,
@@ -1320,7 +1340,7 @@ function Workspace() {
       setJobId(res.jobId);
       window.localStorage.removeItem(draftKey);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "提交失败";
+      const msg = userFacingError(e instanceof Error ? e.message : "提交失败");
       setSubmitErr(msg);
       // H12 — a quota 402 surfaces the upgrade dialog so the user has an exit.
       if (/配额|额度|上限|升级/.test(msg)) setShowUpgrade(true);
