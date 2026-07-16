@@ -1,8 +1,10 @@
 # BrandAI — 品牌项目视觉 AI 生成平台
 
-> **当前功能版本：V0.0.12**（2026-07-12）
+> **当前功能版本：V0.0.14**（2026-07-17）
 
-以 **项目** 为中心，围绕 **品牌套件 / 素材库 / 模板库 / AI 工作台 / 生成图** 组织品牌广告物料的生成、修改与归档。品牌套件由 **logo / 字体 / 颜色 / 设计指南 / 图像 / 品牌指南** 6 个维度组成。V0.0.12 在 V0.0.11 的水印确定性叠加基础上，补齐工作台 **文字生图 / 整图修改 / 局部修改 / 扩图** 四种制作模式、素材调用分级、素材拖入画布、工作台草稿恢复，以及账号昵称修改。
+以 **项目** 为中心，围绕 **品牌套件 / 素材库 / 模板库 / AI 工作台 / 生成图** 组织品牌广告物料的生成、修改与归档。品牌套件由 **logo / 字体 / 颜色 / 设计指南 / 图像 / 品牌指南** 6 个维度组成。V0.0.14 在 V0.0.12 的图生图与素材调用基础上，进一步修正工作台用户侧队列/误生成状态，补充品牌套件一次性上传解析入口，并把 AI 工作台推进到 Lovart 式画布第一阶段。
+
+**V0.0.14（2026-07-17）**：AI 工作台开始向 Lovart 式画布体验收敛，画布区域扩大并加入底部工具坞；素材库入口进入画布工具区，素材可加入画布托盘后点击或拖拽落到画布，也支持本地图片拖入、上传和剪贴板粘贴；模板库仍只作为右侧参考图上下文，不直接落画布；水印配置入口暂时撤下，避免“素材上画布”和“水印叠加”两套概念并行。
 
 ---
 
@@ -84,7 +86,7 @@
 | A3 | 顶部通知入口 | P01-M03 | ✅ | `(brandai)/notification-center.tsx`（bell+未读 badge+收件箱）+ `GET .../notifications` | 从真实终态（Generation + AsyncTask）派生通知，无伪造无新表；未读用 localStorage `lastSeenAt`（phase-2 转服务端） | 接入 2026-06-20 |
 | A4 | 紫色视觉 token 系统（16 语义 token） | doc04§5.4 | ✅ | `packages/ui/src/styles.css` | violet SSOT，L1 快照守 | 2026-06-20 |
 | A5 | 圆角/阴影/字体(Inter)规范 | doc04§5.5-5.6 | ✅ | `packages/config/tailwind-preset.js` | — | 2026-06-20 |
-| A6 | 跨页队列 widget（§2.3 可观测） | CLAUDE§0.3 | ✅ | `GET /api/workspaces/[wsId]/queue` + widget | 展示 PENDING/RUNNING/SUCCEEDED/FAILED | 2026-06-20 |
+| A6 | 跨页队列能力（§2.3 可观测） | CLAUDE§0.3 | ✅ | `GET /api/workspaces/[wsId]/queue` + 管理/日志能力 | 后端仍保留 PENDING/RUNNING/SUCCEEDED/FAILED 队列数据；2026-07-16 起用户端右下角队列浮层隐藏，避免把技术状态暴露给普通用户 | 用户端隐藏 2026-07-16 |
 | A7 | 服务端守卫 + 当前品牌解析 | — | ✅ | `app/(brandai)/layout.tsx`、`lib/brandai.ts::getOrCreateActiveBrand` | 未登录跳 /login；自动建/解析单品牌 workspace | 2026-06-20 |
 
 ## B · P01 首页
@@ -130,6 +132,7 @@
 | D12 | 规则确认（DRAFT→CONFIRMED） | — | ✅ | `page.tsx:52`（PATCH /rules/[id]） | 确认后 worker 出图加载 | 2026-06-20 |
 | D13 | AI 从素材识别规则（recognize） | doc03 AI | ✅ | `brand-knowledge/page.tsx` 素材选择器→`POST /rules/recognize`→轮询 task | 真 VLM；202→6min 有界轮询→刷新规则；灰度真识别待最终冒烟 | 接入 2026-06-20 |
 | D14 | PDF/VI 手册解析（parse-manual） | — | ✅ | `brand-knowledge/page.tsx`（VI_DOC 单选）→`POST /rules/parse-manual`→轮询 | 真 VLM；同上有界轮询 | 接入 2026-06-20 |
+| D15 | Lovart 式品牌套件导入入口（第一阶段） | 用户 2026-07-16/17 | ✅ | `brand-knowledge/page.tsx` BrandKitImportPanel + AIInput 附件流 | 页面顶部新增“一次上传，构建品牌套件”区域；PDF 20MB 内直传为 VI_DOC 并进入 parse-manual；图片按 logo/字体/颜色/设计指南/图像/品牌指南槽位上传并进入 recognize；规则草稿仍需用户编辑/启用；证据缩略图可点击预览。深度能力（从 PDF 自动切出 logo/色卡/图片素材并批量归类）留下一阶段 | 第一阶段 2026-07-17 |
 
 ## E · P04 素材库
 
@@ -148,7 +151,7 @@
 | E11 | 加入项目（→Campaign） | P04-M16 | ✅ | `assets/page.tsx::JoinProjectDialog` + `projects/[id]/assets`(POST kind=MEMBER) | 真弹窗选 Campaign→加入并跳工作台；**服务端 `ProjectAsset` 真关系**（取代纯客户端暂存，跨设备/协作可续），tray 退化为同 tab 即时反馈 | 服务端化 2026-06-22 |
 | E12 | 设为参考（→工作台参考区） | P04-M17 | ✅ | `assets/page.tsx` + `projects/[id]/assets`(kind=REFERENCE) ↔ 工作台 F9 | 历史 `ProjectAsset(REFERENCE)` 继续兼容；V0.0.9 起新工作台把素材库文件作为「素材（水印使用）」处理，模板库图片作为「参考图（模板库）」处理，二者在生成链路中明确分流；STRICT 参考图真视觉条件化经 `/images/edits` 已落地（2026-07-07） | 服务端化 2026-06-22；V0.0.9 分流 2026-07-07 |
 | E13 | 收藏切换 / 使用记录 / 查看来源 | doc02/05 | ✅ | 收藏 toggle(PATCH isFavorite)+筛选、使用记录(generation 引用派生)、查看来源弹窗(H8) | 灰度真验 | 接入 2026-06-21 |
-| E14 | 出图回流生成图（AI 生成图 → Asset 镜像） | 心智断层修复 | ✅ **已验收** | `lib/asset-mirror.ts`（generate/edit worker 出图落库后镜像 Asset）+ `Asset.libraryKind=GENERATED` + 历史回填 `api/admin/backfill-generated-assets` + `api/workspaces/[wsId]/generated-assets` | 修复「出图只在工作台、素材库看不到」：每次真出图/改图产出 `GenerationVersion` 后**镜像一条真实 Asset**，但 V0.0.9 起标记为 `GENERATED`，不再混入素材库默认列表；V0.10 生成图页面可按文件名/描述/项目/项目状态/时间检索，并展示项目回跳入口。best-effort 不阻断出图；唯一约束幂等 | V0.10 检索 2026-07-08 |
+| E14 | 出图回流生成图（AI 生成图 → Asset 镜像） | 心智断层修复 | ✅ **已验收** | `lib/asset-mirror.ts`（generate/edit worker 出图落库后镜像 Asset）+ `Asset.libraryKind=GENERATED` + 历史回填 `api/admin/backfill-generated-assets` + `api/workspaces/[wsId]/generated-assets` | 修复「出图只在工作台、素材库看不到」：每次真出图/改图产出 `GenerationVersion` 后**镜像一条真实 Asset**，但 V0.0.9 起标记为 `GENERATED`，不再混入素材库默认列表；V0.10 生成图页面可按文件名/描述/项目/项目状态/时间检索，并展示项目回跳入口。2026-07-16 明确生成图归属于当前品牌套件，页面说明按当前品牌套件聚合、按项目筛选。best-effort 不阻断出图；唯一约束幂等 | 品牌套件归属说明 2026-07-16 |
 
 ## F · P05 工作台
 
@@ -173,7 +176,7 @@
 | F15 | 中间态超时 + 出口（§2.4） | CLAUDE§0.3 | ✅ | `page.tsx` 轮询 6 分钟上界 | 超时给重试出口 | 2026-06-20 |
 | F17 | 历史出图回看（进入工作台展示该项目历史出图） | 心智断层修复 | ✅ **已验收** | `workspace/page.tsx`（`GET /generations?projectId=` → `listProjectGenerations`） | 修复「产出蒸发」：进入工作台默认展示该项目最近一次出图（newest-first），底部「历史出图」缩略条可切换回看任意一次，复用改图/终选/导出/审阅全套；切项目自动重置+重新播种。刷新/换设备后历史不再消失。**轮询修复**：回看历史出图（jobId=null）改用服务端 startedAt 计时，避免被瞬间判超时停轮询。**灰度真验 2026-06-24**：新项目历史端点返回 SUCCEEDED 出图供回看 | V0.06 命名对齐 2026-06-27；真验 2026-06-24 |
 | F18 | 出图深链（通知/队列点得进具体那张图 + `?gen=` URL 态） | 心智断层修复（E） | ✅ **已验收** | `workspace/page.tsx`（读 `?gen=&project=` 回填查看态 + 反向写回 URL）+ `lib/notifications.ts`（href 深链）+ `contracts/queue.ts`（队列项加 `projectId`） | 修复「看得到完成→点不进图」：完成通知 href=`/workspace?gen=<id>&project=<pid>`、队列项带 `projectId`，点击直达工作台对应项目 + 这次出图；当前查看的出图反向同步进 URL（`?gen=`），刷新/分享落到精确那张。**灰度真验 2026-06-24**：深链页 200；队列项含 `id`(→`?gen=`)+`projectId`(→`&project=`)双要素 | 新增 2026-06-24；真验 2026-06-24 |
-| F20 | V0.0.12 工作台制作模式与草稿 | 新增需求 | ✅ | `workspace/page.tsx` + `OpenCanvas.tsx` | 工作台右侧新增 **文字生图 / 整图修改 / 局部修改 / 扩图** 四种制作模式；整图修改可选当前/历史出图作为底图，局部修改打开蒙版，扩图支持方向和范围；素材库文件可拖入画布成为可移动/缩放元素；未提交前的工作台文字、选项、参考图、素材水印会按品牌写入本地草稿，离开页面再回来自动恢复，并提供清除草稿入口 | V0.0.12 新增 2026-07-12 |
+| F20 | V0.0.12 工作台制作模式与草稿 | 新增需求 | ✅ | `workspace/page.tsx` + `OpenCanvas.tsx` | 工作台右侧新增 **文字生图 / 整图修改 / 局部修改 / 扩图** 四种制作模式；整图修改可选当前/历史出图作为底图，局部修改打开蒙版，扩图支持方向和范围；素材库文件可拖入画布成为可移动/缩放元素；未提交前的工作台文字、选项、参考图、素材水印会按品牌写入本地草稿，离开页面再回来自动恢复，并提供清除草稿入口。2026-07-16 修复进入/切回工作台时 status 为空却误显示“AI 正在生成…”的问题，仅服务端明确 PENDING/RUNNING 时展示生成中 | 误生成状态修复 2026-07-16 |
 
 ## G · P06 模板库
 

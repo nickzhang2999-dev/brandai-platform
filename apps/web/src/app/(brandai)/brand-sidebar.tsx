@@ -5,7 +5,6 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { signOut } from "next-auth/react";
 import { navItems } from "@/lib/brandai-mock";
-import { QueueWidget } from "@/app/(app)/queue-widget";
 import { NotificationCenter } from "./notification-center";
 import { useBrand } from "./brand-context";
 
@@ -46,7 +45,7 @@ export function BrandSidebar({
         <div className="mb-5 flex flex-col gap-3 border-b border-border pb-5">
           <label className="flex flex-col gap-1.5 px-1">
             <span className="text-[11px] font-medium text-muted-foreground">
-              当前品牌
+              当前品牌套件
             </span>
             <select
               value={wsId}
@@ -55,7 +54,7 @@ export function BrandSidebar({
               className="h-10 w-full rounded-lg border border-border bg-background px-2 text-sm outline-none focus:border-primary/40"
             >
               {brands.length === 0 ? (
-                <option value={wsId}>请先创建品牌</option>
+                <option value={wsId}>请先创建品牌套件</option>
               ) : (
                 brands.map((brand) => (
                   <option key={brand.id} value={brand.id}>
@@ -70,7 +69,7 @@ export function BrandSidebar({
             onClick={() => setCreatingBrand(true)}
             className="mx-1 flex h-9 items-center justify-center rounded-lg border border-primary/25 bg-accent-soft text-sm font-medium text-primary transition-colors hover:bg-primary hover:text-primary-foreground"
           >
-            ＋ 创建品牌
+            ＋ 创建品牌套件
           </button>
         </div>
 
@@ -119,10 +118,6 @@ export function BrandSidebar({
         <NotificationCenter wsId={wsId} />
       </div>
 
-      {/* §2.3 — persistent cross-page queue widget (bottom-right). Reused from
-          the (app) shell so BrandAI pages get the same observable surface. */}
-      <QueueWidget wsId={wsId} />
-
       {creatingBrand ? (
         <CreateBrandDialog
           creating={false}
@@ -168,14 +163,14 @@ function CreateBrandDialog({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
       <div className="w-full max-w-sm overflow-hidden rounded-2xl border border-border bg-card shadow-[0_24px_70px_rgba(30,30,60,0.22)]">
         <div className="border-b border-border px-5 py-4">
-          <h2 className="text-base font-semibold">创建品牌</h2>
+          <h2 className="text-base font-semibold">创建品牌套件</h2>
           <p className="mt-1 text-xs text-muted-foreground">
-            创建后，首页、项目、品牌套件、素材与模板都会归属于该品牌。
+            创建后，可在该品牌套件下创建多个项目，并进入对应工作台。
           </p>
         </div>
         <div className="flex flex-col gap-4 px-5 py-4">
           <label className="flex flex-col gap-1.5">
-            <span className="text-xs font-medium">品牌名称</span>
+            <span className="text-xs font-medium">品牌套件名称</span>
             <input
               autoFocus
               value={name}

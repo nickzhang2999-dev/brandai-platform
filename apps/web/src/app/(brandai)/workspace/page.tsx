@@ -70,6 +70,7 @@ const CANVAS_OPS: { value: string; label: string; mask?: boolean }[] = [
 ];
 
 const POLL_CAP_MS = 6 * 60 * 1000; // §2.2 有界中间态
+const ACTIVE_GENERATION_STATUSES = new Set(["PENDING", "RUNNING"]);
 
 type WorkspaceMode = "TEXT_TO_IMAGE" | "IMAGE_EDIT" | "INPAINT" | "OUTPAINT";
 type OutpaintDirection = "left" | "right" | "top" | "bottom" | "all";
@@ -503,26 +504,13 @@ function Workspace() {
   // Reference histVersion so the toolbar re-renders when stacks change.
   void histVersion;
 
-  // V0.0.9 · 素材（水印使用）— localStorage-backed, scoped to (wsId, projectId),
-  // shared with the assets page. These assets are NOT sent to AI as references;
-  // worker composites them deterministically after base generation.
+  // 画布改造第一阶段 · 素材库画布托盘 — localStorage-backed, scoped to (wsId, projectId),
+  // shared with the assets page. These assets are placed directly onto the canvas;
+  // template references remain the only image references sent to AI.
   const [references, setReferences] = useState<RefAsset[]>([]);
   const [assetPickerOpen, setAssetPickerOpen] = useState(false);
   const [templateReferences, setTemplateReferences] = useState<RefAsset[]>([]);
   const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
-  const [watermarkEditorOpen, setWatermarkEditorOpen] = useState(false);
-  const [watermarkOverlays, setWatermarkOverlays] = useState<
-    WatermarkOverlayInput[]
-  >([]);
-  const activeWatermarkOverlays = useMemo(
-    () =>
-      watermarkOverlays.filter(
-        (overlay) =>
-          overlay.enabled !== false &&
-          (overlay.invocationMode ?? "EXACT") !== "REFERENCE",
-      ),
-    [watermarkOverlays],
-  );
   useEffect(() => {
     if (!projectId) {
       setReferences([]);
@@ -568,16 +556,6 @@ function Workspace() {
       unsub();
     };
   }, [wsId, projectId]);
-  useEffect(() => {
-    setWatermarkOverlays((prev) => {
-      const byAsset = new Map(
-        prev.filter((o) => o.assetId).map((o) => [o.assetId!, o]),
-      );
-      return references.map(
-        (r) => byAsset.get(r.id) ?? defaultWatermarkOverlay(r.id),
-      );
-    });
-  }, [references]);
   function dropReference(assetId: string) {
     if (!projectId) return;
     removeReference(wsId, projectId, assetId);
@@ -620,7 +598,6 @@ function Workspace() {
     projectId: string | null;
     references: RefAsset[];
     templateReferences: RefAsset[];
-    watermarkOverlays: WatermarkOverlayInput[];
     savedAt: string;
   };
   const draftKey = `brandai:workspace-draft:v0.0.12:${wsId}`;
@@ -664,8 +641,6 @@ function Workspace() {
       if (Array.isArray(draft.references)) setReferences(draft.references);
       if (Array.isArray(draft.templateReferences))
         setTemplateReferences(draft.templateReferences);
-      if (Array.isArray(draft.watermarkOverlays))
-        setWatermarkOverlays(draft.watermarkOverlays);
       setDraftNotice("已恢复上次未提交的工作台草稿。");
       window.setTimeout(() => setDraftNotice(null), 4000);
     } catch {
@@ -684,20 +659,12 @@ function Workspace() {
         projectId,
         references,
         templateReferences,
-        watermarkOverlays,
         savedAt: new Date().toISOString(),
       };
       window.localStorage.setItem(draftKey, JSON.stringify(draft));
     }, 500);
     return () => window.clearTimeout(timer);
-  }, [
-    draftKey,
-    projectId,
-    references,
-    snapshot,
-    templateReferences,
-    watermarkOverlays,
-  ]);
+  }, [draftKey, projectId, references, snapshot, templateReferences]);
 
   function clearWorkspaceDraft() {
     window.localStorage.removeItem(draftKey);
@@ -911,8 +878,11 @@ function Workspace() {
 
   const status = poll?.job?.status ?? poll?.generation.status ?? null;
   const versions = useMemo(() => poll?.generation.versions ?? [], [poll]);
+  // 只有服务端明确返回 PENDING/RUNNING 才展示“生成中”。进入/切回工作台时
+  // genId 可能已由历史出图播种，但轮询数据尚未返回，此时 status=null；旧逻辑会把
+  // 这个空状态误当作运行中，导致用户未下达任务也看到“AI 正在生成…”。
   const running =
-    !!genId && status !== "SUCCEEDED" && status !== "FAILED" && !timedOut;
+    !!genId && ACTIVE_GENERATION_STATUSES.has(status ?? "") && !timedOut;
   const current = versions[activeVariant] ?? versions[0];
   const editBaseVersion =
     versions.find((v) => v.id === editBaseVersionId) ?? current ?? null;
@@ -1061,7 +1031,10 @@ function Workspace() {
 
   useEffect(() => {
     if (!current?.id) return;
-    if (!editBaseVersionId || !versions.some((v) => v.id === editBaseVersionId)) {
+    if (
+      !editBaseVersionId ||
+      !versions.some((v) => v.id === editBaseVersionId)
+    ) {
       setEditBaseVersionId(current.id);
     }
   }, [current?.id, editBaseVersionId, versions]);
@@ -1168,11 +1141,6 @@ function Workspace() {
           body: JSON.stringify({
             op,
             payload: sized,
-            ...(activeWatermarkOverlays.length
-              ? {
-                  watermarkOverlays: activeWatermarkOverlays,
-                }
-              : {}),
           }),
         },
       );
@@ -1344,11 +1312,6 @@ function Workspace() {
                   ),
                 }
               : {}),
-            ...(activeWatermarkOverlays.length
-              ? {
-                  watermarkOverlays: activeWatermarkOverlays,
-                }
-              : {}),
           }),
         },
       );
@@ -1437,7 +1400,7 @@ function Workspace() {
   return (
     <div className="flex h-screen flex-col">
       <div className="flex items-center justify-between border-b border-border bg-card px-6 py-3">
-        {/* F1 · 顶部项目路径 breadcrumb — 品牌 / 项目名（可切换 + 回项目列表）/ 工作台 */}
+        {/* F1 · 顶部路径 — 当前品牌套件 / 项目名（可切换 + 回项目列表）/ 工作台 */}
         <nav
           aria-label="项目路径"
           className="flex items-center gap-2 text-sm text-muted-foreground"
@@ -1494,9 +1457,9 @@ function Workspace() {
         </div>
       </div>
 
-      <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_340px]">
+      <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_390px]">
         {/* Canvas */}
-        <div className="flex min-h-0 flex-col bg-background p-4">
+        <div className="flex min-h-0 flex-col bg-background p-3">
           <OpenCanvas
             seedVersions={versions}
             running={running}
@@ -1510,6 +1473,12 @@ function Workspace() {
             selectNonce={selectNonce}
             fitKey={genId ?? undefined}
             onUploadImage={onCanvasUploadImage}
+            materialAssets={references}
+            templateAssets={templateReferences}
+            onOpenMaterialLibrary={() => setAssetPickerOpen(true)}
+            onOpenTemplateLibrary={() => setTemplatePickerOpen(true)}
+            onRemoveMaterial={dropReference}
+            onRemoveTemplate={dropTemplateReference}
             edit={{
               ops: CANVAS_OPS,
               busy: !!editJobId || busy === "edit",
@@ -1706,6 +1675,68 @@ function Workspace() {
               </button>
             </div>
           ) : null}
+
+          <section className="rounded-3xl border border-border bg-background p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <div className="text-sm font-semibold">历史对话</div>
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  选择任意历史图，可继续基于它修改、扩图或定稿。
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setGenId(null);
+                  setJobId(null);
+                  setActiveVariant(0);
+                  setCanvasSel(false);
+                }}
+                className="rounded-full border border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted"
+              >
+                新对话
+              </button>
+            </div>
+            {history.length ? (
+              <div className="flex gap-2 overflow-x-auto pb-1">
+                {history.slice(0, 8).map((g) => {
+                  const cover = g.versions?.find((v) => v.imageUrl)?.imageUrl;
+                  const active = g.id === genId;
+                  return (
+                    <button
+                      key={g.id}
+                      type="button"
+                      onClick={() => viewGeneration(g.id)}
+                      className={[
+                        "h-20 w-20 shrink-0 overflow-hidden rounded-2xl border-2 bg-muted text-left transition-colors",
+                        active
+                          ? "border-primary"
+                          : "border-transparent hover:border-border",
+                      ].join(" ")}
+                      title={g.scene || g.sceneType}
+                    >
+                      {cover ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={cover}
+                          alt={g.scene || "历史生成"}
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <span className="flex h-full items-center justify-center text-[10px] text-muted-foreground">
+                          {g.status === "FAILED" ? "失败" : "生成中"}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="rounded-2xl border border-dashed border-border px-3 py-5 text-center text-xs text-muted-foreground">
+                暂无历史生成，输入需求后会在这里沉淀记录。
+              </p>
+            )}
+          </section>
 
           <div>
             <div className="mb-2 text-sm font-semibold">制作模式</div>
@@ -2039,22 +2070,13 @@ function Workspace() {
             </div>
           </div>
 
-          {/* V0.0.9 · 素材（水印使用）与参考图（模板库）分离 */}
+          {/* 画布改造第一阶段 · 素材上画布、模板进提示上下文；水印配置入口暂时撤下。 */}
           {projectId ? (
             <div className="space-y-4">
               <div>
                 <div className="mb-2 flex items-center justify-between text-sm font-semibold">
-                  <span>素材（水印使用）</span>
+                  <span>素材库（画布使用）</span>
                   <div className="flex items-center gap-2">
-                    {references.length ? (
-                      <button
-                        type="button"
-                        onClick={() => setWatermarkEditorOpen(true)}
-                        className="rounded-full border border-primary/30 px-2.5 py-1 text-xs text-primary transition-colors hover:bg-accent-soft"
-                      >
-                        配置水印
-                      </button>
-                    ) : null}
                     <button
                       type="button"
                       onClick={() => setAssetPickerOpen(true)}
@@ -2083,19 +2105,19 @@ function Workspace() {
                         }}
                         className="flex items-center gap-2 rounded-2xl border border-border bg-background p-2"
                       >
-                        <AssetThumb asset={r} alt="水印素材" />
+                        <AssetThumb asset={r} alt="画布素材" />
                         <div className="min-w-0 flex-1">
                           <div className="truncate text-xs font-medium">
                             {r.fileName ?? "素材"}
                           </div>
                           <div className="mt-1 text-[11px] text-muted-foreground">
-                            绝对调用：不改内容，可拖到画布，也会按水印配置叠加。
+                            可拖到画布，也可在画布底部素材托盘中点击落图。
                           </div>
                         </div>
                         <button
                           type="button"
                           onClick={() => dropReference(r.id)}
-                          aria-label="移除水印素材"
+                          aria-label="移除画布素材"
                           className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-destructive"
                         >
                           ✕
@@ -2105,7 +2127,8 @@ function Workspace() {
                   </div>
                 ) : (
                   <p className="rounded-2xl border border-dashed border-border bg-background px-3 py-4 text-center text-xs text-muted-foreground">
-                    从素材库选择 Logo、产品图或固定元素作为水印素材。
+                    从画布底部“素材”入口选择
+                    Logo、产品图或固定元素，加入后可直接落到画布编辑。
                   </p>
                 )}
               </div>
@@ -2219,7 +2242,7 @@ function Workspace() {
             ),
             textMode,
             styleKeywords,
-            referenceCount: references.length,
+            referenceCount: templateReferences.length,
             quota: quota ?? null,
           }}
           submitting={submitting}
@@ -2244,7 +2267,7 @@ function Workspace() {
           wsId={wsId}
           libraryKind="MATERIAL"
           title="选择素材"
-          description="素材会以水印方式确定性叠加到生成图上。"
+          description="素材会加入画布底部素材托盘，可点击或拖拽到画布中自由摆放。"
           existingIds={references.map((r) => r.id)}
           onClose={() => setAssetPickerOpen(false)}
           onAdd={(items) => {
@@ -2259,23 +2282,13 @@ function Workspace() {
           wsId={wsId}
           libraryKind="TEMPLATE"
           title="选择参考图"
-          description="参考图只影响风格、色系、比例和构图，不会叠加到最终图。"
+          description="参考图只进入右侧提示上下文，用于风格、色系、比例和构图参考，不直接落到画布。"
           existingIds={templateReferences.map((r) => r.id)}
           onClose={() => setTemplatePickerOpen(false)}
           onAdd={(items) => {
             addTemplateReferences(items);
             setTemplatePickerOpen(false);
           }}
-        />
-      ) : null}
-
-      {watermarkEditorOpen ? (
-        <WatermarkEditorDialog
-          wsId={wsId}
-          assets={references}
-          overlays={watermarkOverlays}
-          onChange={setWatermarkOverlays}
-          onClose={() => setWatermarkEditorOpen(false)}
         />
       ) : null}
 
@@ -3036,7 +3049,7 @@ function WorkspaceAssetPicker({
               }
               className="h-10 rounded-full bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-50"
             >
-              添加到工作台
+              {libraryKind === "MATERIAL" ? "添加到画布托盘" : "加入参考图"}
             </button>
           </div>
         </div>

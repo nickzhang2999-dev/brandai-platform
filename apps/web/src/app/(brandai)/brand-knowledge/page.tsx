@@ -12,6 +12,10 @@ import type {
 import type { AssetCategory } from "@brandai/contracts";
 import { Button } from "@brandai/ui";
 import { apiFetch, assetThumbUrl } from "@/lib/client";
+import {
+  formatUploadBytes,
+  imageUploadLimitError,
+} from "@/lib/upload-limits";
 import { useBrand } from "../brand-context";
 import { Chip } from "../_ui";
 import { AIInput } from "../ai-input";
@@ -46,6 +50,66 @@ const QUICK_PROMPTS: { type: string; text: string }[] = [
   {
     type: "logo",
     text: "logo 须保留四周安全间距，最小宽度 24px；禁止拉伸、改色或加阴影。",
+  },
+];
+
+const MAX_BRAND_MANUAL_BYTES = 20 * 1024 * 1024;
+
+const BRAND_KIT_IMPORT_SLOTS: {
+  key: string;
+  type: string;
+  title: string;
+  desc: string;
+  accept: string;
+  limit: string;
+}[] = [
+  {
+    key: "manual",
+    type: "layout",
+    title: "上传完整品牌手册",
+    desc: "PDF 自动拆解为 logo、字体、颜色、图像与品牌指南草稿。",
+    accept: "application/pdf",
+    limit: "PDF 不超过 20MB",
+  },
+  {
+    key: "logo",
+    type: "logo",
+    title: "logo",
+    desc: "上传主标、反白标、图形标等，确认后成为 logo 使用规范。",
+    accept: "image/*",
+    limit: "建议最多 10 个",
+  },
+  {
+    key: "font",
+    type: "font",
+    title: "字体",
+    desc: "上传字体说明截图或字体规范页，AI 提取字体使用边界。",
+    accept: "image/*",
+    limit: "建议最多 50 个",
+  },
+  {
+    key: "color",
+    type: "color",
+    title: "颜色",
+    desc: "上传色卡、色值页或视觉样张，AI 提炼主辅色与禁用色。",
+    accept: "image/*",
+    limit: "建议最多 50 个",
+  },
+  {
+    key: "imagery",
+    type: "imagery",
+    title: "图像",
+    desc: "上传参考图、摄影风格或素材规范，沉淀图像风格规则。",
+    accept: "image/*",
+    limit: "建议最多 50 个",
+  },
+  {
+    key: "copy",
+    type: "copy",
+    title: "品牌指南",
+    desc: "上传语气、文案、禁用表达等页面，形成品牌表达规范。",
+    accept: "image/*,application/pdf",
+    limit: "图片 8MB / PDF 20MB",
   },
 ];
 
@@ -318,20 +382,27 @@ function EvidenceItem({ wsId, ev }: { wsId: string; ev: Evidence }) {
   const [failed, setFailed] = useState(false);
   // note-only evidence (no assetId) → text chip.
   if (!ev.assetId) return ev.note ? <EvidenceChip note={ev.note} /> : null;
+  const rawUrl = assetThumbUrl(wsId, ev.assetId, ev.thumbnailUrl ?? "");
   // assetId may point at a NON-image asset (e.g. a parse-manual VI_DOC/PDF whose
   // id is stamped onto evidence) → the <img> 404s/decodes-empty; fall back to a
   // file/note chip instead of a broken thumbnail.
   if (failed)
-    return <EvidenceChip note={ev.note ? `📄 ${ev.note}` : "📄 文件"} />;
+    return (
+      <a href={rawUrl} target="_blank" rel="noreferrer">
+        <EvidenceChip note={ev.note ? `📄 ${ev.note}` : "📄 文件"} />
+      </a>
+    );
   return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      src={assetThumbUrl(wsId, ev.assetId, ev.thumbnailUrl ?? "")}
-      alt={ev.note ?? "依据"}
-      title={ev.note ?? undefined}
-      onError={() => setFailed(true)}
-      className="h-12 w-12 rounded-xl border border-border object-cover"
-    />
+    <a href={rawUrl} target="_blank" rel="noreferrer">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={rawUrl}
+        alt={ev.note ?? "依据"}
+        title={ev.note ?? "点击预览"}
+        onError={() => setFailed(true)}
+        className="h-12 w-12 rounded-xl border border-border object-cover transition-transform hover:scale-105"
+      />
+    </a>
   );
 }
 
@@ -821,6 +892,115 @@ function TaskProgress({
       </div>
       {error ? <p className="text-xs text-destructive">{error}</p> : null}
     </div>
+  );
+}
+
+function BrandKitImportPanel({
+  activeType,
+  disabled,
+  onTypeChange,
+  onFile,
+}: {
+  activeType: string;
+  disabled: boolean;
+  onTypeChange: (type: string) => void;
+  onFile: (file: File) => void;
+}) {
+  const fileRef = useRef<HTMLInputElement | null>(null);
+  const [accept, setAccept] = useState("image/*,application/pdf");
+  const [dragging, setDragging] = useState(false);
+
+  function openPicker(type: string, nextAccept: string) {
+    if (disabled) return;
+    onTypeChange(type);
+    setAccept(nextAccept);
+    window.setTimeout(() => {
+      if (fileRef.current) {
+        fileRef.current.value = "";
+        fileRef.current.click();
+      }
+    }, 0);
+  }
+
+  function pick(files: FileList | null) {
+    const file = files?.[0];
+    if (!file) return;
+    onFile(file);
+  }
+
+  return (
+    <section className="mx-auto mt-7 max-w-4xl rounded-[28px] border border-primary/15 bg-card p-5 text-left shadow-[0_16px_48px_rgba(124,92,255,0.08)]">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-stretch">
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => openPicker("layout", "application/pdf")}
+          onDragEnter={(event) => {
+            event.preventDefault();
+            setDragging(true);
+          }}
+          onDragOver={(event) => event.preventDefault()}
+          onDragLeave={() => setDragging(false)}
+          onDrop={(event) => {
+            event.preventDefault();
+            setDragging(false);
+            pick(event.dataTransfer.files);
+          }}
+          className={`flex min-h-[190px] flex-1 flex-col items-center justify-center rounded-[24px] border border-dashed px-5 py-6 text-center transition-colors ${
+            dragging
+              ? "border-primary bg-accent-soft"
+              : "border-primary/25 bg-gradient-to-br from-accent-soft/60 to-background hover:border-primary/50"
+          } disabled:opacity-60`}
+        >
+          <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary text-xl text-primary-foreground">
+            ⇧
+          </span>
+          <span className="mt-4 text-base font-semibold">
+            一次上传，构建品牌套件
+          </span>
+          <span className="mt-2 max-w-sm text-xs leading-relaxed text-muted-foreground">
+            上传品牌手册 PDF，AI 会自动提取并归类为 logo、字体、颜色、设计指南、图像、品牌指南草稿；你确认后才会启用。
+          </span>
+          <span className="mt-3 rounded-full bg-background px-3 py-1 text-[11px] text-muted-foreground">
+            PNG / JPG / PDF · 图片 8MB · PDF 20MB
+          </span>
+        </button>
+
+        <div className="grid flex-[1.25] grid-cols-2 gap-2 sm:grid-cols-3">
+          {BRAND_KIT_IMPORT_SLOTS.map((slot) => {
+            const active = activeType === slot.type;
+            return (
+              <button
+                key={slot.key}
+                type="button"
+                disabled={disabled}
+                onClick={() => openPicker(slot.type, slot.accept)}
+                className={`flex min-h-[112px] flex-col rounded-2xl border p-3 text-left transition-colors ${
+                  active
+                    ? "border-primary bg-accent-soft text-primary"
+                    : "border-border bg-background hover:border-primary/40"
+                } disabled:opacity-60`}
+              >
+                <span className="text-sm font-semibold">{slot.title}</span>
+                <span className="mt-1 line-clamp-3 text-[11px] leading-relaxed text-muted-foreground">
+                  {slot.desc}
+                </span>
+                <span className="mt-auto pt-2 text-[10px] text-muted-foreground">
+                  {slot.limit}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      <input
+        ref={fileRef}
+        type="file"
+        accept={accept}
+        className="hidden"
+        onChange={(event) => pick(event.currentTarget.files)}
+      />
+    </section>
   );
 }
 
@@ -1317,10 +1497,21 @@ function AICoCreate({
       const isPdf =
         file.type === "application/pdf" ||
         file.name.toLowerCase().endsWith(".pdf");
+      const imageErr = imageUploadLimitError(file);
+      if (imageErr) throw new Error(imageErr);
+      if (isPdf && file.size > MAX_BRAND_MANUAL_BYTES) {
+        throw new Error(
+          `品牌手册不能超过 ${formatUploadBytes(MAX_BRAND_MANUAL_BYTES)}，当前 ${formatUploadBytes(file.size)}。`,
+        );
+      }
       const imageCategory: Record<string, AssetCategory> = {
         logo: "LOGO",
+        color: "OTHER",
+        font: "OTHER",
+        layout: "KV",
         imagery: "KV",
         graphic: "PRODUCT",
+        copy: "OTHER",
       };
       const fd = new FormData();
       fd.append("file", file);
@@ -1398,6 +1589,13 @@ function AICoCreate({
 
   return (
     <>
+      <BrandKitImportPanel
+        activeType={type}
+        disabled={parsing}
+        onTypeChange={setType}
+        onFile={(file) => analyzeAttachment.mutate(file)}
+      />
+
       <div className="mx-auto mt-6 max-w-2xl">
         <AIInput
           value={text}

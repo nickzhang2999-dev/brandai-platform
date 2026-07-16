@@ -3,7 +3,6 @@
 import { usePathname } from "next/navigation";
 import { AppShell, type NavItem, Button } from "@brandai/ui";
 import { OfflineBanner } from "./offline-banner";
-import { QueueWidget } from "./queue-widget";
 
 /**
  * Workspace-scoped nav. Computed on the client from usePathname() — the prior
@@ -99,10 +98,6 @@ export function AppNav({
 }) {
   const pathname = usePathname() ?? "/workspaces";
   const nav = buildNav(pathname, isAdmin);
-  // §2.3 — workspace-scoped queue widget. wsId is derived from the URL the
-  // same way buildNav does (so they never disagree); off-workspace pages get
-  // null → the widget renders nothing.
-  const wsId = pathname.match(/^\/workspaces\/([^/]+)/)?.[1] ?? null;
 
   return (
     <AppShell
@@ -118,7 +113,6 @@ export function AppNav({
     >
       <OfflineBanner />
       {children}
-      <QueueWidget wsId={wsId} />
     </AppShell>
   );
 }

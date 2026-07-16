@@ -29,7 +29,7 @@ const SCENE_LABELS: Record<string, string> = {
  * 并按项目维度提供搜索、筛选和回跳。
  */
 export default function GeneratedImagesPage() {
-  const { wsId } = useBrand();
+  const { wsId, brandName } = useBrand();
   const [q, setQ] = useState("");
   const [projectId, setProjectId] = useState("all");
   const [projectStatus, setProjectStatus] = useState("all");
@@ -64,12 +64,12 @@ export default function GeneratedImagesPage() {
     <div className="mx-auto max-w-[1180px] px-10 py-10">
       <PageHeader
         title="生成图"
-        subtitle="集中查看 AI 工作台确认后的生成图，并按项目维度快速检索"
+        subtitle="集中查看当前品牌套件下的生成图，并按项目维度快速检索"
       />
 
       <div className="mb-5 rounded-2xl border border-primary/15 bg-accent-soft/50 px-4 py-3 text-xs leading-relaxed text-muted-foreground">
-        生成图来自 AI
-        工作台的历史出图与终稿镜像，权威记录仍保留在对应项目的出图版本中。
+        当前品牌套件：{brandName}。生成图来自该品牌套件下各项目的 AI
+        工作台历史出图与终稿镜像，权威记录仍保留在对应项目的出图版本中。
       </div>
 
       <div className="mb-6 rounded-3xl border border-border bg-card p-4 shadow-[0_10px_28px_rgba(30,30,60,0.05)]">
