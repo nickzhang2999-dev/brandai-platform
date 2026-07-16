@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { CdsPreviewToolbarGuard } from "./cds-preview-toolbar-guard";
 import { Providers } from "./providers";
 
 export const metadata: Metadata = {
@@ -46,6 +47,7 @@ export default function RootLayout({
         />
       </head>
       <body>
+        <CdsPreviewToolbarGuard />
         <Providers>{children}</Providers>
       </body>
     </html>

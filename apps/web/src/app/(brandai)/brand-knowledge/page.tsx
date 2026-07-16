@@ -12,10 +12,7 @@ import type {
 import type { AssetCategory } from "@brandai/contracts";
 import { Button } from "@brandai/ui";
 import { apiFetch, assetThumbUrl } from "@/lib/client";
-import {
-  formatUploadBytes,
-  imageUploadLimitError,
-} from "@/lib/upload-limits";
+import { imageUploadLimitError } from "@/lib/upload-limits";
 import { useBrand } from "../brand-context";
 import { Chip } from "../_ui";
 import { AIInput } from "../ai-input";
@@ -53,8 +50,6 @@ const QUICK_PROMPTS: { type: string; text: string }[] = [
   },
 ];
 
-const MAX_BRAND_MANUAL_BYTES = 20 * 1024 * 1024;
-
 const BRAND_KIT_IMPORT_SLOTS: {
   key: string;
   type: string;
@@ -69,7 +64,7 @@ const BRAND_KIT_IMPORT_SLOTS: {
     title: "上传完整品牌手册",
     desc: "PDF 自动拆解为 logo、字体、颜色、图像与品牌指南草稿。",
     accept: "application/pdf",
-    limit: "PDF 不超过 20MB",
+    limit: "上传后自动解析",
   },
   {
     key: "logo",
@@ -109,7 +104,7 @@ const BRAND_KIT_IMPORT_SLOTS: {
     title: "品牌指南",
     desc: "上传语气、文案、禁用表达等页面，形成品牌表达规范。",
     accept: "image/*,application/pdf",
-    limit: "图片 8MB / PDF 20MB",
+    limit: "图片 8MB / PDF 不限",
   },
 ];
 
@@ -431,6 +426,164 @@ function EvidenceThumbs({
   );
 }
 
+function RulePreviewImage({
+  wsId,
+  ev,
+  compact = false,
+}: {
+  wsId: string;
+  ev: Evidence;
+  compact?: boolean;
+}) {
+  const [failed, setFailed] = useState(false);
+  if (!ev.assetId || failed) return null;
+  const rawUrl = assetThumbUrl(wsId, ev.assetId, ev.thumbnailUrl ?? "");
+  return (
+    <a
+      href={rawUrl}
+      target="_blank"
+      rel="noreferrer"
+      className={`group flex overflow-hidden rounded-[18px] bg-muted/50 ${
+        compact ? "h-16 w-20" : "aspect-square w-full"
+      }`}
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={rawUrl}
+        alt={ev.note ?? "品牌资产"}
+        title={ev.note ?? "点击预览"}
+        onError={() => setFailed(true)}
+        className="h-full w-full object-contain p-3 transition-transform group-hover:scale-[1.03]"
+      />
+    </a>
+  );
+}
+
+function BrandAssetPlaceholder({
+  type,
+  label,
+}: {
+  type: string;
+  label: string;
+}) {
+  return (
+    <div className="flex aspect-square w-full flex-col items-center justify-center rounded-[18px] border border-dashed border-border bg-muted/35 text-center">
+      <span className="text-2xl text-muted-foreground">
+        {type === "font" ? "Aa" : type === "color" ? "◉" : "+"}
+      </span>
+      <span className="mt-2 px-3 text-[11px] text-muted-foreground">
+        {label}
+      </span>
+    </div>
+  );
+}
+
+function RuleVisualPreview({ rule, wsId }: { rule: BrandRule; wsId: string }) {
+  const value = (rule.value ?? {}) as Val;
+  const evidence = (rule.evidence ?? []).filter((ev) => ev?.assetId);
+
+  if (rule.type === "color") {
+    const swatches = extractSwatches(value);
+    if (!swatches.length) return null;
+    return (
+      <div className="grid grid-cols-3 gap-2">
+        {swatches.slice(0, 3).map((sw, i) => (
+          <div key={`${sw.hex}-${i}`} className="min-w-0">
+            <div
+              className="aspect-square rounded-[18px] border border-border"
+              style={{ background: sw.hex }}
+            />
+            <div className="mt-1 truncate font-mono text-[10px] uppercase text-muted-foreground">
+              {sw.role ?? sw.hex}
+            </div>
+          </div>
+        ))}
+        <button
+          type="button"
+          className="flex aspect-square items-center justify-center rounded-[18px] border border-dashed border-border text-xl text-muted-foreground"
+          aria-label="增加颜色"
+        >
+          +
+        </button>
+      </div>
+    );
+  }
+
+  if (rule.type === "font") {
+    const imgs = evidence.slice(0, 2);
+    const fonts = extractFonts(value);
+    return (
+      <div className="grid grid-cols-3 gap-2">
+        {imgs.map((ev, i) => (
+          <div key={`${ev.assetId}-${i}`} className="min-w-0">
+            <RulePreviewImage wsId={wsId} ev={ev} />
+            <div className="mt-1 truncate text-[10px] text-muted-foreground">
+              {ev.note ?? "字体参考"}
+            </div>
+          </div>
+        ))}
+        {!imgs.length && fonts.length
+          ? fonts.slice(0, 2).map((font, i) => (
+              <div key={`${font.name}-${i}`} className="min-w-0">
+                <div className="flex aspect-square flex-col justify-center rounded-[18px] bg-muted/45 px-3">
+                  <span
+                    className="text-3xl leading-none text-foreground"
+                    style={{ fontFamily: previewFamily(font.name) }}
+                  >
+                    Ag
+                  </span>
+                  <span className="mt-2 line-clamp-2 text-[10px] text-muted-foreground">
+                    {font.name}
+                  </span>
+                </div>
+                <div className="mt-1 truncate text-[10px] text-muted-foreground">
+                  {font.role ?? "字体"}
+                </div>
+              </div>
+            ))
+          : null}
+        <BrandAssetPlaceholder type="font" label="增加字体" />
+      </div>
+    );
+  }
+
+  if (rule.type === "logo" || rule.type === "imagery") {
+    const imgs = evidence.slice(0, 2);
+    return (
+      <div className="grid grid-cols-3 gap-2">
+        {imgs.map((ev, i) => (
+          <div key={`${ev.assetId}-${i}`} className="min-w-0">
+            <RulePreviewImage wsId={wsId} ev={ev} />
+            <div className="mt-1 truncate text-[10px] text-muted-foreground">
+              {ev.note ?? (rule.type === "logo" ? "Logo" : "图像")}
+            </div>
+          </div>
+        ))}
+        {imgs.length === 0 ? (
+          <BrandAssetPlaceholder
+            type={rule.type}
+            label={rule.type === "logo" ? "等待 logo 图片" : "等待图像"}
+          />
+        ) : null}
+        <BrandAssetPlaceholder
+          type={rule.type}
+          label={rule.type === "logo" ? "增加 Logo" : "增加图像"}
+        />
+      </div>
+    );
+  }
+
+  const first = evidence[0];
+  if (!first) return null;
+  return (
+    <div className="flex gap-2">
+      {evidence.slice(0, 3).map((ev, i) => (
+        <RulePreviewImage key={`${ev.assetId}-${i}`} wsId={wsId} ev={ev} compact />
+      ))}
+    </div>
+  );
+}
+
 function SubHeading({ children }: { children: React.ReactNode }) {
   return (
     <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -657,9 +810,16 @@ function RuleCard({
         </div>
       </div>
 
+      <RuleVisualPreview rule={rule} wsId={wsId} />
+
       <RuleBody rule={rule} />
 
-      <EvidenceThumbs wsId={wsId} evidence={rule.evidence ?? []} />
+      {rule.type === "logo" ||
+      rule.type === "imagery" ||
+      rule.type === "font" ||
+      rule.type === "color" ? null : (
+        <EvidenceThumbs wsId={wsId} evidence={rule.evidence ?? []} />
+      )}
 
       <div className="mt-auto flex flex-wrap gap-2 pt-1">
         <button
@@ -962,7 +1122,7 @@ function BrandKitImportPanel({
             上传品牌手册 PDF，AI 会自动提取并归类为 logo、字体、颜色、设计指南、图像、品牌指南草稿；你确认后才会启用。
           </span>
           <span className="mt-3 rounded-full bg-background px-3 py-1 text-[11px] text-muted-foreground">
-            PNG / JPG / PDF · 图片 8MB · PDF 20MB
+            PNG / JPG / PDF · 上传后自动解析
           </span>
         </button>
 
@@ -1499,11 +1659,6 @@ function AICoCreate({
         file.name.toLowerCase().endsWith(".pdf");
       const imageErr = imageUploadLimitError(file);
       if (imageErr) throw new Error(imageErr);
-      if (isPdf && file.size > MAX_BRAND_MANUAL_BYTES) {
-        throw new Error(
-          `品牌手册不能超过 ${formatUploadBytes(MAX_BRAND_MANUAL_BYTES)}，当前 ${formatUploadBytes(file.size)}。`,
-        );
-      }
       const imageCategory: Record<string, AssetCategory> = {
         logo: "LOGO",
         color: "OTHER",

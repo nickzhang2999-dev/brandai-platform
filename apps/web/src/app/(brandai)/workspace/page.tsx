@@ -1662,28 +1662,42 @@ function Workspace() {
         </div>
 
         {/* Prompt panel */}
-        <aside className="flex min-h-0 flex-col gap-5 overflow-y-auto border-l border-border bg-card p-6">
-          {draftNotice ? (
-            <div className="flex items-center justify-between gap-3 rounded-2xl border border-primary/15 bg-accent-soft/60 px-3 py-2 text-xs text-primary">
-              <span>{draftNotice}</span>
+        <aside className="flex min-h-0 flex-col border-l border-border bg-card">
+          <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-4">
+            <div className="min-w-0">
+              <div className="truncate text-sm font-semibold">
+                {sellingPoint.trim() ||
+                  projects.find((p) => p.id === projectId)?.name ||
+                  "新的创作对话"}
+              </div>
+              <div className="mt-1 text-[11px] text-muted-foreground">
+                {running
+                  ? "AI 正在处理当前请求"
+                  : current
+                    ? "可选择历史结果继续修改"
+                    : "输入需求后开始沉淀过程记录"}
+              </div>
+            </div>
+            <div className="flex shrink-0 items-center gap-1.5">
               <button
                 type="button"
-                onClick={clearWorkspaceDraft}
-                className="shrink-0 rounded-full border border-primary/20 px-2 py-0.5"
+                onClick={() => setTemplatePickerOpen(true)}
+                className="flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                title="选择参考图"
+                aria-label="选择参考图"
               >
-                清空草稿
+                ⊕
               </button>
-            </div>
-          ) : null}
-
-          <section className="rounded-3xl border border-border bg-background p-4">
-            <div className="mb-3 flex items-center justify-between">
-              <div>
-                <div className="text-sm font-semibold">历史对话</div>
-                <p className="mt-1 text-[11px] text-muted-foreground">
-                  选择任意历史图，可继续基于它修改、扩图或定稿。
-                </p>
-              </div>
+              <button
+                type="button"
+                onClick={() => exportKit()}
+                disabled={!current || busy === "export"}
+                className="flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-35"
+                title="导出"
+                aria-label="导出"
+              >
+                ↧
+              </button>
               <button
                 type="button"
                 onClick={() => {
@@ -1691,533 +1705,223 @@ function Workspace() {
                   setJobId(null);
                   setActiveVariant(0);
                   setCanvasSel(false);
+                  setSellingPoint("");
+                  setScene("");
+                  setSubmitErr(null);
                 }}
                 className="rounded-full border border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted"
               >
                 新对话
               </button>
             </div>
-            {history.length ? (
-              <div className="flex gap-2 overflow-x-auto pb-1">
-                {history.slice(0, 8).map((g) => {
+          </div>
+
+          {draftNotice ? (
+            <div className="mx-5 mt-4 flex items-center justify-between gap-3 rounded-2xl border border-primary/15 bg-accent-soft/60 px-3 py-2 text-xs text-primary">
+              <span>{draftNotice}</span>
+              <button
+                type="button"
+                onClick={clearWorkspaceDraft}
+                className="shrink-0 rounded-full border border-primary/20 px-2 py-0.5"
+              >
+                清空
+              </button>
+            </div>
+          ) : null}
+
+          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+            <div className="space-y-4">
+              {history.length === 0 && !current && !running ? (
+                <div className="rounded-3xl border border-dashed border-border bg-background px-4 py-10 text-center text-sm text-muted-foreground">
+                  暂无历史生成。输入需求后，每一步修改和结果都会显示在这里。
+                </div>
+              ) : null}
+
+              {running ? (
+                <div className="rounded-3xl border border-primary/15 bg-accent-soft/40 p-4">
+                  <div className="flex items-center gap-2 text-sm font-medium text-primary">
+                    <span className="h-2 w-2 animate-pulse rounded-full bg-primary" />
+                    思考中
+                  </div>
+                  <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                    正在根据当前输入生成结果，完成后会自动进入画布和历史记录。
+                  </p>
+                </div>
+              ) : null}
+
+              {current ? (
+                <div className="rounded-3xl border border-border bg-background p-4">
+                  <div className="mb-3 flex items-center gap-2 text-xs text-muted-foreground">
+                    <span>思考完成</span>
+                    <span>·</span>
+                    <span>GPT Image 2</span>
+                  </div>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={current.imageUrl}
+                    alt="当前生成图"
+                    className="w-full rounded-2xl border border-border object-cover"
+                  />
+                  <p className="mt-3 text-sm leading-relaxed text-foreground">
+                    {poll?.generation.scene ||
+                      resolvedGenerationBrief.scene ||
+                      "当前结果已生成，可在画布中选中图片继续局部修改、扩图或定稿。"}
+                  </p>
+                  <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+                    <button
+                      type="button"
+                      onClick={markFinal}
+                      disabled={busy === "final" || current.isFinal}
+                      className="rounded-full border border-success/40 px-2.5 py-1 text-success transition-colors hover:bg-success/10 disabled:opacity-50"
+                    >
+                      {current.isFinal ? "已定稿" : "定稿生图"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={exportKit}
+                      disabled={busy === "export"}
+                      className="rounded-full border border-primary/30 px-2.5 py-1 text-primary transition-colors hover:bg-accent-soft disabled:opacity-50"
+                    >
+                      导出
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              {history
+                .filter((g) => g.id !== genId)
+                .slice(0, 8)
+                .map((g) => {
                   const cover = g.versions?.find((v) => v.imageUrl)?.imageUrl;
-                  const active = g.id === genId;
                   return (
                     <button
                       key={g.id}
                       type="button"
                       onClick={() => viewGeneration(g.id)}
-                      className={[
-                        "h-20 w-20 shrink-0 overflow-hidden rounded-2xl border-2 bg-muted text-left transition-colors",
-                        active
-                          ? "border-primary"
-                          : "border-transparent hover:border-border",
-                      ].join(" ")}
-                      title={g.scene || g.sceneType}
+                      className="block w-full rounded-3xl border border-border bg-background p-3 text-left transition-colors hover:border-primary/30"
                     >
-                      {cover ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={cover}
-                          alt={g.scene || "历史生成"}
-                          className="h-full w-full object-cover"
-                        />
-                      ) : (
-                        <span className="flex h-full items-center justify-center text-[10px] text-muted-foreground">
-                          {g.status === "FAILED" ? "失败" : "生成中"}
-                        </span>
-                      )}
+                      <div className="flex gap-3">
+                        {cover ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={cover}
+                            alt={g.scene || "历史生成"}
+                            className="h-20 w-20 shrink-0 rounded-2xl object-cover"
+                          />
+                        ) : (
+                          <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-2xl bg-muted text-xs text-muted-foreground">
+                            {g.status === "FAILED" ? "失败" : "生成中"}
+                          </div>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-sm font-medium">
+                            {g.scene || g.sceneType}
+                          </div>
+                          <div className="mt-1 text-[11px] text-muted-foreground">
+                            {new Date(g.createdAt).toLocaleString("zh-CN")}
+                          </div>
+                          <div className="mt-3 text-xs text-muted-foreground">
+                            点击继续基于这一步修改
+                          </div>
+                        </div>
+                      </div>
                     </button>
                   );
                 })}
-              </div>
-            ) : (
-              <p className="rounded-2xl border border-dashed border-border px-3 py-5 text-center text-xs text-muted-foreground">
-                暂无历史生成，输入需求后会在这里沉淀记录。
-              </p>
-            )}
-          </section>
-
-          <div>
-            <div className="mb-2 text-sm font-semibold">制作模式</div>
-            <div className="grid grid-cols-2 gap-2">
-              {WORKSPACE_MODES.map((mode) => {
-                const active = workspaceMode === mode.value;
-                return (
-                  <button
-                    key={mode.value}
-                    type="button"
-                    onClick={() => setWorkspaceMode(mode.value)}
-                    className={[
-                      "rounded-2xl border px-3 py-2 text-left transition-colors",
-                      active
-                        ? "border-primary bg-accent-soft text-primary"
-                        : "border-border bg-background text-muted-foreground hover:bg-muted",
-                    ].join(" ")}
-                  >
-                    <span className="block text-xs font-semibold">
-                      {mode.label}
-                    </span>
-                    <span className="mt-1 block text-[10px] leading-relaxed">
-                      {mode.hint}
-                    </span>
-                  </button>
-                );
-              })}
             </div>
           </div>
 
-          {workspaceMode !== "TEXT_TO_IMAGE" ? (
-            <div
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={(e) => {
-                e.preventDefault();
-                const versionId = e.dataTransfer.getData(
-                  "application/x-brandai-version",
-                );
-                if (versionId && versions.some((v) => v.id === versionId)) {
-                  setEditBaseVersionId(versionId);
-                }
-              }}
-              className="rounded-2xl border border-dashed border-primary/25 bg-background p-3"
-            >
-              <div className="mb-2 flex items-center justify-between text-sm font-semibold">
-                <span>修改底图</span>
-                {current ? (
-                  <button
-                    type="button"
-                    onClick={() => setEditBaseVersionId(current.id)}
-                    className="rounded-full border border-primary/30 px-2.5 py-1 text-xs text-primary hover:bg-accent-soft"
-                  >
-                    使用当前图
-                  </button>
-                ) : null}
-              </div>
-              {editBaseVersion ? (
-                <div className="flex items-center gap-2">
-                  <AssetThumb
-                    asset={{
-                      id: editBaseVersion.id,
-                      fileName: "当前修改底图",
-                      thumbUrl: editBaseVersion.imageUrl,
-                    }}
-                    alt="修改底图"
-                  />
-                  <div className="min-w-0 text-xs text-muted-foreground">
-                    <div className="font-medium text-foreground">
-                      基于上一版继续修改
-                    </div>
-                    <div className="mt-1">
-                      可从下方变体缩略图拖入这里切换底图。
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <p className="text-xs leading-relaxed text-muted-foreground">
-                  先生成或选择一张历史图，再基于它继续整图修改、局部修改或扩图。
-                </p>
-              )}
+          {submitErr || actionErr ? (
+            <div className="border-t border-border px-5 py-2 text-xs text-destructive">
+              {submitErr || actionErr}
             </div>
           ) : null}
 
-          {workspaceMode === "OUTPAINT" ? (
-            <div>
-              <div className="mb-2 flex items-center justify-between text-sm font-semibold">
-                <span>扩图方向与范围</span>
-                <span className="text-xs font-normal text-muted-foreground">
-                  +{outpaintScale}%
-                </span>
-              </div>
-              <div className="grid grid-cols-3 gap-1.5">
-                {OUTPAINT_DIRECTIONS.map((item) => (
-                  <button
-                    key={item.value}
-                    type="button"
-                    title={item.hint}
-                    onClick={() => setOutpaintDirection(item.value)}
-                    className={[
-                      "rounded-xl border px-2 py-1.5 text-xs transition-colors",
-                      outpaintDirection === item.value
-                        ? "border-primary bg-accent-soft text-primary"
-                        : "border-border text-muted-foreground hover:bg-muted",
-                    ].join(" ")}
+          <div className="border-t border-border bg-card px-4 py-4">
+            {templateReferences.length ? (
+              <div className="mb-2 flex flex-wrap gap-1.5">
+                {templateReferences.map((r) => (
+                  <span
+                    key={r.id}
+                    className="inline-flex items-center gap-1 rounded-full bg-accent-soft px-2 py-1 text-[11px] text-primary"
                   >
-                    {item.label}
-                  </button>
-                ))}
-              </div>
-              <input
-                type="range"
-                min={10}
-                max={100}
-                step={5}
-                value={outpaintScale}
-                onChange={(e) => setOutpaintScale(Number(e.target.value))}
-                className="mt-3 w-full accent-primary"
-              />
-              <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
-                扩图会保留原图主体，在画布边界外补全新区域；文字描述里可继续写“右侧增加干净留白”等细节。
-              </p>
-            </div>
-          ) : null}
-
-          <div>
-            <div className="mb-2 flex items-center justify-between text-sm font-semibold">
-              <span>需求描述 / 卖点</span>
-              <span className="text-xs font-normal text-muted-foreground">
-                {sellingPoint.length}/500
-              </span>
-            </div>
-            <textarea
-              value={sellingPoint}
-              maxLength={500}
-              placeholder="可留空。系统会基于项目摘要、产品/活动、品牌名和行业自动补全。"
-              onChange={(e) => setSellingPoint(e.target.value)}
-              rows={5}
-              className="w-full resize-none rounded-2xl border border-border bg-background p-3 text-sm outline-none focus:border-primary/40 focus:shadow-[0_0_0_4px_rgba(124,92,255,0.08)]"
-            />
-          </div>
-
-          <div>
-            <div className="mb-2 text-sm font-semibold">场景</div>
-            <input
-              value={scene}
-              placeholder="可留空。系统会基于投放渠道、活动和画面类型自动补全。"
-              onChange={(e) => setScene(e.target.value)}
-              className="h-11 w-full rounded-2xl border border-border bg-background px-3 text-sm outline-none focus:border-primary/40 focus:shadow-[0_0_0_4px_rgba(124,92,255,0.08)]"
-            />
-          </div>
-
-          <div>
-            <div className="mb-2 text-sm font-semibold">画面类型</div>
-            <div className="flex flex-wrap gap-1.5">
-              {SCENE_TYPES.map((s) => (
-                <button
-                  key={s.value}
-                  onClick={() => setSceneType(s.value)}
-                  className={[
-                    "rounded-full px-3 py-1 text-xs transition-colors",
-                    sceneType === s.value
-                      ? "bg-accent-soft font-medium text-primary"
-                      : "border border-border text-muted-foreground hover:bg-muted",
-                  ].join(" ")}
-                >
-                  {s.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* 生成数量 — 多尺寸模式下隐藏（每尺寸各出 1 张，AI 服务忽略 versionCount）。 */}
-          {multiSize ? (
-            <div>
-              <div className="mb-2 text-sm font-semibold">生成数量</div>
-              <p className="rounded-2xl border border-primary/15 bg-accent-soft/50 px-3 py-2.5 text-xs leading-relaxed text-muted-foreground">
-                多尺寸模式：每个尺寸各出 1 张（共 {selectedTargets.length}{" "}
-                张）。
-              </p>
-            </div>
-          ) : (
-            <div>
-              <div className="mb-2 text-sm font-semibold">生成数量</div>
-              <div className="flex gap-1.5">
-                {[1, 2, 4, 6].map((n) => (
-                  <button
-                    key={n}
-                    onClick={() => setVersionCount(n)}
-                    className={[
-                      "h-9 w-12 rounded-xl text-sm transition-colors",
-                      versionCount === n
-                        ? "bg-accent-soft font-medium text-primary"
-                        : "border border-border text-muted-foreground hover:bg-muted",
-                    ].join(" ")}
-                  >
-                    {n}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* K5 · 多尺寸渠道档位（P2.0） */}
-          <div>
-            <div className="mb-2 flex items-center justify-between text-sm font-semibold">
-              <span>多尺寸渠道</span>
-              {targetKeys.length ? (
-                <span className="text-xs font-normal text-muted-foreground">
-                  已选 {targetKeys.length}
-                </span>
-              ) : null}
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {CHANNEL_SIZES.map((s) => {
-                const on = targetKeys.includes(s.key);
-                return (
-                  <button
-                    key={s.key}
-                    type="button"
-                    onClick={() => toggleTarget(s.key)}
-                    aria-pressed={on}
-                    className={[
-                      "rounded-full px-3 py-1 text-xs transition-colors",
-                      on
-                        ? "bg-accent-soft font-medium text-primary"
-                        : "border border-border text-muted-foreground hover:bg-muted",
-                    ].join(" ")}
-                  >
-                    {s.label} {s.width}×{s.height}
-                  </button>
-                );
-              })}
-            </div>
-            <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
-              不选则按上方生成数量出同尺寸图；选 ≥1 个渠道则每个尺寸各出 1 张。
-            </p>
-            {multiSize ? (
-              <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-                注：模型会就近匹配到支持的比例（如 1080×1440 →
-                1024×1536），出图后以实际尺寸为准。
-              </p>
-            ) : null}
-          </div>
-
-          {/* K5 · 文本策略（M3 textMode） */}
-          <div>
-            <div className="mb-2 text-sm font-semibold">文本策略</div>
-            <div className="flex gap-1.5">
-              {(
-                [
-                  { value: "direct", label: "直接出图" },
-                  { value: "layered", label: "分层留白" },
-                ] as const
-              ).map((o) => (
-                <button
-                  key={o.value}
-                  type="button"
-                  onClick={() => setTextMode(o.value)}
-                  className={[
-                    "rounded-full px-3 py-1 text-xs transition-colors",
-                    textMode === o.value
-                      ? "bg-accent-soft font-medium text-primary"
-                      : "border border-border text-muted-foreground hover:bg-muted",
-                  ].join(" ")}
-                >
-                  {o.label}
-                </button>
-              ))}
-            </div>
-            <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
-              分层留白 = 模型留干净负空间、不烤字，便于后续叠真实文字。
-            </p>
-          </div>
-
-          {/* F7 · 风格关键词 */}
-          <div>
-            <div className="mb-2 flex items-center justify-between text-sm font-semibold">
-              <span>风格关键词</span>
-              <span className="text-xs font-normal text-muted-foreground">
-                {styleKeywords.length}/{MAX_KEYWORDS}
-              </span>
-            </div>
-            <div className="flex flex-wrap items-center gap-1.5 rounded-2xl border border-border bg-background p-2 focus-within:border-primary/40 focus-within:shadow-[0_0_0_4px_rgba(124,92,255,0.08)]">
-              {styleKeywords.map((kw) => (
-                <span
-                  key={kw}
-                  className="inline-flex items-center gap-1 rounded-full bg-accent-soft px-2.5 py-1 text-xs font-medium text-primary"
-                >
-                  {kw}
-                  <button
-                    type="button"
-                    onClick={() => removeKeyword(kw)}
-                    aria-label={`移除 ${kw}`}
-                    className="text-primary/60 transition-colors hover:text-primary"
-                  >
-                    ✕
-                  </button>
-                </span>
-              ))}
-              <input
-                value={keywordDraft}
-                onChange={(e) => setKeywordDraft(e.target.value)}
-                onKeyDown={onKeywordKeyDown}
-                onBlur={() => {
-                  addKeyword(keywordDraft);
-                  setKeywordDraft("");
-                }}
-                disabled={styleKeywords.length >= MAX_KEYWORDS}
-                placeholder={
-                  styleKeywords.length >= MAX_KEYWORDS
-                    ? "已达上限"
-                    : "输入后回车添加…"
-                }
-                className="min-w-[7rem] flex-1 bg-transparent px-1 py-1 text-sm outline-none placeholder:text-muted-foreground"
-              />
-            </div>
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {SUGGESTED_KEYWORDS.filter((k) => !styleKeywords.includes(k)).map(
-                (k) => (
-                  <button
-                    key={k}
-                    type="button"
-                    onClick={() => addKeyword(k)}
-                    disabled={styleKeywords.length >= MAX_KEYWORDS}
-                    className="rounded-full border border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted disabled:opacity-50"
-                  >
-                    + {k}
-                  </button>
-                ),
-              )}
-            </div>
-          </div>
-
-          {/* 画布改造第一阶段 · 素材上画布、模板进提示上下文；水印配置入口暂时撤下。 */}
-          {projectId ? (
-            <div className="space-y-4">
-              <div>
-                <div className="mb-2 flex items-center justify-between text-sm font-semibold">
-                  <span>素材库（画布使用）</span>
-                  <div className="flex items-center gap-2">
+                    参考图
                     <button
                       type="button"
-                      onClick={() => setAssetPickerOpen(true)}
-                      className="rounded-full border border-primary/30 px-2.5 py-1 text-xs text-primary transition-colors hover:bg-accent-soft"
+                      onClick={() => dropTemplateReference(r.id)}
+                      className="text-primary/60 hover:text-primary"
+                      aria-label="移除参考图"
                     >
-                      选择素材
+                      ×
                     </button>
-                  </div>
-                </div>
-                {references.length ? (
-                  <div className="flex flex-col gap-2">
-                    {references.map((r) => (
-                      <div
-                        key={r.id}
-                        draggable
-                        onDragStart={(e) => {
-                          e.dataTransfer.setData(
-                            "application/x-brandai-asset",
-                            JSON.stringify({
-                              id: r.id,
-                              url: r.thumbUrl,
-                              fileName: r.fileName ?? "素材",
-                            }),
-                          );
-                          e.dataTransfer.effectAllowed = "copy";
-                        }}
-                        className="flex items-center gap-2 rounded-2xl border border-border bg-background p-2"
-                      >
-                        <AssetThumb asset={r} alt="画布素材" />
-                        <div className="min-w-0 flex-1">
-                          <div className="truncate text-xs font-medium">
-                            {r.fileName ?? "素材"}
-                          </div>
-                          <div className="mt-1 text-[11px] text-muted-foreground">
-                            可拖到画布，也可在画布底部素材托盘中点击落图。
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => dropReference(r.id)}
-                          aria-label="移除画布素材"
-                          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-destructive"
-                        >
-                          ✕
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="rounded-2xl border border-dashed border-border bg-background px-3 py-4 text-center text-xs text-muted-foreground">
-                    从画布底部“素材”入口选择
-                    Logo、产品图或固定元素，加入后可直接落到画布编辑。
-                  </p>
-                )}
+                  </span>
+                ))}
               </div>
-
-              <div>
-                <div className="mb-2 flex items-center justify-between text-sm font-semibold">
-                  <span>参考图（模板库）</span>
+            ) : null}
+            <div className="rounded-[24px] border border-border bg-background p-3 shadow-[0_8px_28px_rgba(30,30,60,0.08)] focus-within:border-primary/40 focus-within:shadow-[0_0_0_4px_rgba(124,92,255,0.08)]">
+              <textarea
+                value={sellingPoint}
+                maxLength={500}
+                rows={3}
+                placeholder='Start with an idea, or type "@" to mention'
+                onChange={(e) => setSellingPoint(e.target.value)}
+                onKeyDown={(e) => {
+                  if (
+                    e.key === "Enter" &&
+                    (e.metaKey || e.ctrlKey) &&
+                    !submitting &&
+                    !running &&
+                    !editJobId
+                  ) {
+                    e.preventDefault();
+                    if (!projectId) {
+                      setSubmitErr("请先选择一个项目（没有就去项目页创建）");
+                      return;
+                    }
+                    setSubmitErr(null);
+                    void submitByMode();
+                  }
+                }}
+                className="max-h-36 min-h-20 w-full resize-none bg-transparent text-sm leading-relaxed outline-none placeholder:text-muted-foreground"
+              />
+              <div className="mt-2 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setAssetPickerOpen(true)}
+                    className="flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                    title="选择素材"
+                    aria-label="选择素材"
+                  >
+                    +
+                  </button>
                   <button
                     type="button"
                     onClick={() => setTemplatePickerOpen(true)}
-                    className="rounded-full border border-primary/30 px-2.5 py-1 text-xs text-primary transition-colors hover:bg-accent-soft"
+                    className="rounded-full px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                   >
-                    选择参考图
+                    Agent
                   </button>
                 </div>
-                {templateReferences.length ? (
-                  <div className="flex flex-col gap-2">
-                    {templateReferences.map((r) => (
-                      <div
-                        key={r.id}
-                        className="flex items-center gap-2 rounded-2xl border border-border bg-background p-2"
-                      >
-                        <AssetThumb asset={r} alt="模板参考图" />
-                        <div className="min-w-0 flex-1">
-                          <div className="truncate text-xs font-medium">
-                            {r.fileName ?? "参考图"}
-                          </div>
-                          <div className="mt-1 text-[11px] text-muted-foreground">
-                            只参考风格、色系、比例与构图，不直接叠加。
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => dropTemplateReference(r.id)}
-                          aria-label="移除参考图"
-                          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-destructive"
-                        >
-                          ✕
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="rounded-2xl border border-dashed border-border bg-background px-3 py-4 text-center text-xs text-muted-foreground">
-                    从模板库选择图片作为风格与构图参考。
-                  </p>
-                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!projectId) {
+                      setSubmitErr("请先选择一个项目（没有就去项目页创建）");
+                      return;
+                    }
+                    setSubmitErr(null);
+                    void submitByMode();
+                  }}
+                  disabled={submitting || running || !!editJobId}
+                  className="flex h-10 w-10 items-center justify-center rounded-full bg-foreground text-card shadow-[0_10px_24px_rgba(30,30,60,0.18)] transition-opacity disabled:opacity-50"
+                  title="发送"
+                  aria-label="发送"
+                >
+                  ↑
+                </button>
               </div>
             </div>
-          ) : null}
-
-          {/* F11 · 生成额度展示 + H12 升级入口 */}
-          {quota ? (
-            <QuotaBar quota={quota} onUpgrade={() => setShowUpgrade(true)} />
-          ) : null}
-
-          {submitErr ? (
-            <p className="text-sm text-destructive">{submitErr}</p>
-          ) : null}
-
-          <div className="mt-auto">
-            <button
-              onClick={() => {
-                if (!projectId) {
-                  setSubmitErr("请先选择一个项目（没有就去项目页创建）");
-                  return;
-                }
-                setSubmitErr(null);
-                if (workspaceMode === "TEXT_TO_IMAGE") setConfirmSubmit(true);
-                else void submitByMode();
-              }}
-              disabled={submitting || running || !!editJobId}
-              className="h-12 w-full rounded-[18px] bg-gradient-to-br from-primary to-accent text-sm font-medium text-primary-foreground shadow-[0_12px_28px_rgba(124,92,255,0.26)] disabled:opacity-70"
-            >
-              {running
-                ? "AI 正在生成…"
-                : submitting || editJobId
-                  ? "提交中…"
-                  : workspaceMode === "IMAGE_EDIT"
-                    ? "基于此图修改"
-                    : workspaceMode === "INPAINT"
-                      ? "打开局部修改"
-                      : workspaceMode === "OUTPAINT"
-                        ? "开始扩图"
-                        : "提交制作"}
-            </button>
-            <p className="mt-2 text-[11px] text-muted-foreground">
-              内容由 AI 生成，请注意核对准确性。
-            </p>
           </div>
         </aside>
       </div>
