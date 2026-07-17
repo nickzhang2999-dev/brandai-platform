@@ -1,6 +1,6 @@
 import { resolve4 } from "node:dns/promises";
 
-export const REQUIRED_AI_PARSER_REVISION = "grounded-six-slot-r1";
+export const REQUIRED_AI_PARSER_REVISION = "grounded-six-slot-r2";
 
 const CONFIGURED_BASE =
   process.env.BRANDAI_AI_SERVICE_URL ??
