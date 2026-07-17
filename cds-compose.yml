@@ -98,7 +98,8 @@ services:
     # 部署拉新代码后自动重载，根除「ai 容器陈旧代码」陷阱。
     command: >
       /bin/sh -c "pip install -r requirements.txt &&
-      uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/app --reload-include '*.py'"
+      uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-delay 1
+      --reload-dir /app/app --reload-include '*.py'"
     # 不暴露公网路由:FastAPI 的 /v1/* 没有 requireUser/workspace/quota 门禁,
     # 公网直达会让任何人调 /ai/v1/generate 烧 provider 凭据。web 容器只经内部
     # AI_SERVICE_URL=http://ai:8000 调用它,故移除原 cds.path-prefix=/ai/ 暴露。
@@ -135,10 +136,9 @@ services:
       # Encrypts admin-supplied AI keys at rest. Dedicated key = the project JWT
       # secret (stable); the app also falls back to AUTH_SECRET if this is empty.
       SETTINGS_ENC_KEY: "${CDS_JWT_SECRET}"
-      # 跨分支共享 docker 网络时裸 `ai` 别名会同时解析到本分支与 main 分支的 ai 容器
-      # (round-robin → 间歇命中 main 旧 ai → 新路由 404)。用分支级 env 指向唯一容器名
-      # `cds-<branchId>-ai` 即可隔离；其他分支不设该 env 时回退裸别名。
-      AI_SERVICE_URL: "${AI_SERVICE_URL:-http://ai:8000}"
+      # CDS 为每个分支注入当前分支专属的 service host/port。禁止回退裸 `ai`
+      # 别名：多分支共享网络时它会 round-robin 到其他分支的旧 AI 容器。
+      AI_SERVICE_URL: "http://${CDS_AI_HOST:-ai}:${CDS_AI_PORT:-8000}"
       NODE_ENV: "production"
       CI: "true"
       # scripts/web-startup.sh listens on $PORT.
@@ -187,10 +187,8 @@ services:
       REDIS_URL: "${CDS_REDIS_URL}"
       AUTH_SECRET: "${CDS_JWT_SECRET}"
       SETTINGS_ENC_KEY: "${CDS_JWT_SECRET}"
-      # 跨分支共享 docker 网络时裸 `ai` 别名会同时解析到本分支与 main 分支的 ai 容器
-      # (round-robin → 间歇命中 main 旧 ai → 新路由 404)。用分支级 env 指向唯一容器名
-      # `cds-<branchId>-ai` 即可隔离；其他分支不设该 env 时回退裸别名。
-      AI_SERVICE_URL: "${AI_SERVICE_URL:-http://ai:8000}"
+      # 与 web 一样只连接当前 CDS 分支专属 AI 容器，杜绝解析/生成串分支。
+      AI_SERVICE_URL: "http://${CDS_AI_HOST:-ai}:${CDS_AI_PORT:-8000}"
       WORKER_HEALTH_PORT: "3001"
       NODE_ENV: "production"
       CI: "true"
