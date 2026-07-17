@@ -15,6 +15,7 @@ import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   Asset,
+  BrandRule,
   Generation,
   GenerationVersion,
   ListMembersResponse,
@@ -265,6 +266,14 @@ function Workspace() {
     queryKey: ["brandai-projects", wsId],
     queryFn: () => apiFetch<Project[]>(`/api/workspaces/${wsId}/projects`),
   });
+  const { data: brandRules = [] } = useQuery({
+    queryKey: ["brandai-rules", wsId],
+    queryFn: () =>
+      apiFetch<BrandRule[]>(`/api/workspaces/${wsId}/rules`),
+  });
+  const confirmedBrandRuleCount = brandRules.filter(
+    (rule) => rule.status === "CONFIRMED",
+  ).length;
 
   const [projectId, setProjectId] = useState<string | null>(presetProject);
   // React to client-side navigations that change `?project=` (E11/E12 「加入项目」
@@ -1464,6 +1473,9 @@ function Workspace() {
             /
           </span>
           <span className="font-medium text-foreground">工作台</span>
+          <span className="ml-2 inline-flex items-center rounded-full border border-primary/20 bg-accent-soft px-2.5 py-1 text-xs font-medium text-primary">
+            品牌套件自动应用 · {confirmedBrandRuleCount} 条规则
+          </span>
         </nav>
         <div className="flex items-center gap-3">
           {/* F2 / L6 — undo/redo (生成表单快照)。缩放在画布内自带。 */}
@@ -1883,7 +1895,7 @@ function Workspace() {
                 value={sellingPoint}
                 maxLength={500}
                 rows={3}
-                placeholder='Start with an idea, or type "@" to mention'
+                placeholder="描述你想生成或修改的画面…"
                 onChange={(e) => setSellingPoint(e.target.value)}
                 onKeyDown={(e) => {
                   if (
