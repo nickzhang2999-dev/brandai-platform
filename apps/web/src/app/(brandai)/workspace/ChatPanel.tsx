@@ -1,37 +1,41 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Generation } from "@brandai/contracts";
 import { apiFetch } from "@/lib/client";
+import {
+  buildModelBrief,
+  MAX_CHAT_IMAGE_INPUTS,
+  parseChatDisplayText,
+  serializeComposerTokens,
+  type ChatComposerRef,
+  type ComposerToken,
+} from "@/lib/chat-composer";
 
 /**
  * V0.0.13 · AI 设计师对话面板（迁移自 prd_agent 视觉创作右侧对话，交互对标
  * Lovart）。
  *
- * 设计要点（两条都是从 prd_agent 的 bug 反推出来的硬约束）：
+ * 设计要点（都是从 prd_agent 的 bug / 用户验收反馈反推出来的硬约束）：
  *  1. 会话流不建消息表 —— 直接把本项目的 Generation 历史投影成对话
  *     （服务端权威：刷新/换设备/深链回来，会话流从服务端完整恢复）。
- *  2. 展示层与模型层物理分离 —— 气泡只显示 chatContext.displayText（用户
- *     原文）+ 引用图缩略 chip；模型 prompt 由 worker/AI 服务从结构化字段
- *     组装，绝不把 URL/文件名/【引用图片】块拼进可见文本。
+ *  2. 展示层与模型层物理分离 —— 气泡只显示用户组织的内容（文字 + 行内
+ *     图片 chip）；模型 prompt 由 worker/AI 服务从结构化字段组装，绝不把
+ *     URL/文件名/【引用图片】块拼进可见文本。
+ *  3. V0.0.13b 富文本混排（用户验收反馈）—— 图片 chip 是**文字流的一部分**
+ *     （"[chip]拿着[chip]在[chip]的背景里…"），不是文本框上方的一排附件：
+ *     contentEditable 输入器在光标处插入行内 chip，线格式用 U+FFFC 标记
+ *     chip 位置（见 lib/chat-composer.ts），气泡按标记位置行内还原。
  *
  * 图生图 = 引用 1 张图 + 指令；多图生图 = 按序引用 ≤8 张。两者走同一条
  * POST /generations → worker → /images/edits multipart 路径。
  */
 
-export interface ChatImageRef {
-  kind: "VERSION" | "ASSET";
-  id: string;
-  url: string;
-}
-
 interface ChatContextShape {
   displayText?: string;
   imageInputs?: { kind: "VERSION" | "ASSET"; id: string; url?: string }[];
 }
-
-const MAX_REFS = 8;
 
 function fmtTime(iso: string): string {
   const d = new Date(iso);
@@ -41,6 +45,71 @@ function fmtTime(iso: string): string {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+/** 气泡内的行内 chip（缩略图；解析不到图时退化为「图N」中性块）。 */
+function InlineChip({
+  ordinal,
+  url,
+}: {
+  ordinal: number;
+  url?: string;
+}) {
+  return (
+    <span
+      title={`引用图片 ${ordinal}`}
+      className="mx-0.5 inline-flex translate-y-[6px] items-center overflow-hidden rounded-md border border-primary/25 bg-card align-baseline"
+    >
+      {url ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={url}
+          alt={`引用 ${ordinal}`}
+          className="h-6 w-6 object-cover"
+        />
+      ) : (
+        <span className="flex h-6 w-6 items-center justify-center bg-muted text-[9px] text-muted-foreground">
+          图{ordinal}
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** 用户气泡正文：文字与 chip 按线格式标记位置混排。 */
+function UserBubbleContent({
+  displayText,
+  imageInputs,
+}: {
+  displayText: string;
+  imageInputs: ChatComposerRef[];
+}) {
+  const segments = parseChatDisplayText(displayText, imageInputs);
+  const hasInline = segments.some((s) => s.type === "image");
+  return (
+    <>
+      {/* 兼容早期（无行内标记）的消息：chip 集中显示在正文上方。 */}
+      {!hasInline && imageInputs.length > 0 ? (
+        <span className="mb-1.5 flex flex-wrap justify-end gap-1.5">
+          {imageInputs.map((c, i) => (
+            <InlineChip key={`${c.id}-${i}`} ordinal={i + 1} url={c.url} />
+          ))}
+        </span>
+      ) : null}
+      <span className="whitespace-pre-wrap break-words text-xs leading-6 text-foreground">
+        {segments.map((s, i) =>
+          s.type === "text" ? (
+            <span key={i}>{s.text}</span>
+          ) : (
+            <InlineChip key={i} ordinal={s.ordinal} url={s.ref?.url} />
+          ),
+        )}
+        {displayText.trim() === "" && imageInputs.length === 0 ? (
+          <span className="italic text-muted-foreground">（空消息）</span>
+        ) : null}
+      </span>
+    </>
+  );
 }
 
 export function ChatPanel({
@@ -56,8 +125,9 @@ export function ChatPanel({
   onViewGeneration: (generationId: string) => void;
 }) {
   const qc = useQueryClient();
-  const [draft, setDraft] = useState("");
-  const [refs, setRefs] = useState<ChatImageRef[]>([]);
+  const composerRef = useRef<HTMLDivElement | null>(null);
+  const [chipCount, setChipCount] = useState(0);
+  const [composerEmpty, setComposerEmpty] = useState(true);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [sending, setSending] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -123,20 +193,98 @@ export function ChatPanel({
     if (el) el.scrollTop = el.scrollHeight;
   }, [threadFingerprint]);
 
-  function toggleRef(candidate: { id: string; url: string }) {
-    setRefs((prev) => {
-      const idx = prev.findIndex(
-        (r) => r.kind === "VERSION" && r.id === candidate.id,
-      );
-      if (idx >= 0) return prev.filter((_, i) => i !== idx);
-      if (prev.length >= MAX_REFS) return prev;
-      return [...prev, { kind: "VERSION", id: candidate.id, url: candidate.url }];
-    });
+  /** composer DOM 状态 → chipCount / 是否为空。 */
+  const syncComposerState = useCallback(() => {
+    const el = composerRef.current;
+    if (!el) return;
+    const chips = el.querySelectorAll("[data-chat-chip]").length;
+    setChipCount(chips);
+    setComposerEmpty(chips === 0 && (el.textContent ?? "").trim() === "");
+  }, []);
+
+  /** 在光标处插入一个行内图片 chip（不在输入器内则追加到末尾）。 */
+  const insertChip = useCallback(
+    (ref: { kind: "VERSION" | "ASSET"; id: string; url: string }) => {
+      const el = composerRef.current;
+      if (!el) return;
+      if (el.querySelectorAll("[data-chat-chip]").length >= MAX_CHAT_IMAGE_INPUTS) {
+        setErr(`最多引用 ${MAX_CHAT_IMAGE_INPUTS} 张图片`);
+        return;
+      }
+      setErr(null);
+      const chip = document.createElement("span");
+      chip.contentEditable = "false";
+      chip.dataset.chatChip = "1";
+      chip.dataset.kind = ref.kind;
+      chip.dataset.id = ref.id;
+      chip.dataset.url = ref.url;
+      chip.className =
+        "mx-0.5 inline-flex translate-y-[6px] select-none items-center gap-1 overflow-hidden rounded-md border border-primary/30 bg-accent-soft pr-1 align-baseline";
+      chip.innerHTML =
+        `<img src="${ref.url.replace(/"/g, "&quot;")}" alt="引用图片" class="h-6 w-6 object-cover" />` +
+        `<span class="max-w-[64px] truncate text-[9px] text-primary">#${ref.id.slice(-4)}</span>` +
+        `<button type="button" data-chip-remove="1" aria-label="移除引用" class="text-[10px] leading-none text-primary/70 hover:text-primary">×</button>`;
+      const sel = window.getSelection();
+      let inserted = false;
+      if (sel && sel.rangeCount > 0) {
+        const range = sel.getRangeAt(0);
+        if (el.contains(range.commonAncestorContainer)) {
+          range.deleteContents();
+          range.insertNode(chip);
+          range.setStartAfter(chip);
+          range.collapse(true);
+          sel.removeAllRanges();
+          sel.addRange(range);
+          inserted = true;
+        }
+      }
+      if (!inserted) el.appendChild(chip);
+      el.focus();
+      syncComposerState();
+    },
+    [syncComposerState],
+  );
+
+  /** contentEditable DOM → 有序 token 流（文本 / chip / 换行）。 */
+  function domToTokens(root: Node): ComposerToken[] {
+    const tokens: ComposerToken[] = [];
+    const walk = (node: Node, topLevel: boolean) => {
+      node.childNodes.forEach((child) => {
+        if (child.nodeType === Node.TEXT_NODE) {
+          const text = child.textContent ?? "";
+          if (text) tokens.push({ type: "text", text });
+          return;
+        }
+        if (!(child instanceof HTMLElement)) return;
+        if (child.dataset.chatChip) {
+          tokens.push({
+            type: "image",
+            ref: {
+              kind: (child.dataset.kind === "ASSET" ? "ASSET" : "VERSION"),
+              id: child.dataset.id ?? "",
+              url: child.dataset.url,
+            },
+          });
+          return;
+        }
+        if (child.tagName === "BR") {
+          tokens.push({ type: "text", text: "\n" });
+          return;
+        }
+        // div/p 行容器（浏览器回车产物）→ 行间补换行。
+        if (topLevel && tokens.length > 0) {
+          tokens.push({ type: "text", text: "\n" });
+        }
+        walk(child, false);
+      });
+    };
+    walk(root, true);
+    return tokens;
   }
 
   async function submit(payload: {
-    text: string;
-    imageInputs: { kind: "VERSION" | "ASSET"; id: string }[];
+    displayText: string;
+    imageInputs: ChatComposerRef[];
   }) {
     if (!projectId) {
       setErr("请先选择项目");
@@ -150,14 +298,19 @@ export function ChatPanel({
         body: JSON.stringify({
           projectId,
           sceneType,
-          // 用户指令进 sellingPoint（prompt 载体）；展示原文单独走
-          // chatDisplayText —— 两层分离，气泡永远只显示后者。
-          sellingPoint: payload.text,
+          // 模型层 brief：chip 标记替换为 [图N]（与 multipart 顺序对应）；
+          // 展示原文单独走 chatDisplayText —— 两层分离。
+          sellingPoint: buildModelBrief(payload.displayText).trim(),
           versionCount: 1,
           ...(payload.imageInputs.length > 0
-            ? { imageInputs: payload.imageInputs }
+            ? {
+                imageInputs: payload.imageInputs.map((r) => ({
+                  kind: r.kind,
+                  id: r.id,
+                })),
+              }
             : {}),
-          chatDisplayText: payload.text,
+          chatDisplayText: payload.displayText,
         }),
       });
       await qc.invalidateQueries({
@@ -171,14 +324,15 @@ export function ChatPanel({
   }
 
   async function send() {
-    const text = draft.trim();
-    if (!text && refs.length === 0) return;
-    await submit({
-      text,
-      imageInputs: refs.map((r) => ({ kind: r.kind, id: r.id })),
-    });
-    setDraft("");
-    setRefs([]);
+    const el = composerRef.current;
+    if (!el) return;
+    const { displayText, imageInputs } = serializeComposerTokens(
+      domToTokens(el),
+    );
+    if (displayText.trim() === "" && imageInputs.length === 0) return;
+    await submit({ displayText, imageInputs });
+    el.innerHTML = "";
+    syncComposerState();
     setPickerOpen(false);
   }
 
@@ -186,10 +340,11 @@ export function ChatPanel({
   async function retry(g: Generation) {
     const ctx = (g.chatContext ?? {}) as ChatContextShape;
     await submit({
-      text: ctx.displayText ?? g.sellingPoint ?? "",
+      displayText: ctx.displayText ?? g.sellingPoint ?? "",
       imageInputs: (ctx.imageInputs ?? []).map((r) => ({
         kind: r.kind,
         id: r.id,
+        url: r.url,
       })),
     });
   }
@@ -202,9 +357,11 @@ export function ChatPanel({
           Hi，我是你的 AI 设计师
         </div>
         <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">
-          直接输入文字发送即可<strong className="font-medium text-foreground">文生图</strong>
-          ；从历史出图选中 1 张即<strong className="font-medium text-foreground">图生图</strong>
-          ，多选（≤{MAX_REFS} 张，按选择顺序）即
+          直接输入文字发送即可
+          <strong className="font-medium text-foreground">文生图</strong>
+          ；点「引用图片」把图插进文字里（如「把 图1 放在 图2 的背景里」），
+          1 张即<strong className="font-medium text-foreground">图生图</strong>
+          ，多张（≤{MAX_CHAT_IMAGE_INPUTS}，按插入顺序）即
           <strong className="font-medium text-foreground">多图合成</strong>。
         </p>
       </div>
@@ -219,14 +376,18 @@ export function ChatPanel({
           <div className="mt-8 rounded-2xl border border-dashed border-border bg-background p-4 text-center text-xs leading-relaxed text-muted-foreground">
             还没有对话。
             <br />
-            在下方输入设计需求，或选择引用图片开始图生图。
+            在下方输入设计需求，或插入引用图片开始图生图。
           </div>
         ) : (
           <div className="flex flex-col gap-4 pb-2">
             {thread.map((g) => {
               const ctx = (g.chatContext ?? null) as ChatContextShape | null;
               const displayText = ctx?.displayText ?? g.sellingPoint ?? "";
-              const chips = ctx?.imageInputs ?? [];
+              const chips = (ctx?.imageInputs ?? []).map((c) => ({
+                kind: c.kind,
+                id: c.id,
+                url: c.url,
+              }));
               const active =
                 g.status === "PENDING" || g.status === "RUNNING";
               const elapsedS = Math.max(
@@ -235,43 +396,13 @@ export function ChatPanel({
               );
               return (
                 <div key={g.id} className="flex flex-col gap-2">
-                  {/* 用户气泡 —— 只显示用户原文 + 引用 chip，绝不显示
+                  {/* 用户气泡 —— 文字与 chip 行内混排，绝不显示
                       prompt/文件名/URL。 */}
                   <div className="ml-6 self-end rounded-2xl rounded-br-md bg-accent-soft px-3 py-2">
-                    {chips.length > 0 ? (
-                      <div className="mb-1.5 flex flex-wrap justify-end gap-1.5">
-                        {chips.map((c, i) => (
-                          <span
-                            key={`${c.id}-${i}`}
-                            className="relative h-10 w-10 overflow-hidden rounded-lg border border-primary/20"
-                            title={`引用图片 ${i + 1}`}
-                          >
-                            {c.url ? (
-                              // eslint-disable-next-line @next/next/no-img-element
-                              <img
-                                src={c.url}
-                                alt={`引用 ${i + 1}`}
-                                className="h-full w-full object-cover"
-                              />
-                            ) : (
-                              <span className="flex h-full w-full items-center justify-center bg-muted text-[9px] text-muted-foreground">
-                                图{i + 1}
-                              </span>
-                            )}
-                            <span className="absolute bottom-0 right-0 rounded-tl-md bg-primary px-1 text-[9px] font-medium text-primary-foreground">
-                              {i + 1}
-                            </span>
-                          </span>
-                        ))}
-                      </div>
-                    ) : null}
-                    <div className="whitespace-pre-wrap break-words text-xs text-foreground">
-                      {displayText || (
-                        <span className="italic text-muted-foreground">
-                          （仅引用图片）
-                        </span>
-                      )}
-                    </div>
+                    <UserBubbleContent
+                      displayText={displayText}
+                      imageInputs={chips}
+                    />
                     <div className="mt-1 text-right text-[10px] text-muted-foreground">
                       {fmtTime(g.createdAt)}
                     </div>
@@ -337,12 +468,12 @@ export function ChatPanel({
         )}
       </div>
 
-      {/* 引用选择器 */}
+      {/* 引用选择器：点选 → 插入到输入器光标处（成为文字流的一部分） */}
       {pickerOpen ? (
         <div className="mt-2 shrink-0 rounded-2xl border border-border bg-background p-2">
           <div className="mb-1.5 flex items-center justify-between text-[11px] text-muted-foreground">
             <span>
-              点选历史出图作为引用（按点击顺序，{refs.length}/{MAX_REFS}）
+              点选图片插入到光标处（{chipCount}/{MAX_CHAT_IMAGE_INPUTS}）
             </span>
             <button
               type="button"
@@ -358,114 +489,124 @@ export function ChatPanel({
             </p>
           ) : (
             <div className="flex max-h-[120px] flex-wrap gap-1.5 overflow-y-auto">
-              {candidates.map((c) => {
-                const ordinal =
-                  refs.findIndex(
-                    (r) => r.kind === "VERSION" && r.id === c.id,
-                  ) + 1;
-                return (
-                  <button
-                    key={c.id}
-                    type="button"
-                    onClick={() => toggleRef(c)}
-                    className={[
-                      "relative h-12 w-12 overflow-hidden rounded-lg border-2 transition-colors",
-                      ordinal > 0
-                        ? "border-primary"
-                        : "border-transparent hover:border-border",
-                    ].join(" ")}
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={c.url}
-                      alt="候选引用"
-                      className="h-full w-full object-cover"
-                    />
-                    {ordinal > 0 ? (
-                      <span className="absolute bottom-0 right-0 rounded-tl-md bg-primary px-1 text-[9px] font-medium text-primary-foreground">
-                        {ordinal}
-                      </span>
-                    ) : null}
-                  </button>
-                );
-              })}
+              {candidates.map((c) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  title="插入到输入框"
+                  // 保住 composer 的焦点与光标：点击候选图不抢焦点（编辑器
+                  // 工具栏惯例），chip 才能插到用户正在编辑的位置。
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() =>
+                    insertChip({ kind: "VERSION", id: c.id, url: c.url })
+                  }
+                  className="relative h-12 w-12 overflow-hidden rounded-lg border-2 border-transparent transition-colors hover:border-primary"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={c.url}
+                    alt="候选引用"
+                    className="h-full w-full object-cover"
+                  />
+                </button>
+              ))}
             </div>
           )}
         </div>
       ) : null}
 
-      {/* 输入区 */}
-      <div className="mt-2 shrink-0">
-        {refs.length > 0 ? (
-          <div className="mb-1.5 flex flex-wrap gap-1.5">
-            {refs.map((r, i) => (
-              <span
-                key={`${r.id}-${i}`}
-                className="relative h-10 w-10 overflow-hidden rounded-lg border border-primary/30"
-              >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={r.url}
-                  alt={`引用 ${i + 1}`}
-                  className="h-full w-full object-cover"
-                />
-                <span className="absolute bottom-0 right-0 rounded-tl-md bg-primary px-1 text-[9px] font-medium text-primary-foreground">
-                  {i + 1}
-                </span>
-                <button
-                  type="button"
-                  aria-label={`移除引用 ${i + 1}`}
-                  onClick={() =>
-                    setRefs((prev) => prev.filter((_, j) => j !== i))
-                  }
-                  className="absolute right-0 top-0 rounded-bl-md bg-foreground/70 px-1 text-[9px] text-white"
-                >
-                  ×
-                </button>
-              </span>
-            ))}
-          </div>
-        ) : null}
+      {/* 输入区 —— 富文本混排：图片 chip 藏在文字里。
+          pb-12：右下角队列 widget（fixed bottom-4 right-4，§2.3 全局进度面）
+          与本面板底部同位；预留安全底距，发送/引用按钮不被折叠态 widget
+          头条遮挡（不遮挡原则）。 */}
+      <div className="mt-2 shrink-0 pb-12">
         <div className="rounded-[24px] border border-border bg-background p-2 focus-within:border-primary/40 focus-within:shadow-[0_0_0_4px_rgba(124,92,255,0.08)]">
-          <textarea
-            value={draft}
-            rows={2}
-            placeholder="输入设计需求，直接发送即可文生图（Enter 发送，Shift+Enter 换行）"
-            className="w-full resize-none bg-transparent px-1 text-xs text-foreground outline-none placeholder:text-muted-foreground"
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+          <div className="relative">
+            {composerEmpty ? (
+              <span className="pointer-events-none absolute left-1 top-0 text-xs leading-6 text-muted-foreground">
+                输入设计需求，可把引用图片插进句子里（Enter 发送，Shift+Enter
+                换行）
+              </span>
+            ) : null}
+            <div
+              ref={composerRef}
+              contentEditable
+              suppressContentEditableWarning
+              role="textbox"
+              aria-multiline="true"
+              aria-label="设计需求输入（支持在文字中插入引用图片）"
+              data-testid="chat-composer"
+              className="min-h-[48px] max-h-[140px] w-full overflow-y-auto px-1 text-xs leading-6 text-foreground outline-none"
+              onInput={syncComposerState}
+              onClick={(e) => {
+                const t = e.target as HTMLElement;
+                if (t.closest("[data-chip-remove]")) {
+                  t.closest("[data-chat-chip]")?.remove();
+                  syncComposerState();
+                }
+              }}
+              onKeyDown={(e) => {
+                if (
+                  e.key === "Enter" &&
+                  !e.shiftKey &&
+                  !e.nativeEvent.isComposing
+                ) {
+                  e.preventDefault();
+                  void send();
+                }
+              }}
+              onPaste={(e) => {
+                // 只收纯文本，防止外部富文本/HTML 污染线格式。
                 e.preventDefault();
-                void send();
-              }
-            }}
-          />
+                const text = e.clipboardData.getData("text/plain");
+                document.execCommand("insertText", false, text);
+              }}
+              onDragOver={(e) => {
+                if (
+                  e.dataTransfer.types.includes("application/x-brandai-version")
+                ) {
+                  e.preventDefault();
+                }
+              }}
+              onDrop={(e) => {
+                const versionId = e.dataTransfer.getData(
+                  "application/x-brandai-version",
+                );
+                if (!versionId) return;
+                e.preventDefault();
+                const cand = candidates.find((c) => c.id === versionId);
+                if (cand) {
+                  insertChip({ kind: "VERSION", id: cand.id, url: cand.url });
+                }
+              }}
+            />
+          </div>
           <div className="flex items-center justify-between px-1 pt-1">
             <button
               type="button"
               onClick={() => setPickerOpen((v) => !v)}
               className={[
                 "rounded-full border px-2.5 py-1 text-[11px] transition-colors",
-                pickerOpen || refs.length > 0
+                pickerOpen || chipCount > 0
                   ? "border-primary/40 bg-accent-soft text-primary"
                   : "border-border text-muted-foreground hover:bg-muted",
               ].join(" ")}
             >
-              引用图片{refs.length > 0 ? ` ${refs.length}` : ""}
+              引用图片{chipCount > 0 ? ` ${chipCount}` : ""}
             </button>
             <div className="flex items-center gap-2">
               {/* 模式指示：让用户明确本次发送会跑哪条链路。 */}
               <span className="text-[10px] text-muted-foreground">
-                {refs.length === 0
+                {chipCount === 0
                   ? "文生图"
-                  : refs.length === 1
+                  : chipCount === 1
                     ? "图生图"
-                    : `多图合成×${refs.length}`}
+                    : `多图合成×${chipCount}`}
               </span>
               <button
                 type="button"
                 onClick={() => void send()}
-                disabled={sending || (!draft.trim() && refs.length === 0)}
+                disabled={sending || (composerEmpty && chipCount === 0)}
                 className="rounded-full bg-primary px-3.5 py-1.5 text-[11px] font-medium text-primary-foreground transition-opacity disabled:opacity-50"
               >
                 {sending ? "发送中…" : "发送"}
