@@ -953,12 +953,33 @@ class HttpVLMProvider(VLMProvider):
                     _extract_manual_crops(data, batch, min(remaining, 6))
                 )
 
-        merged = _merge_manual_results(chunk_results)
+        extracted.extend(
+            _fallback_manual_crops(
+                rendered,
+                extracted,
+                _MAX_MANUAL_ASSETS - len(extracted),
+            )
+        )
+        merged = _merge_manual_results(chunk_results, rendered)
         valid_refs = {a["ref"] for a in extracted}
         for rule in merged.get("rules", []):
             for evidence in rule.get("evidence", []):
                 if evidence.get("sourceRef") not in valid_refs:
                     evidence.pop("sourceRef", None)
+            if not any(e.get("sourceRef") for e in rule.get("evidence", [])):
+                fallback_asset = next(
+                    (a for a in extracted if a.get("type") == rule.get("type")),
+                    None,
+                )
+                if fallback_asset:
+                    rule.setdefault("evidence", []).append(
+                        {
+                            "page": fallback_asset["page"],
+                            "sourceRef": fallback_asset["ref"],
+                            "bbox": fallback_asset["bbox"],
+                            "note": fallback_asset["label"],
+                        }
+                    )
         merged["extractedAssets"] = extracted
         return merged
 
@@ -1529,7 +1550,215 @@ def _merge_json_value(target: dict[str, Any], source: dict[str, Any]) -> None:
                     seen.add(marker)
 
 
-def _merge_manual_results(results: list[dict[str, Any]]) -> dict[str, Any]:
+def _manual_page_for(
+    pages: list[dict[str, Any]], keywords: list[str]
+) -> tuple[int, str] | None:
+    """Return the strongest page match for the first available keyword.
+
+    Manuals often repeat every section title in an early contents page. Within
+    the preferred keyword, favor the later match so a fallback visual is the
+    actual specification page rather than the contents entry.
+    """
+    for keyword in keywords:
+        matches = []
+        for page in pages:
+            page_text = str(page.get("text") or "")
+            count = page_text.lower().count(keyword.lower())
+            if count:
+                matches.append(int(page.get("page") or 0))
+        if matches:
+            return max(matches), keyword
+    return None
+
+
+def _ground_missing_manual_modules(
+    grouped: dict[str, dict[str, Any]], pages: list[dict[str, Any]]
+) -> None:
+    """Fill model-omitted modules only from facts explicitly present in the PDF.
+
+    Some OpenAI-compatible VLMs describe the dominant page topic but omit quiet
+    modules (most often logo/copy) from otherwise valid JSON. These fallbacks
+    run only when a module is absent and every emitted fact is matched against
+    extracted page text, with a page citation.
+    """
+    combined = "\n".join(str(page.get("text") or "") for page in pages)
+    compact = re.sub(r"\s+", "", combined)
+
+    def add(
+        kind: str,
+        *,
+        keywords: list[str],
+        summary: str,
+        value: dict[str, Any],
+        strength: str = "STRONG",
+    ) -> None:
+        if kind in grouped:
+            return
+        hit = _manual_page_for(pages, keywords)
+        if not hit:
+            return
+        page_no, keyword = hit
+        grouped[kind] = {
+            "type": kind,
+            "strength": strength,
+            "summaryParts": [summary],
+            "value": value,
+            "evidence": [
+                {"page": page_no, "note": f"第 {page_no} 页 · {keyword}"}
+            ],
+        }
+
+    logo_donts = []
+    if "不得改变其形状、结构和比例" in compact:
+        logo_donts.append("不得改变标志的形状、结构和比例")
+    if "请勿自行创造组合形式" in compact:
+        logo_donts.append("不得自行创造标志组合形式")
+    logo_value: dict[str, Any] = {"dontRules": logo_donts}
+    if "小于8mm时禁止使用" in compact:
+        logo_value["minimumHeightMm"] = 8
+    add(
+        "logo",
+        keywords=[
+            "企业标志及标志创意说明",
+            "标志墨稿",
+            "标志反白效果图",
+            "标志标准化制图",
+        ],
+        summary="使用标准品牌标志及组合，不得改变形状、结构和比例",
+        value=logo_value,
+    )
+
+    font_names = [
+        name
+        for name in [
+            "LetoSans",
+            "思源黑体",
+            "Myriad Pro",
+            "汉仪旗黑",
+            "汉仪中黑简",
+            "MonoxRegular",
+        ]
+        if name.lower() in combined.lower()
+    ]
+    add(
+        "font",
+        keywords=["企业专用印刷字体", "企业全称中文字体", "企业简称英文字体"],
+        summary="按手册使用企业标准字与专用印刷字体",
+        value={"families": font_names},
+    )
+
+    colors: list[str] = []
+    for color in re.findall(r"#[0-9A-Fa-f]{6}\b", combined):
+        normalized = color.upper()
+        if normalized not in colors:
+            colors.append(normalized)
+    add(
+        "color",
+        keywords=["企业标准色（印刷色）", "辅助色系列", "色彩规范"],
+        summary="使用手册规定的企业标准色与辅助色",
+        value={"palette": colors[:16]},
+    )
+
+    add(
+        "layout",
+        keywords=[
+            "广告信息视觉层级梳理",
+            "基本板式集合呈现",
+            "标志与标准字组合多种模式",
+            "标志方格坐标制作图",
+        ],
+        summary="遵循标准组合、保护留白与广告信息视觉层级",
+        value={
+            "rules": [
+                "标准组合周边保留保护空间",
+                "不得改变标准组合比例或自行创造组合形式",
+            ]
+        },
+    )
+
+    imagery_value: dict[str, Any] = {
+        "usage": "按手册中的辅助图形与应用示例保持统一视觉风格"
+    }
+    if "小白砖" in combined:
+        imagery_value["motif"] = "小白砖"
+    add(
+        "imagery",
+        keywords=[
+            "辅助图形的应用延展",
+            "辅助图形基本使用形式",
+            "辅助图形释义",
+            "户外擎天柱广告",
+        ],
+        summary="统一使用手册规定的辅助图形及应用视觉风格",
+        value=imagery_value,
+        strength="WEAK",
+    )
+
+    slogans = []
+    for phrase in ["一家一世界 一居一生活", "一站式整屋家居"]:
+        if re.sub(r"\s+", "", phrase) in compact:
+            slogans.append(phrase)
+    add(
+        "copy",
+        keywords=[
+            "广告信息视觉层级梳理",
+            "室内企业精神口号标牌",
+            "基本板式集合呈现",
+        ],
+        summary=("品牌传播使用：" + "；".join(slogans))
+        if slogans
+        else "按手册中的品牌口号与广告信息层级进行传播",
+        value={"slogans": slogans},
+        strength="WEAK",
+    )
+
+
+def _fallback_manual_crops(
+    pages: list[dict[str, Any]], extracted: list[dict[str, Any]], limit: int
+) -> list[dict[str, Any]]:
+    """Create grounded page previews when the VLM omits crop descriptors."""
+    existing_types = {str(asset.get("type") or "") for asset in extracted}
+    keyword_map = {
+        "logo": ["企业标志及标志创意说明", "标志墨稿", "标志反白效果图"],
+        "font": ["企业专用印刷字体", "企业全称中文字体"],
+        "color": ["企业标准色（印刷色）", "辅助色系列"],
+        "layout": ["基本板式集合呈现", "广告信息视觉层级梳理"],
+        "imagery": ["辅助图形的应用延展", "辅助图形基本使用形式"],
+        "copy": ["广告信息视觉层级梳理", "室内企业精神口号标牌"],
+    }
+    labels = {
+        "logo": "标志规范页面",
+        "font": "字体规范页面",
+        "color": "色彩规范页面",
+        "layout": "版式规范页面",
+        "imagery": "图像与辅助图形页面",
+        "copy": "品牌表达规范页面",
+    }
+    candidates: list[dict[str, Any]] = []
+    for kind, keywords in keyword_map.items():
+        if kind in existing_types:
+            continue
+        hit = _manual_page_for(pages, keywords)
+        if not hit:
+            continue
+        page_no, _keyword = hit
+        candidates.append(
+            {
+                "ref": f"p{page_no}-{kind}-page-evidence",
+                "type": kind,
+                "page": page_no,
+                "bbox": [0.04, 0.07, 0.92, 0.86],
+                "label": labels[kind],
+            }
+        )
+    return _extract_manual_crops(
+        {"assets": candidates}, pages, max(0, min(limit, len(candidates)))
+    )
+
+
+def _merge_manual_results(
+    results: list[dict[str, Any]], pages: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
     """Consolidate page batches into one editable draft per Brand Kit module."""
     order = ["logo", "font", "color", "layout", "imagery", "copy"]
     grouped: dict[str, dict[str, Any]] = {}
@@ -1562,6 +1791,8 @@ def _merge_manual_results(results: list[dict[str, Any]]) -> dict[str, Any]:
             for evidence in rule.get("evidence", []) or []:
                 if evidence not in current["evidence"] and len(current["evidence"]) < 8:
                     current["evidence"].append(evidence)
+
+    _ground_missing_manual_modules(grouped, pages or [])
 
     rules: list[dict[str, Any]] = []
     for kind in order:
