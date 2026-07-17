@@ -1,24 +1,23 @@
 import { Queue } from "bullmq";
 import IORedis from "ioredis";
+import { queuePrefix } from "@/lib/queue-prefix";
+
+export { queuePrefix } from "@/lib/queue-prefix";
 
 const url = process.env.REDIS_URL ?? "redis://localhost:6379";
 
 export const connection = new IORedis(url, { maxRetriesPerRequest: null });
 
 /**
- * BullMQ key prefix. CDS gray runs Redis in **shared** mode across branch
- * deployments, and unprefixed queues (`bull:generate`, …) let a foreign/older
- * deployment's worker pick up THIS deployment's jobs — so a stale worker can
- * process a new job and silently drop newly-added job fields. Namespacing the
- * queues per deployment (set `BULLMQ_PREFIX` to the branch/deploy id in the CDS
- * env) keeps each stack's jobs on its own worker. Defaults to BullMQ's standard
- * `"bull"` when unset, so local/single-deploy behavior is unchanged.
+ * BullMQ key prefix. CDS injects VITE_GIT_BRANCH into every app container, so
+ * derive the namespace in code instead of relying on an operator to remember a
+ * branch-scoped BULLMQ_PREFIX. This prevents another branch's older worker from
+ * consuming a new parse/generate job on the shared Redis instance.
  *
- * IMPORTANT: the producer (these Queues) and the consumers
- * (`lib/workers/*.worker.ts`) MUST share this exact prefix.
+ * BRANDAI_QUEUE_PREFIX remains the explicit production override. The legacy
+ * BULLMQ_PREFIX is used only when no branch identity exists (local/single-stack
+ * compatibility). Producer and consumers import this same constant.
  */
-export const queuePrefix = process.env.BULLMQ_PREFIX || "bull";
-
 export const recognizeQueue = new Queue("recognize", {
   connection,
   prefix: queuePrefix,

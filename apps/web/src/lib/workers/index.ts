@@ -21,6 +21,7 @@ import { createDescribeWorker } from "./describe.worker";
 import { createIngestWorker } from "./ingest.worker";
 import { createSummarizeWorker } from "./summarize.worker";
 import { sweepStaleGenerations } from "@/lib/generations";
+import { queuePrefix } from "@/lib/queue";
 import {
   REQUIRED_AI_PARSER_REVISION,
   resolveAiService,
@@ -28,7 +29,7 @@ import {
 } from "@/lib/ai-service";
 
 const healthPort = Number(process.env.WORKER_HEALTH_PORT ?? 3001);
-const workerRevision = "ai-discovery-r1";
+export const WORKER_REVISION = "ai-discovery-r2";
 const workers: { close: () => Promise<void> }[] = [];
 let workersReady = false;
 let bootError: string | null = null;
@@ -48,9 +49,10 @@ http
     res.end(
       JSON.stringify({
         worker: bootError ? "error" : workersReady ? "ok" : "starting",
-        workerRevision,
+        workerRevision: WORKER_REVISION,
         commit: process.env.CDS_COMMIT_SHA?.slice(0, 12) ?? null,
         count: workers.length,
+        queuePrefix,
         requiredAiParserRevision: REQUIRED_AI_PARSER_REVISION,
         aiResolution: aiService?.source ?? "checking",
         aiParserRevision: aiService?.parserRevision ?? null,
