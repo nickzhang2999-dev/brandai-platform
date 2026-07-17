@@ -17,9 +17,8 @@ import type {
   SummarizeRequest,
   SummarizeResponse,
 } from "@brandai/contracts";
+import { resolveAiService } from "@/lib/ai-service";
 import { getEffectiveAiSettings } from "@/lib/settings";
-
-const BASE = process.env.AI_SERVICE_URL ?? "http://localhost:8000";
 
 /**
  * Forward the admin-configured provider to the (stateless) AI service as
@@ -45,7 +44,8 @@ async function providerHeaders(): Promise<Record<string, string>> {
 }
 
 async function call<TReq, TRes>(path: string, body: TReq): Promise<TRes> {
-  const res = await fetch(`${BASE}${path}`, {
+  const service = await resolveAiService();
+  const res = await fetch(`${service.base}${path}`, {
     method: "POST",
     headers: { "content-type": "application/json", ...(await providerHeaders()) },
     body: JSON.stringify(body),

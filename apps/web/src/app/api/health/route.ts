@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { resolveAiService } from "@/lib/ai-service";
 
 // Server-internal health aggregation. CDS doesn't route worker:3001 publicly
 // (it's health-only) so we proxy a TCP+HTTP probe through here. This is the
@@ -26,7 +27,8 @@ async function probe(url: string): Promise<{ ok: boolean; body?: unknown }> {
 }
 
 export async function GET() {
-  const aiBase = process.env.AI_SERVICE_URL ?? "http://localhost:8000";
+  const aiService = await resolveAiService();
+  const aiBase = aiService.base;
   const workerBase = process.env.WORKER_HEALTH_URL ?? "http://worker:3001";
   const [ai, worker] = await Promise.all([
     probe(`${aiBase}/health`),
@@ -35,6 +37,7 @@ export async function GET() {
   return NextResponse.json({
     web: "ok",
     aiBase,
+    aiResolution: aiService.source,
     ai: ai.ok ? "ok" : "down",
     aiDetail: ai.body,
     // Pass through the worker's own JSON body when present (it self-reports
