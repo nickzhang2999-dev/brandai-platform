@@ -1775,33 +1775,82 @@ def _enforce_grounded_manual_modules(
     Grounding previously happened while the batch accumulator was still being
     assembled. A provider can emit a transient/empty module that suppresses the
     fallback at that stage and then leave the final payload without that slot.
-    Recompute grounded candidates independently and append only types missing
-    from the final rule list. This never invents a module: every candidate still
-    requires an exact heading/fact from extracted PDF text.
+    Recompute grounded candidates independently, append missing types, and make
+    exact PDF-text facts authoritative over model guesses. The VLM remains
+    useful for page interpretation, summaries, and crop locations, but it must
+    not be allowed to replace explicit hex values, font names, slogans, or logo
+    prohibitions printed in the manual.
     """
     rules = merged.get("rules")
     if not isinstance(rules, list):
         rules = []
         merged["rules"] = rules
-    present = {
-        str(rule.get("type") or "")
+    by_type = {
+        str(rule.get("type") or ""): rule
         for rule in rules
         if isinstance(rule, dict)
     }
     grounded: dict[str, dict[str, Any]] = {}
     _ground_missing_manual_modules(grounded, pages)
     order = ["logo", "font", "color", "layout", "imagery", "copy"]
+    authoritative_fields = {
+        "logo": ("dontRules", "minimumHeightMm"),
+        "font": ("families",),
+        "color": ("palette",),
+        "imagery": ("motif",),
+        "copy": ("slogans",),
+    }
     for kind in order:
-        if kind in present or kind not in grounded:
+        if kind not in grounded:
             continue
-        item = grounded[kind]
-        summaries = item.pop("summaryParts", [])
-        item["summary"] = (
-            "；".join(str(part) for part in summaries[:6])
-            or f"从品牌手册提取的{kind}规范"
-        )
-        rules.append(item)
-        present.add(kind)
+        grounded_item = grounded[kind]
+        if kind not in by_type:
+            item = grounded_item
+            summaries = item.pop("summaryParts", [])
+            item["summary"] = (
+                "；".join(str(part) for part in summaries[:6])
+                or f"从品牌手册提取的{kind}规范"
+            )
+            rules.append(item)
+            by_type[kind] = item
+            continue
+
+        item = by_type[kind]
+        value = item.get("value")
+        if not isinstance(value, dict):
+            value = {}
+            item["value"] = value
+        grounded_value = grounded_item.get("value")
+        if isinstance(grounded_value, dict):
+            for field in authoritative_fields.get(kind, ()):
+                grounded_fact = grounded_value.get(field)
+                if grounded_fact not in (None, [], ""):
+                    value[field] = grounded_fact
+
+        evidence = item.get("evidence")
+        if not isinstance(evidence, list):
+            evidence = []
+            item["evidence"] = evidence
+        for citation in grounded_item.get("evidence", []):
+            if citation not in evidence and len(evidence) < 8:
+                evidence.append(citation)
+
+    grounded_colors = (
+        grounded.get("color", {}).get("value", {}).get("palette", [])
+    )
+    if grounded_colors:
+        color_system = merged.get("colorSystem")
+        if not isinstance(color_system, dict):
+            color_system = {}
+            merged["colorSystem"] = color_system
+        color_system["palette"] = grounded_colors
+        color_system["pairing"] = [
+            pair
+            for pair in color_system.get("pairing", [])
+            if isinstance(pair, list)
+            and pair
+            and all(color in grounded_colors for color in pair)
+        ]
     rules.sort(
         key=lambda rule: order.index(str(rule.get("type") or ""))
         if isinstance(rule, dict) and str(rule.get("type") or "") in order

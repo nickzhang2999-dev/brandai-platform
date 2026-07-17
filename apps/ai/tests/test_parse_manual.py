@@ -325,6 +325,75 @@ def test_final_manual_postcondition_restores_a_grounded_logo():
     ]
 
 
+def test_final_manual_postcondition_replaces_model_guesses_with_pdf_facts():
+    """Explicit text facts outrank plausible-looking VLM hallucinations."""
+    from app.providers.http_providers import _enforce_grounded_manual_modules
+
+    merged = {
+        "rules": [
+            {
+                "type": "logo",
+                "strength": "STRONG",
+                "summary": "标志规范",
+                "value": {"dontRules": ["可以改变比例"]},
+                "evidence": [],
+            },
+            {
+                "type": "font",
+                "strength": "STRONG",
+                "summary": "字体规范",
+                "value": {"families": ["Helvetica"]},
+                "evidence": [],
+            },
+            {
+                "type": "color",
+                "strength": "STRONG",
+                "summary": "色彩规范",
+                "value": {"palette": ["#FF6F20", "#00B2A9"]},
+                "evidence": [],
+            },
+        ],
+        "colorSystem": {
+            "palette": ["#FF6F20", "#00B2A9"],
+            "pairing": [["#FF6F20", "#00B2A9"]],
+        },
+    }
+    pages = [
+        {
+            "page": 4,
+            "text": (
+                "企业标志及标志创意说明。不得改变其形状、结构和比例。"
+                "请勿自行创造组合形式。高度小于8mm时禁止使用。"
+            ),
+        },
+        {"page": 12, "text": "企业专用印刷字体 LetoSans 思源黑体"},
+        {"page": 18, "text": "企业标准色（印刷色） #FF6C2C #A1D0CA #3B3C44"},
+    ]
+
+    _enforce_grounded_manual_modules(merged, pages)
+
+    by_type = {rule["type"]: rule for rule in merged["rules"]}
+    assert by_type["logo"]["value"] == {
+        "dontRules": [
+            "不得改变标志的形状、结构和比例",
+            "不得自行创造标志组合形式",
+        ],
+        "minimumHeightMm": 8,
+    }
+    assert by_type["font"]["value"]["families"] == ["LetoSans", "思源黑体"]
+    assert by_type["color"]["value"]["palette"] == [
+        "#FF6C2C",
+        "#A1D0CA",
+        "#3B3C44",
+    ]
+    assert merged["colorSystem"]["palette"] == [
+        "#FF6C2C",
+        "#A1D0CA",
+        "#3B3C44",
+    ]
+    assert merged["colorSystem"]["pairing"] == []
+
+
 @pytest.mark.asyncio
 async def test_rate_limited_visual_batch_degrades_to_grounded_six_slots(
     monkeypatch,
