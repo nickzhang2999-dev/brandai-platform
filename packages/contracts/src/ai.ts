@@ -287,6 +287,13 @@ export const GenerateRequest = z.object({
    * Frozen-additive: existing callers default to `direct`.
    */
   textMode: z.enum(["direct", "layered"]).default("direct"),
+  /**
+   * V0.0.13 — admin-configured image system prompt
+   * (`AppSetting.imageSystemPrompt`, threaded by the web worker). The AI
+   * service prepends it verbatim to the assembled prompt. Frozen-additive:
+   * absent → prompt unchanged.
+   */
+  systemPrompt: z.string().optional(),
 });
 export type GenerateRequest = z.infer<typeof GenerateRequest>;
 

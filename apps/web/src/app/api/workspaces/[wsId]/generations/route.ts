@@ -130,6 +130,70 @@ export async function POST(
     if (!project || project.workspaceId !== wsId) {
       throw new ApiException(404, "Project not found in this workspace");
     }
+    // V0.0.13 — 对话面板图像输入：归属校验（IDOR）+ 解析展示 URL。
+    // displayText 只存用户原文；引用图以结构化 chip 存 chatContext，
+    // 任何路径都不把 URL/文件名拼进可见文本（规避 prd_agent 文本冗余 bug）。
+    const imageInputs = input.imageInputs ?? [];
+    let chatContext: {
+      displayText: string;
+      imageInputs: { kind: "VERSION" | "ASSET"; id: string; url?: string }[];
+    } | null = null;
+    if (imageInputs.length > 0 || input.chatDisplayText !== undefined) {
+      const inputVersionIds = imageInputs
+        .filter((r) => r.kind === "VERSION")
+        .map((r) => r.id);
+      const inputAssetIds = imageInputs
+        .filter((r) => r.kind === "ASSET")
+        .map((r) => r.id);
+      const [versionRows, assetRows] = await Promise.all([
+        inputVersionIds.length > 0
+          ? prisma.generationVersion.findMany({
+              where: {
+                id: { in: inputVersionIds },
+                generation: { workspaceId: wsId },
+              },
+              select: { id: true, imageUrl: true },
+            })
+          : Promise.resolve([]),
+        inputAssetIds.length > 0
+          ? prisma.asset.findMany({
+              where: {
+                id: { in: inputAssetIds },
+                workspaceId: wsId,
+                deprecatedAt: null,
+                mimeType: { startsWith: "image/" },
+              },
+              select: { id: true, url: true },
+            })
+          : Promise.resolve([]),
+      ]);
+      const okVersionIds = new Set(versionRows.map((v) => v.id));
+      const okAssetIds = new Set(assetRows.map((a) => a.id));
+      const bad = imageInputs.filter((r) =>
+        r.kind === "VERSION" ? !okVersionIds.has(r.id) : !okAssetIds.has(r.id),
+      );
+      if (bad.length > 0) {
+        throw new ApiException(
+          400,
+          `对话引用的图片不可用（不在本品牌空间或已失效）：${bad
+            .map((r) => `${r.kind}:${r.id}`)
+            .join(", ")}`,
+        );
+      }
+      const versionUrlMap = new Map(versionRows.map((v) => [v.id, v.imageUrl]));
+      const assetUrlMap = new Map(assetRows.map((a) => [a.id, a.url]));
+      chatContext = {
+        displayText: input.chatDisplayText ?? "",
+        imageInputs: imageInputs.map((r) => ({
+          kind: r.kind,
+          id: r.id,
+          ...(r.kind === "VERSION"
+            ? { url: versionUrlMap.get(r.id) }
+            : { url: assetUrlMap.get(r.id) ?? undefined }),
+        })),
+      };
+    }
+
     const workspace = await prisma.brandWorkspace.findUnique({
       where: { id: wsId },
       select: { name: true, industry: true },
@@ -267,6 +331,9 @@ export async function POST(
         sellingPoint: resolvedBrief.sellingPoint,
         scene: resolvedBrief.scene,
         status: "PENDING",
+        // V0.0.13 — 对话面板投影（含解析后的引用图 URL），PENDING 阶段即可
+        // 渲染会话气泡；null → 非对话来源。
+        ...(chatContext ? { chatContext } : {}),
       }),
     });
     const generation = { id: reserved[0]!.id };
@@ -292,6 +359,10 @@ export async function POST(
         ? { templateReferenceAssetIds }
         : {}),
       ...(watermarkOverlays.length > 0 ? { watermarkOverlays } : {}),
+      // V0.0.13 — 对话面板图像输入（worker 在 workspace 作用域内再解析一次）。
+      ...(imageInputs.length > 0
+        ? { imageInputs: imageInputs.map((r) => ({ kind: r.kind, id: r.id })) }
+        : {}),
     };
     const job = await generateQueue.add("generate", jobData, {
       removeOnComplete: 50,

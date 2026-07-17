@@ -190,6 +190,27 @@ export const Generation = z.object({
   startedAt: z.string().optional(),
   finishedAt: z.string().optional(),
   durationMs: z.number().int().optional(),
+  /**
+   * V0.0.13 — 对话面板（AI 设计师）投影。会话流不建独立消息表，直接从
+   * Generation 历史推导（服务端权威、刷新可恢复）；本字段保存会话气泡需要
+   * 的展示信息：用户原文 + 引用图（含解析后的缩略 URL）。
+   * 铁律：displayText 只存用户敲的原文 —— 任何路径都不得把 URL/文件名/
+   * 引用块拼进来（规避 prd_agent 文本冗余 bug）。
+   */
+  chatContext: z
+    .object({
+      displayText: z.string(),
+      imageInputs: z
+        .array(
+          z.object({
+            kind: z.enum(["VERSION", "ASSET"]),
+            id: z.string(),
+            url: z.string().optional(),
+          }),
+        )
+        .default([]),
+    })
+    .optional(),
 });
 export type Generation = z.infer<typeof Generation>;
 

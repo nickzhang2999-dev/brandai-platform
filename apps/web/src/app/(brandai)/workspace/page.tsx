@@ -40,6 +40,7 @@ import {
 import { useBrand } from "../brand-context";
 import { MaskPaintCanvas } from "./MaskPaintCanvas";
 import { OpenCanvas } from "./OpenCanvas";
+import { ChatPanel } from "./ChatPanel";
 
 /**
  * P05 · AI 工作台 — 左画布 + 变体条，右 prompt 面板。真实出图（CLAUDE.md §2，
@@ -304,6 +305,8 @@ function Workspace() {
   );
   const [workspaceMode, setWorkspaceMode] =
     useState<WorkspaceMode>("TEXT_TO_IMAGE");
+  // V0.0.13 — 右侧面板双 Tab：生成表单（既有） / AI 设计师对话（图生图/多图生图）。
+  const [panelTab, setPanelTab] = useState<"form" | "chat">("form");
   const [editBaseVersionId, setEditBaseVersionId] = useState<string | null>(
     null,
   );
@@ -1693,7 +1696,51 @@ function Workspace() {
         </div>
 
         {/* Prompt panel */}
-        <aside className="flex min-h-0 flex-col gap-5 overflow-y-auto border-l border-border bg-card p-6">
+        <aside
+          className={[
+            "flex min-h-0 flex-col gap-5 border-l border-border bg-card p-6",
+            // 对话 Tab 由 ChatPanel 自己管理会话流滚动；表单 Tab 维持整栏滚动。
+            panelTab === "chat" ? "overflow-hidden" : "overflow-y-auto",
+          ].join(" ")}
+        >
+          {/* V0.0.13 — 面板 Tab 切换（生成表单 / AI 设计师对话） */}
+          <div className="flex shrink-0 gap-1 rounded-full border border-border bg-background p-1">
+            {(
+              [
+                { key: "form", label: "生成面板" },
+                { key: "chat", label: "AI 设计师" },
+              ] as const
+            ).map((t) => (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => setPanelTab(t.key)}
+                className={[
+                  "flex-1 rounded-full px-3 py-1.5 text-xs font-medium transition-colors",
+                  panelTab === t.key
+                    ? "bg-accent-soft text-primary"
+                    : "text-muted-foreground hover:text-foreground",
+                ].join(" ")}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+
+          {panelTab === "chat" ? (
+            <ChatPanel
+              wsId={wsId}
+              projectId={projectId}
+              sceneType={sceneType}
+              onViewGeneration={viewGeneration}
+            />
+          ) : null}
+
+          <div
+            className={
+              panelTab === "form" ? "flex min-h-0 flex-col gap-5" : "hidden"
+            }
+          >
           {draftNotice ? (
             <div className="flex items-center justify-between gap-3 rounded-2xl border border-primary/15 bg-accent-soft/60 px-3 py-2 text-xs text-primary">
               <span>{draftNotice}</span>
@@ -2195,6 +2242,7 @@ function Workspace() {
             <p className="mt-2 text-[11px] text-muted-foreground">
               内容由 AI 生成，请注意核对准确性。
             </p>
+          </div>
           </div>
         </aside>
       </div>

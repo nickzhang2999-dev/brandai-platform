@@ -207,7 +207,11 @@ def test_generate_strict_reference_uses_image_input_edit_path(client):
     assert p["strictReferenceImage"]["mode"] == "STRICT"
 
 
-def test_generate_rejects_multiple_strict_references(client):
+def test_generate_accepts_multiple_strict_references(client):
+    """V0.0.13 — 多图生图: multiple STRICT refs are accepted (the V0.0.8
+    single-STRICT 400 is lifted) and ALL of them are echoed back so the caller
+    can prove none was dropped. Full multi-image behavior is covered in
+    test_multi_image_input.py."""
     r = client.post(
         "/v1/generate",
         json=_payload(
@@ -232,8 +236,12 @@ def test_generate_rejects_multiple_strict_references(client):
             },
         ),
     )
-    assert r.status_code == 400
-    assert "one STRICT reference asset" in r.json()["detail"]
+    assert r.status_code == 200
+    p = r.json()["versions"][0]["params"]
+    assert [ref["url"] for ref in p["strictReferenceImages"]] == [
+        "https://cdn/a.png",
+        "https://cdn/b.png",
+    ]
 
 
 def test_generate_passes_hardblocks_through_without_aborting(client):

@@ -288,19 +288,27 @@ async def generate(
         ]
         positive_refs = [r for r in reference_images if r.get("polarity") == "positive"]
         negative_refs = [r for r in reference_images if r.get("polarity") == "negative"]
+        # V0.0.13 — a STRICT ref is any positive ref explicitly marked STRICT
+        # (or the legacy STRICT_USE note) that carries a fetchable URL. Single
+        # computation shared by the cap check and the img2img path below (the
+        # pre-V0.0.13 code computed this twice with drifting criteria).
         strict_refs = [
-            r
+            {**r, "sourceHint": r.get("sourceHint")}
             for r in positive_refs
-            if str(r.get("mode") or "").upper() == "STRICT"
-            or str(r.get("note") or "").startswith("STRICT_USE:")
+            if (
+                str(r.get("mode") or "").upper() == "STRICT"
+                or str(r.get("note") or "").startswith("STRICT_USE:")
+            )
+            and r.get("url")
         ]
-        if len(strict_refs) > 1:
+        # 多图生图：与 contracts 的 max(8) 对齐 — 直连 /v1/generate 也被守住。
+        if len(strict_refs) > 8:
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    "V0.0.8 currently supports one STRICT reference asset per "
-                    "generation. Keep one mandatory asset and set the others to "
-                    "INSPIRATION."
+                    "At most 8 STRICT / IMAGE_INPUT reference images are "
+                    "supported per generation; got "
+                    f"{len(strict_refs)}."
                 ),
             )
         if positive_refs:
@@ -343,18 +351,11 @@ async def generate(
             if term not in negative:
                 negative.append(term)
 
-    prompt = " ".join(prompt_parts)
+    # V0.0.13 — admin-configured system prompt rides in front of everything.
+    if req.systemPrompt and req.systemPrompt.strip():
+        prompt_parts.insert(0, req.systemPrompt.strip())
 
-    # V0.0.7+ — positive refs the caller marked STRICT (100% 调用). Their pixels
-    # must reach the model via image-to-image (resolved once provider kind is
-    # known, below); INSPIRATION refs stay a text steer only. Carry sourceHint
-    # so the provider applies the K7 SSRF policy per reference (WEBSITE → strict
-    # initial-host check).
-    strict_refs = [
-        {**r, "sourceHint": r.get("sourceHint")}
-        for r in positive_refs
-        if r.get("mode") == "STRICT" and r.get("url")
-    ]
+    prompt = " ".join(prompt_parts)
 
     # aspect_ratio override: "W:H" → derive a matched (w,h) keeping base area.
     w, h = base_w, base_h
@@ -423,6 +424,13 @@ async def generate(
         return params
 
     strict_ref = strict_refs[0] if strict_refs else None
+    # V0.0.13 — 对话面板图生图/多图生图：refs the worker tagged IMAGE_INPUT are
+    # free transform/compose inputs (the user's brief drives the change), NOT
+    # locked brand assets. Any legacy STRICT ref keeps the preserve-exactly
+    # wording so 素材 100% 调用 semantics are never diluted by the new path.
+    _image_input_only = bool(strict_refs) and all(
+        str(r.get("note") or "").startswith("IMAGE_INPUT") for r in strict_refs
+    )
 
     async def _strict_edit_version(
         *,
@@ -430,22 +438,36 @@ async def generate(
         height: int,
         extra_params: dict[str, Any] | None = None,
     ) -> GeneratedVersion:
-        if not strict_ref:
+        if not strict_refs:
             raise RuntimeError("STRICT reference missing")
-        strict_prompt = (
-            "Use the input image as a mandatory locked asset. Preserve the "
-            "input asset's identity, shape, marks, product details and visible "
-            "content exactly. You may only resize, reposition, preserve aspect "
-            "ratio, and apply requested color treatment. Do not replace, redraw, "
-            "reinterpret, omit, crop away, or invent a substitute for the input "
-            f"asset.\n\nGeneration brief: {prompt}"
-        )
+        if _image_input_only:
+            n_refs = len(strict_refs)
+            strict_prompt = (
+                f"Use the {n_refs} provided input image(s), in the given "
+                "order, as mandatory visual inputs. Follow the generation "
+                "brief to transform, restyle, combine or compose them. Keep "
+                "each input's key subject recognizable unless the brief "
+                f"explicitly says otherwise.\n\nGeneration brief: {prompt}"
+            )
+        else:
+            strict_prompt = (
+                "Use the input image(s) as a mandatory locked asset. Preserve "
+                "each input asset's identity, shape, marks, product details "
+                "and visible content exactly. You may only resize, reposition, "
+                "preserve aspect ratio, and apply requested color treatment. "
+                "Do not replace, redraw, reinterpret, omit, crop away, or "
+                "invent a substitute for any input "
+                f"asset.\n\nGeneration brief: {prompt}"
+            )
         if negative:
             strict_prompt += "\n\nAvoid: " + "; ".join(s for s in negative if s)
         if kind == "openai" and hasattr(provider, "generate_with_references"):
+            # 单图与多图共用同一条 /images/edits multipart 路径与同一个响应
+            # 解析器（刻意规避 prd_agent「多图走独立 Vision 分支 + 独立解析」
+            # 导致的 "Vision API 响应格式不支持" bug）。
             urls = await provider.generate_with_references(
                 strict_prompt,
-                [strict_ref],
+                strict_refs,
                 width=width,
                 height=height,
                 n=1,
@@ -459,19 +481,34 @@ async def generate(
                 )
             image_url = urls[0]
         else:
+            # Fallback (mock / non-openai gateways): single image-input edit.
+            # Remaining refs are forwarded in the payload so an img2img-capable
+            # gateway can still read them — never silently dropped.
             image_url = await provider.edit(
-                strict_ref["url"],
+                strict_refs[0]["url"],
                 "STRICT_REFERENCE_GENERATE",
                 {
                     "prompt": strict_prompt,
                     "width": width,
                     "height": height,
+                    **(
+                        {
+                            "additional_reference_urls": [
+                                r["url"] for r in strict_refs[1:]
+                            ]
+                        }
+                        if len(strict_refs) > 1
+                        else {}
+                    ),
                 },
             )
         actual = await _probe_image_size(image_url)
         params_extra: dict[str, Any] = {
             "generationPath": "strict_image_input",
+            # Legacy singular key (first ref) + V0.0.13 plural echo of ALL refs
+            # so callers can prove every reference rode through (多图生图 A3).
             "strictReferenceImage": strict_ref,
+            "strictReferenceImages": strict_refs,
             "strictReferencePolicy": "provider.edit image input; no text-only fallback",
             **(
                 {"actualWidth": actual[0], "actualHeight": actual[1]}
