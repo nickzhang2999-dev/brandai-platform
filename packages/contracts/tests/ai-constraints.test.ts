@@ -209,15 +209,21 @@ describe("compileAIConstraints — semantics", () => {
     );
   });
 
-  it("still hard-blocks on a FORBIDDEN imagery/graphic content prohibition", () => {
+  it("NEVER hard-blocks on FORBIDDEN brand rules — imagery/graphic included (V0.0.13, 二次复发根治)", () => {
+    // 2026-07-17 用户实测：一条「不允许使用旧logo」的 FORBIDDEN 品牌规范
+    // （存成 imagery/graphic 型）把该品牌**所有**出图无条件 422 拦死——与
+    // docs/10 #3 的 logo 规则事故同类，只是换了个 type 复发。根治：文字型
+    // 品牌规范系统无法逐次判定是否真被违反，一律不做全局生成闸门；其约束
+    // 仍进 negativePrompt + promptAdditions 约束模型。真正的「禁止生成」
+    // 语义只保留给显式的 ProhibitionRule（HIGH + affectsGeneration）。
     const out = compileAIConstraints(
       [
         rule({
-          id: "no-alcohol",
+          id: "no-old-logo",
           type: "imagery",
           strength: "FORBIDDEN",
           status: "CONFIRMED",
-          summary: "禁止出现酒精饮品",
+          summary: "不允许使用旧logo",
         }),
         rule({
           id: "no-motif",
@@ -229,12 +235,35 @@ describe("compileAIConstraints — semantics", () => {
       ],
       [],
     );
-    expect(out.blockers).toEqual(
-      expect.arrayContaining([
-        { reason: "禁止出现酒精饮品", source: "brand_rule:no-alcohol" },
-        { reason: "禁止使用竞品图形母题", source: "brand_rule:no-motif" },
-      ]),
+    expect(out.blockers).toHaveLength(0);
+    // 约束不丢：折入 negative prompt + additions 继续钳制模型。
+    expect(out.aiConstraints.negativePrompt).toContain("不允许使用旧logo");
+    expect(out.aiConstraints.negativePrompt).toContain("禁止使用竞品图形母题");
+    expect(out.aiConstraints.promptAdditions).toContain("不允许使用旧logo");
+  });
+
+  it("keeps ProhibitionRule HIGH as the only hard-block channel", () => {
+    const out = compileAIConstraints(
+      [
+        rule({
+          id: "no-old-logo",
+          type: "imagery",
+          strength: "FORBIDDEN",
+          status: "CONFIRMED",
+          summary: "不允许使用旧logo",
+        }),
+      ],
+      [
+        prohibition({
+          id: "blk",
+          severity: "HIGH",
+          description: "禁止生成含酒精内容",
+        }),
+      ],
     );
+    expect(out.blockers).toEqual([
+      { reason: "禁止生成含酒精内容", source: "prohibition:blk" },
+    ]);
   });
 
   it("compiles prohibition example assets into referenceImages (D5)", () => {

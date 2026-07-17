@@ -202,8 +202,10 @@ export function ChatPanel({
           Hi，我是你的 AI 设计师
         </div>
         <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">
-          描述你的设计需求；从历史出图选中图片即可图生图，多选（≤{MAX_REFS}
-          张，按选择顺序）即可多图合成。
+          直接输入文字发送即可<strong className="font-medium text-foreground">文生图</strong>
+          ；从历史出图选中 1 张即<strong className="font-medium text-foreground">图生图</strong>
+          ，多选（≤{MAX_REFS} 张，按选择顺序）即
+          <strong className="font-medium text-foreground">多图合成</strong>。
         </p>
       </div>
 
@@ -428,7 +430,7 @@ export function ChatPanel({
           <textarea
             value={draft}
             rows={2}
-            placeholder="请输入你的设计需求（Enter 发送，Shift+Enter 换行）"
+            placeholder="输入设计需求，直接发送即可文生图（Enter 发送，Shift+Enter 换行）"
             className="w-full resize-none bg-transparent px-1 text-xs text-foreground outline-none placeholder:text-muted-foreground"
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
@@ -451,14 +453,24 @@ export function ChatPanel({
             >
               引用图片{refs.length > 0 ? ` ${refs.length}` : ""}
             </button>
-            <button
-              type="button"
-              onClick={() => void send()}
-              disabled={sending || (!draft.trim() && refs.length === 0)}
-              className="rounded-full bg-primary px-3.5 py-1.5 text-[11px] font-medium text-primary-foreground transition-opacity disabled:opacity-50"
-            >
-              {sending ? "发送中…" : "发送"}
-            </button>
+            <div className="flex items-center gap-2">
+              {/* 模式指示：让用户明确本次发送会跑哪条链路。 */}
+              <span className="text-[10px] text-muted-foreground">
+                {refs.length === 0
+                  ? "文生图"
+                  : refs.length === 1
+                    ? "图生图"
+                    : `多图合成×${refs.length}`}
+              </span>
+              <button
+                type="button"
+                onClick={() => void send()}
+                disabled={sending || (!draft.trim() && refs.length === 0)}
+                className="rounded-full bg-primary px-3.5 py-1.5 text-[11px] font-medium text-primary-foreground transition-opacity disabled:opacity-50"
+              >
+                {sending ? "发送中…" : "发送"}
+              </button>
+            </div>
           </div>
         </div>
         {err ? (

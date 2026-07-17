@@ -102,33 +102,20 @@ export function compileAIConstraints(
     .filter((p) => p.severity === "HIGH")
     .map((p) => ({ reason: p.description, source: `prohibition:${p.id}` }));
 
-  // CONFIRMED + FORBIDDEN brand rules become hard-blocks only when they
-  // describe a *content prohibition* — forbidden imagery / disallowed graphic
-  // motifs that must never appear in the output. Everything else (copy / font /
-  // layout AND logo) is advisory: it shapes the generator via promptAdditions /
-  // negativePrompt below but must NOT gate the whole brand.
+  // V0.0.13 — CONFIRMED + FORBIDDEN brand rules NEVER hard-block generation.
   //
-  // `logo` was removed from this set: logo rules are overwhelmingly *usage
-  // guidelines* (safe-area / sizing / placement / color variants), e.g.
-  // "Logo 周围保留不少于 1x 高度的安全留白". Phrased as a guideline yet flagged
-  // FORBIDDEN, a single logo rule would block EVERY generation for the brand
-  // regardless of input (it harmed real output during 2026-06-24 灰度验收; see
-  // docs/10 #3). True "never render competing logos" prohibitions belong in the
-  // dedicated ProhibitionRule entity (still hard-blocks above), or as `imagery`.
-  // De-duped by source.
-  const HARD_BLOCK_RULE_TYPES = new Set(["imagery", "graphic"]);
-  const blockerSources = new Set(blockers.map((b) => b.source));
-  for (const rule of rules) {
-    if (rule.status !== "CONFIRMED" || rule.strength !== "FORBIDDEN") continue;
-    if (!HARD_BLOCK_RULE_TYPES.has(rule.type)) continue;
-    const source = `brand_rule:${rule.id}`;
-    if (blockerSources.has(source)) continue;
-    blockerSources.add(source);
-    const reason =
-      (rule.summary && rule.summary.trim()) ||
-      `品牌规范禁用项（${rule.type}）`;
-    blockers.push({ reason, source });
-  }
+  // 事故史（两次同类）：
+  //  1. 2026-06-24 灰度验收：一条 FORBIDDEN 的 logo 使用规范无条件拦死全品牌
+  //     出图 → 当时把 `logo` 从 HARD_BLOCK_RULE_TYPES 摘掉（docs/10 #3）。
+  //  2. 2026-07-17 用户实测：同样一条「不允许使用旧logo」存成 imagery 型，
+  //     又把对话面板/工作台的所有出图 422 拦死——按 type 白名单打补丁治不了
+  //     这个类：文字型品牌规范系统**无法逐次判定**某个生成请求是否真会违反
+  //     它，把它当全局闸门必然误伤一切请求。
+  //
+  // 根治：品牌规范（无论 type）一律走 advisory 通道 —— FORBIDDEN summary 在
+  // 下方折入 negativePrompt + promptAdditions 继续钳制模型；真正的「禁止
+  // 生成」语义只保留给显式的 ProhibitionRule 实体（HIGH + affectsGeneration
+  // → 上面的 blockers），那才是用户明确按下的"生成闸门"。
 
   // Sort by severity (HIGH > MEDIUM > LOW) — drives priority into the
   // negativePrompt truncation below.
