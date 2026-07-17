@@ -134,7 +134,7 @@ async def health():
     # Exposed only through the authenticated/web health aggregator. The parser
     # revision makes cross-branch CDS routing mistakes observable without
     # exposing provider credentials or the internal AI API publicly.
-    return {"status": "ok", "parserRevision": "grounded-six-slot-r5"}
+    return {"status": "ok", "parserRevision": "grounded-six-slot-r6"}
 
 
 @app.post("/v1/diag")

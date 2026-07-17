@@ -450,6 +450,50 @@ async def test_rate_limited_visual_batch_degrades_to_grounded_six_slots(
     ]
 
 
+@pytest.mark.asyncio
+async def test_bare_provider_500_degrades_to_grounded_six_slots():
+    """A transient bare 500 in one visual batch cannot fail the whole PDF."""
+    from PIL import Image
+
+    page = Image.new("RGB", (600, 800), "white")
+    buf = io.BytesIO()
+    page.save(buf, format="JPEG")
+    page_url = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, text="Internal Server Error")
+
+    provider = HttpVLMProvider(
+        OPENAI, "k", model="gpt-4o", transport=httpx.MockTransport(handler)
+    )
+    page_texts = [
+        "企业标志及标志创意说明。不得改变其形状、结构和比例。",
+        "企业专用印刷字体 LetoSans 思源黑体 Myriad Pro",
+        "企业标准色（印刷色） #FF6C2C #A1D0CA #3B3C44",
+        "基本板式集合呈现，标准组合周边必须保持空白空间",
+        "辅助图形的应用延展：小白砖图形",
+        "广告信息视觉层级梳理：一家一世界 一居一生活",
+    ]
+    pages = [
+        {"page": number, "text": text, "dataUrl": page_url}
+        for number, text in enumerate(page_texts, start=1)
+    ]
+
+    out = await provider.parse_manual("\n".join(page_texts), pages=pages)
+
+    assert {rule["type"] for rule in out["rules"]} == {
+        "logo",
+        "font",
+        "color",
+        "layout",
+        "imagery",
+        "copy",
+    }
+    assert out["warnings"] == [
+        "第 1–6 页视觉服务暂时异常，已用 PDF 文字与页面证据补齐。"
+    ]
+
+
 def test_parse_manual_endpoint_returns_recognize_response(client, monkeypatch):
     """The endpoint extracts PDF text then returns a valid RecognizeResponse
     via the mock provider — no real PDF bytes needed (text extraction stubbed)."""

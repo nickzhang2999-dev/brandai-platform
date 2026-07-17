@@ -932,6 +932,7 @@ class HttpVLMProvider(VLMProvider):
                     {"type": "image_url", "image_url": {"url": page["dataUrl"]}}
                 )
             last_error: Exception | None = None
+            degraded_reason = "rate_limit"
             for attempt in range(4):
                 try:
                     async with semaphore:
@@ -940,24 +941,49 @@ class HttpVLMProvider(VLMProvider):
                         )
                 except httpx.HTTPStatusError as exc:
                     last_error = exc
-                    if not _is_provider_rate_limit(exc):
-                        raise
-                    if attempt < 3:
-                        await asyncio.sleep(
-                            _provider_rate_limit_delay(exc, attempt)
-                            + (int(batch[0].get("page") or 0) % 3) * 0.35
-                        )
+                    if _is_provider_rate_limit(exc):
+                        if attempt < 3:
+                            await asyncio.sleep(
+                                _provider_rate_limit_delay(exc, attempt)
+                                + (int(batch[0].get("page") or 0) % 3) * 0.35
+                            )
+                        continue
+                    # A long manual fans out into many visual batches. Gateways
+                    # occasionally return a bare 5xx (without the words "rate
+                    # limit") for one batch while all neighbouring batches
+                    # succeed. `_chat_json` has already retried the request; do
+                    # not let that one transient batch erase the entire PDF.
+                    if exc.response.status_code in {500, 502, 503, 504}:
+                        degraded_reason = "transient"
+                        break
+                    # Authentication/configuration and malformed-request 4xx
+                    # errors remain fatal: silently degrading those would hide
+                    # an operator problem and consume a manual without VLM.
+                    raise
+                except httpx.RequestError as exc:
+                    # `_chat_json` already applies the provider retry policy.
+                    # After it is exhausted, preserve the successfully rendered
+                    # pages and exact PDF text instead of failing all 101 pages.
+                    last_error = exc
+                    degraded_reason = "transient"
+                    break
             first_page = int(batch[0].get("page") or 0)
             last_page = int(batch[-1].get("page") or first_page)
             logger.warning(
-                "manual pages %s-%s skipped after provider rate limits: %s",
+                "manual pages %s-%s skipped after provider %s: %s",
                 first_page,
                 last_page,
+                degraded_reason,
                 last_error,
             )
-            batch_warnings.append(
-                f"第 {first_page}–{last_page} 页视觉分析遇到限流，已用 PDF 文字与页面证据补齐。"
-            )
+            if degraded_reason == "rate_limit":
+                batch_warnings.append(
+                    f"第 {first_page}–{last_page} 页视觉分析遇到限流，已用 PDF 文字与页面证据补齐。"
+                )
+            else:
+                batch_warnings.append(
+                    f"第 {first_page}–{last_page} 页视觉服务暂时异常，已用 PDF 文字与页面证据补齐。"
+                )
             return {"rules": [], "assets": []}
 
         # Two batches in flight keeps a long manual within the bounded UI
