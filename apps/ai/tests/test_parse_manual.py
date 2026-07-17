@@ -282,6 +282,48 @@ async def test_http_parse_manual_grounds_missing_modules_and_visual_previews():
     )
 
 
+def test_final_manual_postcondition_restores_a_grounded_logo():
+    """The final payload cannot lose a logo module that the PDF proves exists."""
+    from app.providers.http_providers import _enforce_grounded_manual_modules
+
+    merged = {
+        "rules": [
+            {
+                "type": kind,
+                "strength": "WEAK",
+                "summary": kind,
+                "value": {},
+                "evidence": [],
+            }
+            for kind in ["font", "color", "layout", "imagery", "copy"]
+        ]
+    }
+    pages = [
+        {
+            "page": 7,
+            "text": (
+                "企业标志及标志创意说明。使用中不得改变其形状、结构和比例。"
+                "请勿自行创造组合形式。"
+            ),
+        }
+    ]
+
+    _enforce_grounded_manual_modules(merged, pages)
+
+    assert [rule["type"] for rule in merged["rules"]] == [
+        "logo",
+        "font",
+        "color",
+        "layout",
+        "imagery",
+        "copy",
+    ]
+    assert merged["rules"][0]["value"]["dontRules"] == [
+        "不得改变标志的形状、结构和比例",
+        "不得自行创造标志组合形式",
+    ]
+
+
 def test_parse_manual_endpoint_returns_recognize_response(client, monkeypatch):
     """The endpoint extracts PDF text then returns a valid RecognizeResponse
     via the mock provider — no real PDF bytes needed (text extraction stubbed)."""

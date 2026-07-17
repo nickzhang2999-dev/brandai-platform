@@ -961,6 +961,7 @@ class HttpVLMProvider(VLMProvider):
             )
         )
         merged = _merge_manual_results(chunk_results, rendered)
+        _enforce_grounded_manual_modules(merged, rendered)
         valid_refs = {a["ref"] for a in extracted}
         for rule in merged.get("rules", []):
             for evidence in rule.get("evidence", []):
@@ -1710,6 +1711,48 @@ def _ground_missing_manual_modules(
         else "按手册中的品牌口号与广告信息层级进行传播",
         value={"slogans": slogans},
         strength="WEAK",
+    )
+
+
+def _enforce_grounded_manual_modules(
+    merged: dict[str, Any], pages: list[dict[str, Any]]
+) -> None:
+    """Apply the grounded six-slot postcondition to the final wire payload.
+
+    Grounding previously happened while the batch accumulator was still being
+    assembled. A provider can emit a transient/empty module that suppresses the
+    fallback at that stage and then leave the final payload without that slot.
+    Recompute grounded candidates independently and append only types missing
+    from the final rule list. This never invents a module: every candidate still
+    requires an exact heading/fact from extracted PDF text.
+    """
+    rules = merged.get("rules")
+    if not isinstance(rules, list):
+        rules = []
+        merged["rules"] = rules
+    present = {
+        str(rule.get("type") or "")
+        for rule in rules
+        if isinstance(rule, dict)
+    }
+    grounded: dict[str, dict[str, Any]] = {}
+    _ground_missing_manual_modules(grounded, pages)
+    order = ["logo", "font", "color", "layout", "imagery", "copy"]
+    for kind in order:
+        if kind in present or kind not in grounded:
+            continue
+        item = grounded[kind]
+        summaries = item.pop("summaryParts", [])
+        item["summary"] = (
+            "；".join(str(part) for part in summaries[:6])
+            or f"从品牌手册提取的{kind}规范"
+        )
+        rules.append(item)
+        present.add(kind)
+    rules.sort(
+        key=lambda rule: order.index(str(rule.get("type") or ""))
+        if isinstance(rule, dict) and str(rule.get("type") or "") in order
+        else len(order)
     )
 
 
