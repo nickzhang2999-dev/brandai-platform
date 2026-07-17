@@ -35,6 +35,7 @@ export async function GET() {
   return NextResponse.json({
     web: "ok",
     ai: ai.ok ? "ok" : "down",
+    aiDetail: ai.body,
     // Pass through the worker's own JSON body when present (it self-reports
     // "ok"/"starting"/"error" with a reason, even on its 503 forensics path);
     // only fall back to "down" when the port is truly unreachable.

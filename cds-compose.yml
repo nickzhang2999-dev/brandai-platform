@@ -200,7 +200,9 @@ services:
     # into tsx workers. Without this, every cold deploy fails the worker
     # readiness probe → branch goes to "error" → /api/health 503 across the
     # whole stack. See docs/INFRA-AUDIT.md.
-    command: ["/bin/sh", "scripts/worker-startup.sh"]
+    # Keep the command hash explicit so CDS recreates the long-lived worker
+    # when rollout-critical routing/parser changes are deployed.
+    command: ["/bin/sh", "-c", "exec scripts/worker-startup.sh"]
 
 volumes:
   pgdata:
