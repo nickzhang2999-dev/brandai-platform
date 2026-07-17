@@ -908,6 +908,7 @@ class HttpVLMProvider(VLMProvider):
             for offset in range(0, len(rendered), _MANUAL_BATCH_PAGES)
         ]
         semaphore = asyncio.Semaphore(2)
+        batch_warnings: list[str] = []
 
         async def analyze_batch(batch: list[dict[str, Any]]) -> dict[str, Any]:
             page_text = "\n\n".join(
@@ -930,10 +931,34 @@ class HttpVLMProvider(VLMProvider):
                 parts.append(
                     {"type": "image_url", "image_url": {"url": page["dataUrl"]}}
                 )
-            async with semaphore:
-                return await self._chat_json(
-                    parts, system=_PARSE_MANUAL_SYSTEM, max_tokens=4096
-                )
+            last_error: Exception | None = None
+            for attempt in range(4):
+                try:
+                    async with semaphore:
+                        return await self._chat_json(
+                            parts, system=_PARSE_MANUAL_SYSTEM, max_tokens=4096
+                        )
+                except httpx.HTTPStatusError as exc:
+                    last_error = exc
+                    if not _is_provider_rate_limit(exc):
+                        raise
+                    if attempt < 3:
+                        await asyncio.sleep(
+                            _provider_rate_limit_delay(exc, attempt)
+                            + (int(batch[0].get("page") or 0) % 3) * 0.35
+                        )
+            first_page = int(batch[0].get("page") or 0)
+            last_page = int(batch[-1].get("page") or first_page)
+            logger.warning(
+                "manual pages %s-%s skipped after provider rate limits: %s",
+                first_page,
+                last_page,
+                last_error,
+            )
+            batch_warnings.append(
+                f"第 {first_page}–{last_page} 页视觉分析遇到限流，已用 PDF 文字与页面证据补齐。"
+            )
+            return {"rules": [], "assets": []}
 
         # Two batches in flight keeps a long manual within the bounded UI
         # window without turning one upload into an uncontrolled request burst.
@@ -982,6 +1007,8 @@ class HttpVLMProvider(VLMProvider):
                         }
                     )
         merged["extractedAssets"] = extracted
+        if batch_warnings:
+            merged["warnings"] = batch_warnings
         return merged
 
     async def describe_asset(
@@ -1465,6 +1492,32 @@ def _normalized_bbox(raw: Any) -> list[float] | None:
     if x < -0.01 or y < -0.01 or x + width > 1.01 or y + height > 1.01:
         return None
     return [max(0.0, x), max(0.0, y), min(1.0 - x, width), min(1.0 - y, height)]
+
+
+def _is_provider_rate_limit(exc: httpx.HTTPStatusError) -> bool:
+    response = exc.response
+    body = response.text.lower()
+    return response.status_code == 429 or (
+        response.status_code in {500, 502, 503, 504}
+        and ("rate limit" in body or '"429"' in body or "returned 429" in body)
+    )
+
+
+def _provider_rate_limit_delay(
+    exc: httpx.HTTPStatusError, attempt: int
+) -> float:
+    retry_after = exc.response.headers.get("retry-after")
+    if retry_after:
+        try:
+            return min(30.0, max(1.0, float(retry_after)))
+        except ValueError:
+            pass
+    match = re.search(
+        r"try again in\s+([0-9]+(?:\.[0-9]+)?)s", exc.response.text, re.I
+    )
+    if match:
+        return min(30.0, max(1.0, float(match.group(1))))
+    return min(30.0, float(2 ** (attempt + 1)))
 
 
 def _extract_manual_crops(

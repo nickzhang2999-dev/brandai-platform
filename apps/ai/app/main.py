@@ -134,7 +134,7 @@ async def health():
     # Exposed only through the authenticated/web health aggregator. The parser
     # revision makes cross-branch CDS routing mistakes observable without
     # exposing provider credentials or the internal AI API publicly.
-    return {"status": "ok", "parserRevision": "grounded-six-slot-r2"}
+    return {"status": "ok", "parserRevision": "grounded-six-slot-r3"}
 
 
 @app.post("/v1/diag")
@@ -308,8 +308,11 @@ async def parse_manual(
             rules=[], pageCount=page_count, warnings=warnings
         )
     data = await vlm.parse_manual(text, pages=pages)
+    provider_warnings = data.pop("warnings", [])
     return ParseManualResponse(
-        **data, pageCount=page_count, warnings=warnings
+        **data,
+        pageCount=page_count,
+        warnings=[*warnings, *provider_warnings],
     )
 
 
