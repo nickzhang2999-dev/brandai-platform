@@ -34,6 +34,7 @@ export async function GET() {
   ]);
   return NextResponse.json({
     web: "ok",
+    aiBase,
     ai: ai.ok ? "ok" : "down",
     aiDetail: ai.body,
     // Pass through the worker's own JSON body when present (it self-reports

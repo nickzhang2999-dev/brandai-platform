@@ -138,7 +138,7 @@ services:
       SETTINGS_ENC_KEY: "${CDS_JWT_SECRET}"
       # CDS 为每个分支注入当前分支专属的 service host/port。禁止回退裸 `ai`
       # 别名：多分支共享网络时它会 round-robin 到其他分支的旧 AI 容器。
-      AI_SERVICE_URL: "http://${CDS_AI_HOST:-ai}:${CDS_AI_PORT:-8000}"
+      AI_SERVICE_URL: "http://${CDS_AI_HOST}:${CDS_AI_PORT}"
       NODE_ENV: "production"
       CI: "true"
       # scripts/web-startup.sh listens on $PORT.
@@ -188,7 +188,7 @@ services:
       AUTH_SECRET: "${CDS_JWT_SECRET}"
       SETTINGS_ENC_KEY: "${CDS_JWT_SECRET}"
       # 与 web 一样只连接当前 CDS 分支专属 AI 容器，杜绝解析/生成串分支。
-      AI_SERVICE_URL: "http://${CDS_AI_HOST:-ai}:${CDS_AI_PORT:-8000}"
+      AI_SERVICE_URL: "http://${CDS_AI_HOST}:${CDS_AI_PORT}"
       WORKER_HEALTH_PORT: "3001"
       NODE_ENV: "production"
       CI: "true"
@@ -202,7 +202,7 @@ services:
     # whole stack. See docs/INFRA-AUDIT.md.
     # Keep the command hash explicit so CDS recreates the long-lived worker
     # when rollout-critical routing/parser changes are deployed.
-    command: ["/bin/sh", "-c", "exec scripts/worker-startup.sh"]
+    command: ["/bin/sh", "-c", "exec /app/scripts/worker-startup.sh"]
 
 volumes:
   pgdata:
