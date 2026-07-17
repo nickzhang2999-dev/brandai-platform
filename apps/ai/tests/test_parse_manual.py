@@ -367,7 +367,10 @@ def test_final_manual_postcondition_replaces_model_guesses_with_pdf_facts():
             ),
         },
         {"page": 12, "text": "企业专用印刷字体 LetoSans 思源黑体"},
-        {"page": 18, "text": "企业标准色（印刷色） #FF6C2C #A1D0CA #3B3C44"},
+        {
+            "page": 18,
+            "text": "企业标准色（印刷色） FF6C2C# A1D0CA# 3B3C44#",
+        },
     ]
 
     _enforce_grounded_manual_modules(merged, pages)

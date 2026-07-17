@@ -1702,8 +1702,13 @@ def _ground_missing_manual_modules(
     )
 
     colors: list[str] = []
-    for color in re.findall(r"#[0-9A-Fa-f]{6}\b", combined):
-        normalized = color.upper()
+    # Illustrator-authored PDFs can expose a visually prefixed hex value as
+    # `FF6C2C#` in their text layer. Accept both text orders, while still
+    # requiring six explicit hexadecimal digits adjacent to the hash marker.
+    for match in re.finditer(
+        r"#\s*([0-9A-Fa-f]{6})\b|\b([0-9A-Fa-f]{6})\s*#", combined
+    ):
+        normalized = f"#{match.group(1) or match.group(2)}".upper()
         if normalized not in colors:
             colors.append(normalized)
     add(
