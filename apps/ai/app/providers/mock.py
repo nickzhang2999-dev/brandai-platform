@@ -126,7 +126,9 @@ class MockVLMProvider(VLMProvider):
             },
         }
 
-    async def parse_manual(self, text: str) -> dict[str, Any]:
+    async def parse_manual(
+        self, text: str, pages: list[dict[str, Any]] | None = None
+    ) -> dict[str, Any]:
         # Evidence carries no assetId — the web worker stamps the VI_DOC asset
         # id onto each rule, mirroring the image-recognition path's evidence.
         return {

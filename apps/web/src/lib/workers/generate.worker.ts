@@ -26,10 +26,7 @@ import {
 } from "@/lib/prohibitions";
 import { loadTermLib } from "@/lib/compliance";
 import { setVersionComplianceReport } from "@/lib/generations";
-import {
-  compileAIConstraints,
-  constraintsEnabled,
-} from "@/lib/ai-constraints";
+import { compileAIConstraints, constraintsEnabled } from "@/lib/ai-constraints";
 import { recordUsage, fromGenerateUsage } from "@/lib/usage";
 
 /**
@@ -376,14 +373,14 @@ export async function runGenerateJob(
   // ai.call), but the job slot frees and attempts:1 prevents replay.
   let watchdog: NodeJS.Timeout | null = null;
   const timeout = new Promise<never>((_, reject) => {
-    watchdog = setTimeout(() => reject(new GenerationTimeoutError()), TIMEOUT_MS);
+    watchdog = setTimeout(
+      () => reject(new GenerationTimeoutError()),
+      TIMEOUT_MS,
+    );
   });
 
   try {
-    const result = await Promise.race([
-      runGenerationInner(),
-      timeout,
-    ]);
+    const result = await Promise.race([runGenerationInner(), timeout]);
     if (watchdog) clearTimeout(watchdog);
     return result;
   } catch (err) {
@@ -399,7 +396,9 @@ export async function runGenerateJob(
     // §V0.02 #6 — latest-first ONLY for the generation prompt: newly created /
     // just re-enabled rules take precedence in the constraint. Snapshots and the
     // hard-block gates keep the deterministic default order (docs/10 #4).
-    const brandRules = await getConfirmedRules(workspaceId, { order: "recency" });
+    const brandRules = await getConfirmedRules(workspaceId, {
+      order: "recency",
+    });
     await job.updateProgress(20);
 
     // §2.2 — AI compliance precheck moved here from the POST handler (was
@@ -460,11 +459,86 @@ export async function runGenerateJob(
           p.negativeExampleAssetId,
         ]),
       );
-      const compiled = compileAIConstraints(brandRules, prohibitions, assetUrls);
+      const compiled = compileAIConstraints(
+        brandRules,
+        prohibitions,
+        assetUrls,
+      );
       aiConstraints = compiled.aiConstraints;
       blockers = compiled.blockers;
       if (blockers.length > 0) {
         throw new HardBlockError(blockers);
+      }
+
+      // Brand-manual visual evidence is part of the active project-level kit,
+      // not a one-off user pick. Feed the confirmed primary logo as the single
+      // locked reference (exact pixels) and representative imagery as style
+      // inspiration. This makes PDF-imported assets affect generation instead
+      // of merely decorating the Brand Kit page.
+      const evidenceRows = brandRules.flatMap((rule) =>
+        (Array.isArray(rule.evidence) ? rule.evidence : [])
+          .map((e) =>
+            e && typeof e === "object" && "assetId" in e
+              ? {
+                  rule,
+                  assetId: String((e as { assetId?: unknown }).assetId ?? ""),
+                }
+              : null,
+          )
+          .filter(
+            (x): x is { rule: BrandRule; assetId: string } =>
+              !!x?.assetId &&
+              (x.rule.type === "logo" || x.rule.type === "imagery"),
+          ),
+      );
+      const kitAssets = await prisma.asset.findMany({
+        where: {
+          id: { in: Array.from(new Set(evidenceRows.map((x) => x.assetId))) },
+          workspaceId,
+          libraryKind: "BRAND_KIT",
+          availableForGeneration: true,
+          deprecatedAt: null,
+          mimeType: { startsWith: "image/" },
+        },
+        select: { id: true, url: true, source: true },
+      });
+      const kitAssetMap = new Map(kitAssets.map((asset) => [asset.id, asset]));
+      const primaryLogo = evidenceRows.find(
+        (item) => item.rule.type === "logo" && kitAssetMap.has(item.assetId),
+      );
+      const imagery = evidenceRows
+        .filter(
+          (item) =>
+            item.rule.type === "imagery" && kitAssetMap.has(item.assetId),
+        )
+        .slice(0, 4);
+      const kitReferences = [
+        ...(primaryLogo
+          ? [
+              {
+                url: kitAssetMap.get(primaryLogo.assetId)!.url,
+                polarity: "positive" as const,
+                mode: "STRICT" as const,
+                source: `brand_rule:${primaryLogo.rule.id}`,
+                note: "STRICT_USE: project Brand Kit primary logo; preserve the logo exactly and place it appropriately.",
+                sourceHint: kitAssetMap.get(primaryLogo.assetId)!.source,
+              },
+            ]
+          : []),
+        ...imagery.map((item) => ({
+          url: kitAssetMap.get(item.assetId)!.url,
+          polarity: "positive" as const,
+          mode: "INSPIRATION" as const,
+          source: `brand_rule:${item.rule.id}`,
+          note: `Project Brand Kit imagery reference: ${item.rule.summary}`,
+          sourceHint: kitAssetMap.get(item.assetId)!.source,
+        })),
+      ];
+      if (kitReferences.length > 0) {
+        aiConstraints = {
+          ...aiConstraints,
+          referenceImages: [...aiConstraints.referenceImages, ...kitReferences],
+        };
       }
     }
 
@@ -823,7 +897,9 @@ export async function runGenerateJob(
             ...fromGenerateUsage(result.usage),
           });
         } catch (sizeErr) {
-          failures.push(`[${t.key} ${t.label} ${t.width}×${t.height}] ${String(sizeErr)}`);
+          failures.push(
+            `[${t.key} ${t.label} ${t.width}×${t.height}] ${String(sizeErr)}`,
+          );
           await recordUsage({
             workspaceId,
             userId: ownerId,
@@ -839,16 +915,16 @@ export async function runGenerateJob(
 
       if (versionIds.length === 0) {
         // All sizes failed → FAILED (the catch below records the error too).
-        throw new Error(
-          "All target sizes failed: " + failures.join("; "),
-        );
+        throw new Error("All target sizes failed: " + failures.join("; "));
       }
       // §2.4 — skip the terminal write if the watchdog already FAILED this
       // run (orphan after timeout): don't resurrect a timed-out generation.
-      if (!(await writeTerminal({
-        status: "SUCCEEDED",
-        error: failures.length > 0 ? failures.join("; ") : null,
-      }))) {
+      if (
+        !(await writeTerminal({
+          status: "SUCCEEDED",
+          error: failures.length > 0 ? failures.join("; ") : null,
+        }))
+      ) {
         console.warn(
           `[generate] ${generationId} already settled (timeout); discarding late multi-size success`,
         );

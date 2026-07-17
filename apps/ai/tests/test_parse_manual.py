@@ -1,5 +1,6 @@
 """VI-manual parsing — extract PDF text and shape it into DRAFT brand rules
 via the same RecognizeResponse contract the confirm workbench consumes."""
+import base64
 import io
 import json
 
@@ -32,6 +33,32 @@ def test_pdf_text_extraction_is_wired():
     assert len(reader.pages) == 1
     # extract_text never raises on a valid page (may be empty for blank pages).
     assert isinstance(reader.pages[0].extract_text() or "", str)
+
+
+@pytest.mark.asyncio
+async def test_pdf_manual_renders_scanned_or_textless_pages(monkeypatch):
+    """A scan-only PDF must still reach the visual channel as a page image."""
+    from app import main
+
+    class Response:
+        content = _build_sample_pdf("")
+
+        def raise_for_status(self):
+            return None
+
+    async def fake_safe_get(_client, url: str, **_kwargs):
+        assert url == "https://storage.internal/scanned.pdf"
+        return Response()
+
+    monkeypatch.setattr(main, "safe_get", fake_safe_get)
+    text, pages, page_count, warnings = await main._fetch_pdf_manual(
+        "https://storage.internal/scanned.pdf"
+    )
+    assert text == ""
+    assert page_count == 1
+    assert warnings == []
+    assert pages[0]["page"] == 1
+    assert pages[0]["dataUrl"].startswith("data:image/jpeg;base64,")
 
 
 @pytest.mark.asyncio
@@ -86,16 +113,119 @@ async def test_http_parse_manual_coerces_rules():
     assert out["colorSystem"]["contrastScore"] == 90.0
 
 
+@pytest.mark.asyncio
+async def test_http_parse_manual_reads_rendered_pages_and_returns_crops():
+    from PIL import Image
+
+    page = Image.new("RGB", (400, 300), "white")
+    for x in range(80, 240):
+        for y in range(60, 180):
+            page.putpixel((x, y), (124, 92, 255))
+    buf = io.BytesIO()
+    page.save(buf, format="JPEG")
+    page_url = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+    payload = {
+        "rules": [
+            {
+                "type": "logo",
+                "strength": "STRONG",
+                "summary": "使用紫色主标",
+                "value": {"variants": ["主标"]},
+                "evidence": [
+                    {
+                        "page": 1,
+                        "sourceRef": "p1-primary-logo",
+                        "bbox": [0.2, 0.2, 0.4, 0.4],
+                        "note": "第 1 页主标",
+                    }
+                ],
+            }
+        ],
+        "assets": [
+            {
+                "ref": "p1-primary-logo",
+                "type": "logo",
+                "page": 1,
+                "bbox": [0.2, 0.2, 0.4, 0.4],
+                "label": "主标",
+            }
+        ],
+    }
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": json.dumps(payload)}}]}
+        )
+
+    provider = HttpVLMProvider(
+        OPENAI, "k", model="gpt-4o", transport=httpx.MockTransport(handler)
+    )
+    out = await provider.parse_manual(
+        "[第 1 页] Logo 规范",
+        pages=[{"page": 1, "text": "Logo 规范", "dataUrl": page_url}],
+    )
+    assert out["rules"][0]["type"] == "logo"
+    assert out["rules"][0]["evidence"][0]["sourceRef"] == "p1-primary-logo"
+    assert out["extractedAssets"][0]["ref"] == "p1-primary-logo"
+    assert out["extractedAssets"][0]["dataUrl"].startswith("data:image/jpeg;base64,")
+
+
+@pytest.mark.asyncio
+async def test_http_parse_manual_merges_page_batches_into_one_rule_per_module():
+    """Long manuals are batched, but the review UI receives one draft/module."""
+    from PIL import Image
+
+    page = Image.new("RGB", (80, 80), "white")
+    buf = io.BytesIO()
+    page.save(buf, format="JPEG")
+    page_url = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+    calls = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        payload = {
+            "rules": [
+                {
+                    "type": "color",
+                    "strength": "STRONG",
+                    "summary": f"第 {calls} 批色彩规范",
+                    "value": {"palette": ["#FF6C2C" if calls == 1 else "#A1D0CA"]},
+                    "evidence": [{"page": 1 if calls == 1 else 9}],
+                }
+            ]
+        }
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": json.dumps(payload)}}]}
+        )
+
+    provider = HttpVLMProvider(
+        OPENAI, "k", model="gpt-4o", transport=httpx.MockTransport(handler)
+    )
+    pages = [
+        {"page": number, "text": f"第 {number} 页", "dataUrl": page_url}
+        for number in range(1, 10)
+    ]
+    out = await provider.parse_manual("品牌手册", pages=pages)
+
+    assert calls == 2
+    assert len(out["rules"]) == 1
+    assert out["rules"][0]["type"] == "color"
+    assert out["rules"][0]["value"]["palette"] == ["#FF6C2C", "#A1D0CA"]
+    assert "第 1 批色彩规范" in out["rules"][0]["summary"]
+    assert "第 2 批色彩规范" in out["rules"][0]["summary"]
+
+
 def test_parse_manual_endpoint_returns_recognize_response(client, monkeypatch):
     """The endpoint extracts PDF text then returns a valid RecognizeResponse
     via the mock provider — no real PDF bytes needed (text extraction stubbed)."""
     from app import main
 
-    async def _fake_fetch(url: str) -> str:
+    async def _fake_fetch(url: str):
         assert url == "https://storage.internal/vi-manual.pdf"
-        return "品牌 VI 手册全文 …"
+        return "品牌 VI 手册全文 …", [], 1, []
 
-    monkeypatch.setattr(main, "_fetch_pdf_text", _fake_fetch)
+    monkeypatch.setattr(main, "_fetch_pdf_manual", _fake_fetch)
 
     r = client.post(
         "/v1/parse-manual",
@@ -110,3 +240,5 @@ def test_parse_manual_endpoint_returns_recognize_response(client, monkeypatch):
         }
         assert rule["strength"] in {"STRONG", "WEAK", "FORBIDDEN"}
     assert d["colorSystem"]["palette"]
+    assert d["pageCount"] == 1
+    assert d["extractedAssets"] == []

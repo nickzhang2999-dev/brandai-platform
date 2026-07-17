@@ -22,6 +22,8 @@ describe("Zod .optional() ⊥ null — the contract invariant", () => {
       bbox: null,
       note: null,
       thumbnailUrl: null,
+      sourceRef: null,
+      page: null,
     });
     expect(r.success).toBe(false);
   });
@@ -46,9 +48,7 @@ describe("no captured AI fixture contains a null anywhere", () => {
 
   for (const file of readdirSync(dir).filter((f) => f.endsWith(".json"))) {
     it(`${file} is null-free`, () => {
-      const hits = nulls(
-        JSON.parse(readFileSync(join(dir, file), "utf8")),
-      );
+      const hits = nulls(JSON.parse(readFileSync(join(dir, file), "utf8")));
       expect(hits, `nulls at ${hits.join(", ")}`).toEqual([]);
     });
   }

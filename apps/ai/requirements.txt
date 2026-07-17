@@ -4,6 +4,7 @@ pydantic==2.13.4
 httpx==0.28.1
 pillow==12.2.0
 pypdf==6.13.3
+pypdfium2==5.11.0
 beautifulsoup4==4.15.0
 python-dotenv==1.2.2
 tenacity==9.1.4

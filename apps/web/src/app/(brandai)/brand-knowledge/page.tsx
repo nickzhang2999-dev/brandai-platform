@@ -59,14 +59,6 @@ const BRAND_KIT_IMPORT_SLOTS: {
   limit: string;
 }[] = [
   {
-    key: "manual",
-    type: "layout",
-    title: "上传完整品牌手册",
-    desc: "PDF 自动拆解为 logo、字体、颜色、图像与品牌指南草稿。",
-    accept: "application/pdf",
-    limit: "上传后自动解析",
-  },
-  {
     key: "logo",
     type: "logo",
     title: "logo",
@@ -89,6 +81,14 @@ const BRAND_KIT_IMPORT_SLOTS: {
     desc: "上传色卡、色值页或视觉样张，AI 提炼主辅色与禁用色。",
     accept: "image/*",
     limit: "建议最多 50 个",
+  },
+  {
+    key: "layout",
+    type: "layout",
+    title: "设计指南",
+    desc: "上传版式、网格、留白和组件规范页，提取设计使用边界。",
+    accept: "image/*,application/pdf",
+    limit: "图片或 PDF",
   },
   {
     key: "imagery",
@@ -578,7 +578,12 @@ function RuleVisualPreview({ rule, wsId }: { rule: BrandRule; wsId: string }) {
   return (
     <div className="flex gap-2">
       {evidence.slice(0, 3).map((ev, i) => (
-        <RulePreviewImage key={`${ev.assetId}-${i}`} wsId={wsId} ev={ev} compact />
+        <RulePreviewImage
+          key={`${ev.assetId}-${i}`}
+          wsId={wsId}
+          ev={ev}
+          compact
+        />
       ))}
     </div>
   );
@@ -1023,21 +1028,25 @@ function TaskProgress({
   progress,
   timedOut,
   error,
+  isManual,
 }: {
   status: string | null;
   progress: number;
   timedOut: boolean;
   error?: string | null;
+  isManual: boolean;
 }) {
-  const label = timedOut
-    ? "处理超时"
-    : status === "PENDING"
-      ? "已受理，排队中…"
-      : status === "RUNNING"
-        ? "AI 正在分析素材…"
-        : status === "FAILED"
-          ? "处理失败"
-          : "处理中…";
+  let label = "处理中…";
+  if (timedOut) label = "处理超时";
+  else if (status === "FAILED") label = "处理失败";
+  else if (status === "PENDING") label = "文件已上传，等待开始解析…";
+  else if (status === "RUNNING" && isManual && progress < 50)
+    label = "正在逐页读取文字、版式和图片…";
+  else if (status === "RUNNING" && isManual && progress < 72)
+    label = "正在提取 Logo、色卡、字体和视觉素材…";
+  else if (status === "RUNNING" && isManual)
+    label = "正在整理六类品牌套件草稿…";
+  else if (status === "RUNNING") label = "AI 正在分析素材…";
   return (
     <div className="flex flex-col gap-2 rounded-2xl border border-primary/15 bg-accent-soft/40 px-4 py-3">
       <div className="flex items-center justify-between text-xs">
@@ -1089,44 +1098,15 @@ function BrandKitImportPanel({
   }
 
   return (
-    <section className="mx-auto mt-7 max-w-4xl rounded-[28px] border border-primary/15 bg-card p-5 text-left shadow-[0_16px_48px_rgba(124,92,255,0.08)]">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-stretch">
-        <button
-          type="button"
-          disabled={disabled}
-          onClick={() => openPicker("layout", "application/pdf")}
-          onDragEnter={(event) => {
-            event.preventDefault();
-            setDragging(true);
-          }}
-          onDragOver={(event) => event.preventDefault()}
-          onDragLeave={() => setDragging(false)}
-          onDrop={(event) => {
-            event.preventDefault();
-            setDragging(false);
-            pick(event.dataTransfer.files);
-          }}
-          className={`flex min-h-[190px] flex-1 flex-col items-center justify-center rounded-[24px] border border-dashed px-5 py-6 text-center transition-colors ${
-            dragging
-              ? "border-primary bg-accent-soft"
-              : "border-primary/25 bg-gradient-to-br from-accent-soft/60 to-background hover:border-primary/50"
-          } disabled:opacity-60`}
-        >
-          <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary text-xl text-primary-foreground">
-            ⇧
-          </span>
-          <span className="mt-4 text-base font-semibold">
-            一次上传，构建品牌套件
-          </span>
-          <span className="mt-2 max-w-sm text-xs leading-relaxed text-muted-foreground">
-            上传品牌手册 PDF，AI 会自动提取并归类为 logo、字体、颜色、设计指南、图像、品牌指南草稿；你确认后才会启用。
-          </span>
-          <span className="mt-3 rounded-full bg-background px-3 py-1 text-[11px] text-muted-foreground">
-            PNG / JPG / PDF · 上传后自动解析
-          </span>
-        </button>
-
-        <div className="grid flex-[1.25] grid-cols-2 gap-2 sm:grid-cols-3">
+    <section className="mx-auto mt-7 max-w-3xl rounded-[28px] border border-primary/15 bg-card px-6 py-7 text-left shadow-[0_16px_48px_rgba(124,92,255,0.08)]">
+      <div className="text-center">
+        <h3 className="text-xl font-semibold">开始使用你的品牌套件</h3>
+        <p className="mt-1.5 text-sm text-muted-foreground">
+          添加 logo、字体、颜色等内容，让后续创作始终保持一致。
+        </p>
+      </div>
+      <div className="mt-6 flex flex-col gap-4">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           {BRAND_KIT_IMPORT_SLOTS.map((slot) => {
             const active = activeType === slot.type;
             return (
@@ -1135,7 +1115,7 @@ function BrandKitImportPanel({
                 type="button"
                 disabled={disabled}
                 onClick={() => openPicker(slot.type, slot.accept)}
-                className={`flex min-h-[112px] flex-col rounded-2xl border p-3 text-left transition-colors ${
+                className={`flex min-h-[132px] cursor-pointer flex-col rounded-2xl border p-4 text-left transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 ${
                   active
                     ? "border-primary bg-accent-soft text-primary"
                     : "border-border bg-background hover:border-primary/40"
@@ -1152,6 +1132,48 @@ function BrandKitImportPanel({
             );
           })}
         </div>
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => openPicker("layout", "application/pdf")}
+          onDragEnter={(event) => {
+            event.preventDefault();
+            setDragging(true);
+          }}
+          onDragOver={(event) => event.preventDefault()}
+          onDragLeave={() => setDragging(false)}
+          onDrop={(event) => {
+            event.preventDefault();
+            setDragging(false);
+            pick(event.dataTransfer.files);
+          }}
+          className={`flex min-h-[132px] w-full cursor-pointer flex-col items-center justify-center rounded-[20px] border border-dashed px-5 py-5 text-center transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 ${
+            dragging
+              ? "border-primary bg-accent-soft"
+              : "border-primary/25 bg-muted/30 hover:border-primary/50 hover:bg-accent-soft/40"
+          } disabled:opacity-60`}
+        >
+          <svg
+            aria-hidden="true"
+            viewBox="0 0 24 24"
+            fill="none"
+            className="h-6 w-6 text-primary"
+          >
+            <path
+              d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 14v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+          <span className="mt-2 text-sm font-medium">
+            上传完整品牌手册，自动填充全部内容
+          </span>
+          <span className="mt-1 text-xs text-muted-foreground">
+            PDF · 上传后自动解析文字、页面和图片
+          </span>
+        </button>
       </div>
       <input
         ref={fileRef}
@@ -1193,7 +1215,7 @@ function RecognizeModal({
         // parse-manual only accepts VI_DOC assets; recognize takes images.
         multi
           ? `/api/workspaces/${wsId}/assets`
-          : `/api/workspaces/${wsId}/assets?category=VI_DOC`,
+          : `/api/workspaces/${wsId}/assets?category=VI_DOC&libraryKind=ALL`,
       ),
   });
   const pickable = multi
@@ -1307,6 +1329,7 @@ function RecognizeModal({
               status={status}
               progress={task?.progress ?? 0}
               timedOut={timedOut}
+              isManual={mode === "parse-manual"}
               error={
                 failed
                   ? timedOut
@@ -1532,8 +1555,8 @@ function BrandPreview({
             <h2 className="text-base font-semibold">品牌预览</h2>
           </div>
           <p className="mt-1.5 max-w-xl text-xs leading-relaxed text-muted-foreground">
-            综合已确认的 logo / 字体 / 颜色 / 设计指南 / 图像 / 品牌指南，由真实 AI provider
-            合成一张 代表品牌整体调性的预览主视觉（受品牌约束）。
+            综合已确认的 logo / 字体 / 颜色 / 设计指南 / 图像 / 品牌指南，由真实
+            AI provider 合成一张 代表品牌整体调性的预览主视觉（受品牌约束）。
           </p>
         </div>
         <button
@@ -1630,10 +1653,18 @@ function AICoCreate({
   const [taskId, setTaskId] = useState<string | null>(null);
   const [timedOut, setTimedOut] = useState(false);
   const [attachErr, setAttachErr] = useState<string | null>(null);
+  const [lastUpload, setLastUpload] = useState<{
+    name: string;
+    isPdf: boolean;
+  } | null>(null);
+  const [manualOpen, setManualOpen] = useState(false);
   const startedAt = useRef(0);
 
   useEffect(() => {
-    if (suggestedType && TYPE_META[suggestedType]) setType(suggestedType);
+    if (suggestedType && TYPE_META[suggestedType]) {
+      setType(suggestedType);
+      setManualOpen(true);
+    }
   }, [suggestedType]);
 
   const add = useMutation({
@@ -1657,6 +1688,7 @@ function AICoCreate({
       const isPdf =
         file.type === "application/pdf" ||
         file.name.toLowerCase().endsWith(".pdf");
+      setLastUpload({ name: file.name, isPdf });
       const imageErr = imageUploadLimitError(file);
       if (imageErr) throw new Error(imageErr);
       const imageCategory: Record<string, AssetCategory> = {
@@ -1674,6 +1706,7 @@ function AICoCreate({
         "category",
         isPdf ? "VI_DOC" : (imageCategory[type] ?? "OTHER"),
       );
+      fd.append("libraryKind", "BRAND_KIT");
       const upRes = await fetch(`/api/workspaces/${wsId}/assets/upload`, {
         method: "POST",
         body: fd,
@@ -1725,6 +1758,8 @@ function AICoCreate({
     setTaskId(null);
     setTimedOut(false);
     setAttachErr(null);
+    setLastUpload(null);
+    setManualOpen(false);
   }, [wsId]);
 
   const status = task?.status ?? (taskId ? "PENDING" : null);
@@ -1751,74 +1786,89 @@ function AICoCreate({
         onFile={(file) => analyzeAttachment.mutate(file)}
       />
 
-      <div className="mx-auto mt-6 max-w-2xl">
-        <AIInput
-          value={text}
-          onChange={setText}
-          onSubmit={() => {
-            if (text.trim() && !add.isPending) add.mutate();
-          }}
-          disabled={parsing}
-          placeholder="输入品牌要求，或上传图片 / PDF；AI 会生成可编辑、可启用的规则预览。"
-          onAttach={(f) => analyzeAttachment.mutate(f)}
-          attachAccept="image/*,application/pdf"
-          topSlot={
-            <div className="flex flex-wrap gap-1.5 px-1">
-              {QUICK_PROMPTS.map((q) => (
-                <button
-                  key={q.text}
-                  type="button"
-                  onClick={() => {
-                    setType(q.type);
-                    setText(q.text);
-                  }}
-                  className="rounded-full border border-border bg-muted px-3 py-1 text-[11px] text-muted-foreground transition-colors hover:border-primary/40 hover:bg-accent-soft hover:text-primary"
-                >
-                  {q.text.length > 20 ? `${q.text.slice(0, 20)}…` : q.text}
-                </button>
-              ))}
-            </div>
-          }
-          leftControls={
-            <select
-              value={type}
-              disabled={parsing}
-              onChange={(e) => setType(e.target.value)}
-              className="h-9 rounded-full border border-border bg-background px-3 text-xs outline-none disabled:opacity-60"
-            >
-              {TYPE_OPTIONS.map((t) => (
-                <option key={t.value} value={t.value}>
-                  {t.label}
-                </option>
-              ))}
-            </select>
-          }
-          primaryAction={
-            <button
-              type="button"
-              disabled={!text.trim() || add.isPending || parsing}
-              onClick={() => add.mutate()}
-              className="h-10 shrink-0 rounded-[16px] bg-gradient-to-br from-primary to-accent px-6 text-sm font-medium text-primary-foreground shadow-[0_12px_28px_rgba(124,92,255,0.26)] disabled:opacity-60"
-            >
-              {add.isPending ? "添加中…" : "添加规则"}
-            </button>
-          }
-        />
-      </div>
+      <details
+        open={manualOpen}
+        onToggle={(event) => setManualOpen(event.currentTarget.open)}
+        className="mx-auto mt-5 max-w-2xl"
+      >
+        <summary className="cursor-pointer list-none text-center text-xs font-medium text-muted-foreground transition-colors hover:text-primary">
+          {manualOpen ? "收起手动添加" : "或手动添加一条品牌要求"}
+        </summary>
+        <div className="mt-4">
+          <AIInput
+            value={text}
+            onChange={setText}
+            onSubmit={() => {
+              if (text.trim() && !add.isPending) add.mutate();
+            }}
+            disabled={parsing}
+            placeholder="输入品牌要求，生成一条可编辑、可启用的规则草稿。"
+            topSlot={
+              <div className="flex flex-wrap gap-1.5 px-1">
+                {QUICK_PROMPTS.map((q) => (
+                  <button
+                    key={q.text}
+                    type="button"
+                    onClick={() => {
+                      setType(q.type);
+                      setText(q.text);
+                    }}
+                    className="rounded-full border border-border bg-muted px-3 py-1 text-[11px] text-muted-foreground transition-colors hover:border-primary/40 hover:bg-accent-soft hover:text-primary"
+                  >
+                    {q.text.length > 20 ? `${q.text.slice(0, 20)}…` : q.text}
+                  </button>
+                ))}
+              </div>
+            }
+            leftControls={
+              <select
+                value={type}
+                disabled={parsing}
+                onChange={(e) => setType(e.target.value)}
+                className="h-9 rounded-full border border-border bg-background px-3 text-xs outline-none disabled:opacity-60"
+              >
+                {TYPE_OPTIONS.map((t) => (
+                  <option key={t.value} value={t.value}>
+                    {t.label}
+                  </option>
+                ))}
+              </select>
+            }
+            primaryAction={
+              <button
+                type="button"
+                disabled={!text.trim() || add.isPending || parsing}
+                onClick={() => add.mutate()}
+                className="h-10 shrink-0 rounded-[16px] bg-gradient-to-br from-primary to-accent px-6 text-sm font-medium text-primary-foreground shadow-[0_12px_28px_rgba(124,92,255,0.26)] disabled:opacity-60"
+              >
+                {add.isPending ? "添加中…" : "添加规则"}
+              </button>
+            }
+          />
+        </div>
+      </details>
 
       {/* Unified image/PDF analysis progress, §2.3 observable. */}
       {taskId || analyzeAttachment.isPending ? (
         <div className="mx-auto mt-3 max-w-2xl">
           {status === "SUCCEEDED" ? (
-            <div className="rounded-2xl border border-success/20 bg-success/5 px-4 py-3 text-left text-sm text-success">
-              AI 已从上传内容生成 {task?.refCount ?? 0}{" "}
-              条规则草稿，可在下方编辑后启用。
+            <div
+              className={`rounded-2xl border px-4 py-3 text-left text-sm ${
+                (task?.refCount ?? 0) > 0
+                  ? "border-success/20 bg-success/5 text-success"
+                  : "border-border bg-muted/40 text-muted-foreground"
+              }`}
+            >
+              {(task?.refCount ?? 0) > 0
+                ? `“${lastUpload?.name ?? "上传内容"}”已解析完成，生成 ${task?.refCount ?? 0} 条规则草稿。请在下方逐项核对并启用，启用后将自动约束当前品牌下的项目生成。`
+                : `“${lastUpload?.name ?? "上传内容"}”已解析完成，但没有识别到可用的品牌规则。请检查 PDF 是否清晰、是否包含品牌规范页后重试。`}
             </div>
           ) : (
             <TaskProgress
               status={analyzeAttachment.isPending ? "PENDING" : status}
               progress={task?.progress ?? (analyzeAttachment.isPending ? 5 : 0)}
               timedOut={timedOut}
+              isManual={lastUpload?.isPdf ?? false}
               error={
                 timedOut
                   ? "解析超时，可能仍在后台运行，请稍后刷新页面。"
@@ -1846,9 +1896,6 @@ function AICoCreate({
 export default function BrandKnowledgePage() {
   const { wsId, brandName } = useBrand();
   const qc = useQueryClient();
-  const [aiModal, setAiModal] = useState<null | "recognize" | "parse-manual">(
-    null,
-  );
   const [suggestedType, setSuggestedType] = useState<string | null>(null);
   const [editingRule, setEditingRule] = useState<BrandRule | null>(null);
 
@@ -1923,43 +1970,7 @@ export default function BrandKnowledgePage() {
             {/* One unified source accepts text, images, and PDFs for this knowledge base. */}
             <AICoCreate wsId={wsId} suggestedType={suggestedType} />
           </div>
-
-          {/* D13/D14 · AI 驱动入口 — 从素材识别规则 / 解析 VI 手册（server-authoritative）。 */}
-          <div className="mx-auto mt-4 flex max-w-2xl flex-wrap items-center justify-center gap-2">
-            <button
-              type="button"
-              onClick={() => setAiModal("recognize")}
-              className="flex items-center gap-2 rounded-full border border-primary/30 bg-card px-4 py-2 text-sm font-medium text-primary transition-colors hover:bg-accent-soft"
-            >
-              <span>✦</span> 从素材识别品牌规则
-            </button>
-            <button
-              type="button"
-              onClick={() => setAiModal("parse-manual")}
-              className="flex items-center gap-2 rounded-full border border-primary/30 bg-card px-4 py-2 text-sm font-medium text-primary transition-colors hover:bg-accent-soft"
-            >
-              <span>▦</span> 解析 VI 手册 / PDF
-            </button>
-          </div>
         </section>
-
-        {aiModal ? (
-          <RecognizeModal
-            wsId={wsId}
-            mode={aiModal}
-            onClose={() => {
-              // Safety net: a recognize/parse-manual job can finish just AFTER
-              // the UI's bounded poll gives up (timeout). Always refresh rules on
-              // close so a late-completing job's new rules still surface without a
-              // manual page reload.
-              qc.invalidateQueries({ queryKey: ["brandai-rules", wsId] });
-              setAiModal(null);
-            }}
-            onDone={() =>
-              qc.invalidateQueries({ queryKey: ["brandai-rules", wsId] })
-            }
-          />
-        ) : null}
 
         {editingRule ? (
           <RuleEditorDialog

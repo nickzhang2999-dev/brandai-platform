@@ -104,6 +104,10 @@ class Evidence(BaseModel):
     bbox: Optional[list[float]] = None
     note: Optional[str] = None
     thumbnailUrl: Optional[str] = None
+    # parse-manual bridge: sourceRef is rewritten to a persisted Asset id by
+    # the web worker; page remains as human-verifiable provenance.
+    sourceRef: Optional[str] = None
+    page: Optional[int] = None
 
 
 class RecognizedRule(BaseModel):
@@ -125,6 +129,21 @@ class ColorSystem(BaseModel):
 class RecognizeResponse(BaseModel):
     rules: list[RecognizedRule]
     colorSystem: Optional[ColorSystem] = None
+
+
+class ManualExtractedAsset(BaseModel):
+    ref: str
+    type: str
+    page: int
+    bbox: Optional[list[float]] = None
+    label: str
+    dataUrl: str
+
+
+class ParseManualResponse(RecognizeResponse):
+    extractedAssets: list[ManualExtractedAsset] = Field(default_factory=list)
+    pageCount: int = 0
+    warnings: list[str] = Field(default_factory=list)
 
 
 class BrandRuleIn(BaseModel):

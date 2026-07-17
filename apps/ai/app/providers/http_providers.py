@@ -13,6 +13,7 @@ Two facts shape the VLM impl:
 
 mock stays the registry default, so the service runs with zero keys.
 """
+import asyncio
 import base64
 import io
 import json
@@ -113,6 +114,8 @@ _retry = retry(
 _MAX_VISION_IMAGES = 8
 _MAX_SCRAPE_IMAGES = 30
 _MAX_SCRAPE_TEXT = 6000
+_MANUAL_BATCH_PAGES = 8
+_MAX_MANUAL_ASSETS = 72
 
 # gpt-image-1 only accepts these three sizes (plus "auto"); any other W×H is a
 # hard 400. We snap the requested canvas to the nearest by aspect ratio.
@@ -671,21 +674,30 @@ _ANALYZE_PROMPT = (
     "with strength FORBIDDEN."
 )
 _PARSE_MANUAL_SYSTEM = (
-    "You are a senior brand visual analyst. You read a brand's VI / brand "
-    "manual (the extracted text of a PDF) and distil its visual identity. "
+    "You are a senior brand visual analyst. You read both the text and rendered "
+    "pages of a VI / brand manual and distil a reusable machine-readable Brand Kit. "
     "Reply with STRICT JSON only — no prose, no code fences."
 )
 _PARSE_MANUAL_PROMPT = (
-    "Read this brand/VI manual text and return JSON shaped exactly as:\n"
-    "{{\"rules\":[{{\"type\":\"color|font|layout|imagery|copy\","
+    "Analyze the supplied brand-manual pages and their extracted text. Return "
+    "JSON shaped exactly as:\n"
+    "{{\"rules\":[{{\"type\":\"logo|font|color|layout|imagery|copy\","
     "\"strength\":\"STRONG|WEAK|FORBIDDEN\",\"summary\":\"<concise Chinese>\","
     "\"value\":{{<structured detail>}},"
-    "\"evidence\":[{{\"note\":\"<which section / page of the manual>\"}}]}}],"
+    "\"evidence\":[{{\"page\":<1-based page>,\"sourceRef\":\"<matching asset ref if visual>\","
+    "\"bbox\":[x,y,w,h],\"note\":\"<section / reason>\"}}]}}],"
+    "\"assets\":[{{\"ref\":\"p<page>-<short-key>\","
+    "\"type\":\"logo|font|color|layout|imagery|copy\",\"page\":<1-based page>,"
+    "\"bbox\":[x,y,w,h],\"label\":\"<concise Chinese>\"}}],"
     "\"colorSystem\":{{\"palette\":[\"#hex\"],\"pairing\":[[\"#hex\",\"#hex\"]],"
     "\"restrictions\":[\"<rule>\"],\"contrastScore\":<0-100>,\"consistencyScore\":<0-100>}}}}\n"
-    "Cover color, font, layout, imagery and copy where the manual states rules. "
-    "Mark forbidden usages (禁用) with strength FORBIDDEN. Cite the manual "
-    "section in each evidence note.\n\nManual text:\n{text}"
+    "bbox is normalized [x,y,width,height] in 0..1 relative to the page image. "
+    "Create tight visual crops for primary/alternate logos, font specimens, color "
+    "cards, layout examples and representative photography; do not crop ordinary "
+    "paragraph text unless it expresses copy/voice rules. Every visual evidence "
+    "sourceRef must match one assets.ref. Cover all six modules when evidence exists. "
+    "Mark prohibited usage inside the same module value and summary. Never invent a "
+    "rule that is absent from the supplied pages.\n\nPage text:\n{text}"
 )
 _DESCRIBE_SYSTEM = (
     "You are a brand asset librarian. You look at one image and produce concise, "
@@ -875,14 +887,80 @@ class HttpVLMProvider(VLMProvider):
         data = await self._chat_json(parts, system=_ANALYZE_SYSTEM)
         return _coerce_recognize(data, asset_ids)
 
-    async def parse_manual(self, text: str) -> dict[str, Any]:
-        prompt = _PARSE_MANUAL_PROMPT.format(text=text[:_MAX_SCRAPE_TEXT])
-        data = await self._chat_json(
-            [{"type": "text", "text": prompt}], system=_PARSE_MANUAL_SYSTEM
+    async def parse_manual(
+        self, text: str, pages: list[dict[str, Any]] | None = None
+    ) -> dict[str, Any]:
+        rendered = [p for p in (pages or []) if p.get("dataUrl")]
+        # Text-only compatibility path for callers that cannot render a PDF.
+        if not rendered:
+            prompt = _PARSE_MANUAL_PROMPT.format(text=text[:_MAX_SCRAPE_TEXT])
+            data = await self._chat_json(
+                [{"type": "text", "text": prompt}],
+                system=_PARSE_MANUAL_SYSTEM,
+                max_tokens=4096,
+            )
+            result = _coerce_recognize(data, [])
+            result["extractedAssets"] = []
+            return result
+
+        batches = [
+            rendered[offset : offset + _MANUAL_BATCH_PAGES]
+            for offset in range(0, len(rendered), _MANUAL_BATCH_PAGES)
+        ]
+        semaphore = asyncio.Semaphore(2)
+
+        async def analyze_batch(batch: list[dict[str, Any]]) -> dict[str, Any]:
+            page_text = "\n\n".join(
+                f"[第 {int(p.get('page', 0))} 页]\n{str(p.get('text') or '')}"
+                for p in batch
+            )[:_MAX_SCRAPE_TEXT]
+            parts: list[dict[str, Any]] = [
+                {
+                    "type": "text",
+                    "text": _PARSE_MANUAL_PROMPT.format(text=page_text),
+                }
+            ]
+            for page in batch:
+                parts.append(
+                    {
+                        "type": "text",
+                        "text": f"下图是品牌手册第 {int(page.get('page', 0))} 页。",
+                    }
+                )
+                parts.append(
+                    {"type": "image_url", "image_url": {"url": page["dataUrl"]}}
+                )
+            async with semaphore:
+                return await self._chat_json(
+                    parts, system=_PARSE_MANUAL_SYSTEM, max_tokens=4096
+                )
+
+        # Two batches in flight keeps a long manual within the bounded UI
+        # window without turning one upload into an uncontrolled request burst.
+        batch_data = await asyncio.gather(
+            *(analyze_batch(batch) for batch in batches)
         )
-        # No image assetId to backfill — manual evidence is textual (note only),
-        # the web worker stamps the VI_DOC assetId onto each rule's evidence.
-        return _coerce_recognize(data, [])
+        chunk_results: list[dict[str, Any]] = []
+        extracted: list[dict[str, Any]] = []
+        for batch, data in zip(batches, batch_data, strict=True):
+            chunk_results.append(_coerce_recognize(data, []))
+            remaining = _MAX_MANUAL_ASSETS - len(extracted)
+            if remaining > 0:
+                # Spread the crop budget across the entire manual instead of
+                # letting early pages consume it all before later photography /
+                # advertising examples are inspected.
+                extracted.extend(
+                    _extract_manual_crops(data, batch, min(remaining, 6))
+                )
+
+        merged = _merge_manual_results(chunk_results)
+        valid_refs = {a["ref"] for a in extracted}
+        for rule in merged.get("rules", []):
+            for evidence in rule.get("evidence", []):
+                if evidence.get("sourceRef") not in valid_refs:
+                    evidence.pop("sourceRef", None)
+        merged["extractedAssets"] = extracted
+        return merged
 
     async def describe_asset(
         self,
@@ -1288,6 +1366,15 @@ def _coerce_recognize(
             note = e.get("note")
             if note:
                 item["note"] = str(note)
+            source_ref = e.get("sourceRef")
+            if source_ref and re.fullmatch(r"[A-Za-z0-9._-]{1,80}", str(source_ref)):
+                item["sourceRef"] = str(source_ref)
+            try:
+                page_no = int(e.get("page") or 0)
+            except (TypeError, ValueError):
+                page_no = 0
+            if page_no > 0:
+                item["page"] = page_no
             bbox = e.get("bbox")
             if isinstance(bbox, list) and len(bbox) == 4:
                 # A sloppy VLM can emit non-numeric or non-finite bbox entries.
@@ -1309,10 +1396,16 @@ def _coerce_recognize(
             # drop empties. Note-only evidence is retained.
             if item:
                 evidence.append(item)
+        rule_type = str(r.get("type", "imagery"))
+        if rule_type not in {"logo", "font", "color", "layout", "imagery", "graphic", "copy"}:
+            continue
+        strength = str(r.get("strength", "WEAK")).upper()
+        if strength not in {"STRONG", "WEAK", "FORBIDDEN"}:
+            strength = "WEAK"
         rules.append(
             {
-                "type": str(r.get("type", "imagery")),
-                "strength": str(r.get("strength", "WEAK")).upper(),
+                "type": rule_type,
+                "strength": strength,
                 "summary": str(r.get("summary", "")),
                 "value": r.get("value") if isinstance(r.get("value"), dict) else {},
                 "evidence": evidence,
@@ -1331,6 +1424,184 @@ def _coerce_recognize(
             "restrictions": [str(x) for x in cs.get("restrictions", [])],
             "contrastScore": float(cs.get("contrastScore", 0) or 0),
             "consistencyScore": float(cs.get("consistencyScore", 0) or 0),
+        }
+    return out
+
+
+def _normalized_bbox(raw: Any) -> list[float] | None:
+    if not isinstance(raw, list) or len(raw) != 4:
+        return None
+    try:
+        bbox = [float(x) for x in raw]
+    except (TypeError, ValueError):
+        return None
+    if not all(math.isfinite(x) for x in bbox):
+        return None
+    x, y, width, height = bbox
+    if width <= 0.02 or height <= 0.02:
+        return None
+    if x < -0.01 or y < -0.01 or x + width > 1.01 or y + height > 1.01:
+        return None
+    return [max(0.0, x), max(0.0, y), min(1.0 - x, width), min(1.0 - y, height)]
+
+
+def _extract_manual_crops(
+    data: dict[str, Any], pages: list[dict[str, Any]], limit: int
+) -> list[dict[str, Any]]:
+    """Turn model-selected normalized page regions into bounded JPEG assets."""
+    from PIL import Image
+
+    allowed_types = {"logo", "font", "color", "layout", "imagery", "copy"}
+    page_map = {int(p.get("page") or 0): str(p.get("dataUrl") or "") for p in pages}
+    out: list[dict[str, Any]] = []
+    refs: set[str] = set()
+    for candidate in data.get("assets", []) or []:
+        if len(out) >= limit or not isinstance(candidate, dict):
+            break
+        kind = str(candidate.get("type") or "")
+        if kind not in allowed_types:
+            continue
+        try:
+            page_no = int(candidate.get("page") or 0)
+        except (TypeError, ValueError):
+            continue
+        bbox = _normalized_bbox(candidate.get("bbox"))
+        page_data = page_map.get(page_no)
+        if not bbox or not page_data or "," not in page_data:
+            continue
+        raw_ref = re.sub(r"[^A-Za-z0-9._-]+", "-", str(candidate.get("ref") or ""))
+        raw_ref = raw_ref.strip("-")[:80] or f"p{page_no}-{kind}-{len(out) + 1}"
+        if not raw_ref.startswith(f"p{page_no}-"):
+            raw_ref = f"p{page_no}-{raw_ref}"[:80]
+        ref = raw_ref
+        suffix = 2
+        while ref in refs:
+            ref = f"{raw_ref[:72]}-{suffix}"
+            suffix += 1
+        try:
+            page_bytes = base64.b64decode(page_data.split(",", 1)[1])
+            with Image.open(io.BytesIO(page_bytes)) as page_image:
+                width, height = page_image.size
+                x, y, crop_w, crop_h = bbox
+                # A small margin keeps antialiasing/safe-area context without
+                # turning the crop back into an unreadable full-page screenshot.
+                margin_x = min(0.015, crop_w * 0.08)
+                margin_y = min(0.015, crop_h * 0.08)
+                left = max(0, int((x - margin_x) * width))
+                top = max(0, int((y - margin_y) * height))
+                right = min(width, int((x + crop_w + margin_x) * width))
+                bottom = min(height, int((y + crop_h + margin_y) * height))
+                if right - left < 24 or bottom - top < 24:
+                    continue
+                cropped = page_image.convert("RGB").crop((left, top, right, bottom))
+                cropped.thumbnail((1200, 1200))
+                buf = io.BytesIO()
+                cropped.save(buf, format="JPEG", quality=88, optimize=True)
+        except Exception:  # noqa: BLE001 — skip one unusable crop
+            continue
+        refs.add(ref)
+        out.append(
+            {
+                "ref": ref,
+                "type": kind,
+                "page": page_no,
+                "bbox": bbox,
+                "label": str(candidate.get("label") or f"第 {page_no} 页{kind}"),
+                "dataUrl": "data:image/jpeg;base64,"
+                + base64.b64encode(buf.getvalue()).decode(),
+            }
+        )
+    return out
+
+
+def _merge_json_value(target: dict[str, Any], source: dict[str, Any]) -> None:
+    for key, value in source.items():
+        if key not in target:
+            target[key] = value
+        elif isinstance(target[key], dict) and isinstance(value, dict):
+            _merge_json_value(target[key], value)
+        elif isinstance(target[key], list) and isinstance(value, list):
+            seen = {json.dumps(x, ensure_ascii=False, sort_keys=True) for x in target[key]}
+            for item in value:
+                marker = json.dumps(item, ensure_ascii=False, sort_keys=True)
+                if marker not in seen:
+                    target[key].append(item)
+                    seen.add(marker)
+
+
+def _merge_manual_results(results: list[dict[str, Any]]) -> dict[str, Any]:
+    """Consolidate page batches into one editable draft per Brand Kit module."""
+    order = ["logo", "font", "color", "layout", "imagery", "copy"]
+    grouped: dict[str, dict[str, Any]] = {}
+    for result in results:
+        for rule in result.get("rules", []):
+            kind = str(rule.get("type") or "")
+            if kind not in order:
+                continue
+            current = grouped.setdefault(
+                kind,
+                {
+                    "type": kind,
+                    "strength": "WEAK",
+                    "summaryParts": [],
+                    "value": {},
+                    "evidence": [],
+                },
+            )
+            strength = str(rule.get("strength") or "WEAK")
+            # A module containing both positive and prohibited usage remains a
+            # usable strong rule; the prohibited details stay in value/summary.
+            if strength == "STRONG" or (
+                strength == "FORBIDDEN" and current["strength"] == "WEAK"
+            ):
+                current["strength"] = strength
+            summary = str(rule.get("summary") or "").strip()
+            if summary and summary not in current["summaryParts"]:
+                current["summaryParts"].append(summary)
+            _merge_json_value(current["value"], rule.get("value") or {})
+            for evidence in rule.get("evidence", []) or []:
+                if evidence not in current["evidence"] and len(current["evidence"]) < 8:
+                    current["evidence"].append(evidence)
+
+    rules: list[dict[str, Any]] = []
+    for kind in order:
+        item = grouped.get(kind)
+        if not item:
+            continue
+        summaries = item.pop("summaryParts")
+        item["summary"] = "；".join(summaries[:6]) or f"从品牌手册提取的{kind}规范"
+        rules.append(item)
+
+    palette: list[str] = []
+    pairing: list[list[str]] = []
+    restrictions: list[str] = []
+    contrast: list[float] = []
+    consistency: list[float] = []
+    for result in results:
+        cs = result.get("colorSystem")
+        if not isinstance(cs, dict):
+            continue
+        for color in cs.get("palette", []) or []:
+            if color not in palette:
+                palette.append(color)
+        for pair in cs.get("pairing", []) or []:
+            if pair not in pairing:
+                pairing.append(pair)
+        for rule in cs.get("restrictions", []) or []:
+            if rule not in restrictions:
+                restrictions.append(rule)
+        contrast.append(float(cs.get("contrastScore", 0) or 0))
+        consistency.append(float(cs.get("consistencyScore", 0) or 0))
+    out: dict[str, Any] = {"rules": rules}
+    if palette:
+        out["colorSystem"] = {
+            "palette": palette,
+            "pairing": pairing,
+            "restrictions": restrictions,
+            "contrastScore": sum(contrast) / len(contrast) if contrast else 0,
+            "consistencyScore": sum(consistency) / len(consistency)
+            if consistency
+            else 0,
         }
     return out
 

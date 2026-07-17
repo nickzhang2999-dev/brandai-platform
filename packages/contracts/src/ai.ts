@@ -167,7 +167,24 @@ export type SummarizeResponse = z.infer<typeof SummarizeResponse>;
 export const ParseManualRequest = z.object({ url: z.string() });
 export type ParseManualRequest = z.infer<typeof ParseManualRequest>;
 
-export const ParseManualResponse = RecognizeResponse;
+export const ManualExtractedAsset = z.object({
+  /** Stable within one parse response; rule evidence cites this as sourceRef. */
+  ref: z.string(),
+  type: RuleType,
+  page: z.number().int().positive(),
+  /** normalized [x,y,w,h] crop inside the rendered PDF page */
+  bbox: z.tuple([z.number(), z.number(), z.number(), z.number()]).optional(),
+  label: z.string(),
+  dataUrl: z.string().startsWith("data:image/"),
+});
+export type ManualExtractedAsset = z.infer<typeof ManualExtractedAsset>;
+
+export const ParseManualResponse = RecognizeResponse.extend({
+  /** Cropped visual evidence extracted from rendered PDF pages. */
+  extractedAssets: z.array(ManualExtractedAsset).default([]),
+  pageCount: z.number().int().nonnegative().default(0),
+  warnings: z.array(z.string()).default([]),
+});
 export type ParseManualResponse = z.infer<typeof ParseManualResponse>;
 
 // P1.2 — AI constraint layer. Optional payload compiled from confirmed brand
