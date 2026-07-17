@@ -139,7 +139,7 @@
 | D13 | AI 从素材识别规则（recognize） | doc03 AI | ✅ | `brand-knowledge/page.tsx` 素材选择器→`POST /rules/recognize`→轮询 task | 真 VLM；202→6min 有界轮询→刷新规则；灰度真识别待最终冒烟 | 接入 2026-06-20 |
 | D14 | PDF/VI 手册解析（parse-manual） | — | ✅ | `brand-knowledge/page.tsx`（VI_DOC 单选）→`POST /rules/parse-manual`→轮询 | 真 VLM；同上有界轮询 | 接入 2026-06-20 |
 | D15 | Lovart 式品牌套件导入入口（第一阶段） | 用户 2026-07-16/17 | ✅ | `brand-knowledge/page.tsx` BrandKitImportPanel + AIInput 附件流 | 页面顶部新增“一次上传，构建品牌套件”区域；PDF 直传为 VI_DOC 并进入 parse-manual；图片按 logo/字体/颜色/设计指南/图像/品牌指南槽位上传并进入 recognize；规则草稿仍需用户编辑/启用；证据缩略图可点击预览。深度能力由 D16 接续完成 | 第一阶段 2026-07-17 |
-| D16 | 品牌手册 PDF 深度解析与项目级应用 | 用户 2026-07-17 | ✅ **真实验收** | `apps/ai/app/main.py` + `providers/http_providers.py` + `parse-manual.worker.ts` + `generate.worker.ts` | PDF 逐页文字+视觉解析（最多 120 页），分批合并六类品牌规则；VLM 选择的 Logo、色卡、字体样张、版式和摄影区域自动裁切并落 `BRAND_KIT` 资产，证据保留页码；规则默认 DRAFT，经用户确认后，规则文本、主 Logo 与图像参考自动约束当前品牌下全部项目生成。长 PDF 任一视觉批次遇到裸 5xx 或网络超时会降级使用 PDF 精确文字与页面证据，不再让整份手册失败。2026-07-18 在 CDS 部署环境以 101 页《一家一居VI全 预览版》完成真实浏览器验收：六类准确提取并全部启用，工作台显示自动应用 6 条规则，GPT Image 2 成功返回 4 个真实海报变体 | V0.0.17 2026-07-18 |
+| D16 | 品牌手册 PDF 深度解析与项目级应用 | 用户 2026-07-17 | ✅ **真实验收** | `apps/ai/app/main.py` + `providers/http_providers.py` + `parse-manual.worker.ts` + `generate.worker.ts` | PDF 逐页文字+视觉解析（最多 120 页），分批合并六类品牌规则；VLM 选择的 Logo、色卡、字体样张、版式和摄影区域自动裁切并落 `BRAND_KIT` 资产，证据保留页码；规则默认 DRAFT，经用户确认后，规则文本、主 Logo 与图像参考自动约束当前品牌下全部项目生成。长 PDF 任一视觉批次遇到裸 5xx 或网络超时会降级使用 PDF 精确文字与页面证据，不再让整份手册失败。2026-07-18 在 CDS 部署环境以 101 页《一家一居VI全 预览版》完成真实浏览器验收：六类准确提取并全部启用，工作台显示自动应用 6 条规则，GPT Image 2 成功返回 4 个真实海报变体；`grounded-six-slot-r6` 部署后又在原失败品牌“测试 0717”同文件二次解析成功，并验证新项目自动应用 6 条规则 | V0.0.17 2026-07-18 |
 
 ## E · P04 素材库
 
