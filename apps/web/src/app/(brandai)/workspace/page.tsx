@@ -1241,24 +1241,31 @@ function Workspace() {
         setCanvasSel(false);
         return;
       }
-      // V0.0.13c — 对话 Tab：点画布图片 = 插入引用 chip（视觉创作同款交互）。
-      const picked = versions.find((x) => x.id === versionId);
-      if (
-        picked?.imageUrl &&
-        chatPickImage({
-          id: picked.id,
-          url: picked.imageUrl,
-          label: scene || sellingPoint || "画布图",
-        })
-      ) {
-        return;
-      }
+      // 注意：这里是「选择同步」回调（activeVersionId/selectNonce/回调身份变化都会
+      // 重放），不能承载对话 Tab 的点选插入——那走 onUserPickVersion（真实点击专用），
+      // 否则切到对话 Tab 的瞬间会凭空插入一个引用 chip（灰度自验收捕获的真 bug）。
       setCanvasSel(true);
       setEditBaseVersionId(versionId);
       setActiveVariant((prev) => {
         const idx = versions.findIndex((x) => x.id === versionId);
         return idx >= 0 ? idx : prev;
       });
+    },
+    [versions],
+  );
+
+  // V0.0.13c — 对话 Tab：用户真实点击画布出图 tile = 插入引用 chip（视觉创作同款）。
+  // 与选择同步分离（onUserPickVersion 只在真实 pointer tap 时触发，程序化同步不触发）。
+  const onCanvasUserPickVersion = useCallback(
+    (versionId: string) => {
+      const picked = versions.find((x) => x.id === versionId);
+      if (picked?.imageUrl) {
+        chatPickImage({
+          id: picked.id,
+          url: picked.imageUrl,
+          label: scene || sellingPoint || "画布图",
+        });
+      }
     },
     [versions, chatPickImage, scene, sellingPoint],
   );
@@ -1550,6 +1557,7 @@ function Workspace() {
             selectNonce={selectNonce}
             fitKey={genId ?? undefined}
             onUploadImage={onCanvasUploadImage}
+            onUserPickVersion={onCanvasUserPickVersion}
             edit={{
               ops: CANVAS_OPS,
               busy: !!editJobId || busy === "edit",

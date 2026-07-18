@@ -99,6 +99,8 @@ type Gesture =
       sx: number;
       sy: number;
       start: Map<string, { x: number; y: number }>;
+      /** 本次手势按下的 item key —— 抬起且未拖动时视为「真实点击」该 item。 */
+      tapKey?: string;
     }
   | {
       type: "resize";
@@ -131,6 +133,7 @@ export function OpenCanvas({
   selectNonce,
   fitKey,
   onUploadImage,
+  onUserPickVersion,
   edit,
 }: {
   seedVersions: GenerationVersion[];
@@ -155,6 +158,10 @@ export function OpenCanvas({
     width?: number;
     height?: number;
   }>;
+  /** 用户「真实点击」某出图变体 tile（非拖拽、非程序化选择同步）时回传。
+   *  与 onSelectVersion 分离：后者由选择同步 effect 驱动、会因回调身份变化重放，
+   *  不能承载「点选插入引用」这类一次性用户意图（V0.0.13c 对话面板点选取图）。 */
+  onUserPickVersion?: (versionId: string) => void;
   edit: CanvasEditBridge;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -682,7 +689,13 @@ export function OpenCanvas({
     const start = new Map<string, { x: number; y: number }>();
     for (const it of items)
       if (nextSel.has(it.key)) start.set(it.key, { x: it.x, y: it.y });
-    gestureRef.current = { type: "move", sx: e.clientX, sy: e.clientY, start };
+    gestureRef.current = {
+      type: "move",
+      sx: e.clientX,
+      sy: e.clientY,
+      start,
+      tapKey: key,
+    };
     movedRef.current = false;
   };
 
@@ -817,6 +830,18 @@ export function OpenCanvas({
       } else if (!g.additive && !movedRef.current) {
         setSelected(new Set());
       }
+    }
+    // 「真实点击」出图变体 tile（按下即抬起、未拖动、非 shift 多选）→ 上报用户点选。
+    // 只在此处上报：程序化选择同步（activeVersionId/selectNonce/回调身份变化）永不触发。
+    if (
+      g.type === "move" &&
+      !movedRef.current &&
+      g.tapKey &&
+      !e.shiftKey &&
+      onUserPickVersion
+    ) {
+      const it = items.find((i) => i.key === g.tapKey);
+      if (it?.versionId) onUserPickVersion(it.versionId);
     }
   };
 
