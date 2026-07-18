@@ -40,7 +40,7 @@ import {
 import { useBrand } from "../brand-context";
 import { MaskPaintCanvas } from "./MaskPaintCanvas";
 import { OpenCanvas } from "./OpenCanvas";
-import { ChatPanel } from "./ChatPanel";
+import { ChatPanel, type ChatInsertFn } from "./ChatPanel";
 
 /**
  * P05 · AI 工作台 — 左画布 + 变体条，右 prompt 面板。真实出图（CLAUDE.md §2，
@@ -307,6 +307,31 @@ function Workspace() {
     useState<WorkspaceMode>("TEXT_TO_IMAGE");
   // V0.0.13 — 右侧面板双 Tab：生成表单（既有） / AI 设计师对话（图生图/多图生图）。
   const [panelTab, setPanelTab] = useState<"form" | "chat">("form");
+  // V0.0.13c — 视觉创作交互物理移植：对话 Tab 下点选 画布/变体条/历史条 图片
+  // → 经此桥插入输入框 chip（灰色待选 → 再点/点输入区 确认实体色）。
+  const chatInsertRef = useRef<ChatInsertFn | null>(null);
+  // 输入框内当前引用（有序 + 就绪态），驱动源图的 灰罩✓ / violet 描边 + 序号。
+  const [chatComposerRefs, setChatComposerRefs] = useState<
+    { id: string; ready: boolean }[]
+  >([]);
+  /** 对话 Tab 下点选一张源图。返回 true 表示已被对话面板消费。 */
+  const chatPickImage = useCallback(
+    (ref: { id: string; url: string; label?: string }) => {
+      if (panelTab !== "chat" || !chatInsertRef.current) return false;
+      chatInsertRef.current({ kind: "VERSION", ...ref });
+      return true;
+    },
+    [panelTab],
+  );
+  /** 源图当前在输入框中的状态（无 / 待选灰 / 就绪）+ 序号。 */
+  const chatRefState = useCallback(
+    (id: string): { ordinal: number; ready: boolean } | null => {
+      const idx = chatComposerRefs.findIndex((r) => r.id === id);
+      if (idx < 0) return null;
+      return { ordinal: idx + 1, ready: chatComposerRefs[idx]!.ready };
+    },
+    [chatComposerRefs],
+  );
   const [editBaseVersionId, setEditBaseVersionId] = useState<string | null>(
     null,
   );
@@ -1216,6 +1241,18 @@ function Workspace() {
         setCanvasSel(false);
         return;
       }
+      // V0.0.13c — 对话 Tab：点画布图片 = 插入引用 chip（视觉创作同款交互）。
+      const picked = versions.find((x) => x.id === versionId);
+      if (
+        picked?.imageUrl &&
+        chatPickImage({
+          id: picked.id,
+          url: picked.imageUrl,
+          label: scene || sellingPoint || "画布图",
+        })
+      ) {
+        return;
+      }
       setCanvasSel(true);
       setEditBaseVersionId(versionId);
       setActiveVariant((prev) => {
@@ -1223,7 +1260,7 @@ function Workspace() {
         return idx >= 0 ? idx : prev;
       });
     },
-    [versions],
+    [versions, chatPickImage, scene, sellingPoint],
   );
 
   // 上传图片到画布:走真实素材上传(R2)→ 公网 URL + 真实尺寸(从 resolution 串解析)。
@@ -1525,7 +1562,9 @@ function Workspace() {
           />
           {versions.length > 0 ? (
             <div className="mt-4 flex flex-wrap gap-3">
-              {versions.map((v, i) => (
+              {versions.map((v, i) => {
+                const chatSt = chatRefState(v.id);
+                return (
                 <button
                   key={v.id}
                   draggable
@@ -1536,7 +1575,21 @@ function Workspace() {
                     );
                     e.dataTransfer.effectAllowed = "copy";
                   }}
+                  // 对话 Tab 下不抢输入框焦点（保住光标位置插 chip）。
+                  onMouseDown={(e) => {
+                    if (panelTab === "chat") e.preventDefault();
+                  }}
                   onClick={() => {
+                    // V0.0.13c — 对话 Tab：点变体 = 插入引用（灰待选→点选确认）。
+                    if (
+                      chatPickImage({
+                        id: v.id,
+                        url: v.imageUrl,
+                        label: `变体${i + 1}`,
+                      })
+                    ) {
+                      return;
+                    }
                     setActiveVariant(i);
                     setEditBaseVersionId(v.id);
                     setCanvasSel(true);
@@ -1546,9 +1599,11 @@ function Workspace() {
                   }}
                   className={[
                     "relative h-[82px] w-[118px] overflow-hidden rounded-[18px] border-2 transition-colors",
-                    i === activeVariant && canvasSel
+                    chatSt?.ready
                       ? "border-primary"
-                      : "border-transparent hover:border-border",
+                      : i === activeVariant && canvasSel && panelTab !== "chat"
+                        ? "border-primary"
+                        : "border-transparent hover:border-border",
                   ].join(" ")}
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -1557,18 +1612,37 @@ function Workspace() {
                     alt={`变体 ${i + 1}`}
                     className="h-full w-full object-cover"
                   />
+                  {/* 视觉创作两阶段态：待选=灰罩+✓；就绪=violet 序号角标 */}
+                  {chatSt && !chatSt.ready ? (
+                    <span
+                      className="absolute inset-0 flex items-center justify-center"
+                      style={{
+                        background: "rgba(156,163,175,0.25)",
+                        border: "2px solid rgba(156,163,175,0.6)",
+                        borderRadius: 16,
+                      }}
+                    >
+                      <span className="text-lg font-bold text-white drop-shadow">✓</span>
+                    </span>
+                  ) : null}
+                  {chatSt?.ready ? (
+                    <span className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-primary text-[11px] font-bold text-primary-foreground shadow">
+                      {chatSt.ordinal}
+                    </span>
+                  ) : null}
                   {v.isFinal ? (
                     <span className="absolute left-1 top-1 rounded-full bg-success px-1.5 py-0.5 text-[10px] font-medium text-primary-foreground">
                       终稿
                     </span>
                   ) : null}
-                  {v.parentVersionId ? (
+                  {v.parentVersionId && !chatSt ? (
                     <span className="absolute right-1 top-1 rounded-full bg-accent-soft px-1.5 py-0.5 text-[10px] font-medium text-primary">
                       改
                     </span>
                   ) : null}
                 </button>
-              ))}
+                );
+              })}
             </div>
           ) : null}
 
@@ -1587,7 +1661,9 @@ function Workspace() {
               </div>
               <div className="flex gap-3 overflow-x-auto pb-1">
                 {history.map((g) => {
-                  const cover = g.versions?.find((v) => v.imageUrl)?.imageUrl;
+                  const coverVersion = g.versions?.find((v) => v.imageUrl);
+                  const cover = coverVersion?.imageUrl;
+                  const chatSt = coverVersion ? chatRefState(coverVersion.id) : null;
                   const active = g.id === genId;
                   const finalCount = (g.versions ?? []).filter(
                     (v) => v.isFinal,
@@ -1595,7 +1671,23 @@ function Workspace() {
                   return (
                     <button
                       key={g.id}
-                      onClick={() => viewGeneration(g.id)}
+                      onMouseDown={(e) => {
+                        if (panelTab === "chat") e.preventDefault();
+                      }}
+                      onClick={() => {
+                        // V0.0.13c — 对话 Tab：点历史图 = 插入引用 chip。
+                        if (
+                          coverVersion?.imageUrl &&
+                          chatPickImage({
+                            id: coverVersion.id,
+                            url: coverVersion.imageUrl,
+                            label: g.scene || g.sellingPoint || "历史图",
+                          })
+                        ) {
+                          return;
+                        }
+                        viewGeneration(g.id);
+                      }}
                       title={`${g.scene || g.sceneType} · ${new Date(
                         g.createdAt,
                       ).toLocaleString("zh-CN")}`}
@@ -1625,7 +1717,25 @@ function Workspace() {
                       <span className="absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-foreground/70 to-transparent px-1.5 pb-1 pt-3 text-[10px] font-medium text-white">
                         {g.scene || g.sceneType}
                       </span>
-                      {(g.versions?.length ?? 0) > 1 ? (
+                      {/* 对话引用两阶段态（覆盖在历史缩略图上） */}
+                      {chatSt && !chatSt.ready ? (
+                        <span
+                          className="absolute inset-0 flex items-center justify-center"
+                          style={{
+                            background: "rgba(156,163,175,0.25)",
+                            border: "2px solid rgba(156,163,175,0.6)",
+                            borderRadius: 14,
+                          }}
+                        >
+                          <span className="text-lg font-bold text-white drop-shadow">✓</span>
+                        </span>
+                      ) : null}
+                      {chatSt?.ready ? (
+                        <span className="absolute left-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-primary text-[11px] font-bold text-primary-foreground shadow">
+                          {chatSt.ordinal}
+                        </span>
+                      ) : null}
+                      {(g.versions?.length ?? 0) > 1 && !chatSt ? (
                         <span className="absolute right-1 top-1 rounded-full bg-card/90 px-1.5 py-0.5 text-[10px] font-medium text-foreground">
                           ×{g.versions!.length}
                         </span>
@@ -1733,6 +1843,8 @@ function Workspace() {
               projectId={projectId}
               sceneType={sceneType}
               onViewGeneration={viewGeneration}
+              insertRef={chatInsertRef}
+              onComposerRefsChange={setChatComposerRefs}
             />
           ) : null}
 

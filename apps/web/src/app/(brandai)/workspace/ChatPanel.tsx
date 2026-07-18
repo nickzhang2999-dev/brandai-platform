@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MutableRefObject,
+} from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Generation } from "@brandai/contracts";
 import { apiFetch } from "@/lib/client";
@@ -14,32 +21,51 @@ import {
 } from "@/lib/chat-composer";
 
 /**
- * V0.0.13 · AI 设计师对话面板（迁移自 prd_agent 视觉创作右侧对话，交互对标
- * Lovart）。
+ * V0.0.13c · AI 设计师对话面板 —— 视觉创作 composer 的物理移植
+ * （2026-07-18 用户验收：「你需要一比一复刻/物理移植」，本版按从
+ * prd_agent AdvancedVisualAgentTab / TwoPhaseRichComposer / ImageChipNode
+ * 逐行提取的交互规格实现）：
  *
- * 设计要点（都是从 prd_agent 的 bug / 用户验收反馈反推出来的硬约束）：
- *  1. 会话流不建消息表 —— 直接把本项目的 Generation 历史投影成对话
- *     （服务端权威：刷新/换设备/深链回来，会话流从服务端完整恢复）。
- *  2. 展示层与模型层物理分离 —— 气泡只显示用户组织的内容（文字 + 行内
- *     图片 chip）；模型 prompt 由 worker/AI 服务从结构化字段组装，绝不把
- *     URL/文件名/【引用图片】块拼进可见文本。
- *  3. V0.0.13b 富文本混排（用户验收反馈）—— 图片 chip 是**文字流的一部分**
- *     （"[chip]拿着[chip]在[chip]的背景里…"），不是文本框上方的一排附件：
- *     contentEditable 输入器在光标处插入行内 chip，线格式用 U+FFFC 标记
- *     chip 位置（见 lib/chat-composer.ts），气泡按标记位置行内还原。
+ *  1. 两阶段选择（TwoPhase）：点选任意图片（画布/变体条/历史条/会话结果图）
+ *     → 立即在输入框光标处插入**灰色待选 chip**（bg rgba(156,163,175,.18)，
+ *     缩略图/文字 60% 透明）；点击输入区（或再点同一张图 / 发送）→ chip
+ *     变**实体色就绪态**。待确认时显示「待确认 N 张 + 清除」徽标，
+ *     placeholder 切换为「点击此处确认选择，或继续输入...」。
+ *  2. chip 解剖 1:1：inline-flex h-20px gap-4px pad 0 6px 0 4px 圆角 4px；
+ *     14×14 缩略图（圆角 3）+ 13px 语义标签（>8 字符截为 6+…，maxWidth 80）。
+ *  3. 底栏 1:1：左「1K · 比例」尺寸 chip（弹出 分辨率+比例小矩形网格）；
+ *     右 模型 chip + 圆形发送箭头（h-7 w-7 rounded-full）。
+ *  4. 会话流只投影**对话来源**（chatContext 存在）的生成——表单历史的
+ *     brief 不再"莫名其妙"出现。
  *
- * 图生图 = 引用 1 张图 + 指令；多图生图 = 按序引用 ≤8 张。两者走同一条
- * POST /generations → worker → /images/edits multipart 路径。
+ * 展示/模型分层铁律不变：displayText 只存用户内容（U+FFFC 标记 chip 位置），
+ * 模型 brief 用 [图N]；绝不把 URL/文件名/引用块拼进可见文本。
  */
+
+export interface ChatInsertRefInput {
+  kind: "VERSION" | "ASSET";
+  id: string;
+  url: string;
+  label?: string;
+}
+
+/** 页面侧（画布/变体条/历史条）通过该 ref 调用「点选图片 → 插入 chip」。 */
+export type ChatInsertFn = (ref: ChatInsertRefInput) => void;
 
 interface ChatContextShape {
   displayText?: string;
   imageInputs?: { kind: "VERSION" | "ASSET"; id: string; url?: string }[];
 }
 
+/** 尺寸 chip 的选项（gpt-image-2 支持的 1K 档三比例）。 */
+const SIZE_OPTIONS = [
+  { ratio: "1:1", width: 1024, height: 1024 },
+  { ratio: "2:3", width: 1024, height: 1536 },
+  { ratio: "3:2", width: 1536, height: 1024 },
+] as const;
+
 function fmtTime(iso: string): string {
-  const d = new Date(iso);
-  return d.toLocaleString("zh-CN", {
+  return new Date(iso).toLocaleString("zh-CN", {
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
@@ -47,14 +73,81 @@ function fmtTime(iso: string): string {
   });
 }
 
-/** 气泡内的行内 chip（缩略图；解析不到图时退化为「图N」中性块）。 */
-function InlineChip({
-  ordinal,
-  url,
-}: {
-  ordinal: number;
-  url?: string;
-}) {
+/** chip 标签：>8 字符截为前 6 + …（ImageChipNode.tsx:222 同款）。 */
+function chipLabel(raw: string | undefined, fallback: string): string {
+  const s = (raw ?? "").trim() || fallback;
+  return s.length > 8 ? `${s.slice(0, 6)}…` : s;
+}
+
+/** 从一次生成推导语义标签（用户原文优先，剥掉 chip 位置标记）。 */
+function labelFromGeneration(g: Generation): string {
+  const ctx = (g.chatContext ?? null) as ChatContextShape | null;
+  const raw = ctx?.displayText ?? g.sellingPoint ?? "";
+  const text = parseChatDisplayText(raw, [])
+    .map((s) => (s.type === "text" ? s.text : ""))
+    .join("")
+    .trim();
+  return text || g.scene || "图";
+}
+
+/* ---------- chip DOM（物理移植 ImageChipNode 的几何与状态） ---------- */
+
+const CHIP_GRAY_BG = "rgba(156, 163, 175, 0.18)";
+const CHIP_GRAY_BORDER = "rgba(156, 163, 175, 0.35)";
+// 就绪态用 BrandAI 品牌 violet（源实现为蓝，本仓库品牌色唯一 violet）。
+const CHIP_READY_BG = "rgba(124, 92, 255, 0.16)";
+const CHIP_READY_BORDER = "rgba(124, 92, 255, 0.4)";
+
+function applyChipReadyStyle(chip: HTMLElement, ready: boolean) {
+  chip.dataset.ready = ready ? "1" : "0";
+  chip.style.background = ready ? CHIP_READY_BG : CHIP_GRAY_BG;
+  chip.style.border = `1px solid ${ready ? CHIP_READY_BORDER : CHIP_GRAY_BORDER}`;
+  const img = chip.querySelector("img");
+  if (img) (img as HTMLElement).style.opacity = ready ? "1" : "0.6";
+  const label = chip.querySelector("[data-chip-label]");
+  if (label) (label as HTMLElement).style.opacity = ready ? "0.95" : "0.6";
+}
+
+function buildChipElement(ref: ChatInsertRefInput): HTMLElement {
+  const chip = document.createElement("span");
+  chip.contentEditable = "false";
+  chip.dataset.chatChip = "1";
+  chip.dataset.kind = ref.kind;
+  chip.dataset.id = ref.id;
+  chip.dataset.url = ref.url;
+  chip.dataset.label = ref.label ?? "";
+  chip.style.cssText =
+    "display:inline-flex;align-items:center;gap:4px;height:20px;" +
+    "padding:0 6px 0 4px;margin:0 2px;border-radius:4px;vertical-align:middle;" +
+    "cursor:default;user-select:none;";
+  const img = document.createElement("img");
+  img.src = ref.url;
+  img.alt = "引用图片";
+  img.style.cssText =
+    "width:14px;height:14px;border-radius:3px;object-fit:cover;" +
+    "border:1px solid rgba(0,0,0,0.12);";
+  const label = document.createElement("span");
+  label.dataset.chipLabel = "1";
+  label.textContent = chipLabel(ref.label, "图");
+  label.style.cssText =
+    "font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;" +
+    "text-overflow:ellipsis;max-width:80px;color:var(--foreground,#1a1a1f);";
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.dataset.chipRemove = "1";
+  remove.setAttribute("aria-label", "移除引用");
+  remove.textContent = "×";
+  remove.style.cssText =
+    "font-size:11px;line-height:1;color:rgba(124,92,255,0.7);cursor:pointer;" +
+    "background:none;border:none;padding:0 0 0 2px;";
+  chip.append(img, label, remove);
+  applyChipReadyStyle(chip, false);
+  return chip;
+}
+
+/* ---------- 气泡行内 chip（会话流展示，只读） ---------- */
+
+function InlineChip({ ordinal, url }: { ordinal: number; url?: string }) {
   return (
     <span
       title={`引用图片 ${ordinal}`}
@@ -62,11 +155,7 @@ function InlineChip({
     >
       {url ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={url}
-          alt={`引用 ${ordinal}`}
-          className="h-6 w-6 object-cover"
-        />
+        <img src={url} alt={`引用 ${ordinal}`} className="h-6 w-6 object-cover" />
       ) : (
         <span className="flex h-6 w-6 items-center justify-center bg-muted text-[9px] text-muted-foreground">
           图{ordinal}
@@ -76,7 +165,6 @@ function InlineChip({
   );
 }
 
-/** 用户气泡正文：文字与 chip 按线格式标记位置混排。 */
 function UserBubbleContent({
   displayText,
   imageInputs,
@@ -88,7 +176,6 @@ function UserBubbleContent({
   const hasInline = segments.some((s) => s.type === "image");
   return (
     <>
-      {/* 兼容早期（无行内标记）的消息：chip 集中显示在正文上方。 */}
       {!hasInline && imageInputs.length > 0 ? (
         <span className="mb-1.5 flex flex-wrap justify-end gap-1.5">
           {imageInputs.map((c, i) => (
@@ -112,26 +199,34 @@ function UserBubbleContent({
   );
 }
 
+/* ==================== 面板 ==================== */
+
 export function ChatPanel({
   wsId,
   projectId,
   sceneType,
   onViewGeneration,
+  insertRef,
+  onComposerRefsChange,
 }: {
   wsId: string;
   projectId: string | null;
   sceneType: string;
-  /** 点结果图 → 画布回看该次出图 */
   onViewGeneration: (generationId: string) => void;
+  /** 页面侧点选图片（画布/变体条/历史条）→ 插入 chip 的桥。 */
+  insertRef?: MutableRefObject<ChatInsertFn | null>;
+  /** 输入框内当前引用（有序 id + 就绪态）变化时回调，供源图显示选中态。 */
+  onComposerRefsChange?: (refs: { id: string; ready: boolean }[]) => void;
 }) {
   const qc = useQueryClient();
   const composerRef = useRef<HTMLDivElement | null>(null);
   const [chipCount, setChipCount] = useState(0);
+  const [pendingCount, setPendingCount] = useState(0);
   const [composerEmpty, setComposerEmpty] = useState(true);
-  const [pickerOpen, setPickerOpen] = useState(false);
   const [sending, setSending] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  // 生成中气泡的「已等待 Xs」计时。
+  const [sizeOpen, setSizeOpen] = useState(false);
+  const [sizeIdx, setSizeIdx] = useState(0);
   const [now, setNow] = useState(() => Date.now());
 
   const { data: history = [] } = useQuery<Generation[]>({
@@ -139,7 +234,6 @@ export function ChatPanel({
     queryFn: () =>
       apiFetch(`/api/workspaces/${wsId}/generations?projectId=${projectId}`),
     enabled: !!projectId,
-    // §2.2 — 有活跃出图时轮询；否则静默（服务端状态是权威）。
     refetchInterval: (q) =>
       (q.state.data ?? []).some(
         (g) => g.status === "PENDING" || g.status === "RUNNING",
@@ -157,11 +251,13 @@ export function ChatPanel({
     return () => window.clearInterval(t);
   }, [anyActive]);
 
-  // 会话流 = 历史出图按时间正序（旧→新，聊天习惯）。
+  // 会话流 = **对话来源**的出图（chatContext 存在），旧→新。表单（生成面板）
+  // 的历史 brief 不属于对话，不再混入（2026-07-18 用户验收「莫名其妙出现
+  // 一段提示词」的修复）。表单历史仍在画布下方「历史出图」条。
   const thread = useMemo(
     () =>
       history
-        .slice()
+        .filter((g) => !!g.chatContext)
         .sort(
           (a, b) =>
             new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
@@ -169,61 +265,78 @@ export function ChatPanel({
     [history],
   );
 
-  // 可引用候选：历史出图的所有版本（新→旧，去重，上限 24 个缩略图）。
-  const candidates = useMemo(() => {
-    const seen = new Set<string>();
-    const out: { id: string; url: string }[] = [];
-    for (const g of history) {
-      for (const v of g.versions ?? []) {
-        if (!v.imageUrl || seen.has(v.id)) continue;
-        seen.add(v.id);
-        out.push({ id: v.id, url: v.imageUrl });
-        if (out.length >= 24) return out;
-      }
-    }
-    return out;
-  }, [history]);
-
   const scrollRef = useRef<HTMLDivElement | null>(null);
-  const threadFingerprint = thread
-    .map((g) => `${g.id}:${g.status}`)
-    .join("|");
+  const threadFingerprint = thread.map((g) => `${g.id}:${g.status}`).join("|");
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [threadFingerprint]);
 
-  /** composer DOM 状态 → chipCount / 是否为空。 */
+  /* ---------- composer 状态同步 ---------- */
+
   const syncComposerState = useCallback(() => {
     const el = composerRef.current;
     if (!el) return;
-    const chips = el.querySelectorAll("[data-chat-chip]").length;
-    setChipCount(chips);
-    setComposerEmpty(chips === 0 && (el.textContent ?? "").trim() === "");
-  }, []);
+    const chips = Array.from(
+      el.querySelectorAll<HTMLElement>("[data-chat-chip]"),
+    );
+    setChipCount(chips.length);
+    setPendingCount(chips.filter((c) => c.dataset.ready !== "1").length);
+    setComposerEmpty(
+      chips.length === 0 && (el.textContent ?? "").trim() === "",
+    );
+    onComposerRefsChange?.(
+      chips.map((c) => ({ id: c.dataset.id ?? "", ready: c.dataset.ready === "1" })),
+    );
+  }, [onComposerRefsChange]);
 
-  /** 在光标处插入一个行内图片 chip（不在输入器内则追加到末尾）。 */
+  /** 灰色待选 → 全部就绪（TwoPhase confirmPending 的移植）。 */
+  const confirmPending = useCallback(() => {
+    const el = composerRef.current;
+    if (!el) return;
+    el.querySelectorAll<HTMLElement>('[data-chat-chip][data-ready="0"]').forEach(
+      (c) => applyChipReadyStyle(c, true),
+    );
+    syncComposerState();
+  }, [syncComposerState]);
+
+  /** 清除所有待选（灰色）chip。 */
+  const clearPending = useCallback(() => {
+    const el = composerRef.current;
+    if (!el) return;
+    el.querySelectorAll<HTMLElement>('[data-chat-chip][data-ready="0"]').forEach(
+      (c) => c.remove(),
+    );
+    syncComposerState();
+  }, [syncComposerState]);
+
+  /**
+   * 点选图片（源自画布/变体条/历史条/会话结果图）：
+   *  - 不在输入框 → 插入灰色待选 chip（光标处，无光标则追加）；
+   *  - 已在且待选 → 该 chip 变实体色（用户描述的「再点选变实体颜色」）；
+   *  - 已在且就绪 → 移除（第三次点 = 取消引用）。
+   */
   const insertChip = useCallback(
-    (ref: { kind: "VERSION" | "ASSET"; id: string; url: string }) => {
+    (ref: ChatInsertRefInput) => {
       const el = composerRef.current;
       if (!el) return;
-      if (el.querySelectorAll("[data-chat-chip]").length >= MAX_CHAT_IMAGE_INPUTS) {
+      const existing = el.querySelector<HTMLElement>(
+        `[data-chat-chip][data-id="${ref.id}"]`,
+      );
+      if (existing) {
+        if (existing.dataset.ready !== "1") applyChipReadyStyle(existing, true);
+        else existing.remove();
+        syncComposerState();
+        return;
+      }
+      if (
+        el.querySelectorAll("[data-chat-chip]").length >= MAX_CHAT_IMAGE_INPUTS
+      ) {
         setErr(`最多引用 ${MAX_CHAT_IMAGE_INPUTS} 张图片`);
         return;
       }
       setErr(null);
-      const chip = document.createElement("span");
-      chip.contentEditable = "false";
-      chip.dataset.chatChip = "1";
-      chip.dataset.kind = ref.kind;
-      chip.dataset.id = ref.id;
-      chip.dataset.url = ref.url;
-      chip.className =
-        "mx-0.5 inline-flex translate-y-[6px] select-none items-center gap-1 overflow-hidden rounded-md border border-primary/30 bg-accent-soft pr-1 align-baseline";
-      chip.innerHTML =
-        `<img src="${ref.url.replace(/"/g, "&quot;")}" alt="引用图片" class="h-6 w-6 object-cover" />` +
-        `<span class="max-w-[64px] truncate text-[9px] text-primary">#${ref.id.slice(-4)}</span>` +
-        `<button type="button" data-chip-remove="1" aria-label="移除引用" class="text-[10px] leading-none text-primary/70 hover:text-primary">×</button>`;
+      const chip = buildChipElement(ref);
       const sel = window.getSelection();
       let inserted = false;
       if (sel && sel.rangeCount > 0) {
@@ -239,13 +352,22 @@ export function ChatPanel({
         }
       }
       if (!inserted) el.appendChild(chip);
-      el.focus();
       syncComposerState();
     },
     [syncComposerState],
   );
 
-  /** contentEditable DOM → 有序 token 流（文本 / chip / 换行）。 */
+  // 页面桥：画布/变体条/历史条点选 → insertChip。
+  useEffect(() => {
+    if (!insertRef) return;
+    insertRef.current = insertChip;
+    return () => {
+      insertRef.current = null;
+    };
+  }, [insertRef, insertChip]);
+
+  /* ---------- 序列化 / 发送 ---------- */
+
   function domToTokens(root: Node): ComposerToken[] {
     const tokens: ComposerToken[] = [];
     const walk = (node: Node, topLevel: boolean) => {
@@ -260,7 +382,7 @@ export function ChatPanel({
           tokens.push({
             type: "image",
             ref: {
-              kind: (child.dataset.kind === "ASSET" ? "ASSET" : "VERSION"),
+              kind: child.dataset.kind === "ASSET" ? "ASSET" : "VERSION",
               id: child.dataset.id ?? "",
               url: child.dataset.url,
             },
@@ -271,10 +393,7 @@ export function ChatPanel({
           tokens.push({ type: "text", text: "\n" });
           return;
         }
-        // div/p 行容器（浏览器回车产物）→ 行间补换行。
-        if (topLevel && tokens.length > 0) {
-          tokens.push({ type: "text", text: "\n" });
-        }
+        if (topLevel && tokens.length > 0) tokens.push({ type: "text", text: "\n" });
         walk(child, false);
       });
     };
@@ -290,6 +409,7 @@ export function ChatPanel({
       setErr("请先选择项目");
       return;
     }
+    const size = SIZE_OPTIONS[sizeIdx] ?? SIZE_OPTIONS[0];
     setSending(true);
     setErr(null);
     try {
@@ -298,10 +418,17 @@ export function ChatPanel({
         body: JSON.stringify({
           projectId,
           sceneType,
-          // 模型层 brief：chip 标记替换为 [图N]（与 multipart 顺序对应）；
-          // 展示原文单独走 chatDisplayText —— 两层分离。
           sellingPoint: buildModelBrief(payload.displayText).trim(),
           versionCount: 1,
+          // 尺寸 chip → 单 target（1K 档，比例即用户所选）。
+          targets: [
+            {
+              key: `chat-1k-${size.ratio.replace(":", "x")}`,
+              label: `1K·${size.ratio}`,
+              width: size.width,
+              height: size.height,
+            },
+          ],
           ...(payload.imageInputs.length > 0
             ? {
                 imageInputs: payload.imageInputs.map((r) => ({
@@ -326,17 +453,15 @@ export function ChatPanel({
   async function send() {
     const el = composerRef.current;
     if (!el) return;
-    const { displayText, imageInputs } = serializeComposerTokens(
-      domToTokens(el),
-    );
+    // 发送前自动确认所有待选（TwoPhase handleSubmit 的移植）。
+    confirmPending();
+    const { displayText, imageInputs } = serializeComposerTokens(domToTokens(el));
     if (displayText.trim() === "" && imageInputs.length === 0) return;
     await submit({ displayText, imageInputs });
     el.innerHTML = "";
     syncComposerState();
-    setPickerOpen(false);
   }
 
-  // 失败气泡的重试：用该次出图落库的结构化上下文原样重发。
   async function retry(g: Generation) {
     const ctx = (g.chatContext ?? {}) as ChatContextShape;
     await submit({
@@ -349,24 +474,22 @@ export function ChatPanel({
     });
   }
 
+  const size = SIZE_OPTIONS[sizeIdx] ?? SIZE_OPTIONS[0];
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {/* 头部 */}
-      <div className="shrink-0 pb-3">
+      <div className="shrink-0 pb-2">
         <div className="text-sm font-semibold text-foreground">
           Hi，我是你的 AI 设计师
         </div>
         <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">
-          直接输入文字发送即可
-          <strong className="font-medium text-foreground">文生图</strong>
-          ；点「引用图片」把图插进文字里（如「把 图1 放在 图2 的背景里」），
-          1 张即<strong className="font-medium text-foreground">图生图</strong>
-          ，多张（≤{MAX_CHAT_IMAGE_INPUTS}，按插入顺序）即
-          <strong className="font-medium text-foreground">多图合成</strong>。
+          点选画布/变体/历史图片即可插入引用（先灰色待选，再点一次或点输入区变
+          实体色确认，第三次点取消）；直接输入文字即文生图。
         </p>
       </div>
 
-      {/* 会话流 */}
+      {/* 会话流（仅对话来源） */}
       <div
         ref={scrollRef}
         className="min-h-0 flex-1 overflow-y-auto pr-1"
@@ -376,28 +499,25 @@ export function ChatPanel({
           <div className="mt-8 rounded-2xl border border-dashed border-border bg-background p-4 text-center text-xs leading-relaxed text-muted-foreground">
             还没有对话。
             <br />
-            在下方输入设计需求，或插入引用图片开始图生图。
+            输入设计需求，或点选图片开始图生图。
           </div>
         ) : (
           <div className="flex flex-col gap-4 pb-2">
             {thread.map((g) => {
               const ctx = (g.chatContext ?? null) as ChatContextShape | null;
-              const displayText = ctx?.displayText ?? g.sellingPoint ?? "";
+              const displayText = ctx?.displayText ?? "";
               const chips = (ctx?.imageInputs ?? []).map((c) => ({
                 kind: c.kind,
                 id: c.id,
                 url: c.url,
               }));
-              const active =
-                g.status === "PENDING" || g.status === "RUNNING";
+              const active = g.status === "PENDING" || g.status === "RUNNING";
               const elapsedS = Math.max(
                 0,
                 Math.round((now - new Date(g.createdAt).getTime()) / 1000),
               );
               return (
                 <div key={g.id} className="flex flex-col gap-2">
-                  {/* 用户气泡 —— 文字与 chip 行内混排，绝不显示
-                      prompt/文件名/URL。 */}
                   <div className="ml-6 self-end rounded-2xl rounded-br-md bg-accent-soft px-3 py-2">
                     <UserBubbleContent
                       displayText={displayText}
@@ -407,8 +527,6 @@ export function ChatPanel({
                       {fmtTime(g.createdAt)}
                     </div>
                   </div>
-
-                  {/* 助手气泡 —— 产物即体验：结果图本体，而非状态描述。 */}
                   <div className="mr-6 self-start">
                     {active ? (
                       <div className="flex items-center gap-2 rounded-2xl rounded-bl-md border border-border bg-background px-3 py-2 text-xs text-muted-foreground">
@@ -437,26 +555,48 @@ export function ChatPanel({
                         {(g.versions ?? [])
                           .filter((v) => v.imageUrl)
                           .map((v) => (
-                            <button
+                            <div
                               key={v.id}
-                              type="button"
-                              onClick={() => onViewGeneration(g.id)}
-                              title="在画布中查看"
                               className="group relative w-[220px] overflow-hidden rounded-2xl rounded-bl-md border border-border transition-colors hover:border-primary"
                             >
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img
-                                src={v.imageUrl}
-                                alt="生成结果"
-                                className="w-full object-cover"
-                              />
+                              {/* 点结果图 = 插入引用（与画布点选同语义） */}
+                              <button
+                                type="button"
+                                title="点击引用此图（再点确认/取消）"
+                                onMouseDown={(e) => e.preventDefault()}
+                                onClick={() =>
+                                  insertChip({
+                                    kind: "VERSION",
+                                    id: v.id,
+                                    url: v.imageUrl,
+                                    label: labelFromGeneration(g),
+                                  })
+                                }
+                                className="block w-full"
+                              >
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img
+                                  src={v.imageUrl}
+                                  alt="生成结果"
+                                  className="w-full object-cover"
+                                />
+                              </button>
                               <span className="absolute bottom-1 left-1 rounded-full bg-card/90 px-1.5 py-0.5 text-[10px] text-foreground">
                                 {v.width}×{v.height}
-                                {chips.length > 0
-                                  ? ` · 图生图×${chips.length}`
-                                  : ""}
+                                {chips.length > 0 ? ` · 图生图×${chips.length}` : ""}
                               </span>
-                            </button>
+                              <button
+                                type="button"
+                                title="在画布中查看"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onViewGeneration(g.id);
+                                }}
+                                className="absolute right-1 top-1 rounded-full bg-card/90 px-1.5 py-0.5 text-[10px] text-primary opacity-0 transition-opacity group-hover:opacity-100"
+                              >
+                                查看
+                              </button>
+                            </div>
                           ))}
                       </div>
                     )}
@@ -468,64 +608,46 @@ export function ChatPanel({
         )}
       </div>
 
-      {/* 引用选择器：点选 → 插入到输入器光标处（成为文字流的一部分） */}
-      {pickerOpen ? (
-        <div className="mt-2 shrink-0 rounded-2xl border border-border bg-background p-2">
-          <div className="mb-1.5 flex items-center justify-between text-[11px] text-muted-foreground">
+      {/* 输入面板（物理移植：surface-inset 容器 + 待确认徽标 + 底栏） */}
+      <div className="relative mt-2 shrink-0 pb-12">
+        {pendingCount > 0 ? (
+          <div className="absolute -top-3 right-1 z-10 flex items-center gap-1.5 rounded-full border border-border bg-card px-2 py-0.5 text-[10px] text-muted-foreground shadow-sm">
             <span>
-              点选图片插入到光标处（{chipCount}/{MAX_CHAT_IMAGE_INPUTS}）
+              待确认 <span className="font-semibold text-foreground">{pendingCount}</span> 张
             </span>
             <button
               type="button"
-              className="underline"
-              onClick={() => setPickerOpen(false)}
+              onClick={clearPending}
+              className="text-primary underline"
             >
-              收起
+              清除
             </button>
           </div>
-          {candidates.length === 0 ? (
-            <p className="py-2 text-center text-[11px] text-muted-foreground">
-              本项目还没有可引用的出图
-            </p>
-          ) : (
-            <div className="flex max-h-[120px] flex-wrap gap-1.5 overflow-y-auto">
-              {candidates.map((c) => (
-                <button
-                  key={c.id}
-                  type="button"
-                  title="插入到输入框"
-                  // 保住 composer 的焦点与光标：点击候选图不抢焦点（编辑器
-                  // 工具栏惯例），chip 才能插到用户正在编辑的位置。
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() =>
-                    insertChip({ kind: "VERSION", id: c.id, url: c.url })
-                  }
-                  className="relative h-12 w-12 overflow-hidden rounded-lg border-2 border-transparent transition-colors hover:border-primary"
-                >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={c.url}
-                    alt="候选引用"
-                    className="h-full w-full object-cover"
-                  />
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      ) : null}
+        ) : null}
 
-      {/* 输入区 —— 富文本混排：图片 chip 藏在文字里。
-          pb-12：右下角队列 widget（fixed bottom-4 right-4，§2.3 全局进度面）
-          与本面板底部同位；预留安全底距，发送/引用按钮不被折叠态 widget
-          头条遮挡（不遮挡原则）。 */}
-      <div className="mt-2 shrink-0 pb-12">
-        <div className="rounded-[24px] border border-border bg-background p-2 focus-within:border-primary/40 focus-within:shadow-[0_0_0_4px_rgba(124,92,255,0.08)]">
+        <div
+          className="rounded-[12px] border border-border bg-background p-2 shadow-[inset_0_1px_3px_rgba(0,0,0,0.06)] focus-within:border-primary/40"
+          style={{ cursor: "text" }}
+          onClick={(e) => {
+            // 点击输入区任意处 = 确认待选（TwoPhase handleContainerClick）。
+            const t = e.target as HTMLElement;
+            if (t.closest("[data-chip-remove]")) {
+              t.closest("[data-chat-chip]")?.remove();
+              syncComposerState();
+              return;
+            }
+            confirmPending();
+          }}
+        >
           <div className="relative">
-            {composerEmpty ? (
-              <span className="pointer-events-none absolute left-1 top-0 text-xs leading-6 text-muted-foreground">
-                输入设计需求，可把引用图片插进句子里（Enter 发送，Shift+Enter
-                换行）
+            {composerEmpty && pendingCount === 0 ? (
+              <span className="pointer-events-none absolute left-0 top-0 select-none text-[14px] leading-5 text-muted-foreground">
+                请输入你的设计需求（Enter 发送，Shift+Enter 换行）
+              </span>
+            ) : null}
+            {pendingCount > 0 && composerEmpty ? (
+              <span className="pointer-events-none absolute left-0 top-6 select-none text-[12px] leading-5 text-muted-foreground">
+                点击此处确认选择，或继续输入...
               </span>
             ) : null}
             <div
@@ -534,89 +656,139 @@ export function ChatPanel({
               suppressContentEditableWarning
               role="textbox"
               aria-multiline="true"
-              aria-label="设计需求输入（支持在文字中插入引用图片）"
+              aria-label="设计需求输入（点选图片插入引用）"
               data-testid="chat-composer"
-              className="min-h-[48px] max-h-[140px] w-full overflow-y-auto px-1 text-xs leading-6 text-foreground outline-none"
-              onInput={syncComposerState}
-              onClick={(e) => {
-                const t = e.target as HTMLElement;
-                if (t.closest("[data-chip-remove]")) {
-                  t.closest("[data-chat-chip]")?.remove();
-                  syncComposerState();
-                }
+              className="w-full overflow-y-auto outline-none"
+              style={{
+                minHeight: 96,
+                maxHeight: 132,
+                fontSize: 14,
+                lineHeight: "20px",
               }}
+              onInput={syncComposerState}
               onKeyDown={(e) => {
-                if (
-                  e.key === "Enter" &&
-                  !e.shiftKey &&
-                  !e.nativeEvent.isComposing
-                ) {
+                if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                   e.preventDefault();
                   void send();
                 }
               }}
               onPaste={(e) => {
-                // 只收纯文本，防止外部富文本/HTML 污染线格式。
                 e.preventDefault();
                 const text = e.clipboardData.getData("text/plain");
                 document.execCommand("insertText", false, text);
               }}
-              onDragOver={(e) => {
-                if (
-                  e.dataTransfer.types.includes("application/x-brandai-version")
-                ) {
-                  e.preventDefault();
-                }
-              }}
-              onDrop={(e) => {
-                const versionId = e.dataTransfer.getData(
-                  "application/x-brandai-version",
-                );
-                if (!versionId) return;
-                e.preventDefault();
-                const cand = candidates.find((c) => c.id === versionId);
-                if (cand) {
-                  insertChip({ kind: "VERSION", id: cand.id, url: cand.url });
-                }
-              }}
             />
           </div>
-          <div className="flex items-center justify-between px-1 pt-1">
+        </div>
+
+        {/* 底栏：左 尺寸chip · 右 模型chip + 圆形发送 */}
+        <div className="mt-1 flex items-center justify-between gap-1.5">
+          <div className="relative">
             <button
               type="button"
-              onClick={() => setPickerOpen((v) => !v)}
+              onClick={() => setSizeOpen((v) => !v)}
               className={[
-                "rounded-full border px-2.5 py-1 text-[11px] transition-colors",
-                pickerOpen || chipCount > 0
-                  ? "border-primary/40 bg-accent-soft text-primary"
-                  : "border-border text-muted-foreground hover:bg-muted",
+                "h-7 rounded-full px-2.5 text-[11px] font-semibold transition-colors",
+                sizeOpen
+                  ? "bg-accent-soft text-primary"
+                  : "border border-border bg-card text-muted-foreground hover:text-foreground",
               ].join(" ")}
             >
-              引用图片{chipCount > 0 ? ` ${chipCount}` : ""}
+              1K · {size.ratio} <span aria-hidden>▾</span>
             </button>
-            <div className="flex items-center gap-2">
-              {/* 模式指示：让用户明确本次发送会跑哪条链路。 */}
-              <span className="text-[10px] text-muted-foreground">
-                {chipCount === 0
-                  ? "文生图"
-                  : chipCount === 1
-                    ? "图生图"
-                    : `多图合成×${chipCount}`}
-              </span>
-              <button
-                type="button"
-                onClick={() => void send()}
-                disabled={sending || (composerEmpty && chipCount === 0)}
-                className="rounded-full bg-primary px-3.5 py-1.5 text-[11px] font-medium text-primary-foreground transition-opacity disabled:opacity-50"
-              >
-                {sending ? "发送中…" : "发送"}
-              </button>
-            </div>
+            {sizeOpen ? (
+              <div className="absolute bottom-9 left-0 z-20 w-[220px] rounded-2xl border border-border bg-card p-3 shadow-lg">
+                <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  分辨率
+                </div>
+                <div className="mb-2 flex gap-1.5">
+                  <span className="rounded-full bg-accent-soft px-2.5 py-1 text-[11px] font-semibold text-primary">
+                    1K
+                  </span>
+                </div>
+                <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Size
+                </div>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {SIZE_OPTIONS.map((o, i) => {
+                    const activeOpt = i === sizeIdx;
+                    const rw = o.width;
+                    const rh = o.height;
+                    const w = rw >= rh ? 22 : Math.round((22 * rw) / rh);
+                    const h = rh >= rw ? 22 : Math.round((22 * rh) / rw);
+                    return (
+                      <button
+                        key={o.ratio}
+                        type="button"
+                        onClick={() => {
+                          setSizeIdx(i);
+                          setSizeOpen(false);
+                        }}
+                        className={[
+                          "flex flex-col items-center gap-1 rounded-xl border px-2 py-1.5 text-[10px] transition-colors",
+                          activeOpt
+                            ? "border-primary/60 bg-accent-soft text-primary"
+                            : "border-border text-muted-foreground hover:border-primary/30",
+                        ].join(" ")}
+                      >
+                        <span
+                          className={[
+                            "rounded-[3px] border",
+                            activeOpt ? "border-primary" : "border-muted-foreground/50",
+                          ].join(" ")}
+                          style={{ width: w, height: h }}
+                        />
+                        {o.ratio}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <span
+              title="平台配置的生图模型（/admin/settings/ai 可改）"
+              className="inline-flex h-7 max-w-[140px] items-center gap-1 truncate rounded-full bg-accent-soft px-2.5 text-[11px] font-medium text-primary"
+            >
+              <span
+                aria-hidden
+                className="inline-block h-1.5 w-1.5 rounded-full bg-primary"
+              />
+              gpt-image-2
+            </span>
+            <button
+              type="button"
+              onClick={() => void send()}
+              disabled={sending || (composerEmpty && chipCount === 0)}
+              title="发送（Enter）"
+              aria-label="发送"
+              className="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-primary-foreground transition-opacity disabled:opacity-50"
+            >
+              {sending ? (
+                <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-primary-foreground border-t-transparent" />
+              ) : (
+                <svg
+                  width="13"
+                  height="13"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  aria-hidden
+                >
+                  <path
+                    d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              )}
+            </button>
           </div>
         </div>
-        {err ? (
-          <p className="mt-1.5 text-[11px] text-destructive">{err}</p>
-        ) : null}
+        {err ? <p className="mt-1.5 text-[11px] text-destructive">{err}</p> : null}
       </div>
     </div>
   );
