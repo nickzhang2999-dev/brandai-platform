@@ -396,14 +396,18 @@ export function OpenCanvas({
     const json = JSON.stringify(body);
     // 基线比对时忽略 camera 精度抖动之外的等值（简单字符串比对足够：内容一致即跳过）。
     if (json === lastSavedRef.current) return;
-    const t = window.setTimeout(() => {
+    // keepalive：防抖窗口内刷新/关页，PUT 仍能发出并送达 —— 否则在途丢失后，
+    // 新页面加载态的补救保存会用旧数据覆盖（last-writer-wins 丢更新，灰度实测踩中）。
+    const put = () => {
       lastSavedRef.current = json;
+      pendingSaveRef.current = null;
       void fetch(
         `/api/workspaces/${persistWs}/projects/${persistProject}/canvas`,
         {
           method: "PUT",
           headers: { "content-type": "application/json" },
           body: json,
+          keepalive: true,
         },
       ).then(
         (r) => {
@@ -413,9 +417,26 @@ export function OpenCanvas({
           lastSavedRef.current = "";
         },
       );
-    }, 1200);
+    };
+    pendingSaveRef.current = put;
+    const t = window.setTimeout(put, 1200);
     return () => window.clearTimeout(t);
   }, [items, camera, zoom, removedNonce, hydrated, persistWs, persistProject]);
+
+  // 离页 flush：防抖计时器尚未触发就刷新/关页 → 立即把待保存状态发出去
+  //（fetch keepalive 允许请求在页面卸载后完成）。
+  const pendingSaveRef = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    const flush = () => {
+      pendingSaveRef.current?.();
+    };
+    window.addEventListener("pagehide", flush);
+    window.addEventListener("beforeunload", flush);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      window.removeEventListener("beforeunload", flush);
+    };
+  }, []);
 
   // 出图变体 → 画布图片 item:增量合并(保留手工布局/形状/文字;切 generation 时
   // 移除已不在的版本;改图新子版本自动作为新 item 浮现)。
