@@ -398,6 +398,7 @@ export async function runGenerateJob(
     // hard-block gates keep the deterministic default order (docs/10 #4).
     const brandRules = await getConfirmedRules(workspaceId, {
       order: "recency",
+      respectKitAvailability: true,
     });
     await job.updateProgress(20);
 

@@ -268,12 +268,13 @@ function Workspace() {
   });
   const { data: brandRules = [] } = useQuery({
     queryKey: ["brandai-rules", wsId],
-    queryFn: () =>
-      apiFetch<BrandRule[]>(`/api/workspaces/${wsId}/rules`),
+    queryFn: () => apiFetch<BrandRule[]>(`/api/workspaces/${wsId}/rules`),
   });
-  const confirmedBrandRuleCount = brandRules.filter(
-    (rule) => rule.status === "CONFIRMED",
-  ).length;
+  const activeBrandForKit = brands.find((brand) => brand.id === wsId);
+  const kitEnabled = !activeBrandForKit?.tags?.includes("__kb_disabled");
+  const confirmedBrandRuleCount = kitEnabled
+    ? brandRules.filter((rule) => rule.status === "CONFIRMED").length
+    : 0;
 
   const [projectId, setProjectId] = useState<string | null>(presetProject);
   // React to client-side navigations that change `?project=` (E11/E12 「加入项目」
@@ -1474,7 +1475,9 @@ function Workspace() {
           </span>
           <span className="font-medium text-foreground">工作台</span>
           <span className="ml-2 inline-flex items-center rounded-full border border-primary/20 bg-accent-soft px-2.5 py-1 text-xs font-medium text-primary">
-            品牌套件自动应用 · {confirmedBrandRuleCount} 条规则
+            {kitEnabled
+              ? `品牌套件自动应用 · ${confirmedBrandRuleCount} 条规则`
+              : "品牌套件暂未应用"}
           </span>
         </nav>
         <div className="flex items-center gap-3">

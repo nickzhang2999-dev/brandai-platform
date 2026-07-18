@@ -56,7 +56,9 @@ export async function runComplianceCheck(input: {
   // 视觉复查必须带上已确认的品牌规则(色彩/版式/Logo 等),否则 AI 端拿到空
   // brandRules,复查只能靠 term/prohibition 兜底,放过偏离规范的图。文本检查无需。
   const brandRules = input.imageUrl
-    ? await getConfirmedRules(input.workspaceId)
+    ? await getConfirmedRules(input.workspaceId, {
+        respectKitAvailability: true,
+      })
     : [];
   const request = ComplianceCheckRequest.parse({
     text: input.text,

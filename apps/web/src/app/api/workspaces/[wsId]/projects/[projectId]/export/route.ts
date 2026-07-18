@@ -2,12 +2,7 @@ import { PassThrough, Readable } from "node:stream";
 import archiver from "archiver";
 import { z } from "zod";
 import { prisma } from "@brandai/db";
-import {
-  ApiException,
-  handleError,
-  parse,
-  requireUser,
-} from "@/lib/api";
+import { ApiException, handleError, parse, requireUser } from "@/lib/api";
 import { requireWorkspaceRole } from "@/lib/workspace";
 import { getProject, getVersion } from "@/lib/generations";
 import { getConfirmedRules } from "@/lib/rules";
@@ -87,13 +82,12 @@ export async function POST(
       versions.push({ version: v, generation: gen });
     }
     if (versions.length === 0) {
-      throw new ApiException(
-        404,
-        "No exportable versions in this project",
-      );
+      throw new ApiException(404, "No exportable versions in this project");
     }
 
-    const rules = await getConfirmedRules(wsId);
+    const rules = await getConfirmedRules(wsId, {
+      respectKitAvailability: true,
+    });
 
     const archive = archiver("zip", { zlib: { level: 9 } });
     const passthrough = new PassThrough();
@@ -180,10 +174,12 @@ export async function POST(
     for (const v of manifest.versions) {
       sceneCounts.set(v.sceneType, (sceneCounts.get(v.sceneType) ?? 0) + 1);
     }
-    manifest.scenes = [...sceneCounts.entries()].map(([sceneType, imageCount]) => ({
-      sceneType,
-      imageCount,
-    }));
+    manifest.scenes = [...sceneCounts.entries()].map(
+      ([sceneType, imageCount]) => ({
+        sceneType,
+        imageCount,
+      }),
+    );
 
     archive.append(JSON.stringify(rules, null, 2), {
       name: "rules.json",

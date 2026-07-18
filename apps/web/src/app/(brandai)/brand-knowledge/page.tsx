@@ -78,14 +78,6 @@ const BRAND_KIT_IMPORT_SLOTS: {
     accept: "image/*",
     limit: "建议最多 50 个",
   },
-  {
-    key: "copy",
-    type: "copy",
-    title: "品牌指南",
-    desc: "上传语气、文案、禁用表达等页面，形成品牌表达规范。",
-    accept: "image/*,application/pdf",
-    limit: "图片 8MB / PDF 不限",
-  },
 ];
 
 /**
@@ -93,9 +85,9 @@ const BRAND_KIT_IMPORT_SLOTS: {
  * GET/POST/PATCH /api/workspaces/[wsId]/rules。已确认(CONFIRMED)的规则会在
  * 工作台出图时被 worker 加载用于受控生成。
  *
- * D4–D10 · 品牌套件 6 个维度从「通用规则卡」恢复为 RICH 结构化卡：
+ * D4–D10 · 品牌套件内容从「通用规则卡」恢复为 RICH 结构化卡：
  * logo→do/don't，字体→字族预览，颜色→真实色块，设计指南/图像→结构化要点，
- * 品牌指南→禁用词。
+ * copy 规则继续保留在底层生成约束中，但不再作为与设计指南重复的页面分区展示。
  * 所有字段访问都对 value 缺字段降级（fall back 到 summary），绝不崩。
  */
 const TYPE_META: Record<
@@ -1846,7 +1838,7 @@ function BrandKitLightbox({
 }
 
 export default function BrandKnowledgePage() {
-  const { wsId, brandName, brands, updateBrand } = useBrand();
+  const { wsId, brandName, brands, refreshBrands, updateBrand } = useBrand();
   const qc = useQueryClient();
   const [suggestedType, setSuggestedType] = useState<string | null>(null);
   const [editingRule, setEditingRule] = useState<BrandRule | null>(null);
@@ -1898,18 +1890,27 @@ export default function BrandKnowledgePage() {
     setTitleDraft(brandName);
   }, [brandName, wsId]);
 
+  const firstLogoAssetId = rules
+    .find((rule) => rule.type === "logo")
+    ?.evidence?.find((item) => item.assetId)?.assetId;
+
+  useEffect(() => {
+    // `/api/workspaces` derives each sidebar cover from its first Logo image.
+    // Refresh only when that identity changes, so a newly parsed/uploaded Logo
+    // appears in the left rail without a full page reload.
+    void refreshBrands();
+  }, [firstLogoAssetId, refreshBrands, wsId]);
+
   const activeBrand = brands.find((brand) => brand.id === wsId);
   const kitEnabled = !activeBrand?.tags?.includes("__kb_disabled");
 
-  // group rules by the six rigid dimensions so every brand kit always shows the same
-  // skeleton, even before a dimension has any rules.
-  const grouped = ["layout", "copy", "logo", "color", "font", "imagery"].map(
-    (cat) => ({
-      cat,
-      meta: TYPE_META[cat]!,
-      items: rules.filter((r) => r.type === cat),
-    }),
-  );
+  // `copy` remains available to the generation worker, but the product UI no
+  // longer renders a duplicate 品牌指南 section beside 设计指南.
+  const grouped = ["layout", "logo", "color", "font", "imagery"].map((cat) => ({
+    cat,
+    meta: TYPE_META[cat]!,
+    items: rules.filter((r) => r.type === cat),
+  }));
   // any rule whose type isn't in CATEGORY_ORDER (defensive)
   const others = rules.filter((r) => !CATEGORY_ORDER.includes(r.type));
 
@@ -1972,7 +1973,7 @@ export default function BrandKnowledgePage() {
           />
         </div>
         <label className="flex shrink-0 cursor-pointer items-center gap-2 text-[11px] text-muted-foreground">
-          应用到新项目
+          应用到项目
           <span className="relative inline-flex">
             <input
               type="checkbox"
@@ -2013,7 +2014,7 @@ export default function BrandKnowledgePage() {
 
       <div className="mt-9 flex flex-col gap-10">
         {grouped.map((group) => {
-          const guidance = group.cat === "layout" || group.cat === "copy";
+          const guidance = group.cat === "layout";
           return (
             <section key={group.cat}>
               <div className="mb-2 flex items-center justify-between">

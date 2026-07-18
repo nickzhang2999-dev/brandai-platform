@@ -4,29 +4,17 @@ import {
   resolveGenerationDefaults,
   WatermarkOverlayInput,
 } from "@brandai/contracts";
-import {
-  ApiException,
-  handleError,
-  ok,
-  parse,
-  requireUser,
-} from "@/lib/api";
+import { ApiException, handleError, ok, parse, requireUser } from "@/lib/api";
 import { requireOwnedWorkspace, requireWorkspaceRole } from "@/lib/workspace";
 import { generateQueue } from "@/lib/queue";
-import {
-  getGeneration,
-  listProjectGenerations,
-} from "@/lib/generations";
+import { getGeneration, listProjectGenerations } from "@/lib/generations";
 import type { GenerateJobData } from "@/lib/workers/generate.worker";
 import { getConfirmedRules } from "@/lib/rules";
 import {
   assertExampleAssetsInWorkspace,
   serializeProhibition,
 } from "@/lib/prohibitions";
-import {
-  compileAIConstraints,
-  constraintsEnabled,
-} from "@/lib/ai-constraints";
+import { compileAIConstraints, constraintsEnabled } from "@/lib/ai-constraints";
 import { reserveGenerationQuota } from "@/lib/quota";
 
 /**
@@ -97,7 +85,10 @@ export async function POST(
       .filter((item) => item.mode !== "STRICT")
       .map((item) => item.assetId);
     const templateReferenceAssetIds = Array.from(
-      new Set([...(input.templateReferenceAssetIds ?? []), ...legacyInspirationIds]),
+      new Set([
+        ...(input.templateReferenceAssetIds ?? []),
+        ...legacyInspirationIds,
+      ]),
     );
     const watermarkOverlays = [
       ...(input.watermarkOverlays ?? []).map((overlay) =>
@@ -213,9 +204,13 @@ export async function POST(
     // synchronous path gives the UI a deterministic 422 + reason.
     if (constraintsEnabled()) {
       const [brandRules, prohRows] = await Promise.all([
-        getConfirmedRules(wsId),
+        getConfirmedRules(wsId, { respectKitAvailability: true }),
         prisma.prohibitionRule.findMany({
-          where: { workspaceId: wsId, status: "ACTIVE", affectsGeneration: true },
+          where: {
+            workspaceId: wsId,
+            status: "ACTIVE",
+            affectsGeneration: true,
+          },
         }),
       ]);
       const compiled = compileAIConstraints(
