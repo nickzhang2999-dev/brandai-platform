@@ -10,7 +10,7 @@
 
 **V0.0.17 CDS 数据库启动安全修复（2026-07-19）**：灰度环境的历史 Web profile 仍调用根命令 `pnpm db:push`。该兼容入口现安全转发到生产迁移脚本：正常执行 `prisma migrate deploy`；仅在精确检测到既有非空数据库缺少迁移历史的 `P3005` 时，将仓库现有迁移登记为基线后再次验证 deploy。全程不执行 `--accept-data-loss`，不删除表、列或业务数据；本地一次性数据库仍可直接调用 `pnpm --filter @brandai/db push`。
 
-**V0.0.17 CDS 前端版本一致性修复（2026-07-19）**：Next 静态资源增加 Git 提交级 `deploymentId`。CDS 预览 profile 即使在拉取新提交时保留开发进程，新服务端 HTML 也只会加载同一提交的客户端 bundle，避免旧 `/_next` 资源覆盖新页面并触发 hydration 红色浮层。
+**V0.0.17 CDS 前端版本一致性修复（2026-07-19）**：Next 静态资源增加 Git 提交级 `deploymentId`，Web 启动脚本会优先把 CDS 注入的提交号显式传入 `next build` 与 `next start`。CDS 预览 profile 即使保留旧 `.next` 或 CDN 四小时静态缓存，新服务端 HTML 也只会加载同一提交的客户端 bundle，避免旧 `/_next` 资源覆盖新页面并触发 hydration 红色浮层。
 
 **V0.0.16（2026-07-17）**：修复 AI 工作台因 URL 或草稿残留旧项目 ID 导致 “Project not found in this workspace” 的问题；项目列表加载后会自动校验当前项目是否属于当前品牌套件，发现失效则切换到当前品牌套件下可用项目并清理旧出图状态；提交出图时只使用已校验的项目 ID，英文错误转为中文提示，避免用户看到后台错误信息。
 
