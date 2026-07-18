@@ -122,3 +122,57 @@ describe("buildModelBrief（展示层 → 模型层）", () => {
     expect(buildModelBrief("春季海报")).toBe("春季海报");
   });
 });
+
+// ---- V0.0.13f · chip 文本 token（复制粘贴往返，Lovart 同款形态）+ 同图多引用 ----
+
+import {
+  chipToken,
+  parseChipTokenText,
+} from "../../../apps/web/src/lib/chat-composer";
+
+describe("同一张图可多次引用（每个位置独立 chip/input）", () => {
+  it("serializeComposerTokens 保留重复引用（各占一个 input + 标记）", () => {
+    const a = { kind: "VERSION" as const, id: "v1", url: "https://x/a.png" };
+    const out = serializeComposerTokens([
+      { type: "image", ref: a },
+      { type: "text", text: " 拿着" },
+      { type: "image", ref: a },
+    ]);
+    expect(out.imageInputs).toHaveLength(2);
+    expect(out.imageInputs[0]!.id).toBe("v1");
+    expect(out.imageInputs[1]!.id).toBe("v1");
+    expect(out.displayText).toBe("￼1 拿着￼2");
+  });
+});
+
+describe("chipToken / parseChipTokenText（复制粘贴文本往返）", () => {
+  it("token 格式与解析往返", () => {
+    const t = chipToken(1, { kind: "VERSION", id: "cmr123", url: "https://cdn/x.png" });
+    expect(t).toBe("[@image:#1:VERSION_cmr123:https://cdn/x.png]");
+    const segs = parseChipTokenText(`${t} 拿着[@image:#2:ASSET_a9:https://cdn/y.png] 在背景里`);
+    expect(segs).toEqual([
+      { type: "chip", ref: { kind: "VERSION", id: "cmr123", url: "https://cdn/x.png" } },
+      { type: "text", text: " 拿着" },
+      { type: "chip", ref: { kind: "ASSET", id: "a9", url: "https://cdn/y.png" } },
+      { type: "text", text: " 在背景里" },
+    ]);
+  });
+
+  it("同图重复 token 各自成 chip", () => {
+    const a = chipToken(1, { kind: "VERSION", id: "v1", url: "https://cdn/a.png" });
+    const segs = parseChipTokenText(`${a} 拿着${a}`);
+    expect(segs.filter((s) => s.type === "chip")).toHaveLength(2);
+  });
+
+  it("外部/不认识的 token 保持纯文本（不构造幻觉引用）", () => {
+    const foreign = "[@image:#1:79587b6e90619f53:https://a.lovart.ai/artifacts/user/x.jpg]";
+    const segs = parseChipTokenText(`${foreign} 增加艺术字`);
+    expect(segs).toEqual([{ type: "text", text: `${foreign} 增加艺术字` }]);
+  });
+
+  it("无 token 的纯文本原样返回", () => {
+    expect(parseChipTokenText("普通一句话")).toEqual([
+      { type: "text", text: "普通一句话" },
+    ]);
+  });
+});

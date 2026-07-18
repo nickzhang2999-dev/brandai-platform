@@ -85,3 +85,47 @@ export function buildModelBrief(displayText: string): string {
     (_all, n: string) => `[图${n}]`,
   );
 }
+
+/* ---------- V0.0.13f · chip 文本 token（复制粘贴往返，Lovart 同款形态） ---------- */
+
+/**
+ * 复制时 chip 序列化为文本 token：`[@image:#N:KIND_id:url]`。
+ * 粘贴时解析回 chip —— 同一张图可出现任意多次（每个位置独立引用）。
+ * 只认本应用的 KIND_id（VERSION_/ASSET_ 前缀）；外部来源（如 Lovart 原生
+ * hash token）保持纯文本，绝不构造无法通过归属校验的幻觉引用。
+ */
+export function chipToken(
+  ordinal: number,
+  ref: { kind: "VERSION" | "ASSET"; id: string; url?: string },
+): string {
+  return `[@image:#${ordinal}:${ref.kind}_${ref.id}:${ref.url ?? ""}]`;
+}
+
+export type PastedSegment =
+  | { type: "text"; text: string }
+  | { type: "chip"; ref: { kind: "VERSION" | "ASSET"; id: string; url: string } };
+
+const CHIP_TOKEN_RE = /\[@image:#\d+:(VERSION|ASSET)_([A-Za-z0-9_-]+):([^\]]*)\]/g;
+
+export function parseChipTokenText(text: string): PastedSegment[] {
+  const segments: PastedSegment[] = [];
+  let last = 0;
+  CHIP_TOKEN_RE.lastIndex = 0;
+  for (let m = CHIP_TOKEN_RE.exec(text); m; m = CHIP_TOKEN_RE.exec(text)) {
+    if (m.index > last)
+      segments.push({ type: "text", text: text.slice(last, m.index) });
+    segments.push({
+      type: "chip",
+      ref: {
+        kind: m[1] as "VERSION" | "ASSET",
+        id: m[2]!,
+        url: m[3] ?? "",
+      },
+    });
+    last = m.index + m[0].length;
+  }
+  if (last < text.length)
+    segments.push({ type: "text", text: text.slice(last) });
+  if (segments.length === 0) segments.push({ type: "text", text: "" });
+  return segments;
+}

@@ -13,8 +13,10 @@ import type { Generation } from "@brandai/contracts";
 import { apiFetch } from "@/lib/client";
 import {
   buildModelBrief,
+  chipToken,
   MAX_CHAT_IMAGE_INPUTS,
   parseChatDisplayText,
+  parseChipTokenText,
   serializeComposerTokens,
   type ChatComposerRef,
   type ComposerToken,
@@ -303,6 +305,47 @@ export function ChatPanel({
     );
   }, [onComposerRefsChange]);
 
+  /**
+   * V0.0.13f — 选区 → chip 文本 token（复制/剪切）。选区含 chip 时返回
+   * `文本 + [@image:#N:KIND_id:url]` 混合文本（可粘回本 composer 还原，
+   * 也可存到任何地方）；选区不在 composer 内或不含 chip 时返回 null
+   * （走浏览器默认复制）。
+   */
+  const selectionToTokenText = useCallback((): string | null => {
+    const el = composerRef.current;
+    const sel = window.getSelection();
+    if (!el || !sel || sel.rangeCount === 0 || sel.isCollapsed) return null;
+    const range = sel.getRangeAt(0);
+    if (!el.contains(range.commonAncestorContainer)) return null;
+    const frag = range.cloneContents();
+    let ordinal = 0;
+    let hasChip = false;
+    const walk = (node: Node): string => {
+      if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? "";
+      if (node instanceof HTMLElement && node.dataset.chatChip === "1") {
+        hasChip = true;
+        ordinal += 1;
+        return chipToken(ordinal, {
+          kind: (node.dataset.kind === "ASSET" ? "ASSET" : "VERSION") as
+            | "VERSION"
+            | "ASSET",
+          id: node.dataset.id ?? "",
+          url: node.dataset.url ?? "",
+        });
+      }
+      let out = "";
+      node.childNodes.forEach((c) => {
+        out += walk(c);
+      });
+      return out;
+    };
+    let out = "";
+    frag.childNodes.forEach((c) => {
+      out += walk(c);
+    });
+    return hasChip ? out : null;
+  }, []);
+
   /** 灰色待选 → 全部就绪（TwoPhase confirmPending 的移植）。 */
   const confirmPending = useCallback(() => {
     const el = composerRef.current;
@@ -343,11 +386,12 @@ export function ChatPanel({
           if (c.dataset.id !== ref.id) c.remove();
         });
       }
-      const existing = el.querySelector<HTMLElement>(
-        `[data-chat-chip][data-id="${ref.id}"]`,
+      // 同一张图允许多次引用（每个位置独立 chip，对齐 Lovart 文本 token 模型）；
+      // 仅当已有同图「灰待选」时不重复插（防连点堆叠——确认后再点才是新引用）。
+      const pendingSame = el.querySelector<HTMLElement>(
+        `[data-chat-chip][data-id="${ref.id}"][data-ready="0"]`,
       );
-      if (existing) {
-        // 已在（灰保持灰 / 实体保持实体），replace 语义已在上面清掉其它灰。
+      if (pendingSame) {
         syncComposerState();
         return;
       }
@@ -711,7 +755,61 @@ export function ChatPanel({
                   return;
                 }
                 const text = e.clipboardData.getData("text/plain");
+                // V0.0.13f — chip 文本 token 粘贴还原（[@image:#N:KIND_id:url]）：
+                // 复制过的提示词（含图片引用）粘回来即恢复 chips；外部 token 保持纯文本。
+                const segs = parseChipTokenText(text);
+                if (segs.some((sg) => sg.type === "chip")) {
+                  const el = composerRef.current;
+                  const sel = window.getSelection();
+                  if (!el || !sel || sel.rangeCount === 0) return;
+                  const range = sel.getRangeAt(0);
+                  if (!el.contains(range.commonAncestorContainer)) return;
+                  range.deleteContents();
+                  const frag = document.createDocumentFragment();
+                  let inserted = 0;
+                  const already =
+                    el.querySelectorAll("[data-chat-chip]").length;
+                  for (const sg of segs) {
+                    if (sg.type === "text") {
+                      frag.appendChild(document.createTextNode(sg.text));
+                      continue;
+                    }
+                    if (already + inserted >= MAX_CHAT_IMAGE_INPUTS) continue;
+                    const chip = buildChipElement({
+                      kind: sg.ref.kind,
+                      id: sg.ref.id,
+                      url: sg.ref.url,
+                      label: "引用图",
+                    });
+                    // 粘贴还原的引用是成品内容 → 直接实体态（无需再两阶段确认）。
+                    applyChipReadyStyle(chip, true);
+                    frag.appendChild(chip);
+                    inserted += 1;
+                  }
+                  range.insertNode(frag);
+                  sel.collapseToEnd();
+                  syncComposerState();
+                  return;
+                }
                 document.execCommand("insertText", false, text);
+                syncComposerState();
+              }}
+              onCopy={(e) => {
+                const out = selectionToTokenText();
+                if (out != null) {
+                  e.preventDefault();
+                  e.clipboardData.setData("text/plain", out);
+                }
+              }}
+              onCut={(e) => {
+                const out = selectionToTokenText();
+                if (out != null) {
+                  e.preventDefault();
+                  e.clipboardData.setData("text/plain", out);
+                  const sel = window.getSelection();
+                  if (sel && sel.rangeCount > 0) sel.getRangeAt(0).deleteContents();
+                  syncComposerState();
+                }
               }}
             />
           </div>
