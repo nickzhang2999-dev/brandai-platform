@@ -122,6 +122,24 @@ export type CanvasEditBridge = {
   onInstrChange: (v: string) => void;
   onRun: (version: GenerationVersion, op: string) => void;
   onOpenMask: (version: GenerationVersion) => void;
+  /** V0.0.13e — 终选/交付/审阅（BrandAI 特有业务，视觉创作无此概念）：
+   *  下方独立面板已删，动作挪进画布选中工具条（跟随画布选中，交互形态与
+   *  视觉创作的「选中即操作」一致）。 */
+  delivery?: {
+    isFinal: boolean;
+    hasFinal: boolean;
+    busy: string | null;
+    error?: string | null;
+    onMarkFinal: () => void;
+    onExport: () => void;
+    reviewStatus?: string | null;
+    canSubmitReview: boolean;
+    canDecideReview: boolean;
+    reviewBusy: boolean;
+    onSubmitReview: () => void;
+    onApprove: () => void;
+    onOpenReject: () => void;
+  };
 };
 
 export function OpenCanvas({
@@ -263,8 +281,10 @@ export function OpenCanvas({
           removedVersionIds?: string[];
         };
         if (cancelled) return;
+        // V0.0.13e：版本 tile 一并恢复（画布累积语义）；仅剔除被删集合命中的。
+        const removedSet = new Set(data.removedVersionIds ?? []);
         const manual = (data.items ?? []).filter(
-          (it) => !it.versionId && it.key,
+          (it) => it.key && !(it.versionId && removedSet.has(it.versionId)),
         );
         // uid 计数器回填：模块计数器刷新归零，恢复旧 key 后新建项可能撞 key。
         for (const it of manual) {
@@ -273,12 +293,20 @@ export function OpenCanvas({
         }
         removedVersionIdsRef.current = new Set(data.removedVersionIds ?? []);
         setItems((prev) => {
-          // 版本 tile（可能已被 seedVersions 合并进来）保留，手动项整体以服务端为准。
-          const versionTiles = prev.filter(
-            (it) =>
-              it.versionId && !removedVersionIdsRef.current.has(it.versionId),
+          // 服务端为准；seed 合并可能已抢先加了当前 gen 的 tile —— 按
+          // versionId/key 去重后保留（避免同一版本双 tile）。
+          const haveVer = new Set(
+            manual.filter((it) => it.versionId).map((it) => it.versionId),
           );
-          return [...manual, ...versionTiles];
+          const haveKey = new Set(manual.map((it) => it.key));
+          const extra = prev.filter(
+            (it) =>
+              it.versionId &&
+              !removedVersionIdsRef.current.has(it.versionId) &&
+              !haveVer.has(it.versionId) &&
+              !haveKey.has(it.key),
+          );
+          return [...manual, ...extra];
         });
         if (
           data.camera &&
@@ -313,7 +341,6 @@ export function OpenCanvas({
     const manual = items
       .filter(
         (it) =>
-          !it.versionId &&
           !(
             it.kind === "image" &&
             (!it.imageUrl ||
@@ -332,6 +359,7 @@ export function OpenCanvas({
               w: it.w,
               h: it.h,
               imageUrl: it.imageUrl!,
+              ...(it.versionId ? { versionId: it.versionId } : {}),
               ...(it.assetId ? { assetId: it.assetId } : {}),
               ...(it.naturalW ? { naturalW: it.naturalW } : {}),
               ...(it.naturalH ? { naturalH: it.naturalH } : {}),
@@ -394,8 +422,14 @@ export function OpenCanvas({
   useEffect(() => {
     setItems((prev) => {
       const byId = new Map(seedVersions.map((v) => [v.id, v]));
+      // V0.0.13e：不再按「当前 generation」裁剪版本 tile —— 出图跨 generation
+      // 累积在画布上（对齐 prd_agent 单画布），只有用户显式删除（removedVersionIds）
+      // 才移除；下方变体/历史条已删，画布是唯一图片表面。
       const kept = prev
-        .filter((it) => !it.versionId || byId.has(it.versionId))
+        .filter(
+          (it) =>
+            !it.versionId || !removedVersionIdsRef.current.has(it.versionId),
+        )
         .map((it) => {
           // 版本 id 不变但 imageUrl/尺寸后续可能被轮询更新(如占位→真图) → 同步到
           // 已存在的画布 tile,否则会停在旧值/空白(Bugbot)。只同步图源与自然尺寸,
@@ -419,11 +453,19 @@ export function OpenCanvas({
       const have = new Set(
         kept.filter((it) => it.versionId).map((it) => it.versionId),
       );
-      const base = kept.length;
-      const add = seedVersions
-        .filter((v) => !have.has(v.id) && !removedVersionIdsRef.current.has(v.id))
-        .map((v, i) => imageItemFromVersion(v, base + i));
-      return add.length ? [...kept, ...add] : kept;
+      const fresh = seedVersions.filter(
+        (v) => !have.has(v.id) && !removedVersionIdsRef.current.has(v.id),
+      );
+      if (fresh.length === 0) return kept;
+      // 新 tile 落在现有内容包围盒下方一行（避免与累积的旧图/手动元素重叠）。
+      const maxY = kept.length
+        ? Math.max(...kept.map((it) => it.y + it.h))
+        : -64;
+      const add = fresh.map((v, i) => {
+        const item = imageItemFromVersion(v, i);
+        return { ...item, x: i * (item.w + 48), y: maxY + 64 };
+      });
+      return [...kept, ...add];
     });
   }, [seedVersions]);
 
@@ -1599,6 +1641,75 @@ export function OpenCanvas({
           >
             {edit.busy ? "改图中…" : "出图"}
           </button>
+
+          {/* V0.0.13e — 终选/交付/审阅（原下方面板已删，动作跟随画布选中） */}
+          {edit.delivery ? (
+            <>
+              <span className="mx-0.5 h-5 w-px bg-border" />
+              <button
+                type="button"
+                onClick={edit.delivery.onMarkFinal}
+                disabled={
+                  edit.delivery.busy === "final" || edit.delivery.isFinal
+                }
+                className="rounded-full border border-success/40 px-2.5 py-1 text-xs text-success transition-colors hover:bg-success/10 disabled:opacity-60"
+              >
+                {edit.delivery.isFinal ? "✓ 终稿" : "设为终稿"}
+              </button>
+              <button
+                type="button"
+                onClick={edit.delivery.onExport}
+                disabled={edit.delivery.busy === "export"}
+                className="rounded-full border border-primary/40 px-2.5 py-1 text-xs text-primary transition-colors hover:bg-accent-soft disabled:opacity-60"
+              >
+                {edit.delivery.busy === "export"
+                  ? "打包中…"
+                  : edit.delivery.hasFinal
+                    ? "导出(终稿)"
+                    : "导出(当前图)"}
+              </button>
+              {edit.delivery.canSubmitReview ? (
+                <button
+                  type="button"
+                  onClick={edit.delivery.onSubmitReview}
+                  disabled={edit.delivery.reviewBusy}
+                  className="rounded-full border border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted disabled:opacity-60"
+                >
+                  提交审阅
+                </button>
+              ) : null}
+              {edit.delivery.canDecideReview ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={edit.delivery.onApprove}
+                    disabled={edit.delivery.reviewBusy}
+                    className="rounded-full border border-success/40 px-2.5 py-1 text-xs text-success transition-colors hover:bg-success/10 disabled:opacity-60"
+                  >
+                    通过
+                  </button>
+                  <button
+                    type="button"
+                    onClick={edit.delivery.onOpenReject}
+                    disabled={edit.delivery.reviewBusy}
+                    className="rounded-full border border-destructive/40 px-2.5 py-1 text-xs text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-60"
+                  >
+                    驳回
+                  </button>
+                </>
+              ) : null}
+              {edit.delivery.reviewStatus ? (
+                <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
+                  {edit.delivery.reviewStatus}
+                </span>
+              ) : null}
+              {edit.delivery.error ? (
+                <span className="text-[10px] text-destructive">
+                  {edit.delivery.error}
+                </span>
+              ) : null}
+            </>
+          ) : null}
         </div>
       ) : null}
     </div>

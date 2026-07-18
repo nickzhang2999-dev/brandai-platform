@@ -1260,243 +1260,33 @@ function Workspace() {
               onRun: (version, op) =>
                 void runEdit(op, { prompt: editInstr.trim() }, version),
               onOpenMask: (version) => openMaskPaint(version),
+              // V0.0.13e — 终选/交付/审阅挪进画布选中工具条（原下方面板已删）。
+              delivery: current
+                ? {
+                    isFinal: !!current.isFinal,
+                    hasFinal: versions.some((v) => v.isFinal),
+                    busy,
+                    error: actionErr,
+                    onMarkFinal: () => void markFinal(),
+                    onExport: () => void exportKit(),
+                    reviewStatus:
+                      current.reviewStatus === "PENDING"
+                        ? null
+                        : (current.reviewStatus ?? null),
+                    canSubmitReview,
+                    canDecideReview,
+                    reviewBusy,
+                    onSubmitReview: () => void submitForReview(),
+                    onApprove: () => void decideReview("APPROVED"),
+                    onOpenReject: () => {
+                      setReviewErr(null);
+                      setRejectNote("");
+                      setRejectOpen(true);
+                    },
+                  }
+                : undefined,
             }}
           />
-          {versions.length > 0 ? (
-            <div className="mt-4 flex flex-wrap gap-3">
-              {versions.map((v, i) => {
-                const chatSt = chatRefState(v.id);
-                return (
-                <button
-                  key={v.id}
-                  draggable
-                  onDragStart={(e) => {
-                    e.dataTransfer.setData(
-                      "application/x-brandai-version",
-                      v.id,
-                    );
-                    e.dataTransfer.effectAllowed = "copy";
-                  }}
-                  // 不抢输入框焦点（保住光标位置插 chip）。
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={(e) => {
-                    // V0.0.13d — 点变体 = 插入引用（replace，Shift 累加）+ 选中变体。
-                    chatPickImage(
-                      { id: v.id, url: v.imageUrl, label: `变体${i + 1}` },
-                      { additive: e.shiftKey || e.metaKey || e.ctrlKey },
-                    );
-                    setActiveVariant(i);
-                    setEditBaseVersionId(v.id);
-                    setCanvasSel(true);
-                    // 强制画布重新选中该变体 tile(即便 i 已是 activeVariant),
-                    // 让清选后点缩略图也能一键回到「条↔画布同步」状态。
-                    setSelectNonce((n) => n + 1);
-                  }}
-                  className={[
-                    "relative h-[82px] w-[118px] overflow-hidden rounded-[18px] border-2 transition-colors",
-                    chatSt?.ready
-                      ? "border-primary"
-                      : i === activeVariant && canvasSel
-                        ? "border-primary"
-                        : "border-transparent hover:border-border",
-                  ].join(" ")}
-                >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={v.imageUrl}
-                    alt={`变体 ${i + 1}`}
-                    className="h-full w-full object-cover"
-                  />
-                  {/* 视觉创作两阶段态：待选=灰罩+✓；就绪=violet 序号角标 */}
-                  {chatSt && !chatSt.ready ? (
-                    <span
-                      className="absolute inset-0 flex items-center justify-center"
-                      style={{
-                        background: "rgba(156,163,175,0.25)",
-                        border: "2px solid rgba(156,163,175,0.6)",
-                        borderRadius: 16,
-                      }}
-                    >
-                      <span className="text-lg font-bold text-white drop-shadow">✓</span>
-                    </span>
-                  ) : null}
-                  {chatSt?.ready ? (
-                    <span className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-primary text-[11px] font-bold text-primary-foreground shadow">
-                      {chatSt.ordinal}
-                    </span>
-                  ) : null}
-                  {v.isFinal ? (
-                    <span className="absolute left-1 top-1 rounded-full bg-success px-1.5 py-0.5 text-[10px] font-medium text-primary-foreground">
-                      终稿
-                    </span>
-                  ) : null}
-                  {v.parentVersionId && !chatSt ? (
-                    <span className="absolute right-1 top-1 rounded-full bg-accent-soft px-1.5 py-0.5 text-[10px] font-medium text-primary">
-                      改
-                    </span>
-                  ) : null}
-                </button>
-                );
-              })}
-            </div>
-          ) : null}
-
-          {/* 历史出图回看 —— 本 Campaign 已生成的每一次出图，newest-first。点击即在
-              上方画布回看（复用改图/终选/导出/审阅）。修复「产出蒸发」：刷新/切项目
-              后历史不再消失。 */}
-          {history.length > 0 ? (
-            <div className="mt-5 border-t border-border pt-4">
-              <div className="mb-2 flex items-center justify-between">
-                <span className="text-xs font-semibold text-muted-foreground">
-                  历史出图
-                </span>
-                <span className="text-xs font-normal text-muted-foreground">
-                  {history.length} 次
-                </span>
-              </div>
-              <div className="flex gap-3 overflow-x-auto pb-1">
-                {history.map((g) => {
-                  const coverVersion = g.versions?.find((v) => v.imageUrl);
-                  const cover = coverVersion?.imageUrl;
-                  const chatSt = coverVersion ? chatRefState(coverVersion.id) : null;
-                  const active = g.id === genId;
-                  const finalCount = (g.versions ?? []).filter(
-                    (v) => v.isFinal,
-                  ).length;
-                  return (
-                    <button
-                      key={g.id}
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={(e) => {
-                        // V0.0.13d — 点历史图 = 插入引用 chip（replace，Shift 累加）
-                        // + 回看该次出图（画布切到它，复用改图/终选/导出）。
-                        if (coverVersion?.imageUrl) {
-                          chatPickImage(
-                            {
-                              id: coverVersion.id,
-                              url: coverVersion.imageUrl,
-                              label: g.scene || g.sellingPoint || "历史图",
-                            },
-                            { additive: e.shiftKey || e.metaKey || e.ctrlKey },
-                          );
-                        }
-                        viewGeneration(g.id);
-                      }}
-                      title={`${g.scene || g.sceneType} · ${new Date(
-                        g.createdAt,
-                      ).toLocaleString("zh-CN")}`}
-                      className={[
-                        "group relative flex h-[88px] w-[116px] shrink-0 flex-col overflow-hidden rounded-[16px] border-2 text-left transition-colors",
-                        active
-                          ? "border-primary"
-                          : "border-transparent hover:border-border",
-                      ].join(" ")}
-                    >
-                      {cover ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={cover}
-                          alt={g.scene || "历史出图"}
-                          className="h-full w-full object-cover"
-                        />
-                      ) : (
-                        <div className="flex h-full w-full items-center justify-center bg-muted text-[10px] text-muted-foreground">
-                          {g.status === "FAILED"
-                            ? "失败"
-                            : g.status === "PENDING" || g.status === "RUNNING"
-                              ? "生成中…"
-                              : "无图"}
-                        </div>
-                      )}
-                      <span className="absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-foreground/70 to-transparent px-1.5 pb-1 pt-3 text-[10px] font-medium text-white">
-                        {g.scene || g.sceneType}
-                      </span>
-                      {/* 对话引用两阶段态（覆盖在历史缩略图上） */}
-                      {chatSt && !chatSt.ready ? (
-                        <span
-                          className="absolute inset-0 flex items-center justify-center"
-                          style={{
-                            background: "rgba(156,163,175,0.25)",
-                            border: "2px solid rgba(156,163,175,0.6)",
-                            borderRadius: 14,
-                          }}
-                        >
-                          <span className="text-lg font-bold text-white drop-shadow">✓</span>
-                        </span>
-                      ) : null}
-                      {chatSt?.ready ? (
-                        <span className="absolute left-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-primary text-[11px] font-bold text-primary-foreground shadow">
-                          {chatSt.ordinal}
-                        </span>
-                      ) : null}
-                      {(g.versions?.length ?? 0) > 1 && !chatSt ? (
-                        <span className="absolute right-1 top-1 rounded-full bg-card/90 px-1.5 py-0.5 text-[10px] font-medium text-foreground">
-                          ×{g.versions!.length}
-                        </span>
-                      ) : null}
-                      {finalCount > 0 ? (
-                        <span className="absolute left-1 top-1 rounded-full bg-success px-1.5 py-0.5 text-[10px] font-medium text-primary-foreground">
-                          终稿
-                        </span>
-                      ) : null}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          ) : null}
-
-          {/* 修改优化 / 终选 / 交付归档 —— 仅在已出图后对选中变体可用 */}
-          {status === "SUCCEEDED" && current ? (
-            <div className="mt-4 rounded-2xl border border-border bg-card p-4">
-              <div className="mb-1 text-xs font-semibold text-muted-foreground">
-                选中图片 · 终选与交付
-              </div>
-              <p className="mb-2 text-[11px] leading-relaxed text-muted-foreground">
-                改图操作(局部重画/换背景/扩展…)在画布上选中图片后从其上方工具条触发。
-              </p>
-              <div className="mt-1 flex flex-wrap gap-2">
-                <button
-                  onClick={markFinal}
-                  disabled={busy === "final" || current.isFinal}
-                  className="rounded-full border border-success/40 px-3 py-1.5 text-xs text-success transition-colors hover:bg-success/10 disabled:opacity-60"
-                >
-                  {current.isFinal ? "✓ 已是终稿" : "设为终稿"}
-                </button>
-                <button
-                  onClick={exportKit}
-                  disabled={busy === "export"}
-                  className="rounded-full border border-primary/40 px-3 py-1.5 text-xs text-primary transition-colors hover:bg-accent-soft disabled:opacity-60"
-                >
-                  {busy === "export"
-                    ? "打包中…"
-                    : versions.some((v) => v.isFinal)
-                      ? "导出交付包(终稿)"
-                      : "导出交付包(当前图)"}
-                </button>
-              </div>
-              {actionErr ? (
-                <p className="mt-2 text-xs text-destructive">{actionErr}</p>
-              ) : null}
-
-              {/* G6 · 审阅 / 批准流 — 选中变体的审核状态 + 角色门控的动作。 */}
-              <ReviewPanel
-                version={current}
-                myRole={myRole}
-                canSubmit={canSubmitReview}
-                canDecide={canDecideReview}
-                busy={reviewBusy}
-                error={reviewErr}
-                onSubmit={submitForReview}
-                onApprove={() => decideReview("APPROVED")}
-                onOpenReject={() => {
-                  setReviewErr(null);
-                  setRejectNote("");
-                  setRejectOpen(true);
-                }}
-              />
-            </div>
-          ) : null}
         </div>
 
         {/* Prompt panel */}
