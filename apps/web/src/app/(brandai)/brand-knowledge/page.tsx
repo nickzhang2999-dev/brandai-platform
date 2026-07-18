@@ -3,12 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type {
-  Asset,
-  BrandRule,
-  Evidence,
-  TaskState,
-} from "@brandai/contracts";
+import type { Asset, BrandRule, Evidence, TaskState } from "@brandai/contracts";
 import type { AssetCategory } from "@brandai/contracts";
 import { Button } from "@brandai/ui";
 import {
@@ -781,7 +776,7 @@ function RuleCard({
   const swatch = rule.type === "color" ? extractSwatches(value)[0] : null;
   const font = rule.type === "font" ? extractFonts(value)[0] : null;
   return (
-    <div className="group relative w-[148px] shrink-0">
+    <div className="group relative w-24 shrink-0">
       <button
         type="button"
         disabled={busy}
@@ -792,7 +787,7 @@ function RuleCard({
             onEdit(rule);
           }
         }}
-        className="flex aspect-[4/3] w-full cursor-pointer items-center justify-center overflow-hidden rounded-xl border border-border bg-muted/45 transition-colors duration-200 hover:border-primary/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:opacity-60"
+        className="flex aspect-square w-full cursor-pointer items-center justify-center overflow-hidden rounded-lg border border-border bg-muted/45 transition-colors duration-200 hover:border-primary/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:opacity-60"
       >
         {previewUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -1904,7 +1899,6 @@ export default function BrandKnowledgePage() {
     setPreview(null);
   }, [wsId]);
 
-  const confirmedCount = rules.filter((r) => r.status === "CONFIRMED").length;
   const activeBrand = brands.find((brand) => brand.id === wsId);
   const kitEnabled = !activeBrand?.tags?.includes("__kb_disabled");
 
@@ -1951,15 +1945,12 @@ export default function BrandKnowledgePage() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-[820px] px-8 pb-20 pt-9">
-      <header className="relative flex min-h-11 items-center justify-center">
-        <div className="text-center">
+    <div className="mx-auto w-full max-w-[620px] px-8 pb-20 pt-6">
+      <header className="flex min-h-9 items-center justify-between gap-6">
+        <div className="min-w-0">
           <h1 className="text-xl font-semibold tracking-tight">{brandName}</h1>
-          <p className="mt-1 text-[10px] text-muted-foreground">
-            已收录 {rules.length} 项内容 · {confirmedCount} 项已启用
-          </p>
         </div>
-        <label className="absolute right-0 flex cursor-pointer items-center gap-2 text-[11px] text-muted-foreground">
+        <label className="flex shrink-0 cursor-pointer items-center gap-2 text-[11px] text-muted-foreground">
           应用到新项目
           <span className="relative inline-flex">
             <input
@@ -2004,11 +1995,8 @@ export default function BrandKnowledgePage() {
           const guidance = group.cat === "layout" || group.cat === "copy";
           return (
             <section key={group.cat}>
-              <div className="mb-3 flex items-center justify-between">
+              <div className="mb-2 flex items-center justify-between">
                 <h2 className="text-xs font-medium">{group.meta.label}</h2>
-                <span className="text-[10px] text-muted-foreground">
-                  {group.items.length} 项
-                </span>
               </div>
               {guidance ? (
                 <div className="rounded-xl bg-muted/45 p-4">
@@ -2030,14 +2018,6 @@ export default function BrandKnowledgePage() {
                       暂无{group.meta.label}
                     </p>
                   )}
-                  <button
-                    type="button"
-                    onClick={() => setSuggestedType(group.cat)}
-                    className="mt-3 flex h-9 cursor-pointer items-center gap-1.5 rounded-lg border border-dashed border-border px-3 text-[11px] text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                    添加{group.meta.label}
-                  </button>
                 </div>
               ) : (
                 <div className="flex flex-wrap gap-3">
@@ -2057,7 +2037,7 @@ export default function BrandKnowledgePage() {
                     type="button"
                     aria-label={`添加${group.meta.label}`}
                     onClick={() => setSuggestedType(group.cat)}
-                    className="flex aspect-[4/3] w-[148px] cursor-pointer items-center justify-center rounded-xl border border-dashed border-border text-muted-foreground transition-colors hover:border-primary/40 hover:bg-accent-soft hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                    className="flex aspect-square w-24 cursor-pointer items-center justify-center rounded-lg border border-dashed border-border text-muted-foreground transition-colors hover:border-primary/40 hover:bg-accent-soft hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
                   >
                     <Plus className="h-5 w-5" />
                   </button>

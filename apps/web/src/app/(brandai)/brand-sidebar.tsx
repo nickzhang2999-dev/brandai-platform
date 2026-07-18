@@ -19,9 +19,9 @@ import { NotificationCenter } from "./notification-center";
 import { useBrand } from "./brand-context";
 
 /**
- * BrandAI 左侧导航壳（docs/04 §布局：侧栏 236px，logo mark + 主导航 + 底部
- * 用户卡）。紫色设计语言：选中项用 lavender 底 + violet 文字。品牌名/用户来自
- * 真实会话（由 (brandai)/layout 注入）。
+ * BrandAI 左侧导航壳。常规产品页使用 236px 主导航；品牌套件路由切换为
+ * 216px Lovart 式套件卡片栏，不混入账号区与大品牌 Logo。紫色设计语言：
+ * 选中项用 lavender 底 + violet 文字。品牌名/用户来自真实会话。
  */
 export function BrandSidebar({
   children,
@@ -73,20 +73,27 @@ export function BrandSidebar({
 
   return (
     <div className="flex min-h-screen bg-background text-foreground">
-      <aside className="sticky top-0 flex h-screen w-[236px] shrink-0 flex-col border-r border-border bg-card px-4 py-6">
+      <aside
+        className={[
+          "sticky top-0 flex h-screen shrink-0 flex-col border-r border-border bg-card",
+          isBrandKitPage ? "w-[216px] px-3 py-4" : "w-[236px] px-4 py-6",
+        ].join(" ")}
+      >
         {/* Logo */}
-        <Link href="/" className="mb-7 flex items-center px-2">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src="/brand/nova-art-lab-logo.png"
-            alt="NOVA ART LAB"
-            className="h-12 w-[156px] object-contain object-left"
-          />
-        </Link>
+        {!isBrandKitPage ? (
+          <Link href="/" className="mb-7 flex items-center px-2">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/brand/nova-art-lab-logo.png"
+              alt="NOVA ART LAB"
+              className="h-12 w-[156px] object-contain object-left"
+            />
+          </Link>
+        ) : null}
 
         {isBrandKitPage ? (
           <>
-            <div className="flex items-center justify-between px-1">
+            <div className="flex h-8 items-center justify-between px-1">
               <div className="flex items-center gap-1.5">
                 <h1 className="text-sm font-semibold">我的品牌套件</h1>
                 <span className="rounded-full bg-accent-soft px-1.5 py-0.5 text-[9px] font-medium text-primary">
@@ -98,12 +105,12 @@ export function BrandSidebar({
             <button
               type="button"
               onClick={() => setCreatingBrand(true)}
-              className="mt-4 flex h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-xl border border-border bg-background text-sm font-medium transition-colors duration-200 hover:border-primary/35 hover:bg-accent-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+              className="mt-2 flex h-9 w-full cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-border bg-background text-xs font-medium transition-colors duration-200 hover:border-primary/35 hover:bg-accent-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
             >
               <Plus className="h-4 w-4" />
               新建
             </button>
-            <div className="mt-5 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
+            <div className="mt-4 min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
               {brands.map((brand) => {
                 const active = brand.id === wsId;
                 const canManage = brand.ownerId === brandUser.id;
@@ -111,7 +118,7 @@ export function BrandSidebar({
                   <div
                     key={brand.id}
                     className={[
-                      "group relative overflow-visible rounded-xl border p-1.5 transition-colors duration-200",
+                      "group relative overflow-visible rounded-lg border p-1 transition-colors duration-200",
                       active
                         ? "border-primary/45 bg-accent-soft/45"
                         : "border-transparent hover:border-border hover:bg-muted/45",
@@ -125,7 +132,7 @@ export function BrandSidebar({
                       }}
                       className="w-full cursor-pointer text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
                     >
-                      <span className="flex aspect-[16/9] w-full items-center justify-center overflow-hidden rounded-lg bg-muted">
+                      <span className="flex aspect-[16/9] w-full items-center justify-center overflow-hidden rounded-md bg-muted">
                         {brand.coverImage ? (
                           // eslint-disable-next-line @next/next/no-img-element
                           <img
@@ -137,7 +144,7 @@ export function BrandSidebar({
                           <FileImage className="h-7 w-7 text-muted-foreground/55" />
                         )}
                       </span>
-                      <span className="mt-2 block truncate px-1 pr-8 text-xs font-medium">
+                      <span className="mt-1.5 block truncate px-1 pr-8 text-[11px] font-medium">
                         {brand.name}
                       </span>
                     </button>
@@ -196,7 +203,7 @@ export function BrandSidebar({
             </div>
             <Link
               href="/"
-              className="mt-4 flex h-10 items-center gap-2 rounded-xl px-2 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              className="mt-3 flex h-9 items-center gap-2 rounded-lg px-2 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
             >
               <ArrowLeft className="h-4 w-4" />
               返回主导航
@@ -263,7 +270,12 @@ export function BrandSidebar({
         )}
 
         {/* Settings + user */}
-        <div className="mt-4 flex flex-col gap-2">
+        <div
+          className={[
+            "mt-4 flex flex-col gap-2",
+            isBrandKitPage ? "hidden" : "",
+          ].join(" ")}
+        >
           <Link
             href="/account"
             className="flex items-center gap-3 rounded-2xl px-3 py-2.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
