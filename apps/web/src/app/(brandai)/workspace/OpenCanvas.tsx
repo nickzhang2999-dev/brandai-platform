@@ -39,6 +39,9 @@ export type CanvasItem = {
   assetId?: string; // 上传/素材来源(可被对话面板引用为 ASSET 图像输入)
   naturalW?: number;
   naturalH?: number;
+  /** 上传同步态（仅本地内存，不持久化）：pending=本地预览已上画布、资产上传中；
+   *  failed=上传失败（刷新会丢）。undefined/synced=已持久。 */
+  syncStatus?: "pending" | "synced" | "failed";
   // shape
   shapeType?: ShapeType;
   fill?: string;
@@ -822,49 +825,97 @@ export function OpenCanvas({
       const imgs = files.filter((f) => f.type.startsWith("image/")).slice(0, 20);
       if (imgs.length === 0) return;
       setUploadError(null);
-      let lastItem: CanvasItem | null = null;
+      // V0.0.13h — 先本地预览秒上画布，再后台持久化（prd_agent 同款体感）：
+      // FileReader dataURL 立即建 tile（syncStatus:pending，角标「同步中」），
+      // 上传成功后回填 assetId + 代理 URL（syncStatus 清除→参与持久化），
+      // 失败标 failed（红色「未持久化」，刷新会丢）。
+      const readAsDataUrl = (f: File) =>
+        new Promise<string>((resolve, reject) => {
+          const r = new FileReader();
+          r.onload = () => resolve(String(r.result));
+          r.onerror = () => reject(new Error("读取文件失败"));
+          r.readAsDataURL(f);
+        });
+      const probeSize = (src: string) =>
+        new Promise<{ w: number; h: number }>((resolve) => {
+          const im = new Image();
+          im.onload = () => resolve({ w: im.naturalWidth, h: im.naturalHeight });
+          im.onerror = () => resolve({ w: 0, h: 0 });
+          im.src = src;
+        });
+      let lastKey: string | null = null;
+      const uploads: Promise<void>[] = [];
       for (let i = 0; i < imgs.length; i++) {
+        const f = imgs[i]!;
+        let dataUrl: string;
         try {
-          const { url, width, height, assetId } = await onUploadImage(imgs[i]!);
-          const ratio = width && height ? width / height : 1;
-          const w = 280;
-          const h = Math.round(w / (ratio || 1));
-          const c = at
-            ? { x: at.sx, y: at.sy }
-            : centerScreen();
-          const wp = toWorld(c.x, c.y);
-          const item: CanvasItem = {
-            key: uid("img"),
-            kind: "image",
-            imageUrl: url,
-            assetId,
-            naturalW: width,
-            naturalH: height,
-            x: wp.x - w / 2 + i * 24,
-            y: wp.y - h / 2 + i * 24,
-            w,
-            h,
-          };
-          lastItem = item;
-          setItems((prev) => [...prev, item]);
+          dataUrl = await readAsDataUrl(f);
         } catch (err) {
-          setUploadError(err instanceof Error ? err.message : "上传失败");
+          setUploadError(err instanceof Error ? err.message : "读取失败");
+          continue;
         }
-      }
-      if (lastItem) {
-        setSelected(new Set([lastItem.key]));
-        // 上传即预选：自动插入灰待选 chip（prd_agent 上传后自动 pending 同款）。
-        if (lastItem.imageUrl && (lastItem.versionId || lastItem.assetId)) {
-          onUserPickImage?.(
-            {
-              versionId: lastItem.versionId,
-              assetId: lastItem.assetId,
-              imageUrl: lastItem.imageUrl,
+        const nat = await probeSize(dataUrl);
+        const ratio = nat.w && nat.h ? nat.w / nat.h : 1;
+        const w = 280;
+        const h = Math.round(w / (ratio || 1));
+        const c = at ? { x: at.sx, y: at.sy } : centerScreen();
+        const wp = toWorld(c.x, c.y);
+        const key = uid("img");
+        lastKey = key;
+        const item: CanvasItem = {
+          key,
+          kind: "image",
+          imageUrl: dataUrl,
+          naturalW: nat.w || undefined,
+          naturalH: nat.h || undefined,
+          x: wp.x - w / 2 + i * 24,
+          y: wp.y - h / 2 + i * 24,
+          w,
+          h,
+          syncStatus: "pending",
+        };
+        setItems((prev) => [...prev, item]);
+        // 后台上传（不阻塞下一张的本地预览）。
+        uploads.push(
+          onUploadImage(f).then(
+            ({ url, width, height, assetId }) => {
+              setItems((prev) =>
+                prev.map((p) =>
+                  p.key === key
+                    ? {
+                        ...p,
+                        imageUrl: url,
+                        assetId,
+                        naturalW: width ?? p.naturalW,
+                        naturalH: height ?? p.naturalH,
+                        syncStatus: "synced",
+                      }
+                    : p,
+                ),
+              );
+              // 上传完成即预选：自动插灰待选 chip（需要 assetId 才能被引用）。
+              if (key === lastKey && assetId) {
+                onUserPickImage?.(
+                  { assetId, imageUrl: url },
+                  { additive: false },
+                );
+              }
             },
-            { additive: false },
-          );
-        }
+            (err) => {
+              setItems((prev) =>
+                prev.map((p) =>
+                  p.key === key ? { ...p, syncStatus: "failed" } : p,
+                ),
+              );
+              setUploadError(
+                err instanceof Error ? err.message : "上传失败（图片未持久化，刷新会丢）",
+              );
+            },
+          ),
+        );
       }
+      if (lastKey) setSelected(new Set([lastKey]));
+      await Promise.allSettled(uploads);
     },
     [onUploadImage, onUserPickImage, toWorld],
   );
@@ -1361,6 +1412,22 @@ export function OpenCanvas({
               </div>
             )}
 
+            {/* 上传同步态角标（prd_agent「同步中/未持久化」同款语义） */}
+            {it.kind === "image" && it.syncStatus === "pending" ? (
+              <span className="pointer-events-none absolute right-1 top-1 z-40 animate-pulse rounded-full bg-card/90 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground shadow">
+                同步中…
+              </span>
+            ) : null}
+            {it.kind === "image" && it.syncStatus === "failed" ? (
+              <span
+                className="pointer-events-none absolute right-1 top-1 z-40 rounded-full px-1.5 py-0.5 text-[10px] font-medium text-white shadow"
+                style={{ background: "rgba(239,68,68,0.85)" }}
+                title="图片未持久化到资产库，刷新可能丢失"
+              >
+                未持久化
+              </span>
+            ) : null}
+
             {/* hover 淡蓝边框（prd_agent Tab:6448-6462 同款）：未选中、非待选的图片 */}
             {it.kind === "image" && it.imageUrl && !isSel && !refSt ? (
               <div
@@ -1588,10 +1655,28 @@ export function OpenCanvas({
           arm-then-confirm:点 op chip 只「选中操作」(高亮),输入指令后回车/点「出图」
           才真正改图;局部重画(mask)点了直接开涂抹层(自带指令+确认)。布局固定不随
           交互增减元素,避免居中工具条左右抖动。*/}
-      {soloVersion ? (
+      {soloVersion ? (() => {
+        // V0.0.13h — 操作条贴图（prd_agent ImageQuickActionBar 位置语义）：
+        // 浮在选中图片正上方居中、跟随图片与相机变换；贴近画布顶部时翻到图片下方。
+        const soloIt = items.find((i) => selectedKeys.length === 1 && i.key === selectedKeys[0]);
+        const cx = soloIt ? (soloIt.x + soloIt.w / 2) * zoom + camera.x : 0;
+        const topY = soloIt ? soloIt.y * zoom + camera.y : 0;
+        const bottomY = soloIt ? (soloIt.y + soloIt.h) * zoom + camera.y : 0;
+        const flip = topY < 120; // 上方放不下 → 放图片下方
+        const barStyle: React.CSSProperties = soloIt
+          ? {
+              left: Math.max(160, Math.min(cx, 99999)),
+              top: flip ? bottomY + 12 : undefined,
+              bottom: flip ? undefined : undefined,
+              transform: "translate(-50%, 0)",
+              ...(flip ? {} : { top: Math.max(8, topY - 12), transform: "translate(-50%, -100%)" }),
+            }
+          : { left: "50%", top: "4.5rem", transform: "translateX(-50%)" };
+        return (
         <div
           onPointerDown={(e) => e.stopPropagation()}
-          className="absolute left-1/2 top-[4.5rem] z-20 flex max-w-[calc(100%-8rem)] -translate-x-1/2 flex-wrap items-center justify-center gap-1.5 rounded-2xl border border-border bg-card/95 px-2.5 py-2 shadow-[0_14px_40px_rgba(30,30,60,0.12)] backdrop-blur"
+          className="absolute z-20 flex max-w-[calc(100%-8rem)] flex-wrap items-center justify-center gap-1.5 rounded-2xl border border-border bg-card/95 px-2.5 py-2 shadow-[0_14px_40px_rgba(30,30,60,0.12)] backdrop-blur"
+          style={barStyle}
         >
           {edit.ops.map((o) => {
             const active = o.mask ? false : armedOp === o.value;
@@ -1732,7 +1817,8 @@ export function OpenCanvas({
             </>
           ) : null}
         </div>
-      ) : null}
+        );
+      })() : null}
     </div>
   );
 }
