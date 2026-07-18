@@ -263,10 +263,18 @@ async def generate(
     )
     # P1.2 — fold compiled promptAdditions into the prompt and machineRules
     # into width/height where possible.
-    prompt_parts = [
-        f"[{req.sceneType}] {req.sellingPoint}. Scene: {req.scene}.",
-        f"Brand rules: {rule_summary}",
-    ]
+    # V0.0.13g — promptMode="direct"（对话来源）：prompt 只含用户 brief，
+    # 不加场景标签/Scene/品牌规则/Additions（文不对题修复：11 字指令曾被
+    # ~3000 字品牌倾倒淹没）。缺省 "branded" 行为逐字节不变。
+    direct_mode = (req.promptMode or "branded") == "direct"
+    prompt_parts = (
+        [req.sellingPoint]
+        if direct_mode
+        else [
+            f"[{req.sceneType}] {req.sellingPoint}. Scene: {req.scene}.",
+            f"Brand rules: {rule_summary}",
+        ]
+    )
     negative: list[str] = []
     machine_rules: dict[str, Any] = {}
     prompt_additions: list[str] = []
@@ -280,7 +288,7 @@ async def generate(
         negative = list(req.aiConstraints.negativePrompt or [])
         prompt_additions = list(req.aiConstraints.promptAdditions or [])
         machine_rules = dict(req.aiConstraints.machineRules or {})
-        if prompt_additions:
+        if prompt_additions and not direct_mode:
             prompt_parts.append("Additions: " + " | ".join(prompt_additions))
         reference_images = [
             r.model_dump(exclude_none=True)
@@ -311,10 +319,11 @@ async def generate(
                     f"{len(strict_refs)}."
                 ),
             )
-        if positive_refs:
+        style_refs = [r for r in positive_refs if r not in strict_refs]
+        if style_refs:
             prompt_parts.append(
                 "Match the visual style, palette, composition and treatment of "
-                f"the {len(positive_refs)} provided positive reference example(s)."
+                f"the {len(style_refs)} provided positive reference example(s)."
             )
         if negative_refs:
             prompt_parts.append(

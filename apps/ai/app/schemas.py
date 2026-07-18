@@ -1,5 +1,5 @@
 """Pydantic mirrors of @brandai/contracts AI schemas. Keep in sync."""
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field
 
 
@@ -202,6 +202,8 @@ class GenerateRequest(BaseModel):
     # threaded through the web worker). Prepended verbatim to the prompt.
     # Frozen-additive: absent → prompt unchanged.
     systemPrompt: Optional[str] = None
+    # V0.0.13g — "branded"(缺省,场景+品牌规则折叠) | "direct"(对话来源,仅用户 brief)
+    promptMode: Optional[Literal["branded", "direct"]] = None
 
 
 class GeneratedVersion(BaseModel):

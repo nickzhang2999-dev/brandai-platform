@@ -294,6 +294,8 @@ export const GenerateRequest = z.object({
    * absent → prompt unchanged.
    */
   systemPrompt: z.string().optional(),
+  // V0.0.13g — "branded"(缺省，场景+品牌规则折叠) | "direct"(对话来源：仅用户 brief)
+  promptMode: z.enum(["branded", "direct"]).optional(),
 });
 export type GenerateRequest = z.infer<typeof GenerateRequest>;
 

@@ -198,13 +198,23 @@ export async function POST(
       where: { id: wsId },
       select: { name: true, industry: true },
     });
-    const resolvedBrief = resolveGenerationDefaults({
-      project,
-      brand: workspace,
-      sceneType: input.sceneType,
-      sellingPoint: input.sellingPoint,
-      scene: input.scene,
-    });
+    // V0.0.13g — 对话来源不做 Campaign 场景/卖点自动解析（否则空字段会被
+    // 项目摘要填充成「魔兽世界法师…」这类与指令无关的场景，稀释用户意图）。
+    const resolvedBrief = chatContext
+      ? {
+          sceneType: input.sceneType,
+          sellingPoint: input.sellingPoint?.trim() || "按参考图生成",
+          sellingPointSource: "user" as const,
+          scene: input.scene?.trim() || "",
+          sceneSource: "user" as const,
+        }
+      : resolveGenerationDefaults({
+          project,
+          brand: workspace,
+          sceneType: input.sceneType,
+          sellingPoint: input.sellingPoint,
+          scene: input.scene,
+        });
 
     if (templateReferenceAssetIds.length > 0) {
       const refIds = templateReferenceAssetIds;

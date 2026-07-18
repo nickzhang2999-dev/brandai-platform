@@ -758,11 +758,30 @@ export async function runGenerateJob(
     // V0.0.13 — 管理员配置的图像系统提示词（AppSetting > env，空则不注入）。
     const { imageSystemPrompt } = await getEffectiveAiSettings();
 
+    // V0.0.13g — 对话来源（chatContext 存在）走 direct prompt：只发用户 brief，
+    // 不发品牌规则摘要/场景/promptAdditions/品牌示例参考图（文不对题修复——
+    // 11 字指令曾被 ~3000 字品牌倾倒淹没，模型服从品牌规范无视输入图）。
+    // 安全底线保留：negativePrompt 照发、硬禁令闸（上方 HardBlockError）照拦、
+    // 水印照叠。表单语义路径（campaign-kit/regenerate 等）逐字节不变。
+    const chatOrigin = generation.chatContext != null;
+    if (chatOrigin) {
+      aiConstraints = {
+        ...aiConstraints,
+        promptAdditions: [],
+        // 只保留用户点选的图像输入（IMAGE_INPUT，上方刚折进来），剔除品牌
+        // 示例/禁例参考图 —— 它们是「Match the visual style…」跑题的来源之一。
+        referenceImages: aiConstraints.referenceImages.filter((r) =>
+          (r.note ?? "").startsWith("IMAGE_INPUT:"),
+        ),
+      };
+    }
+
     const baseFields = {
       sceneType: generation.sceneType,
       sellingPoint: generation.sellingPoint,
-      scene: generation.scene,
-      brandRules,
+      scene: chatOrigin ? "" : generation.scene,
+      brandRules: chatOrigin ? [] : brandRules,
+      ...(chatOrigin ? { promptMode: "direct" as const } : {}),
       // M3 — forward the chosen text mode (defaults to "direct" when a job was
       // enqueued before this field existed, preserving legacy behavior).
       textMode: job.data.textMode ?? "direct",
