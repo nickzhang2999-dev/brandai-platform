@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   Asset,
@@ -11,18 +12,30 @@ import type {
 } from "@brandai/contracts";
 import type { AssetCategory } from "@brandai/contracts";
 import { Button } from "@brandai/ui";
+import {
+  BookOpenText,
+  Download,
+  FileText,
+  Image as ImageIcon,
+  MessageCircle,
+  Minus,
+  MoreHorizontal,
+  Palette,
+  Plus,
+  Type as TypeIcon,
+  Upload,
+  X,
+  ZoomIn,
+} from "lucide-react";
 import { apiFetch, assetThumbUrl } from "@/lib/client";
 import { imageUploadLimitError } from "@/lib/upload-limits";
 import { useBrand } from "../brand-context";
 import { Chip } from "../_ui";
-import { AIInput } from "../ai-input";
 
 // §2.2 — bounded intermediate state; mirror the workspace page's POLL_CAP.
 const POLL_CAP_MS = 6 * 60 * 1000;
 const POLL_INTERVAL_MS = 2500;
 
-// D10 — generate-poll shape (mirrors the workspace page's JobState) for the
-// brand-preview server-authoritative flow.
 type JobState = {
   generation: Generation;
   job: {
@@ -32,23 +45,6 @@ type JobState = {
     failedReason?: string;
   };
 };
-
-// D2 · 快捷提示词 — pure client convenience, fills the rule textarea. text only.
-const QUICK_PROMPTS: { type: string; text: string }[] = [
-  {
-    type: "color",
-    text: "我们的主色是 #7C5CFF，辅助色是…，禁止使用其他高饱和色或描边。",
-  },
-  { type: "font", text: "标题字体用…，正文字体用…，禁止使用系统默认衬线体。" },
-  {
-    type: "copy",
-    text: "品牌指南：专业而亲切、简洁有力；禁用词：最、第一、绝对。",
-  },
-  {
-    type: "logo",
-    text: "logo 须保留四周安全间距，最小宽度 24px；禁止拉伸、改色或加阴影。",
-  },
-];
 
 const BRAND_KIT_IMPORT_SLOTS: {
   key: string;
@@ -139,11 +135,6 @@ const CATEGORY_ORDER: string[] = [
   "imagery",
   "copy",
 ];
-const TYPE_OPTIONS = Object.entries(TYPE_META).map(([value, m]) => ({
-  value,
-  label: m.label,
-}));
-
 const STRENGTH_META: Record<string, { label: string; cls: string }> = {
   STRONG: { label: "强约束", cls: "bg-accent-soft text-primary" },
   WEAK: { label: "弱约束", cls: "bg-muted text-muted-foreground" },
@@ -220,15 +211,12 @@ function extractSwatches(value: Val): Swatch[] {
   return out;
 }
 
-/** colorSystem 报告里的限制条款（若存在）。 */
 function colorRestrictions(value: Val): string[] {
-  const cs = value.colorSystem;
-  if (cs && typeof cs === "object") {
-    return asArr((cs as Val).restrictions)
-      .map((r) => asStr(r))
-      .filter((s): s is string => !!s);
-  }
-  return [];
+  const colorSystem = value.colorSystem;
+  if (!colorSystem || typeof colorSystem !== "object") return [];
+  return asArr((colorSystem as Val).restrictions)
+    .map((item) => asStr(item))
+    .filter((item): item is string => !!item);
 }
 
 /** font 字族预览：display/body 或 fontFamily/families 数组。 */
@@ -261,33 +249,31 @@ function previewFamily(name: string): string {
   return `'${name}', Inter, system-ui, sans-serif`;
 }
 
-/** copy 品牌指南：tone + 禁用词列表（容忍 forbidden/banned/禁用词）。 */
 function extractTone(value: Val): { tone: string | null; banned: string[] } {
   const tone =
     asStr(value.tone) ?? asStr(value.voice) ?? asStr(value.style) ?? null;
   const banned = [
     ...asArr(value.forbidden),
     ...asArr(value.banned),
-    ...asArr((value as Val)["禁用词"]),
+    ...asArr(value["禁用词"]),
     ...asArr(value.bannedWords),
   ]
-    .map((w) => asStr(w))
-    .filter((s): s is string => !!s);
+    .map((item) => asStr(item))
+    .filter((item): item is string => !!item);
   return { tone, banned };
 }
 
-/** logo 结构化 do / don't / 尺寸 / 安全间距。 */
 function extractLogo(value: Val): {
   dos: string[];
   donts: string[];
   minSize: string | null;
   safeSpace: string | null;
 } {
-  const list = (k: string[]) =>
-    k
-      .flatMap((key) => asArr((value as Val)[key]))
-      .map((x) => asStr(x))
-      .filter((s): s is string => !!s);
+  const list = (keys: string[]) =>
+    keys
+      .flatMap((key) => asArr(value[key]))
+      .map((item) => asStr(item))
+      .filter((item): item is string => !!item);
   return {
     dos: list(["dos", "do", "allowed"]),
     donts: list(["donts", "dont", "forbidden", "prohibited"]),
@@ -296,7 +282,6 @@ function extractLogo(value: Val): {
   };
 }
 
-/** imagery/layout/graphic 等：把 value 的标量字段铺成「键 · 值」要点。 */
 const KEY_LABELS: Record<string, string> = {
   lighting: "光线",
   depth: "景深",
@@ -311,20 +296,24 @@ const KEY_LABELS: Record<string, string> = {
   spacing: "间距",
   shape: "形状",
 };
+
 function genericBullets(value: Val): { label: string; text: string }[] {
-  const out: { label: string; text: string }[] = [];
-  for (const [k, v] of Object.entries(value)) {
-    if (k === "colorSystem") continue; // report payload, not a display bullet
-    const label = KEY_LABELS[k] ?? k;
-    if (typeof v === "string" && v.trim()) out.push({ label, text: v.trim() });
-    else if (typeof v === "number" || typeof v === "boolean")
-      out.push({ label, text: String(v) });
-    else if (Array.isArray(v)) {
-      const items = v.map((x) => asStr(x)).filter((s): s is string => !!s);
-      if (items.length) out.push({ label, text: items.join("、") });
+  const output: { label: string; text: string }[] = [];
+  for (const [key, raw] of Object.entries(value)) {
+    if (key === "colorSystem") continue;
+    const label = KEY_LABELS[key] ?? key;
+    if (typeof raw === "string" && raw.trim()) {
+      output.push({ label, text: raw.trim() });
+    } else if (typeof raw === "number" || typeof raw === "boolean") {
+      output.push({ label, text: String(raw) });
+    } else if (Array.isArray(raw)) {
+      const items = raw
+        .map((item) => asStr(item))
+        .filter((item): item is string => !!item);
+      if (items.length) output.push({ label, text: items.join("、") });
     }
   }
-  return out;
+  return output;
 }
 
 // ── presentational bits ──────────────────────────────────────────────────────
@@ -781,85 +770,112 @@ function RuleBody({ rule }: { rule: BrandRule }) {
 function RuleCard({
   rule,
   wsId,
-  onAddSimilar,
   onEdit,
   onToggle,
   onDelete,
+  onPreview,
   busy,
 }: {
   rule: BrandRule;
   wsId: string;
-  onAddSimilar: (type: string) => void;
   onEdit: (rule: BrandRule) => void;
   onToggle: (rule: BrandRule) => void;
   onDelete: (rule: BrandRule) => void;
+  onPreview: (input: { src: string; alt: string }) => void;
   busy: boolean;
 }) {
-  const meta = TYPE_META[rule.type] ?? {
-    label: rule.type,
-    short: rule.type,
-    icon: "✦",
-  };
+  const value = (rule.value ?? {}) as Val;
+  const evidence = (rule.evidence ?? []).find((item) => item.assetId);
+  const previewUrl = evidence?.assetId
+    ? assetThumbUrl(wsId, evidence.assetId, evidence.thumbnailUrl ?? "")
+    : null;
+  const swatch = rule.type === "color" ? extractSwatches(value)[0] : null;
+  const font = rule.type === "font" ? extractFonts(value)[0] : null;
   return (
-    <div className="flex flex-col gap-3 rounded-3xl border border-border bg-card p-5 shadow-[0_8px_24px_rgba(30,30,60,0.06)]">
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex items-center gap-3">
-          <span className="flex h-9 w-9 items-center justify-center rounded-2xl bg-accent-soft text-base text-primary">
-            {meta.icon}
+    <div className="group relative w-[148px] shrink-0">
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => {
+          if (previewUrl) {
+            onPreview({ src: previewUrl, alt: evidence?.note ?? rule.summary });
+          } else {
+            onEdit(rule);
+          }
+        }}
+        className="flex aspect-[4/3] w-full cursor-pointer items-center justify-center overflow-hidden rounded-xl border border-border bg-muted/45 transition-colors duration-200 hover:border-primary/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:opacity-60"
+      >
+        {previewUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={previewUrl}
+            alt={evidence?.note ?? rule.summary}
+            className="h-full w-full object-contain p-3"
+          />
+        ) : swatch ? (
+          <span
+            className="h-full w-full"
+            style={{ backgroundColor: swatch.hex }}
+          />
+        ) : font ? (
+          <span
+            className="text-4xl text-foreground"
+            style={{ fontFamily: previewFamily(font.name) }}
+          >
+            Ag
           </span>
-          <span className="text-[15px] font-semibold">{meta.label}</span>
-        </div>
-        <div className="flex shrink-0 items-center gap-1.5">
-          <StrengthBadge strength={rule.strength} />
-          <StatusBadge status={rule.status} />
-        </div>
+        ) : (
+          <span className="flex flex-col items-center gap-2 px-4 text-center text-muted-foreground">
+            <ImportSlotIcon type={rule.type} />
+            <span className="line-clamp-2 text-[10px] leading-relaxed">
+              {rule.summary}
+            </span>
+          </span>
+        )}
+      </button>
+      <div className="mt-1.5 flex min-w-0 items-center gap-1.5">
+        <span
+          className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+            rule.status === "CONFIRMED" ? "bg-success" : "bg-muted-foreground"
+          }`}
+          title={rule.status === "CONFIRMED" ? "已启用" : "未启用"}
+        />
+        <span className="truncate text-[10px] text-muted-foreground">
+          {evidence?.note ?? rule.summary}
+        </span>
       </div>
-
-      <RuleVisualPreview rule={rule} wsId={wsId} />
-
-      <RuleBody rule={rule} />
-
-      {rule.type === "logo" ||
-      rule.type === "imagery" ||
-      rule.type === "font" ||
-      rule.type === "color" ? null : (
-        <EvidenceThumbs wsId={wsId} evidence={rule.evidence ?? []} />
-      )}
-
-      <div className="mt-auto flex flex-wrap gap-2 pt-1">
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => onAddSimilar(rule.type)}
-          className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary disabled:opacity-60"
-        >
-          增加同类
-        </button>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => onEdit(rule)}
-          className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary disabled:opacity-60"
-        >
-          编辑
-        </button>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => onToggle(rule)}
-          className="rounded-full border border-primary/30 px-3 py-1 text-xs text-primary transition-colors hover:bg-accent-soft disabled:opacity-60"
-        >
-          {rule.status === "CONFIRMED" ? "禁用" : "启用"}
-        </button>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => onDelete(rule)}
-          className="rounded-full border border-destructive/25 px-3 py-1 text-xs text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-60"
-        >
-          删除
-        </button>
-      </div>
+      <details className="absolute right-1 top-1 z-20">
+        <summary className="flex h-8 w-8 cursor-pointer list-none items-center justify-center rounded-lg bg-background/85 text-muted-foreground opacity-0 shadow-sm backdrop-blur transition-opacity hover:text-foreground focus:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 group-hover:opacity-100">
+          <MoreHorizontal className="h-4 w-4" />
+          <span className="sr-only">规则操作</span>
+        </summary>
+        <div className="absolute right-0 top-9 w-28 overflow-hidden rounded-xl border border-border bg-card py-1 text-xs shadow-[0_14px_36px_rgba(30,30,60,0.18)]">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => onEdit(rule)}
+            className="h-9 w-full cursor-pointer px-3 text-left transition-colors hover:bg-muted disabled:opacity-60"
+          >
+            编辑
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => onToggle(rule)}
+            className="h-9 w-full cursor-pointer px-3 text-left transition-colors hover:bg-muted disabled:opacity-60"
+          >
+            {rule.status === "CONFIRMED" ? "禁用" : "启用"}
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => onDelete(rule)}
+            className="h-9 w-full cursor-pointer px-3 text-left text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-60"
+          >
+            删除
+          </button>
+        </div>
+      </details>
     </div>
   );
 }
@@ -1065,68 +1081,49 @@ function TaskProgress({
 }
 
 function BrandKitImportPanel({
-  activeType,
   disabled,
-  onTypeChange,
-  onFile,
+  onSelectType,
+  onManualFile,
 }: {
-  activeType: string;
   disabled: boolean;
-  onTypeChange: (type: string) => void;
-  onFile: (file: File) => void;
+  onSelectType: (type: string) => void;
+  onManualFile: (file: File) => void;
 }) {
   const fileRef = useRef<HTMLInputElement | null>(null);
-  const [accept, setAccept] = useState("image/*,application/pdf");
   const [dragging, setDragging] = useState(false);
-
-  function openPicker(type: string, nextAccept: string) {
-    if (disabled) return;
-    onTypeChange(type);
-    setAccept(nextAccept);
-    window.setTimeout(() => {
-      if (fileRef.current) {
-        fileRef.current.value = "";
-        fileRef.current.click();
-      }
-    }, 0);
-  }
 
   function pick(files: FileList | null) {
     const file = files?.[0];
     if (!file) return;
-    onFile(file);
+    onManualFile(file);
   }
 
   return (
-    <section className="mx-auto mt-7 max-w-3xl rounded-[28px] border border-primary/15 bg-card px-6 py-7 text-left shadow-[0_16px_48px_rgba(124,92,255,0.08)]">
+    <section className="mx-auto flex w-full max-w-[560px] flex-col items-center text-left">
       <div className="text-center">
-        <h3 className="text-xl font-semibold">开始使用你的品牌套件</h3>
-        <p className="mt-1.5 text-sm text-muted-foreground">
+        <h1 className="text-2xl font-semibold tracking-tight">
+          开始使用你的品牌套件
+        </h1>
+        <p className="mt-2 text-sm text-muted-foreground">
           添加 logo、字体、颜色等内容，让后续创作始终保持一致。
         </p>
       </div>
-      <div className="mt-6 flex flex-col gap-4">
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+      <div className="mt-7 w-full">
+        <div className="grid grid-cols-2 gap-x-3 gap-y-4 sm:grid-cols-3">
           {BRAND_KIT_IMPORT_SLOTS.map((slot) => {
-            const active = activeType === slot.type;
             return (
               <button
                 key={slot.key}
                 type="button"
                 disabled={disabled}
-                onClick={() => openPicker(slot.type, slot.accept)}
-                className={`flex min-h-[132px] cursor-pointer flex-col rounded-2xl border p-4 text-left transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 ${
-                  active
-                    ? "border-primary bg-accent-soft text-primary"
-                    : "border-border bg-background hover:border-primary/40"
-                } disabled:opacity-60`}
+                onClick={() => onSelectType(slot.type)}
+                className="group cursor-pointer text-left focus-visible:outline-none disabled:opacity-60"
               >
-                <span className="text-sm font-semibold">{slot.title}</span>
-                <span className="mt-1 line-clamp-3 text-[11px] leading-relaxed text-muted-foreground">
-                  {slot.desc}
+                <span className="flex aspect-[4/3] w-full items-center justify-center overflow-hidden rounded-xl border border-border bg-muted/55 text-muted-foreground transition-colors duration-200 group-hover:border-primary/35 group-hover:bg-accent-soft group-hover:text-primary group-focus-visible:ring-2 group-focus-visible:ring-primary/40">
+                  <ImportSlotIcon type={slot.type} />
                 </span>
-                <span className="mt-auto pt-2 text-[10px] text-muted-foreground">
-                  {slot.limit}
+                <span className="mt-1.5 block text-xs font-medium text-foreground">
+                  {slot.title}
                 </span>
               </button>
             );
@@ -1135,7 +1132,9 @@ function BrandKitImportPanel({
         <button
           type="button"
           disabled={disabled}
-          onClick={() => openPicker("layout", "application/pdf")}
+          onClick={() => {
+            if (!disabled) fileRef.current?.click();
+          }}
           onDragEnter={(event) => {
             event.preventDefault();
             setDragging(true);
@@ -1147,42 +1146,152 @@ function BrandKitImportPanel({
             setDragging(false);
             pick(event.dataTransfer.files);
           }}
-          className={`flex min-h-[132px] w-full cursor-pointer flex-col items-center justify-center rounded-[20px] border border-dashed px-5 py-5 text-center transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 ${
+          className={`mt-6 flex min-h-[94px] w-full cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed px-5 py-4 text-center transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 ${
             dragging
               ? "border-primary bg-accent-soft"
-              : "border-primary/25 bg-muted/30 hover:border-primary/50 hover:bg-accent-soft/40"
+              : "border-border bg-muted/25 hover:border-primary/45 hover:bg-accent-soft/35"
           } disabled:opacity-60`}
         >
-          <svg
-            aria-hidden="true"
-            viewBox="0 0 24 24"
-            fill="none"
-            className="h-6 w-6 text-primary"
-          >
-            <path
-              d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 14v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-          <span className="mt-2 text-sm font-medium">
+          <Upload className="h-4 w-4 text-muted-foreground" />
+          <span className="mt-2 text-xs font-medium">
             上传完整品牌手册，自动填充全部内容
           </span>
-          <span className="mt-1 text-xs text-muted-foreground">
+          <span className="mt-1 text-[10px] text-muted-foreground">
             PDF · 上传后自动解析文字、页面和图片
           </span>
         </button>
+        <div className="mt-4 flex items-center gap-3 text-[10px] text-muted-foreground">
+          <span className="h-px flex-1 bg-border" />
+          或
+          <span className="h-px flex-1 bg-border" />
+        </div>
+        <p className="mt-3 text-center text-[11px] text-muted-foreground">
+          还没有品牌素材？也可以从上方任一分类开始创建。
+        </p>
       </div>
       <input
         ref={fileRef}
         type="file"
-        accept={accept}
+        accept="application/pdf"
         className="hidden"
-        onChange={(event) => pick(event.currentTarget.files)}
+        onChange={(event) => {
+          pick(event.currentTarget.files);
+          event.currentTarget.value = "";
+        }}
       />
     </section>
+  );
+}
+
+function ImportSlotIcon({ type }: { type: string }) {
+  if (type === "font") return <TypeIcon className="h-11 w-11" />;
+  if (type === "color") return <Palette className="h-11 w-11" />;
+  if (type === "layout") return <MessageCircle className="h-11 w-11" />;
+  if (type === "imagery") return <ImageIcon className="h-11 w-11" />;
+  if (type === "copy") return <BookOpenText className="h-11 w-11" />;
+  return (
+    <span className="flex h-14 w-14 items-center justify-center rounded-full border-2 border-current">
+      <span className="text-base font-semibold">Lo</span>
+    </span>
+  );
+}
+
+function CompactManualImport({
+  disabled,
+  onFile,
+}: {
+  disabled: boolean;
+  onFile: (file: File) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  return (
+    <div className="w-full rounded-xl bg-muted/45 px-4 py-3">
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-background text-muted-foreground">
+            <FileText className="h-4 w-4" />
+          </span>
+          <div className="min-w-0">
+            <p className="truncate text-xs font-medium">
+              一次上传，构建完整品牌套件
+            </p>
+            <p className="mt-0.5 truncate text-[10px] text-muted-foreground">
+              上传品牌 PDF，自动提取 Logo、颜色、字体等信息
+            </p>
+          </div>
+        </div>
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => inputRef.current?.click()}
+          className="flex h-9 shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-border bg-background px-3 text-xs font-medium transition-colors hover:border-primary/35 hover:bg-accent-soft disabled:opacity-60"
+        >
+          <Upload className="h-3.5 w-3.5" />
+          从文件中提取
+        </button>
+      </div>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="application/pdf"
+        className="hidden"
+        onChange={(event) => {
+          const file = event.currentTarget.files?.[0];
+          if (file) onFile(file);
+          event.currentTarget.value = "";
+        }}
+      />
+    </div>
+  );
+}
+
+function SlotUploadDialog({
+  slot,
+  disabled,
+  onClose,
+  onFile,
+}: {
+  slot: (typeof BRAND_KIT_IMPORT_SLOTS)[number];
+  disabled: boolean;
+  onClose: () => void;
+  onFile: (file: File) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  return (
+    <ModalShell
+      title={`添加你的品牌 ${slot.title}`}
+      subtitle={slot.desc}
+      onClose={onClose}
+    >
+      <div className="px-6 py-5">
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => inputRef.current?.click()}
+          className="flex aspect-[4/3] w-36 cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-border bg-muted/35 text-muted-foreground transition-colors hover:border-primary/45 hover:bg-accent-soft hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:opacity-60"
+        >
+          <Plus className="h-5 w-5" />
+          <span className="mt-2 text-[10px]">添加文件</span>
+        </button>
+        <p className="mt-4 text-[11px] text-muted-foreground">{slot.limit}</p>
+        <input
+          ref={inputRef}
+          type="file"
+          accept={slot.accept}
+          className="hidden"
+          onChange={(event) => {
+            const file = event.currentTarget.files?.[0];
+            if (file) onFile(file);
+            event.currentTarget.value = "";
+          }}
+        />
+      </div>
+      <div className="flex justify-end border-t border-border px-6 py-4">
+        <Button variant="outline" onClick={onClose} disabled={disabled}>
+          取消
+        </Button>
+      </div>
+    </ModalShell>
   );
 }
 
@@ -1642,13 +1751,17 @@ function BrandPreview({
 function AICoCreate({
   wsId,
   suggestedType,
+  hasContent,
+  onSuggestionHandled,
 }: {
   wsId: string;
   suggestedType?: string | null;
+  hasContent: boolean;
+  onSuggestionHandled?: () => void;
 }) {
   const qc = useQueryClient();
-  const [text, setText] = useState("");
   const [type, setType] = useState("copy");
+  const [uploadType, setUploadType] = useState<string | null>(null);
   // parse-manual async task (from an attached PDF)
   const [taskId, setTaskId] = useState<string | null>(null);
   const [timedOut, setTimedOut] = useState(false);
@@ -1657,27 +1770,15 @@ function AICoCreate({
     name: string;
     isPdf: boolean;
   } | null>(null);
-  const [manualOpen, setManualOpen] = useState(false);
   const startedAt = useRef(0);
 
   useEffect(() => {
     if (suggestedType && TYPE_META[suggestedType]) {
       setType(suggestedType);
-      setManualOpen(true);
+      setUploadType(suggestedType);
+      onSuggestionHandled?.();
     }
-  }, [suggestedType]);
-
-  const add = useMutation({
-    mutationFn: () =>
-      apiFetch<BrandRule>(`/api/workspaces/${wsId}/rules`, {
-        method: "POST",
-        body: JSON.stringify({ type, summary: text.trim(), value: {} }),
-      }),
-    onSuccess: () => {
-      setText("");
-      qc.invalidateQueries({ queryKey: ["brandai-rules", wsId] });
-    },
-  });
+  }, [onSuggestionHandled, suggestedType]);
 
   // One knowledge input accepts a written rule, an image, or a PDF. The asset
   // stays in this workspace, then AI turns it into draft rule previews.
@@ -1759,7 +1860,7 @@ function AICoCreate({
     setTimedOut(false);
     setAttachErr(null);
     setLastUpload(null);
-    setManualOpen(false);
+    setUploadType(null);
   }, [wsId]);
 
   const status = task?.status ?? (taskId ? "PENDING" : null);
@@ -1776,77 +1877,45 @@ function AICoCreate({
   }, [status, taskId, qc, wsId]);
 
   const parsing = analyzeAttachment.isPending || running;
+  const activeSlot = BRAND_KIT_IMPORT_SLOTS.find(
+    (slot) => slot.type === uploadType,
+  );
 
   return (
     <>
-      <BrandKitImportPanel
-        activeType={type}
-        disabled={parsing}
-        onTypeChange={setType}
-        onFile={(file) => analyzeAttachment.mutate(file)}
-      />
+      {hasContent ? (
+        <CompactManualImport
+          disabled={parsing}
+          onFile={(file) => {
+            setType("layout");
+            analyzeAttachment.mutate(file);
+          }}
+        />
+      ) : (
+        <BrandKitImportPanel
+          disabled={parsing}
+          onSelectType={(nextType) => {
+            setType(nextType);
+            setUploadType(nextType);
+          }}
+          onManualFile={(file) => {
+            setType("layout");
+            analyzeAttachment.mutate(file);
+          }}
+        />
+      )}
 
-      <details
-        open={manualOpen}
-        onToggle={(event) => setManualOpen(event.currentTarget.open)}
-        className="mx-auto mt-5 max-w-2xl"
-      >
-        <summary className="cursor-pointer list-none text-center text-xs font-medium text-muted-foreground transition-colors hover:text-primary">
-          {manualOpen ? "收起手动添加" : "或手动添加一条品牌要求"}
-        </summary>
-        <div className="mt-4">
-          <AIInput
-            value={text}
-            onChange={setText}
-            onSubmit={() => {
-              if (text.trim() && !add.isPending) add.mutate();
-            }}
-            disabled={parsing}
-            placeholder="输入品牌要求，生成一条可编辑、可启用的规则草稿。"
-            topSlot={
-              <div className="flex flex-wrap gap-1.5 px-1">
-                {QUICK_PROMPTS.map((q) => (
-                  <button
-                    key={q.text}
-                    type="button"
-                    onClick={() => {
-                      setType(q.type);
-                      setText(q.text);
-                    }}
-                    className="rounded-full border border-border bg-muted px-3 py-1 text-[11px] text-muted-foreground transition-colors hover:border-primary/40 hover:bg-accent-soft hover:text-primary"
-                  >
-                    {q.text.length > 20 ? `${q.text.slice(0, 20)}…` : q.text}
-                  </button>
-                ))}
-              </div>
-            }
-            leftControls={
-              <select
-                value={type}
-                disabled={parsing}
-                onChange={(e) => setType(e.target.value)}
-                className="h-9 rounded-full border border-border bg-background px-3 text-xs outline-none disabled:opacity-60"
-              >
-                {TYPE_OPTIONS.map((t) => (
-                  <option key={t.value} value={t.value}>
-                    {t.label}
-                  </option>
-                ))}
-              </select>
-            }
-            primaryAction={
-              <button
-                type="button"
-                disabled={!text.trim() || add.isPending || parsing}
-                onClick={() => add.mutate()}
-                className="h-10 shrink-0 rounded-[16px] bg-gradient-to-br from-primary to-accent px-6 text-sm font-medium text-primary-foreground shadow-[0_12px_28px_rgba(124,92,255,0.26)] disabled:opacity-60"
-              >
-                {add.isPending ? "添加中…" : "添加规则"}
-              </button>
-            }
-          />
-        </div>
-      </details>
+      {activeSlot ? (
+        <SlotUploadDialog
+          slot={activeSlot}
+          disabled={parsing}
+          onClose={() => setUploadType(null)}
+          onFile={(file) => {
+            analyzeAttachment.mutate(file);
+            setUploadType(null);
+          }}
+        />
+      ) : null}
 
       {/* Unified image/PDF analysis progress, §2.3 observable. */}
       {taskId || analyzeAttachment.isPending ? (
@@ -1881,11 +1950,6 @@ function AICoCreate({
         </div>
       ) : null}
 
-      {add.isError ? (
-        <p className="mt-2 text-sm text-destructive">
-          {(add.error as Error).message}
-        </p>
-      ) : null}
       {attachErr ? (
         <p className="mt-2 text-sm text-destructive">{attachErr}</p>
       ) : null}
@@ -1893,11 +1957,106 @@ function AICoCreate({
   );
 }
 
+function BrandKitLightbox({
+  preview,
+  onClose,
+}: {
+  preview: { src: string; alt: string } | null;
+  onClose: () => void;
+}) {
+  const [zoom, setZoom] = useState(100);
+
+  useEffect(() => {
+    if (!preview) return;
+    setZoom(100);
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+      if (event.key === "+" || event.key === "=") {
+        setZoom((current) => Math.min(200, current + 25));
+      }
+      if (event.key === "-") {
+        setZoom((current) => Math.max(50, current - 25));
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [preview, onClose]);
+
+  if (!preview) return null;
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={`预览${preview.alt}`}
+      onClick={onClose}
+      className="fixed inset-0 z-[70] flex items-center justify-center overflow-auto bg-foreground/85 p-8 backdrop-blur-sm"
+    >
+      <button
+        type="button"
+        aria-label="关闭预览"
+        onClick={onClose}
+        className="fixed right-5 top-5 flex h-11 w-11 cursor-pointer items-center justify-center rounded-full bg-background/10 text-background transition-colors hover:bg-background/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-background/70"
+      >
+        <X className="h-5 w-5" />
+      </button>
+      <div className="flex min-h-full min-w-full items-center justify-center">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={preview.src}
+          alt={preview.alt}
+          style={{ transform: `scale(${zoom / 100})` }}
+          onClick={(event) => event.stopPropagation()}
+          className="max-h-[72vh] max-w-[78vw] rounded-sm bg-card object-contain shadow-2xl transition-transform duration-200"
+        />
+      </div>
+      <div
+        className="fixed bottom-5 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-full bg-foreground/90 p-1.5 text-background shadow-2xl"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <button
+          type="button"
+          aria-label="缩小"
+          onClick={() => setZoom((current) => Math.max(50, current - 25))}
+          className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-full hover:bg-background/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-background/70"
+        >
+          <Minus className="h-4 w-4" />
+        </button>
+        <span className="w-12 text-center text-[11px]">{zoom}%</span>
+        <button
+          type="button"
+          aria-label="放大"
+          onClick={() => setZoom((current) => Math.min(200, current + 25))}
+          className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-full hover:bg-background/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-background/70"
+        >
+          <ZoomIn className="h-4 w-4" />
+        </button>
+        <span className="mx-1 h-5 w-px bg-background/20" />
+        <a
+          href={preview.src}
+          download
+          aria-label="下载图片"
+          className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-full hover:bg-background/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-background/70"
+        >
+          <Download className="h-4 w-4" />
+        </a>
+      </div>
+    </div>
+  );
+}
+
 export default function BrandKnowledgePage() {
-  const { wsId, brandName } = useBrand();
+  const { wsId, brandName, brands, updateBrand } = useBrand();
   const qc = useQueryClient();
   const [suggestedType, setSuggestedType] = useState<string | null>(null);
   const [editingRule, setEditingRule] = useState<BrandRule | null>(null);
+  const [preview, setPreview] = useState<{ src: string; alt: string } | null>(
+    null,
+  );
 
   const { data: rules = [], isLoading } = useQuery({
     queryKey: ["brandai-rules", wsId],
@@ -1935,244 +2094,208 @@ export default function BrandKnowledgePage() {
   useEffect(() => {
     setEditingRule(null);
     setSuggestedType(null);
+    setPreview(null);
   }, [wsId]);
 
   const confirmedCount = rules.filter((r) => r.status === "CONFIRMED").length;
+  const activeBrand = brands.find((brand) => brand.id === wsId);
+  const kitEnabled = !activeBrand?.tags?.includes("__kb_disabled");
 
   // group rules by the six rigid dimensions so every brand kit always shows the same
   // skeleton, even before a dimension has any rules.
-  const grouped = CATEGORY_ORDER.map((cat) => ({
-    cat,
-    meta: TYPE_META[cat]!,
-    items: rules.filter((r) => r.type === cat),
-  }));
+  const grouped = ["layout", "copy", "logo", "color", "font", "imagery"].map(
+    (cat) => ({
+      cat,
+      meta: TYPE_META[cat]!,
+      items: rules.filter((r) => r.type === cat),
+    }),
+  );
   // any rule whose type isn't in CATEGORY_ORDER (defensive)
   const others = rules.filter((r) => !CATEGORY_ORDER.includes(r.type));
 
+  const busy = updateRule.isPending || deleteRule.isPending;
+  const toggleRule = (rule: BrandRule) =>
+    updateRule.mutate({
+      id: rule.id,
+      patch: {
+        status: rule.status === "CONFIRMED" ? "REJECTED" : "CONFIRMED",
+      },
+    });
+  const removeRule = (rule: BrandRule) => {
+    if (window.confirm(`删除「${rule.summary}」？此操作不可恢复。`)) {
+      deleteRule.mutate(rule.id);
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center text-sm text-muted-foreground">
+        加载品牌套件…
+      </div>
+    );
+  }
+
+  if (rules.length === 0) {
+    return (
+      <div className="flex min-h-screen items-center justify-center px-8 py-12">
+        <AICoCreate wsId={wsId} hasContent={false} />
+      </div>
+    );
+  }
+
   return (
-    <div className="mx-auto max-w-[1180px] px-10 py-10">
-      <section className="text-center">
-        <h1 className="text-[34px] font-semibold tracking-tight">品牌套件</h1>
-        <p className="mx-auto mt-2 max-w-xl text-sm text-muted-foreground">
-          当前品牌：{brandName}。每个品牌有且只有一套品牌套件。
-        </p>
-      </section>
-
-      <>
-        <section className="mt-10 text-center">
-          <h2 className="text-[28px] font-semibold tracking-tight">
-            {brandName}
-          </h2>
-          <p className="mx-auto mt-2 max-w-xl text-sm text-muted-foreground">
-            维护当前品牌唯一品牌套件的六个核心维度。每个维度可以保留多条规则，但同一时间有且只有一条处于启用状态。
+    <div className="mx-auto w-full max-w-[820px] px-8 pb-20 pt-9">
+      <header className="relative flex min-h-11 items-center justify-center">
+        <div className="text-center">
+          <h1 className="text-xl font-semibold tracking-tight">{brandName}</h1>
+          <p className="mt-1 text-[10px] text-muted-foreground">
+            已收录 {rules.length} 项内容 · {confirmedCount} 项已启用
           </p>
-          <div id="knowledge-source">
-            {/* One unified source accepts text, images, and PDFs for this knowledge base. */}
-            <AICoCreate wsId={wsId} suggestedType={suggestedType} />
-          </div>
-        </section>
+        </div>
+        <label className="absolute right-0 flex cursor-pointer items-center gap-2 text-[11px] text-muted-foreground">
+          应用到新项目
+          <span className="relative inline-flex">
+            <input
+              type="checkbox"
+              checked={kitEnabled}
+              onChange={(event) =>
+                void updateBrand(wsId, { disabled: !event.target.checked })
+              }
+              className="peer sr-only"
+            />
+            <span className="h-5 w-9 rounded-full bg-muted-foreground/35 transition-colors peer-checked:bg-primary peer-focus-visible:ring-2 peer-focus-visible:ring-primary/40 peer-focus-visible:ring-offset-2" />
+            <span className="absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-card shadow-sm transition-transform peer-checked:translate-x-4" />
+          </span>
+        </label>
+      </header>
 
-        {editingRule ? (
-          <RuleEditorDialog
-            rule={editingRule}
-            saving={updateRule.isPending}
-            onClose={() => setEditingRule(null)}
-            onSave={(patch) =>
-              updateRule.mutate(
-                { id: editingRule.id, patch },
-                { onSuccess: () => setEditingRule(null) },
-              )
-            }
-          />
-        ) : null}
-
-        <section className="mt-12">
-          <div className="mb-6 flex items-center justify-between">
-            <h2 className="text-2xl font-semibold">品牌套件内容</h2>
-            <span className="text-xs text-muted-foreground">
-              共 {rules.length} 条 · 已确认 {confirmedCount} 条
-            </span>
-          </div>
-
-          {isLoading ? (
-            <div className="rounded-3xl border border-border bg-card p-12 text-center text-sm text-muted-foreground">
-              加载中…
-            </div>
-          ) : rules.length === 0 ? (
-            <div className="rounded-3xl border border-dashed border-border bg-card p-12 text-center text-sm text-muted-foreground">
-              还没有品牌规则。在上方输入第一条，AI 出图时即可遵循它。
-            </div>
-          ) : (
-            <div className="flex flex-col gap-10">
-              {grouped.map((g) => (
-                <div key={g.cat}>
-                  <div className="mb-3 flex items-center gap-2">
-                    <span className="flex h-7 w-7 items-center justify-center rounded-xl bg-accent-soft text-sm text-primary">
-                      {g.meta.icon}
-                    </span>
-                    <h3 className="text-base font-semibold">{g.meta.label}</h3>
-                    <span className="text-[11px] text-muted-foreground">
-                      {g.items.length} 条
-                    </span>
-                  </div>
-                  <div className="grid gap-[18px] md:grid-cols-2 lg:grid-cols-3">
-                    {g.items.length === 0 ? (
-                      <div className="rounded-3xl border border-dashed border-border bg-card p-6 text-sm text-muted-foreground">
-                        <div className="font-medium text-foreground">
-                          暂无{g.meta.label}
-                        </div>
-                        <p className="mt-2 text-xs leading-relaxed">
-                          可通过一次性输入、上传图片 /
-                          PDF，或手动增加同类规则来补充。
-                        </p>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="mt-4"
-                          onClick={() => {
-                            setSuggestedType(g.cat);
-                            document
-                              .getElementById("knowledge-source")
-                              ?.scrollIntoView({
-                                behavior: "smooth",
-                                block: "center",
-                              });
-                          }}
-                        >
-                          增加内容
-                        </Button>
-                      </div>
-                    ) : (
-                      g.items.map((r) => (
-                        <RuleCard
-                          key={r.id}
-                          rule={r}
-                          wsId={wsId}
-                          busy={updateRule.isPending || deleteRule.isPending}
-                          onAddSimilar={(type) => {
-                            setSuggestedType(type);
-                            document
-                              .getElementById("knowledge-source")
-                              ?.scrollIntoView({
-                                behavior: "smooth",
-                                block: "center",
-                              });
-                          }}
-                          onEdit={setEditingRule}
-                          onToggle={(rule) =>
-                            updateRule.mutate({
-                              id: rule.id,
-                              patch: {
-                                status:
-                                  rule.status === "CONFIRMED"
-                                    ? "REJECTED"
-                                    : "CONFIRMED",
-                              },
-                            })
-                          }
-                          onDelete={(rule) => {
-                            if (
-                              window.confirm(
-                                `删除「${rule.summary}」？此操作不可恢复。`,
-                              )
-                            ) {
-                              deleteRule.mutate(rule.id);
-                            }
-                          }}
-                        />
-                      ))
-                    )}
-                  </div>
-                </div>
-              ))}
-              {others.length ? (
-                <div>
-                  <div className="mb-3 flex items-center gap-2">
-                    <span className="flex h-7 w-7 items-center justify-center rounded-xl bg-accent-soft text-sm text-primary">
-                      ✦
-                    </span>
-                    <h3 className="text-base font-semibold">其他</h3>
-                  </div>
-                  <div className="grid gap-[18px] md:grid-cols-2 lg:grid-cols-3">
-                    {others.map((r) => (
-                      <RuleCard
-                        key={r.id}
-                        rule={r}
-                        wsId={wsId}
-                        busy={updateRule.isPending || deleteRule.isPending}
-                        onAddSimilar={(type) => {
-                          setSuggestedType(type);
-                          document
-                            .getElementById("knowledge-source")
-                            ?.scrollIntoView({
-                              behavior: "smooth",
-                              block: "center",
-                            });
-                        }}
-                        onEdit={setEditingRule}
-                        onToggle={(rule) =>
-                          updateRule.mutate({
-                            id: rule.id,
-                            patch: {
-                              status:
-                                rule.status === "CONFIRMED"
-                                  ? "REJECTED"
-                                  : "CONFIRMED",
-                            },
-                          })
-                        }
-                        onDelete={(rule) => {
-                          if (
-                            window.confirm(
-                              `删除「${rule.summary}」？此操作不可恢复。`,
-                            )
-                          ) {
-                            deleteRule.mutate(rule.id);
-                          }
-                        }}
-                      />
-                    ))}
-                  </div>
-                </div>
-              ) : null}
-            </div>
-          )}
-        </section>
-
-        <section className="mt-12 rounded-3xl border border-primary/15 bg-gradient-to-br from-accent-soft/70 to-card p-7 shadow-[0_8px_24px_rgba(30,30,60,0.06)]">
-          <div className="flex items-center gap-2">
-            <span className="flex h-7 w-7 items-center justify-center rounded-xl bg-card text-sm text-primary">
-              ✦
-            </span>
-            <span className="text-sm font-semibold">
-              AI 知识摘要 · {brandName}
-            </span>
-          </div>
-          <p className="mt-3 max-w-3xl text-sm leading-relaxed text-foreground/80">
-            {rules.length === 0
-              ? "尚未沉淀品牌规则。建议先确认 logo、字体、颜色与品牌指南，AI 出图会据此受控生成。"
-              : `已沉淀 ${rules.length} 条品牌规则（${confirmedCount} 条已确认并生效）。已确认规则会在工作台每次出图时由 worker 加载，确保结果遵循品牌规范。`}
-          </p>
-          {rules.length > 0 ? (
-            <div className="mt-4 flex flex-wrap gap-2">
-              {Array.from(
-                new Set(rules.map((r) => TYPE_META[r.type]?.label ?? r.type)),
-              ).map((k) => (
-                <Chip key={k}>{k}</Chip>
-              ))}
-            </div>
-          ) : null}
-        </section>
-
-        {/* D10 · 品牌预览 — composite visual auto-generation from confirmed KB. */}
-        <BrandPreview
+      <div id="knowledge-source" className="mt-5">
+        <AICoCreate
           wsId={wsId}
-          confirmedCount={confirmedCount}
-          hasForbidden={rules.some(
-            (r) => r.status === "CONFIRMED" && r.strength === "FORBIDDEN",
-          )}
+          suggestedType={suggestedType}
+          hasContent
+          onSuggestionHandled={() => setSuggestedType(null)}
         />
-      </>
+      </div>
+
+      {editingRule ? (
+        <RuleEditorDialog
+          rule={editingRule}
+          saving={updateRule.isPending}
+          onClose={() => setEditingRule(null)}
+          onSave={(patch) =>
+            updateRule.mutate(
+              { id: editingRule.id, patch },
+              { onSuccess: () => setEditingRule(null) },
+            )
+          }
+        />
+      ) : null}
+
+      <div className="mt-9 flex flex-col gap-8">
+        {grouped.map((group) => {
+          const guidance = group.cat === "layout" || group.cat === "copy";
+          return (
+            <section key={group.cat}>
+              <div className="mb-3 flex items-center justify-between">
+                <h2 className="text-xs font-medium">{group.meta.label}</h2>
+                <span className="text-[10px] text-muted-foreground">
+                  {group.items.length} 项
+                </span>
+              </div>
+              {guidance ? (
+                <div className="rounded-xl bg-muted/45 p-4">
+                  {group.items.length ? (
+                    <div className="max-h-36 space-y-3 overflow-y-auto pr-2">
+                      {group.items.map((rule) => (
+                        <button
+                          key={rule.id}
+                          type="button"
+                          onClick={() => setEditingRule(rule)}
+                          className="block w-full cursor-pointer text-left text-xs leading-relaxed text-foreground/80 transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                        >
+                          {rule.summary}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">
+                      暂无{group.meta.label}
+                    </p>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setSuggestedType(group.cat)}
+                    className="mt-3 flex h-9 cursor-pointer items-center gap-1.5 rounded-lg border border-dashed border-border px-3 text-[11px] text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    添加{group.meta.label}
+                  </button>
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-3">
+                  {group.items.map((rule) => (
+                    <RuleCard
+                      key={rule.id}
+                      rule={rule}
+                      wsId={wsId}
+                      busy={busy}
+                      onEdit={setEditingRule}
+                      onToggle={toggleRule}
+                      onDelete={removeRule}
+                      onPreview={setPreview}
+                    />
+                  ))}
+                  <button
+                    type="button"
+                    aria-label={`添加${group.meta.label}`}
+                    onClick={() => setSuggestedType(group.cat)}
+                    className="flex aspect-[4/3] w-[148px] cursor-pointer items-center justify-center rounded-xl border border-dashed border-border text-muted-foreground transition-colors hover:border-primary/40 hover:bg-accent-soft hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                  >
+                    <Plus className="h-5 w-5" />
+                  </button>
+                </div>
+              )}
+            </section>
+          );
+        })}
+
+        {others.length ? (
+          <section>
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-xs font-medium">其他</h2>
+              <span className="text-[10px] text-muted-foreground">
+                {others.length} 项
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              {others.map((rule) => (
+                <RuleCard
+                  key={rule.id}
+                  rule={rule}
+                  wsId={wsId}
+                  busy={busy}
+                  onEdit={setEditingRule}
+                  onToggle={toggleRule}
+                  onDelete={removeRule}
+                  onPreview={setPreview}
+                />
+              ))}
+            </div>
+          </section>
+        ) : null}
+      </div>
+
+      <div className="mt-12 flex justify-center">
+        <Link
+          href="/campaigns"
+          className="flex h-11 items-center justify-center rounded-xl bg-foreground px-5 text-xs font-medium text-background transition-opacity hover:opacity-85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2"
+        >
+          使用此套件创建项目
+        </Link>
+      </div>
+
+      <BrandKitLightbox preview={preview} onClose={() => setPreview(null)} />
     </div>
   );
 }

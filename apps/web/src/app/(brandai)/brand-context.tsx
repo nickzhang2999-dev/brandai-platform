@@ -23,7 +23,7 @@ import {
 export interface BrandCtx {
   wsId: string;
   brandName: string;
-  user: { name: string; email: string; initial: string };
+  user: { id: string; name: string; email: string; initial: string };
   brands: BrandWorkspace[];
   switchBrand: (workspaceId: string) => void;
   refreshBrands: () => Promise<void>;
@@ -35,6 +35,7 @@ export interface BrandCtx {
     workspaceId: string,
     patch: { name?: string; industry?: string; disabled?: boolean },
   ) => Promise<BrandWorkspace>;
+  deleteBrand: (workspaceId: string) => Promise<void>;
 }
 
 const Ctx = createContext<BrandCtx | null>(null);
@@ -117,6 +118,27 @@ export function BrandProvider({
     [],
   );
 
+  const deleteBrand = useCallback(
+    async (workspaceId: string) => {
+      await apiFetch<{ ok: true }>(`/api/workspaces/${workspaceId}`, {
+        method: "DELETE",
+      });
+      const remainingBrands = brands.filter(
+        (brand) => brand.id !== workspaceId,
+      );
+      setBrands(remainingBrands);
+      if (workspaceId !== value.wsId) return;
+      const nextBrand = remainingBrands[0];
+      if (nextBrand) {
+        switchBrand(nextBrand.id);
+        return;
+      }
+      document.cookie = `${ACTIVE_BRAND_COOKIE}=; path=/; max-age=0; samesite=lax`;
+      router.refresh();
+    },
+    [brands, router, switchBrand, value.wsId],
+  );
+
   const activeBase = brands.find((brand) => brand.id === value.wsId);
   const context = useMemo<BrandCtx>(
     () => ({
@@ -128,6 +150,7 @@ export function BrandProvider({
       refreshBrands,
       createBrand,
       updateBrand,
+      deleteBrand,
     }),
     [
       activeBase,
@@ -136,6 +159,7 @@ export function BrandProvider({
       refreshBrands,
       switchBrand,
       updateBrand,
+      deleteBrand,
       value,
     ],
   );

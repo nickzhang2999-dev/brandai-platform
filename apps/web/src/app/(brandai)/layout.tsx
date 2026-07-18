@@ -41,7 +41,7 @@ export default async function BrandaiLayout({
   const email = dbUser.email ?? session.user.email ?? "";
   const name = dbUser.name ?? email.split("@")[0] ?? "用户";
   const initial = (name || email || "U").trim().slice(0, 1).toUpperCase();
-  const user = { name, email, initial };
+  const user = { id: session.user.id, name, email, initial };
 
   // Only platform admins get the 管理后台 entry in the user menu; everyone else
   // sees personal 账号设置 only. The admin console + its APIs re-check this, so
