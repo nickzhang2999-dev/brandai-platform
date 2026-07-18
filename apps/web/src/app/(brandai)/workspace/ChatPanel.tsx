@@ -49,8 +49,18 @@ export interface ChatInsertRefInput {
   label?: string;
 }
 
-/** 页面侧（画布/变体条/历史条）通过该 ref 调用「点选图片 → 插入 chip」。 */
-export type ChatInsertFn = (ref: ChatInsertRefInput) => void;
+/**
+ * 页面侧（画布/变体条/历史条）操控 composer 的桥（prd_agent 两阶段语义）：
+ *  - pick：点选图片。默认 replace（清掉其它灰待选，再插/保留这张的灰 chip）；
+ *    additive=true（Shift/Ctrl/Cmd 点选）= 累加不清旧。已就绪的 chip 不受影响。
+ *  - clearPending：点画布空白 = 清所有灰待选（已确认的不动）。
+ *  - confirmPending：全部灰待选 → 实体确认。
+ */
+export interface ChatComposerApi {
+  pick: (ref: ChatInsertRefInput, opts?: { additive?: boolean }) => void;
+  clearPending: () => void;
+  confirmPending: () => void;
+}
 
 interface ChatContextShape {
   displayText?: string;
@@ -208,15 +218,18 @@ export function ChatPanel({
   onViewGeneration,
   insertRef,
   onComposerRefsChange,
+  onPasteImage,
 }: {
   wsId: string;
   projectId: string | null;
   sceneType: string;
   onViewGeneration: (generationId: string) => void;
-  /** 页面侧点选图片（画布/变体条/历史条）→ 插入 chip 的桥。 */
-  insertRef?: MutableRefObject<ChatInsertFn | null>;
+  /** 页面侧点选图片（画布/变体条/历史条）→ composer 操控 API 的桥。 */
+  insertRef?: MutableRefObject<ChatComposerApi | null>;
   /** 输入框内当前引用（有序 id + 就绪态）变化时回调，供源图显示选中态。 */
   onComposerRefsChange?: (refs: { id: string; ready: boolean }[]) => void;
+  /** 输入框内粘贴图片 → 交给页面上传进画布（prd_agent 途径4：图片落画布不落输入框）。 */
+  onPasteImage?: (files: File[]) => void;
 }) {
   const qc = useQueryClient();
   const composerRef = useRef<HTMLDivElement | null>(null);
@@ -311,21 +324,30 @@ export function ChatPanel({
   }, [syncComposerState]);
 
   /**
-   * 点选图片（源自画布/变体条/历史条/会话结果图）：
-   *  - 不在输入框 → 插入灰色待选 chip（光标处，无光标则追加）；
-   *  - 已在且待选 → 该 chip 变实体色（用户描述的「再点选变实体颜色」）；
-   *  - 已在且就绪 → 移除（第三次点 = 取消引用）。
+   * 点选图片（源自画布/变体条/历史条/会话结果图）—— prd_agent
+   * updateSelectionWithChips + syncChipsToSelection 的语义移植：
+   *  - 默认 replace：先清掉**其它**灰待选 chip（已确认的实体 chip 不动），
+   *    这张图不在输入框则插入灰待选（光标处，无光标则追加）；
+   *  - additive（Shift/Ctrl/Cmd 点选）：不清旧，仅补插；
+   *  - 该图已是实体 chip → no-op（去重；移除走 chip 上的 ×）。
+   *  确认（灰→实体）只发生在：点输入区 / 发送（confirmPending）。
    */
-  const insertChip = useCallback(
-    (ref: ChatInsertRefInput) => {
+  const pickImage = useCallback(
+    (ref: ChatInsertRefInput, opts?: { additive?: boolean }) => {
       const el = composerRef.current;
       if (!el) return;
+      if (!opts?.additive) {
+        el.querySelectorAll<HTMLElement>(
+          '[data-chat-chip][data-ready="0"]',
+        ).forEach((c) => {
+          if (c.dataset.id !== ref.id) c.remove();
+        });
+      }
       const existing = el.querySelector<HTMLElement>(
         `[data-chat-chip][data-id="${ref.id}"]`,
       );
       if (existing) {
-        if (existing.dataset.ready !== "1") applyChipReadyStyle(existing, true);
-        else existing.remove();
+        // 已在（灰保持灰 / 实体保持实体），replace 语义已在上面清掉其它灰。
         syncComposerState();
         return;
       }
@@ -357,14 +379,14 @@ export function ChatPanel({
     [syncComposerState],
   );
 
-  // 页面桥：画布/变体条/历史条点选 → insertChip。
+  // 页面桥：画布/变体条/历史条点选与空白清除 → composer 操控 API。
   useEffect(() => {
     if (!insertRef) return;
-    insertRef.current = insertChip;
+    insertRef.current = { pick: pickImage, clearPending, confirmPending };
     return () => {
       insertRef.current = null;
     };
-  }, [insertRef, insertChip]);
+  }, [insertRef, pickImage, clearPending, confirmPending]);
 
   /* ---------- 序列化 / 发送 ---------- */
 
@@ -559,18 +581,24 @@ export function ChatPanel({
                               key={v.id}
                               className="group relative w-[220px] overflow-hidden rounded-2xl rounded-bl-md border border-border transition-colors hover:border-primary"
                             >
-                              {/* 点结果图 = 插入引用（与画布点选同语义） */}
+                              {/* 点结果图 = 点选引用（与画布点选同语义：replace，Shift 累加） */}
                               <button
                                 type="button"
-                                title="点击引用此图（再点确认/取消）"
+                                title="点击引用此图（点输入区确认）"
                                 onMouseDown={(e) => e.preventDefault()}
-                                onClick={() =>
-                                  insertChip({
-                                    kind: "VERSION",
-                                    id: v.id,
-                                    url: v.imageUrl,
-                                    label: labelFromGeneration(g),
-                                  })
+                                onClick={(e) =>
+                                  pickImage(
+                                    {
+                                      kind: "VERSION",
+                                      id: v.id,
+                                      url: v.imageUrl,
+                                      label: labelFromGeneration(g),
+                                    },
+                                    {
+                                      additive:
+                                        e.shiftKey || e.metaKey || e.ctrlKey,
+                                    },
+                                  )
                                 }
                                 className="block w-full"
                               >
@@ -674,6 +702,14 @@ export function ChatPanel({
               }}
               onPaste={(e) => {
                 e.preventDefault();
+                // 图片粘贴 → 上传进画布（prd_agent RC onPaste → onUploadImages 同款）。
+                const imgs = Array.from(e.clipboardData.files).filter((f) =>
+                  f.type.startsWith("image/"),
+                );
+                if (imgs.length > 0 && onPasteImage) {
+                  onPasteImage(imgs);
+                  return;
+                }
                 const text = e.clipboardData.getData("text/plain");
                 document.execCommand("insertText", false, text);
               }}

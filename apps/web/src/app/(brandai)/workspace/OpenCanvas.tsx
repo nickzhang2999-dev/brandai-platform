@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type MutableRefObject,
 } from "react";
 import type { GenerationVersion } from "@brandai/contracts";
 
@@ -35,6 +36,7 @@ export type CanvasItem = {
   // image
   imageUrl?: string;
   versionId?: string; // 出图变体来源(可对其改图);上传/外部图为空
+  assetId?: string; // 上传/素材来源(可被对话面板引用为 ASSET 图像输入)
   naturalW?: number;
   naturalH?: number;
   // shape
@@ -133,7 +135,11 @@ export function OpenCanvas({
   selectNonce,
   fitKey,
   onUploadImage,
-  onUserPickVersion,
+  onUserPickImage,
+  onBlankClick,
+  chatRefStates,
+  persist,
+  uploadFilesRef,
   edit,
 }: {
   seedVersions: GenerationVersion[];
@@ -152,16 +158,32 @@ export function OpenCanvas({
   /** 触发「自动适配」的 key(= 当前 generation id):变化=切了 generation,重新适配一次
    *  取景;同一 generation 内新增改图子版本不重置(不夺走用户手动缩放/平移)。 */
   fitKey?: string;
-  /** 上传图片到画布:返回公网 URL + 真实尺寸。 */
+  /** 上传图片到画布:返回公网 URL + 真实尺寸 + 资产 id（可持久引用/对话引用）。 */
   onUploadImage: (file: File) => Promise<{
     url: string;
     width?: number;
     height?: number;
+    assetId?: string;
   }>;
-  /** 用户「真实点击」某出图变体 tile（非拖拽、非程序化选择同步）时回传。
-   *  与 onSelectVersion 分离：后者由选择同步 effect 驱动、会因回调身份变化重放，
-   *  不能承载「点选插入引用」这类一次性用户意图（V0.0.13c 对话面板点选取图）。 */
-  onUserPickVersion?: (versionId: string) => void;
+  /** 用户「真实点击」某图片 item（出图变体或上传/素材图；非拖拽、非程序化选择同步）
+   *  时回传。与 onSelectVersion 分离：后者由选择同步 effect 驱动、会因回调身份变化
+   *  重放，不能承载「点选插入引用」这类一次性用户意图（V0.0.13c/13d 对话点选取图）。
+   *  additive = Shift/Ctrl/Cmd 点选（prd_agent 累加语义）。 */
+  onUserPickImage?: (
+    pick: { versionId?: string; assetId?: string; imageUrl: string },
+    opts: { additive: boolean },
+  ) => void;
+  /** 点画布空白（非框选、非 shift）清空选择时回传 —— 页面据此清对话灰待选 chip
+   *  （prd_agent clearSelectionWithChips 语义）。 */
+  onBlankClick?: () => void;
+  /** 对话引用态（versionId/assetId → 序号+就绪）：画布图片本体叠加
+   *  灰罩✓（待选）/ 序号角标（已确认），与变体条/历史条一致（prd_agent 同款）。 */
+  chatRefStates?: Record<string, { ordinal: number; ready: boolean }>;
+  /** 服务端持久化作用域（V0.0.13d）：挂载即 GET 恢复（手动元素/相机/已删版本集），
+   *  变化后 1200ms 防抖 PUT。出图变体 tile 由 seedVersions 服务端权威重建，不入画布 JSON。 */
+  persist?: { wsId: string; projectId: string };
+  /** 页面侧（如 composer 粘贴图片）注入文件上传到画布的入口。 */
+  uploadFilesRef?: MutableRefObject<((files: File[]) => void) | null>;
   edit: CanvasEditBridge;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -208,7 +230,164 @@ export function OpenCanvas({
 
   // 用户从画布删掉的出图变体 tile —— 记住其 versionId,防止下面的 seedVersions 合并
   // 在轮询刷新/新子版本到达时把它当「缺失版本」再加回来(Delete 白删)(Bugbot Medium)。
+  // V0.0.13d：随画布持久化（否则刷新后已删 tile 复活）；变化经 bumpRemovedNonce 触发保存。
   const removedVersionIdsRef = useRef<Set<string>>(new Set());
+  const [removedNonce, setRemovedNonce] = useState(0);
+  const bumpRemovedNonce = () => setRemovedNonce((n) => n + 1);
+
+  /* ---------- V0.0.13d · 服务端持久化（对齐 prd_agent image_master_canvases） ----------
+   * 只持久化「手动元素」（上传图/素材图/形状/文字，无 versionId）+ 相机 + 已删版本集。
+   * 出图变体 tile 由 seedVersions（Generation 服务端数据）权威重建，不入画布 JSON——
+   * 这也是 F19 ⑨ 用户定夺的「画布=持久开放世界工作台，变体 tile 随出图进出」语义。 */
+  const [hydrated, setHydrated] = useState(!persist);
+  const suppressNextFitRef = useRef(false);
+  const lastSavedRef = useRef("");
+  const persistWs = persist?.wsId;
+  const persistProject = persist?.projectId;
+  useEffect(() => {
+    if (!persistWs || !persistProject) {
+      setHydrated(true);
+      return;
+    }
+    let cancelled = false;
+    setHydrated(false);
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/workspaces/${persistWs}/projects/${persistProject}/canvas`,
+        );
+        if (!res.ok) return;
+        const data = (await res.json()) as {
+          items?: CanvasItem[];
+          camera?: { x: number; y: number; zoom: number };
+          removedVersionIds?: string[];
+        };
+        if (cancelled) return;
+        const manual = (data.items ?? []).filter(
+          (it) => !it.versionId && it.key,
+        );
+        // uid 计数器回填：模块计数器刷新归零，恢复旧 key 后新建项可能撞 key。
+        for (const it of manual) {
+          const m = /-(\d+)-/.exec(it.key);
+          if (m && Number(m[1]) >= __k) __k = Number(m[1]) + 1;
+        }
+        removedVersionIdsRef.current = new Set(data.removedVersionIds ?? []);
+        setItems((prev) => {
+          // 版本 tile（可能已被 seedVersions 合并进来）保留，手动项整体以服务端为准。
+          const versionTiles = prev.filter(
+            (it) =>
+              it.versionId && !removedVersionIdsRef.current.has(it.versionId),
+          );
+          return [...manual, ...versionTiles];
+        });
+        if (
+          data.camera &&
+          Number.isFinite(data.camera.zoom) &&
+          data.camera.zoom > 0
+        ) {
+          setZoom(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, data.camera.zoom)));
+          setCamera({ x: data.camera.x, y: data.camera.y });
+          // 恢复了取景 → 跳过下一次 fitKey 自动适配（否则覆盖恢复的视角）。
+          suppressNextFitRef.current = true;
+        }
+        // 恢复即基线：刚加载完不要立刻触发一次无意义保存。
+        lastSavedRef.current = JSON.stringify({
+          items: manual,
+          camera: data.camera ?? null,
+          removedVersionIds: [...removedVersionIdsRef.current].sort(),
+        });
+      } catch {
+        /* 恢复失败 → 空画布继续可用；下一次编辑照常保存 */
+      } finally {
+        if (!cancelled) setHydrated(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [persistWs, persistProject]);
+
+  // 1200ms 防抖保存（prd_agent autosave 同款节奏）；内容未变不发；失败下次重试。
+  useEffect(() => {
+    if (!persistWs || !persistProject || !hydrated) return;
+    const manual = items
+      .filter(
+        (it) =>
+          !it.versionId &&
+          !(
+            it.kind === "image" &&
+            (!it.imageUrl ||
+              it.imageUrl.startsWith("data:") ||
+              it.imageUrl.startsWith("blob:"))
+          ),
+      )
+      .slice(0, 200)
+      .map((it) =>
+        it.kind === "image"
+          ? {
+              key: it.key,
+              kind: it.kind,
+              x: it.x,
+              y: it.y,
+              w: it.w,
+              h: it.h,
+              imageUrl: it.imageUrl!,
+              ...(it.assetId ? { assetId: it.assetId } : {}),
+              ...(it.naturalW ? { naturalW: it.naturalW } : {}),
+              ...(it.naturalH ? { naturalH: it.naturalH } : {}),
+            }
+          : it.kind === "shape"
+            ? {
+                key: it.key,
+                kind: it.kind,
+                x: it.x,
+                y: it.y,
+                w: it.w,
+                h: it.h,
+                shapeType: it.shapeType ?? "rect",
+                fill: it.fill ?? "",
+                stroke: it.stroke ?? "",
+              }
+            : {
+                key: it.key,
+                kind: it.kind,
+                x: it.x,
+                y: it.y,
+                w: it.w,
+                h: it.h,
+                text: it.text ?? "",
+                fontSize: it.fontSize ?? 18,
+                color: it.color ?? "",
+              },
+      );
+    const body = {
+      items: manual,
+      camera: { x: camera.x, y: camera.y, zoom },
+      removedVersionIds: [...removedVersionIdsRef.current].sort(),
+    };
+    const json = JSON.stringify(body);
+    // 基线比对时忽略 camera 精度抖动之外的等值（简单字符串比对足够：内容一致即跳过）。
+    if (json === lastSavedRef.current) return;
+    const t = window.setTimeout(() => {
+      lastSavedRef.current = json;
+      void fetch(
+        `/api/workspaces/${persistWs}/projects/${persistProject}/canvas`,
+        {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: json,
+        },
+      ).then(
+        (r) => {
+          if (!r.ok) lastSavedRef.current = "";
+        },
+        () => {
+          lastSavedRef.current = "";
+        },
+      );
+    }, 1200);
+    return () => window.clearTimeout(t);
+  }, [items, camera, zoom, removedNonce, hydrated, persistWs, persistProject]);
 
   // 出图变体 → 画布图片 item:增量合并(保留手工布局/形状/文字;切 generation 时
   // 移除已不在的版本;改图新子版本自动作为新 item 浮现)。
@@ -423,6 +602,11 @@ export function OpenCanvas({
     if (items.length === 0) return;
     if (lastFitKeyRef.current === fitKey) return;
     lastFitKeyRef.current = fitKey;
+    // 持久化恢复了相机取景 → 跳过这一次自动适配（V0.0.13d）。
+    if (suppressNextFitRef.current) {
+      suppressNextFitRef.current = false;
+      return;
+    }
     fitToContent();
   }, [items, fitKey, fitToContent]);
 
@@ -471,6 +655,7 @@ export function OpenCanvas({
                 removedVersionIdsRef.current.add(it.versionId);
             return p.filter((it) => !selected.has(it.key));
           });
+          bumpRemovedNonce();
           setSelected(new Set());
         }
       } else if (e.key === "Escape") {
@@ -563,35 +748,103 @@ export function OpenCanvas({
   );
 
   const triggerUpload = () => fileRef.current?.click();
-  const onFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0];
-    e.target.value = "";
-    if (!f) return;
-    try {
+
+  /**
+   * 统一上传入口（prd_agent onUploadImages 的移植）：按钮 / 拖拽文件 / 画布粘贴 /
+   * composer 粘贴全部汇入。逐张串行上传 → 视口指定点（缺省中心）放置 →
+   * 最新一张自动单选 + 上报点选（对话面板插灰待选 chip，Tab:5184-5191 同款）。
+   */
+  const uploadFiles = useCallback(
+    async (files: File[], at?: { sx: number; sy: number }) => {
+      const imgs = files.filter((f) => f.type.startsWith("image/")).slice(0, 20);
+      if (imgs.length === 0) return;
       setUploadError(null);
-      const { url, width, height } = await onUploadImage(f);
-      const ratio = width && height ? width / height : 1;
-      const w = 280;
-      const h = Math.round(w / (ratio || 1));
-      const c = centerScreen();
-      const wp = toWorld(c.x, c.y);
-      const item: CanvasItem = {
-        key: uid("img"),
-        kind: "image",
-        imageUrl: url,
-        naturalW: width,
-        naturalH: height,
-        x: wp.x - w / 2,
-        y: wp.y - h / 2,
-        w,
-        h,
-      };
-      setItems((prev) => [...prev, item]);
-      setSelected(new Set([item.key]));
-    } catch (err) {
-      setUploadError(err instanceof Error ? err.message : "上传失败");
-    }
+      let lastItem: CanvasItem | null = null;
+      for (let i = 0; i < imgs.length; i++) {
+        try {
+          const { url, width, height, assetId } = await onUploadImage(imgs[i]!);
+          const ratio = width && height ? width / height : 1;
+          const w = 280;
+          const h = Math.round(w / (ratio || 1));
+          const c = at
+            ? { x: at.sx, y: at.sy }
+            : centerScreen();
+          const wp = toWorld(c.x, c.y);
+          const item: CanvasItem = {
+            key: uid("img"),
+            kind: "image",
+            imageUrl: url,
+            assetId,
+            naturalW: width,
+            naturalH: height,
+            x: wp.x - w / 2 + i * 24,
+            y: wp.y - h / 2 + i * 24,
+            w,
+            h,
+          };
+          lastItem = item;
+          setItems((prev) => [...prev, item]);
+        } catch (err) {
+          setUploadError(err instanceof Error ? err.message : "上传失败");
+        }
+      }
+      if (lastItem) {
+        setSelected(new Set([lastItem.key]));
+        // 上传即预选：自动插入灰待选 chip（prd_agent 上传后自动 pending 同款）。
+        if (lastItem.imageUrl && (lastItem.versionId || lastItem.assetId)) {
+          onUserPickImage?.(
+            {
+              versionId: lastItem.versionId,
+              assetId: lastItem.assetId,
+              imageUrl: lastItem.imageUrl,
+            },
+            { additive: false },
+          );
+        }
+      }
+    },
+    [onUploadImage, onUserPickImage, toWorld],
+  );
+
+  // 页面注入口（composer 粘贴图片 → 上传进画布）。
+  useEffect(() => {
+    if (!uploadFilesRef) return;
+    uploadFilesRef.current = (files: File[]) => void uploadFiles(files);
+    return () => {
+      uploadFilesRef.current = null;
+    };
+  }, [uploadFilesRef, uploadFiles]);
+
+  const onFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const fs = Array.from(e.target.files ?? []);
+    e.target.value = "";
+    if (fs.length) await uploadFiles(fs);
   };
+
+  // 画布粘贴（prd_agent 途径3）：指针悬停在画布上时接管剪贴板图片；
+  // 焦点在输入控件里不劫持（用户可能在 composer 粘贴文字/图片）。
+  const stageHoverRef = useRef(false);
+  useEffect(() => {
+    const onPaste = (ev: ClipboardEvent) => {
+      const t = ev.target as HTMLElement | null;
+      if (
+        t &&
+        (t.isContentEditable ||
+          t.tagName === "INPUT" ||
+          t.tagName === "TEXTAREA")
+      )
+        return;
+      if (!stageHoverRef.current) return;
+      const files = Array.from(ev.clipboardData?.files ?? []).filter((f) =>
+        f.type.startsWith("image/"),
+      );
+      if (files.length === 0) return;
+      ev.preventDefault();
+      void uploadFiles(files);
+    };
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  }, [uploadFiles]);
 
   // ---- 指针手势 ----
   const beginPan = (e: React.PointerEvent) => {
@@ -639,6 +892,7 @@ export function OpenCanvas({
         key: uid("asset"),
         kind: "image",
         imageUrl: asset.url,
+        assetId: asset.id,
         naturalW: asset.width,
         naturalH: asset.height,
         x: wp.x - w / 2,
@@ -648,8 +902,13 @@ export function OpenCanvas({
       };
       setItems((prev) => [...prev, item]);
       setSelected(new Set([item.key]));
+      // 素材拖入即预选（与上传一致）：自动插灰待选 chip。
+      onUserPickImage?.(
+        { assetId: asset.id, imageUrl: asset.url },
+        { additive: false },
+      );
     },
-    [toWorld],
+    [toWorld, onUserPickImage],
   );
 
   const beginItemDrag = (e: React.PointerEvent, key: string) => {
@@ -828,20 +1087,26 @@ export function OpenCanvas({
           g.additive ? new Set([...prev, ...hit]) : new Set(hit),
         );
       } else if (!g.additive && !movedRef.current) {
+        // 点空白 = 清选择 + 通知页面清对话灰待选（prd_agent clearSelectionWithChips）。
         setSelected(new Set());
+        onBlankClick?.();
       }
     }
-    // 「真实点击」出图变体 tile（按下即抬起、未拖动、非 shift 多选）→ 上报用户点选。
-    // 只在此处上报：程序化选择同步（activeVersionId/selectNonce/回调身份变化）永不触发。
-    if (
-      g.type === "move" &&
-      !movedRef.current &&
-      g.tapKey &&
-      !e.shiftKey &&
-      onUserPickVersion
-    ) {
+    // 「真实点击」图片 item（按下即抬起、未拖动）→ 上报用户点选（replace；
+    // Shift/Ctrl/Cmd = additive 累加）。只在此处上报：程序化选择同步
+    // （activeVersionId/selectNonce/回调身份变化）永不触发。
+    if (g.type === "move" && !movedRef.current && g.tapKey && onUserPickImage) {
       const it = items.find((i) => i.key === g.tapKey);
-      if (it?.versionId) onUserPickVersion(it.versionId);
+      if (it?.kind === "image" && it.imageUrl && (it.versionId || it.assetId)) {
+        onUserPickImage(
+          {
+            versionId: it.versionId,
+            assetId: it.assetId,
+            imageUrl: it.imageUrl,
+          },
+          { additive: e.shiftKey || e.metaKey || e.ctrlKey },
+        );
+      }
     }
   };
 
@@ -860,22 +1125,42 @@ export function OpenCanvas({
       onPointerMove={onStageMove}
       onPointerUp={onStageUp}
       onPointerCancel={onStageUp}
+      onPointerEnter={() => {
+        stageHoverRef.current = true;
+      }}
+      onPointerLeave={() => {
+        stageHoverRef.current = false;
+      }}
       onDragOver={(e) => {
-        if (e.dataTransfer.types.includes("application/x-brandai-asset")) {
+        if (
+          e.dataTransfer.types.includes("application/x-brandai-asset") ||
+          e.dataTransfer.types.includes("Files")
+        ) {
           e.preventDefault();
           e.dataTransfer.dropEffect = "copy";
         }
       }}
       onDrop={(e) => {
         const raw = e.dataTransfer.getData("application/x-brandai-asset");
-        if (!raw) return;
-        e.preventDefault();
-        try {
-          const asset = JSON.parse(raw) as DraggedAsset;
+        if (raw) {
+          e.preventDefault();
+          try {
+            const asset = JSON.parse(raw) as DraggedAsset;
+            const lp = localPoint(e);
+            addImageAtScreenPoint(asset, lp.x, lp.y);
+          } catch {
+            setUploadError("素材拖入失败");
+          }
+          return;
+        }
+        // 拖拽本地文件进画布（prd_agent 途径2）：落点处上传放置。
+        const files = Array.from(e.dataTransfer.files ?? []).filter((f) =>
+          f.type.startsWith("image/"),
+        );
+        if (files.length > 0) {
+          e.preventDefault();
           const lp = localPoint(e);
-          addImageAtScreenPoint(asset, lp.x, lp.y);
-        } catch {
-          setUploadError("素材拖入失败");
+          void uploadFiles(files, { sx: lp.x, sy: lp.y });
         }
       }}
       className="relative min-h-[560px] flex-1 select-none overflow-hidden rounded-[28px] border border-border bg-card"
@@ -920,12 +1205,20 @@ export function OpenCanvas({
         const w = it.w * zoom;
         const h = it.h * zoom;
         const isSel = selected.has(it.key);
+        // 对话引用态（prd_agent 画布同款）：灰罩✓ = 灰待选；序号角标 = 已确认。
+        const refSt =
+          it.kind === "image"
+            ? ((it.versionId && chatRefStates?.[it.versionId]) ||
+                (it.assetId && chatRefStates?.[it.assetId]) ||
+                null)
+            : null;
         return (
           <div
             key={it.key}
             data-testid="canvas-item"
             data-kind={it.kind}
             data-selected={isSel ? "1" : "0"}
+            className="group/citem"
             onPointerDown={(e) => beginItemDrag(e, it.key)}
             onDoubleClick={(e) => {
               if (it.kind === "text") {
@@ -1004,6 +1297,59 @@ export function OpenCanvas({
                 {it.text}
               </div>
             )}
+
+            {/* hover 淡蓝边框（prd_agent Tab:6448-6462 同款）：未选中、非待选的图片 */}
+            {it.kind === "image" && it.imageUrl && !isSel && !refSt ? (
+              <div
+                className="pointer-events-none absolute inset-0 rounded-[6px] opacity-0 transition-opacity duration-200 group-hover/citem:opacity-100"
+                style={{
+                  border: "2px solid rgba(147,197,253,0.55)",
+                  boxShadow:
+                    "0 0 16px rgba(96,165,250,0.18), inset 0 0 8px rgba(96,165,250,0.06)",
+                  zIndex: 30,
+                }}
+              />
+            ) : null}
+
+            {/* 对话引用两阶段态（prd_agent Tab:6465-6493 同款）：
+                灰待选 = 灰罩 + 居中✓；已确认 = violet 序号角标 */}
+            {refSt && !refSt.ready ? (
+              <div
+                className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-[6px]"
+                style={{
+                  background: "rgba(156,163,175,0.25)",
+                  border: "2px solid rgba(156,163,175,0.6)",
+                  zIndex: 35,
+                }}
+              >
+                <span
+                  className="font-bold text-white"
+                  style={{
+                    fontSize: Math.max(20, Math.min(w, h) * 0.15),
+                    textShadow: "0 2px 8px rgba(0,0,0,0.5)",
+                  }}
+                >
+                  ✓
+                </span>
+              </div>
+            ) : null}
+            {refSt?.ready ? (
+              <span
+                className="pointer-events-none absolute right-0 top-0 flex items-center justify-center rounded-full bg-primary font-bold text-primary-foreground"
+                style={{
+                  transform: "translate(50%,-50%)",
+                  minWidth: 20,
+                  height: 20,
+                  padding: "0 6px",
+                  fontSize: 11,
+                  boxShadow: "0 2px 8px rgba(0,0,0,0.25)",
+                  zIndex: 40,
+                }}
+                title={`引用顺序: ${refSt.ordinal}`}
+              >
+                {refSt.ordinal}
+              </span>
+            ) : null}
 
             {/* 选择框 + 四角手柄(固定屏幕尺寸) */}
             {isSel ? (
@@ -1160,6 +1506,7 @@ export function OpenCanvas({
                 removedVersionIdsRef.current.add(it.versionId);
             return p.filter((it) => !selected.has(it.key));
           });
+            bumpRemovedNonce();
             setSelected(new Set());
           }}
         >

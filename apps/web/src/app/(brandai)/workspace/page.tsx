@@ -40,7 +40,7 @@ import {
 import { useBrand } from "../brand-context";
 import { MaskPaintCanvas } from "./MaskPaintCanvas";
 import { OpenCanvas } from "./OpenCanvas";
-import { ChatPanel, type ChatInsertFn } from "./ChatPanel";
+import { ChatPanel, type ChatComposerApi } from "./ChatPanel";
 
 /**
  * P05 · AI 工作台 — 左画布 + 变体条，右 prompt 面板。真实出图（CLAUDE.md §2，
@@ -305,23 +305,27 @@ function Workspace() {
   );
   const [workspaceMode, setWorkspaceMode] =
     useState<WorkspaceMode>("TEXT_TO_IMAGE");
-  // V0.0.13 — 右侧面板双 Tab：生成表单（既有） / AI 设计师对话（图生图/多图生图）。
-  const [panelTab, setPanelTab] = useState<"form" | "chat">("form");
-  // V0.0.13c — 视觉创作交互物理移植：对话 Tab 下点选 画布/变体条/历史条 图片
-  // → 经此桥插入输入框 chip（灰色待选 → 再点/点输入区 确认实体色）。
-  const chatInsertRef = useRef<ChatInsertFn | null>(null);
+  // V0.0.13c/d — 视觉创作交互物理移植：点选 画布/变体条/历史条 图片 → 灰待选
+  // chip（replace；Shift/Ctrl 累加）；点输入区/发送确认；点画布空白清待选。
+  const chatInsertRef = useRef<ChatComposerApi | null>(null);
+  // composer 粘贴图片 → 画布上传入口（OpenCanvas 注入）。
+  const chatUploadFilesRef = useRef<((files: File[]) => void) | null>(null);
   // 输入框内当前引用（有序 + 就绪态），驱动源图的 灰罩✓ / violet 描边 + 序号。
   const [chatComposerRefs, setChatComposerRefs] = useState<
     { id: string; ready: boolean }[]
   >([]);
-  /** 对话 Tab 下点选一张源图。返回 true 表示已被对话面板消费。 */
+  /** 点选一张源图（prd_agent replace/additive 语义）。 */
   const chatPickImage = useCallback(
-    (ref: { id: string; url: string; label?: string }) => {
-      if (panelTab !== "chat" || !chatInsertRef.current) return false;
-      chatInsertRef.current({ kind: "VERSION", ...ref });
-      return true;
+    (
+      ref: { kind?: "VERSION" | "ASSET"; id: string; url: string; label?: string },
+      opts?: { additive?: boolean },
+    ) => {
+      chatInsertRef.current?.pick(
+        { kind: ref.kind ?? "VERSION", id: ref.id, url: ref.url, label: ref.label },
+        opts,
+      );
     },
-    [panelTab],
+    [],
   );
   /** 源图当前在输入框中的状态（无 / 待选灰 / 就绪）+ 序号。 */
   const chatRefState = useCallback(
@@ -332,6 +336,14 @@ function Workspace() {
     },
     [chatComposerRefs],
   );
+  /** OpenCanvas 消费的 id→引用态映射（versionId/assetId 通用）。 */
+  const chatRefStatesMap = useMemo(() => {
+    const m: Record<string, { ordinal: number; ready: boolean }> = {};
+    chatComposerRefs.forEach((r, i) => {
+      if (r.id) m[r.id] = { ordinal: i + 1, ready: r.ready };
+    });
+    return m;
+  }, [chatComposerRefs]);
   const [editBaseVersionId, setEditBaseVersionId] = useState<string | null>(
     null,
   );
@@ -410,126 +422,6 @@ function Workspace() {
     const kws = parseStyleParam(presetStyle);
     if (kws.length) setStyleKeywords(kws);
   }, [presetStyle]);
-
-  // F2 / L6 — bounded undo/redo history over the generation-form snapshot.
-  // The current snapshot is recomputed from the live field state; an effect
-  // pushes it onto the past stack (debounced via a shallow-equality check) so
-  // typing coalesces into discrete steps. Undo/redo restore a whole snapshot.
-  type FormSnapshot = {
-    workspaceMode: WorkspaceMode;
-    editBaseVersionId: string | null;
-    outpaintDirection: OutpaintDirection;
-    outpaintScale: number;
-    sellingPoint: string;
-    scene: string;
-    sceneType: string;
-    versionCount: number;
-    targetKeys: string[];
-    textMode: "direct" | "layered";
-    styleKeywords: string[];
-  };
-  const snapshot: FormSnapshot = useMemo(
-    () => ({
-      workspaceMode,
-      editBaseVersionId,
-      outpaintDirection,
-      outpaintScale,
-      sellingPoint,
-      scene,
-      sceneType,
-      versionCount,
-      targetKeys,
-      textMode,
-      styleKeywords,
-    }),
-    [
-      workspaceMode,
-      editBaseVersionId,
-      outpaintDirection,
-      outpaintScale,
-      sellingPoint,
-      scene,
-      sceneType,
-      versionCount,
-      targetKeys,
-      textMode,
-      styleKeywords,
-    ],
-  );
-  const HISTORY_CAP = 50;
-  const past = useRef<FormSnapshot[]>([]);
-  const future = useRef<FormSnapshot[]>([]);
-  const lastSnap = useRef<FormSnapshot>(snapshot);
-  const [histVersion, setHistVersion] = useState(0); // re-render on stack change
-
-  function snapEqual(a: FormSnapshot, b: FormSnapshot): boolean {
-    return (
-      a.workspaceMode === b.workspaceMode &&
-      a.editBaseVersionId === b.editBaseVersionId &&
-      a.outpaintDirection === b.outpaintDirection &&
-      a.outpaintScale === b.outpaintScale &&
-      a.sellingPoint === b.sellingPoint &&
-      a.scene === b.scene &&
-      a.sceneType === b.sceneType &&
-      a.versionCount === b.versionCount &&
-      a.textMode === b.textMode &&
-      a.targetKeys.length === b.targetKeys.length &&
-      a.targetKeys.every((k, i) => k === b.targetKeys[i]) &&
-      a.styleKeywords.length === b.styleKeywords.length &&
-      a.styleKeywords.every((k, i) => k === b.styleKeywords[i])
-    );
-  }
-
-  function restoreSnapshot(s: FormSnapshot) {
-    applyingHistory.current = true;
-    setWorkspaceMode(s.workspaceMode);
-    setEditBaseVersionId(s.editBaseVersionId);
-    setOutpaintDirection(s.outpaintDirection);
-    setOutpaintScale(s.outpaintScale);
-    setSellingPoint(s.sellingPoint);
-    setScene(s.scene);
-    setSceneType(s.sceneType);
-    setVersionCount(s.versionCount);
-    setTargetKeys(s.targetKeys);
-    setTextMode(s.textMode);
-    setStyleKeywords(s.styleKeywords);
-    lastSnap.current = s;
-    // Clear the suppression flag after the state updates flush.
-    setTimeout(() => {
-      applyingHistory.current = false;
-    }, 0);
-  }
-
-  // Record a new history step whenever the snapshot changes by a real edit.
-  useEffect(() => {
-    if (applyingHistory.current) return;
-    if (snapEqual(snapshot, lastSnap.current)) return;
-    past.current.push(lastSnap.current);
-    if (past.current.length > HISTORY_CAP) past.current.shift();
-    future.current = []; // a fresh edit invalidates the redo branch
-    lastSnap.current = snapshot;
-    setHistVersion((v) => v + 1);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [snapshot]);
-
-  function undo() {
-    const prev = past.current.pop();
-    if (!prev) return;
-    future.current.push(lastSnap.current);
-    setHistVersion((v) => v + 1);
-    restoreSnapshot(prev);
-  }
-  function redo() {
-    const next = future.current.pop();
-    if (!next) return;
-    past.current.push(lastSnap.current);
-    setHistVersion((v) => v + 1);
-    restoreSnapshot(next);
-  }
-  const canUndo = past.current.length > 0;
-  const canRedo = future.current.length > 0;
-  // Reference histVersion so the toolbar re-renders when stacks change.
-  void histVersion;
 
   // V0.0.9 · 素材（水印使用）— localStorage-backed, scoped to (wsId, projectId),
   // shared with the assets page. These assets are NOT sent to AI as references;
@@ -642,95 +534,6 @@ function Workspace() {
   }
   function dropTemplateReference(assetId: string) {
     setTemplateReferences((prev) => prev.filter((r) => r.id !== assetId));
-  }
-
-  type WorkspaceDraft = FormSnapshot & {
-    projectId: string | null;
-    references: RefAsset[];
-    templateReferences: RefAsset[];
-    watermarkOverlays: WatermarkOverlayInput[];
-    savedAt: string;
-  };
-  const draftKey = `brandai:workspace-draft:v0.0.12:${wsId}`;
-  const draftRestored = useRef(false);
-  const draftReady = useRef(false);
-  const hasIncomingSeed =
-    !!presetBrief?.trim() ||
-    !!presetScene?.trim() ||
-    !!presetStyle?.trim() ||
-    !!presetSceneType ||
-    !!presetGen;
-
-  useEffect(() => {
-    if (draftRestored.current || hasIncomingSeed) {
-      draftReady.current = true;
-      return;
-    }
-    draftRestored.current = true;
-    try {
-      const raw = window.localStorage.getItem(draftKey);
-      if (!raw) return;
-      const draft = JSON.parse(raw) as Partial<WorkspaceDraft>;
-      if (draft.projectId) setProjectId(draft.projectId);
-      if (draft.workspaceMode) setWorkspaceMode(draft.workspaceMode);
-      if ("editBaseVersionId" in draft)
-        setEditBaseVersionId(draft.editBaseVersionId ?? null);
-      if (draft.outpaintDirection)
-        setOutpaintDirection(draft.outpaintDirection);
-      if (typeof draft.outpaintScale === "number")
-        setOutpaintScale(draft.outpaintScale);
-      if (typeof draft.sellingPoint === "string")
-        setSellingPoint(draft.sellingPoint);
-      if (typeof draft.scene === "string") setScene(draft.scene);
-      if (draft.sceneType) setSceneType(draft.sceneType);
-      if (typeof draft.versionCount === "number")
-        setVersionCount(draft.versionCount);
-      if (Array.isArray(draft.targetKeys)) setTargetKeys(draft.targetKeys);
-      if (draft.textMode) setTextMode(draft.textMode);
-      if (Array.isArray(draft.styleKeywords))
-        setStyleKeywords(draft.styleKeywords.slice(0, MAX_KEYWORDS));
-      if (Array.isArray(draft.references)) setReferences(draft.references);
-      if (Array.isArray(draft.templateReferences))
-        setTemplateReferences(draft.templateReferences);
-      if (Array.isArray(draft.watermarkOverlays))
-        setWatermarkOverlays(draft.watermarkOverlays);
-      setDraftNotice("已恢复上次未提交的工作台草稿。");
-      window.setTimeout(() => setDraftNotice(null), 4000);
-    } catch {
-      window.localStorage.removeItem(draftKey);
-    } finally {
-      draftReady.current = true;
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draftKey, hasIncomingSeed]);
-
-  useEffect(() => {
-    if (!draftReady.current) return;
-    const timer = window.setTimeout(() => {
-      const draft: WorkspaceDraft = {
-        ...snapshot,
-        projectId,
-        references,
-        templateReferences,
-        watermarkOverlays,
-        savedAt: new Date().toISOString(),
-      };
-      window.localStorage.setItem(draftKey, JSON.stringify(draft));
-    }, 500);
-    return () => window.clearTimeout(timer);
-  }, [
-    draftKey,
-    projectId,
-    references,
-    snapshot,
-    templateReferences,
-    watermarkOverlays,
-  ]);
-
-  function clearWorkspaceDraft() {
-    window.localStorage.removeItem(draftKey);
-    setDraftNotice("已清空工作台草稿。");
-    window.setTimeout(() => setDraftNotice(null), 3000);
   }
 
   // F11 · 生成额度展示 — read-only quota status.
@@ -1207,7 +1010,6 @@ function Workspace() {
       editStartedAt.current = Date.now();
       setEditVid(v.id);
       setEditJobId(r.jobId);
-      window.localStorage.removeItem(draftKey);
     } catch (e) {
       setActionErr(e instanceof Error ? e.message : "改图提交失败");
     } finally {
@@ -1254,20 +1056,35 @@ function Workspace() {
     [versions],
   );
 
-  // V0.0.13c — 对话 Tab：用户真实点击画布出图 tile = 插入引用 chip（视觉创作同款）。
-  // 与选择同步分离（onUserPickVersion 只在真实 pointer tap 时触发，程序化同步不触发）。
-  const onCanvasUserPickVersion = useCallback(
-    (versionId: string) => {
-      const picked = versions.find((x) => x.id === versionId);
-      if (picked?.imageUrl) {
-        chatPickImage({
-          id: picked.id,
-          url: picked.imageUrl,
-          label: scene || sellingPoint || "画布图",
-        });
+  // V0.0.13d — 用户真实点击画布图片（出图变体 / 上传图 / 素材）= 点选引用
+  // （replace；Shift/Ctrl 累加）。与选择同步分离（onUserPickImage 只在真实
+  // pointer tap 时触发，程序化同步不触发）。
+  const onCanvasUserPickImage = useCallback(
+    (
+      pick: { versionId?: string; assetId?: string; imageUrl: string },
+      opts: { additive: boolean },
+    ) => {
+      if (pick.versionId) {
+        const picked = versions.find((x) => x.id === pick.versionId);
+        chatPickImage(
+          {
+            kind: "VERSION",
+            id: pick.versionId,
+            url: picked?.imageUrl || pick.imageUrl,
+            label: "画布图",
+          },
+          opts,
+        );
+        return;
+      }
+      if (pick.assetId) {
+        chatPickImage(
+          { kind: "ASSET", id: pick.assetId, url: pick.imageUrl, label: "上传图" },
+          opts,
+        );
       }
     },
-    [versions, chatPickImage, scene, sellingPoint],
+    [versions, chatPickImage],
   );
 
   // 上传图片到画布:走真实素材上传(R2)→ 公网 URL + 真实尺寸(从 resolution 串解析)。
@@ -1300,7 +1117,12 @@ function Workspace() {
       // 走同源代理 URL(/assets/:id/raw)而非存储对象 URL —— 配了 browser 不可达/内网
       // origin 的对象存储时,直接用 a.url 会往画布塞一张打不开的 <img>;全站素材都经
       // assetThumbUrl 代理正是为此(Codex P2)。
-      return { url: assetThumbUrl(wsId, a.id, a.url), width, height };
+      return {
+        url: assetThumbUrl(wsId, a.id, a.url),
+        width,
+        height,
+        assetId: a.id,
+      };
     },
     [wsId],
   );
@@ -1356,131 +1178,6 @@ function Workspace() {
     }
   }
 
-  async function submit() {
-    if (!projectId) {
-      setSubmitErr("请先选择一个项目（没有就去项目页创建）");
-      return;
-    }
-    setSubmitErr(null);
-    setSubmitting(true);
-    setTimedOut(false);
-    setActiveVariant(0);
-    try {
-      const res = await apiFetch<{ generation: Generation; jobId: string }>(
-        `/api/workspaces/${wsId}/generations`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            projectId,
-            sceneType,
-            sellingPoint: resolvedGenerationBrief.sellingPoint,
-            scene: resolvedGenerationBrief.scene,
-            versionCount,
-            // K5 / M3 — text rendering strategy ("direct" default | "layered").
-            textMode,
-            // K5 / P2.0 — only send `targets` when ≥1 size selected (frozen-
-            // additive). When present the AI service fans out one image per size
-            // and ignores versionCount.
-            ...(selectedTargets.length ? { targets: selectedTargets } : {}),
-            // F7 — only send when non-empty (frozen-additive optional field).
-            ...(styleKeywords.length ? { styleKeywords } : {}),
-            ...(templateReferences.length
-              ? {
-                  templateReferenceAssetIds: templateReferences.map(
-                    (r) => r.id,
-                  ),
-                }
-              : {}),
-            ...(activeWatermarkOverlays.length
-              ? {
-                  watermarkOverlays: activeWatermarkOverlays,
-                }
-              : {}),
-          }),
-        },
-      );
-      startedAt.current = Date.now();
-      setGenId(res.generation.id);
-      setJobId(res.jobId);
-      window.localStorage.removeItem(draftKey);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "提交失败";
-      setSubmitErr(msg);
-      // H12 — a quota 402 surfaces the upgrade dialog so the user has an exit.
-      if (/配额|额度|上限|升级/.test(msg)) setShowUpgrade(true);
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  async function submitByMode() {
-    if (workspaceMode === "TEXT_TO_IMAGE") {
-      await submit();
-      return;
-    }
-    const prompt = [
-      resolvedGenerationBrief.sellingPoint,
-      resolvedGenerationBrief.scene,
-    ]
-      .map((part) => part.trim())
-      .filter(Boolean)
-      .join("\n");
-    const target = editBaseVersion;
-    if (!target) {
-      setSubmitErr("请先选择一张已生成图片作为修改底图。");
-      return;
-    }
-    if (!prompt) {
-      setSubmitErr("请输入修改指令。");
-      return;
-    }
-    if (workspaceMode === "INPAINT") {
-      openMaskPaint(target);
-      setSubmitErr(null);
-      return;
-    }
-    if (workspaceMode === "OUTPAINT") {
-      const size = versionPixelSize(target);
-      const scale = 1 + outpaintScale / 100;
-      const width =
-        outpaintDirection === "left" ||
-        outpaintDirection === "right" ||
-        outpaintDirection === "all"
-          ? Math.round(size.width * scale)
-          : size.width;
-      const height =
-        outpaintDirection === "top" ||
-        outpaintDirection === "bottom" ||
-        outpaintDirection === "all"
-          ? Math.round(size.height * scale)
-          : size.height;
-      setSubmitErr(null);
-      await runEdit(
-        "OUTPAINT",
-        {
-          prompt,
-          width,
-          height,
-          outpaintDirection,
-          outpaintScale,
-          preserveOriginal: true,
-        },
-        target,
-      );
-      return;
-    }
-    setSubmitErr(null);
-    await runEdit(
-      "IMAGE_EDIT",
-      {
-        prompt,
-        editMode: "whole-image",
-        preserveStructure: true,
-      },
-      target,
-    );
-  }
-
   return (
     <div className="flex h-screen flex-col">
       <div className="flex items-center justify-between border-b border-border bg-card px-6 py-3">
@@ -1530,13 +1227,6 @@ function Workspace() {
           <span className="font-medium text-foreground">工作台</span>
         </nav>
         <div className="flex items-center gap-3">
-          {/* F2 / L6 — undo/redo (生成表单快照)。缩放在画布内自带。 */}
-          <Toolbar
-            canUndo={canUndo}
-            canRedo={canRedo}
-            onUndo={undo}
-            onRedo={redo}
-          />
           <StatusPill status={status} timedOut={timedOut} />
         </div>
       </div>
@@ -1557,7 +1247,11 @@ function Workspace() {
             selectNonce={selectNonce}
             fitKey={genId ?? undefined}
             onUploadImage={onCanvasUploadImage}
-            onUserPickVersion={onCanvasUserPickVersion}
+            onUserPickImage={onCanvasUserPickImage}
+            onBlankClick={() => chatInsertRef.current?.clearPending()}
+            chatRefStates={chatRefStatesMap}
+            persist={projectId ? { wsId, projectId } : undefined}
+            uploadFilesRef={chatUploadFilesRef}
             edit={{
               ops: CANVAS_OPS,
               busy: !!editJobId || busy === "edit",
@@ -1583,21 +1277,14 @@ function Workspace() {
                     );
                     e.dataTransfer.effectAllowed = "copy";
                   }}
-                  // 对话 Tab 下不抢输入框焦点（保住光标位置插 chip）。
-                  onMouseDown={(e) => {
-                    if (panelTab === "chat") e.preventDefault();
-                  }}
-                  onClick={() => {
-                    // V0.0.13c — 对话 Tab：点变体 = 插入引用（灰待选→点选确认）。
-                    if (
-                      chatPickImage({
-                        id: v.id,
-                        url: v.imageUrl,
-                        label: `变体${i + 1}`,
-                      })
-                    ) {
-                      return;
-                    }
+                  // 不抢输入框焦点（保住光标位置插 chip）。
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={(e) => {
+                    // V0.0.13d — 点变体 = 插入引用（replace，Shift 累加）+ 选中变体。
+                    chatPickImage(
+                      { id: v.id, url: v.imageUrl, label: `变体${i + 1}` },
+                      { additive: e.shiftKey || e.metaKey || e.ctrlKey },
+                    );
                     setActiveVariant(i);
                     setEditBaseVersionId(v.id);
                     setCanvasSel(true);
@@ -1609,7 +1296,7 @@ function Workspace() {
                     "relative h-[82px] w-[118px] overflow-hidden rounded-[18px] border-2 transition-colors",
                     chatSt?.ready
                       ? "border-primary"
-                      : i === activeVariant && canvasSel && panelTab !== "chat"
+                      : i === activeVariant && canvasSel
                         ? "border-primary"
                         : "border-transparent hover:border-border",
                   ].join(" ")}
@@ -1679,20 +1366,19 @@ function Workspace() {
                   return (
                     <button
                       key={g.id}
-                      onMouseDown={(e) => {
-                        if (panelTab === "chat") e.preventDefault();
-                      }}
-                      onClick={() => {
-                        // V0.0.13c — 对话 Tab：点历史图 = 插入引用 chip。
-                        if (
-                          coverVersion?.imageUrl &&
-                          chatPickImage({
-                            id: coverVersion.id,
-                            url: coverVersion.imageUrl,
-                            label: g.scene || g.sellingPoint || "历史图",
-                          })
-                        ) {
-                          return;
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={(e) => {
+                        // V0.0.13d — 点历史图 = 插入引用 chip（replace，Shift 累加）
+                        // + 回看该次出图（画布切到它，复用改图/终选/导出）。
+                        if (coverVersion?.imageUrl) {
+                          chatPickImage(
+                            {
+                              id: coverVersion.id,
+                              url: coverVersion.imageUrl,
+                              label: g.scene || g.sellingPoint || "历史图",
+                            },
+                            { additive: e.shiftKey || e.metaKey || e.ctrlKey },
+                          );
                         }
                         viewGeneration(g.id);
                       }}
@@ -1814,638 +1500,20 @@ function Workspace() {
         </div>
 
         {/* Prompt panel */}
-        <aside
-          className={[
-            "flex min-h-0 flex-col gap-5 border-l border-border bg-card p-6",
-            // 对话 Tab 由 ChatPanel 自己管理会话流滚动；表单 Tab 维持整栏滚动。
-            panelTab === "chat" ? "overflow-hidden" : "overflow-y-auto",
-          ].join(" ")}
-        >
-          {/* V0.0.13 — 面板 Tab 切换（生成表单 / AI 设计师对话） */}
-          <div className="flex shrink-0 gap-1 rounded-full border border-border bg-background p-1">
-            {(
-              [
-                { key: "form", label: "生成面板" },
-                { key: "chat", label: "AI 设计师" },
-              ] as const
-            ).map((t) => (
-              <button
-                key={t.key}
-                type="button"
-                onClick={() => setPanelTab(t.key)}
-                className={[
-                  "flex-1 rounded-full px-3 py-1.5 text-xs font-medium transition-colors",
-                  panelTab === t.key
-                    ? "bg-accent-soft text-primary"
-                    : "text-muted-foreground hover:text-foreground",
-                ].join(" ")}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
-
-          {panelTab === "chat" ? (
-            <ChatPanel
-              wsId={wsId}
-              projectId={projectId}
-              sceneType={sceneType}
-              onViewGeneration={viewGeneration}
-              insertRef={chatInsertRef}
-              onComposerRefsChange={setChatComposerRefs}
-            />
-          ) : null}
-
-          <div
-            className={
-              panelTab === "form" ? "flex min-h-0 flex-col gap-5" : "hidden"
-            }
-          >
-          {draftNotice ? (
-            <div className="flex items-center justify-between gap-3 rounded-2xl border border-primary/15 bg-accent-soft/60 px-3 py-2 text-xs text-primary">
-              <span>{draftNotice}</span>
-              <button
-                type="button"
-                onClick={clearWorkspaceDraft}
-                className="shrink-0 rounded-full border border-primary/20 px-2 py-0.5"
-              >
-                清空草稿
-              </button>
-            </div>
-          ) : null}
-
-          <div>
-            <div className="mb-2 text-sm font-semibold">制作模式</div>
-            <div className="grid grid-cols-2 gap-2">
-              {WORKSPACE_MODES.map((mode) => {
-                const active = workspaceMode === mode.value;
-                return (
-                  <button
-                    key={mode.value}
-                    type="button"
-                    onClick={() => setWorkspaceMode(mode.value)}
-                    className={[
-                      "rounded-2xl border px-3 py-2 text-left transition-colors",
-                      active
-                        ? "border-primary bg-accent-soft text-primary"
-                        : "border-border bg-background text-muted-foreground hover:bg-muted",
-                    ].join(" ")}
-                  >
-                    <span className="block text-xs font-semibold">
-                      {mode.label}
-                    </span>
-                    <span className="mt-1 block text-[10px] leading-relaxed">
-                      {mode.hint}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {workspaceMode !== "TEXT_TO_IMAGE" ? (
-            <div
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={(e) => {
-                e.preventDefault();
-                const versionId = e.dataTransfer.getData(
-                  "application/x-brandai-version",
-                );
-                if (versionId && versions.some((v) => v.id === versionId)) {
-                  setEditBaseVersionId(versionId);
-                }
-              }}
-              className="rounded-2xl border border-dashed border-primary/25 bg-background p-3"
-            >
-              <div className="mb-2 flex items-center justify-between text-sm font-semibold">
-                <span>修改底图</span>
-                {current ? (
-                  <button
-                    type="button"
-                    onClick={() => setEditBaseVersionId(current.id)}
-                    className="rounded-full border border-primary/30 px-2.5 py-1 text-xs text-primary hover:bg-accent-soft"
-                  >
-                    使用当前图
-                  </button>
-                ) : null}
-              </div>
-              {editBaseVersion ? (
-                <div className="flex items-center gap-2">
-                  <AssetThumb
-                    asset={{
-                      id: editBaseVersion.id,
-                      fileName: "当前修改底图",
-                      thumbUrl: editBaseVersion.imageUrl,
-                    }}
-                    alt="修改底图"
-                  />
-                  <div className="min-w-0 text-xs text-muted-foreground">
-                    <div className="font-medium text-foreground">
-                      基于上一版继续修改
-                    </div>
-                    <div className="mt-1">
-                      可从下方变体缩略图拖入这里切换底图。
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <p className="text-xs leading-relaxed text-muted-foreground">
-                  先生成或选择一张历史图，再基于它继续整图修改、局部修改或扩图。
-                </p>
-              )}
-            </div>
-          ) : null}
-
-          {workspaceMode === "OUTPAINT" ? (
-            <div>
-              <div className="mb-2 flex items-center justify-between text-sm font-semibold">
-                <span>扩图方向与范围</span>
-                <span className="text-xs font-normal text-muted-foreground">
-                  +{outpaintScale}%
-                </span>
-              </div>
-              <div className="grid grid-cols-3 gap-1.5">
-                {OUTPAINT_DIRECTIONS.map((item) => (
-                  <button
-                    key={item.value}
-                    type="button"
-                    title={item.hint}
-                    onClick={() => setOutpaintDirection(item.value)}
-                    className={[
-                      "rounded-xl border px-2 py-1.5 text-xs transition-colors",
-                      outpaintDirection === item.value
-                        ? "border-primary bg-accent-soft text-primary"
-                        : "border-border text-muted-foreground hover:bg-muted",
-                    ].join(" ")}
-                  >
-                    {item.label}
-                  </button>
-                ))}
-              </div>
-              <input
-                type="range"
-                min={10}
-                max={100}
-                step={5}
-                value={outpaintScale}
-                onChange={(e) => setOutpaintScale(Number(e.target.value))}
-                className="mt-3 w-full accent-primary"
-              />
-              <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
-                扩图会保留原图主体，在画布边界外补全新区域；文字描述里可继续写“右侧增加干净留白”等细节。
-              </p>
-            </div>
-          ) : null}
-
-          <div>
-            <div className="mb-2 flex items-center justify-between text-sm font-semibold">
-              <span>需求描述 / 卖点</span>
-              <span className="text-xs font-normal text-muted-foreground">
-                {sellingPoint.length}/500
-              </span>
-            </div>
-            <textarea
-              value={sellingPoint}
-              maxLength={500}
-              placeholder="可留空。系统会基于项目摘要、产品/活动、品牌名和行业自动补全。"
-              onChange={(e) => setSellingPoint(e.target.value)}
-              rows={5}
-              className="w-full resize-none rounded-2xl border border-border bg-background p-3 text-sm outline-none focus:border-primary/40 focus:shadow-[0_0_0_4px_rgba(124,92,255,0.08)]"
-            />
-          </div>
-
-          <div>
-            <div className="mb-2 text-sm font-semibold">场景</div>
-            <input
-              value={scene}
-              placeholder="可留空。系统会基于投放渠道、活动和画面类型自动补全。"
-              onChange={(e) => setScene(e.target.value)}
-              className="h-11 w-full rounded-2xl border border-border bg-background px-3 text-sm outline-none focus:border-primary/40 focus:shadow-[0_0_0_4px_rgba(124,92,255,0.08)]"
-            />
-          </div>
-
-          <div>
-            <div className="mb-2 text-sm font-semibold">画面类型</div>
-            <div className="flex flex-wrap gap-1.5">
-              {SCENE_TYPES.map((s) => (
-                <button
-                  key={s.value}
-                  onClick={() => setSceneType(s.value)}
-                  className={[
-                    "rounded-full px-3 py-1 text-xs transition-colors",
-                    sceneType === s.value
-                      ? "bg-accent-soft font-medium text-primary"
-                      : "border border-border text-muted-foreground hover:bg-muted",
-                  ].join(" ")}
-                >
-                  {s.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* 生成数量 — 多尺寸模式下隐藏（每尺寸各出 1 张，AI 服务忽略 versionCount）。 */}
-          {multiSize ? (
-            <div>
-              <div className="mb-2 text-sm font-semibold">生成数量</div>
-              <p className="rounded-2xl border border-primary/15 bg-accent-soft/50 px-3 py-2.5 text-xs leading-relaxed text-muted-foreground">
-                多尺寸模式：每个尺寸各出 1 张（共 {selectedTargets.length}{" "}
-                张）。
-              </p>
-            </div>
-          ) : (
-            <div>
-              <div className="mb-2 text-sm font-semibold">生成数量</div>
-              <div className="flex gap-1.5">
-                {[1, 2, 4, 6].map((n) => (
-                  <button
-                    key={n}
-                    onClick={() => setVersionCount(n)}
-                    className={[
-                      "h-9 w-12 rounded-xl text-sm transition-colors",
-                      versionCount === n
-                        ? "bg-accent-soft font-medium text-primary"
-                        : "border border-border text-muted-foreground hover:bg-muted",
-                    ].join(" ")}
-                  >
-                    {n}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* K5 · 多尺寸渠道档位（P2.0） */}
-          <div>
-            <div className="mb-2 flex items-center justify-between text-sm font-semibold">
-              <span>多尺寸渠道</span>
-              {targetKeys.length ? (
-                <span className="text-xs font-normal text-muted-foreground">
-                  已选 {targetKeys.length}
-                </span>
-              ) : null}
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {CHANNEL_SIZES.map((s) => {
-                const on = targetKeys.includes(s.key);
-                return (
-                  <button
-                    key={s.key}
-                    type="button"
-                    onClick={() => toggleTarget(s.key)}
-                    aria-pressed={on}
-                    className={[
-                      "rounded-full px-3 py-1 text-xs transition-colors",
-                      on
-                        ? "bg-accent-soft font-medium text-primary"
-                        : "border border-border text-muted-foreground hover:bg-muted",
-                    ].join(" ")}
-                  >
-                    {s.label} {s.width}×{s.height}
-                  </button>
-                );
-              })}
-            </div>
-            <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
-              不选则按上方生成数量出同尺寸图；选 ≥1 个渠道则每个尺寸各出 1 张。
-            </p>
-            {multiSize ? (
-              <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-                注：模型会就近匹配到支持的比例（如 1080×1440 →
-                1024×1536），出图后以实际尺寸为准。
-              </p>
-            ) : null}
-          </div>
-
-          {/* K5 · 文本策略（M3 textMode） */}
-          <div>
-            <div className="mb-2 text-sm font-semibold">文本策略</div>
-            <div className="flex gap-1.5">
-              {(
-                [
-                  { value: "direct", label: "直接出图" },
-                  { value: "layered", label: "分层留白" },
-                ] as const
-              ).map((o) => (
-                <button
-                  key={o.value}
-                  type="button"
-                  onClick={() => setTextMode(o.value)}
-                  className={[
-                    "rounded-full px-3 py-1 text-xs transition-colors",
-                    textMode === o.value
-                      ? "bg-accent-soft font-medium text-primary"
-                      : "border border-border text-muted-foreground hover:bg-muted",
-                  ].join(" ")}
-                >
-                  {o.label}
-                </button>
-              ))}
-            </div>
-            <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
-              分层留白 = 模型留干净负空间、不烤字，便于后续叠真实文字。
-            </p>
-          </div>
-
-          {/* F7 · 风格关键词 */}
-          <div>
-            <div className="mb-2 flex items-center justify-between text-sm font-semibold">
-              <span>风格关键词</span>
-              <span className="text-xs font-normal text-muted-foreground">
-                {styleKeywords.length}/{MAX_KEYWORDS}
-              </span>
-            </div>
-            <div className="flex flex-wrap items-center gap-1.5 rounded-2xl border border-border bg-background p-2 focus-within:border-primary/40 focus-within:shadow-[0_0_0_4px_rgba(124,92,255,0.08)]">
-              {styleKeywords.map((kw) => (
-                <span
-                  key={kw}
-                  className="inline-flex items-center gap-1 rounded-full bg-accent-soft px-2.5 py-1 text-xs font-medium text-primary"
-                >
-                  {kw}
-                  <button
-                    type="button"
-                    onClick={() => removeKeyword(kw)}
-                    aria-label={`移除 ${kw}`}
-                    className="text-primary/60 transition-colors hover:text-primary"
-                  >
-                    ✕
-                  </button>
-                </span>
-              ))}
-              <input
-                value={keywordDraft}
-                onChange={(e) => setKeywordDraft(e.target.value)}
-                onKeyDown={onKeywordKeyDown}
-                onBlur={() => {
-                  addKeyword(keywordDraft);
-                  setKeywordDraft("");
-                }}
-                disabled={styleKeywords.length >= MAX_KEYWORDS}
-                placeholder={
-                  styleKeywords.length >= MAX_KEYWORDS
-                    ? "已达上限"
-                    : "输入后回车添加…"
-                }
-                className="min-w-[7rem] flex-1 bg-transparent px-1 py-1 text-sm outline-none placeholder:text-muted-foreground"
-              />
-            </div>
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {SUGGESTED_KEYWORDS.filter((k) => !styleKeywords.includes(k)).map(
-                (k) => (
-                  <button
-                    key={k}
-                    type="button"
-                    onClick={() => addKeyword(k)}
-                    disabled={styleKeywords.length >= MAX_KEYWORDS}
-                    className="rounded-full border border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted disabled:opacity-50"
-                  >
-                    + {k}
-                  </button>
-                ),
-              )}
-            </div>
-          </div>
-
-          {/* V0.0.9 · 素材（水印使用）与参考图（模板库）分离 */}
-          {projectId ? (
-            <div className="space-y-4">
-              <div>
-                <div className="mb-2 flex items-center justify-between text-sm font-semibold">
-                  <span>素材（水印使用）</span>
-                  <div className="flex items-center gap-2">
-                    {references.length ? (
-                      <button
-                        type="button"
-                        onClick={() => setWatermarkEditorOpen(true)}
-                        className="rounded-full border border-primary/30 px-2.5 py-1 text-xs text-primary transition-colors hover:bg-accent-soft"
-                      >
-                        配置水印
-                      </button>
-                    ) : null}
-                    <button
-                      type="button"
-                      onClick={() => setAssetPickerOpen(true)}
-                      className="rounded-full border border-primary/30 px-2.5 py-1 text-xs text-primary transition-colors hover:bg-accent-soft"
-                    >
-                      选择素材
-                    </button>
-                  </div>
-                </div>
-                {references.length ? (
-                  <div className="flex flex-col gap-2">
-                    {references.map((r) => (
-                      <div
-                        key={r.id}
-                        draggable
-                        onDragStart={(e) => {
-                          e.dataTransfer.setData(
-                            "application/x-brandai-asset",
-                            JSON.stringify({
-                              id: r.id,
-                              url: r.thumbUrl,
-                              fileName: r.fileName ?? "素材",
-                            }),
-                          );
-                          e.dataTransfer.effectAllowed = "copy";
-                        }}
-                        className="flex items-center gap-2 rounded-2xl border border-border bg-background p-2"
-                      >
-                        <AssetThumb asset={r} alt="水印素材" />
-                        <div className="min-w-0 flex-1">
-                          <div className="truncate text-xs font-medium">
-                            {r.fileName ?? "素材"}
-                          </div>
-                          <div className="mt-1 text-[11px] text-muted-foreground">
-                            绝对调用：不改内容，可拖到画布，也会按水印配置叠加。
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => dropReference(r.id)}
-                          aria-label="移除水印素材"
-                          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-destructive"
-                        >
-                          ✕
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="rounded-2xl border border-dashed border-border bg-background px-3 py-4 text-center text-xs text-muted-foreground">
-                    从素材库选择 Logo、产品图或固定元素作为水印素材。
-                  </p>
-                )}
-              </div>
-
-              <div>
-                <div className="mb-2 flex items-center justify-between text-sm font-semibold">
-                  <span>参考图（模板库）</span>
-                  <button
-                    type="button"
-                    onClick={() => setTemplatePickerOpen(true)}
-                    className="rounded-full border border-primary/30 px-2.5 py-1 text-xs text-primary transition-colors hover:bg-accent-soft"
-                  >
-                    选择参考图
-                  </button>
-                </div>
-                {templateReferences.length ? (
-                  <div className="flex flex-col gap-2">
-                    {templateReferences.map((r) => (
-                      <div
-                        key={r.id}
-                        className="flex items-center gap-2 rounded-2xl border border-border bg-background p-2"
-                      >
-                        <AssetThumb asset={r} alt="模板参考图" />
-                        <div className="min-w-0 flex-1">
-                          <div className="truncate text-xs font-medium">
-                            {r.fileName ?? "参考图"}
-                          </div>
-                          <div className="mt-1 text-[11px] text-muted-foreground">
-                            只参考风格、色系、比例与构图，不直接叠加。
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => dropTemplateReference(r.id)}
-                          aria-label="移除参考图"
-                          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-destructive"
-                        >
-                          ✕
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="rounded-2xl border border-dashed border-border bg-background px-3 py-4 text-center text-xs text-muted-foreground">
-                    从模板库选择图片作为风格与构图参考。
-                  </p>
-                )}
-              </div>
-            </div>
-          ) : null}
-
-          {/* F11 · 生成额度展示 + H12 升级入口 */}
-          {quota ? (
-            <QuotaBar quota={quota} onUpgrade={() => setShowUpgrade(true)} />
-          ) : null}
-
-          {submitErr ? (
-            <p className="text-sm text-destructive">{submitErr}</p>
-          ) : null}
-
-          <div className="mt-auto">
-            <button
-              onClick={() => {
-                if (!projectId) {
-                  setSubmitErr("请先选择一个项目（没有就去项目页创建）");
-                  return;
-                }
-                setSubmitErr(null);
-                if (workspaceMode === "TEXT_TO_IMAGE") setConfirmSubmit(true);
-                else void submitByMode();
-              }}
-              disabled={submitting || running || !!editJobId}
-              className="h-12 w-full rounded-[18px] bg-gradient-to-br from-primary to-accent text-sm font-medium text-primary-foreground shadow-[0_12px_28px_rgba(124,92,255,0.26)] disabled:opacity-70"
-            >
-              {running
-                ? "AI 正在生成…"
-                : submitting || editJobId
-                  ? "提交中…"
-                  : workspaceMode === "IMAGE_EDIT"
-                    ? "基于此图修改"
-                    : workspaceMode === "INPAINT"
-                      ? "打开局部修改"
-                      : workspaceMode === "OUTPAINT"
-                        ? "开始扩图"
-                        : "提交制作"}
-            </button>
-            <p className="mt-2 text-[11px] text-muted-foreground">
-              内容由 AI 生成，请注意核对准确性。
-            </p>
-          </div>
-          </div>
+        <aside className="flex min-h-0 flex-col overflow-hidden border-l border-border bg-card p-6">
+          {/* V0.0.13d — 生成面板已删除：AI 设计师对话是唯一右栏（用户指令，
+              对齐 prd_agent 视觉创作「画布 + 对话」单面板形态）。 */}
+          <ChatPanel
+            wsId={wsId}
+            projectId={projectId}
+            sceneType={sceneType}
+            onViewGeneration={viewGeneration}
+            insertRef={chatInsertRef}
+            onComposerRefsChange={setChatComposerRefs}
+            onPasteImage={(files) => chatUploadFilesRef.current?.(files)}
+          />
         </aside>
       </div>
-
-      {/* H9 · 提交制作确认弹窗 */}
-      {confirmSubmit ? (
-        <ConfirmSubmitDialog
-          summary={{
-            projectName:
-              projects.find((p) => p.id === projectId)?.name ?? "未选择项目",
-            sceneType:
-              SCENE_TYPES.find((s) => s.value === sceneType)?.label ??
-              sceneType,
-            scene: resolvedGenerationBrief.scene,
-            sceneSource: resolvedGenerationBrief.sceneSource,
-            sellingPoint: resolvedGenerationBrief.sellingPoint,
-            sellingPointSource: resolvedGenerationBrief.sellingPointSource,
-            count: multiSize ? selectedTargets.length : versionCount,
-            multiSize,
-            targets: selectedTargets.map(
-              (t) => `${t.label} ${t.width}×${t.height}`,
-            ),
-            textMode,
-            styleKeywords,
-            referenceCount: references.length,
-            quota: quota ?? null,
-          }}
-          submitting={submitting}
-          onCancel={() => setConfirmSubmit(false)}
-          onConfirm={() => {
-            setConfirmSubmit(false);
-            void submit();
-          }}
-        />
-      ) : null}
-
-      {/* H12 · 额度升级弹窗 */}
-      {showUpgrade ? (
-        <UpgradeDialog
-          quota={quota ?? null}
-          onClose={() => setShowUpgrade(false)}
-        />
-      ) : null}
-
-      {assetPickerOpen ? (
-        <WorkspaceAssetPicker
-          wsId={wsId}
-          libraryKind="MATERIAL"
-          title="选择素材"
-          description="素材会以水印方式确定性叠加到生成图上。"
-          existingIds={references.map((r) => r.id)}
-          onClose={() => setAssetPickerOpen(false)}
-          onAdd={(items) => {
-            addPickedReferences(items);
-            setAssetPickerOpen(false);
-          }}
-        />
-      ) : null}
-
-      {templatePickerOpen ? (
-        <WorkspaceAssetPicker
-          wsId={wsId}
-          libraryKind="TEMPLATE"
-          title="选择参考图"
-          description="参考图只影响风格、色系、比例和构图，不会叠加到最终图。"
-          existingIds={templateReferences.map((r) => r.id)}
-          onClose={() => setTemplatePickerOpen(false)}
-          onAdd={(items) => {
-            addTemplateReferences(items);
-            setTemplatePickerOpen(false);
-          }}
-        />
-      ) : null}
-
-      {watermarkEditorOpen ? (
-        <WatermarkEditorDialog
-          wsId={wsId}
-          assets={references}
-          overlays={watermarkOverlays}
-          onChange={setWatermarkOverlays}
-          onClose={() => setWatermarkEditorOpen(false)}
-        />
-      ) : null}
 
       {/* G6 · 驳回弹窗 — 可选附理由（reviewNote），走真实 review 端点。 */}
       {rejectOpen ? (
