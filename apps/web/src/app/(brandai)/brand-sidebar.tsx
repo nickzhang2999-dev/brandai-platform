@@ -5,13 +5,16 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { signOut } from "next-auth/react";
 import {
-  ArrowLeft,
+  CircleHelp,
   FileImage,
+  Folder,
+  Home,
   Info,
   MoreHorizontal,
   Pencil,
   Plus,
   Trash2,
+  UserRound,
 } from "lucide-react";
 import type { BrandWorkspace } from "@brandai/contracts";
 import { navItems } from "@/lib/brandai-mock";
@@ -20,8 +23,8 @@ import { useBrand } from "./brand-context";
 
 /**
  * BrandAI 左侧导航壳。常规产品页使用 236px 主导航；品牌套件路由切换为
- * 216px Lovart 式套件卡片栏，不混入账号区与大品牌 Logo。紫色设计语言：
- * 选中项用 lavender 底 + violet 文字。品牌名/用户来自真实会话。
+ * Lovart 式 60px 全局图标栏 + 260px 套件卡片栏。紫色设计语言：选中项用
+ * lavender 底 + violet 文字。品牌名/用户来自真实会话。
  */
 export function BrandSidebar({
   children,
@@ -75,8 +78,10 @@ export function BrandSidebar({
     <div className="flex min-h-screen bg-background text-foreground">
       <aside
         className={[
-          "sticky top-0 flex h-screen shrink-0 flex-col border-r border-border bg-card",
-          isBrandKitPage ? "w-[216px] px-3 py-4" : "w-[236px] px-4 py-6",
+          "sticky top-0 flex h-screen shrink-0 border-r border-border bg-card",
+          isBrandKitPage
+            ? "w-[320px] flex-row"
+            : "w-[236px] flex-col px-4 py-6",
         ].join(" ")}
       >
         {/* Logo */}
@@ -93,121 +98,174 @@ export function BrandSidebar({
 
         {isBrandKitPage ? (
           <>
-            <div className="flex h-8 items-center justify-between px-1">
-              <div className="flex items-center gap-1.5">
-                <h1 className="text-sm font-semibold">我的品牌套件</h1>
-                <span className="rounded-full bg-accent-soft px-1.5 py-0.5 text-[9px] font-medium text-primary">
-                  Beta
-                </span>
-              </div>
-              <Info className="h-3.5 w-3.5 text-muted-foreground" />
-            </div>
-            <button
-              type="button"
-              onClick={() => setCreatingBrand(true)}
-              className="mt-2 flex h-9 w-full cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-border bg-background text-xs font-medium transition-colors duration-200 hover:border-primary/35 hover:bg-accent-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+            <nav
+              aria-label="全局导航"
+              className="flex w-[60px] shrink-0 flex-col items-center border-r border-border py-3"
             >
-              <Plus className="h-4 w-4" />
-              新建
-            </button>
-            <div className="mt-4 min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
-              {brands.map((brand) => {
-                const active = brand.id === wsId;
-                const canManage = brand.ownerId === brandUser.id;
-                return (
-                  <div
-                    key={brand.id}
-                    className={[
-                      "group relative overflow-visible rounded-lg border p-1 transition-colors duration-200",
-                      active
-                        ? "border-primary/45 bg-accent-soft/45"
-                        : "border-transparent hover:border-border hover:bg-muted/45",
-                    ].join(" ")}
-                  >
-                    <button
-                      type="button"
-                      aria-current={active ? "page" : undefined}
-                      onClick={() => {
-                        if (!active) switchBrand(brand.id);
-                      }}
-                      className="w-full cursor-pointer text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+              <Link
+                href="/"
+                aria-label="BrandAI 首页"
+                className="flex h-9 w-9 items-center justify-center rounded-full bg-foreground text-xs font-semibold text-background"
+              >
+                BR
+              </Link>
+              <Link
+                href="/campaigns"
+                aria-label="创建新项目"
+                className="mt-5 flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              >
+                <Plus className="h-4 w-4" />
+              </Link>
+              <div className="mt-2 flex flex-col gap-1.5">
+                <Link
+                  href="/"
+                  aria-label="首页"
+                  className="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                >
+                  <Home className="h-4 w-4" />
+                </Link>
+                <Link
+                  href="/campaigns"
+                  aria-label="项目"
+                  className="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                >
+                  <Folder className="h-4 w-4" />
+                </Link>
+                <Link
+                  href="/brand-knowledge"
+                  aria-label="品牌套件"
+                  aria-current="page"
+                  className="flex h-9 w-9 items-center justify-center rounded-lg bg-accent-soft text-primary"
+                >
+                  <FileImage className="h-4 w-4" />
+                </Link>
+                <Link
+                  href="/account"
+                  aria-label="账号设置"
+                  className="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                >
+                  <UserRound className="h-4 w-4" />
+                </Link>
+              </div>
+              <Link
+                href="/account"
+                aria-label="帮助"
+                className="mt-auto flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              >
+                <CircleHelp className="h-4 w-4" />
+              </Link>
+            </nav>
+
+            <div className="flex min-w-0 flex-1 flex-col px-3 py-4">
+              <div className="flex h-8 items-center justify-between px-1">
+                <div className="flex items-center gap-1.5">
+                  <h1 className="text-sm font-semibold">我的品牌套件</h1>
+                  <span className="rounded-full bg-accent-soft px-1.5 py-0.5 text-[9px] font-medium text-primary">
+                    Beta
+                  </span>
+                </div>
+                <Info className="h-3.5 w-3.5 text-muted-foreground" />
+              </div>
+              <button
+                type="button"
+                onClick={() => setCreatingBrand(true)}
+                className="mt-2 flex h-9 w-full cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-border bg-background text-xs font-medium transition-colors duration-200 hover:border-primary/35 hover:bg-accent-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+              >
+                <Plus className="h-4 w-4" />
+                新建
+              </button>
+              <div className="mt-4 min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
+                {brands.map((brand) => {
+                  const active = brand.id === wsId;
+                  const canManage = brand.ownerId === brandUser.id;
+                  return (
+                    <div
+                      key={brand.id}
+                      className={[
+                        "group relative overflow-visible rounded-lg border p-1 transition-colors duration-200",
+                        active
+                          ? "border-primary/45 bg-accent-soft/45"
+                          : "border-transparent hover:border-border hover:bg-muted/45",
+                      ].join(" ")}
                     >
-                      <span className="flex aspect-[16/9] w-full items-center justify-center overflow-hidden rounded-md bg-muted">
-                        {brand.coverImage ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={brand.coverImage}
-                            alt=""
-                            className="h-full w-full object-cover"
-                          />
-                        ) : (
-                          <FileImage className="h-7 w-7 text-muted-foreground/55" />
-                        )}
-                      </span>
-                      <span className="mt-1.5 block truncate px-1 pr-8 text-[11px] font-medium">
-                        {brand.name}
-                      </span>
-                    </button>
-                    {canManage ? (
                       <button
                         type="button"
-                        aria-label={`管理${brand.name}`}
-                        aria-haspopup="menu"
-                        aria-expanded={brandMenuId === brand.id}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          setBrandMenuId((current) =>
-                            current === brand.id ? null : brand.id,
-                          );
+                        aria-current={active ? "page" : undefined}
+                        onClick={() => {
+                          if (!active) switchBrand(brand.id);
                         }}
-                        className="absolute bottom-1 right-1 flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg text-muted-foreground opacity-0 transition-opacity hover:bg-background hover:text-foreground focus:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 group-hover:opacity-100"
+                        className="w-full cursor-pointer text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
                       >
-                        <MoreHorizontal className="h-4 w-4" />
+                        <span className="flex aspect-[16/9] w-full items-center justify-center overflow-hidden rounded-md bg-muted">
+                          {brand.coverImage ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={brand.coverImage}
+                              alt=""
+                              className="h-full w-full object-cover"
+                            />
+                          ) : (
+                            <FileImage className="h-7 w-7 text-muted-foreground/55" />
+                          )}
+                        </span>
+                        <span className="mt-1.5 block truncate px-1 pr-8 text-[11px] font-medium">
+                          {brand.name}
+                        </span>
                       </button>
-                    ) : null}
-                    {brandMenuId === brand.id ? (
-                      <div
-                        role="menu"
-                        onClick={(event) => event.stopPropagation()}
-                        className="absolute bottom-9 right-1 z-50 w-32 overflow-hidden rounded-xl border border-border bg-card py-1 shadow-[0_16px_40px_rgba(30,30,60,0.16)]"
-                      >
+                      {canManage ? (
                         <button
                           type="button"
-                          role="menuitem"
-                          onClick={() => {
-                            setRenamingBrand(brand);
-                            setBrandMenuId(null);
+                          aria-label={`管理${brand.name}`}
+                          aria-haspopup="menu"
+                          aria-expanded={brandMenuId === brand.id}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setBrandMenuId((current) =>
+                              current === brand.id ? null : brand.id,
+                            );
                           }}
-                          className="flex h-10 w-full cursor-pointer items-center gap-2 px-3 text-left text-xs transition-colors hover:bg-muted"
+                          className="absolute bottom-1 right-1 flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg text-muted-foreground opacity-0 transition-opacity hover:bg-background hover:text-foreground focus:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 group-hover:opacity-100"
                         >
-                          <Pencil className="h-3.5 w-3.5" />
-                          改名
+                          <MoreHorizontal className="h-4 w-4" />
                         </button>
-                        <button
-                          type="button"
-                          role="menuitem"
-                          onClick={() => {
-                            setDeletingBrand(brand);
-                            setBrandMenuId(null);
-                          }}
-                          className="flex h-10 w-full cursor-pointer items-center gap-2 px-3 text-left text-xs text-destructive transition-colors hover:bg-destructive/10"
+                      ) : null}
+                      {brandMenuId === brand.id ? (
+                        <div
+                          role="menu"
+                          onClick={(event) => event.stopPropagation()}
+                          className="absolute bottom-9 right-1 z-50 w-32 overflow-hidden rounded-xl border border-border bg-card py-1 shadow-[0_16px_40px_rgba(30,30,60,0.16)]"
                         >
-                          <Trash2 className="h-3.5 w-3.5" />
-                          删除
-                        </button>
-                      </div>
-                    ) : null}
-                  </div>
-                );
-              })}
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                              setRenamingBrand(brand);
+                              setBrandMenuId(null);
+                            }}
+                            className="flex h-10 w-full cursor-pointer items-center gap-2 px-3 text-left text-xs transition-colors hover:bg-muted"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                            改名
+                          </button>
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                              setDeletingBrand(brand);
+                              setBrandMenuId(null);
+                            }}
+                            className="flex h-10 w-full cursor-pointer items-center gap-2 px-3 text-left text-xs text-destructive transition-colors hover:bg-destructive/10"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                            删除
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-            <Link
-              href="/"
-              className="mt-3 flex h-9 items-center gap-2 rounded-lg px-2 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-            >
-              <ArrowLeft className="h-4 w-4" />
-              返回主导航
-            </Link>
           </>
         ) : (
           <>

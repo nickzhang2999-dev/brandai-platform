@@ -41,7 +41,7 @@ const BRAND_KIT_IMPORT_SLOTS: {
   {
     key: "logo",
     type: "logo",
-    title: "logo",
+    title: "Logo",
     desc: "上传主标、反白标、图形标等，确认后成为 logo 使用规范。",
     accept: "image/*",
     limit: "建议最多 10 个",
@@ -102,7 +102,7 @@ const TYPE_META: Record<
   string,
   { label: string; short: string; icon: string }
 > = {
-  logo: { label: "logo", short: "logo", icon: "◐" },
+  logo: { label: "Logo", short: "Logo", icon: "◐" },
   font: { label: "字体", short: "字体", icon: "Aa" },
   color: { label: "颜色", short: "颜色", icon: "◉" },
   layout: { label: "设计指南", short: "设计指南", icon: "▤" },
@@ -776,7 +776,7 @@ function RuleCard({
   const swatch = rule.type === "color" ? extractSwatches(value)[0] : null;
   const font = rule.type === "font" ? extractFonts(value)[0] : null;
   return (
-    <div className="group relative w-24 shrink-0">
+    <div className="group relative w-[120px] shrink-0">
       <button
         type="button"
         disabled={busy}
@@ -817,14 +817,8 @@ function RuleCard({
           </span>
         )}
       </button>
-      <div className="mt-1.5 flex min-w-0 items-center gap-1.5">
-        <span
-          className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-            rule.status === "CONFIRMED" ? "bg-success" : "bg-muted-foreground"
-          }`}
-          title={rule.status === "CONFIRMED" ? "已启用" : "未启用"}
-        />
-        <span className="truncate text-[10px] text-muted-foreground">
+      <div className="mt-1.5 min-w-0">
+        <span className="block truncate text-[10px] text-muted-foreground">
           {evidence?.note ?? rule.summary}
         </span>
       </div>
@@ -1089,7 +1083,7 @@ function BrandKitImportPanel({
           开始使用你的品牌套件
         </h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          添加 logo、字体、颜色等内容，让后续创作始终保持一致。
+          添加 Logo、颜色、字体等，保持品牌一致性。
         </p>
       </div>
       <div className="mt-7 w-full">
@@ -1141,7 +1135,7 @@ function BrandKitImportPanel({
             上传完整品牌手册，自动填充全部内容
           </span>
           <span className="mt-1 text-[10px] text-muted-foreground">
-            PDF · 上传后自动解析文字、页面和图片
+            PNG、JPG、PDF · 上传后自动解析全部内容
           </span>
         </button>
         <div className="mt-4 flex items-center gap-3 text-[10px] text-muted-foreground">
@@ -1150,7 +1144,7 @@ function BrandKitImportPanel({
           <span className="h-px flex-1 bg-border" />
         </div>
         <p className="mt-3 text-center text-[11px] text-muted-foreground">
-          还没有品牌素材？也可以从上方任一分类开始创建。
+          还没有品牌素材？从零开始在画布上创建。
         </p>
       </div>
       <input
@@ -1189,18 +1183,18 @@ function CompactManualImport({
 }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   return (
-    <div className="w-full rounded-xl bg-muted/45 px-4 py-3">
+    <div className="w-full rounded-xl border border-border/60 bg-muted/45 px-5 py-4">
       <div className="flex items-center justify-between gap-4">
         <div className="flex min-w-0 items-center gap-3">
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-background text-muted-foreground">
-            <FileText className="h-4 w-4" />
+          <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-background text-muted-foreground">
+            <FileText className="h-5 w-5" />
           </span>
           <div className="min-w-0">
-            <p className="truncate text-xs font-medium">
-              一次上传，构建完整品牌套件
+            <p className="truncate text-sm font-semibold">
+              一次上传，构建你的品牌套件
             </p>
-            <p className="mt-0.5 truncate text-[10px] text-muted-foreground">
-              上传品牌 PDF，自动提取 Logo、颜色、字体等信息
+            <p className="mt-0.5 truncate text-xs text-muted-foreground">
+              上传品牌文件，自动填充 Logo、颜色、字体等信息。
             </p>
           </div>
         </div>
@@ -1859,6 +1853,7 @@ export default function BrandKnowledgePage() {
   const [preview, setPreview] = useState<{ src: string; alt: string } | null>(
     null,
   );
+  const [titleDraft, setTitleDraft] = useState(brandName);
 
   const { data: rules = [], isLoading } = useQuery({
     queryKey: ["brandai-rules", wsId],
@@ -1898,6 +1893,10 @@ export default function BrandKnowledgePage() {
     setSuggestedType(null);
     setPreview(null);
   }, [wsId]);
+
+  useEffect(() => {
+    setTitleDraft(brandName);
+  }, [brandName, wsId]);
 
   const activeBrand = brands.find((brand) => brand.id === wsId);
   const kitEnabled = !activeBrand?.tags?.includes("__kb_disabled");
@@ -1944,11 +1943,33 @@ export default function BrandKnowledgePage() {
     );
   }
 
+  const commitTitle = () => {
+    const nextName = titleDraft.trim();
+    if (!nextName) {
+      setTitleDraft(brandName);
+      return;
+    }
+    if (nextName !== brandName) void updateBrand(wsId, { name: nextName });
+  };
+
   return (
-    <div className="mx-auto w-full max-w-[620px] px-8 pb-20 pt-6">
+    <div className="mx-auto w-full max-w-[704px] px-8 pb-20 pt-6">
       <header className="flex min-h-9 items-center justify-between gap-6">
-        <div className="min-w-0">
-          <h1 className="text-xl font-semibold tracking-tight">{brandName}</h1>
+        <div className="min-w-0 flex-1">
+          <input
+            aria-label="品牌套件名称"
+            value={titleDraft}
+            onChange={(event) => setTitleDraft(event.target.value)}
+            onBlur={commitTitle}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") event.currentTarget.blur();
+              if (event.key === "Escape") {
+                setTitleDraft(brandName);
+                event.currentTarget.blur();
+              }
+            }}
+            className="w-full min-w-0 truncate border-0 bg-transparent p-0 text-xl font-semibold tracking-tight outline-none transition-colors hover:text-primary focus:text-primary"
+          />
         </div>
         <label className="flex shrink-0 cursor-pointer items-center gap-2 text-[11px] text-muted-foreground">
           应用到新项目
@@ -1990,7 +2011,7 @@ export default function BrandKnowledgePage() {
         />
       ) : null}
 
-      <div className="mt-9 flex flex-col gap-8">
+      <div className="mt-9 flex flex-col gap-10">
         {grouped.map((group) => {
           const guidance = group.cat === "layout" || group.cat === "copy";
           return (
@@ -1999,9 +2020,9 @@ export default function BrandKnowledgePage() {
                 <h2 className="text-xs font-medium">{group.meta.label}</h2>
               </div>
               {guidance ? (
-                <div className="rounded-xl bg-muted/45 p-4">
+                <div className="min-h-[108px] rounded-xl bg-muted/45 p-4">
                   {group.items.length ? (
-                    <div className="max-h-36 space-y-3 overflow-y-auto pr-2">
+                    <div className="max-h-[112px] space-y-3 overflow-y-auto pr-2">
                       {group.items.map((rule) => (
                         <button
                           key={rule.id}
@@ -2020,7 +2041,7 @@ export default function BrandKnowledgePage() {
                   )}
                 </div>
               ) : (
-                <div className="flex flex-wrap gap-3">
+                <div className="flex flex-wrap gap-2.5">
                   {group.items.map((rule) => (
                     <RuleCard
                       key={rule.id}
@@ -2037,7 +2058,7 @@ export default function BrandKnowledgePage() {
                     type="button"
                     aria-label={`添加${group.meta.label}`}
                     onClick={() => setSuggestedType(group.cat)}
-                    className="flex aspect-square w-24 cursor-pointer items-center justify-center rounded-lg border border-dashed border-border text-muted-foreground transition-colors hover:border-primary/40 hover:bg-accent-soft hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                    className="flex aspect-square w-[120px] cursor-pointer items-center justify-center rounded-lg border border-dashed border-border text-muted-foreground transition-colors hover:border-primary/40 hover:bg-accent-soft hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
                   >
                     <Plus className="h-5 w-5" />
                   </button>
