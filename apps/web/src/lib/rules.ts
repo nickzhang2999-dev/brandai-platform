@@ -26,8 +26,21 @@ import type { BrandRule } from "@brandai/contracts";
  */
 export async function getConfirmedRules(
   workspaceId: string,
-  options: { order?: "created" | "recency" } = {},
+  options: {
+    order?: "created" | "recency";
+    /** Project/generation consumers respect the brand-kit availability switch.
+     * Library maintenance (snapshots/restore) intentionally keeps the default
+     * false so disabling application never hides or destroys stored rules. */
+    respectKitAvailability?: boolean;
+  } = {},
 ): Promise<BrandRule[]> {
+  if (options.respectKitAvailability) {
+    const workspace = await prisma.brandWorkspace.findUnique({
+      where: { id: workspaceId },
+      select: { tags: true },
+    });
+    if (!workspace || workspace.tags.includes("__kb_disabled")) return [];
+  }
   const rows = await prisma.brandRule.findMany({
     where: { workspaceId, status: "CONFIRMED" },
     orderBy:

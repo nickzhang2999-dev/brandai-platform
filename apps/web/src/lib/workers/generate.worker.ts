@@ -26,12 +26,10 @@ import {
 } from "@/lib/prohibitions";
 import { loadTermLib } from "@/lib/compliance";
 import { setVersionComplianceReport } from "@/lib/generations";
-import {
-  compileAIConstraints,
-  constraintsEnabled,
-} from "@/lib/ai-constraints";
+import { compileAIConstraints, constraintsEnabled } from "@/lib/ai-constraints";
 import { recordUsage, fromGenerateUsage } from "@/lib/usage";
 import { getEffectiveAiSettings } from "@/lib/settings";
+import { resolveChatBrandPolicy } from "@/lib/chat-brand-policy";
 
 /**
  * K5 — zero-dependency pixel-size probe for a base64 `data:` URL, used as a
@@ -384,14 +382,14 @@ export async function runGenerateJob(
   // ai.call), but the job slot frees and attempts:1 prevents replay.
   let watchdog: NodeJS.Timeout | null = null;
   const timeout = new Promise<never>((_, reject) => {
-    watchdog = setTimeout(() => reject(new GenerationTimeoutError()), TIMEOUT_MS);
+    watchdog = setTimeout(
+      () => reject(new GenerationTimeoutError()),
+      TIMEOUT_MS,
+    );
   });
 
   try {
-    const result = await Promise.race([
-      runGenerationInner(),
-      timeout,
-    ]);
+    const result = await Promise.race([runGenerationInner(), timeout]);
     if (watchdog) clearTimeout(watchdog);
     return result;
   } catch (err) {
@@ -407,7 +405,10 @@ export async function runGenerateJob(
     // §V0.02 #6 — latest-first ONLY for the generation prompt: newly created /
     // just re-enabled rules take precedence in the constraint. Snapshots and the
     // hard-block gates keep the deterministic default order (docs/10 #4).
-    const brandRules = await getConfirmedRules(workspaceId, { order: "recency" });
+    const brandRules = await getConfirmedRules(workspaceId, {
+      order: "recency",
+      respectKitAvailability: true,
+    });
     await job.updateProgress(20);
 
     // §2.2 — AI compliance precheck moved here from the POST handler (was
@@ -449,6 +450,11 @@ export async function runGenerateJob(
       referenceImages: [],
     };
     let blockers: Array<{ reason: string; source: string }> = [];
+    let automaticBrandLogoAsset: {
+      id: string;
+      url: string;
+      mimeType: string;
+    } | null = null;
     if (constraintsEnabled()) {
       const prohRows = await prisma.prohibitionRule.findMany({
         where: {
@@ -468,11 +474,94 @@ export async function runGenerateJob(
           p.negativeExampleAssetId,
         ]),
       );
-      const compiled = compileAIConstraints(brandRules, prohibitions, assetUrls);
+      const compiled = compileAIConstraints(
+        brandRules,
+        prohibitions,
+        assetUrls,
+      );
       aiConstraints = compiled.aiConstraints;
       blockers = compiled.blockers;
       if (blockers.length > 0) {
         throw new HardBlockError(blockers);
+      }
+
+      // Brand-manual visual evidence is part of the active project-level kit,
+      // not a one-off user pick. Feed the confirmed primary logo as the single
+      // locked reference (exact pixels) and representative imagery as style
+      // inspiration. This makes PDF-imported assets affect generation instead
+      // of merely decorating the Brand Kit page.
+      const evidenceRows = brandRules.flatMap((rule) =>
+        (Array.isArray(rule.evidence) ? rule.evidence : [])
+          .map((e) =>
+            e && typeof e === "object" && "assetId" in e
+              ? {
+                  rule,
+                  assetId: String((e as { assetId?: unknown }).assetId ?? ""),
+                }
+              : null,
+          )
+          .filter(
+            (x): x is { rule: BrandRule; assetId: string } =>
+              !!x?.assetId &&
+              (x.rule.type === "logo" || x.rule.type === "imagery"),
+          ),
+      );
+      const kitAssets = await prisma.asset.findMany({
+        where: {
+          id: { in: Array.from(new Set(evidenceRows.map((x) => x.assetId))) },
+          workspaceId,
+          libraryKind: "BRAND_KIT",
+          availableForGeneration: true,
+          deprecatedAt: null,
+          mimeType: { startsWith: "image/" },
+        },
+        select: { id: true, url: true, mimeType: true, source: true },
+      });
+      const kitAssetMap = new Map(kitAssets.map((asset) => [asset.id, asset]));
+      const primaryLogo = evidenceRows.find(
+        (item) => item.rule.type === "logo" && kitAssetMap.has(item.assetId),
+      );
+      if (primaryLogo) {
+        const asset = kitAssetMap.get(primaryLogo.assetId)!;
+        automaticBrandLogoAsset = {
+          id: asset.id,
+          url: asset.url,
+          mimeType: asset.mimeType,
+        };
+      }
+      const imagery = evidenceRows
+        .filter(
+          (item) =>
+            item.rule.type === "imagery" && kitAssetMap.has(item.assetId),
+        )
+        .slice(0, 4);
+      const kitReferences = [
+        ...(primaryLogo
+          ? [
+              {
+                url: kitAssetMap.get(primaryLogo.assetId)!.url,
+                polarity: "positive" as const,
+                mode: "STRICT" as const,
+                source: `brand_rule:${primaryLogo.rule.id}`,
+                note: "BRAND_LOGO_LOCKED: authoritative project Brand Kit primary logo; reserve a safe area and never invent a substitute.",
+                sourceHint: kitAssetMap.get(primaryLogo.assetId)!.source,
+              },
+            ]
+          : []),
+        ...imagery.map((item) => ({
+          url: kitAssetMap.get(item.assetId)!.url,
+          polarity: "positive" as const,
+          mode: "INSPIRATION" as const,
+          source: `brand_rule:${item.rule.id}`,
+          note: `Project Brand Kit imagery reference: ${item.rule.summary}`,
+          sourceHint: kitAssetMap.get(item.assetId)!.source,
+        })),
+      ];
+      if (kitReferences.length > 0) {
+        aiConstraints = {
+          ...aiConstraints,
+          referenceImages: [...aiConstraints.referenceImages, ...kitReferences],
+        };
       }
     }
 
@@ -632,26 +721,40 @@ export async function runGenerateJob(
             : {}),
         };
       });
+    // Project-level Brand Kit logo composition is automatic and intentionally
+    // has no workspace UI control. The model receives the logo as identity
+    // context, then the worker composites the exact source pixels so an
+    // invented/redrawn mark can never become the final authority.
+    const automaticBrandLogoOverlay: ResolvedWatermarkOverlay | null =
+      automaticBrandLogoAsset
+        ? {
+            assetId: automaticBrandLogoAsset.id,
+            assetUrl: automaticBrandLogoAsset.url,
+            assetMimeType: automaticBrandLogoAsset.mimeType,
+            enabled: true,
+            anchor: "top-left",
+            positionMode: "ratio",
+            offsetX: 0.035,
+            offsetY: 0.035,
+            widthPx: 196,
+            fontFamily: "Inter",
+            fontSizePx: 28,
+            opacity: 1,
+            textColor: "#111827",
+            backgroundEnabled: false,
+            backgroundColor: "#FFFFFF",
+            borderEnabled: false,
+            borderColor: "#7C5CFF",
+            borderWidth: 1,
+            cornerRadius: 0,
+          }
+        : null;
+    const resolvedOutputOverlays = [
+      ...resolvedWatermarkOverlays,
+      ...(automaticBrandLogoOverlay ? [automaticBrandLogoOverlay] : []),
+    ];
 
     const sceneType = generation.sceneType;
-    // 惰性构建（Codex P2）：aiConstraints 在下方还会被改写（折入对话 IMAGE_INPUT、
-    // chat-origin 剔除品牌参考/additions）。若在此处提前快照，落库的
-    // appliedReferenceImages 会漏掉用户点选的输入图、或把 chat 分支刻意滤掉的
-    // 品牌/禁例参考写回审计留痕。改为 persist 时按最终 aiConstraints 计算。
-    const buildConstraintEcho = () =>
-      constraintsEnabled()
-        ? {
-            // P1.2 — echo the compiled constraints so L3 can assert what
-            // actually shaped the image. Provider-side may also write these
-            // keys; explicit echo here guarantees presence even when the
-            // upstream silently ignores fields.
-            appliedNegativePrompt: aiConstraints.negativePrompt,
-            appliedPromptAdditions: aiConstraints.promptAdditions,
-            machineRulesApplied: aiConstraints.machineRules ?? {},
-            // D5 — record which positive/negative example assets shaped the image.
-            appliedReferenceImages: aiConstraints.referenceImages,
-          }
-        : {};
 
     // Re-generate: capture prior root versions but DON'T delete them yet —
     // only swap them out once the replacement has actually been generated +
@@ -768,36 +871,44 @@ export async function runGenerateJob(
     // V0.0.13 — 管理员配置的图像系统提示词（AppSetting > env，空则不注入）。
     const { imageSystemPrompt } = await getEffectiveAiSettings();
 
-    // V0.0.13g — 对话来源（chatContext 存在）走 direct prompt：只发用户 brief，
-    // 不发品牌规则摘要/场景/promptAdditions/品牌示例参考图（文不对题修复——
-    // 11 字指令曾被 ~3000 字品牌倾倒淹没，模型服从品牌规范无视输入图）。
-    // 安全底线保留：negativePrompt 照发、硬禁令闸（上方 HardBlockError）照拦、
-    // 水印照叠。表单语义路径（campaign-kit/regenerate 等）逐字节不变。
+    // V0.0.18 — chat uses one of two server-authoritative policies, without UI
+    // switches: no active rules → free direct creation; active rules → compact
+    // branded_direct. The latter MUST retain compiled additions and automatic
+    // Brand Kit references. This replaces V0.0.13g's blanket clearing, which
+    // made the "Brand Kit auto-applied" badge diverge from the real AI request.
     const chatOrigin = generation.chatContext != null;
-    if (chatOrigin) {
-      aiConstraints = {
-        ...aiConstraints,
-        promptAdditions: [],
-        // 只保留用户点选的图像输入（IMAGE_INPUT，上方刚折进来），剔除品牌
-        // 示例/禁例参考图 —— 它们是「Match the visual style…」跑题的来源之一。
-        referenceImages: aiConstraints.referenceImages.filter((r) =>
-          (r.note ?? "").startsWith("IMAGE_INPUT:"),
-        ),
-      };
-    }
+    const chatBrandPolicy = resolveChatBrandPolicy({
+      chatOrigin,
+      brandRules,
+      aiConstraints,
+    });
+    aiConstraints = chatBrandPolicy.aiConstraints;
 
     const baseFields = {
       sceneType: generation.sceneType,
       sellingPoint: generation.sellingPoint,
       scene: chatOrigin ? "" : generation.scene,
-      brandRules: chatOrigin ? [] : brandRules,
-      ...(chatOrigin ? { promptMode: "direct" as const } : {}),
+      brandRules: chatBrandPolicy.brandRules,
+      ...(chatBrandPolicy.promptMode
+        ? { promptMode: chatBrandPolicy.promptMode }
+        : {}),
       // M3 — forward the chosen text mode (defaults to "direct" when a job was
       // enqueued before this field existed, preserving legacy behavior).
       textMode: job.data.textMode ?? "direct",
       ...(constraintsEnabled() || hasExplicitPicks ? { aiConstraints } : {}),
       ...(imageSystemPrompt ? { systemPrompt: imageSystemPrompt } : {}),
     };
+    const constraintEcho = constraintsEnabled()
+      ? {
+          // Persist the FINAL policy-adjusted payload, not the pre-chat draft,
+          // so version params prove exactly which constraints/references reached
+          // the AI service for this output.
+          appliedNegativePrompt: aiConstraints.negativePrompt,
+          appliedPromptAdditions: aiConstraints.promptAdditions,
+          machineRulesApplied: aiConstraints.machineRules ?? {},
+          appliedReferenceImages: aiConstraints.referenceImages,
+        }
+      : {};
 
     // 审计留痕与实际发给 AI 的规则同源（Codex P2）：chat-origin/direct 分支
     // 刻意不发品牌规则（baseFields.brandRules = []），若仍把全量 confirmed
@@ -815,8 +926,8 @@ export async function runGenerateJob(
       // header read of the original data: URL (the AI probe is unreliable on
       // the gray container, but the worker always has the raw bytes here).
       const watermarked =
-        resolvedWatermarkOverlays.length > 0
-          ? await applyWatermarksToImage(v.imageUrl, resolvedWatermarkOverlays)
+        resolvedOutputOverlays.length > 0
+          ? await applyWatermarksToImage(v.imageUrl, resolvedOutputOverlays)
           : { imageUrl: v.imageUrl, appliedAssetIds: [] };
       const finalImageUrl = watermarked.imageUrl;
       const localSize =
@@ -841,6 +952,15 @@ export async function runGenerateJob(
           params: {
             ...v.params,
             appliedRuleIds,
+            brandConstraintMode: brandRules.length > 0 ? "BRANDED" : "FREE",
+            appliedBrandRuleCount: appliedRuleIds.length,
+            ...(automaticBrandLogoAsset &&
+            watermarked.appliedAssetIds.includes(automaticBrandLogoAsset.id)
+              ? {
+                  appliedBrandLogoAssetId: automaticBrandLogoAsset.id,
+                  brandLogoComposition: "deterministic-source-overlay",
+                }
+              : {}),
             sceneType,
             // K5 — persist the ACTUAL returned pixel size (OpenAI snaps the
             // requested canvas). The AI service also echoes these into
@@ -848,7 +968,7 @@ export async function runGenerateJob(
             // record robust even if a provider drops the param echo. Absent when
             // the size probe failed / mock provider (requested w×h stays truth).
             ...actualSize,
-            ...buildConstraintEcho(),
+            ...constraintEcho,
             // K5 / M3 — stamp the chosen text mode onto each version so 重新生成
             // can reconstruct it from prior roots (mirrors styleKeywords below;
             // defaults to "direct" for jobs enqueued before this field existed).
@@ -862,8 +982,14 @@ export async function runGenerateJob(
             // V0.0.13 — 对话面板图像输入留痕（重试/审计可重建）。
             ...(imageInputs.length > 0 ? { imageInputs } : {}),
             ...(watermarkOverlays.length > 0 ? { watermarkOverlays } : {}),
-            ...(watermarked.appliedAssetIds.length > 0
-              ? { appliedWatermarkAssetIds: watermarked.appliedAssetIds }
+            ...(watermarked.appliedAssetIds.filter((id) =>
+              watermarkAssetIds.includes(id),
+            ).length > 0
+              ? {
+                  appliedWatermarkAssetIds: watermarked.appliedAssetIds.filter(
+                    (id) => watermarkAssetIds.includes(id),
+                  ),
+                }
               : {}),
             imageKind: "GENERATED",
             ...(legacyReferenceItems.length > 0
@@ -940,7 +1066,9 @@ export async function runGenerateJob(
             ...fromGenerateUsage(result.usage),
           });
         } catch (sizeErr) {
-          failures.push(`[${t.key} ${t.label} ${t.width}×${t.height}] ${String(sizeErr)}`);
+          failures.push(
+            `[${t.key} ${t.label} ${t.width}×${t.height}] ${String(sizeErr)}`,
+          );
           await recordUsage({
             workspaceId,
             userId: ownerId,
@@ -956,16 +1084,16 @@ export async function runGenerateJob(
 
       if (versionIds.length === 0) {
         // All sizes failed → FAILED (the catch below records the error too).
-        throw new Error(
-          "All target sizes failed: " + failures.join("; "),
-        );
+        throw new Error("All target sizes failed: " + failures.join("; "));
       }
       // §2.4 — skip the terminal write if the watchdog already FAILED this
       // run (orphan after timeout): don't resurrect a timed-out generation.
-      if (!(await writeTerminal({
-        status: "SUCCEEDED",
-        error: failures.length > 0 ? failures.join("; ") : null,
-      }))) {
+      if (
+        !(await writeTerminal({
+          status: "SUCCEEDED",
+          error: failures.length > 0 ? failures.join("; ") : null,
+        }))
+      ) {
         console.warn(
           `[generate] ${generationId} already settled (timeout); discarding late multi-size success`,
         );

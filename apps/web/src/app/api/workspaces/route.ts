@@ -18,7 +18,43 @@ export async function GET() {
       },
       orderBy: { createdAt: "desc" },
     });
-    return ok(workspaces);
+    // Lovart-style kit rail: the card cover is not an independently managed
+    // field. It always mirrors the first (newest, matching the kit page order)
+    // Logo rule image. Keep the stored cover only as a legacy fallback.
+    const logoRules = workspaces.length
+      ? await prisma.brandRule.findMany({
+          where: {
+            workspaceId: { in: workspaces.map((workspace) => workspace.id) },
+            type: "logo",
+          },
+          orderBy: { createdAt: "desc" },
+          select: { workspaceId: true, evidence: true },
+        })
+      : [];
+    const logoAssetByWorkspace = new Map<string, string>();
+    for (const rule of logoRules) {
+      if (logoAssetByWorkspace.has(rule.workspaceId)) continue;
+      const evidence = Array.isArray(rule.evidence) ? rule.evidence : [];
+      const assetId = evidence.find(
+        (item): item is { assetId: string } =>
+          typeof item === "object" &&
+          item !== null &&
+          typeof (item as { assetId?: unknown }).assetId === "string",
+      )?.assetId;
+      if (assetId) logoAssetByWorkspace.set(rule.workspaceId, assetId);
+    }
+
+    return ok(
+      workspaces.map((workspace) => {
+        const logoAssetId = logoAssetByWorkspace.get(workspace.id);
+        return {
+          ...workspace,
+          coverImage: logoAssetId
+            ? `/api/workspaces/${workspace.id}/assets/${logoAssetId}/raw`
+            : workspace.coverImage,
+        };
+      }),
+    );
   } catch (err) {
     return handleError(err);
   }

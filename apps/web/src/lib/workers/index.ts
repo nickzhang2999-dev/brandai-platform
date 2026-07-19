@@ -11,6 +11,8 @@
  * /api/health proxies out for an operator to read.
  */
 import http from "node:http";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { createRecognizeWorker } from "./recognize.worker";
 import { createParseManualWorker } from "./parse-manual.worker";
 import { createGenerateWorker } from "./generate.worker";
@@ -19,11 +21,20 @@ import { createDescribeWorker } from "./describe.worker";
 import { createIngestWorker } from "./ingest.worker";
 import { createSummarizeWorker } from "./summarize.worker";
 import { sweepStaleGenerations } from "@/lib/generations";
+import { queuePrefix } from "@/lib/queue";
+import {
+  REQUIRED_AI_PARSER_REVISION,
+  resolveAiService,
+  type AiServiceResolution,
+} from "@/lib/ai-service";
 
 const healthPort = Number(process.env.WORKER_HEALTH_PORT ?? 3001);
+export const WORKER_REVISION = "ai-discovery-r2";
 const workers: { close: () => Promise<void> }[] = [];
 let workersReady = false;
 let bootError: string | null = null;
+let aiService: AiServiceResolution | null = null;
+const execFileAsync = promisify(execFile);
 
 // Bind the health server before constructing anything. Reports:
 //   { worker: "starting" }            — port bound, workers not yet created
@@ -38,7 +49,13 @@ http
     res.end(
       JSON.stringify({
         worker: bootError ? "error" : workersReady ? "ok" : "starting",
+        workerRevision: WORKER_REVISION,
+        commit: process.env.CDS_COMMIT_SHA?.slice(0, 12) ?? null,
         count: workers.length,
+        queuePrefix,
+        requiredAiParserRevision: REQUIRED_AI_PARSER_REVISION,
+        aiResolution: aiService?.source ?? "checking",
+        aiParserRevision: aiService?.parserRevision ?? null,
         ...(bootError ? { error: bootError } : {}),
       }),
     );
@@ -59,6 +76,16 @@ try {
   );
   workersReady = true;
   console.log(`[workers] started: ${workers.length} worker(s)`);
+  void resolveAiService()
+    .then((resolution) => {
+      aiService = resolution;
+      console.log(
+        `[workers] AI service: ${resolution.source} ${resolution.parserRevision ?? "unknown-revision"}`,
+      );
+    })
+    .catch((error) => {
+      console.error("[workers] AI service discovery failed:", error);
+    });
 
   // §2.4 (server side) — sweep orphaned PENDING/RUNNING generations whose
   // BullMQ job died with a previous worker/Redis. Run once on boot, then on
@@ -72,6 +99,29 @@ try {
       .catch((e) => console.error("[sweep] failed:", e));
   void sweep();
   setInterval(sweep, 5 * 60_000).unref();
+
+  // CDS bind-mounts the branch worktree into this long-lived process. A pull
+  // can therefore replace source files without recreating the container.
+  // Detect that drift and exit cleanly; Docker/CDS restarts the worker so the
+  // next job cannot keep executing an older in-memory module graph.
+  const deployedCommit = process.env.CDS_COMMIT_SHA;
+  if (deployedCommit) {
+    setInterval(() => {
+      void execFileAsync("git", ["rev-parse", "HEAD"], { cwd: "/app" })
+        .then(({ stdout }) => {
+          const currentCommit = stdout.trim();
+          if (currentCommit && currentCommit !== deployedCommit) {
+            console.log(
+              `[workers] source changed ${deployedCommit.slice(0, 12)} -> ${currentCommit.slice(0, 12)}; restarting`,
+            );
+            void shutdown();
+          }
+        })
+        .catch((error) =>
+          console.error("[workers] source revision check failed:", error),
+        );
+    }, 15_000).unref();
+  }
 } catch (err) {
   bootError = String(err);
   console.error("[workers] FAILED to construct workers:", err);

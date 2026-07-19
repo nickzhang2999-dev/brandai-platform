@@ -15,6 +15,7 @@ import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   Asset,
+  BrandRule,
   Generation,
   GenerationVersion,
   ListMembersResponse,
@@ -71,6 +72,7 @@ const CANVAS_OPS: { value: string; label: string; mask?: boolean }[] = [
 ];
 
 const POLL_CAP_MS = 6 * 60 * 1000; // §2.2 有界中间态
+const ACTIVE_GENERATION_STATUSES = new Set(["PENDING", "RUNNING"]);
 
 type WorkspaceMode = "TEXT_TO_IMAGE" | "IMAGE_EDIT" | "INPAINT" | "OUTPAINT";
 type OutpaintDirection = "left" | "right" | "top" | "bottom" | "all";
@@ -225,6 +227,13 @@ function parseStyleParam(raw: string | null): string[] {
   return out;
 }
 
+function userFacingError(message: string): string {
+  if (/Project not found/i.test(message)) {
+    return "当前项目不属于这个品牌套件，已为你重新同步项目。请再点一次发送。";
+  }
+  return message;
+}
+
 export default function WorkspacePage() {
   return (
     <Suspense
@@ -268,10 +277,19 @@ function Workspace() {
     return parts.length > 0 ? parts.join("，") : null;
   }, [presetBrief, presetScene, presetStyle]);
 
-  const { data: projects = [] } = useQuery({
+  const { data: projects = [], isFetched: projectsFetched } = useQuery({
     queryKey: ["brandai-projects", wsId],
     queryFn: () => apiFetch<Project[]>(`/api/workspaces/${wsId}/projects`),
   });
+  const { data: brandRules = [] } = useQuery({
+    queryKey: ["brandai-rules", wsId],
+    queryFn: () => apiFetch<BrandRule[]>(`/api/workspaces/${wsId}/rules`),
+  });
+  const activeBrandForKit = brands.find((brand) => brand.id === wsId);
+  const kitEnabled = !activeBrandForKit?.tags?.includes("__kb_disabled");
+  const confirmedBrandRuleCount = kitEnabled
+    ? brandRules.filter((rule) => rule.status === "CONFIRMED").length
+    : 0;
 
   const [projectId, setProjectId] = useState<string | null>(presetProject);
   // React to client-side navigations that change `?project=` (E11/E12 「加入项目」
@@ -282,8 +300,19 @@ function Workspace() {
     if (presetProject) setProjectId(presetProject);
   }, [presetProject]);
   useEffect(() => {
-    if (!projectId && projects.length > 0) setProjectId(projects[0]!.id);
-  }, [projects, projectId]);
+    if (!projectsFetched) return;
+    const fallbackProjectId = projects[0]?.id ?? null;
+    if (!projectId) {
+      if (fallbackProjectId) setProjectId(fallbackProjectId);
+      return;
+    }
+    if (!projects.some((project) => project.id === projectId)) {
+      setProjectId(fallbackProjectId);
+      setGenId(null);
+      setJobId(null);
+      setTimedOut(false);
+    }
+  }, [projects, projectsFetched, projectId]);
 
   const [sellingPoint, setSellingPoint] = useState(
     presetBrief?.trim() ? presetBrief.trim().slice(0, 500) : "",
@@ -313,6 +342,7 @@ function Workspace() {
     () => projects.find((p) => p.id === projectId) ?? projects[0] ?? null,
     [projectId, projects],
   );
+  const activeProjectId = activeProject?.id ?? null;
   const activeBrand = useMemo(
     () => brands.find((brand) => brand.id === wsId) ?? { name: brandName },
     [brandName, brands, wsId],
@@ -444,19 +474,6 @@ function Workspace() {
   const [assetPickerOpen, setAssetPickerOpen] = useState(false);
   const [templateReferences, setTemplateReferences] = useState<RefAsset[]>([]);
   const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
-  const [watermarkEditorOpen, setWatermarkEditorOpen] = useState(false);
-  const [watermarkOverlays, setWatermarkOverlays] = useState<
-    WatermarkOverlayInput[]
-  >([]);
-  const activeWatermarkOverlays = useMemo(
-    () =>
-      watermarkOverlays.filter(
-        (overlay) =>
-          overlay.enabled !== false &&
-          (overlay.invocationMode ?? "EXACT") !== "REFERENCE",
-      ),
-    [watermarkOverlays],
-  );
   useEffect(() => {
     if (!projectId) {
       setReferences([]);
@@ -502,16 +519,6 @@ function Workspace() {
       unsub();
     };
   }, [wsId, projectId]);
-  useEffect(() => {
-    setWatermarkOverlays((prev) => {
-      const byAsset = new Map(
-        prev.filter((o) => o.assetId).map((o) => [o.assetId!, o]),
-      );
-      return references.map(
-        (r) => byAsset.get(r.id) ?? defaultWatermarkOverlay(r.id),
-      );
-    });
-  }, [references]);
   function dropReference(assetId: string) {
     if (!projectId) return;
     removeReference(wsId, projectId, assetId);
@@ -794,8 +801,11 @@ function Workspace() {
     }
     return [...m.values()];
   }, [history, versions, poll, projectId]);
+  // 只有服务端明确返回 PENDING/RUNNING 才展示“生成中”。进入/切回工作台时
+  // genId 可能已由历史出图播种，但轮询数据尚未返回，此时 status=null；旧逻辑会把
+  // 这个空状态误当作运行中，导致用户未下达任务也看到“AI 正在生成…”。
   const running =
-    !!genId && status !== "SUCCEEDED" && status !== "FAILED" && !timedOut;
+    !!genId && ACTIVE_GENERATION_STATUSES.has(status ?? "") && !timedOut;
   const current = versions[activeVariant] ?? versions[0];
   const editBaseVersion =
     versions.find((v) => v.id === editBaseVersionId) ?? current ?? null;
@@ -944,7 +954,10 @@ function Workspace() {
 
   useEffect(() => {
     if (!current?.id) return;
-    if (!editBaseVersionId || !versions.some((v) => v.id === editBaseVersionId)) {
+    if (
+      !editBaseVersionId ||
+      !versions.some((v) => v.id === editBaseVersionId)
+    ) {
       setEditBaseVersionId(current.id);
     }
   }, [current?.id, editBaseVersionId, versions]);
@@ -1051,11 +1064,6 @@ function Workspace() {
           body: JSON.stringify({
             op,
             payload: sized,
-            ...(activeWatermarkOverlays.length
-              ? {
-                  watermarkOverlays: activeWatermarkOverlays,
-                }
-              : {}),
           }),
         },
       );
@@ -1244,7 +1252,7 @@ function Workspace() {
   return (
     <div className="flex h-screen flex-col">
       <div className="flex items-center justify-between border-b border-border bg-card px-6 py-3">
-        {/* F1 · 顶部项目路径 breadcrumb — 品牌 / 项目名（可切换 + 回项目列表）/ 工作台 */}
+        {/* F1 · 顶部路径 — 当前品牌套件 / 项目名（可切换 + 回项目列表）/ 工作台 */}
         <nav
           aria-label="项目路径"
           className="flex items-center gap-2 text-sm text-muted-foreground"
@@ -1288,15 +1296,20 @@ function Workspace() {
             /
           </span>
           <span className="font-medium text-foreground">工作台</span>
+          <span className="ml-2 inline-flex items-center rounded-full border border-primary/20 bg-accent-soft px-2.5 py-1 text-xs font-medium text-primary">
+            {kitEnabled
+              ? `品牌套件自动应用 · ${confirmedBrandRuleCount} 条规则`
+              : "品牌套件暂未应用"}
+          </span>
         </nav>
         <div className="flex items-center gap-3">
           <StatusPill status={status} timedOut={timedOut} />
         </div>
       </div>
 
-      <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_340px]">
+      <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_390px]">
         {/* Canvas */}
-        <div className="flex min-h-0 flex-col bg-background p-4">
+        <div className="flex min-h-0 flex-col bg-background p-3">
           <OpenCanvas
             seedVersions={seedVersionsAll}
             seedReady={historyLoaded}
@@ -1311,6 +1324,12 @@ function Workspace() {
             selectNonce={selectNonce}
             fitKey={genId ?? undefined}
             onUploadImage={onCanvasUploadImage}
+            materialAssets={references}
+            templateAssets={templateReferences}
+            onOpenMaterialLibrary={() => setAssetPickerOpen(true)}
+            onOpenTemplateLibrary={() => setTemplatePickerOpen(true)}
+            onRemoveMaterial={dropReference}
+            onRemoveTemplate={dropTemplateReference}
             onUserPickImage={onCanvasUserPickImage}
             onBlankClick={() => chatInsertRef.current?.clearPending()}
             chatRefStates={chatRefStatesMap}
@@ -1364,13 +1383,42 @@ function Workspace() {
             onViewGeneration={viewGeneration}
             onSubmitted={onChatSubmitted}
             presetBrief={chatPresetBrief}
-            watermarkOverlays={activeWatermarkOverlays}
             insertRef={chatInsertRef}
             onComposerRefsChange={setChatComposerRefs}
             onPasteImage={(files) => chatUploadFilesRef.current?.(files)}
           />
         </aside>
       </div>
+
+      {assetPickerOpen ? (
+        <WorkspaceAssetPicker
+          wsId={wsId}
+          libraryKind="MATERIAL"
+          title="选择素材"
+          description="素材会加入画布底部素材托盘，可点击或拖拽到画布中自由摆放。"
+          existingIds={references.map((r) => r.id)}
+          onClose={() => setAssetPickerOpen(false)}
+          onAdd={(items) => {
+            addPickedReferences(items);
+            setAssetPickerOpen(false);
+          }}
+        />
+      ) : null}
+
+      {templatePickerOpen ? (
+        <WorkspaceAssetPicker
+          wsId={wsId}
+          libraryKind="TEMPLATE"
+          title="选择参考图"
+          description="参考图会加入画布模板托盘，可放到画布后作为 AI 对话的图像引用。"
+          existingIds={templateReferences.map((r) => r.id)}
+          onClose={() => setTemplatePickerOpen(false)}
+          onAdd={(items) => {
+            addTemplateReferences(items);
+            setTemplatePickerOpen(false);
+          }}
+        />
+      ) : null}
 
       {/* G6 · 驳回弹窗 — 可选附理由（reviewNote），走真实 review 端点。 */}
       {rejectOpen ? (
@@ -2129,7 +2177,7 @@ function WorkspaceAssetPicker({
               }
               className="h-10 rounded-full bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-50"
             >
-              添加到工作台
+              {libraryKind === "MATERIAL" ? "添加到画布托盘" : "加入参考图"}
             </button>
           </div>
         </div>

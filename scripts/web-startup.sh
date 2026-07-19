@@ -264,6 +264,20 @@ CURRENT_COMMIT=$(git rev-parse HEAD 2>/dev/null || echo "")
 LAST_BUILD_COMMIT=$(cat "$DEPLOY_COMMIT_FILE" 2>/dev/null || echo "")
 echo "[startup] git HEAD=$CURRENT_COMMIT  last-built=$LAST_BUILD_COMMIT"
 
+# The preview CDN caches /_next/static chunks for four hours. Make the commit
+# an explicit Next deployment id before both `next build` and `next start`, so
+# a branch overwrite can never reuse a previous commit's chunk URL. This also
+# covers CDS builders where next.config.mjs cannot discover .git on its own.
+if [ -z "${NEXT_DEPLOYMENT_ID:-}" ]; then
+  if [ -n "${CDS_COMMIT_SHA:-}" ]; then
+    NEXT_DEPLOYMENT_ID=$(printf '%.12s' "$CDS_COMMIT_SHA")
+  elif [ -n "$CURRENT_COMMIT" ]; then
+    NEXT_DEPLOYMENT_ID=$(printf '%.12s' "$CURRENT_COMMIT")
+  fi
+  export NEXT_DEPLOYMENT_ID
+fi
+echo "[startup] Next deployment id=${NEXT_DEPLOYMENT_ID:-local}"
+
 if [ -f "$BUILD_ID_FILE" ] && [ -n "$CURRENT_COMMIT" ] && [ "$CURRENT_COMMIT" = "$LAST_BUILD_COMMIT" ]; then
   echo "[startup] cached .next/ matches HEAD — skipping next build"
 else

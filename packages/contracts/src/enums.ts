@@ -16,7 +16,15 @@ export type AssetCategory = z.infer<typeof AssetCategory>;
 // MATERIAL = 素材库（会被确定性使用/水印叠加）
 // TEMPLATE = 模板库参考图（只影响风格、色系、比例、构图）
 // GENERATED = AI 工作台确认后的生成图镜像
-export const AssetLibraryKind = z.enum(["MATERIAL", "TEMPLATE", "GENERATED"]);
+export const AssetLibraryKind = z.enum([
+  "MATERIAL",
+  "TEMPLATE",
+  "GENERATED",
+  // Brand-kit source files and AI-extracted visual evidence live outside the
+  // normal material/template pickers. They are still workspace-scoped Assets
+  // so rules can cite and reuse them during generation.
+  "BRAND_KIT",
+]);
 export type AssetLibraryKind = z.infer<typeof AssetLibraryKind>;
 
 export const RuleType = z.enum([
@@ -51,30 +59,16 @@ export const SceneType = z.enum([
 ]);
 export type SceneType = z.infer<typeof SceneType>;
 
-export const JobStatus = z.enum([
-  "PENDING",
-  "RUNNING",
-  "SUCCEEDED",
-  "FAILED",
-]);
+export const JobStatus = z.enum(["PENDING", "RUNNING", "SUCCEEDED", "FAILED"]);
 export type JobStatus = z.infer<typeof JobStatus>;
 
 // BrandAI — Campaign 生命周期状态（草稿 / 进行中 / 已完成）。映射自旧
 // `Project`，是 Campaign 卡片状态徽章 + 列表筛选的事实源。
-export const CampaignStatus = z.enum([
-  "DRAFT",
-  "IN_PROGRESS",
-  "COMPLETED",
-]);
+export const CampaignStatus = z.enum(["DRAFT", "IN_PROGRESS", "COMPLETED"]);
 export type CampaignStatus = z.infer<typeof CampaignStatus>;
 
 // G6 — workspace member roles (rank: OWNER > EDITOR > REVIEWER > VIEWER).
-export const WorkspaceRole = z.enum([
-  "OWNER",
-  "EDITOR",
-  "REVIEWER",
-  "VIEWER",
-]);
+export const WorkspaceRole = z.enum(["OWNER", "EDITOR", "REVIEWER", "VIEWER"]);
 export type WorkspaceRole = z.infer<typeof WorkspaceRole>;
 
 // G6 — generation version approval state.

@@ -3,7 +3,7 @@
 -- AppSetting.imageSystemPrompt: /admin/settings/ai 配置，worker 注入
 -- GenerateRequest.systemPrompt。
 ALTER TABLE "Generation"
-  ADD COLUMN "chatContext" JSONB;
+  ADD COLUMN IF NOT EXISTS "chatContext" JSONB;
 
 ALTER TABLE "AppSetting"
-  ADD COLUMN "imageSystemPrompt" TEXT;
+  ADD COLUMN IF NOT EXISTS "imageSystemPrompt" TEXT;

@@ -2,7 +2,10 @@
 
 
 def test_health(client):
-    assert client.get("/health").json() == {"status": "ok"}
+    assert client.get("/health").json() == {
+        "status": "ok",
+        "parserRevision": "grounded-six-slot-r6",
+    }
 
 
 def test_diag_mock_providers_ok(client):

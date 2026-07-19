@@ -13,6 +13,7 @@ Two facts shape the VLM impl:
 
 mock stays the registry default, so the service runs with zero keys.
 """
+import asyncio
 import base64
 import io
 import json
@@ -113,6 +114,8 @@ _retry = retry(
 _MAX_VISION_IMAGES = 8
 _MAX_SCRAPE_IMAGES = 30
 _MAX_SCRAPE_TEXT = 6000
+_MANUAL_BATCH_PAGES = 8
+_MAX_MANUAL_ASSETS = 72
 
 # gpt-image-1 only accepts these three sizes (plus "auto"); any other W×H is a
 # hard 400. We snap the requested canvas to the nearest by aspect ratio.
@@ -671,21 +674,30 @@ _ANALYZE_PROMPT = (
     "with strength FORBIDDEN."
 )
 _PARSE_MANUAL_SYSTEM = (
-    "You are a senior brand visual analyst. You read a brand's VI / brand "
-    "manual (the extracted text of a PDF) and distil its visual identity. "
+    "You are a senior brand visual analyst. You read both the text and rendered "
+    "pages of a VI / brand manual and distil a reusable machine-readable Brand Kit. "
     "Reply with STRICT JSON only — no prose, no code fences."
 )
 _PARSE_MANUAL_PROMPT = (
-    "Read this brand/VI manual text and return JSON shaped exactly as:\n"
-    "{{\"rules\":[{{\"type\":\"color|font|layout|imagery|copy\","
+    "Analyze the supplied brand-manual pages and their extracted text. Return "
+    "JSON shaped exactly as:\n"
+    "{{\"rules\":[{{\"type\":\"logo|font|color|layout|imagery|copy\","
     "\"strength\":\"STRONG|WEAK|FORBIDDEN\",\"summary\":\"<concise Chinese>\","
     "\"value\":{{<structured detail>}},"
-    "\"evidence\":[{{\"note\":\"<which section / page of the manual>\"}}]}}],"
+    "\"evidence\":[{{\"page\":<1-based page>,\"sourceRef\":\"<matching asset ref if visual>\","
+    "\"bbox\":[x,y,w,h],\"note\":\"<section / reason>\"}}]}}],"
+    "\"assets\":[{{\"ref\":\"p<page>-<short-key>\","
+    "\"type\":\"logo|font|color|layout|imagery|copy\",\"page\":<1-based page>,"
+    "\"bbox\":[x,y,w,h],\"label\":\"<concise Chinese>\"}}],"
     "\"colorSystem\":{{\"palette\":[\"#hex\"],\"pairing\":[[\"#hex\",\"#hex\"]],"
     "\"restrictions\":[\"<rule>\"],\"contrastScore\":<0-100>,\"consistencyScore\":<0-100>}}}}\n"
-    "Cover color, font, layout, imagery and copy where the manual states rules. "
-    "Mark forbidden usages (禁用) with strength FORBIDDEN. Cite the manual "
-    "section in each evidence note.\n\nManual text:\n{text}"
+    "bbox is normalized [x,y,width,height] in 0..1 relative to the page image. "
+    "Create tight visual crops for primary/alternate logos, font specimens, color "
+    "cards, layout examples and representative photography; do not crop ordinary "
+    "paragraph text unless it expresses copy/voice rules. Every visual evidence "
+    "sourceRef must match one assets.ref. Cover all six modules when evidence exists. "
+    "Mark prohibited usage inside the same module value and summary. Never invent a "
+    "rule that is absent from the supplied pages.\n\nPage text:\n{text}"
 )
 _DESCRIBE_SYSTEM = (
     "You are a brand asset librarian. You look at one image and produce concise, "
@@ -875,14 +887,155 @@ class HttpVLMProvider(VLMProvider):
         data = await self._chat_json(parts, system=_ANALYZE_SYSTEM)
         return _coerce_recognize(data, asset_ids)
 
-    async def parse_manual(self, text: str) -> dict[str, Any]:
-        prompt = _PARSE_MANUAL_PROMPT.format(text=text[:_MAX_SCRAPE_TEXT])
-        data = await self._chat_json(
-            [{"type": "text", "text": prompt}], system=_PARSE_MANUAL_SYSTEM
+    async def parse_manual(
+        self, text: str, pages: list[dict[str, Any]] | None = None
+    ) -> dict[str, Any]:
+        rendered = [p for p in (pages or []) if p.get("dataUrl")]
+        # Text-only compatibility path for callers that cannot render a PDF.
+        if not rendered:
+            prompt = _PARSE_MANUAL_PROMPT.format(text=text[:_MAX_SCRAPE_TEXT])
+            data = await self._chat_json(
+                [{"type": "text", "text": prompt}],
+                system=_PARSE_MANUAL_SYSTEM,
+                max_tokens=4096,
+            )
+            result = _coerce_recognize(data, [])
+            result["extractedAssets"] = []
+            return result
+
+        batches = [
+            rendered[offset : offset + _MANUAL_BATCH_PAGES]
+            for offset in range(0, len(rendered), _MANUAL_BATCH_PAGES)
+        ]
+        semaphore = asyncio.Semaphore(2)
+        batch_warnings: list[str] = []
+
+        async def analyze_batch(batch: list[dict[str, Any]]) -> dict[str, Any]:
+            page_text = "\n\n".join(
+                f"[第 {int(p.get('page', 0))} 页]\n{str(p.get('text') or '')}"
+                for p in batch
+            )[:_MAX_SCRAPE_TEXT]
+            parts: list[dict[str, Any]] = [
+                {
+                    "type": "text",
+                    "text": _PARSE_MANUAL_PROMPT.format(text=page_text),
+                }
+            ]
+            for page in batch:
+                parts.append(
+                    {
+                        "type": "text",
+                        "text": f"下图是品牌手册第 {int(page.get('page', 0))} 页。",
+                    }
+                )
+                parts.append(
+                    {"type": "image_url", "image_url": {"url": page["dataUrl"]}}
+                )
+            last_error: Exception | None = None
+            degraded_reason = "rate_limit"
+            for attempt in range(4):
+                try:
+                    async with semaphore:
+                        return await self._chat_json(
+                            parts, system=_PARSE_MANUAL_SYSTEM, max_tokens=4096
+                        )
+                except httpx.HTTPStatusError as exc:
+                    last_error = exc
+                    if _is_provider_rate_limit(exc):
+                        if attempt < 3:
+                            await asyncio.sleep(
+                                _provider_rate_limit_delay(exc, attempt)
+                                + (int(batch[0].get("page") or 0) % 3) * 0.35
+                            )
+                        continue
+                    # A long manual fans out into many visual batches. Gateways
+                    # occasionally return a bare 5xx (without the words "rate
+                    # limit") for one batch while all neighbouring batches
+                    # succeed. `_chat_json` has already retried the request; do
+                    # not let that one transient batch erase the entire PDF.
+                    if exc.response.status_code in {500, 502, 503, 504}:
+                        degraded_reason = "transient"
+                        break
+                    # Authentication/configuration and malformed-request 4xx
+                    # errors remain fatal: silently degrading those would hide
+                    # an operator problem and consume a manual without VLM.
+                    raise
+                except httpx.RequestError as exc:
+                    # `_chat_json` already applies the provider retry policy.
+                    # After it is exhausted, preserve the successfully rendered
+                    # pages and exact PDF text instead of failing all 101 pages.
+                    last_error = exc
+                    degraded_reason = "transient"
+                    break
+            first_page = int(batch[0].get("page") or 0)
+            last_page = int(batch[-1].get("page") or first_page)
+            logger.warning(
+                "manual pages %s-%s skipped after provider %s: %s",
+                first_page,
+                last_page,
+                degraded_reason,
+                last_error,
+            )
+            if degraded_reason == "rate_limit":
+                batch_warnings.append(
+                    f"第 {first_page}–{last_page} 页视觉分析遇到限流，已用 PDF 文字与页面证据补齐。"
+                )
+            else:
+                batch_warnings.append(
+                    f"第 {first_page}–{last_page} 页视觉服务暂时异常，已用 PDF 文字与页面证据补齐。"
+                )
+            return {"rules": [], "assets": []}
+
+        # Two batches in flight keeps a long manual within the bounded UI
+        # window without turning one upload into an uncontrolled request burst.
+        batch_data = await asyncio.gather(
+            *(analyze_batch(batch) for batch in batches)
         )
-        # No image assetId to backfill — manual evidence is textual (note only),
-        # the web worker stamps the VI_DOC assetId onto each rule's evidence.
-        return _coerce_recognize(data, [])
+        chunk_results: list[dict[str, Any]] = []
+        extracted: list[dict[str, Any]] = []
+        for batch, data in zip(batches, batch_data, strict=True):
+            chunk_results.append(_coerce_recognize(data, []))
+            remaining = _MAX_MANUAL_ASSETS - len(extracted)
+            if remaining > 0:
+                # Spread the crop budget across the entire manual instead of
+                # letting early pages consume it all before later photography /
+                # advertising examples are inspected.
+                extracted.extend(
+                    _extract_manual_crops(data, batch, min(remaining, 6))
+                )
+
+        extracted.extend(
+            _fallback_manual_crops(
+                rendered,
+                extracted,
+                _MAX_MANUAL_ASSETS - len(extracted),
+            )
+        )
+        merged = _merge_manual_results(chunk_results, rendered)
+        _enforce_grounded_manual_modules(merged, rendered)
+        valid_refs = {a["ref"] for a in extracted}
+        for rule in merged.get("rules", []):
+            for evidence in rule.get("evidence", []):
+                if evidence.get("sourceRef") not in valid_refs:
+                    evidence.pop("sourceRef", None)
+            if not any(e.get("sourceRef") for e in rule.get("evidence", [])):
+                fallback_asset = next(
+                    (a for a in extracted if a.get("type") == rule.get("type")),
+                    None,
+                )
+                if fallback_asset:
+                    rule.setdefault("evidence", []).append(
+                        {
+                            "page": fallback_asset["page"],
+                            "sourceRef": fallback_asset["ref"],
+                            "bbox": fallback_asset["bbox"],
+                            "note": fallback_asset["label"],
+                        }
+                    )
+        merged["extractedAssets"] = extracted
+        if batch_warnings:
+            merged["warnings"] = batch_warnings
+        return merged
 
     async def describe_asset(
         self,
@@ -1288,6 +1441,15 @@ def _coerce_recognize(
             note = e.get("note")
             if note:
                 item["note"] = str(note)
+            source_ref = e.get("sourceRef")
+            if source_ref and re.fullmatch(r"[A-Za-z0-9._-]{1,80}", str(source_ref)):
+                item["sourceRef"] = str(source_ref)
+            try:
+                page_no = int(e.get("page") or 0)
+            except (TypeError, ValueError):
+                page_no = 0
+            if page_no > 0:
+                item["page"] = page_no
             bbox = e.get("bbox")
             if isinstance(bbox, list) and len(bbox) == 4:
                 # A sloppy VLM can emit non-numeric or non-finite bbox entries.
@@ -1309,10 +1471,16 @@ def _coerce_recognize(
             # drop empties. Note-only evidence is retained.
             if item:
                 evidence.append(item)
+        rule_type = str(r.get("type", "imagery"))
+        if rule_type not in {"logo", "font", "color", "layout", "imagery", "graphic", "copy"}:
+            continue
+        strength = str(r.get("strength", "WEAK")).upper()
+        if strength not in {"STRONG", "WEAK", "FORBIDDEN"}:
+            strength = "WEAK"
         rules.append(
             {
-                "type": str(r.get("type", "imagery")),
-                "strength": str(r.get("strength", "WEAK")).upper(),
+                "type": rule_type,
+                "strength": strength,
                 "summary": str(r.get("summary", "")),
                 "value": r.get("value") if isinstance(r.get("value"), dict) else {},
                 "evidence": evidence,
@@ -1331,6 +1499,516 @@ def _coerce_recognize(
             "restrictions": [str(x) for x in cs.get("restrictions", [])],
             "contrastScore": float(cs.get("contrastScore", 0) or 0),
             "consistencyScore": float(cs.get("consistencyScore", 0) or 0),
+        }
+    return out
+
+
+def _normalized_bbox(raw: Any) -> list[float] | None:
+    if not isinstance(raw, list) or len(raw) != 4:
+        return None
+    try:
+        bbox = [float(x) for x in raw]
+    except (TypeError, ValueError):
+        return None
+    if not all(math.isfinite(x) for x in bbox):
+        return None
+    x, y, width, height = bbox
+    if width <= 0.02 or height <= 0.02:
+        return None
+    if x < -0.01 or y < -0.01 or x + width > 1.01 or y + height > 1.01:
+        return None
+    return [max(0.0, x), max(0.0, y), min(1.0 - x, width), min(1.0 - y, height)]
+
+
+def _is_provider_rate_limit(exc: httpx.HTTPStatusError) -> bool:
+    response = exc.response
+    body = response.text.lower()
+    return response.status_code == 429 or (
+        response.status_code in {500, 502, 503, 504}
+        and ("rate limit" in body or '"429"' in body or "returned 429" in body)
+    )
+
+
+def _provider_rate_limit_delay(
+    exc: httpx.HTTPStatusError, attempt: int
+) -> float:
+    retry_after = exc.response.headers.get("retry-after")
+    if retry_after:
+        try:
+            return min(30.0, max(1.0, float(retry_after)))
+        except ValueError:
+            pass
+    match = re.search(
+        r"try again in\s+([0-9]+(?:\.[0-9]+)?)s", exc.response.text, re.I
+    )
+    if match:
+        return min(30.0, max(1.0, float(match.group(1))))
+    return min(30.0, float(2 ** (attempt + 1)))
+
+
+def _extract_manual_crops(
+    data: dict[str, Any], pages: list[dict[str, Any]], limit: int
+) -> list[dict[str, Any]]:
+    """Turn model-selected normalized page regions into bounded JPEG assets."""
+    from PIL import Image
+
+    allowed_types = {"logo", "font", "color", "layout", "imagery", "copy"}
+    page_map = {int(p.get("page") or 0): str(p.get("dataUrl") or "") for p in pages}
+    out: list[dict[str, Any]] = []
+    refs: set[str] = set()
+    for candidate in data.get("assets", []) or []:
+        if len(out) >= limit or not isinstance(candidate, dict):
+            break
+        kind = str(candidate.get("type") or "")
+        if kind not in allowed_types:
+            continue
+        try:
+            page_no = int(candidate.get("page") or 0)
+        except (TypeError, ValueError):
+            continue
+        bbox = _normalized_bbox(candidate.get("bbox"))
+        page_data = page_map.get(page_no)
+        if not bbox or not page_data or "," not in page_data:
+            continue
+        raw_ref = re.sub(r"[^A-Za-z0-9._-]+", "-", str(candidate.get("ref") or ""))
+        raw_ref = raw_ref.strip("-")[:80] or f"p{page_no}-{kind}-{len(out) + 1}"
+        if not raw_ref.startswith(f"p{page_no}-"):
+            raw_ref = f"p{page_no}-{raw_ref}"[:80]
+        ref = raw_ref
+        suffix = 2
+        while ref in refs:
+            ref = f"{raw_ref[:72]}-{suffix}"
+            suffix += 1
+        try:
+            page_bytes = base64.b64decode(page_data.split(",", 1)[1])
+            with Image.open(io.BytesIO(page_bytes)) as page_image:
+                width, height = page_image.size
+                x, y, crop_w, crop_h = bbox
+                # A small margin keeps antialiasing/safe-area context without
+                # turning the crop back into an unreadable full-page screenshot.
+                margin_x = min(0.015, crop_w * 0.08)
+                margin_y = min(0.015, crop_h * 0.08)
+                left = max(0, int((x - margin_x) * width))
+                top = max(0, int((y - margin_y) * height))
+                right = min(width, int((x + crop_w + margin_x) * width))
+                bottom = min(height, int((y + crop_h + margin_y) * height))
+                if right - left < 24 or bottom - top < 24:
+                    continue
+                cropped = page_image.convert("RGB").crop((left, top, right, bottom))
+                cropped.thumbnail((1200, 1200))
+                buf = io.BytesIO()
+                cropped.save(buf, format="JPEG", quality=88, optimize=True)
+        except Exception:  # noqa: BLE001 — skip one unusable crop
+            continue
+        refs.add(ref)
+        out.append(
+            {
+                "ref": ref,
+                "type": kind,
+                "page": page_no,
+                "bbox": bbox,
+                "label": str(candidate.get("label") or f"第 {page_no} 页{kind}"),
+                "dataUrl": "data:image/jpeg;base64,"
+                + base64.b64encode(buf.getvalue()).decode(),
+            }
+        )
+    return out
+
+
+def _merge_json_value(target: dict[str, Any], source: dict[str, Any]) -> None:
+    for key, value in source.items():
+        if key not in target:
+            target[key] = value
+        elif isinstance(target[key], dict) and isinstance(value, dict):
+            _merge_json_value(target[key], value)
+        elif isinstance(target[key], list) and isinstance(value, list):
+            seen = {json.dumps(x, ensure_ascii=False, sort_keys=True) for x in target[key]}
+            for item in value:
+                marker = json.dumps(item, ensure_ascii=False, sort_keys=True)
+                if marker not in seen:
+                    target[key].append(item)
+                    seen.add(marker)
+
+
+def _manual_page_for(
+    pages: list[dict[str, Any]], keywords: list[str]
+) -> tuple[int, str] | None:
+    """Return the strongest page match for the first available keyword.
+
+    Manuals often repeat every section title in an early contents page. Within
+    the preferred keyword, favor the later match so a fallback visual is the
+    actual specification page rather than the contents entry.
+    """
+    for keyword in keywords:
+        matches = []
+        for page in pages:
+            page_text = str(page.get("text") or "")
+            count = page_text.lower().count(keyword.lower())
+            if count:
+                matches.append(int(page.get("page") or 0))
+        if matches:
+            return max(matches), keyword
+    return None
+
+
+def _ground_missing_manual_modules(
+    grouped: dict[str, dict[str, Any]], pages: list[dict[str, Any]]
+) -> None:
+    """Fill model-omitted modules only from facts explicitly present in the PDF.
+
+    Some OpenAI-compatible VLMs describe the dominant page topic but omit quiet
+    modules (most often logo/copy) from otherwise valid JSON. These fallbacks
+    run only when a module is absent and every emitted fact is matched against
+    extracted page text, with a page citation.
+    """
+    combined = "\n".join(str(page.get("text") or "") for page in pages)
+    compact = re.sub(r"\s+", "", combined)
+
+    def add(
+        kind: str,
+        *,
+        keywords: list[str],
+        summary: str,
+        value: dict[str, Any],
+        strength: str = "STRONG",
+    ) -> None:
+        if kind in grouped:
+            return
+        hit = _manual_page_for(pages, keywords)
+        if not hit:
+            return
+        page_no, keyword = hit
+        grouped[kind] = {
+            "type": kind,
+            "strength": strength,
+            "summaryParts": [summary],
+            "value": value,
+            "evidence": [
+                {"page": page_no, "note": f"第 {page_no} 页 · {keyword}"}
+            ],
+        }
+
+    logo_donts = []
+    if "不得改变其形状、结构和比例" in compact:
+        logo_donts.append("不得改变标志的形状、结构和比例")
+    if "请勿自行创造组合形式" in compact:
+        logo_donts.append("不得自行创造标志组合形式")
+    logo_value: dict[str, Any] = {"dontRules": logo_donts}
+    if "小于8mm时禁止使用" in compact:
+        logo_value["minimumHeightMm"] = 8
+    add(
+        "logo",
+        keywords=[
+            "企业标志及标志创意说明",
+            "标志墨稿",
+            "标志反白效果图",
+            "标志标准化制图",
+        ],
+        summary="使用标准品牌标志及组合，不得改变形状、结构和比例",
+        value=logo_value,
+    )
+
+    font_names = [
+        name
+        for name in [
+            "LetoSans",
+            "思源黑体",
+            "Myriad Pro",
+            "汉仪旗黑",
+            "汉仪中黑简",
+            "MonoxRegular",
+        ]
+        if name.lower() in combined.lower()
+    ]
+    add(
+        "font",
+        keywords=["企业专用印刷字体", "企业全称中文字体", "企业简称英文字体"],
+        summary="按手册使用企业标准字与专用印刷字体",
+        value={"families": font_names},
+    )
+
+    colors: list[str] = []
+    # Illustrator-authored PDFs can expose a visually prefixed hex value as
+    # `FF6C2C#` in their text layer. Accept both text orders, while still
+    # requiring six explicit hexadecimal digits adjacent to the hash marker.
+    for match in re.finditer(
+        r"#\s*([0-9A-Fa-f]{6})\b|\b([0-9A-Fa-f]{6})\s*#", combined
+    ):
+        normalized = f"#{match.group(1) or match.group(2)}".upper()
+        if normalized not in colors:
+            colors.append(normalized)
+    add(
+        "color",
+        keywords=["企业标准色（印刷色）", "辅助色系列", "色彩规范"],
+        summary="使用手册规定的企业标准色与辅助色",
+        value={"palette": colors[:16]},
+    )
+
+    add(
+        "layout",
+        keywords=[
+            "广告信息视觉层级梳理",
+            "基本板式集合呈现",
+            "标志与标准字组合多种模式",
+            "标志方格坐标制作图",
+        ],
+        summary="遵循标准组合、保护留白与广告信息视觉层级",
+        value={
+            "rules": [
+                "标准组合周边保留保护空间",
+                "不得改变标准组合比例或自行创造组合形式",
+            ]
+        },
+    )
+
+    imagery_value: dict[str, Any] = {
+        "usage": "按手册中的辅助图形与应用示例保持统一视觉风格"
+    }
+    if "小白砖" in combined:
+        imagery_value["motif"] = "小白砖"
+    add(
+        "imagery",
+        keywords=[
+            "辅助图形的应用延展",
+            "辅助图形基本使用形式",
+            "辅助图形释义",
+            "户外擎天柱广告",
+        ],
+        summary="统一使用手册规定的辅助图形及应用视觉风格",
+        value=imagery_value,
+        strength="WEAK",
+    )
+
+    slogans = []
+    for phrase in ["一家一世界 一居一生活", "一站式整屋家居"]:
+        if re.sub(r"\s+", "", phrase) in compact:
+            slogans.append(phrase)
+    add(
+        "copy",
+        keywords=[
+            "广告信息视觉层级梳理",
+            "室内企业精神口号标牌",
+            "基本板式集合呈现",
+        ],
+        summary=("品牌传播使用：" + "；".join(slogans))
+        if slogans
+        else "按手册中的品牌口号与广告信息层级进行传播",
+        value={"slogans": slogans},
+        strength="WEAK",
+    )
+
+
+def _enforce_grounded_manual_modules(
+    merged: dict[str, Any], pages: list[dict[str, Any]]
+) -> None:
+    """Apply the grounded six-slot postcondition to the final wire payload.
+
+    Grounding previously happened while the batch accumulator was still being
+    assembled. A provider can emit a transient/empty module that suppresses the
+    fallback at that stage and then leave the final payload without that slot.
+    Recompute grounded candidates independently, append missing types, and make
+    exact PDF-text facts authoritative over model guesses. The VLM remains
+    useful for page interpretation, summaries, and crop locations, but it must
+    not be allowed to replace explicit hex values, font names, slogans, or logo
+    prohibitions printed in the manual.
+    """
+    rules = merged.get("rules")
+    if not isinstance(rules, list):
+        rules = []
+        merged["rules"] = rules
+    by_type = {
+        str(rule.get("type") or ""): rule
+        for rule in rules
+        if isinstance(rule, dict)
+    }
+    grounded: dict[str, dict[str, Any]] = {}
+    _ground_missing_manual_modules(grounded, pages)
+    order = ["logo", "font", "color", "layout", "imagery", "copy"]
+    authoritative_fields = {
+        "logo": ("dontRules", "minimumHeightMm"),
+        "font": ("families",),
+        "color": ("palette",),
+        "imagery": ("motif",),
+        "copy": ("slogans",),
+    }
+    for kind in order:
+        if kind not in grounded:
+            continue
+        grounded_item = grounded[kind]
+        if kind not in by_type:
+            item = grounded_item
+            summaries = item.pop("summaryParts", [])
+            item["summary"] = (
+                "；".join(str(part) for part in summaries[:6])
+                or f"从品牌手册提取的{kind}规范"
+            )
+            rules.append(item)
+            by_type[kind] = item
+            continue
+
+        item = by_type[kind]
+        value = item.get("value")
+        if not isinstance(value, dict):
+            value = {}
+            item["value"] = value
+        grounded_value = grounded_item.get("value")
+        if isinstance(grounded_value, dict):
+            for field in authoritative_fields.get(kind, ()):
+                grounded_fact = grounded_value.get(field)
+                if grounded_fact not in (None, [], ""):
+                    value[field] = grounded_fact
+
+        evidence = item.get("evidence")
+        if not isinstance(evidence, list):
+            evidence = []
+            item["evidence"] = evidence
+        for citation in grounded_item.get("evidence", []):
+            if citation not in evidence and len(evidence) < 8:
+                evidence.append(citation)
+
+    grounded_colors = (
+        grounded.get("color", {}).get("value", {}).get("palette", [])
+    )
+    if grounded_colors:
+        color_system = merged.get("colorSystem")
+        if not isinstance(color_system, dict):
+            color_system = {}
+            merged["colorSystem"] = color_system
+        color_system["palette"] = grounded_colors
+        color_system["pairing"] = [
+            pair
+            for pair in color_system.get("pairing", [])
+            if isinstance(pair, list)
+            and pair
+            and all(color in grounded_colors for color in pair)
+        ]
+    rules.sort(
+        key=lambda rule: order.index(str(rule.get("type") or ""))
+        if isinstance(rule, dict) and str(rule.get("type") or "") in order
+        else len(order)
+    )
+
+
+def _fallback_manual_crops(
+    pages: list[dict[str, Any]], extracted: list[dict[str, Any]], limit: int
+) -> list[dict[str, Any]]:
+    """Create grounded page previews when the VLM omits crop descriptors."""
+    existing_types = {str(asset.get("type") or "") for asset in extracted}
+    keyword_map = {
+        "logo": ["企业标志及标志创意说明", "标志墨稿", "标志反白效果图"],
+        "font": ["企业专用印刷字体", "企业全称中文字体"],
+        "color": ["企业标准色（印刷色）", "辅助色系列"],
+        "layout": ["基本板式集合呈现", "广告信息视觉层级梳理"],
+        "imagery": ["辅助图形的应用延展", "辅助图形基本使用形式"],
+        "copy": ["广告信息视觉层级梳理", "室内企业精神口号标牌"],
+    }
+    labels = {
+        "logo": "标志规范页面",
+        "font": "字体规范页面",
+        "color": "色彩规范页面",
+        "layout": "版式规范页面",
+        "imagery": "图像与辅助图形页面",
+        "copy": "品牌表达规范页面",
+    }
+    candidates: list[dict[str, Any]] = []
+    for kind, keywords in keyword_map.items():
+        if kind in existing_types:
+            continue
+        hit = _manual_page_for(pages, keywords)
+        if not hit:
+            continue
+        page_no, _keyword = hit
+        candidates.append(
+            {
+                "ref": f"p{page_no}-{kind}-page-evidence",
+                "type": kind,
+                "page": page_no,
+                "bbox": [0.04, 0.07, 0.92, 0.86],
+                "label": labels[kind],
+            }
+        )
+    return _extract_manual_crops(
+        {"assets": candidates}, pages, max(0, min(limit, len(candidates)))
+    )
+
+
+def _merge_manual_results(
+    results: list[dict[str, Any]], pages: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
+    """Consolidate page batches into one editable draft per Brand Kit module."""
+    order = ["logo", "font", "color", "layout", "imagery", "copy"]
+    grouped: dict[str, dict[str, Any]] = {}
+    for result in results:
+        for rule in result.get("rules", []):
+            kind = str(rule.get("type") or "")
+            if kind not in order:
+                continue
+            current = grouped.setdefault(
+                kind,
+                {
+                    "type": kind,
+                    "strength": "WEAK",
+                    "summaryParts": [],
+                    "value": {},
+                    "evidence": [],
+                },
+            )
+            strength = str(rule.get("strength") or "WEAK")
+            # A module containing both positive and prohibited usage remains a
+            # usable strong rule; the prohibited details stay in value/summary.
+            if strength == "STRONG" or (
+                strength == "FORBIDDEN" and current["strength"] == "WEAK"
+            ):
+                current["strength"] = strength
+            summary = str(rule.get("summary") or "").strip()
+            if summary and summary not in current["summaryParts"]:
+                current["summaryParts"].append(summary)
+            _merge_json_value(current["value"], rule.get("value") or {})
+            for evidence in rule.get("evidence", []) or []:
+                if evidence not in current["evidence"] and len(current["evidence"]) < 8:
+                    current["evidence"].append(evidence)
+
+    _ground_missing_manual_modules(grouped, pages or [])
+
+    rules: list[dict[str, Any]] = []
+    for kind in order:
+        item = grouped.get(kind)
+        if not item:
+            continue
+        summaries = item.pop("summaryParts")
+        item["summary"] = "；".join(summaries[:6]) or f"从品牌手册提取的{kind}规范"
+        rules.append(item)
+
+    palette: list[str] = []
+    pairing: list[list[str]] = []
+    restrictions: list[str] = []
+    contrast: list[float] = []
+    consistency: list[float] = []
+    for result in results:
+        cs = result.get("colorSystem")
+        if not isinstance(cs, dict):
+            continue
+        for color in cs.get("palette", []) or []:
+            if color not in palette:
+                palette.append(color)
+        for pair in cs.get("pairing", []) or []:
+            if pair not in pairing:
+                pairing.append(pair)
+        for rule in cs.get("restrictions", []) or []:
+            if rule not in restrictions:
+                restrictions.append(rule)
+        contrast.append(float(cs.get("contrastScore", 0) or 0))
+        consistency.append(float(cs.get("consistencyScore", 0) or 0))
+    out: dict[str, Any] = {"rules": rules}
+    if palette:
+        out["colorSystem"] = {
+            "palette": palette,
+            "pairing": pairing,
+            "restrictions": restrictions,
+            "contrastScore": sum(contrast) / len(contrast) if contrast else 0,
+            "consistencyScore": sum(consistency) / len(consistency)
+            if consistency
+            else 0,
         }
     return out
 

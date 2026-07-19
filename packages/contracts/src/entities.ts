@@ -25,6 +25,13 @@ export const Evidence = z.object({
   bbox: z.tuple([z.number(), z.number(), z.number(), z.number()]).optional(),
   note: z.string().optional(),
   thumbnailUrl: z.string().optional(),
+  /**
+   * parse-manual bridge fields. `sourceRef` points at an extracted visual in
+   * ParseManualResponse until the web worker persists it as a real Asset and
+   * rewrites it to `assetId`; `page` preserves the human-verifiable PDF page.
+   */
+  sourceRef: z.string().optional(),
+  page: z.number().int().positive().optional(),
 });
 export type Evidence = z.infer<typeof Evidence>;
 

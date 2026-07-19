@@ -11,11 +11,12 @@ import {
 } from "../src/index";
 
 describe("Asset taxonomy — V0.0.9", () => {
-  it("accepts the three platform image library kinds", () => {
+  it("accepts the platform image and brand-kit library kinds", () => {
     expect(AssetLibraryKind.options).toEqual([
       "MATERIAL",
       "TEMPLATE",
       "GENERATED",
+      "BRAND_KIT",
     ]);
   });
 
@@ -49,7 +50,7 @@ describe("Asset taxonomy — V0.0.9", () => {
     );
     expect(Asset.safeParse(base).success).toBe(true);
     expect(Asset.safeParse({ ...base, libraryKind: "BRAND_KIT" }).success).toBe(
-      false,
+      true,
     );
   });
 

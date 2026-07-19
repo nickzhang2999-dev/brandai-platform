@@ -36,6 +36,7 @@ from .schemas import (
     IngestWebsiteRequest,
     IngestWebsiteResponse,
     ParseManualRequest,
+    ParseManualResponse,
     RecognizeRequest,
     RecognizeResponse,
     SummarizeRequest,
@@ -130,7 +131,10 @@ _RISK_LEXICON = {
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    # Exposed only through the authenticated/web health aggregator. The parser
+    # revision makes cross-branch CDS routing mistakes observable without
+    # exposing provider credentials or the internal AI API publicly.
+    return {"status": "ok", "parserRevision": "grounded-six-slot-r6"}
 
 
 @app.post("/v1/diag")
@@ -205,51 +209,111 @@ async def summarize(
     return SummarizeResponse(**data)
 
 
-async def _fetch_pdf_text(url: str) -> str:
-    """Download a PDF server-side (internal storage) and extract its text.
+_MAX_MANUAL_PAGES = 120
+_MANUAL_RENDER_MAX_EDGE = 1400
 
-    Asset URLs point at internal object storage a third-party model can't
-    reach — but we're on the internal network, so fetch the bytes here and
-    extract the text with pypdf. Returns "" on any failure so the provider
-    still emits a (possibly empty) valid RecognizeResponse rather than 500.
+
+def _page_data_url(image) -> str:
+    """Encode a rendered PDF page as bounded JPEG for multimodal analysis."""
+    image = image.convert("RGB")
+    image.thumbnail((_MANUAL_RENDER_MAX_EDGE, _MANUAL_RENDER_MAX_EDGE))
+    out = io.BytesIO()
+    image.save(out, format="JPEG", quality=82, optimize=True)
+    return "data:image/jpeg;base64," + base64.b64encode(out.getvalue()).decode()
+
+
+async def _fetch_pdf_manual(
+    url: str,
+) -> tuple[str, list[dict[str, Any]], int, list[str]]:
+    """Fetch and inspect a brand manual through text + rendered-page channels.
+
+    Text extraction alone misses scanned manuals and every visual rule shown in
+    logos, color cards, typography specimens and photography examples. PDFium
+    renders those pages so the VLM sees the actual manual; pypdf still provides
+    page-labelled text for exact names, hex values and prose constraints.
     """
     from pypdf import PdfReader
+    import pypdfium2 as pdfium
 
-    # 任何失败(SSRF 拦截 / HTTP 错误 / 非 PDF 字节 / pypdf 解析失败)都降级为空串,
-    # 让 /v1/parse-manual 仍返回合法(可能为空)的 RecognizeResponse 而非 500。
+    warnings: list[str] = []
     try:
         async with httpx.AsyncClient(timeout=settings.http_timeout) as c:
-            # SSRF: initial URL is trusted internal storage (PDF inlining);
-            # redirect hops are attacker-controllable via a saved WEBSITE/VI_DOC
-            # asset URL → validate them. safe_get raises on a private redirect.
             r = await safe_get(c, url, allow_private_initial=True)
             r.raise_for_status()
             content = r.content
+
         reader = PdfReader(io.BytesIO(content))
-        parts = [page.extract_text() or "" for page in reader.pages]
-        return "\n".join(p for p in parts if p).strip()
-    except Exception:  # noqa: BLE001 — best-effort, degrade to empty text
-        return ""
+        page_count = len(reader.pages)
+        text_parts: list[str] = []
+        page_texts: list[str] = []
+        for index, page in enumerate(reader.pages):
+            try:
+                page_text = (page.extract_text() or "").strip()
+            except Exception:  # noqa: BLE001 — one malformed page must not sink all
+                page_text = ""
+            page_texts.append(page_text)
+            if page_text:
+                text_parts.append(f"[第 {index + 1} 页]\n{page_text}")
+
+        rendered: list[dict[str, Any]] = []
+        document = pdfium.PdfDocument(content)
+        render_count = min(len(document), _MAX_MANUAL_PAGES)
+        if len(document) > _MAX_MANUAL_PAGES:
+            warnings.append(
+                f"手册共 {len(document)} 页；为保证任务有界，本次视觉解析前 {_MAX_MANUAL_PAGES} 页。"
+            )
+        for index in range(render_count):
+            try:
+                page = document[index]
+                # PDF points are usually ~600–900px at scale 1.5. Keep a hard
+                # edge cap during JPEG encoding to bound provider payload size.
+                bitmap = page.render(scale=1.5)
+                data_url = _page_data_url(bitmap.to_pil())
+                rendered.append(
+                    {
+                        "page": index + 1,
+                        "dataUrl": data_url,
+                        "text": page_texts[index] if index < len(page_texts) else "",
+                    }
+                )
+            except Exception as exc:  # noqa: BLE001 — retain other pages
+                logger.warning("manual page %s render failed: %s", index + 1, exc)
+        return "\n\n".join(text_parts).strip(), rendered, page_count, warnings
+    except Exception as exc:  # noqa: BLE001 — fail closed, never invent a kit
+        logger.warning("manual fetch/extraction failed: %s", exc)
+        return "", [], 0, ["PDF 无法读取或文件已损坏，请检查后重试。"]
 
 
-@app.post("/v1/parse-manual", response_model=RecognizeResponse, response_model_exclude_none=True)
+async def _fetch_pdf_text(url: str) -> str:
+    """Compatibility helper retained for direct extraction tests/callers."""
+    text, _pages, _count, _warnings = await _fetch_pdf_manual(url)
+    return text
+
+
+@app.post("/v1/parse-manual", response_model=ParseManualResponse, response_model_exclude_none=True)
 async def parse_manual(
     req: ParseManualRequest,
     vlm: VLMProvider = Depends(resolve_vlm_provider),
 ):
     """Parse a brand/VI manual PDF into DRAFT brand rules.
 
-    Reuses the recognition contract end-to-end: extract the PDF text, hand it
-    to the VLM's `parse_manual`, and return the same RecognizeResponse shape the
-    confirm workbench already consumes.
+    The VLM receives page-labelled text and rendered page images, then returns
+    editable rules plus cropped visual evidence for the six Brand Kit modules.
     """
-    text = await _fetch_pdf_text(req.url)
-    # 空文本(扫描件/加密 PDF/标错的 VI_DOC/抓取失败)不喂 VLM:模型(mock 与真实皆然)
-    # 会无视输入凭空"造"出规则,被 worker 落成 DRAFT 污染品牌知识库。直接返回空结果。
-    if not text.strip():
-        return RecognizeResponse(rules=[])
-    data = await vlm.parse_manual(text)
-    return RecognizeResponse(**data)
+    text, pages, page_count, warnings = await _fetch_pdf_manual(req.url)
+    # Fail closed only when neither channel yielded evidence. A scanned manual
+    # legitimately has no text but is still analyzable through rendered pages.
+    if not text.strip() and not pages:
+        return ParseManualResponse(
+            rules=[], pageCount=page_count, warnings=warnings
+        )
+    data = await vlm.parse_manual(text, pages=pages)
+    provider_warnings = data.pop("warnings", [])
+    return ParseManualResponse(
+        **data,
+        pageCount=page_count,
+        warnings=[*warnings, *provider_warnings],
+    )
 
 
 @app.post("/v1/generate", response_model=GenerateResponse, response_model_exclude_none=True)
@@ -263,18 +327,28 @@ async def generate(
     )
     # P1.2 — fold compiled promptAdditions into the prompt and machineRules
     # into width/height where possible.
-    # V0.0.13g — promptMode="direct"（对话来源）：prompt 只含用户 brief，
-    # 不加场景标签/Scene/品牌规则/Additions（文不对题修复：11 字指令曾被
-    # ~3000 字品牌倾倒淹没）。缺省 "branded" 行为逐字节不变。
+    # V0.0.18 — prompt policy is explicit:
+    #   direct: chat with no active Brand Kit → user brief only;
+    #   branded_direct: chat with an active Brand Kit → compact mandatory brand
+    #     boundary first, user brief second, without the legacy scene dump;
+    #   branded: legacy form/campaign path (unchanged).
     direct_mode = (req.promptMode or "branded") == "direct"
-    prompt_parts = (
-        [req.sellingPoint]
-        if direct_mode
-        else [
+    branded_direct_mode = req.promptMode == "branded_direct"
+    if direct_mode:
+        prompt_parts = [req.sellingPoint]
+    elif branded_direct_mode:
+        prompt_parts = [
+            (
+                "[MANDATORY BRAND BOUNDARY — apply before all creative choices] "
+                + (rule_summary or "Use the active Brand Kit exactly as supplied.")
+            ),
+            f"[USER CREATIVE BRIEF] {req.sellingPoint}",
+        ]
+    else:
+        prompt_parts = [
             f"[{req.sceneType}] {req.sellingPoint}. Scene: {req.scene}.",
             f"Brand rules: {rule_summary}",
         ]
-    )
     negative: list[str] = []
     machine_rules: dict[str, Any] = {}
     prompt_additions: list[str] = []
@@ -289,7 +363,13 @@ async def generate(
         prompt_additions = list(req.aiConstraints.promptAdditions or [])
         machine_rules = dict(req.aiConstraints.machineRules or {})
         if prompt_additions and not direct_mode:
-            prompt_parts.append("Additions: " + " | ".join(prompt_additions))
+            compiled = "[COMPILED BRAND CONSTRAINTS] " + " | ".join(prompt_additions)
+            if branded_direct_mode:
+                # Keep both brand blocks ahead of the user brief: model/provider
+                # ordering is the last portable priority signal before image gen.
+                prompt_parts.insert(1, compiled)
+            else:
+                prompt_parts.append("Additions: " + " | ".join(prompt_additions))
         reference_images = [
             r.model_dump(exclude_none=True)
             for r in req.aiConstraints.referenceImages
@@ -309,14 +389,21 @@ async def generate(
             )
             and r.get("url")
         ]
-        # 多图生图：与 contracts 的 max(8) 对齐 — 直连 /v1/generate 也被守住。
-        if len(strict_refs) > 8:
+        # 多图生图：用户显式 IMAGE_INPUT 仍与 contracts 的 max(8) 对齐。
+        # 自动 Brand Kit Logo 是服务端边界，不占用用户的 8 张输入配额；否则
+        # 用户选择 8 张合法输入后会被隐藏注入的第 9 张 Logo 意外打成 400。
+        user_strict_refs = [
+            r
+            for r in strict_refs
+            if not str(r.get("note") or "").startswith("BRAND_LOGO_LOCKED:")
+        ]
+        if len(user_strict_refs) > 8:
             raise HTTPException(
                 status_code=400,
                 detail=(
                     "At most 8 STRICT / IMAGE_INPUT reference images are "
                     "supported per generation; got "
-                    f"{len(strict_refs)}."
+                    f"{len(user_strict_refs)}."
                 ),
             )
         style_refs = [r for r in positive_refs if r not in strict_refs]
@@ -440,6 +527,11 @@ async def generate(
     _image_input_only = bool(strict_refs) and all(
         str(r.get("note") or "").startswith("IMAGE_INPUT") for r in strict_refs
     )
+    _brand_logo_refs = [
+        r
+        for r in strict_refs
+        if str(r.get("note") or "").startswith("BRAND_LOGO_LOCKED:")
+    ]
 
     async def _strict_edit_version(
         *,
@@ -449,7 +541,30 @@ async def generate(
     ) -> GeneratedVersion:
         if not strict_refs:
             raise RuntimeError("STRICT reference missing")
-        if _image_input_only:
+        if _brand_logo_refs:
+            n_user_refs = len(
+                [
+                    r
+                    for r in strict_refs
+                    if str(r.get("note") or "").startswith("IMAGE_INPUT")
+                ]
+            )
+            strict_prompt = (
+                "The BRAND_LOGO_LOCKED input is the authoritative project Brand "
+                "Kit logo. Use it to understand the exact brand identity and "
+                "palette. Reserve a clean, high-contrast safe area in the upper-"
+                "left for that exact logo. Do not draw, spell, reinterpret, invent "
+                "or substitute any logo or brand mark: the original pixels will "
+                "be composited into that safe area after generation."
+            )
+            if n_user_refs:
+                strict_prompt += (
+                    f" Use the other {n_user_refs} IMAGE_INPUT image(s) as "
+                    "mandatory visual inputs and follow the brief to transform "
+                    "or compose them."
+                )
+            strict_prompt += f"\n\nGeneration brief: {prompt}"
+        elif _image_input_only:
             n_refs = len(strict_refs)
             strict_prompt = (
                 f"Use the {n_refs} provided input image(s), in the given "

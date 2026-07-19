@@ -1,7 +1,7 @@
 {
   "name": "brandai",
   "private": true,
-  "version": "0.0.12",
+  "version": "0.0.17",
   "packageManager": "pnpm@9.15.0",
   "engines": {
     "node": ">=20"
@@ -13,7 +13,8 @@
     "typecheck": "turbo run typecheck",
     "db:generate": "pnpm --filter @brandai/db generate",
     "db:migrate": "pnpm --filter @brandai/db migrate",
-    "db:push": "pnpm --filter @brandai/db push",
+    "db:deploy": "pnpm --filter @brandai/db run deploy",
+    "db:push": "pnpm run db:deploy",
     "db:seed": "pnpm --filter @brandai/db seed",
     "test": "turbo run test",
     "test:unit": "pnpm --filter @brandai/contracts test",

@@ -60,6 +60,12 @@ type DraggedAsset = {
   height?: number;
 };
 
+export type CanvasLibraryAsset = {
+  id: string;
+  fileName?: string;
+  thumbUrl?: string;
+};
+
 const ZOOM_MIN = 0.1;
 const ZOOM_MAX = 4;
 const MIN_SIZE = 32;
@@ -157,6 +163,12 @@ export function OpenCanvas({
   selectNonce,
   fitKey,
   onUploadImage,
+  materialAssets = [],
+  templateAssets = [],
+  onOpenMaterialLibrary,
+  onOpenTemplateLibrary,
+  onRemoveMaterial,
+  onRemoveTemplate,
   onUserPickImage,
   onBlankClick,
   chatRefStates,
@@ -191,6 +203,12 @@ export function OpenCanvas({
     height?: number;
     assetId?: string;
   }>;
+  materialAssets?: CanvasLibraryAsset[];
+  templateAssets?: CanvasLibraryAsset[];
+  onOpenMaterialLibrary?: () => void;
+  onOpenTemplateLibrary?: () => void;
+  onRemoveMaterial?: (assetId: string) => void;
+  onRemoveTemplate?: (assetId: string) => void;
   /** 用户「真实点击」某图片 item（出图变体或上传/素材图；非拖拽、非程序化选择同步）
    *  时回传。与 onSelectVersion 分离：后者由选择同步 effect 驱动、会因回调身份变化
    *  重放，不能承载「点选插入引用」这类一次性用户意图（V0.0.13c/13d 对话点选取图）。
@@ -693,13 +711,10 @@ export function OpenCanvas({
   }, [commitTextEdit, editingText]);
 
   // ---- 坐标转换 ----
-  const toWorld = useCallback(
-    (sx: number, sy: number) => {
-      const { zoom: z, camera: c } = vpRef.current;
-      return { x: (sx - c.x) / z, y: (sy - c.y) / z };
-    },
-    [],
-  );
+  const toWorld = useCallback((sx: number, sy: number) => {
+    const { zoom: z, camera: c } = vpRef.current;
+    return { x: (sx - c.x) / z, y: (sy - c.y) / z };
+  }, []);
   const localPoint = (e: { clientX: number; clientY: number }) => {
     const r = containerRef.current!.getBoundingClientRect();
     return { x: e.clientX - r.left, y: e.clientY - r.top };
@@ -741,7 +756,10 @@ export function OpenCanvas({
     const pad = 80;
     const z = Math.min(
       ZOOM_MAX,
-      Math.max(ZOOM_MIN, Math.min((r.width - pad) / bw, (r.height - pad) / bh, 1)),
+      Math.max(
+        ZOOM_MIN,
+        Math.min((r.width - pad) / bw, (r.height - pad) / bh, 1),
+      ),
     );
     setZoom(z);
     setCamera({
@@ -821,7 +839,12 @@ export function OpenCanvas({
         setEditingText(null);
       } else if (e.key.startsWith("Arrow") && selected.size) {
         e.preventDefault();
-        const d = { ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0] }[e.key]!;
+        const d = {
+          ArrowUp: [0, -1],
+          ArrowDown: [0, 1],
+          ArrowLeft: [-1, 0],
+          ArrowRight: [1, 0],
+        }[e.key]!;
         const step = e.shiftKey ? 10 : 1;
         setItems((p) =>
           p.map((it) =>
@@ -1043,13 +1066,33 @@ export function OpenCanvas({
       const files = Array.from(ev.clipboardData?.files ?? []).filter((f) =>
         f.type.startsWith("image/"),
       );
-      if (files.length === 0) return;
+      if (files.length > 0) {
+        ev.preventDefault();
+        void uploadFiles(files);
+        return;
+      }
+      const text = ev.clipboardData?.getData("text/plain")?.trim();
+      if (!text) return;
       ev.preventDefault();
-      void uploadFiles(files);
+      const c = centerScreen();
+      const wp = toWorld(c.x, c.y);
+      const item: CanvasItem = {
+        key: uid("text"),
+        kind: "text",
+        x: wp.x - 160,
+        y: wp.y - 44,
+        w: 320,
+        h: 88,
+        text: text.slice(0, 500),
+        fontSize: 22,
+        color: "rgb(31 31 42)",
+      };
+      setItems((prev) => [...prev, item]);
+      setSelected(new Set([item.key]));
     };
     window.addEventListener("paste", onPaste);
     return () => window.removeEventListener("paste", onPaste);
-  }, [uploadFiles]);
+  }, [toWorld, uploadFiles]);
 
   // ---- 指针手势 ----
   const beginPan = (e: React.PointerEvent) => {
@@ -1089,7 +1132,8 @@ export function OpenCanvas({
   const addImageAtScreenPoint = useCallback(
     (asset: DraggedAsset, sx: number, sy: number) => {
       if (!asset.url) return;
-      const ratio = asset.width && asset.height ? asset.width / asset.height : 1;
+      const ratio =
+        asset.width && asset.height ? asset.width / asset.height : 1;
       const w = 240;
       const h = Math.round(w / (ratio || 1));
       const wp = toWorld(sx, sy);
@@ -1191,7 +1235,10 @@ export function OpenCanvas({
     const g = gestureRef.current;
     if (!g) return;
     if (g.type === "pan") {
-      setCamera({ x: g.cam.x + (e.clientX - g.sx), y: g.cam.y + (e.clientY - g.sy) });
+      setCamera({
+        x: g.cam.x + (e.clientX - g.sx),
+        y: g.cam.y + (e.clientY - g.sy),
+      });
       return;
     }
     if (g.type === "marquee") {
@@ -1339,6 +1386,9 @@ export function OpenCanvas({
       onDragOver={(e) => {
         if (
           e.dataTransfer.types.includes("application/x-brandai-asset") ||
+          Array.from(e.dataTransfer.items).some(
+            (item) => item.kind === "file" && item.type.startsWith("image/"),
+          ) ||
           e.dataTransfer.types.includes("Files")
         ) {
           e.preventDefault();
@@ -1488,7 +1538,10 @@ export function OpenCanvas({
                   commitTextEdit(it.key, e.target.value);
                 }}
                 className="h-full w-full resize-none rounded-[6px] border border-primary/40 bg-card p-1 outline-none"
-                style={{ fontSize: (it.fontSize ?? 18) * zoom, color: it.color }}
+                style={{
+                  fontSize: (it.fontSize ?? 18) * zoom,
+                  color: it.color,
+                }}
               />
             ) : (
               <div
@@ -1672,10 +1725,18 @@ export function OpenCanvas({
         onPointerDown={(e) => e.stopPropagation()}
         className="absolute left-4 top-1/2 z-20 flex -translate-y-1/2 flex-col gap-1.5 rounded-2xl border border-border bg-card/95 p-2 shadow-[0_14px_40px_rgba(30,30,60,0.12)] backdrop-blur"
       >
-        <ToolBtn active={tool === "select" && !placing} title="选择" onClick={() => pickTool("select")}>
+        <ToolBtn
+          active={tool === "select" && !placing}
+          title="选择"
+          onClick={() => pickTool("select")}
+        >
           <CursorIcon />
         </ToolBtn>
-        <ToolBtn active={handCursor} title="移动画布(手型/空格)" onClick={() => pickTool("hand")}>
+        <ToolBtn
+          active={handCursor}
+          title="移动画布(手型/空格)"
+          onClick={() => pickTool("hand")}
+        >
           <HandIcon />
         </ToolBtn>
         <span className="my-0.5 h-px bg-border" />
@@ -1704,16 +1765,32 @@ export function OpenCanvas({
           <span className="text-sm font-semibold">T</span>
         </ToolBtn>
         <span className="my-0.5 h-px bg-border" />
-        <ToolBtn title="上移一层" disabled={!selected.size} onClick={() => reorder("up")}>
+        <ToolBtn
+          title="上移一层"
+          disabled={!selected.size}
+          onClick={() => reorder("up")}
+        >
           <span className="text-xs">↑</span>
         </ToolBtn>
-        <ToolBtn title="下移一层" disabled={!selected.size} onClick={() => reorder("down")}>
+        <ToolBtn
+          title="下移一层"
+          disabled={!selected.size}
+          onClick={() => reorder("down")}
+        >
           <span className="text-xs">↓</span>
         </ToolBtn>
-        <ToolBtn title="置顶" disabled={!selected.size} onClick={() => reorder("front")}>
+        <ToolBtn
+          title="置顶"
+          disabled={!selected.size}
+          onClick={() => reorder("front")}
+        >
           <span className="text-[10px] font-semibold">顶</span>
         </ToolBtn>
-        <ToolBtn title="置底" disabled={!selected.size} onClick={() => reorder("back")}>
+        <ToolBtn
+          title="置底"
+          disabled={!selected.size}
+          onClick={() => reorder("back")}
+        >
           <span className="text-[10px] font-semibold">底</span>
         </ToolBtn>
         <span className="my-0.5 h-px bg-border" />
@@ -1722,11 +1799,11 @@ export function OpenCanvas({
           disabled={!selected.size}
           onClick={() => {
             setItems((p) => {
-            for (const it of p)
-              if (selected.has(it.key) && it.versionId)
-                removedVersionIdsRef.current.add(it.versionId);
-            return p.filter((it) => !selected.has(it.key));
-          });
+              for (const it of p)
+                if (selected.has(it.key) && it.versionId)
+                  removedVersionIdsRef.current.add(it.versionId);
+              return p.filter((it) => !selected.has(it.key));
+            });
             bumpRemovedNonce();
             setSelected(new Set());
           }}
@@ -1734,6 +1811,160 @@ export function OpenCanvas({
           <TrashIcon />
         </ToolBtn>
       </div>
+
+      {/* Lovart-style 快捷工具坞:把素材库/模板库/上传/粘贴入口放到画布操作区。 */}
+      <div
+        onPointerDown={(e) => e.stopPropagation()}
+        className="absolute bottom-4 left-1/2 z-30 flex -translate-x-1/2 items-center gap-1.5 rounded-2xl border border-border bg-card/95 p-2 shadow-[0_14px_40px_rgba(30,30,60,0.14)] backdrop-blur"
+      >
+        <DockBtn
+          active={tool === "select" && !placing}
+          title="选择"
+          onClick={() => pickTool("select")}
+        >
+          <CursorIcon />
+        </DockBtn>
+        <DockBtn
+          title="素材库"
+          badge={materialAssets.length || undefined}
+          onClick={() => onOpenMaterialLibrary?.()}
+        >
+          素材
+        </DockBtn>
+        <DockBtn
+          title="模板库"
+          badge={templateAssets.length || undefined}
+          onClick={() => onOpenTemplateLibrary?.()}
+        >
+          模板
+        </DockBtn>
+        <span className="h-6 w-px bg-border" />
+        <DockBtn title="本地上传图片" onClick={triggerUpload}>
+          上传
+        </DockBtn>
+        <DockBtn title="复制图片后在画布直接粘贴">粘贴</DockBtn>
+        <span className="h-6 w-px bg-border" />
+        <DockBtn
+          active={placing?.kind === "text"}
+          title="添加文字"
+          onClick={() => setPlacing({ kind: "text" })}
+        >
+          文字
+        </DockBtn>
+        <DockBtn
+          active={placing?.kind === "shape" && placing.shapeType === "rect"}
+          title="添加矩形"
+          onClick={() => setPlacing({ kind: "shape", shapeType: "rect" })}
+        >
+          方形
+        </DockBtn>
+      </div>
+
+      {materialAssets.length ? (
+        <div
+          onPointerDown={(e) => e.stopPropagation()}
+          className="absolute bottom-20 left-4 z-30 flex max-w-[min(36rem,calc(100%-2rem))] items-center gap-2 overflow-x-auto rounded-2xl border border-border bg-card/95 p-2 shadow-[0_14px_40px_rgba(30,30,60,0.12)] backdrop-blur"
+        >
+          <span className="shrink-0 px-1 text-xs font-medium text-muted-foreground">
+            素材
+          </span>
+          {onRemoveMaterial ? (
+            <button
+              type="button"
+              onClick={() =>
+                materialAssets.forEach((asset) => onRemoveMaterial(asset.id))
+              }
+              className="shrink-0 rounded-full px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-muted"
+            >
+              清空
+            </button>
+          ) : null}
+          {materialAssets.map((asset) => (
+            <button
+              key={asset.id}
+              type="button"
+              draggable={!!asset.thumbUrl}
+              onClick={() =>
+                addImageAtScreenPoint(
+                  {
+                    id: asset.id,
+                    url: asset.thumbUrl,
+                    fileName: asset.fileName ?? "素材",
+                  },
+                  centerScreen().x,
+                  centerScreen().y,
+                )
+              }
+              onDragStart={(e) => {
+                e.dataTransfer.setData(
+                  "application/x-brandai-asset",
+                  JSON.stringify({
+                    id: asset.id,
+                    url: asset.thumbUrl,
+                    fileName: asset.fileName ?? "素材",
+                  }),
+                );
+                e.dataTransfer.effectAllowed = "copy";
+              }}
+              className="group relative h-14 w-14 shrink-0 overflow-hidden rounded-xl border border-border bg-background transition-colors hover:border-primary/40"
+              title={asset.fileName ?? "素材"}
+            >
+              {asset.thumbUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={asset.thumbUrl}
+                  alt={asset.fileName ?? "素材"}
+                  className="h-full w-full object-cover"
+                  draggable={false}
+                />
+              ) : (
+                <span className="flex h-full w-full items-center justify-center text-xs text-muted-foreground">
+                  素材
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      {templateAssets.length ? (
+        <div
+          onPointerDown={(e) => e.stopPropagation()}
+          className="absolute bottom-20 right-4 z-30 flex max-w-xs items-center gap-2 rounded-2xl border border-primary/20 bg-card/95 p-2 text-xs text-muted-foreground shadow-[0_14px_40px_rgba(30,30,60,0.12)] backdrop-blur"
+        >
+          <span className="font-medium text-primary">
+            参考图 {templateAssets.length}
+          </span>
+          <div className="flex -space-x-2">
+            {templateAssets.slice(0, 4).map((asset) => (
+              <span
+                key={asset.id}
+                className="relative block h-9 w-9 overflow-hidden rounded-full border-2 border-card bg-background"
+                title={asset.fileName ?? "参考图"}
+              >
+                {asset.thumbUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={asset.thumbUrl}
+                    alt={asset.fileName ?? "参考图"}
+                    className="h-full w-full object-cover"
+                    draggable={false}
+                  />
+                ) : null}
+              </span>
+            ))}
+          </div>
+          {onRemoveTemplate && templateAssets.length === 1 ? (
+            <button
+              type="button"
+              onClick={() => onRemoveTemplate(templateAssets[0]!.id)}
+              className="rounded-full px-2 py-1 text-muted-foreground hover:bg-muted"
+            >
+              移除
+            </button>
+          ) : null}
+        </div>
+      ) : null}
 
       {/* 放置提示 */}
       {placing ? (
@@ -1785,7 +2016,11 @@ export function OpenCanvas({
                     setArmedOp((prev) => (prev === o.value ? null : o.value));
                   }
                 }}
-                title={o.mask ? "在图片上涂抹要重绘的区域" : `选「${o.label}」,再输入指令出图`}
+                title={
+                  o.mask
+                    ? "在图片上涂抹要重绘的区域"
+                    : `选「${o.label}」,再输入指令出图`
+                }
                 className={[
                   "rounded-full px-2.5 py-1 text-xs transition-colors disabled:opacity-50",
                   o.mask
@@ -1805,7 +2040,12 @@ export function OpenCanvas({
             onChange={(e) => edit.onInstrChange(e.target.value)}
             onPointerDown={(e) => e.stopPropagation()}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && armedOp && edit.instr.trim() && !edit.busy) {
+              if (
+                e.key === "Enter" &&
+                armedOp &&
+                edit.instr.trim() &&
+                !edit.busy
+              ) {
                 e.preventDefault();
                 edit.onRun(soloVersion, armedOp);
               }
@@ -1965,7 +2205,9 @@ function CanvasEmpty({
       {timedOut ? (
         <>
           <div className="text-sm text-warning">生成超时</div>
-          <p className="mt-1 text-xs text-muted-foreground">可能仍在后台,稍后重试。</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            可能仍在后台,稍后重试。
+          </p>
         </>
       ) : status === "FAILED" ? (
         <>
@@ -2027,33 +2269,110 @@ function ToolBtn({
   );
 }
 
+function DockBtn({
+  active,
+  disabled,
+  title,
+  badge,
+  onClick,
+  children,
+}: {
+  active?: boolean;
+  disabled?: boolean;
+  title: string;
+  badge?: number;
+  onClick?: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      title={title}
+      aria-label={title}
+      disabled={disabled}
+      onClick={onClick}
+      onPointerDown={(e) => e.stopPropagation()}
+      className={[
+        "relative flex h-9 min-w-9 items-center justify-center rounded-xl px-2.5 text-xs font-medium transition-colors disabled:opacity-35",
+        active
+          ? "bg-primary text-primary-foreground"
+          : "text-muted-foreground hover:bg-muted hover:text-foreground",
+      ].join(" ")}
+    >
+      {children}
+      {badge ? (
+        <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] leading-none text-primary-foreground">
+          {badge}
+        </span>
+      ) : null}
+    </button>
+  );
+}
+
 function CursorIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
-      <path d="m4 3 7 17 2.5-6.5L20 11 4 3Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+      <path
+        d="m4 3 7 17 2.5-6.5L20 11 4 3Z"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
 function HandIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
-      <path d="M6 11V6.5a1.5 1.5 0 0 1 3 0V11m0-1.5v-3a1.5 1.5 0 0 1 3 0V11m0-1.5a1.5 1.5 0 0 1 3 0V12m0-.5a1.5 1.5 0 0 1 3 0V15a5 5 0 0 1-5 5h-1.5a5 5 0 0 1-4.2-2.3L5 14.5c-.6-1 .2-2 1.2-1.7L9 14" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      <path
+        d="M6 11V6.5a1.5 1.5 0 0 1 3 0V11m0-1.5v-3a1.5 1.5 0 0 1 3 0V11m0-1.5a1.5 1.5 0 0 1 3 0V12m0-.5a1.5 1.5 0 0 1 3 0V15a5 5 0 0 1-5 5h-1.5a5 5 0 0 1-4.2-2.3L5 14.5c-.6-1 .2-2 1.2-1.7L9 14"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
 function ImageIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
-      <rect x="3" y="4" width="18" height="16" rx="2.5" stroke="currentColor" strokeWidth="1.8" />
-      <circle cx="8.5" cy="9.5" r="1.6" stroke="currentColor" strokeWidth="1.5" />
-      <path d="m4 17 5-4 4 3 3-2 4 3" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      <rect
+        x="3"
+        y="4"
+        width="18"
+        height="16"
+        rx="2.5"
+        stroke="currentColor"
+        strokeWidth="1.8"
+      />
+      <circle
+        cx="8.5"
+        cy="9.5"
+        r="1.6"
+        stroke="currentColor"
+        strokeWidth="1.5"
+      />
+      <path
+        d="m4 17 5-4 4 3 3-2 4 3"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
 function TrashIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
-      <path d="M4 7h16M9 7V5h6v2m-7 0 1 13h6l1-13" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+      <path
+        d="M4 7h16M9 7V5h6v2m-7 0 1 13h6l1-13"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }

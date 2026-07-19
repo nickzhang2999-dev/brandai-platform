@@ -42,7 +42,7 @@ const RANGES: { key: RangeKey; label: string; days?: number }[] = [
 ];
 
 export default function CampaignsPage() {
-  const { wsId, brandName } = useBrand();
+  const { wsId, brandName, brands } = useBrand();
   const qc = useQueryClient();
   const [activeId, setActiveId] = useState<string | null>(null);
   const [filterKey, setFilterKey] = useState("all");
@@ -62,6 +62,9 @@ export default function CampaignsPage() {
   // a filter while a dialog is open could re-target the confirm/summary action
   // to a different visible project.
   const [dialogProjectId, setDialogProjectId] = useState<string | null>(null);
+  const kitEnabled = !brands
+    .find((brand) => brand.id === wsId)
+    ?.tags?.includes("__kb_disabled");
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["brandai-projects-all"] });
@@ -375,6 +378,7 @@ export default function CampaignsPage() {
         <RulesPanel
           wsId={active?.workspaceId ?? wsId}
           brandName={brandName}
+          enabled={kitEnabled}
           onClose={() => setViewingRules(false)}
         />
       ) : null}
@@ -506,7 +510,6 @@ const RULE_TYPE_META: Record<string, { label: string; icon: string }> = {
   color: { label: "颜色", icon: "◉" },
   layout: { label: "设计指南", icon: "▤" },
   imagery: { label: "图像", icon: "▦" },
-  copy: { label: "品牌指南", icon: "❝" },
   graphic: { label: "设计元素", icon: "✦" },
 };
 const RULE_TYPE_ORDER = [
@@ -515,7 +518,6 @@ const RULE_TYPE_ORDER = [
   "color",
   "layout",
   "imagery",
-  "copy",
   "graphic",
 ];
 const STRENGTH_META: Record<string, { label: string; cls: string }> = {
@@ -534,17 +536,21 @@ const STRENGTH_META: Record<string, { label: string; cls: string }> = {
 function RulesPanel({
   wsId,
   brandName,
+  enabled,
   onClose,
 }: {
   wsId: string;
   brandName: string;
+  enabled: boolean;
   onClose: () => void;
 }) {
   const { data: rules = [], isLoading } = useQuery({
     queryKey: ["brandai-rules", wsId],
     queryFn: () => apiFetch<BrandRule[]>(`/api/workspaces/${wsId}/rules`),
   });
-  const confirmed = rules.filter((r) => r.status === "CONFIRMED");
+  const confirmed = enabled
+    ? rules.filter((r) => r.status === "CONFIRMED" && r.type !== "copy")
+    : [];
   const groups = RULE_TYPE_ORDER.map((type) => ({
     type,
     meta: RULE_TYPE_META[type]!,
@@ -587,10 +593,13 @@ function RulesPanel({
               <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-accent-soft text-2xl text-primary">
                 ◎
               </div>
-              <div className="text-sm font-semibold">暂无已确认规范</div>
+              <div className="text-sm font-semibold">
+                {enabled ? "暂无已确认规范" : "品牌套件暂未应用到项目"}
+              </div>
               <p className="mx-auto mt-2 max-w-xs text-xs leading-relaxed text-muted-foreground">
-                去「品牌套件」沉淀并确认 logo / 字体 / 颜色 /
-                设计指南 / 图像 / 品牌指南，确认后会在这里展示并约束出图。
+                {enabled
+                  ? "去「品牌套件」沉淀并确认 Logo、字体、颜色、设计指南和图像，确认后会在这里展示并约束出图。"
+                  : "请先在品牌套件中开启「应用到项目」，项目才能调用其中的规则。"}
               </p>
               <a href="/brand-knowledge">
                 <Button variant="outline" className="mt-4">

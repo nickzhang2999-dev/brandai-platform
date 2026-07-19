@@ -51,8 +51,14 @@ class VLMProvider(ABC):
         """Return recognized brand rules + color system."""
 
     @abstractmethod
-    async def parse_manual(self, text: str) -> dict[str, Any]:
-        """Return recognized brand rules (+ color system) from manual text."""
+    async def parse_manual(
+        self, text: str, pages: list[dict[str, Any]] | None = None
+    ) -> dict[str, Any]:
+        """Return rules, color system and visual crops from a brand manual.
+
+        ``pages`` contains rendered PDF-page images plus page-local text. It is
+        optional so text-only callers and deterministic mocks stay compatible.
+        """
 
     @abstractmethod
     async def check_visual_compliance(

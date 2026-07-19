@@ -4,13 +4,7 @@ import {
   dedupedSceneCount,
   resolveGenerationDefaults,
 } from "@brandai/contracts";
-import {
-  ApiException,
-  handleError,
-  ok,
-  parse,
-  requireUser,
-} from "@/lib/api";
+import { ApiException, handleError, ok, parse, requireUser } from "@/lib/api";
 import { requireWorkspaceRole } from "@/lib/workspace";
 import { generateQueue } from "@/lib/queue";
 import { getGeneration } from "@/lib/generations";
@@ -67,9 +61,13 @@ export async function POST(
     // Hard-block gate — runs once for the whole kit.
     if (constraintsEnabled()) {
       const [brandRules, prohRows] = await Promise.all([
-        getConfirmedRules(wsId),
+        getConfirmedRules(wsId, { respectKitAvailability: true }),
         prisma.prohibitionRule.findMany({
-          where: { workspaceId: wsId, status: "ACTIVE", affectsGeneration: true },
+          where: {
+            workspaceId: wsId,
+            status: "ACTIVE",
+            affectsGeneration: true,
+          },
         }),
       ]);
       const compiled = compileAIConstraints(

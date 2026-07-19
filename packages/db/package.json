@@ -1,6 +1,6 @@
 {
   "name": "@brandai/db",
-  "version": "0.0.12",
+  "version": "0.0.17",
   "private": true,
   "type": "module",
   "main": "./src/index.ts",
@@ -11,6 +11,7 @@
   "scripts": {
     "generate": "prisma generate",
     "migrate": "prisma migrate dev",
+    "deploy": "sh ../../scripts/prisma-deploy-safe.sh",
     "push": "prisma db push",
     "seed": "tsx prisma/seed.ts",
     "studio": "prisma studio",
