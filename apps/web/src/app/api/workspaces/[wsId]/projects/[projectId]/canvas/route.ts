@@ -62,6 +62,10 @@ async function filterAndNormalizeCanvasItems<
             // mimeType image/ 闸拒掉——留下无法使用的服务端权威 tile。与
             // 对话 chip 校验同口径在源头剔除。
             mimeType: { startsWith: "image/" },
+            // 生命周期闸同口径（Codex P2）：被管理员停用出图的素材 tile 恢复
+            // 后点选即插入必被 /generations 拒绝的 ASSET chip——画布是生成
+            // 表面，停用素材与非图片素材一样在读写两侧剔除。
+            availableForGeneration: true,
           },
           select: { id: true },
         })
