@@ -147,6 +147,7 @@ export type CanvasEditBridge = {
 
 export function OpenCanvas({
   seedVersions,
+  seedReady = false,
   running,
   status,
   timedOut,
@@ -164,6 +165,10 @@ export function OpenCanvas({
   edit,
 }: {
   seedVersions: GenerationVersion[];
+  /** 当前 Campaign 的历史查询是否已成功加载。seed 成员剪枝只在 true 时执行——
+   *  切 Campaign 后新 key 的 history 尚未返回时 seed 短暂为空/不全，此时剪枝会
+   *  把水合恢复的本项目版本 tile 误删（丢自定义布局）。 */
+  seedReady?: boolean;
   running: boolean;
   status: string | null;
   timedOut: boolean;
@@ -503,6 +508,15 @@ export function OpenCanvas({
           (it) =>
             !it.versionId || !removedVersionIdsRef.current.has(it.versionId),
         )
+        // seed 成员剪枝（Codex P2）：seed = 本 Campaign 全部 generation 的版本
+        // 并集（page.tsx 已做项目一致性闸）。不在其中的版本 tile 要么是切
+        // Campaign 过渡帧里混进来的他项目 tile，要么是已被服务端删除
+        // （regenerate dropStaleRoots）的死 tile——留着会渲染出点选即报错的
+        // 幽灵图。仅在 seedReady（新 key 的 history 已加载）时剪，避免把
+        // 水合恢复的本项目 tile 在 seed 就位前误删。
+        .filter(
+          (it) => !it.versionId || !seedReady || byId.has(it.versionId),
+        )
         .map((it) => {
           // 版本 id 不变但 imageUrl/尺寸后续可能被轮询更新(如占位→真图) → 同步到
           // 已存在的画布 tile,否则会停在旧值/空白(Bugbot)。只同步图源与自然尺寸,
@@ -554,7 +568,7 @@ export function OpenCanvas({
       });
       return [...kept, ...add];
     });
-  }, [seedVersions]);
+  }, [seedVersions, seedReady]);
 
   // items 变化后(尤其切 generation 时版本 tile 被裁剪)把 selected 收敛到仍存在的 key ——
   // 否则被移除版本的 key 残留在 selected 里,图层/删除条仍高亮可点、键盘操作打到「幽灵

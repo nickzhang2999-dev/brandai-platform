@@ -560,7 +560,9 @@ function Workspace() {
   // 历史出图回看 — 进入工作台默认能看到本 Campaign 已生成的图，而不是空态。
   // 接现成的 GET /generations?projectId=（listProjectGenerations，newest first）。
   // 修复「产出蒸发」：刷新/切项目/换设备后历史出图不再消失。
-  const { data: history = [] } = useQuery<Generation[]>({
+  const { data: history = [], isSuccess: historyLoaded } = useQuery<
+    Generation[]
+  >({
     queryKey: ["brandai-project-gens", wsId, projectId],
     queryFn: () =>
       apiFetch<Generation[]>(
@@ -783,9 +785,15 @@ function Workspace() {
   const seedVersionsAll = useMemo(() => {
     const m = new Map<string, GenerationVersion>();
     for (const g of history) for (const v of g.versions ?? []) m.set(v.id, v);
-    for (const v of versions) m.set(v.id, v);
+    // 切 Campaign 的过渡渲染帧里 projectId 已是新项目、poll 仍是旧项目
+    // generation 的滞后数据（genId 重置 effect 晚一拍）——不加项目一致性闸，
+    // 旧项目的版本会经 seed 铺进新项目画布，点选还会插入被 Campaign 作用域
+    // 提交拒绝的 VERSION chip（Codex P2）。history 本身按 projectId 查询，天然干净。
+    if (poll?.generation && poll.generation.projectId === projectId) {
+      for (const v of versions) m.set(v.id, v);
+    }
     return [...m.values()];
-  }, [history, versions]);
+  }, [history, versions, poll, projectId]);
   const running =
     !!genId && status !== "SUCCEEDED" && status !== "FAILED" && !timedOut;
   const current = versions[activeVariant] ?? versions[0];
@@ -1291,6 +1299,7 @@ function Workspace() {
         <div className="flex min-h-0 flex-col bg-background p-4">
           <OpenCanvas
             seedVersions={seedVersionsAll}
+            seedReady={historyLoaded}
             running={running}
             status={status}
             timedOut={timedOut}
