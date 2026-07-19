@@ -399,9 +399,11 @@ export function OpenCanvas({
     const json = JSON.stringify(body);
     // 基线比对时忽略 camera 精度抖动之外的等值（简单字符串比对足够：内容一致即跳过）。
     if (json === lastSavedRef.current) return;
-    // keepalive：防抖窗口内刷新/关页，PUT 仍能发出并送达 —— 否则在途丢失后，
-    // 新页面加载态的补救保存会用旧数据覆盖（last-writer-wins 丢更新，灰度实测踩中）。
-    const put = () => {
+    // keepalive 只用于离页 flush（浏览器对 keepalive 请求体有 ~64KB 上限，
+    // 大画布常态自动保存若带 keepalive 会在客户端直接 reject、保存静默失效
+    // —— Codex P2）。常态防抖走普通 fetch；刷新/关页时才用 keepalive 让
+    // 在途 PUT 于页面卸载后仍能送达（防 last-writer-wins 丢更新，灰度实测踩中）。
+    const put = (useKeepalive: boolean) => {
       lastSavedRef.current = json;
       pendingSaveRef.current = null;
       void fetch(
@@ -410,7 +412,7 @@ export function OpenCanvas({
           method: "PUT",
           headers: { "content-type": "application/json" },
           body: json,
-          keepalive: true,
+          ...(useKeepalive ? { keepalive: true } : {}),
         },
       ).then(
         (r) => {
@@ -422,16 +424,16 @@ export function OpenCanvas({
       );
     };
     pendingSaveRef.current = put;
-    const t = window.setTimeout(put, 1200);
+    const t = window.setTimeout(() => put(false), 1200);
     return () => window.clearTimeout(t);
   }, [items, camera, zoom, removedNonce, hydrated, persistWs, persistProject]);
 
   // 离页 flush：防抖计时器尚未触发就刷新/关页 → 立即把待保存状态发出去
   //（fetch keepalive 允许请求在页面卸载后完成）。
-  const pendingSaveRef = useRef<(() => void) | null>(null);
+  const pendingSaveRef = useRef<((useKeepalive: boolean) => void) | null>(null);
   useEffect(() => {
     const flush = () => {
-      pendingSaveRef.current?.();
+      pendingSaveRef.current?.(true);
     };
     window.addEventListener("pagehide", flush);
     window.addEventListener("beforeunload", flush);
@@ -440,6 +442,17 @@ export function OpenCanvas({
       window.removeEventListener("beforeunload", flush);
     };
   }, []);
+
+  // 切项目/卸载 flush（Codex P2）：SPA 内切 Campaign 不触发 pagehide，若仍在
+  // 1.2s 防抖窗口内，旧项目的最后编辑会随 clearTimeout 一起丢。此 effect 只随
+  // 持久化作用域变化清理——pending 闭包捕获的是旧作用域的 URL 与 JSON，此刻
+  // 直接发出（页面未卸载，普通 fetch 即可），不会写进新项目。
+  useEffect(() => {
+    return () => {
+      pendingSaveRef.current?.(false);
+      pendingSaveRef.current = null;
+    };
+  }, [persistWs, persistProject]);
 
   // 出图变体 → 画布图片 item:增量合并(保留手工布局/形状/文字;切 generation 时
   // 移除已不在的版本;改图新子版本自动作为新 item 浮现)。

@@ -57,9 +57,51 @@ export async function PUT(
     if (!project) throw new ApiException(404, "Project not found");
 
     const body = parse(UpsertCanvasInputSchema, await req.json());
+    const rawItems = body.items ?? [];
+
+    // 归属校验（多租户隔离标准 #2，Codex P2）：items 引用的 version/asset 必须
+    // 属于本 workspace。跨空间注入或已失效（删除/弃用）的引用直接剔除后落库——
+    // 自愈而非 400，避免一条陈旧引用把自动保存永久打死。
+    const versionIds = new Set<string>();
+    const assetIds = new Set<string>();
+    for (const it of rawItems) {
+      if (it.kind !== "image") continue;
+      if (it.versionId) versionIds.add(it.versionId);
+      if (it.assetId) assetIds.add(it.assetId);
+    }
+    const [okVersionRows, okAssetRows] = await Promise.all([
+      versionIds.size > 0
+        ? prisma.generationVersion.findMany({
+            where: {
+              id: { in: [...versionIds] },
+              generation: { workspaceId: wsId },
+            },
+            select: { id: true },
+          })
+        : Promise.resolve([]),
+      assetIds.size > 0
+        ? prisma.asset.findMany({
+            where: {
+              id: { in: [...assetIds] },
+              workspaceId: wsId,
+              deprecatedAt: null,
+            },
+            select: { id: true },
+          })
+        : Promise.resolve([]),
+    ]);
+    const okVersions = new Set(okVersionRows.map((v) => v.id));
+    const okAssets = new Set(okAssetRows.map((a) => a.id));
+    const items = rawItems.filter((it) => {
+      if (it.kind !== "image") return true;
+      if (it.versionId && !okVersions.has(it.versionId)) return false;
+      if (it.assetId && !okAssets.has(it.assetId)) return false;
+      return true;
+    });
+
     const data = {
       workspaceId: wsId,
-      items: body.items as object[],
+      items: items as object[],
       camera: body.camera ?? Prisma.JsonNull,
       removedVersionIds: body.removedVersionIds,
     };
