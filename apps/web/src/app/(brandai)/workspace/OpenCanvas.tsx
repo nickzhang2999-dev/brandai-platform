@@ -357,17 +357,37 @@ export function OpenCanvas({
   // 1200ms 防抖保存（prd_agent autosave 同款节奏）；内容未变不发；失败下次重试。
   useEffect(() => {
     if (!persistWs || !persistProject || !hydrated) return;
-    const manual = items
-      .filter(
-        (it) =>
-          !(
-            it.kind === "image" &&
-            (!it.imageUrl ||
-              it.imageUrl.startsWith("data:") ||
-              it.imageUrl.startsWith("blob:"))
-          ),
-      )
-      .slice(0, 200)
+    const eligible = items.filter(
+      (it) =>
+        !(
+          it.kind === "image" &&
+          (!it.imageUrl ||
+            it.imageUrl.startsWith("data:") ||
+            it.imageUrl.startsWith("blob:"))
+        ),
+    );
+    // 200 上限的预算先给手工元素（上传/形状/文字/素材 tile），再给播种的
+    // 版本 tile（Codex P2）：全量播种可能把 200 个版本 tile 排在数组前部，
+    // 若从头截断，之后新增的手工元素永远进不了 PUT——本地可见、刷新即丢。
+    // 版本 tile 即使被挤出持久化，恢复时也会由播种流程重新铺上（仅丢布局）。
+    const keepKeys = new Set<string>();
+    let budget = 200;
+    for (const it of eligible) {
+      if (budget <= 0) break;
+      if (!(it.kind === "image" && it.versionId)) {
+        keepKeys.add(it.key);
+        budget--;
+      }
+    }
+    for (const it of eligible) {
+      if (budget <= 0) break;
+      if (it.kind === "image" && it.versionId && !keepKeys.has(it.key)) {
+        keepKeys.add(it.key);
+        budget--;
+      }
+    }
+    const manual = eligible
+      .filter((it) => keepKeys.has(it.key))
       .map((it) =>
         it.kind === "image"
           ? {

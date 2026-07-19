@@ -552,6 +552,12 @@ export function ChatPanel({
       return true;
     } catch (e) {
       setErr(e instanceof Error ? e.message : "发送失败");
+      // 失败也刷新会话流（Codex P2）：硬禁令路径服务端已落一条 FAILED 行
+      // （带 chatContext）再回 422——不失效查询的话，被拦下的消息气泡与
+      // 重试入口要等手动刷新才可见。非落库失败（配额/网络）多刷一次无害。
+      void qc.invalidateQueries({
+        queryKey: ["brandai-project-gens", wsId, projectId],
+      });
       return false;
     } finally {
       sendingRef.current = false;
