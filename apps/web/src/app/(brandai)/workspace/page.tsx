@@ -745,12 +745,18 @@ function Workspace() {
 
   // 点击历史缩略图回看某次出图：复用整套机制（轮询无 jobId → 回退 SUCCEEDED，
   // 改图/终选/导出/审阅全部对该历史出图生效）。
-  function viewGeneration(id: string) {
+  function viewGeneration(id: string, focusVersionId?: string | null) {
     if (id === genId) return;
     setGenId(id);
     setJobId(null);
     setTimedOut(false);
-    setActiveVariant(0);
+    // 点选历史 tile 切 generation 时保持点的那张为当前变体（Codex P2）：
+    // 默认回 0 号会让选中框与 终稿/导出/审阅 动作跳到该 generation 的第一张图。
+    const owner = focusVersionId ? history.find((g) => g.id === id) : undefined;
+    const idx = focusVersionId
+      ? (owner?.versions ?? []).findIndex((v) => v.id === focusVersionId)
+      : -1;
+    setActiveVariant(idx >= 0 ? idx : 0);
     setSubmitErr(null);
   }
 
@@ -1111,7 +1117,7 @@ function Workspace() {
           const owner = history.find((g) =>
             (g.versions ?? []).some((v) => v.id === pick.versionId),
           );
-          if (owner) viewGeneration(owner.id);
+          if (owner) viewGeneration(owner.id, pick.versionId);
         }
         chatPickImage(
           {

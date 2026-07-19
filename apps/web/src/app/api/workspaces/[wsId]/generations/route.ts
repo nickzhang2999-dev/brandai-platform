@@ -318,6 +318,10 @@ export async function POST(
               compiled.blockers
                 .map((b) => `[${b.source}] ${b.reason}`)
                 .join("; "),
+            // 对话来源同样落 chatContext（Codex P2）：ChatPanel 只渲染
+            // chatContext 非空的行，缺了它被硬禁令拦下的对话消息在
+            // 刷新/重取后会从会话流里消失，失败气泡与重试入口一并丢失。
+            ...(chatContext ? { chatContext } : {}),
           },
         });
         throw new ApiException(
