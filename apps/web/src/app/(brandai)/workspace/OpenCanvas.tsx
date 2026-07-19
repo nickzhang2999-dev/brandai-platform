@@ -447,6 +447,20 @@ export function OpenCanvas({
     const put = (useKeepalive: boolean) => {
       lastSavedRef.current = json;
       pendingSaveRef.current = null;
+      // 失败自愈（Codex P2）：防抖 effect 只在内容变化时重跑——瞬时 500/网络
+      // 抖动后用户不再编辑或直接刷新，最后一次编辑就永远丢了（pending 已在
+      // 发送前清空，离页 flush 也无从重发）。失败时恢复 pending（离页/切项目
+      // flush 可重发）+ 4s 定时重试；若期间有更新的保存接管（pending 被新
+      // 闭包覆盖）则放弃，避免旧 JSON 迟到覆盖新状态（last-writer-wins）。
+      const onFail = () => {
+        lastSavedRef.current = "";
+        if (pendingSaveRef.current === null) {
+          pendingSaveRef.current = put;
+          window.setTimeout(() => {
+            if (pendingSaveRef.current === put) put(false);
+          }, 4000);
+        }
+      };
       void fetch(
         `/api/workspaces/${persistWs}/projects/${persistProject}/canvas`,
         {
@@ -457,10 +471,10 @@ export function OpenCanvas({
         },
       ).then(
         (r) => {
-          if (!r.ok) lastSavedRef.current = "";
+          if (!r.ok) onFail();
         },
         () => {
-          lastSavedRef.current = "";
+          onFail();
         },
       );
     };
