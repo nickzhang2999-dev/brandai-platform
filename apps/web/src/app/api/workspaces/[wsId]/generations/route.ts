@@ -141,7 +141,11 @@ export async function POST(
           ? prisma.generationVersion.findMany({
               where: {
                 id: { in: inputVersionIds },
-                generation: { workspaceId: wsId },
+                // VERSION chip 按 Campaign 作用域校验（Codex P2）：画布/历史
+                // 都是 project 级表面，只卡 workspace 会让切 Campaign 后的
+                // 陈旧 composer chip / 构造请求把 A 项目的出图喂进 B 项目的
+                // 生成输入并写进 B 的 chatContext。与画布 PUT 同口径。
+                generation: { workspaceId: wsId, projectId: input.projectId },
               },
               select: { id: true, imageUrl: true },
             })
@@ -152,6 +156,9 @@ export async function POST(
                 id: { in: inputAssetIds },
                 workspaceId: wsId,
                 deprecatedAt: null,
+                // 与表单参考素材路径同一道生命周期闸（Codex P2）：被管理员
+                // 停用出图的素材不得经对话 chip 绕进 STRICT 输入。
+                availableForGeneration: true,
                 mimeType: { startsWith: "image/" },
               },
               select: { id: true, url: true },
@@ -172,15 +179,18 @@ export async function POST(
         );
       }
       const versionUrlMap = new Map(versionRows.map((v) => [v.id, v.imageUrl]));
-      const assetUrlMap = new Map(assetRows.map((a) => [a.id, a.url]));
       chatContext = {
         displayText: input.chatDisplayText ?? "",
         imageInputs: imageInputs.map((r) => ({
           kind: r.kind,
           id: r.id,
+          // ASSET 存工作区代理路径而非原始存储 URL（Codex P2）：内网/私有
+          // 存储域名对浏览器不可达，历史气泡里的素材 chip 会裂图；代理路径
+          // 与上传路径的 assetThumbUrl 口径一致。worker 侧自行从 DB 解析
+          // 真实 URL，不消费这里的展示 URL。
           ...(r.kind === "VERSION"
             ? { url: versionUrlMap.get(r.id) }
-            : { url: assetUrlMap.get(r.id) ?? undefined }),
+            : { url: `/api/workspaces/${wsId}/assets/${r.id}/raw` }),
         })),
       };
     }
@@ -307,6 +317,10 @@ export async function POST(
               compiled.blockers
                 .map((b) => `[${b.source}] ${b.reason}`)
                 .join("; "),
+            // 对话来源同样落 chatContext（Codex P2）：ChatPanel 只渲染
+            // chatContext 非空的行，缺了它被硬禁令拦下的对话消息在
+            // 刷新/重取后会从会话流里消失，失败气泡与重试入口一并丢失。
+            ...(chatContext ? { chatContext } : {}),
           },
         });
         throw new ApiException(

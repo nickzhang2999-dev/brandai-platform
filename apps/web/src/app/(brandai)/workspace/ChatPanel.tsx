@@ -9,7 +9,7 @@ import {
   type MutableRefObject,
 } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import type { Generation } from "@brandai/contracts";
+import type { Generation, WatermarkOverlayInput } from "@brandai/contracts";
 import { apiFetch } from "@/lib/client";
 import {
   buildModelBrief,
@@ -218,6 +218,9 @@ export function ChatPanel({
   projectId,
   sceneType,
   onViewGeneration,
+  onSubmitted,
+  presetBrief,
+  watermarkOverlays,
   insertRef,
   onComposerRefsChange,
   onPasteImage,
@@ -225,13 +228,23 @@ export function ChatPanel({
   wsId: string;
   projectId: string | null;
   sceneType: string;
+  /** 页面侧已配置的水印/logo 叠加（启用且非 REFERENCE 模式）。对话是唯一生成
+      入口（生成表单已删），不透传的话已配置水印的 Campaign 出图会静默丢
+      logo/水印——worker 对 chat-origin 同样支持确定性合成（Codex P2）。 */
+  watermarkOverlays?: WatermarkOverlayInput[];
   onViewGeneration: (generationId: string) => void;
+  /** 提交成功后回调（新 generation + jobId）——页面切换选中出图，让新图直接
+      落画布轮询，不必等用户手点「查看」（Codex P2）。 */
+  onSubmitted?: (generationId: string, jobId: string | null) => void;
   /** 页面侧点选图片（画布/变体条/历史条）→ composer 操控 API 的桥。 */
   insertRef?: MutableRefObject<ChatComposerApi | null>;
   /** 输入框内当前引用（有序 id + 就绪态）变化时回调，供源图显示选中态。 */
   onComposerRefsChange?: (refs: { id: string; ready: boolean }[]) => void;
   /** 输入框内粘贴图片 → 交给页面上传进画布（prd_agent 途径4：图片落画布不落输入框）。 */
   onPasteImage?: (files: File[]) => void;
+  /** 首页「开始创作」/模板库经 ?brief= 直达工作台的起始提示词（Codex P2）：
+      生成表单已删，brief 落进对话输入框；仅在参数真实变化且输入框为空时播种。 */
+  presetBrief?: string | null;
 }) {
   const qc = useQueryClient();
   const composerRef = useRef<HTMLDivElement | null>(null);
@@ -239,6 +252,10 @@ export function ChatPanel({
   const [pendingCount, setPendingCount] = useState(0);
   const [composerEmpty, setComposerEmpty] = useState(true);
   const [sending, setSending] = useState(false);
+  // 在途防连击（Codex P2）：contentEditable 里连按 Enter 不经过按钮 disabled，
+  // sending state 的闭包也可能滞后一拍——用 ref 做同步闸，杜绝同一份输入
+  // 重复 POST /generations（重复扣配额 + 重复起 job）。
+  const sendingRef = useRef(false);
   const [err, setErr] = useState<string | null>(null);
   const [sizeOpen, setSizeOpen] = useState(false);
   const [sizeIdx, setSizeIdx] = useState(0);
@@ -304,6 +321,23 @@ export function ChatPanel({
       chips.map((c) => ({ id: c.dataset.id ?? "", ready: c.dataset.ready === "1" })),
     );
   }, [onComposerRefsChange]);
+
+  // 首页 brief 播种（Codex P2）：`/workspace?brief=...` 到达时把起始提示词落进
+  // 对话输入框——生成表单删除后这是唯一生成入口，否则首页 CTA 的 brief 会被
+  // 静默丢弃。仅在 brief 参数真实变化（真导航）且输入框为空时播种，绝不覆盖
+  // 用户已输入的内容；播种后同步状态让发送按钮立即可用。
+  useEffect(() => {
+    const brief = presetBrief?.trim();
+    if (!brief) return;
+    const el = composerRef.current;
+    if (!el) return;
+    const hasContent =
+      (el.textContent ?? "").trim() !== "" ||
+      el.querySelector("[data-chat-chip]") !== null;
+    if (hasContent) return;
+    el.textContent = brief;
+    syncComposerState();
+  }, [presetBrief, syncComposerState]);
 
   /**
    * V0.0.13f — 选区 → chip 文本 token（复制/剪切）。选区含 chip 时返回
@@ -467,19 +501,25 @@ export function ChatPanel({
     return tokens;
   }
 
+  /** 返回是否提交成功——失败时调用方保留输入框内容让用户改后重试（Codex P2）。 */
   async function submit(payload: {
     displayText: string;
     imageInputs: ChatComposerRef[];
-  }) {
+  }): Promise<boolean> {
+    if (sendingRef.current) return false;
     if (!projectId) {
       setErr("请先选择项目");
-      return;
+      return false;
     }
     const size = SIZE_OPTIONS[sizeIdx] ?? SIZE_OPTIONS[0];
+    sendingRef.current = true;
     setSending(true);
     setErr(null);
     try {
-      await apiFetch(`/api/workspaces/${wsId}/generations`, {
+      const res = await apiFetch<{
+        generation: { id: string };
+        jobId: string | null;
+      }>(`/api/workspaces/${wsId}/generations`, {
         method: "POST",
         body: JSON.stringify({
           projectId,
@@ -503,15 +543,34 @@ export function ChatPanel({
                 })),
               }
             : {}),
+          // Campaign 配置的水印/logo 与旧表单提交同口径透传（Codex P2）：
+          // direct prompt 只改提示词组装，水印是安全底线之一、照叠。
+          ...(watermarkOverlays && watermarkOverlays.length > 0
+            ? { watermarkOverlays }
+            : {}),
           chatDisplayText: payload.displayText,
         }),
       });
+      // 新出图立即成为当前选中——画布直接开始轮询渲染，不必等用户点「查看」
+      // （父级只在 genId 为空时才从 history 播种，Codex P2）。
+      if (res?.generation?.id) {
+        onSubmitted?.(res.generation.id, res.jobId ?? null);
+      }
       await qc.invalidateQueries({
         queryKey: ["brandai-project-gens", wsId, projectId],
       });
+      return true;
     } catch (e) {
       setErr(e instanceof Error ? e.message : "发送失败");
+      // 失败也刷新会话流（Codex P2）：硬禁令路径服务端已落一条 FAILED 行
+      // （带 chatContext）再回 422——不失效查询的话，被拦下的消息气泡与
+      // 重试入口要等手动刷新才可见。非落库失败（配额/网络）多刷一次无害。
+      void qc.invalidateQueries({
+        queryKey: ["brandai-project-gens", wsId, projectId],
+      });
+      return false;
     } finally {
+      sendingRef.current = false;
       setSending(false);
     }
   }
@@ -523,7 +582,9 @@ export function ChatPanel({
     confirmPending();
     const { displayText, imageInputs } = serializeComposerTokens(domToTokens(el));
     if (displayText.trim() === "" && imageInputs.length === 0) return;
-    await submit({ displayText, imageInputs });
+    const ok = await submit({ displayText, imageInputs });
+    // 失败（配额/引用失效/网络抖动）保留提示词与 chip，让用户修改后重试。
+    if (!ok) return;
     el.innerHTML = "";
     syncComposerState();
   }

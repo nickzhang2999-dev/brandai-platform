@@ -754,7 +754,6 @@ export async function runGenerateJob(
       ...(automaticBrandLogoOverlay ? [automaticBrandLogoOverlay] : []),
     ];
 
-    const appliedRuleIds = brandRules.map((r) => r.id);
     const sceneType = generation.sceneType;
 
     // Re-generate: capture prior root versions but DON'T delete them yet —
@@ -809,7 +808,10 @@ export async function runGenerateJob(
           ? prisma.generationVersion.findMany({
               where: {
                 id: { in: versionIds },
-                generation: { workspaceId },
+                // 与 route 层同口径按 Campaign 作用域（Codex P2）：VERSION
+                // 输入必须属于本次出图所在 project，防止跨 Campaign 的出图
+                // 经陈旧/构造 job 泄入本项目的生成输入。
+                generation: { workspaceId, projectId: generation.projectId },
               },
               select: { id: true, imageUrl: true },
             })
@@ -820,6 +822,9 @@ export async function runGenerateJob(
                 id: { in: assetIds },
                 workspaceId,
                 deprecatedAt: null,
+                // 生命周期闸与 route 同口径：入队后素材被停用出图的窗口期
+                // 也拦住（解析不到 → 抛可读错误 → FAILED）。
+                availableForGeneration: true,
                 mimeType: { startsWith: "image/" },
               },
               select: { id: true, url: true, source: true },
@@ -904,6 +909,11 @@ export async function runGenerateJob(
           appliedReferenceImages: aiConstraints.referenceImages,
         }
       : {};
+
+    // 审计留痕与实际发给 AI 的规则同源（Codex P2）：chat-origin/direct 分支
+    // 刻意不发品牌规则（baseFields.brandRules = []），若仍把全量 confirmed
+    // 规则 id 盖进版本 params，导出/审计会声称这些规则塑造了图——与事实相反。
+    const appliedRuleIds = baseFields.brandRules.map((r) => r.id);
 
     async function persist(
       v: GenerateResponse["versions"][number],

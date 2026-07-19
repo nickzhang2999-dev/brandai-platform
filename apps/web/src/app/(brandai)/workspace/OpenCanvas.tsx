@@ -153,6 +153,7 @@ export type CanvasEditBridge = {
 
 export function OpenCanvas({
   seedVersions,
+  seedReady = false,
   running,
   status,
   timedOut,
@@ -176,6 +177,10 @@ export function OpenCanvas({
   edit,
 }: {
   seedVersions: GenerationVersion[];
+  /** 当前 Campaign 的历史查询是否已成功加载。seed 成员剪枝只在 true 时执行——
+   *  切 Campaign 后新 key 的 history 尚未返回时 seed 短暂为空/不全，此时剪枝会
+   *  把水合恢复的本项目版本 tile 误删（丢自定义布局）。 */
+  seedReady?: boolean;
   running: boolean;
   status: string | null;
   timedOut: boolean;
@@ -290,7 +295,17 @@ export function OpenCanvas({
     }
     let cancelled = false;
     setHydrated(false);
+    // 切 Campaign（Codex P2）：先清掉上一项目残留在内存的 items——否则下方
+    // 恢复合并的 extra 过滤会把 A 项目的版本 tile 保进 B 的画布，且随后的
+    // 自动保存会把它们持久化进 B 的 ProjectCanvas（route 归属校验只到
+    // workspace 级，拦不住同空间跨项目）。旧项目的待保存已由作用域 flush
+    // effect 在本效果重跑前发出；seed 合并只在 seedVersions 身份变化时重跑，
+    // 清空后不会用旧 generation 的 versions 把它们加回来。
+    setItems([]);
+    removedVersionIdsRef.current = new Set();
+    lastSavedRef.current = "";
     (async () => {
+      let restored = false;
       try {
         const res = await fetch(
           `/api/workspaces/${persistWs}/projects/${persistProject}/canvas`,
@@ -345,10 +360,16 @@ export function OpenCanvas({
           camera: data.camera ?? null,
           removedVersionIds: [...removedVersionIdsRef.current].sort(),
         });
+        restored = true;
       } catch {
-        /* 恢复失败 → 空画布继续可用；下一次编辑照常保存 */
+        /* 读取异常 → 走下方 finally 的「未恢复不放开保存」路径 */
       } finally {
-        if (!cancelled) setHydrated(true);
+        // 只有成功恢复才放开自动保存（Codex P2）：读取失败（瞬时非 200 /
+        // 网络异常）时 items 已被上方作用域清空，若照旧置 hydrated，自动
+        // 保存会把空画布 PUT 覆盖服务端已存状态。代价是失败这次会话的
+        // 编辑不入库（画布仍可用，刷新即重试恢复+恢复保存），比静默清库安全。
+        // 真空画布不受影响：route 无记录时返回 200 空态，restored 照常为真。
+        if (!cancelled && restored) setHydrated(true);
       }
     })();
     return () => {
@@ -359,17 +380,37 @@ export function OpenCanvas({
   // 1200ms 防抖保存（prd_agent autosave 同款节奏）；内容未变不发；失败下次重试。
   useEffect(() => {
     if (!persistWs || !persistProject || !hydrated) return;
-    const manual = items
-      .filter(
-        (it) =>
-          !(
-            it.kind === "image" &&
-            (!it.imageUrl ||
-              it.imageUrl.startsWith("data:") ||
-              it.imageUrl.startsWith("blob:"))
-          ),
-      )
-      .slice(0, 200)
+    const eligible = items.filter(
+      (it) =>
+        !(
+          it.kind === "image" &&
+          (!it.imageUrl ||
+            it.imageUrl.startsWith("data:") ||
+            it.imageUrl.startsWith("blob:"))
+        ),
+    );
+    // 200 上限的预算先给手工元素（上传/形状/文字/素材 tile），再给播种的
+    // 版本 tile（Codex P2）：全量播种可能把 200 个版本 tile 排在数组前部，
+    // 若从头截断，之后新增的手工元素永远进不了 PUT——本地可见、刷新即丢。
+    // 版本 tile 即使被挤出持久化，恢复时也会由播种流程重新铺上（仅丢布局）。
+    const keepKeys = new Set<string>();
+    let budget = 200;
+    for (const it of eligible) {
+      if (budget <= 0) break;
+      if (!(it.kind === "image" && it.versionId)) {
+        keepKeys.add(it.key);
+        budget--;
+      }
+    }
+    for (const it of eligible) {
+      if (budget <= 0) break;
+      if (it.kind === "image" && it.versionId && !keepKeys.has(it.key)) {
+        keepKeys.add(it.key);
+        budget--;
+      }
+    }
+    const manual = eligible
+      .filter((it) => keepKeys.has(it.key))
       .map((it) =>
         it.kind === "image"
           ? {
@@ -417,39 +458,55 @@ export function OpenCanvas({
     const json = JSON.stringify(body);
     // 基线比对时忽略 camera 精度抖动之外的等值（简单字符串比对足够：内容一致即跳过）。
     if (json === lastSavedRef.current) return;
-    // keepalive：防抖窗口内刷新/关页，PUT 仍能发出并送达 —— 否则在途丢失后，
-    // 新页面加载态的补救保存会用旧数据覆盖（last-writer-wins 丢更新，灰度实测踩中）。
-    const put = () => {
+    // keepalive 只用于离页 flush（浏览器对 keepalive 请求体有 ~64KB 上限，
+    // 大画布常态自动保存若带 keepalive 会在客户端直接 reject、保存静默失效
+    // —— Codex P2）。常态防抖走普通 fetch；刷新/关页时才用 keepalive 让
+    // 在途 PUT 于页面卸载后仍能送达（防 last-writer-wins 丢更新，灰度实测踩中）。
+    const put = (useKeepalive: boolean) => {
       lastSavedRef.current = json;
       pendingSaveRef.current = null;
+      // 失败自愈（Codex P2）：防抖 effect 只在内容变化时重跑——瞬时 500/网络
+      // 抖动后用户不再编辑或直接刷新，最后一次编辑就永远丢了（pending 已在
+      // 发送前清空，离页 flush 也无从重发）。失败时恢复 pending（离页/切项目
+      // flush 可重发）+ 4s 定时重试；若期间有更新的保存接管（pending 被新
+      // 闭包覆盖）则放弃，避免旧 JSON 迟到覆盖新状态（last-writer-wins）。
+      const onFail = () => {
+        lastSavedRef.current = "";
+        if (pendingSaveRef.current === null) {
+          pendingSaveRef.current = put;
+          window.setTimeout(() => {
+            if (pendingSaveRef.current === put) put(false);
+          }, 4000);
+        }
+      };
       void fetch(
         `/api/workspaces/${persistWs}/projects/${persistProject}/canvas`,
         {
           method: "PUT",
           headers: { "content-type": "application/json" },
           body: json,
-          keepalive: true,
+          ...(useKeepalive ? { keepalive: true } : {}),
         },
       ).then(
         (r) => {
-          if (!r.ok) lastSavedRef.current = "";
+          if (!r.ok) onFail();
         },
         () => {
-          lastSavedRef.current = "";
+          onFail();
         },
       );
     };
     pendingSaveRef.current = put;
-    const t = window.setTimeout(put, 1200);
+    const t = window.setTimeout(() => put(false), 1200);
     return () => window.clearTimeout(t);
   }, [items, camera, zoom, removedNonce, hydrated, persistWs, persistProject]);
 
   // 离页 flush：防抖计时器尚未触发就刷新/关页 → 立即把待保存状态发出去
   //（fetch keepalive 允许请求在页面卸载后完成）。
-  const pendingSaveRef = useRef<(() => void) | null>(null);
+  const pendingSaveRef = useRef<((useKeepalive: boolean) => void) | null>(null);
   useEffect(() => {
     const flush = () => {
-      pendingSaveRef.current?.();
+      pendingSaveRef.current?.(true);
     };
     window.addEventListener("pagehide", flush);
     window.addEventListener("beforeunload", flush);
@@ -458,6 +515,17 @@ export function OpenCanvas({
       window.removeEventListener("beforeunload", flush);
     };
   }, []);
+
+  // 切项目/卸载 flush（Codex P2）：SPA 内切 Campaign 不触发 pagehide，若仍在
+  // 1.2s 防抖窗口内，旧项目的最后编辑会随 clearTimeout 一起丢。此 effect 只随
+  // 持久化作用域变化清理——pending 闭包捕获的是旧作用域的 URL 与 JSON，此刻
+  // 直接发出（页面未卸载，普通 fetch 即可），不会写进新项目。
+  useEffect(() => {
+    return () => {
+      pendingSaveRef.current?.(false);
+      pendingSaveRef.current = null;
+    };
+  }, [persistWs, persistProject]);
 
   // 出图变体 → 画布图片 item:增量合并(保留手工布局/形状/文字;切 generation 时
   // 移除已不在的版本;改图新子版本自动作为新 item 浮现)。
@@ -471,6 +539,15 @@ export function OpenCanvas({
         .filter(
           (it) =>
             !it.versionId || !removedVersionIdsRef.current.has(it.versionId),
+        )
+        // seed 成员剪枝（Codex P2）：seed = 本 Campaign 全部 generation 的版本
+        // 并集（page.tsx 已做项目一致性闸）。不在其中的版本 tile 要么是切
+        // Campaign 过渡帧里混进来的他项目 tile，要么是已被服务端删除
+        // （regenerate dropStaleRoots）的死 tile——留着会渲染出点选即报错的
+        // 幽灵图。仅在 seedReady（新 key 的 history 已加载）时剪，避免把
+        // 水合恢复的本项目 tile 在 seed 就位前误删。
+        .filter(
+          (it) => !it.versionId || !seedReady || byId.has(it.versionId),
         )
         .map((it) => {
           // 版本 id 不变但 imageUrl/尺寸后续可能被轮询更新(如占位→真图) → 同步到
@@ -499,17 +576,31 @@ export function OpenCanvas({
         (v) => !have.has(v.id) && !removedVersionIdsRef.current.has(v.id),
       );
       if (fresh.length === 0) return kept;
-      // 新 tile 落在现有内容包围盒下方一行（避免与累积的旧图/手动元素重叠）。
+      // 新 tile 落在现有内容包围盒下方（避免与累积的旧图/手动元素重叠）。
+      // 4 列换行：历史 generation 全量回填（老项目首次进入）可能一次落几十张，
+      // 单行会拉出超长横条。
       const maxY = kept.length
         ? Math.max(...kept.map((it) => it.y + it.h))
         : -64;
+      const COLS = 4;
+      let rowY = maxY + 64;
+      let colX = 0;
+      let rowH = 0;
       const add = fresh.map((v, i) => {
         const item = imageItemFromVersion(v, i);
-        return { ...item, x: i * (item.w + 48), y: maxY + 64 };
+        if (i > 0 && i % COLS === 0) {
+          rowY += rowH + 48;
+          colX = 0;
+          rowH = 0;
+        }
+        const placed = { ...item, x: colX, y: rowY };
+        colX += item.w + 48;
+        rowH = Math.max(rowH, item.h);
+        return placed;
       });
       return [...kept, ...add];
     });
-  }, [seedVersions]);
+  }, [seedVersions, seedReady]);
 
   // items 变化后(尤其切 generation 时版本 tile 被裁剪)把 selected 收敛到仍存在的 key ——
   // 否则被移除版本的 key 残留在 selected 里,图层/删除条仍高亮可点、键盘操作打到「幽灵

@@ -262,6 +262,20 @@ function Workspace() {
   const presetScene = search.get("scene");
   const presetSceneType = search.get("sceneType");
   const presetStyle = search.get("style");
+  // 首页/模板库直达工作台的起始提示词（Codex P2）：生成表单已删，brief/scene/
+  // style 不再有表单可落——合成一段可编辑文本播种进对话输入框（用户所见即所发，
+  // direct prompt 原文送模型）。三段都空则不播种。
+  const chatPresetBrief = useMemo(() => {
+    const brief = presetBrief?.trim().slice(0, 500) ?? "";
+    const scene = presetScene?.trim() ?? "";
+    const styles = parseStyleParam(presetStyle);
+    const parts = [
+      brief,
+      scene,
+      styles.length > 0 ? `风格：${styles.join("、")}` : "",
+    ].filter(Boolean);
+    return parts.length > 0 ? parts.join("，") : null;
+  }, [presetBrief, presetScene, presetStyle]);
 
   const { data: projects = [], isFetched: projectsFetched } = useQuery({
     queryKey: ["brandai-projects", wsId],
@@ -553,7 +567,9 @@ function Workspace() {
   // 历史出图回看 — 进入工作台默认能看到本 Campaign 已生成的图，而不是空态。
   // 接现成的 GET /generations?projectId=（listProjectGenerations，newest first）。
   // 修复「产出蒸发」：刷新/切项目/换设备后历史出图不再消失。
-  const { data: history = [] } = useQuery<Generation[]>({
+  const { data: history = [], isSuccess: historyLoaded } = useQuery<
+    Generation[]
+  >({
     queryKey: ["brandai-project-gens", wsId, projectId],
     queryFn: () =>
       apiFetch<Generation[]>(
@@ -738,10 +754,29 @@ function Workspace() {
 
   // 点击历史缩略图回看某次出图：复用整套机制（轮询无 jobId → 回退 SUCCEEDED，
   // 改图/终选/导出/审阅全部对该历史出图生效）。
-  function viewGeneration(id: string) {
+  function viewGeneration(id: string, focusVersionId?: string | null) {
     if (id === genId) return;
     setGenId(id);
     setJobId(null);
+    setTimedOut(false);
+    // 点选历史 tile 切 generation 时保持点的那张为当前变体（Codex P2）：
+    // 默认回 0 号会让选中框与 终稿/导出/审阅 动作跳到该 generation 的第一张图。
+    const owner = focusVersionId ? history.find((g) => g.id === id) : undefined;
+    const idx = focusVersionId
+      ? (owner?.versions ?? []).findIndex((v) => v.id === focusVersionId)
+      : -1;
+    setActiveVariant(idx >= 0 ? idx : 0);
+    setSubmitErr(null);
+  }
+
+  // 对话面板提交成功 → 新出图立即成为当前选中（带 jobId 走完整 job 轮询），
+  // 画布无需用户手点「查看」即渲染新图（Codex P2）。
+  function onChatSubmitted(id: string, job: string | null) {
+    // 有 jobId 即实时出图：先起本地计时表——超时 effect 用 startedAt 判 6 分钟
+    // 上界，不起表会以 0 为起点、约 3 秒就误判超时（Codex P2）。
+    startedAt.current = Date.now();
+    setGenId(id);
+    setJobId(job);
     setTimedOut(false);
     setActiveVariant(0);
     setSubmitErr(null);
@@ -749,6 +784,23 @@ function Workspace() {
 
   const status = poll?.job?.status ?? poll?.generation.status ?? null;
   const versions = useMemo(() => poll?.generation.versions ?? [], [poll]);
+  // Codex P2 — 历史 generation 全量落画布：变体/历史条已删、ChatPanel 只显示
+  // 对话来源的气泡，老项目（本次迁移前的表单出图）若不落 tile 将没有任何
+  // 编辑/终稿/导出/审阅入口。画布是唯一图片表面：把所有 generation 的版本
+  // 并入 seed（当前轮询数据后写入覆盖，保证占位→真图实时刷新）；用户删除的
+  // tile 仍由 removedVersionIds 持久化管辖，不会被重新播回。
+  const seedVersionsAll = useMemo(() => {
+    const m = new Map<string, GenerationVersion>();
+    for (const g of history) for (const v of g.versions ?? []) m.set(v.id, v);
+    // 切 Campaign 的过渡渲染帧里 projectId 已是新项目、poll 仍是旧项目
+    // generation 的滞后数据（genId 重置 effect 晚一拍）——不加项目一致性闸，
+    // 旧项目的版本会经 seed 铺进新项目画布，点选还会插入被 Campaign 作用域
+    // 提交拒绝的 VERSION chip（Codex P2）。history 本身按 projectId 查询，天然干净。
+    if (poll?.generation && poll.generation.projectId === projectId) {
+      for (const v of versions) m.set(v.id, v);
+    }
+    return [...m.values()];
+  }, [history, versions, poll, projectId]);
   // 只有服务端明确返回 PENDING/RUNNING 才展示“生成中”。进入/切回工作台时
   // genId 可能已由历史出图播种，但轮询数据尚未返回，此时 status=null；旧逻辑会把
   // 这个空状态误当作运行中，导致用户未下达任务也看到“AI 正在生成…”。
@@ -1074,6 +1126,15 @@ function Workspace() {
     ) => {
       if (pick.versionId) {
         const picked = versions.find((x) => x.id === pick.versionId);
+        // 点选的是历史 generation 的累积 tile（不在当前 gen 的 versions 里）→
+        // 顺带把工作台切到该次出图，否则 soloVersion 解析不到、选中后没有
+        // 改图/终稿/导出/审阅 操作条（Codex P2；改图等端点也按 genId 作用域）。
+        if (!picked) {
+          const owner = history.find((g) =>
+            (g.versions ?? []).some((v) => v.id === pick.versionId),
+          );
+          if (owner) viewGeneration(owner.id, pick.versionId);
+        }
         chatPickImage(
           {
             kind: "VERSION",
@@ -1092,7 +1153,9 @@ function Workspace() {
         );
       }
     },
-    [versions, chatPickImage],
+    // viewGeneration 是组件体内声明的函数（身份随渲染变化），与 versions 同列
+    // 依赖即可——本回调本就随 versions 变化重建。
+    [versions, history, chatPickImage, viewGeneration],
   );
 
   // 上传图片到画布:走真实素材上传(R2)→ 公网 URL + 真实尺寸(从 resolution 串解析)。
@@ -1248,7 +1311,8 @@ function Workspace() {
         {/* Canvas */}
         <div className="flex min-h-0 flex-col bg-background p-3">
           <OpenCanvas
-            seedVersions={versions}
+            seedVersions={seedVersionsAll}
+            seedReady={historyLoaded}
             running={running}
             status={status}
             timedOut={timedOut}
@@ -1317,6 +1381,8 @@ function Workspace() {
             projectId={projectId}
             sceneType={sceneType}
             onViewGeneration={viewGeneration}
+            onSubmitted={onChatSubmitted}
+            presetBrief={chatPresetBrief}
             insertRef={chatInsertRef}
             onComposerRefsChange={setChatComposerRefs}
             onPasteImage={(files) => chatUploadFilesRef.current?.(files)}

@@ -304,6 +304,79 @@ export async function POST(
           })()
         : undefined;
 
+    // V0.0.13 — 对话图生图的输入图同样要重建（Codex P2）：行上 chatContext 仍在
+    // （worker 会走 direct prompt），但 job.data.imageInputs 不重建的话重生成会
+    // 无视原输入图。以 chatContext.imageInputs（权威、有序）为准，旧数据兜底读
+    // 版本 params.imageInputs（worker 落库留痕）；校验口径与 POST /generations
+    // 相同，失效引用按 validReferenceAssets 的语义过滤而非 400。
+    const priorImageInputs = (() => {
+      const ctx = priorRow.chatContext as {
+        imageInputs?: { kind?: unknown; id?: unknown }[];
+      } | null;
+      const fromCtx = Array.isArray(ctx?.imageInputs) ? ctx.imageInputs : null;
+      const fromParams = (() => {
+        for (const v of priorRoots) {
+          const p = (v.params ?? {}) as { imageInputs?: unknown };
+          if (Array.isArray(p.imageInputs)) {
+            return p.imageInputs as { kind?: unknown; id?: unknown }[];
+          }
+        }
+        return null;
+      })();
+      return (fromCtx ?? fromParams ?? []).filter(
+        (r): r is { kind: "VERSION" | "ASSET"; id: string } =>
+          !!r &&
+          (r.kind === "VERSION" || r.kind === "ASSET") &&
+          typeof r.id === "string",
+      );
+    })();
+    const validImageInputs =
+      priorImageInputs.length > 0
+        ? await (async () => {
+            const versionIds = priorImageInputs
+              .filter((r) => r.kind === "VERSION")
+              .map((r) => r.id);
+            const assetIds = priorImageInputs
+              .filter((r) => r.kind === "ASSET")
+              .map((r) => r.id);
+            const [okVersionRows, okAssetRows] = await Promise.all([
+              versionIds.length > 0
+                ? prisma.generationVersion.findMany({
+                    where: {
+                      id: { in: versionIds },
+                      // 与 POST /generations、worker 同口径按 Campaign 作用域
+                      // （Codex P2）：历史 chatContext 里的跨项目版本引用在此
+                      // 被过滤（validReferenceAssets 语义），而不是入队后在
+                      // worker 的项目闸上硬失败。
+                      generation: {
+                        workspaceId: wsId,
+                        projectId: priorRow.projectId,
+                      },
+                    },
+                    select: { id: true },
+                  })
+                : Promise.resolve([]),
+              assetIds.length > 0
+                ? prisma.asset.findMany({
+                    where: {
+                      id: { in: assetIds },
+                      workspaceId: wsId,
+                      deprecatedAt: null,
+                      availableForGeneration: true,
+                      mimeType: { startsWith: "image/" },
+                    },
+                    select: { id: true },
+                  })
+                : Promise.resolve([]),
+            ]);
+            const okVersions = new Set(okVersionRows.map((v) => v.id));
+            const okAssets = new Set(okAssetRows.map((a) => a.id));
+            return priorImageInputs.filter((r) =>
+              r.kind === "VERSION" ? okVersions.has(r.id) : okAssets.has(r.id),
+            );
+          })()
+        : undefined;
+
     const jobData: GenerateJobData = {
       workspaceId: wsId,
       generationId: genId,
@@ -315,6 +388,9 @@ export async function POST(
         : {}),
       ...(validReferenceAssets && validReferenceAssets.length > 0
         ? { referenceAssets: validReferenceAssets }
+        : {}),
+      ...(validImageInputs && validImageInputs.length > 0
+        ? { imageInputs: validImageInputs }
         : {}),
     };
     const job = await generateQueue.add("generate", jobData, {
