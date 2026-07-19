@@ -25,6 +25,8 @@ interface Masked {
   image: MaskedProvider;
   vlm: MaskedProvider;
   storage: MaskedStorage;
+  /** V0.0.13 — 图像系统提示词（非密，直接读写） */
+  imageSystemPrompt: string;
 }
 
 type Kind = "image" | "vlm";
@@ -47,6 +49,7 @@ export function AiSettingsForm({ initial }: { initial: Masked }) {
     image: { ...initial.image, provider: initial.image.provider || "openai" },
     vlm: { ...initial.vlm, provider: initial.vlm.provider || "openai" },
     storage: { ...initial.storage },
+    imageSystemPrompt: initial.imageSystemPrompt ?? "",
   });
   // New keys typed by the admin; empty = leave the stored key unchanged.
   const [keys, setKeys] = useState<Record<Kind, string>>({ image: "", vlm: "" });
@@ -101,10 +104,13 @@ export function AiSettingsForm({ initial }: { initial: Masked }) {
       image: Record<string, string | null>;
       vlm: Record<string, string | null>;
       storage: Record<string, string | boolean | null>;
+      imageSystemPrompt: string;
     } = {
       image: pack("image"),
       vlm: pack("vlm"),
       storage: packStorage(),
+      // 非密字段：总是随保存提交（"" = 清空，回退 env/无提示词）。
+      imageSystemPrompt: data.imageSystemPrompt,
     };
     if (opts?.clearKey) body[opts.clearKey].apiKey = "";
     if (opts?.clearStorageSecret) body.storage.secretKey = "";
@@ -256,6 +262,27 @@ export function AiSettingsForm({ initial }: { initial: Masked }) {
           </CreamCard>
         );
       })}
+
+      <CreamCard>
+        <h2 className="font-serif text-lg text-foreground">图像系统提示词</h2>
+        <p className="mt-1 text-xs text-muted-foreground">
+          每次出图（含工作台对话面板的图生图/多图生图）都会把这段提示词置于最终
+          prompt 首部，用于统一品牌基调/风格约束。留空则不注入。
+        </p>
+        <div className="mt-4">
+          <Label>系统提示词（≤4000 字）</Label>
+          <textarea
+            value={data.imageSystemPrompt}
+            maxLength={4000}
+            rows={4}
+            placeholder="例：品牌基调——极简、克制，主色 violet #7C5CFF；画面留白充足，不出现竞品元素。"
+            className="mt-1 w-full rounded-2xl border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-primary/40 focus:shadow-[0_0_0_4px_rgba(124,92,255,0.08)]"
+            onChange={(e) =>
+              setData((d) => ({ ...d, imageSystemPrompt: e.target.value }))
+            }
+          />
+        </div>
+      </CreamCard>
 
       <CreamCard>
         <h2 className="font-serif text-lg text-foreground">

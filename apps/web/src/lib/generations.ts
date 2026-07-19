@@ -48,6 +48,8 @@ type GenerationRow = {
   startedAt: Date | null;
   finishedAt: Date | null;
   durationMs: number | null;
+  // V0.0.13 — 对话面板投影（可缺省：迁移前的行 / 未 select 该列的旧调用方）。
+  chatContext?: unknown;
   versions: VersionRow[];
 };
 
@@ -96,6 +98,14 @@ export function serializeGeneration(row: GenerationRow): Generation {
     startedAt: row.startedAt ? row.startedAt.toISOString() : undefined,
     finishedAt: row.finishedAt ? row.finishedAt.toISOString() : undefined,
     durationMs: row.durationMs ?? undefined,
+    // safeParse：脏/旧 JSON 不匹配 schema 时静默丢弃，绝不让一行坏数据
+    // 打挂整个历史列表的读取。
+    chatContext: (() => {
+      const parsed = Generation.shape.chatContext.safeParse(
+        row.chatContext ?? undefined,
+      );
+      return parsed.success ? parsed.data : undefined;
+    })(),
   });
 }
 

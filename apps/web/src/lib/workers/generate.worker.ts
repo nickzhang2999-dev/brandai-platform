@@ -28,6 +28,7 @@ import { loadTermLib } from "@/lib/compliance";
 import { setVersionComplianceReport } from "@/lib/generations";
 import { compileAIConstraints, constraintsEnabled } from "@/lib/ai-constraints";
 import { recordUsage, fromGenerateUsage } from "@/lib/usage";
+import { getEffectiveAiSettings } from "@/lib/settings";
 
 /**
  * K5 — zero-dependency pixel-size probe for a base64 `data:` URL, used as a
@@ -206,6 +207,13 @@ export interface GenerateJobData {
     borderWidth: number;
     cornerRadius: number;
   }[];
+  /**
+   * V0.0.13 — 对话面板图生图/多图生图输入（有序，≤8）。worker 在 workspace
+   * 作用域内把每个引用解析成 URL，并按序折成 STRICT referenceImages
+   * （note=IMAGE_INPUT:{序号}）。单图与多图共用 AI 服务同一条
+   * /images/edits multipart 路径（规避 prd_agent 多图独立 Vision 分支 bug）。
+   */
+  imageInputs?: { kind: "VERSION" | "ASSET"; id: string }[];
 }
 
 /** P2.0 feature flag. Default on; set MULTI_SIZE_V1=0 to fall back to the
@@ -753,15 +761,107 @@ export async function runGenerateJob(
       }
     }
 
+    // V0.0.13 — 对话面板图像输入：workspace 作用域内解析（defense-in-depth，
+    // route 层已 IDOR 校验过一次），按用户给定顺序折成 STRICT referenceImages。
+    const imageInputs = job.data.imageInputs ?? [];
+    if (imageInputs.length > 0) {
+      const versionIds = imageInputs
+        .filter((r) => r.kind === "VERSION")
+        .map((r) => r.id);
+      const assetIds = imageInputs
+        .filter((r) => r.kind === "ASSET")
+        .map((r) => r.id);
+      const [versionRows, assetRows] = await Promise.all([
+        versionIds.length > 0
+          ? prisma.generationVersion.findMany({
+              where: {
+                id: { in: versionIds },
+                generation: { workspaceId },
+              },
+              select: { id: true, imageUrl: true },
+            })
+          : Promise.resolve([]),
+        assetIds.length > 0
+          ? prisma.asset.findMany({
+              where: {
+                id: { in: assetIds },
+                workspaceId,
+                deprecatedAt: null,
+                mimeType: { startsWith: "image/" },
+              },
+              select: { id: true, url: true, source: true },
+            })
+          : Promise.resolve([]),
+      ]);
+      const versionMap = new Map(versionRows.map((v) => [v.id, v]));
+      const assetMap = new Map(assetRows.map((a) => [a.id, a]));
+      const inputRefs = imageInputs.map((r, i) => {
+        const resolved =
+          r.kind === "VERSION" ? versionMap.get(r.id) : assetMap.get(r.id);
+        const url =
+          resolved && "imageUrl" in resolved
+            ? resolved.imageUrl
+            : resolved?.url;
+        if (!resolved || !url) {
+          throw new Error(
+            `对话引用的图片不可用（${r.kind === "VERSION" ? "出图版本" : "素材"} ${r.id} 不在本品牌空间或已失效）`,
+          );
+        }
+        return {
+          url,
+          polarity: "positive" as const,
+          source: `${r.kind === "VERSION" ? "version" : "asset"}:${r.id}`,
+          mode: "STRICT" as const,
+          // note 只承载机器可读的序号标记 —— 展示文本(chatContext.displayText)
+          // 与模型层物理分离，绝不把文件名/URL 拼进用户可见消息。
+          note: `IMAGE_INPUT:${i + 1}`,
+          // K7 — WEBSITE 采集素材走严格 SSRF 初始 host 校验；出图版本存于
+          // 自有存储，走 UPLOAD 信任策略。
+          sourceHint:
+            resolved && "source" in resolved && resolved.source === "WEBSITE"
+              ? ("WEBSITE" as const)
+              : ("UPLOAD" as const),
+        };
+      });
+      aiConstraints = {
+        ...aiConstraints,
+        referenceImages: [...aiConstraints.referenceImages, ...inputRefs],
+      };
+      hasExplicitPicks = true;
+    }
+
+    // V0.0.13 — 管理员配置的图像系统提示词（AppSetting > env，空则不注入）。
+    const { imageSystemPrompt } = await getEffectiveAiSettings();
+
+    // V0.0.13g — 对话来源（chatContext 存在）走 direct prompt：只发用户 brief，
+    // 不发品牌规则摘要/场景/promptAdditions/品牌示例参考图（文不对题修复——
+    // 11 字指令曾被 ~3000 字品牌倾倒淹没，模型服从品牌规范无视输入图）。
+    // 安全底线保留：negativePrompt 照发、硬禁令闸（上方 HardBlockError）照拦、
+    // 水印照叠。表单语义路径（campaign-kit/regenerate 等）逐字节不变。
+    const chatOrigin = generation.chatContext != null;
+    if (chatOrigin) {
+      aiConstraints = {
+        ...aiConstraints,
+        promptAdditions: [],
+        // 只保留用户点选的图像输入（IMAGE_INPUT，上方刚折进来），剔除品牌
+        // 示例/禁例参考图 —— 它们是「Match the visual style…」跑题的来源之一。
+        referenceImages: aiConstraints.referenceImages.filter((r) =>
+          (r.note ?? "").startsWith("IMAGE_INPUT:"),
+        ),
+      };
+    }
+
     const baseFields = {
       sceneType: generation.sceneType,
       sellingPoint: generation.sellingPoint,
-      scene: generation.scene,
-      brandRules,
+      scene: chatOrigin ? "" : generation.scene,
+      brandRules: chatOrigin ? [] : brandRules,
+      ...(chatOrigin ? { promptMode: "direct" as const } : {}),
       // M3 — forward the chosen text mode (defaults to "direct" when a job was
       // enqueued before this field existed, preserving legacy behavior).
       textMode: job.data.textMode ?? "direct",
       ...(constraintsEnabled() || hasExplicitPicks ? { aiConstraints } : {}),
+      ...(imageSystemPrompt ? { systemPrompt: imageSystemPrompt } : {}),
     };
 
     async function persist(
@@ -819,6 +919,8 @@ export async function runGenerateJob(
             ...(templateReferenceAssetIds.length > 0
               ? { templateReferenceAssetIds }
               : {}),
+            // V0.0.13 — 对话面板图像输入留痕（重试/审计可重建）。
+            ...(imageInputs.length > 0 ? { imageInputs } : {}),
             ...(watermarkOverlays.length > 0 ? { watermarkOverlays } : {}),
             ...(watermarked.appliedAssetIds.length > 0
               ? { appliedWatermarkAssetIds: watermarked.appliedAssetIds }

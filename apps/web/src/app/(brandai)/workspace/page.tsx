@@ -41,6 +41,7 @@ import {
 import { useBrand } from "../brand-context";
 import { MaskPaintCanvas } from "./MaskPaintCanvas";
 import { OpenCanvas } from "./OpenCanvas";
+import { ChatPanel, type ChatComposerApi } from "./ChatPanel";
 
 /**
  * P05 · AI 工作台 — 左画布 + 变体条，右 prompt 面板。真实出图（CLAUDE.md §2，
@@ -334,6 +335,45 @@ function Workspace() {
   );
   const [workspaceMode, setWorkspaceMode] =
     useState<WorkspaceMode>("TEXT_TO_IMAGE");
+  // V0.0.13c/d — 视觉创作交互物理移植：点选 画布/变体条/历史条 图片 → 灰待选
+  // chip（replace；Shift/Ctrl 累加）；点输入区/发送确认；点画布空白清待选。
+  const chatInsertRef = useRef<ChatComposerApi | null>(null);
+  // composer 粘贴图片 → 画布上传入口（OpenCanvas 注入）。
+  const chatUploadFilesRef = useRef<((files: File[]) => void) | null>(null);
+  // 输入框内当前引用（有序 + 就绪态），驱动源图的 灰罩✓ / violet 描边 + 序号。
+  const [chatComposerRefs, setChatComposerRefs] = useState<
+    { id: string; ready: boolean }[]
+  >([]);
+  /** 点选一张源图（prd_agent replace/additive 语义）。 */
+  const chatPickImage = useCallback(
+    (
+      ref: { kind?: "VERSION" | "ASSET"; id: string; url: string; label?: string },
+      opts?: { additive?: boolean },
+    ) => {
+      chatInsertRef.current?.pick(
+        { kind: ref.kind ?? "VERSION", id: ref.id, url: ref.url, label: ref.label },
+        opts,
+      );
+    },
+    [],
+  );
+  /** 源图当前在输入框中的状态（无 / 待选灰 / 就绪）+ 序号。 */
+  const chatRefState = useCallback(
+    (id: string): { ordinal: number; ready: boolean } | null => {
+      const idx = chatComposerRefs.findIndex((r) => r.id === id);
+      if (idx < 0) return null;
+      return { ordinal: idx + 1, ready: chatComposerRefs[idx]!.ready };
+    },
+    [chatComposerRefs],
+  );
+  /** OpenCanvas 消费的 id→引用态映射（versionId/assetId 通用）。 */
+  const chatRefStatesMap = useMemo(() => {
+    const m: Record<string, { ordinal: number; ready: boolean }> = {};
+    chatComposerRefs.forEach((r, i) => {
+      if (r.id) m[r.id] = { ordinal: i + 1, ready: r.ready };
+    });
+    return m;
+  }, [chatComposerRefs]);
   const [editBaseVersionId, setEditBaseVersionId] = useState<string | null>(
     null,
   );
@@ -413,129 +453,9 @@ function Workspace() {
     if (kws.length) setStyleKeywords(kws);
   }, [presetStyle]);
 
-  // F2 / L6 — bounded undo/redo history over the generation-form snapshot.
-  // The current snapshot is recomputed from the live field state; an effect
-  // pushes it onto the past stack (debounced via a shallow-equality check) so
-  // typing coalesces into discrete steps. Undo/redo restore a whole snapshot.
-  type FormSnapshot = {
-    workspaceMode: WorkspaceMode;
-    editBaseVersionId: string | null;
-    outpaintDirection: OutpaintDirection;
-    outpaintScale: number;
-    sellingPoint: string;
-    scene: string;
-    sceneType: string;
-    versionCount: number;
-    targetKeys: string[];
-    textMode: "direct" | "layered";
-    styleKeywords: string[];
-  };
-  const snapshot: FormSnapshot = useMemo(
-    () => ({
-      workspaceMode,
-      editBaseVersionId,
-      outpaintDirection,
-      outpaintScale,
-      sellingPoint,
-      scene,
-      sceneType,
-      versionCount,
-      targetKeys,
-      textMode,
-      styleKeywords,
-    }),
-    [
-      workspaceMode,
-      editBaseVersionId,
-      outpaintDirection,
-      outpaintScale,
-      sellingPoint,
-      scene,
-      sceneType,
-      versionCount,
-      targetKeys,
-      textMode,
-      styleKeywords,
-    ],
-  );
-  const HISTORY_CAP = 50;
-  const past = useRef<FormSnapshot[]>([]);
-  const future = useRef<FormSnapshot[]>([]);
-  const lastSnap = useRef<FormSnapshot>(snapshot);
-  const [histVersion, setHistVersion] = useState(0); // re-render on stack change
-
-  function snapEqual(a: FormSnapshot, b: FormSnapshot): boolean {
-    return (
-      a.workspaceMode === b.workspaceMode &&
-      a.editBaseVersionId === b.editBaseVersionId &&
-      a.outpaintDirection === b.outpaintDirection &&
-      a.outpaintScale === b.outpaintScale &&
-      a.sellingPoint === b.sellingPoint &&
-      a.scene === b.scene &&
-      a.sceneType === b.sceneType &&
-      a.versionCount === b.versionCount &&
-      a.textMode === b.textMode &&
-      a.targetKeys.length === b.targetKeys.length &&
-      a.targetKeys.every((k, i) => k === b.targetKeys[i]) &&
-      a.styleKeywords.length === b.styleKeywords.length &&
-      a.styleKeywords.every((k, i) => k === b.styleKeywords[i])
-    );
-  }
-
-  function restoreSnapshot(s: FormSnapshot) {
-    applyingHistory.current = true;
-    setWorkspaceMode(s.workspaceMode);
-    setEditBaseVersionId(s.editBaseVersionId);
-    setOutpaintDirection(s.outpaintDirection);
-    setOutpaintScale(s.outpaintScale);
-    setSellingPoint(s.sellingPoint);
-    setScene(s.scene);
-    setSceneType(s.sceneType);
-    setVersionCount(s.versionCount);
-    setTargetKeys(s.targetKeys);
-    setTextMode(s.textMode);
-    setStyleKeywords(s.styleKeywords);
-    lastSnap.current = s;
-    // Clear the suppression flag after the state updates flush.
-    setTimeout(() => {
-      applyingHistory.current = false;
-    }, 0);
-  }
-
-  // Record a new history step whenever the snapshot changes by a real edit.
-  useEffect(() => {
-    if (applyingHistory.current) return;
-    if (snapEqual(snapshot, lastSnap.current)) return;
-    past.current.push(lastSnap.current);
-    if (past.current.length > HISTORY_CAP) past.current.shift();
-    future.current = []; // a fresh edit invalidates the redo branch
-    lastSnap.current = snapshot;
-    setHistVersion((v) => v + 1);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [snapshot]);
-
-  function undo() {
-    const prev = past.current.pop();
-    if (!prev) return;
-    future.current.push(lastSnap.current);
-    setHistVersion((v) => v + 1);
-    restoreSnapshot(prev);
-  }
-  function redo() {
-    const next = future.current.pop();
-    if (!next) return;
-    past.current.push(lastSnap.current);
-    setHistVersion((v) => v + 1);
-    restoreSnapshot(next);
-  }
-  const canUndo = past.current.length > 0;
-  const canRedo = future.current.length > 0;
-  // Reference histVersion so the toolbar re-renders when stacks change.
-  void histVersion;
-
-  // 画布改造第一阶段 · 素材库画布托盘 — localStorage-backed, scoped to (wsId, projectId),
-  // shared with the assets page. These assets are placed directly onto the canvas;
-  // template references remain the only image references sent to AI.
+  // V0.0.9 · 素材（水印使用）— localStorage-backed, scoped to (wsId, projectId),
+  // shared with the assets page. These assets are NOT sent to AI as references;
+  // worker composites them deterministically after base generation.
   const [references, setReferences] = useState<RefAsset[]>([]);
   const [assetPickerOpen, setAssetPickerOpen] = useState(false);
   const [templateReferences, setTemplateReferences] = useState<RefAsset[]>([]);
@@ -621,84 +541,6 @@ function Workspace() {
   }
   function dropTemplateReference(assetId: string) {
     setTemplateReferences((prev) => prev.filter((r) => r.id !== assetId));
-  }
-
-  type WorkspaceDraft = FormSnapshot & {
-    projectId: string | null;
-    references: RefAsset[];
-    templateReferences: RefAsset[];
-    savedAt: string;
-  };
-  const draftKey = `brandai:workspace-draft:v0.0.12:${wsId}`;
-  const draftRestored = useRef(false);
-  const draftReady = useRef(false);
-  const hasIncomingSeed =
-    !!presetBrief?.trim() ||
-    !!presetScene?.trim() ||
-    !!presetStyle?.trim() ||
-    !!presetSceneType ||
-    !!presetGen;
-
-  useEffect(() => {
-    if (draftRestored.current || hasIncomingSeed) {
-      draftReady.current = true;
-      return;
-    }
-    draftRestored.current = true;
-    try {
-      const raw = window.localStorage.getItem(draftKey);
-      if (!raw) return;
-      const draft = JSON.parse(raw) as Partial<WorkspaceDraft>;
-      if (draft.projectId) setProjectId(draft.projectId);
-      if (draft.workspaceMode) setWorkspaceMode(draft.workspaceMode);
-      if ("editBaseVersionId" in draft)
-        setEditBaseVersionId(draft.editBaseVersionId ?? null);
-      if (draft.outpaintDirection)
-        setOutpaintDirection(draft.outpaintDirection);
-      if (typeof draft.outpaintScale === "number")
-        setOutpaintScale(draft.outpaintScale);
-      if (typeof draft.sellingPoint === "string")
-        setSellingPoint(draft.sellingPoint);
-      if (typeof draft.scene === "string") setScene(draft.scene);
-      if (draft.sceneType) setSceneType(draft.sceneType);
-      if (typeof draft.versionCount === "number")
-        setVersionCount(draft.versionCount);
-      if (Array.isArray(draft.targetKeys)) setTargetKeys(draft.targetKeys);
-      if (draft.textMode) setTextMode(draft.textMode);
-      if (Array.isArray(draft.styleKeywords))
-        setStyleKeywords(draft.styleKeywords.slice(0, MAX_KEYWORDS));
-      if (Array.isArray(draft.references)) setReferences(draft.references);
-      if (Array.isArray(draft.templateReferences))
-        setTemplateReferences(draft.templateReferences);
-      setDraftNotice("已恢复上次未提交的工作台草稿。");
-      window.setTimeout(() => setDraftNotice(null), 4000);
-    } catch {
-      window.localStorage.removeItem(draftKey);
-    } finally {
-      draftReady.current = true;
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draftKey, hasIncomingSeed]);
-
-  useEffect(() => {
-    if (!draftReady.current) return;
-    const timer = window.setTimeout(() => {
-      const draft: WorkspaceDraft = {
-        ...snapshot,
-        projectId,
-        references,
-        templateReferences,
-        savedAt: new Date().toISOString(),
-      };
-      window.localStorage.setItem(draftKey, JSON.stringify(draft));
-    }, 500);
-    return () => window.clearTimeout(timer);
-  }, [draftKey, projectId, references, snapshot, templateReferences]);
-
-  function clearWorkspaceDraft() {
-    window.localStorage.removeItem(draftKey);
-    setDraftNotice("已清空工作台草稿。");
-    window.setTimeout(() => setDraftNotice(null), 3000);
   }
 
   // F11 · 生成额度展示 — read-only quota status.
@@ -1176,7 +1018,6 @@ function Workspace() {
       editStartedAt.current = Date.now();
       setEditVid(v.id);
       setEditJobId(r.jobId);
-      window.localStorage.removeItem(draftKey);
     } catch (e) {
       setActionErr(e instanceof Error ? e.message : "改图提交失败");
     } finally {
@@ -1210,6 +1051,9 @@ function Workspace() {
         setCanvasSel(false);
         return;
       }
+      // 注意：这里是「选择同步」回调（activeVersionId/selectNonce/回调身份变化都会
+      // 重放），不能承载对话 Tab 的点选插入——那走 onUserPickVersion（真实点击专用），
+      // 否则切到对话 Tab 的瞬间会凭空插入一个引用 chip（灰度自验收捕获的真 bug）。
       setCanvasSel(true);
       setEditBaseVersionId(versionId);
       setActiveVariant((prev) => {
@@ -1218,6 +1062,37 @@ function Workspace() {
       });
     },
     [versions],
+  );
+
+  // V0.0.13d — 用户真实点击画布图片（出图变体 / 上传图 / 素材）= 点选引用
+  // （replace；Shift/Ctrl 累加）。与选择同步分离（onUserPickImage 只在真实
+  // pointer tap 时触发，程序化同步不触发）。
+  const onCanvasUserPickImage = useCallback(
+    (
+      pick: { versionId?: string; assetId?: string; imageUrl: string },
+      opts: { additive: boolean },
+    ) => {
+      if (pick.versionId) {
+        const picked = versions.find((x) => x.id === pick.versionId);
+        chatPickImage(
+          {
+            kind: "VERSION",
+            id: pick.versionId,
+            url: picked?.imageUrl || pick.imageUrl,
+            label: "画布图",
+          },
+          opts,
+        );
+        return;
+      }
+      if (pick.assetId) {
+        chatPickImage(
+          { kind: "ASSET", id: pick.assetId, url: pick.imageUrl, label: "上传图" },
+          opts,
+        );
+      }
+    },
+    [versions, chatPickImage],
   );
 
   // 上传图片到画布:走真实素材上传(R2)→ 公网 URL + 真实尺寸(从 resolution 串解析)。
@@ -1250,7 +1125,12 @@ function Workspace() {
       // 走同源代理 URL(/assets/:id/raw)而非存储对象 URL —— 配了 browser 不可达/内网
       // origin 的对象存储时,直接用 a.url 会往画布塞一张打不开的 <img>;全站素材都经
       // assetThumbUrl 代理正是为此(Codex P2)。
-      return { url: assetThumbUrl(wsId, a.id, a.url), width, height };
+      return {
+        url: assetThumbUrl(wsId, a.id, a.url),
+        width,
+        height,
+        assetId: a.id,
+      };
     },
     [wsId],
   );
@@ -1304,127 +1184,6 @@ function Workspace() {
     } finally {
       setBusy(null);
     }
-  }
-
-  async function submit() {
-    if (!activeProjectId) {
-      setSubmitErr("请先选择一个项目（没有就去项目页创建）");
-      return;
-    }
-    if (projectId !== activeProjectId) setProjectId(activeProjectId);
-    setSubmitErr(null);
-    setSubmitting(true);
-    setTimedOut(false);
-    setActiveVariant(0);
-    try {
-      const res = await apiFetch<{ generation: Generation; jobId: string }>(
-        `/api/workspaces/${wsId}/generations`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            projectId: activeProjectId,
-            sceneType,
-            sellingPoint: resolvedGenerationBrief.sellingPoint,
-            scene: resolvedGenerationBrief.scene,
-            versionCount,
-            // K5 / M3 — text rendering strategy ("direct" default | "layered").
-            textMode,
-            // K5 / P2.0 — only send `targets` when ≥1 size selected (frozen-
-            // additive). When present the AI service fans out one image per size
-            // and ignores versionCount.
-            ...(selectedTargets.length ? { targets: selectedTargets } : {}),
-            // F7 — only send when non-empty (frozen-additive optional field).
-            ...(styleKeywords.length ? { styleKeywords } : {}),
-            ...(templateReferences.length
-              ? {
-                  templateReferenceAssetIds: templateReferences.map(
-                    (r) => r.id,
-                  ),
-                }
-              : {}),
-          }),
-        },
-      );
-      startedAt.current = Date.now();
-      setGenId(res.generation.id);
-      setJobId(res.jobId);
-      window.localStorage.removeItem(draftKey);
-    } catch (e) {
-      const msg = userFacingError(e instanceof Error ? e.message : "提交失败");
-      setSubmitErr(msg);
-      // H12 — a quota 402 surfaces the upgrade dialog so the user has an exit.
-      if (/配额|额度|上限|升级/.test(msg)) setShowUpgrade(true);
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  async function submitByMode() {
-    if (workspaceMode === "TEXT_TO_IMAGE") {
-      await submit();
-      return;
-    }
-    const prompt = [
-      resolvedGenerationBrief.sellingPoint,
-      resolvedGenerationBrief.scene,
-    ]
-      .map((part) => part.trim())
-      .filter(Boolean)
-      .join("\n");
-    const target = editBaseVersion;
-    if (!target) {
-      setSubmitErr("请先选择一张已生成图片作为修改底图。");
-      return;
-    }
-    if (!prompt) {
-      setSubmitErr("请输入修改指令。");
-      return;
-    }
-    if (workspaceMode === "INPAINT") {
-      openMaskPaint(target);
-      setSubmitErr(null);
-      return;
-    }
-    if (workspaceMode === "OUTPAINT") {
-      const size = versionPixelSize(target);
-      const scale = 1 + outpaintScale / 100;
-      const width =
-        outpaintDirection === "left" ||
-        outpaintDirection === "right" ||
-        outpaintDirection === "all"
-          ? Math.round(size.width * scale)
-          : size.width;
-      const height =
-        outpaintDirection === "top" ||
-        outpaintDirection === "bottom" ||
-        outpaintDirection === "all"
-          ? Math.round(size.height * scale)
-          : size.height;
-      setSubmitErr(null);
-      await runEdit(
-        "OUTPAINT",
-        {
-          prompt,
-          width,
-          height,
-          outpaintDirection,
-          outpaintScale,
-          preserveOriginal: true,
-        },
-        target,
-      );
-      return;
-    }
-    setSubmitErr(null);
-    await runEdit(
-      "IMAGE_EDIT",
-      {
-        prompt,
-        editMode: "whole-image",
-        preserveStructure: true,
-      },
-      target,
-    );
   }
 
   return (
@@ -1481,13 +1240,6 @@ function Workspace() {
           </span>
         </nav>
         <div className="flex items-center gap-3">
-          {/* F2 / L6 — undo/redo (生成表单快照)。缩放在画布内自带。 */}
-          <Toolbar
-            canUndo={canUndo}
-            canRedo={canRedo}
-            onUndo={undo}
-            onRedo={redo}
-          />
           <StatusPill status={status} timedOut={timedOut} />
         </div>
       </div>
@@ -1514,6 +1266,11 @@ function Workspace() {
             onOpenTemplateLibrary={() => setTemplatePickerOpen(true)}
             onRemoveMaterial={dropReference}
             onRemoveTemplate={dropTemplateReference}
+            onUserPickImage={onCanvasUserPickImage}
+            onBlankClick={() => chatInsertRef.current?.clearPending()}
+            chatRefStates={chatRefStatesMap}
+            persist={projectId ? { wsId, projectId } : undefined}
+            uploadFilesRef={chatUploadFilesRef}
             edit={{
               ops: CANVAS_OPS,
               busy: !!editJobId || busy === "edit",
@@ -1522,484 +1279,50 @@ function Workspace() {
               onRun: (version, op) =>
                 void runEdit(op, { prompt: editInstr.trim() }, version),
               onOpenMask: (version) => openMaskPaint(version),
+              // V0.0.13e — 终选/交付/审阅挪进画布选中工具条（原下方面板已删）。
+              delivery: current
+                ? {
+                    isFinal: !!current.isFinal,
+                    hasFinal: versions.some((v) => v.isFinal),
+                    busy,
+                    error: actionErr,
+                    onMarkFinal: () => void markFinal(),
+                    onExport: () => void exportKit(),
+                    reviewStatus:
+                      current.reviewStatus === "PENDING"
+                        ? null
+                        : (current.reviewStatus ?? null),
+                    canSubmitReview,
+                    canDecideReview,
+                    reviewBusy,
+                    onSubmitReview: () => void submitForReview(),
+                    onApprove: () => void decideReview("APPROVED"),
+                    onOpenReject: () => {
+                      setReviewErr(null);
+                      setRejectNote("");
+                      setRejectOpen(true);
+                    },
+                  }
+                : undefined,
             }}
           />
-          {versions.length > 0 ? (
-            <div className="mt-4 flex flex-wrap gap-3">
-              {versions.map((v, i) => (
-                <button
-                  key={v.id}
-                  draggable
-                  onDragStart={(e) => {
-                    e.dataTransfer.setData(
-                      "application/x-brandai-version",
-                      v.id,
-                    );
-                    e.dataTransfer.effectAllowed = "copy";
-                  }}
-                  onClick={() => {
-                    setActiveVariant(i);
-                    setEditBaseVersionId(v.id);
-                    setCanvasSel(true);
-                    // 强制画布重新选中该变体 tile(即便 i 已是 activeVariant),
-                    // 让清选后点缩略图也能一键回到「条↔画布同步」状态。
-                    setSelectNonce((n) => n + 1);
-                  }}
-                  className={[
-                    "relative h-[82px] w-[118px] overflow-hidden rounded-[18px] border-2 transition-colors",
-                    i === activeVariant && canvasSel
-                      ? "border-primary"
-                      : "border-transparent hover:border-border",
-                  ].join(" ")}
-                >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={v.imageUrl}
-                    alt={`变体 ${i + 1}`}
-                    className="h-full w-full object-cover"
-                  />
-                  {v.isFinal ? (
-                    <span className="absolute left-1 top-1 rounded-full bg-success px-1.5 py-0.5 text-[10px] font-medium text-primary-foreground">
-                      终稿
-                    </span>
-                  ) : null}
-                  {v.parentVersionId ? (
-                    <span className="absolute right-1 top-1 rounded-full bg-accent-soft px-1.5 py-0.5 text-[10px] font-medium text-primary">
-                      改
-                    </span>
-                  ) : null}
-                </button>
-              ))}
-            </div>
-          ) : null}
-
-          {/* 历史出图回看 —— 本 Campaign 已生成的每一次出图，newest-first。点击即在
-              上方画布回看（复用改图/终选/导出/审阅）。修复「产出蒸发」：刷新/切项目
-              后历史不再消失。 */}
-          {history.length > 0 ? (
-            <div className="mt-5 border-t border-border pt-4">
-              <div className="mb-2 flex items-center justify-between">
-                <span className="text-xs font-semibold text-muted-foreground">
-                  历史出图
-                </span>
-                <span className="text-xs font-normal text-muted-foreground">
-                  {history.length} 次
-                </span>
-              </div>
-              <div className="flex gap-3 overflow-x-auto pb-1">
-                {history.map((g) => {
-                  const cover = g.versions?.find((v) => v.imageUrl)?.imageUrl;
-                  const active = g.id === genId;
-                  const finalCount = (g.versions ?? []).filter(
-                    (v) => v.isFinal,
-                  ).length;
-                  return (
-                    <button
-                      key={g.id}
-                      onClick={() => viewGeneration(g.id)}
-                      title={`${g.scene || g.sceneType} · ${new Date(
-                        g.createdAt,
-                      ).toLocaleString("zh-CN")}`}
-                      className={[
-                        "group relative flex h-[88px] w-[116px] shrink-0 flex-col overflow-hidden rounded-[16px] border-2 text-left transition-colors",
-                        active
-                          ? "border-primary"
-                          : "border-transparent hover:border-border",
-                      ].join(" ")}
-                    >
-                      {cover ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={cover}
-                          alt={g.scene || "历史出图"}
-                          className="h-full w-full object-cover"
-                        />
-                      ) : (
-                        <div className="flex h-full w-full items-center justify-center bg-muted text-[10px] text-muted-foreground">
-                          {g.status === "FAILED"
-                            ? "失败"
-                            : g.status === "PENDING" || g.status === "RUNNING"
-                              ? "生成中…"
-                              : "无图"}
-                        </div>
-                      )}
-                      <span className="absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-foreground/70 to-transparent px-1.5 pb-1 pt-3 text-[10px] font-medium text-white">
-                        {g.scene || g.sceneType}
-                      </span>
-                      {(g.versions?.length ?? 0) > 1 ? (
-                        <span className="absolute right-1 top-1 rounded-full bg-card/90 px-1.5 py-0.5 text-[10px] font-medium text-foreground">
-                          ×{g.versions!.length}
-                        </span>
-                      ) : null}
-                      {finalCount > 0 ? (
-                        <span className="absolute left-1 top-1 rounded-full bg-success px-1.5 py-0.5 text-[10px] font-medium text-primary-foreground">
-                          终稿
-                        </span>
-                      ) : null}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          ) : null}
-
-          {/* 修改优化 / 终选 / 交付归档 —— 仅在已出图后对选中变体可用 */}
-          {status === "SUCCEEDED" && current ? (
-            <div className="mt-4 rounded-2xl border border-border bg-card p-4">
-              <div className="mb-1 text-xs font-semibold text-muted-foreground">
-                选中图片 · 终选与交付
-              </div>
-              <p className="mb-2 text-[11px] leading-relaxed text-muted-foreground">
-                改图操作(局部重画/换背景/扩展…)在画布上选中图片后从其上方工具条触发。
-              </p>
-              <div className="mt-1 flex flex-wrap gap-2">
-                <button
-                  onClick={markFinal}
-                  disabled={busy === "final" || current.isFinal}
-                  className="rounded-full border border-success/40 px-3 py-1.5 text-xs text-success transition-colors hover:bg-success/10 disabled:opacity-60"
-                >
-                  {current.isFinal ? "✓ 已是终稿" : "设为终稿"}
-                </button>
-                <button
-                  onClick={exportKit}
-                  disabled={busy === "export"}
-                  className="rounded-full border border-primary/40 px-3 py-1.5 text-xs text-primary transition-colors hover:bg-accent-soft disabled:opacity-60"
-                >
-                  {busy === "export"
-                    ? "打包中…"
-                    : versions.some((v) => v.isFinal)
-                      ? "导出交付包(终稿)"
-                      : "导出交付包(当前图)"}
-                </button>
-              </div>
-              {actionErr ? (
-                <p className="mt-2 text-xs text-destructive">{actionErr}</p>
-              ) : null}
-
-              {/* G6 · 审阅 / 批准流 — 选中变体的审核状态 + 角色门控的动作。 */}
-              <ReviewPanel
-                version={current}
-                myRole={myRole}
-                canSubmit={canSubmitReview}
-                canDecide={canDecideReview}
-                busy={reviewBusy}
-                error={reviewErr}
-                onSubmit={submitForReview}
-                onApprove={() => decideReview("APPROVED")}
-                onOpenReject={() => {
-                  setReviewErr(null);
-                  setRejectNote("");
-                  setRejectOpen(true);
-                }}
-              />
-            </div>
-          ) : null}
         </div>
 
         {/* Prompt panel */}
-        <aside className="flex min-h-0 flex-col border-l border-border bg-card">
-          <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-4">
-            <div className="min-w-0">
-              <div className="truncate text-sm font-semibold">
-                {sellingPoint.trim() ||
-                  projects.find((p) => p.id === projectId)?.name ||
-                  "新的创作对话"}
-              </div>
-              <div className="mt-1 text-[11px] text-muted-foreground">
-                {running
-                  ? "AI 正在处理当前请求"
-                  : current
-                    ? "可选择历史结果继续修改"
-                    : "输入需求后开始沉淀过程记录"}
-              </div>
-            </div>
-            <div className="flex shrink-0 items-center gap-1.5">
-              <button
-                type="button"
-                onClick={() => setTemplatePickerOpen(true)}
-                className="flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                title="选择参考图"
-                aria-label="选择参考图"
-              >
-                ⊕
-              </button>
-              <button
-                type="button"
-                onClick={() => exportKit()}
-                disabled={!current || busy === "export"}
-                className="flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-35"
-                title="导出"
-                aria-label="导出"
-              >
-                ↧
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setGenId(null);
-                  setJobId(null);
-                  setActiveVariant(0);
-                  setCanvasSel(false);
-                  setSellingPoint("");
-                  setScene("");
-                  setSubmitErr(null);
-                }}
-                className="rounded-full border border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted"
-              >
-                新对话
-              </button>
-            </div>
-          </div>
-
-          {draftNotice ? (
-            <div className="mx-5 mt-4 flex items-center justify-between gap-3 rounded-2xl border border-primary/15 bg-accent-soft/60 px-3 py-2 text-xs text-primary">
-              <span>{draftNotice}</span>
-              <button
-                type="button"
-                onClick={clearWorkspaceDraft}
-                className="shrink-0 rounded-full border border-primary/20 px-2 py-0.5"
-              >
-                清空
-              </button>
-            </div>
-          ) : null}
-
-          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-            <div className="space-y-4">
-              {history.length === 0 && !current && !running ? (
-                <div className="rounded-3xl border border-dashed border-border bg-background px-4 py-10 text-center text-sm text-muted-foreground">
-                  暂无历史生成。输入需求后，每一步修改和结果都会显示在这里。
-                </div>
-              ) : null}
-
-              {running ? (
-                <div className="rounded-3xl border border-primary/15 bg-accent-soft/40 p-4">
-                  <div className="flex items-center gap-2 text-sm font-medium text-primary">
-                    <span className="h-2 w-2 animate-pulse rounded-full bg-primary" />
-                    思考中
-                  </div>
-                  <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-                    正在根据当前输入生成结果，完成后会自动进入画布和历史记录。
-                  </p>
-                </div>
-              ) : null}
-
-              {current ? (
-                <div className="rounded-3xl border border-border bg-background p-4">
-                  <div className="mb-3 flex items-center gap-2 text-xs text-muted-foreground">
-                    <span>思考完成</span>
-                    <span>·</span>
-                    <span>GPT Image 2</span>
-                  </div>
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={current.imageUrl}
-                    alt="当前生成图"
-                    className="w-full rounded-2xl border border-border object-cover"
-                  />
-                  <p className="mt-3 text-sm leading-relaxed text-foreground">
-                    {poll?.generation.scene ||
-                      resolvedGenerationBrief.scene ||
-                      "当前结果已生成，可在画布中选中图片继续局部修改、扩图或定稿。"}
-                  </p>
-                  <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
-                    <button
-                      type="button"
-                      onClick={markFinal}
-                      disabled={busy === "final" || current.isFinal}
-                      className="rounded-full border border-success/40 px-2.5 py-1 text-success transition-colors hover:bg-success/10 disabled:opacity-50"
-                    >
-                      {current.isFinal ? "已定稿" : "定稿生图"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={exportKit}
-                      disabled={busy === "export"}
-                      className="rounded-full border border-primary/30 px-2.5 py-1 text-primary transition-colors hover:bg-accent-soft disabled:opacity-50"
-                    >
-                      导出
-                    </button>
-                  </div>
-                </div>
-              ) : null}
-
-              {history
-                .filter((g) => g.id !== genId)
-                .slice(0, 8)
-                .map((g) => {
-                  const cover = g.versions?.find((v) => v.imageUrl)?.imageUrl;
-                  return (
-                    <button
-                      key={g.id}
-                      type="button"
-                      onClick={() => viewGeneration(g.id)}
-                      className="block w-full rounded-3xl border border-border bg-background p-3 text-left transition-colors hover:border-primary/30"
-                    >
-                      <div className="flex gap-3">
-                        {cover ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={cover}
-                            alt={g.scene || "历史生成"}
-                            className="h-20 w-20 shrink-0 rounded-2xl object-cover"
-                          />
-                        ) : (
-                          <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-2xl bg-muted text-xs text-muted-foreground">
-                            {g.status === "FAILED" ? "失败" : "生成中"}
-                          </div>
-                        )}
-                        <div className="min-w-0 flex-1">
-                          <div className="truncate text-sm font-medium">
-                            {g.scene || g.sceneType}
-                          </div>
-                          <div className="mt-1 text-[11px] text-muted-foreground">
-                            {new Date(g.createdAt).toLocaleString("zh-CN")}
-                          </div>
-                          <div className="mt-3 text-xs text-muted-foreground">
-                            点击继续基于这一步修改
-                          </div>
-                        </div>
-                      </div>
-                    </button>
-                  );
-                })}
-            </div>
-          </div>
-
-          {submitErr || actionErr ? (
-            <div className="border-t border-border px-5 py-2 text-xs text-destructive">
-              {submitErr || actionErr}
-            </div>
-          ) : null}
-
-          <div className="border-t border-border bg-card px-4 py-4">
-            {templateReferences.length ? (
-              <div className="mb-2 flex flex-wrap gap-1.5">
-                {templateReferences.map((r) => (
-                  <span
-                    key={r.id}
-                    className="inline-flex items-center gap-1 rounded-full bg-accent-soft px-2 py-1 text-[11px] text-primary"
-                  >
-                    参考图
-                    <button
-                      type="button"
-                      onClick={() => dropTemplateReference(r.id)}
-                      className="text-primary/60 hover:text-primary"
-                      aria-label="移除参考图"
-                    >
-                      ×
-                    </button>
-                  </span>
-                ))}
-              </div>
-            ) : null}
-            <div className="rounded-[24px] border border-border bg-background p-3 shadow-[0_8px_28px_rgba(30,30,60,0.08)] focus-within:border-primary/40 focus-within:shadow-[0_0_0_4px_rgba(124,92,255,0.08)]">
-              <textarea
-                value={sellingPoint}
-                maxLength={500}
-                rows={3}
-                placeholder="描述你想生成或修改的画面…"
-                onChange={(e) => setSellingPoint(e.target.value)}
-                onKeyDown={(e) => {
-                  if (
-                    e.key === "Enter" &&
-                    (e.metaKey || e.ctrlKey) &&
-                    !submitting &&
-                    !running &&
-                    !editJobId
-                  ) {
-                    e.preventDefault();
-                    if (!projectId) {
-                      setSubmitErr("请先选择一个项目（没有就去项目页创建）");
-                      return;
-                    }
-                    setSubmitErr(null);
-                    void submitByMode();
-                  }
-                }}
-                className="max-h-36 min-h-20 w-full resize-none bg-transparent text-sm leading-relaxed outline-none placeholder:text-muted-foreground"
-              />
-              <div className="mt-2 flex items-center justify-between gap-2">
-                <div className="flex items-center gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => setAssetPickerOpen(true)}
-                    className="flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                    title="选择素材"
-                    aria-label="选择素材"
-                  >
-                    +
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setTemplatePickerOpen(true)}
-                    className="rounded-full px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                  >
-                    Agent
-                  </button>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!projectId) {
-                      setSubmitErr("请先选择一个项目（没有就去项目页创建）");
-                      return;
-                    }
-                    setSubmitErr(null);
-                    void submitByMode();
-                  }}
-                  disabled={submitting || running || !!editJobId}
-                  className="flex h-10 w-10 items-center justify-center rounded-full bg-foreground text-card shadow-[0_10px_24px_rgba(30,30,60,0.18)] transition-opacity disabled:opacity-50"
-                  title="发送"
-                  aria-label="发送"
-                >
-                  ↑
-                </button>
-              </div>
-            </div>
-          </div>
+        <aside className="flex min-h-0 flex-col overflow-hidden border-l border-border bg-card p-6">
+          {/* V0.0.13d — 生成面板已删除：AI 设计师对话是唯一右栏（用户指令，
+              对齐 prd_agent 视觉创作「画布 + 对话」单面板形态）。 */}
+          <ChatPanel
+            wsId={wsId}
+            projectId={projectId}
+            sceneType={sceneType}
+            onViewGeneration={viewGeneration}
+            insertRef={chatInsertRef}
+            onComposerRefsChange={setChatComposerRefs}
+            onPasteImage={(files) => chatUploadFilesRef.current?.(files)}
+          />
         </aside>
       </div>
-
-      {/* H9 · 提交制作确认弹窗 */}
-      {confirmSubmit ? (
-        <ConfirmSubmitDialog
-          summary={{
-            projectName:
-              projects.find((p) => p.id === projectId)?.name ?? "未选择项目",
-            sceneType:
-              SCENE_TYPES.find((s) => s.value === sceneType)?.label ??
-              sceneType,
-            scene: resolvedGenerationBrief.scene,
-            sceneSource: resolvedGenerationBrief.sceneSource,
-            sellingPoint: resolvedGenerationBrief.sellingPoint,
-            sellingPointSource: resolvedGenerationBrief.sellingPointSource,
-            count: multiSize ? selectedTargets.length : versionCount,
-            multiSize,
-            targets: selectedTargets.map(
-              (t) => `${t.label} ${t.width}×${t.height}`,
-            ),
-            textMode,
-            styleKeywords,
-            referenceCount: templateReferences.length,
-            quota: quota ?? null,
-          }}
-          submitting={submitting}
-          onCancel={() => setConfirmSubmit(false)}
-          onConfirm={() => {
-            setConfirmSubmit(false);
-            void submit();
-          }}
-        />
-      ) : null}
-
-      {/* H12 · 额度升级弹窗 */}
-      {showUpgrade ? (
-        <UpgradeDialog
-          quota={quota ?? null}
-          onClose={() => setShowUpgrade(false)}
-        />
-      ) : null}
 
       {assetPickerOpen ? (
         <WorkspaceAssetPicker
@@ -2021,7 +1344,7 @@ function Workspace() {
           wsId={wsId}
           libraryKind="TEMPLATE"
           title="选择参考图"
-          description="参考图只进入右侧提示上下文，用于风格、色系、比例和构图参考，不直接落到画布。"
+          description="参考图会加入画布模板托盘，可放到画布后作为 AI 对话的图像引用。"
           existingIds={templateReferences.map((r) => r.id)}
           onClose={() => setTemplatePickerOpen(false)}
           onAdd={(items) => {

@@ -1,5 +1,5 @@
 """Pydantic mirrors of @brandai/contracts AI schemas. Keep in sync."""
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field
 
 
@@ -168,14 +168,13 @@ class ReferenceImage(BaseModel):
     url: str
     polarity: str  # "positive" | "negative"
     source: str
-    # V0.0.8 — "STRICT" must use an image-input path; "INSPIRATION" remains soft.
+    # V0.0.7+/V0.0.8 — "STRICT" (100%-use → image-to-image input path, must not
+    # silently degrade to a text steer) | "INSPIRATION" (text steer only).
+    # Absent → INSPIRATION (unchanged behavior).
     mode: Optional[str] = None
     note: Optional[str] = None
     # K7 — provenance of the URL for SSRF policy ("UPLOAD" | "WEBSITE").
     sourceHint: Optional[str] = None
-    # V0.0.7+ — "STRICT" (100%-use → image-to-image) | "INSPIRATION" (text steer).
-    # Absent → INSPIRATION (unchanged behavior).
-    mode: Optional[str] = None
 
 
 class AIConstraints(BaseModel):
@@ -218,6 +217,12 @@ class GenerateRequest(BaseModel):
     # itself (legacy). "layered" = steer the model to leave clean negative space
     # and render NO text, so the client overlays crisp editable text on top.
     textMode: str = "direct"
+    # V0.0.13 — admin-configured image system prompt (AppSetting.imageSystemPrompt
+    # threaded through the web worker). Prepended verbatim to the prompt.
+    # Frozen-additive: absent → prompt unchanged.
+    systemPrompt: Optional[str] = None
+    # V0.0.13g — "branded"(缺省,场景+品牌规则折叠) | "direct"(对话来源,仅用户 brief)
+    promptMode: Optional[Literal["branded", "direct"]] = None
 
 
 class GeneratedVersion(BaseModel):

@@ -42,6 +42,8 @@ const UpdateInput = z.object({
   image: ProviderInput.optional(),
   vlm: ProviderInput.optional(),
   storage: StorageInput.optional(),
+  // V0.0.13 — 图像系统提示词（非密）。omitted → unchanged; "" → clear.
+  imageSystemPrompt: z.string().max(4000).optional(),
 });
 
 export async function PUT(req: Request) {

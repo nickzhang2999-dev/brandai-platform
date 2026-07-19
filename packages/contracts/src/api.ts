@@ -139,6 +139,19 @@ export const CreateProjectInput = z.object({
 });
 export type CreateProjectInput = z.infer<typeof CreateProjectInput>;
 
+/**
+ * V0.0.13 — 对话面板（AI 设计师）的图像输入引用：一次图生图/多图生图请求里，
+ * 用户按序选中的历史出图版本(VERSION)或素材(ASSET)。worker 把它们解析成
+ * STRICT referenceImages（note=IMAGE_INPUT:{序号}），单图与多图共用同一条
+ * /images/edits multipart 路径。与 V0.0.12 的「素材 STRICT→水印叠加」
+ * 「模板参考→INSPIRATION」语义互不干扰。
+ */
+export const ImageInputRef = z.object({
+  kind: z.enum(["VERSION", "ASSET"]),
+  id: z.string(),
+});
+export type ImageInputRef = z.infer<typeof ImageInputRef>;
+
 export const CreateGenerationInput = z.object({
   projectId: z.string(),
   sceneType: SceneType,
@@ -198,6 +211,17 @@ export const CreateGenerationInput = z.object({
    * the web worker composites them after the base image is generated.
    */
   watermarkOverlays: z.array(WatermarkOverlayInput).max(8).optional(),
+  /**
+   * V0.0.13 — 对话面板图生图/多图生图输入（有序，≤8，跨 workspace 引用在
+   * route 层做归属校验）。Frozen-additive。
+   */
+  imageInputs: z.array(ImageInputRef).max(8).optional(),
+  /**
+   * V0.0.13 — 会话气泡里展示的用户原文。与模型 prompt 彻底分离（规避
+   * prd_agent「引用块/文件名泄漏进可见消息」bug）：本字段仅存展示，服务端
+   * 不对它做任何拼接。Frozen-additive。
+   */
+  chatDisplayText: z.string().max(2000).optional(),
 });
 export type CreateGenerationInput = z.infer<typeof CreateGenerationInput>;
 

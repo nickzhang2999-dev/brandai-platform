@@ -418,9 +418,31 @@ model Project {
   // break sibling branches that don't know it; an additive nullable column is
   // backward-compatible).
   archivedAt  DateTime?
+  canvas      ProjectCanvas?
 
   @@index([workspaceId])
   @@index([workspaceId, status])
+}
+
+// V0.0.13d — 工作台开放画布服务端持久化（对齐 prd_agent image_master_canvases）。
+// 只存可编辑结构化状态（元素引用/布局/相机/已删版本集），图片字节走 Asset 存储；
+// 刷新/换端后画布完整恢复（§0.7 服务端权威，禁 localStorage 双事实源）。
+model ProjectCanvas {
+  id                String   @id @default(cuid())
+  workspaceId       String
+  projectId         String   @unique
+  project           Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  // CanvasItem[]（image: key/x/y/w/h/imageUrl/versionId?/assetId?/naturalW?/naturalH?;
+  //  shape: shapeType/fill/stroke; text: text/fontSize/color）。字节内容不入库。
+  items             Json     @default("[]")
+  // { x, y, zoom } — 恢复取景，避免每次回默认视角。
+  camera            Json?
+  // 用户显式删除的出图变体 tile（否则 seedVersions 合并会把它们加回来）。
+  removedVersionIds Json     @default("[]")
+  updatedAt         DateTime @updatedAt
+  createdAt         DateTime @default(now())
+
+  @@index([workspaceId])
 }
 
 model Generation {
@@ -442,6 +464,9 @@ model Generation {
   startedAt    DateTime?
   finishedAt   DateTime?
   durationMs   Int?
+  // V0.0.13 — 对话面板投影：{displayText, imageInputs:[{kind,id,url}]}。
+  // displayText 只存用户原文（展示层与模型 prompt 物理分离）。
+  chatContext  Json?
   versions     GenerationVersion[]
 
   @@index([projectId])
@@ -572,6 +597,9 @@ model AppSetting {
   vlmApiKey     String?
   vlmBaseUrl    String?
   vlmModel      String?
+  // V0.0.13 — 管理员配置的图像系统提示词。worker 每次出图注入
+  // GenerateRequest.systemPrompt，AI 服务把它置于 prompt 首部。空 → 不注入。
+  imageSystemPrompt String?
   // Generated-image object storage (S3-compatible: Tencent COS / Cloudflare R2 /
   // internal MinIO). storageSecretKey holds AES ciphertext like imageApiKey;
   // storageForcePathStyle is stored as text "true"/"false" to keep the

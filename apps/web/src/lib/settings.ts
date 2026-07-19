@@ -19,6 +19,12 @@ export interface ProviderConfig {
 export interface EffectiveAiSettings {
   image: ProviderConfig;
   vlm: ProviderConfig;
+  /**
+   * V0.0.13 — admin-configured image system prompt, prepended to every
+   * generation prompt by the AI service (GenerateRequest.systemPrompt).
+   * Empty → nothing injected. DB wins over IMAGE_SYSTEM_PROMPT env.
+   */
+  imageSystemPrompt: string;
 }
 
 function safeDecrypt(blob?: string | null): string {
@@ -74,6 +80,8 @@ export async function getEffectiveAiSettings(): Promise<EffectiveAiSettings> {
       baseUrl: row?.vlmBaseUrl || process.env.VLM_PROVIDER_BASE_URL || "",
       model: row?.vlmModel || process.env.VLM_MODEL || "",
     },
+    imageSystemPrompt:
+      row?.imageSystemPrompt || process.env.IMAGE_SYSTEM_PROMPT || "",
   };
 }
 
@@ -146,6 +154,8 @@ export interface MaskedAiSettings {
   image: MaskedProvider;
   vlm: MaskedProvider;
   storage: MaskedStorage;
+  /** V0.0.13 — 非密字段，admin 页直接读写。 */
+  imageSystemPrompt: string;
 }
 
 /** Non-secret view for the admin page (never returns the raw key). */
@@ -188,6 +198,7 @@ export async function getMaskedAiSettings(): Promise<MaskedAiSettings> {
       secretKeySet: !!row?.storageSecretKey,
       envSecretPresent: !!process.env.S3_SECRET_KEY,
     },
+    imageSystemPrompt: row?.imageSystemPrompt ?? "",
   };
 }
 
@@ -215,6 +226,8 @@ export interface AiSettingsInput {
   image?: ProviderInput;
   vlm?: ProviderInput;
   storage?: StorageInput;
+  // undefined → leave unchanged; "" → clear (falls back to env / no prompt).
+  imageSystemPrompt?: string;
 }
 
 function applyProvider(
@@ -263,6 +276,9 @@ export async function updateAiSettings(
   applyProvider(data, "image", input.image);
   applyProvider(data, "vlm", input.vlm);
   applyStorage(data, input.storage);
+  if (input.imageSystemPrompt !== undefined) {
+    data.imageSystemPrompt = input.imageSystemPrompt.trim() || null;
+  }
 
   // Audit trail: log who changed what (secrets redacted to set/cleared), so a
   // "my model got reverted" report can be traced to an actual write vs. not.
