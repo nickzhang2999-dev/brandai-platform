@@ -9,7 +9,7 @@ import {
   type MutableRefObject,
 } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import type { Generation } from "@brandai/contracts";
+import type { Generation, WatermarkOverlayInput } from "@brandai/contracts";
 import { apiFetch } from "@/lib/client";
 import {
   buildModelBrief,
@@ -220,6 +220,7 @@ export function ChatPanel({
   onViewGeneration,
   onSubmitted,
   presetBrief,
+  watermarkOverlays,
   insertRef,
   onComposerRefsChange,
   onPasteImage,
@@ -227,6 +228,10 @@ export function ChatPanel({
   wsId: string;
   projectId: string | null;
   sceneType: string;
+  /** 页面侧已配置的水印/logo 叠加（启用且非 REFERENCE 模式）。对话是唯一生成
+      入口（生成表单已删），不透传的话已配置水印的 Campaign 出图会静默丢
+      logo/水印——worker 对 chat-origin 同样支持确定性合成（Codex P2）。 */
+  watermarkOverlays?: WatermarkOverlayInput[];
   onViewGeneration: (generationId: string) => void;
   /** 提交成功后回调（新 generation + jobId）——页面切换选中出图，让新图直接
       落画布轮询，不必等用户手点「查看」（Codex P2）。 */
@@ -537,6 +542,11 @@ export function ChatPanel({
                   id: r.id,
                 })),
               }
+            : {}),
+          // Campaign 配置的水印/logo 与旧表单提交同口径透传（Codex P2）：
+          // direct prompt 只改提示词组装，水印是安全底线之一、照叠。
+          ...(watermarkOverlays && watermarkOverlays.length > 0
+            ? { watermarkOverlays }
             : {}),
           chatDisplayText: payload.displayText,
         }),

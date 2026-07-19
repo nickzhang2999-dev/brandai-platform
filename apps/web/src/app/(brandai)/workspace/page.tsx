@@ -1364,6 +1364,7 @@ function Workspace() {
             onViewGeneration={viewGeneration}
             onSubmitted={onChatSubmitted}
             presetBrief={chatPresetBrief}
+            watermarkOverlays={activeWatermarkOverlays}
             insertRef={chatInsertRef}
             onComposerRefsChange={setChatComposerRefs}
             onPasteImage={(files) => chatUploadFilesRef.current?.(files)}
