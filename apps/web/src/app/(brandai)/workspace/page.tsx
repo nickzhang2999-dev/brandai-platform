@@ -740,6 +740,16 @@ function Workspace() {
     setSubmitErr(null);
   }
 
+  // 对话面板提交成功 → 新出图立即成为当前选中（带 jobId 走完整 job 轮询），
+  // 画布无需用户手点「查看」即渲染新图（Codex P2）。
+  function onChatSubmitted(id: string, job: string | null) {
+    setGenId(id);
+    setJobId(job);
+    setTimedOut(false);
+    setActiveVariant(0);
+    setSubmitErr(null);
+  }
+
   const status = poll?.job?.status ?? poll?.generation.status ?? null;
   const versions = useMemo(() => poll?.generation.versions ?? [], [poll]);
   const running =
@@ -1298,6 +1308,7 @@ function Workspace() {
             projectId={projectId}
             sceneType={sceneType}
             onViewGeneration={viewGeneration}
+            onSubmitted={onChatSubmitted}
             insertRef={chatInsertRef}
             onComposerRefsChange={setChatComposerRefs}
             onPasteImage={(files) => chatUploadFilesRef.current?.(files)}

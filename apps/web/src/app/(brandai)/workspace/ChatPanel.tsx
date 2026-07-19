@@ -218,6 +218,7 @@ export function ChatPanel({
   projectId,
   sceneType,
   onViewGeneration,
+  onSubmitted,
   insertRef,
   onComposerRefsChange,
   onPasteImage,
@@ -226,6 +227,9 @@ export function ChatPanel({
   projectId: string | null;
   sceneType: string;
   onViewGeneration: (generationId: string) => void;
+  /** 提交成功后回调（新 generation + jobId）——页面切换选中出图，让新图直接
+      落画布轮询，不必等用户手点「查看」（Codex P2）。 */
+  onSubmitted?: (generationId: string, jobId: string | null) => void;
   /** 页面侧点选图片（画布/变体条/历史条）→ composer 操控 API 的桥。 */
   insertRef?: MutableRefObject<ChatComposerApi | null>;
   /** 输入框内当前引用（有序 id + 就绪态）变化时回调，供源图显示选中态。 */
@@ -467,19 +471,23 @@ export function ChatPanel({
     return tokens;
   }
 
+  /** 返回是否提交成功——失败时调用方保留输入框内容让用户改后重试（Codex P2）。 */
   async function submit(payload: {
     displayText: string;
     imageInputs: ChatComposerRef[];
-  }) {
+  }): Promise<boolean> {
     if (!projectId) {
       setErr("请先选择项目");
-      return;
+      return false;
     }
     const size = SIZE_OPTIONS[sizeIdx] ?? SIZE_OPTIONS[0];
     setSending(true);
     setErr(null);
     try {
-      await apiFetch(`/api/workspaces/${wsId}/generations`, {
+      const res = await apiFetch<{
+        generation: { id: string };
+        jobId: string | null;
+      }>(`/api/workspaces/${wsId}/generations`, {
         method: "POST",
         body: JSON.stringify({
           projectId,
@@ -506,11 +514,18 @@ export function ChatPanel({
           chatDisplayText: payload.displayText,
         }),
       });
+      // 新出图立即成为当前选中——画布直接开始轮询渲染，不必等用户点「查看」
+      // （父级只在 genId 为空时才从 history 播种，Codex P2）。
+      if (res?.generation?.id) {
+        onSubmitted?.(res.generation.id, res.jobId ?? null);
+      }
       await qc.invalidateQueries({
         queryKey: ["brandai-project-gens", wsId, projectId],
       });
+      return true;
     } catch (e) {
       setErr(e instanceof Error ? e.message : "发送失败");
+      return false;
     } finally {
       setSending(false);
     }
@@ -523,7 +538,9 @@ export function ChatPanel({
     confirmPending();
     const { displayText, imageInputs } = serializeComposerTokens(domToTokens(el));
     if (displayText.trim() === "" && imageInputs.length === 0) return;
-    await submit({ displayText, imageInputs });
+    const ok = await submit({ displayText, imageInputs });
+    // 失败（配额/引用失效/网络抖动）保留提示词与 chip，让用户修改后重试。
+    if (!ok) return;
     el.innerHTML = "";
     syncComposerState();
   }

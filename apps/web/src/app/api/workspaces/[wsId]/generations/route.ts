@@ -181,15 +181,18 @@ export async function POST(
         );
       }
       const versionUrlMap = new Map(versionRows.map((v) => [v.id, v.imageUrl]));
-      const assetUrlMap = new Map(assetRows.map((a) => [a.id, a.url]));
       chatContext = {
         displayText: input.chatDisplayText ?? "",
         imageInputs: imageInputs.map((r) => ({
           kind: r.kind,
           id: r.id,
+          // ASSET 存工作区代理路径而非原始存储 URL（Codex P2）：内网/私有
+          // 存储域名对浏览器不可达，历史气泡里的素材 chip 会裂图；代理路径
+          // 与上传路径的 assetThumbUrl 口径一致。worker 侧自行从 DB 解析
+          // 真实 URL，不消费这里的展示 URL。
           ...(r.kind === "VERSION"
             ? { url: versionUrlMap.get(r.id) }
-            : { url: assetUrlMap.get(r.id) ?? undefined }),
+            : { url: `/api/workspaces/${wsId}/assets/${r.id}/raw` }),
         })),
       };
     }
