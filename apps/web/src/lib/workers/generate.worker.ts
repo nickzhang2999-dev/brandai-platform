@@ -635,19 +635,24 @@ export async function runGenerateJob(
 
     const appliedRuleIds = brandRules.map((r) => r.id);
     const sceneType = generation.sceneType;
-    const constraintEcho = constraintsEnabled()
-      ? {
-          // P1.2 — echo the compiled constraints so L3 can assert what
-          // actually shaped the image. Provider-side may also write these
-          // keys; explicit echo here guarantees presence even when the
-          // upstream silently ignores fields.
-          appliedNegativePrompt: aiConstraints.negativePrompt,
-          appliedPromptAdditions: aiConstraints.promptAdditions,
-          machineRulesApplied: aiConstraints.machineRules ?? {},
-          // D5 — record which positive/negative example assets shaped the image.
-          appliedReferenceImages: aiConstraints.referenceImages,
-        }
-      : {};
+    // 惰性构建（Codex P2）：aiConstraints 在下方还会被改写（折入对话 IMAGE_INPUT、
+    // chat-origin 剔除品牌参考/additions）。若在此处提前快照，落库的
+    // appliedReferenceImages 会漏掉用户点选的输入图、或把 chat 分支刻意滤掉的
+    // 品牌/禁例参考写回审计留痕。改为 persist 时按最终 aiConstraints 计算。
+    const buildConstraintEcho = () =>
+      constraintsEnabled()
+        ? {
+            // P1.2 — echo the compiled constraints so L3 can assert what
+            // actually shaped the image. Provider-side may also write these
+            // keys; explicit echo here guarantees presence even when the
+            // upstream silently ignores fields.
+            appliedNegativePrompt: aiConstraints.negativePrompt,
+            appliedPromptAdditions: aiConstraints.promptAdditions,
+            machineRulesApplied: aiConstraints.machineRules ?? {},
+            // D5 — record which positive/negative example assets shaped the image.
+            appliedReferenceImages: aiConstraints.referenceImages,
+          }
+        : {};
 
     // Re-generate: capture prior root versions but DON'T delete them yet —
     // only swap them out once the replacement has actually been generated +
@@ -836,7 +841,7 @@ export async function runGenerateJob(
             // record robust even if a provider drops the param echo. Absent when
             // the size probe failed / mock provider (requested w×h stays truth).
             ...actualSize,
-            ...constraintEcho,
+            ...buildConstraintEcho(),
             // K5 / M3 — stamp the chosen text mode onto each version so 重新生成
             // can reconstruct it from prior roots (mirrors styleKeywords below;
             // defaults to "direct" for jobs enqueued before this field existed).
