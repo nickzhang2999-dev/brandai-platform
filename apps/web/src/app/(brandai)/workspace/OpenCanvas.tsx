@@ -282,6 +282,7 @@ export function OpenCanvas({
     removedVersionIdsRef.current = new Set();
     lastSavedRef.current = "";
     (async () => {
+      let restored = false;
       try {
         const res = await fetch(
           `/api/workspaces/${persistWs}/projects/${persistProject}/canvas`,
@@ -336,10 +337,16 @@ export function OpenCanvas({
           camera: data.camera ?? null,
           removedVersionIds: [...removedVersionIdsRef.current].sort(),
         });
+        restored = true;
       } catch {
-        /* 恢复失败 → 空画布继续可用；下一次编辑照常保存 */
+        /* 读取异常 → 走下方 finally 的「未恢复不放开保存」路径 */
       } finally {
-        if (!cancelled) setHydrated(true);
+        // 只有成功恢复才放开自动保存（Codex P2）：读取失败（瞬时非 200 /
+        // 网络异常）时 items 已被上方作用域清空，若照旧置 hydrated，自动
+        // 保存会把空画布 PUT 覆盖服务端已存状态。代价是失败这次会话的
+        // 编辑不入库（画布仍可用，刷新即重试恢复+恢复保存），比静默清库安全。
+        // 真空画布不受影响：route 无记录时返回 200 空态，restored 照常为真。
+        if (!cancelled && restored) setHydrated(true);
       }
     })();
     return () => {

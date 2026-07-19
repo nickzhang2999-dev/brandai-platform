@@ -74,7 +74,11 @@ export async function PUT(
         ? prisma.generationVersion.findMany({
             where: {
               id: { in: [...versionIds] },
-              generation: { workspaceId: wsId },
+              // 画布按 Campaign 归属：版本 tile 必须属于本项目的 generation，
+              // 只卡 workspace 拦不住陈旧标签页/构造保存把 A 项目的出图
+              // 持久化进 B 项目画布（Codex P2）。素材是 workspace 级共享库，
+              // 维持 workspace 作用域不变。
+              generation: { workspaceId: wsId, projectId },
             },
             select: { id: true },
           })
