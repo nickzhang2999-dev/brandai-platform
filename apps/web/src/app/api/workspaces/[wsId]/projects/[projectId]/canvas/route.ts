@@ -80,7 +80,7 @@ export async function PUT(
               // 维持 workspace 作用域不变。
               generation: { workspaceId: wsId, projectId },
             },
-            select: { id: true },
+            select: { id: true, imageUrl: true },
           })
         : Promise.resolve([]),
       assetIds.size > 0
@@ -94,14 +94,33 @@ export async function PUT(
           })
         : Promise.resolve([]),
     ]);
-    const okVersions = new Set(okVersionRows.map((v) => v.id));
+    const versionUrlById = new Map(
+      okVersionRows.map((v) => [v.id, v.imageUrl]),
+    );
     const okAssets = new Set(okAssetRows.map((a) => a.id));
-    const items = rawItems.filter((it) => {
-      if (it.kind !== "image") return true;
-      if (it.versionId && !okVersions.has(it.versionId)) return false;
-      if (it.assetId && !okAssets.has(it.assetId)) return false;
-      return true;
-    });
+    const items = rawItems
+      .filter((it) => {
+        if (it.kind !== "image") return true;
+        if (it.versionId && !versionUrlById.has(it.versionId)) return false;
+        if (it.assetId && !okAssets.has(it.assetId)) return false;
+        return true;
+      })
+      .map((it) => {
+        // 归一 imageUrl（Codex P2）：id 合法但 URL 被陈旧标签页/构造保存改写时，
+        // 画布显示的图与工具条/对话动作实际操作的 id 会指向两张不同的图。落库
+        // 前用 DB 权威值改写——版本 tile 用行上 imageUrl，素材 tile 统一走
+        // workspace 代理路径（与上传/chatContext 的口径一致）。
+        if (it.kind !== "image") return it;
+        if (it.versionId) {
+          const url = versionUrlById.get(it.versionId);
+          return url && url !== it.imageUrl ? { ...it, imageUrl: url } : it;
+        }
+        if (it.assetId) {
+          const url = `/api/workspaces/${wsId}/assets/${it.assetId}/raw`;
+          return url !== it.imageUrl ? { ...it, imageUrl: url } : it;
+        }
+        return it;
+      });
 
     const data = {
       workspaceId: wsId,

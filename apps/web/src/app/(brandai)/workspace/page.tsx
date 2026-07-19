@@ -769,6 +769,17 @@ function Workspace() {
 
   const status = poll?.job?.status ?? poll?.generation.status ?? null;
   const versions = useMemo(() => poll?.generation.versions ?? [], [poll]);
+  // Codex P2 — 历史 generation 全量落画布：变体/历史条已删、ChatPanel 只显示
+  // 对话来源的气泡，老项目（本次迁移前的表单出图）若不落 tile 将没有任何
+  // 编辑/终稿/导出/审阅入口。画布是唯一图片表面：把所有 generation 的版本
+  // 并入 seed（当前轮询数据后写入覆盖，保证占位→真图实时刷新）；用户删除的
+  // tile 仍由 removedVersionIds 持久化管辖，不会被重新播回。
+  const seedVersionsAll = useMemo(() => {
+    const m = new Map<string, GenerationVersion>();
+    for (const g of history) for (const v of g.versions ?? []) m.set(v.id, v);
+    for (const v of versions) m.set(v.id, v);
+    return [...m.values()];
+  }, [history, versions]);
   const running =
     !!genId && status !== "SUCCEEDED" && status !== "FAILED" && !timedOut;
   const current = versions[activeVariant] ?? versions[0];
@@ -1273,7 +1284,7 @@ function Workspace() {
         {/* Canvas */}
         <div className="flex min-h-0 flex-col bg-background p-4">
           <OpenCanvas
-            seedVersions={versions}
+            seedVersions={seedVersionsAll}
             running={running}
             status={status}
             timedOut={timedOut}

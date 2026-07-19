@@ -510,13 +510,27 @@ export function OpenCanvas({
         (v) => !have.has(v.id) && !removedVersionIdsRef.current.has(v.id),
       );
       if (fresh.length === 0) return kept;
-      // 新 tile 落在现有内容包围盒下方一行（避免与累积的旧图/手动元素重叠）。
+      // 新 tile 落在现有内容包围盒下方（避免与累积的旧图/手动元素重叠）。
+      // 4 列换行：历史 generation 全量回填（老项目首次进入）可能一次落几十张，
+      // 单行会拉出超长横条。
       const maxY = kept.length
         ? Math.max(...kept.map((it) => it.y + it.h))
         : -64;
+      const COLS = 4;
+      let rowY = maxY + 64;
+      let colX = 0;
+      let rowH = 0;
       const add = fresh.map((v, i) => {
         const item = imageItemFromVersion(v, i);
-        return { ...item, x: i * (item.w + 48), y: maxY + 64 };
+        if (i > 0 && i % COLS === 0) {
+          rowY += rowH + 48;
+          colX = 0;
+          rowH = 0;
+        }
+        const placed = { ...item, x: colX, y: rowY };
+        colX += item.w + 48;
+        rowH = Math.max(rowH, item.h);
+        return placed;
       });
       return [...kept, ...add];
     });
