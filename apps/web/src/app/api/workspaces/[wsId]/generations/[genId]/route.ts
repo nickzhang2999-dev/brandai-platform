@@ -344,7 +344,14 @@ export async function POST(
                 ? prisma.generationVersion.findMany({
                     where: {
                       id: { in: versionIds },
-                      generation: { workspaceId: wsId },
+                      // 与 POST /generations、worker 同口径按 Campaign 作用域
+                      // （Codex P2）：历史 chatContext 里的跨项目版本引用在此
+                      // 被过滤（validReferenceAssets 语义），而不是入队后在
+                      // worker 的项目闸上硬失败。
+                      generation: {
+                        workspaceId: wsId,
+                        projectId: priorRow.projectId,
+                      },
                     },
                     select: { id: true },
                   })

@@ -633,7 +633,6 @@ export async function runGenerateJob(
         };
       });
 
-    const appliedRuleIds = brandRules.map((r) => r.id);
     const sceneType = generation.sceneType;
     // 惰性构建（Codex P2）：aiConstraints 在下方还会被改写（折入对话 IMAGE_INPUT、
     // chat-origin 剔除品牌参考/additions）。若在此处提前快照，落库的
@@ -706,7 +705,10 @@ export async function runGenerateJob(
           ? prisma.generationVersion.findMany({
               where: {
                 id: { in: versionIds },
-                generation: { workspaceId },
+                // 与 route 层同口径按 Campaign 作用域（Codex P2）：VERSION
+                // 输入必须属于本次出图所在 project，防止跨 Campaign 的出图
+                // 经陈旧/构造 job 泄入本项目的生成输入。
+                generation: { workspaceId, projectId: generation.projectId },
               },
               select: { id: true, imageUrl: true },
             })
@@ -796,6 +798,11 @@ export async function runGenerateJob(
       ...(constraintsEnabled() || hasExplicitPicks ? { aiConstraints } : {}),
       ...(imageSystemPrompt ? { systemPrompt: imageSystemPrompt } : {}),
     };
+
+    // 审计留痕与实际发给 AI 的规则同源（Codex P2）：chat-origin/direct 分支
+    // 刻意不发品牌规则（baseFields.brandRules = []），若仍把全量 confirmed
+    // 规则 id 盖进版本 params，导出/审计会声称这些规则塑造了图——与事实相反。
+    const appliedRuleIds = baseFields.brandRules.map((r) => r.id);
 
     async function persist(
       v: GenerateResponse["versions"][number],

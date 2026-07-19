@@ -150,7 +150,11 @@ export async function POST(
           ? prisma.generationVersion.findMany({
               where: {
                 id: { in: inputVersionIds },
-                generation: { workspaceId: wsId },
+                // VERSION chip 按 Campaign 作用域校验（Codex P2）：画布/历史
+                // 都是 project 级表面，只卡 workspace 会让切 Campaign 后的
+                // 陈旧 composer chip / 构造请求把 A 项目的出图喂进 B 项目的
+                // 生成输入并写进 B 的 chatContext。与画布 PUT 同口径。
+                generation: { workspaceId: wsId, projectId: input.projectId },
               },
               select: { id: true, imageUrl: true },
             })
