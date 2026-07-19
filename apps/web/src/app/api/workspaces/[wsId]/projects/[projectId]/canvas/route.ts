@@ -57,6 +57,11 @@ async function filterAndNormalizeCanvasItems<
             id: { in: [...assetIds] },
             workspaceId: wsId,
             deprecatedAt: null,
+            // 只收图片素材（Codex P2）：PDF/VI_DOC 等非图片素材经陈旧/构造
+            // 保存落进画布后，<img> 渲染裂图、点选提交又被 /generations 的
+            // mimeType image/ 闸拒掉——留下无法使用的服务端权威 tile。与
+            // 对话 chip 校验同口径在源头剔除。
+            mimeType: { startsWith: "image/" },
           },
           select: { id: true },
         })
