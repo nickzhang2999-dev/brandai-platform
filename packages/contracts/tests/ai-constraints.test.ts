@@ -11,6 +11,7 @@
 import { describe, expect, it } from "vitest";
 import { AIConstraints, GenerateRequest, GenerateResponse } from "../src/ai";
 import { compileAIConstraints } from "../../../apps/web/src/lib/ai-constraints";
+import { resolveChatBrandPolicy } from "../../../apps/web/src/lib/chat-brand-policy";
 import type { BrandRule, VI } from "../src/index";
 
 function ts(): string {
@@ -76,6 +77,19 @@ describe("AIConstraints — contract shape", () => {
     expect(r.success).toBe(true);
   });
 
+  it("GenerateRequest accepts branded_direct for automatic Brand Kit chat", () => {
+    expect(
+      GenerateRequest.safeParse({
+        sceneType: "ECOM_MAIN",
+        sellingPoint: "客厅餐桌电商海报",
+        scene: "",
+        brandRules: [],
+        versionCount: 1,
+        promptMode: "branded_direct",
+      }).success,
+    ).toBe(true);
+  });
+
   it("AIConstraints accepts an empty object (all fields optional/defaulted)", () => {
     expect(AIConstraints.safeParse({}).success).toBe(true);
   });
@@ -84,7 +98,12 @@ describe("AIConstraints — contract shape", () => {
     // mock-shaped usage: no costUsd / model keys at all (not null).
     const r = GenerateResponse.safeParse({
       versions: [{ imageUrl: "x", width: 1024, height: 1024, params: {} }],
-      usage: { provider: "mock", size: "1024x1024", imageCount: 2, latencyMs: 12 },
+      usage: {
+        provider: "mock",
+        size: "1024x1024",
+        imageCount: 2,
+        latencyMs: 12,
+      },
     });
     expect(r.success).toBe(true);
     // explicit null on an optional usage field is rejected (null-vs-optional lock)
@@ -99,6 +118,75 @@ describe("AIConstraints — contract shape", () => {
         versions: [{ imageUrl: "x", width: 10, height: 10, params: {} }],
       }).success,
     ).toBe(true);
+  });
+});
+
+describe("chat Brand Kit policy", () => {
+  const logoRule = rule({
+    id: "logo-rule",
+    type: "logo",
+    strength: "STRONG",
+    summary: "必须使用品牌主 Logo",
+  });
+
+  it("retains compiled constraints and the automatic logo for branded chat", () => {
+    const policy = resolveChatBrandPolicy({
+      chatOrigin: true,
+      brandRules: [logoRule],
+      aiConstraints: AIConstraints.parse({
+        promptAdditions: ["品牌主色 #FF6C2C"],
+        referenceImages: [
+          {
+            url: "https://cdn/brand-logo.png",
+            polarity: "positive",
+            source: "brand_rule:logo-rule",
+            mode: "STRICT",
+            note: "BRAND_LOGO_LOCKED: authoritative logo",
+          },
+        ],
+      }),
+    });
+
+    expect(policy.mode).toBe("BRANDED");
+    expect(policy.promptMode).toBe("branded_direct");
+    expect(policy.brandRules.map((item) => item.id)).toEqual(["logo-rule"]);
+    expect(policy.aiConstraints.promptAdditions).toEqual(["品牌主色 #FF6C2C"]);
+    expect(policy.aiConstraints.referenceImages[0]?.note).toMatch(
+      /^BRAND_LOGO_LOCKED:/,
+    );
+  });
+
+  it("keeps free chat concise when the active kit has no confirmed rules", () => {
+    const policy = resolveChatBrandPolicy({
+      chatOrigin: true,
+      brandRules: [],
+      aiConstraints: AIConstraints.parse({
+        promptAdditions: ["unrelated brand dump"],
+        negativePrompt: ["禁止违法内容"],
+        referenceImages: [
+          {
+            url: "https://cdn/style.png",
+            polarity: "positive",
+            source: "brand_rule:r1",
+          },
+          {
+            url: "https://cdn/user.png",
+            polarity: "positive",
+            source: "asset:a1",
+            mode: "STRICT",
+            note: "IMAGE_INPUT:1",
+          },
+        ],
+      }),
+    });
+
+    expect(policy.mode).toBe("FREE");
+    expect(policy.promptMode).toBe("direct");
+    expect(policy.brandRules).toEqual([]);
+    expect(policy.aiConstraints.promptAdditions).toEqual([]);
+    expect(policy.aiConstraints.negativePrompt).toEqual(["禁止违法内容"]);
+    expect(policy.aiConstraints.referenceImages).toHaveLength(1);
+    expect(policy.aiConstraints.referenceImages[0]?.note).toBe("IMAGE_INPUT:1");
   });
 });
 
@@ -122,7 +210,9 @@ describe("compileAIConstraints — semantics", () => {
       [],
     );
     expect(out.aiConstraints.promptAdditions).toContain("warm palette");
-    expect(out.aiConstraints.promptAdditions).not.toContain("should-not-appear");
+    expect(out.aiConstraints.promptAdditions).not.toContain(
+      "should-not-appear",
+    );
   });
 
   it("sorts negativePrompt by prohibition severity (HIGH first)", () => {

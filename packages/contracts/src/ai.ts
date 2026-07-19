@@ -311,8 +311,13 @@ export const GenerateRequest = z.object({
    * absent → prompt unchanged.
    */
   systemPrompt: z.string().optional(),
-  // V0.0.13g — "branded"(缺省，场景+品牌规则折叠) | "direct"(对话来源：仅用户 brief)
-  promptMode: z.enum(["branded", "direct"]).optional(),
+  // V0.0.18 — generation prompt policy:
+  //  - branded: legacy form/campaign path (scene + rules + additions)
+  //  - direct: chat path with no active Brand Kit (user brief only)
+  //  - branded_direct: chat path with an active Brand Kit. Mandatory compact
+  //    brand boundaries are placed before the user brief without restoring the
+  //    legacy scene/long-context dump that previously caused off-topic output.
+  promptMode: z.enum(["branded", "direct", "branded_direct"]).optional(),
 });
 export type GenerateRequest = z.infer<typeof GenerateRequest>;
 

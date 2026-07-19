@@ -327,18 +327,28 @@ async def generate(
     )
     # P1.2 — fold compiled promptAdditions into the prompt and machineRules
     # into width/height where possible.
-    # V0.0.13g — promptMode="direct"（对话来源）：prompt 只含用户 brief，
-    # 不加场景标签/Scene/品牌规则/Additions（文不对题修复：11 字指令曾被
-    # ~3000 字品牌倾倒淹没）。缺省 "branded" 行为逐字节不变。
+    # V0.0.18 — prompt policy is explicit:
+    #   direct: chat with no active Brand Kit → user brief only;
+    #   branded_direct: chat with an active Brand Kit → compact mandatory brand
+    #     boundary first, user brief second, without the legacy scene dump;
+    #   branded: legacy form/campaign path (unchanged).
     direct_mode = (req.promptMode or "branded") == "direct"
-    prompt_parts = (
-        [req.sellingPoint]
-        if direct_mode
-        else [
+    branded_direct_mode = req.promptMode == "branded_direct"
+    if direct_mode:
+        prompt_parts = [req.sellingPoint]
+    elif branded_direct_mode:
+        prompt_parts = [
+            (
+                "[MANDATORY BRAND BOUNDARY — apply before all creative choices] "
+                + (rule_summary or "Use the active Brand Kit exactly as supplied.")
+            ),
+            f"[USER CREATIVE BRIEF] {req.sellingPoint}",
+        ]
+    else:
+        prompt_parts = [
             f"[{req.sceneType}] {req.sellingPoint}. Scene: {req.scene}.",
             f"Brand rules: {rule_summary}",
         ]
-    )
     negative: list[str] = []
     machine_rules: dict[str, Any] = {}
     prompt_additions: list[str] = []
@@ -353,7 +363,13 @@ async def generate(
         prompt_additions = list(req.aiConstraints.promptAdditions or [])
         machine_rules = dict(req.aiConstraints.machineRules or {})
         if prompt_additions and not direct_mode:
-            prompt_parts.append("Additions: " + " | ".join(prompt_additions))
+            compiled = "[COMPILED BRAND CONSTRAINTS] " + " | ".join(prompt_additions)
+            if branded_direct_mode:
+                # Keep both brand blocks ahead of the user brief: model/provider
+                # ordering is the last portable priority signal before image gen.
+                prompt_parts.insert(1, compiled)
+            else:
+                prompt_parts.append("Additions: " + " | ".join(prompt_additions))
         reference_images = [
             r.model_dump(exclude_none=True)
             for r in req.aiConstraints.referenceImages
@@ -373,14 +389,21 @@ async def generate(
             )
             and r.get("url")
         ]
-        # 多图生图：与 contracts 的 max(8) 对齐 — 直连 /v1/generate 也被守住。
-        if len(strict_refs) > 8:
+        # 多图生图：用户显式 IMAGE_INPUT 仍与 contracts 的 max(8) 对齐。
+        # 自动 Brand Kit Logo 是服务端边界，不占用用户的 8 张输入配额；否则
+        # 用户选择 8 张合法输入后会被隐藏注入的第 9 张 Logo 意外打成 400。
+        user_strict_refs = [
+            r
+            for r in strict_refs
+            if not str(r.get("note") or "").startswith("BRAND_LOGO_LOCKED:")
+        ]
+        if len(user_strict_refs) > 8:
             raise HTTPException(
                 status_code=400,
                 detail=(
                     "At most 8 STRICT / IMAGE_INPUT reference images are "
                     "supported per generation; got "
-                    f"{len(strict_refs)}."
+                    f"{len(user_strict_refs)}."
                 ),
             )
         style_refs = [r for r in positive_refs if r not in strict_refs]
@@ -504,6 +527,11 @@ async def generate(
     _image_input_only = bool(strict_refs) and all(
         str(r.get("note") or "").startswith("IMAGE_INPUT") for r in strict_refs
     )
+    _brand_logo_refs = [
+        r
+        for r in strict_refs
+        if str(r.get("note") or "").startswith("BRAND_LOGO_LOCKED:")
+    ]
 
     async def _strict_edit_version(
         *,
@@ -513,7 +541,30 @@ async def generate(
     ) -> GeneratedVersion:
         if not strict_refs:
             raise RuntimeError("STRICT reference missing")
-        if _image_input_only:
+        if _brand_logo_refs:
+            n_user_refs = len(
+                [
+                    r
+                    for r in strict_refs
+                    if str(r.get("note") or "").startswith("IMAGE_INPUT")
+                ]
+            )
+            strict_prompt = (
+                "The BRAND_LOGO_LOCKED input is the authoritative project Brand "
+                "Kit logo. Use it to understand the exact brand identity and "
+                "palette. Reserve a clean, high-contrast safe area in the upper-"
+                "left for that exact logo. Do not draw, spell, reinterpret, invent "
+                "or substitute any logo or brand mark: the original pixels will "
+                "be composited into that safe area after generation."
+            )
+            if n_user_refs:
+                strict_prompt += (
+                    f" Use the other {n_user_refs} IMAGE_INPUT image(s) as "
+                    "mandatory visual inputs and follow the brief to transform "
+                    "or compose them."
+                )
+            strict_prompt += f"\n\nGeneration brief: {prompt}"
+        elif _image_input_only:
             n_refs = len(strict_refs)
             strict_prompt = (
                 f"Use the {n_refs} provided input image(s), in the given "

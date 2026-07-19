@@ -60,3 +60,27 @@ def test_branded_default_unchanged():
     prompt = r.json()["versions"][0]["params"]["prompt"]
     assert prompt.startswith("[SOCIAL_POSTER] 让 [图1] 仿照 [图2] 的风格绘画. Scene: 突出魔兽世界法师的冒险主题.")
     assert "Brand rules: 整份品牌规范长文……" in prompt
+
+
+def test_branded_direct_puts_compact_brand_boundary_before_user_brief():
+    r = client.post("/v1/generate", json=_base(
+        promptMode="branded_direct",
+        aiConstraints={
+            "promptAdditions": ["品牌主色 #FF6C2C", "Logo 保持安全留白"],
+            "negativePrompt": ["禁止替换品牌 Logo"],
+            "hardBlocks": [],
+            "referenceImages": [],
+        },
+    ))
+    assert r.status_code == 200
+    params = r.json()["versions"][0]["params"]
+    prompt = params["prompt"]
+    boundary = prompt.index("[MANDATORY BRAND BOUNDARY")
+    compiled = prompt.index("[COMPILED BRAND CONSTRAINTS]")
+    brief = prompt.index("[USER CREATIVE BRIEF]")
+    assert boundary < compiled < brief
+    assert "整份品牌规范长文……" in prompt
+    assert "品牌主色 #FF6C2C" in prompt
+    assert "让 [图1] 仿照 [图2] 的风格绘画" in prompt
+    assert "Scene:" not in prompt
+    assert params["appliedRules"] == ["r1"]

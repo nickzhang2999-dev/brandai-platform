@@ -152,6 +152,23 @@ def test_more_than_eight_strict_refs_rejected(client):
     assert "8" in r.json()["detail"]
 
 
+def test_automatic_brand_logo_does_not_consume_eight_user_input_slots(client):
+    provider = _RecordingOpenAIProvider()
+    refs = [
+        _strict_ref(
+            "https://cdn/brand-logo.png",
+            note="BRAND_LOGO_LOCKED: authoritative project Brand Kit logo",
+        ),
+        *[
+            _strict_ref(f"https://cdn/{i}.png", note=f"IMAGE_INPUT:{i}")
+            for i in range(8)
+        ],
+    ]
+    r = _post_with(client, provider, _payload(aiConstraints=_constraints(refs)))
+    assert r.status_code == 200
+    assert len(provider.ref_calls[0]["references"]) == 9
+
+
 def test_image_input_refs_use_compose_prompt_template(client):
     """IMAGE_INPUT refs (对话面板图生图) must NOT get the locked-asset wording —
     the user's brief drives a free transform/compose, not asset preservation."""
@@ -179,6 +196,23 @@ def test_legacy_strict_refs_keep_locked_asset_template(client):
     assert r.status_code == 200
     prompt = provider.ref_calls[0]["prompt"]
     assert "mandatory locked asset" in prompt
+
+
+def test_brand_logo_ref_reserves_safe_area_and_forbids_invented_logo(client):
+    provider = _RecordingOpenAIProvider()
+    refs = [
+        _strict_ref(
+            "https://cdn/brand-logo.png",
+            note="BRAND_LOGO_LOCKED: authoritative project Brand Kit logo",
+        )
+    ]
+    r = _post_with(client, provider, _payload(aiConstraints=_constraints(refs)))
+    assert r.status_code == 200
+    prompt = provider.ref_calls[0]["prompt"]
+    assert "upper-left" in prompt
+    assert "Do not draw" in prompt
+    assert "invent" in prompt
+    assert "composited" in prompt
 
 
 def test_multi_strict_refs_fallback_edit_path_keeps_all_urls(client):

@@ -221,8 +221,10 @@ class GenerateRequest(BaseModel):
     # threaded through the web worker). Prepended verbatim to the prompt.
     # Frozen-additive: absent → prompt unchanged.
     systemPrompt: Optional[str] = None
-    # V0.0.13g — "branded"(缺省,场景+品牌规则折叠) | "direct"(对话来源,仅用户 brief)
-    promptMode: Optional[Literal["branded", "direct"]] = None
+    # V0.0.18 — branded_direct keeps the chat brief concise while prepending
+    # the active Brand Kit as a mandatory boundary. direct remains the free
+    # creation path when no confirmed Brand Kit rules exist.
+    promptMode: Optional[Literal["branded", "direct", "branded_direct"]] = None
 
 
 class GeneratedVersion(BaseModel):
