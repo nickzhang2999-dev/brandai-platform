@@ -272,6 +272,15 @@ export function OpenCanvas({
     }
     let cancelled = false;
     setHydrated(false);
+    // 切 Campaign（Codex P2）：先清掉上一项目残留在内存的 items——否则下方
+    // 恢复合并的 extra 过滤会把 A 项目的版本 tile 保进 B 的画布，且随后的
+    // 自动保存会把它们持久化进 B 的 ProjectCanvas（route 归属校验只到
+    // workspace 级，拦不住同空间跨项目）。旧项目的待保存已由作用域 flush
+    // effect 在本效果重跑前发出；seed 合并只在 seedVersions 身份变化时重跑，
+    // 清空后不会用旧 generation 的 versions 把它们加回来。
+    setItems([]);
+    removedVersionIdsRef.current = new Set();
+    lastSavedRef.current = "";
     (async () => {
       try {
         const res = await fetch(

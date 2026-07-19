@@ -743,6 +743,9 @@ function Workspace() {
   // 对话面板提交成功 → 新出图立即成为当前选中（带 jobId 走完整 job 轮询），
   // 画布无需用户手点「查看」即渲染新图（Codex P2）。
   function onChatSubmitted(id: string, job: string | null) {
+    // 有 jobId 即实时出图：先起本地计时表——超时 effect 用 startedAt 判 6 分钟
+    // 上界，不起表会以 0 为起点、约 3 秒就误判超时（Codex P2）。
+    startedAt.current = Date.now();
     setGenId(id);
     setJobId(job);
     setTimedOut(false);
