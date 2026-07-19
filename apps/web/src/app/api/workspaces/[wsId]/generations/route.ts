@@ -161,6 +161,9 @@ export async function POST(
                 id: { in: inputAssetIds },
                 workspaceId: wsId,
                 deprecatedAt: null,
+                // 与表单参考素材路径同一道生命周期闸（Codex P2）：被管理员
+                // 停用出图的素材不得经对话 chip 绕进 STRICT 输入。
+                availableForGeneration: true,
                 mimeType: { startsWith: "image/" },
               },
               select: { id: true, url: true },

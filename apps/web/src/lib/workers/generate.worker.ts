@@ -712,6 +712,9 @@ export async function runGenerateJob(
                 id: { in: assetIds },
                 workspaceId,
                 deprecatedAt: null,
+                // 生命周期闸与 route 同口径：入队后素材被停用出图的窗口期
+                // 也拦住（解析不到 → 抛可读错误 → FAILED）。
+                availableForGeneration: true,
                 mimeType: { startsWith: "image/" },
               },
               select: { id: true, url: true, source: true },

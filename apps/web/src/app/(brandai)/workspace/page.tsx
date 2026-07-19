@@ -1079,6 +1079,15 @@ function Workspace() {
     ) => {
       if (pick.versionId) {
         const picked = versions.find((x) => x.id === pick.versionId);
+        // 点选的是历史 generation 的累积 tile（不在当前 gen 的 versions 里）→
+        // 顺带把工作台切到该次出图，否则 soloVersion 解析不到、选中后没有
+        // 改图/终稿/导出/审阅 操作条（Codex P2；改图等端点也按 genId 作用域）。
+        if (!picked) {
+          const owner = history.find((g) =>
+            (g.versions ?? []).some((v) => v.id === pick.versionId),
+          );
+          if (owner) viewGeneration(owner.id);
+        }
         chatPickImage(
           {
             kind: "VERSION",
@@ -1097,7 +1106,9 @@ function Workspace() {
         );
       }
     },
-    [versions, chatPickImage],
+    // viewGeneration 是组件体内声明的函数（身份随渲染变化），与 versions 同列
+    // 依赖即可——本回调本就随 versions 变化重建。
+    [versions, history, chatPickImage, viewGeneration],
   );
 
   // 上传图片到画布:走真实素材上传(R2)→ 公网 URL + 真实尺寸(从 resolution 串解析)。
