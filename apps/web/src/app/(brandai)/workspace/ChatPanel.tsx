@@ -219,6 +219,7 @@ export function ChatPanel({
   sceneType,
   onViewGeneration,
   onSubmitted,
+  presetBrief,
   insertRef,
   onComposerRefsChange,
   onPasteImage,
@@ -236,6 +237,9 @@ export function ChatPanel({
   onComposerRefsChange?: (refs: { id: string; ready: boolean }[]) => void;
   /** 输入框内粘贴图片 → 交给页面上传进画布（prd_agent 途径4：图片落画布不落输入框）。 */
   onPasteImage?: (files: File[]) => void;
+  /** 首页「开始创作」/模板库经 ?brief= 直达工作台的起始提示词（Codex P2）：
+      生成表单已删，brief 落进对话输入框；仅在参数真实变化且输入框为空时播种。 */
+  presetBrief?: string | null;
 }) {
   const qc = useQueryClient();
   const composerRef = useRef<HTMLDivElement | null>(null);
@@ -243,6 +247,10 @@ export function ChatPanel({
   const [pendingCount, setPendingCount] = useState(0);
   const [composerEmpty, setComposerEmpty] = useState(true);
   const [sending, setSending] = useState(false);
+  // 在途防连击（Codex P2）：contentEditable 里连按 Enter 不经过按钮 disabled，
+  // sending state 的闭包也可能滞后一拍——用 ref 做同步闸，杜绝同一份输入
+  // 重复 POST /generations（重复扣配额 + 重复起 job）。
+  const sendingRef = useRef(false);
   const [err, setErr] = useState<string | null>(null);
   const [sizeOpen, setSizeOpen] = useState(false);
   const [sizeIdx, setSizeIdx] = useState(0);
@@ -308,6 +316,23 @@ export function ChatPanel({
       chips.map((c) => ({ id: c.dataset.id ?? "", ready: c.dataset.ready === "1" })),
     );
   }, [onComposerRefsChange]);
+
+  // 首页 brief 播种（Codex P2）：`/workspace?brief=...` 到达时把起始提示词落进
+  // 对话输入框——生成表单删除后这是唯一生成入口，否则首页 CTA 的 brief 会被
+  // 静默丢弃。仅在 brief 参数真实变化（真导航）且输入框为空时播种，绝不覆盖
+  // 用户已输入的内容；播种后同步状态让发送按钮立即可用。
+  useEffect(() => {
+    const brief = presetBrief?.trim();
+    if (!brief) return;
+    const el = composerRef.current;
+    if (!el) return;
+    const hasContent =
+      (el.textContent ?? "").trim() !== "" ||
+      el.querySelector("[data-chat-chip]") !== null;
+    if (hasContent) return;
+    el.textContent = brief;
+    syncComposerState();
+  }, [presetBrief, syncComposerState]);
 
   /**
    * V0.0.13f — 选区 → chip 文本 token（复制/剪切）。选区含 chip 时返回
@@ -476,11 +501,13 @@ export function ChatPanel({
     displayText: string;
     imageInputs: ChatComposerRef[];
   }): Promise<boolean> {
+    if (sendingRef.current) return false;
     if (!projectId) {
       setErr("请先选择项目");
       return false;
     }
     const size = SIZE_OPTIONS[sizeIdx] ?? SIZE_OPTIONS[0];
+    sendingRef.current = true;
     setSending(true);
     setErr(null);
     try {
@@ -527,6 +554,7 @@ export function ChatPanel({
       setErr(e instanceof Error ? e.message : "发送失败");
       return false;
     } finally {
+      sendingRef.current = false;
       setSending(false);
     }
   }

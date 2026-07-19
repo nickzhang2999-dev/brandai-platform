@@ -253,6 +253,20 @@ function Workspace() {
   const presetScene = search.get("scene");
   const presetSceneType = search.get("sceneType");
   const presetStyle = search.get("style");
+  // 首页/模板库直达工作台的起始提示词（Codex P2）：生成表单已删，brief/scene/
+  // style 不再有表单可落——合成一段可编辑文本播种进对话输入框（用户所见即所发，
+  // direct prompt 原文送模型）。三段都空则不播种。
+  const chatPresetBrief = useMemo(() => {
+    const brief = presetBrief?.trim().slice(0, 500) ?? "";
+    const scene = presetScene?.trim() ?? "";
+    const styles = parseStyleParam(presetStyle);
+    const parts = [
+      brief,
+      scene,
+      styles.length > 0 ? `风格：${styles.join("、")}` : "",
+    ].filter(Boolean);
+    return parts.length > 0 ? parts.join("，") : null;
+  }, [presetBrief, presetScene, presetStyle]);
 
   const { data: projects = [] } = useQuery({
     queryKey: ["brandai-projects", wsId],
@@ -1323,6 +1337,7 @@ function Workspace() {
             sceneType={sceneType}
             onViewGeneration={viewGeneration}
             onSubmitted={onChatSubmitted}
+            presetBrief={chatPresetBrief}
             insertRef={chatInsertRef}
             onComposerRefsChange={setChatComposerRefs}
             onPasteImage={(files) => chatUploadFilesRef.current?.(files)}
