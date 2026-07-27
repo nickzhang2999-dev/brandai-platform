@@ -1,6 +1,7 @@
 version: 2
-# 分组策略：每个生态把「版本更新」与「安全更新」各合并为单个分组 PR
-# （patterns: ["*"]），并把 open-pull-requests-limit 收紧到 3 作为安全上限。
+# 分组策略：停止定时普通版本更新，仅保留 Dependabot 安全更新。
+# `open-pull-requests-limit: 0` 只关闭 version-updates，不影响 security-updates；
+# 安全更新仍按每个生态的 security 分组聚合为单个 PR。
 # 背景：旧配置只给 dev-deps 分组，其余每个生产依赖各开一个 PR，首次运行就开到
 # npm10 + pip5 + actions5 ≈ 20 个，造成 PR 列表泛滥。
 # 注意：Dependabot `groups.applies-to` 默认只作用于 version-updates，安全更新需单列
@@ -11,7 +12,7 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 0
     groups:
       github-actions:
         applies-to: version-updates
@@ -25,7 +26,7 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 0
     groups:
       npm-dependencies:
         applies-to: version-updates
@@ -39,7 +40,7 @@ updates:
     directory: "/apps/ai"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 0
     groups:
       pip-dependencies:
         applies-to: version-updates
