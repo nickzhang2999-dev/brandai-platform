@@ -264,16 +264,17 @@ function ExactAssetEditor({
   }
 
   const previewAspect = frame.width / frame.height;
-  const previewStyle =
-    previewAspect >= 1
-      ? {
-          width: "min(680px, 64vw)",
-          aspectRatio: `${frame.width}/${frame.height}`,
-        }
-      : {
-          height: "min(620px, 66vh)",
-          aspectRatio: `${frame.width}/${frame.height}`,
-        };
+  const previewStyle = {
+    // Keep the preview inside its grid track. A vw-based width can be wider
+    // than the left column after reserving the 330px controls panel, which
+    // makes CSS Grid expand the first track and clip the controls on zoomed or
+    // narrower viewports.
+    width:
+      previewAspect >= 1
+        ? "min(680px, 100%)"
+        : `min(${Math.max(240, Math.round(620 * previewAspect))}px, 100%)`,
+    aspectRatio: `${frame.width}/${frame.height}`,
+  };
 
   return (
     <div
@@ -281,10 +282,10 @@ function ExactAssetEditor({
       onClick={onCancel}
     >
       <div
-        className="grid max-h-[92vh] w-full max-w-6xl grid-cols-[minmax(360px,1fr)_330px] overflow-hidden rounded-3xl border border-border bg-card shadow-[0_24px_70px_rgba(30,30,60,0.2)]"
+        className="grid max-h-[calc(100vh-2rem)] w-[calc(100vw-2rem)] max-w-6xl grid-cols-1 overflow-y-auto rounded-3xl border border-border bg-card shadow-[0_24px_70px_rgba(30,30,60,0.2)] md:grid-cols-[minmax(0,1fr)_minmax(280px,330px)] md:overflow-hidden"
         onClick={(event) => event.stopPropagation()}
       >
-        <main className="flex min-h-[560px] flex-col items-center justify-center bg-muted/35 p-6">
+        <main className="flex min-h-[360px] min-w-0 flex-col items-center justify-center overflow-hidden bg-muted/35 p-4 md:min-h-[min(560px,calc(100vh-2rem))] md:p-6">
           <div className="mb-3 flex w-full max-w-3xl items-center justify-between text-xs">
             <span className="font-semibold">输出画框 · {frame.label}</span>
             <span className="text-muted-foreground">
@@ -328,7 +329,7 @@ function ExactAssetEditor({
             在画框中拖动素材中心；画框外的部分会被确定性裁掉。
           </p>
         </main>
-        <aside className="overflow-y-auto border-l border-border p-5">
+        <aside className="min-w-0 border-t border-border p-5 md:overflow-y-auto md:border-l md:border-t-0">
           <div className="flex items-start justify-between gap-3">
             <div>
               <h3 className="text-base font-semibold">锁定素材布局</h3>
