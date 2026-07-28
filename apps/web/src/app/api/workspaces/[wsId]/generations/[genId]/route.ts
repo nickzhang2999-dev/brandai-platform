@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { prisma } from "@brandai/db";
-import { SizeSpec } from "@brandai/contracts";
+import { AssetUsageInput, SizeSpec } from "@brandai/contracts";
 import { ApiException, handleError, ok, parse, requireUser } from "@/lib/api";
 import {
   requireOwnedWorkspace,
@@ -378,6 +378,38 @@ export async function POST(
             );
           })()
         : undefined;
+    const reconstructedAssetUsages = (() => {
+      for (const version of priorRoots) {
+        const params = (version.params ?? {}) as { assetUsages?: unknown };
+        if (!Array.isArray(params.assetUsages)) continue;
+        return params.assetUsages
+          .map((usage) => AssetUsageInput.safeParse(usage))
+          .filter((result) => result.success)
+          .map((result) => result.data);
+      }
+      return [];
+    })();
+    const validAssetUsages =
+      reconstructedAssetUsages.length > 0
+        ? await (async () => {
+            const rows = await prisma.asset.findMany({
+              where: {
+                id: {
+                  in: reconstructedAssetUsages.map((usage) => usage.assetId),
+                },
+                workspaceId: wsId,
+                deprecatedAt: null,
+                availableForGeneration: true,
+                mimeType: { startsWith: "image/" },
+              },
+              select: { id: true },
+            });
+            const ok = new Set(rows.map((asset) => asset.id));
+            return reconstructedAssetUsages.filter((usage) =>
+              ok.has(usage.assetId),
+            );
+          })()
+        : [];
 
     const jobData: GenerateJobData = {
       workspaceId: wsId,
@@ -394,6 +426,7 @@ export async function POST(
       ...(validImageInputs && validImageInputs.length > 0
         ? { imageInputs: validImageInputs }
         : {}),
+      ...(validAssetUsages.length > 0 ? { assetUsages: validAssetUsages } : {}),
     };
     const job = await generateQueue.add("generate", jobData, {
       removeOnComplete: 50,

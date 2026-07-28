@@ -417,18 +417,13 @@ async def generate(
         # 多图生图：用户显式 IMAGE_INPUT 仍与 contracts 的 max(8) 对齐。
         # 自动 Brand Kit Logo 是服务端边界，不占用用户的 8 张输入配额；否则
         # 用户选择 8 张合法输入后会被隐藏注入的第 9 张 Logo 意外打成 400。
-        user_strict_refs = [
-            r
-            for r in strict_refs
-            if not str(r.get("note") or "").startswith("BRAND_LOGO_LOCKED:")
-        ]
-        if len(user_strict_refs) > 8:
+        if len(strict_refs) > 16:
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    "At most 8 STRICT / IMAGE_INPUT reference images are "
-                    "supported per generation; got "
-                    f"{len(user_strict_refs)}."
+                    "At most 16 total model-input images (including an automatic "
+                    "Brand Kit logo, when present) are supported per generation; got "
+                    f"{len(strict_refs)}."
                 ),
             )
         style_refs = [r for r in positive_refs if r not in strict_refs]
@@ -545,18 +540,42 @@ async def generate(
         return params
 
     strict_ref = strict_refs[0] if strict_refs else None
-    # V0.0.13 — 对话面板图生图/多图生图：refs the worker tagged IMAGE_INPUT are
-    # free transform/compose inputs (the user's brief drives the change), NOT
-    # locked brand assets. Any legacy STRICT ref keeps the preserve-exactly
-    # wording so 素材 100% 调用 semantics are never diluted by the new path.
-    _image_input_only = bool(strict_refs) and all(
-        str(r.get("note") or "").startswith("IMAGE_INPUT") for r in strict_refs
-    )
+    # V0.0.21 — model inputs carry explicit semantics. IMAGE_INPUT remains the
+    # free chat-compose path; project assets are either ADAPTIVE (recognizable
+    # identity, model may harmonize) or REFERENCE (style/palette/composition
+    # only). EXACT project assets never reach this service.
+    _image_input_refs = [
+        r
+        for r in strict_refs
+        if str(r.get("note") or "").startswith("IMAGE_INPUT")
+    ]
+    _adaptive_asset_refs = [
+        r
+        for r in strict_refs
+        if str(r.get("note") or "").startswith("ASSET_USAGE:ADAPTIVE:")
+    ]
+    _reference_asset_refs = [
+        r
+        for r in strict_refs
+        if str(r.get("note") or "").startswith("ASSET_USAGE:REFERENCE:")
+    ]
     _brand_logo_refs = [
         r
         for r in strict_refs
         if str(r.get("note") or "").startswith("BRAND_LOGO_LOCKED:")
     ]
+    _special_refs = (
+        _image_input_refs
+        + _adaptive_asset_refs
+        + _reference_asset_refs
+        + _brand_logo_refs
+    )
+    _legacy_locked_refs = [r for r in strict_refs if r not in _special_refs]
+
+    def _input_numbers(refs: list[dict[str, Any]]) -> str:
+        return ", ".join(
+            f"#{strict_refs.index(ref) + 1}" for ref in refs
+        )
 
     async def _strict_edit_version(
         *,
@@ -567,15 +586,9 @@ async def generate(
     ) -> GeneratedVersion:
         if not strict_refs:
             raise RuntimeError("STRICT reference missing")
+        instruction_parts: list[str] = []
         if _brand_logo_refs:
-            n_user_refs = len(
-                [
-                    r
-                    for r in strict_refs
-                    if str(r.get("note") or "").startswith("IMAGE_INPUT")
-                ]
-            )
-            strict_prompt = (
+            instruction_parts.append(
                 "The BRAND_LOGO_LOCKED input is the authoritative project Brand "
                 "Kit logo. Use it to understand the exact brand identity and "
                 "palette. Reserve a clean, high-contrast safe area in the upper-"
@@ -583,32 +596,40 @@ async def generate(
                 "or substitute any logo or brand mark: the original pixels will "
                 "be composited into that safe area after generation."
             )
-            if n_user_refs:
-                strict_prompt += (
-                    f" Use the other {n_user_refs} IMAGE_INPUT image(s) as "
-                    "mandatory visual inputs and follow the brief to transform "
-                    "or compose them."
-                )
-            strict_prompt += f"\n\nGeneration brief: {prompt}"
-        elif _image_input_only:
-            n_refs = len(strict_refs)
-            strict_prompt = (
-                f"Use the {n_refs} provided input image(s), in the given "
-                "order, as mandatory visual inputs. Follow the generation "
+        if _image_input_refs:
+            instruction_parts.append(
+                f"Use input image(s) {_input_numbers(_image_input_refs)} as "
+                "mandatory visual inputs. Follow the generation "
                 "brief to transform, restyle, combine or compose them. Keep "
                 "each input's key subject recognizable unless the brief "
-                f"explicitly says otherwise.\n\nGeneration brief: {prompt}"
+                "explicitly says otherwise."
             )
-        else:
-            strict_prompt = (
-                "Use the input image(s) as a mandatory locked asset. Preserve "
+        if _adaptive_asset_refs:
+            instruction_parts.append(
+                f"Input image(s) {_input_numbers(_adaptive_asset_refs)} are "
+                "ADAPTIVE assets: their key subject must appear and remain "
+                "recognizable, but you may harmonize lighting, perspective, "
+                "surface treatment and surrounding composition. Never replace "
+                "them with a different product, species, person or object."
+            )
+        if _reference_asset_refs:
+            instruction_parts.append(
+                f"Input image(s) {_input_numbers(_reference_asset_refs)} are "
+                "REFERENCE-only: borrow their style, palette, composition and "
+                "visual language. Their depicted subjects do not need to appear "
+                "and must not be copied as mandatory content."
+            )
+        if _legacy_locked_refs:
+            instruction_parts.append(
+                "Use the remaining input image(s) as a mandatory locked asset. Preserve "
                 "each input asset's identity, shape, marks, product details "
                 "and visible content exactly. You may only resize, reposition, "
                 "preserve aspect ratio, and apply requested color treatment. "
                 "Do not replace, redraw, reinterpret, omit, crop away, or "
-                "invent a substitute for any input "
-                f"asset.\n\nGeneration brief: {prompt}"
+                "invent a substitute for any input asset."
             )
+        strict_prompt = "\n\n".join(instruction_parts)
+        strict_prompt += f"\n\nGeneration brief: {prompt}"
         if negative:
             strict_prompt += "\n\nAvoid: " + "; ".join(s for s in negative if s)
         effective_quality = (

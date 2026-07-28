@@ -123,6 +123,9 @@ importers:
       '@brandai/config':
         specifier: workspace:*
         version: link:../config
+      sharp:
+        specifier: ^0.33.5
+        version: 0.33.5
       typescript:
         specifier: ^5.7.2
         version: 5.9.3

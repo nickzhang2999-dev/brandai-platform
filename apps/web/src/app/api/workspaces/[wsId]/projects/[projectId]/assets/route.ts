@@ -1,5 +1,7 @@
-import { prisma } from "@brandai/db";
+import { prisma, Prisma } from "@brandai/db";
 import {
+  AssetInvocationMode,
+  ExactAssetTransform,
   LinkProjectAssetInput,
   ProjectAssetKind,
   type ProjectAssetLink,
@@ -32,6 +34,8 @@ type LinkRow = {
   id: string;
   projectId: string;
   kind: string;
+  usageMode: string | null;
+  exactTransform: unknown;
   createdAt: Date;
   asset: Parameters<typeof serializeAsset>[0];
 };
@@ -41,6 +45,12 @@ function serializeLink(row: LinkRow): ProjectAssetLink {
     id: row.id,
     projectId: row.projectId,
     kind: ProjectAssetKind.parse(row.kind),
+    ...(row.usageMode
+      ? { usageMode: AssetInvocationMode.parse(row.usageMode) }
+      : {}),
+    ...(row.exactTransform
+      ? { exactTransform: ExactAssetTransform.parse(row.exactTransform) }
+      : {}),
     createdAt: row.createdAt.toISOString(),
     asset: serializeAsset(row.asset),
   };
@@ -103,12 +113,30 @@ export async function POST(
       where: { projectId, assetId: input.assetId, kind: input.kind },
       include: { asset: true },
     });
-    const row =
-      existing ??
-      (await prisma.projectAsset.create({
-        data: { projectId, assetId: input.assetId, kind: input.kind },
-        include: { asset: true },
-      }));
+    const usageData = {
+      ...(input.usageMode ? { usageMode: input.usageMode } : {}),
+      ...(input.exactTransform
+        ? {
+            exactTransform:
+              input.exactTransform as unknown as Prisma.InputJsonValue,
+          }
+        : {}),
+    };
+    const row = existing
+      ? await prisma.projectAsset.update({
+          where: { id: existing.id },
+          data: usageData,
+          include: { asset: true },
+        })
+      : await prisma.projectAsset.create({
+          data: {
+            projectId,
+            assetId: input.assetId,
+            kind: input.kind,
+            ...usageData,
+          },
+          include: { asset: true },
+        });
     return ok(serializeLink(row), { status: existing ? 200 : 201 });
   } catch (err) {
     return handleError(err);

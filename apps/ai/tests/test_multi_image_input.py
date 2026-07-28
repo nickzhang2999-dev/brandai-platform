@@ -8,7 +8,7 @@ chat/completions Vision 分支且响应解析只认 message.content 字符串（
 契约：
   1. 多张 STRICT 参考不再被 400 拒绝；全部（≤8、按序）到达 provider；
   2. 单张 STRICT 行为逐字节不变（回归护栏）；
-  3. >8 张 → 400（与 contracts 的 max(8) 对齐，直连调用也被守住）；
+  3. >16 张 → 400（8 个对话输入 + 8 个项目资源，直连调用也被守住）；
   4. note 以 "IMAGE_INPUT" 开头的引用使用「按指令合成/改绘」prompt 模板，
      遗留 STRICT（锁定素材）保留 "mandatory locked asset" 模板——两种语义
      不得互相污染。
@@ -253,16 +253,16 @@ def test_gpt_image_2_gateway_uses_same_brand_kit_multipart_path(client):
     assert provider.edit_calls == []
 
 
-def test_more_than_eight_strict_refs_rejected(client):
+def test_more_than_sixteen_model_inputs_rejected(client):
     refs = [
         _strict_ref(f"https://cdn/{i}.png", note=f"IMAGE_INPUT:{i}")
-        for i in range(9)
+        for i in range(17)
     ]
     r = client.post(
         "/v1/generate", json=_payload(aiConstraints=_constraints(refs))
     )
     assert r.status_code == 400
-    assert "8" in r.json()["detail"]
+    assert "16" in r.json()["detail"]
 
 
 def test_automatic_brand_logo_does_not_consume_eight_user_input_slots(client):
@@ -309,6 +309,32 @@ def test_legacy_strict_refs_keep_locked_asset_template(client):
     assert r.status_code == 200
     prompt = provider.ref_calls[0]["prompt"]
     assert "mandatory locked asset" in prompt
+
+
+def test_project_asset_usage_modes_get_distinct_real_input_instructions(client):
+    provider = _RecordingOpenAIProvider()
+    refs = [
+        _strict_ref(
+            "https://cdn/chicken-leg.png",
+            note="ASSET_USAGE:ADAPTIVE:1",
+        ),
+        _strict_ref(
+            "https://cdn/style-board.png",
+            note="ASSET_USAGE:REFERENCE:2",
+        ),
+    ]
+    r = _post_with(client, provider, _payload(aiConstraints=_constraints(refs)))
+    assert r.status_code == 200
+    assert len(provider.ref_calls) == 1
+    assert [ref["url"] for ref in provider.ref_calls[0]["references"]] == [
+        "https://cdn/chicken-leg.png",
+        "https://cdn/style-board.png",
+    ]
+    prompt = provider.ref_calls[0]["prompt"]
+    assert "ADAPTIVE assets" in prompt
+    assert "Never replace them with a different product, species" in prompt
+    assert "REFERENCE-only" in prompt
+    assert "subjects do not need to appear" in prompt
 
 
 def test_brand_logo_ref_reserves_safe_area_and_forbids_invented_logo(client):

@@ -1,6 +1,6 @@
 {
   "name": "@brandai/config",
-  "version": "0.0.20",
+  "version": "0.0.21",
   "private": true,
   "exports": {
     "./tsconfig.base.json": "./tsconfig.base.json",

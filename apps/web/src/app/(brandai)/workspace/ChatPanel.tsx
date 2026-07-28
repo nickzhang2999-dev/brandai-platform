@@ -14,9 +14,11 @@ import {
   GenerationSizeSelection as GenerationSizeSelectionSchema,
   resolveGenerationSize,
   type Generation,
+  type AssetUsageInput,
   type GenerationAspectRatioKey,
   type GenerationResolutionTier,
   type GenerationSizeSelection,
+  type SizeSpec,
   type WatermarkOverlayInput,
 } from "@brandai/contracts";
 import { apiFetch } from "@/lib/client";
@@ -228,6 +230,8 @@ export function ChatPanel({
   onSubmitted,
   presetBrief,
   watermarkOverlays,
+  assetUsages,
+  onSizeSelectionChange,
   insertRef,
   onComposerRefsChange,
   onPasteImage,
@@ -239,6 +243,12 @@ export function ChatPanel({
       入口（生成表单已删），不透传的话已配置水印的 Campaign 出图会静默丢
       logo/水印——worker 对 chat-origin 同样支持确定性合成（Codex P2）。 */
   watermarkOverlays?: WatermarkOverlayInput[];
+  /** V0.0.21 — server-authoritative project resources and their execution mode. */
+  assetUsages?: AssetUsageInput[];
+  onSizeSelectionChange?: (
+    selection: GenerationSizeSelection,
+    resolved: SizeSpec,
+  ) => void;
   onViewGeneration: (generationId: string) => void;
   /** 提交成功后回调（新 generation + jobId）——页面切换选中出图，让新图直接
       落画布轮询，不必等用户手点「查看」（Codex P2）。 */
@@ -307,6 +317,18 @@ export function ChatPanel({
       };
     }
   }, [customRatioHeight, customRatioWidth, ratioKey, resolutionTier]);
+  useEffect(() => {
+    if (sizeSelectionState.selection && sizeSelectionState.resolved) {
+      onSizeSelectionChange?.(
+        sizeSelectionState.selection,
+        sizeSelectionState.resolved,
+      );
+    }
+  }, [
+    onSizeSelectionChange,
+    sizeSelectionState.resolved,
+    sizeSelectionState.selection,
+  ]);
 
   const { data: history = [] } = useQuery<Generation[]>({
     queryKey: ["brandai-project-gens", wsId, projectId],
@@ -591,6 +613,7 @@ export function ChatPanel({
                 })),
               }
             : {}),
+          ...(assetUsages && assetUsages.length > 0 ? { assetUsages } : {}),
           // Campaign 配置的水印/logo 与旧表单提交同口径透传（Codex P2）：
           // direct prompt 只改提示词组装，水印是安全底线之一、照叠。
           ...(watermarkOverlays && watermarkOverlays.length > 0

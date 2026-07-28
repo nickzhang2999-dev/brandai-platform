@@ -6,6 +6,7 @@ import {
   ComplianceReport,
   GenerateRequest,
   GenerateResponse,
+  type AssetUsageInput,
   type BrandRule,
   type SizeSpec,
 } from "@brandai/contracts";
@@ -30,6 +31,10 @@ import { compileAIConstraints, constraintsEnabled } from "@/lib/ai-constraints";
 import { recordUsage, fromGenerateUsage } from "@/lib/usage";
 import { getEffectiveAiSettings } from "@/lib/settings";
 import { resolveChatBrandPolicy } from "@/lib/chat-brand-policy";
+import {
+  applyExactAssetLayers,
+  type ResolvedExactAssetLayer,
+} from "@/lib/exact-assets";
 
 /**
  * K5 — zero-dependency pixel-size probe for a base64 `data:` URL, used as a
@@ -215,6 +220,11 @@ export interface GenerateJobData {
    * /images/edits multipart 路径（规避 prd_agent 多图独立 Vision 分支 bug）。
    */
   imageInputs?: { kind: "VERSION" | "ASSET"; id: string }[];
+  /**
+   * V0.0.21 — explicit project resource semantics. EXACT is post-composited;
+   * ADAPTIVE/REFERENCE become real ordered /images/edits inputs.
+   */
+  assetUsages?: AssetUsageInput[];
 }
 
 /** P2.0 feature flag. Default on; set MULTI_SIZE_V1=0 to fall back to the
@@ -868,6 +878,96 @@ export async function runGenerateJob(
       hasExplicitPicks = true;
     }
 
+    // V0.0.21 — project resource semantics. EXACT sources are resolved for the
+    // deterministic post-compositor only and are intentionally NOT appended to
+    // referenceImages. ADAPTIVE/REFERENCE are real ordered model inputs.
+    const assetUsages = [...(job.data.assetUsages ?? [])].sort(
+      (a, b) => a.order - b.order,
+    );
+    const usageAssetIds = assetUsages.map((usage) => usage.assetId);
+    const usageAssets =
+      usageAssetIds.length > 0
+        ? await prisma.asset.findMany({
+            where: {
+              id: { in: usageAssetIds },
+              workspaceId,
+              availableForGeneration: true,
+              deprecatedAt: null,
+              mimeType: { startsWith: "image/" },
+            },
+            select: {
+              id: true,
+              url: true,
+              mimeType: true,
+              source: true,
+              fileName: true,
+            },
+          })
+        : [];
+    const usageAssetMap = new Map(
+      usageAssets.map((asset) => [asset.id, asset]),
+    );
+    const missingUsageAssetIds = usageAssetIds.filter(
+      (id) => !usageAssetMap.has(id),
+    );
+    if (missingUsageAssetIds.length > 0) {
+      throw new Error(
+        `project resource unavailable: ${missingUsageAssetIds.join(", ")}`,
+      );
+    }
+    const resolvedExactAssetLayers: ResolvedExactAssetLayer[] = assetUsages
+      .filter((usage) => usage.mode === "EXACT")
+      .map((usage) => {
+        const asset = usageAssetMap.get(usage.assetId)!;
+        return {
+          assetId: usage.assetId,
+          assetUrl: asset.url,
+          assetMimeType: asset.mimeType,
+          transform: usage.exactTransform,
+        };
+      });
+    const modelAssetUsages = assetUsages.filter(
+      (usage) => usage.mode !== "EXACT",
+    );
+    if (resolvedExactAssetLayers.length > 0) {
+      const slots = resolvedExactAssetLayers
+        .map((layer, index) => {
+          const t = layer.transform;
+          return `slot ${index + 1}: center ${Math.round(t.xRatio * 100)}%/${Math.round(
+            t.yRatio * 100,
+          )}%, width ${Math.round(t.widthRatio * 100)}%, rotation ${Math.round(
+            t.rotationDeg,
+          )}°`;
+        })
+        .join("; ");
+      aiConstraints = {
+        ...aiConstraints,
+        promptAdditions: [
+          ...aiConstraints.promptAdditions,
+          `[EXACT_LAYOUT] Generate the background around these reserved composition slots (${slots}). Do not draw substitute products, people, logos or objects inside them; the authoritative locked source pixels will be composited after generation.`,
+        ],
+      };
+      hasExplicitPicks = true;
+    }
+    if (modelAssetUsages.length > 0) {
+      const refs = modelAssetUsages.map((usage, index) => {
+        const asset = usageAssetMap.get(usage.assetId)!;
+        return {
+          url: asset.url,
+          polarity: "positive" as const,
+          source: `asset:${usage.assetId}`,
+          mode: "STRICT" as const,
+          note: `ASSET_USAGE:${usage.mode}:${index + 1}`,
+          sourceHint: asset.source,
+        };
+      });
+      aiConstraints = {
+        ...aiConstraints,
+        referenceImages: [...aiConstraints.referenceImages, ...refs],
+      };
+      hasExplicitPicks = true;
+    }
+
     // V0.0.13 — 管理员配置的图像系统提示词（AppSetting > env，空则不注入）。
     const { imageSystemPrompt } = await getEffectiveAiSettings();
 
@@ -925,10 +1025,24 @@ export async function runGenerateJob(
       // K5 — prefer the AI service's probed size; fall back to a local
       // header read of the original data: URL (the AI probe is unreliable on
       // the gray container, but the worker always has the raw bytes here).
+      const baseImageUrl =
+        resolvedExactAssetLayers.length > 0
+          ? await uploadDataUrlImage(
+              v.imageUrl,
+              `generations/${workspaceId}/bases`,
+            )
+          : null;
+      const exactComposited =
+        resolvedExactAssetLayers.length > 0
+          ? await applyExactAssetLayers(v.imageUrl, resolvedExactAssetLayers)
+          : { imageUrl: v.imageUrl, appliedAssetIds: [] };
       const watermarked =
         resolvedOutputOverlays.length > 0
-          ? await applyWatermarksToImage(v.imageUrl, resolvedOutputOverlays)
-          : { imageUrl: v.imageUrl, appliedAssetIds: [] };
+          ? await applyWatermarksToImage(
+              exactComposited.imageUrl,
+              resolvedOutputOverlays,
+            )
+          : { imageUrl: exactComposited.imageUrl, appliedAssetIds: [] };
       const finalImageUrl = watermarked.imageUrl;
       const localSize =
         v.actualWidth && v.actualHeight ? null : decodeImageSize(finalImageUrl);
@@ -982,6 +1096,14 @@ export async function runGenerateJob(
               : {}),
             // V0.0.13 — 对话面板图像输入留痕（重试/审计可重建）。
             ...(imageInputs.length > 0 ? { imageInputs } : {}),
+            ...(assetUsages.length > 0 ? { assetUsages } : {}),
+            ...(baseImageUrl ? { baseImageUrl } : {}),
+            ...(exactComposited.appliedAssetIds.length > 0
+              ? {
+                  appliedExactAssetIds: exactComposited.appliedAssetIds,
+                  exactComposition: "identity-locked-source-layer",
+                }
+              : {}),
             ...(watermarkOverlays.length > 0 ? { watermarkOverlays } : {}),
             ...(watermarked.appliedAssetIds.filter((id) =>
               watermarkAssetIds.includes(id),

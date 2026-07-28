@@ -4,6 +4,9 @@ import {
   EditOp,
   EditRequest,
   EditResponse,
+  AssetUsageInput,
+  WatermarkOverlayInput as WatermarkOverlaySchema,
+  type AssetUsageInput as AssetUsageInputType,
   type WatermarkOverlayInput,
 } from "@brandai/contracts";
 import { connection, queuePrefix } from "@/lib/queue";
@@ -21,6 +24,10 @@ import {
   markSucceeded,
   markFailed,
 } from "@/lib/async-tasks";
+import {
+  applyExactAssetLayers,
+  type ResolvedExactAssetLayer,
+} from "@/lib/exact-assets";
 
 /**
  * Payload enqueued by
@@ -38,6 +45,8 @@ export interface EditJobData {
   payload: Record<string, unknown>;
   /** V0.0.11 — deterministic overlays to apply after AI edit returns. */
   watermarkOverlays?: WatermarkOverlayInput[];
+  /** V0.0.21 — explicit project resources; only EXACT layers are re-composited. */
+  assetUsages?: AssetUsageInputType[];
   /** H-async — server-authoritative task row to mirror progress/status into. */
   taskId?: string;
 }
@@ -67,7 +76,7 @@ export async function runEditJob(
     payload,
     taskId,
     workspaceId,
-    watermarkOverlays = [],
+    watermarkOverlays,
   } = job.data;
   try {
     await job.updateProgress(5);
@@ -81,11 +90,44 @@ export async function runEditJob(
         `Source version ${sourceVersionId} not found in generation ${generationId}`,
       );
     }
+    const sourceParams =
+      source.params && typeof source.params === "object"
+        ? (source.params as Record<string, unknown>)
+        : {};
+    const inheritedAssetUsages = Array.isArray(sourceParams.assetUsages)
+      ? sourceParams.assetUsages
+          .map((usage) => AssetUsageInput.safeParse(usage))
+          .filter((result) => result.success)
+          .map((result) => result.data)
+      : [];
+    const effectiveAssetUsages =
+      job.data.assetUsages && job.data.assetUsages.length > 0
+        ? job.data.assetUsages
+        : inheritedAssetUsages;
+    const inheritedWatermarkOverlays = Array.isArray(
+      sourceParams.watermarkOverlays,
+    )
+      ? sourceParams.watermarkOverlays
+          .map((overlay) => WatermarkOverlaySchema.safeParse(overlay))
+          .filter((result) => result.success)
+          .map((result) => result.data)
+      : [];
+    const effectiveWatermarkOverlays =
+      watermarkOverlays && watermarkOverlays.length > 0
+        ? watermarkOverlays
+        : inheritedWatermarkOverlays;
+    const exactAssetUsages = effectiveAssetUsages.filter(
+      (usage) => usage.mode === "EXACT",
+    );
+    const sourceBaseImageUrl =
+      typeof sourceParams.baseImageUrl === "string"
+        ? sourceParams.baseImageUrl
+        : source.imageUrl;
     await job.updateProgress(20);
     await setProgress(taskId, 20);
 
     const request = EditRequest.parse({
-      imageUrl: source.imageUrl,
+      imageUrl: sourceBaseImageUrl,
       op,
       payload,
     });
@@ -116,7 +158,7 @@ export async function runEditJob(
 
     const watermarkAssetIds = Array.from(
       new Set(
-        watermarkOverlays
+        effectiveWatermarkOverlays
           .map((overlay) => overlay.assetId)
           .filter((id): id is string => !!id),
       ),
@@ -145,7 +187,7 @@ export async function runEditJob(
       );
     }
     const resolvedWatermarkOverlays: ResolvedWatermarkOverlay[] =
-      watermarkOverlays.map((overlay) => {
+      effectiveWatermarkOverlays.map((overlay) => {
         const asset = overlay.assetId
           ? watermarkAssetMap.get(overlay.assetId)
           : null;
@@ -156,6 +198,46 @@ export async function runEditJob(
             : {}),
         };
       });
+    const automaticBrandLogoAssetId =
+      typeof sourceParams.appliedBrandLogoAssetId === "string"
+        ? sourceParams.appliedBrandLogoAssetId
+        : null;
+    const automaticBrandLogoAsset = automaticBrandLogoAssetId
+      ? await prisma.asset.findFirst({
+          where: {
+            id: automaticBrandLogoAssetId,
+            workspaceId,
+            availableForGeneration: true,
+            deprecatedAt: null,
+            mimeType: { startsWith: "image/" },
+          },
+          select: { id: true, url: true, mimeType: true },
+        })
+      : null;
+    if (automaticBrandLogoAssetId && !automaticBrandLogoAsset) {
+      throw new Error(
+        `automatic Brand Kit logo unavailable: ${automaticBrandLogoAssetId}`,
+      );
+    }
+    const resolvedOutputOverlays: ResolvedWatermarkOverlay[] = [
+      ...resolvedWatermarkOverlays,
+      ...(automaticBrandLogoAsset
+        ? [
+            {
+              assetId: automaticBrandLogoAsset.id,
+              assetUrl: automaticBrandLogoAsset.url,
+              assetMimeType: automaticBrandLogoAsset.mimeType,
+              enabled: true,
+              anchor: "top-left" as const,
+              positionMode: "ratio" as const,
+              offsetX: 0.035,
+              offsetY: 0.035,
+              widthPx: 196,
+              opacity: 1,
+            },
+          ]
+        : []),
+    ];
 
     // New index = max(index)+1 within the generation so ordering stays clean
     // and queryable; the original root version is never overwritten.
@@ -165,21 +247,62 @@ export async function runEditJob(
     });
     const nextIndex = (agg._max.index ?? -1) + 1;
 
-    const sourceParams =
-      source.params && typeof source.params === "object"
-        ? (source.params as Record<string, unknown>)
-        : {};
-
     // 与 generate.worker 一致:真实 provider 返回的 b64 会被 AI 服务转成多 MB 的
     // data: URL。配了对象存储就上传换公网 URL,避免把大图塞进 Postgres/JSON 拖慢
     // project/version 读取;未配存储时透传 data: URL。
-    const watermarked =
-      resolvedWatermarkOverlays.length > 0
-        ? await applyWatermarksToImage(
+    const exactAssetIds = exactAssetUsages.map((usage) => usage.assetId);
+    const exactAssets =
+      exactAssetIds.length > 0
+        ? await prisma.asset.findMany({
+            where: {
+              id: { in: exactAssetIds },
+              workspaceId,
+              availableForGeneration: true,
+              deprecatedAt: null,
+              mimeType: { startsWith: "image/" },
+            },
+            select: { id: true, url: true, mimeType: true },
+          })
+        : [];
+    const exactAssetMap = new Map(
+      exactAssets.map((asset) => [asset.id, asset]),
+    );
+    const missingExactAssetIds = exactAssetIds.filter(
+      (id) => !exactAssetMap.has(id),
+    );
+    if (missingExactAssetIds.length > 0) {
+      throw new Error(
+        `exact asset unavailable: ${missingExactAssetIds.join(", ")}`,
+      );
+    }
+    const resolvedExactAssetLayers: ResolvedExactAssetLayer[] =
+      exactAssetUsages.map((usage) => {
+        const asset = exactAssetMap.get(usage.assetId)!;
+        return {
+          assetId: usage.assetId,
+          assetUrl: asset.url,
+          assetMimeType: asset.mimeType,
+          transform: usage.exactTransform,
+        };
+      });
+    const editedBaseImageUrl =
+      resolvedExactAssetLayers.length > 0
+        ? await uploadDataUrlImage(
             result.imageUrl,
-            resolvedWatermarkOverlays,
+            `generations/${workspaceId}/bases`,
           )
+        : null;
+    const exactComposited =
+      resolvedExactAssetLayers.length > 0
+        ? await applyExactAssetLayers(result.imageUrl, resolvedExactAssetLayers)
         : { imageUrl: result.imageUrl, appliedAssetIds: [] };
+    const watermarked =
+      resolvedOutputOverlays.length > 0
+        ? await applyWatermarksToImage(
+            exactComposited.imageUrl,
+            resolvedOutputOverlays,
+          )
+        : { imageUrl: exactComposited.imageUrl, appliedAssetIds: [] };
     const finalEditImageUrl = watermarked.imageUrl;
 
     const editedImageUrl = await uploadDataUrlImage(
@@ -226,7 +349,19 @@ export async function runEditJob(
           // record this edit so M6 can trace the lineage and what changed.
           ...sourceParams,
           ...resultParamsNoMask,
-          ...(watermarkOverlays.length > 0 ? { watermarkOverlays } : {}),
+          ...(effectiveAssetUsages.length > 0
+            ? { assetUsages: effectiveAssetUsages }
+            : {}),
+          ...(editedBaseImageUrl ? { baseImageUrl: editedBaseImageUrl } : {}),
+          ...(exactComposited.appliedAssetIds.length > 0
+            ? {
+                appliedExactAssetIds: exactComposited.appliedAssetIds,
+                exactComposition: "identity-locked-source-layer",
+              }
+            : {}),
+          ...(effectiveWatermarkOverlays.length > 0
+            ? { watermarkOverlays: effectiveWatermarkOverlays }
+            : {}),
           ...(watermarked.appliedAssetIds.length > 0
             ? { appliedWatermarkAssetIds: watermarked.appliedAssetIds }
             : {}),

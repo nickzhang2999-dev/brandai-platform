@@ -26,8 +26,14 @@ import type {
   WorkspaceRole,
   GenerationDefaultSource,
   AssetInvocationMode,
+  ExactAssetTransform,
+  AssetUsageInput,
 } from "@brandai/contracts";
-import { CHANNEL_SIZES, resolveGenerationDefaults } from "@brandai/contracts";
+import {
+  CHANNEL_SIZES,
+  ExactAssetTransform as ExactAssetTransformSchema,
+  resolveGenerationDefaults,
+} from "@brandai/contracts";
 import { apiFetch, assetThumbUrl } from "@/lib/client";
 import { planTiers, upgradeContactEmail } from "@/lib/brandai-mock";
 import { validateImageUploadFile } from "@/lib/upload-limits";
@@ -42,6 +48,10 @@ import { useBrand } from "../brand-context";
 import { MaskPaintCanvas } from "./MaskPaintCanvas";
 import { OpenCanvas } from "./OpenCanvas";
 import { ChatPanel, type ChatComposerApi } from "./ChatPanel";
+import {
+  ResourceUsagePanel,
+  type WorkspaceResourceUsage,
+} from "./ResourceUsagePanel";
 
 /**
  * P05 · AI 工作台 — 左画布 + 变体条，右 prompt 面板。真实出图（CLAUDE.md §2，
@@ -216,6 +226,14 @@ function defaultWatermarkOverlay(assetId?: string): WatermarkOverlayInput {
   };
 }
 
+function defaultExactTransform(index = 0): ExactAssetTransform {
+  return ExactAssetTransformSchema.parse({
+    xRatio: Math.min(0.72, 0.5 + index * 0.06),
+    yRatio: Math.min(0.72, 0.5 + index * 0.05),
+    zIndex: index,
+  });
+}
+
 // G1 — parse a template `?style=a,b,c` param into a deduped, capped keyword list.
 function parseStyleParam(raw: string | null): string[] {
   if (!raw) return [];
@@ -361,11 +379,21 @@ function Workspace() {
   /** 点选一张源图（prd_agent replace/additive 语义）。 */
   const chatPickImage = useCallback(
     (
-      ref: { kind?: "VERSION" | "ASSET"; id: string; url: string; label?: string },
+      ref: {
+        kind?: "VERSION" | "ASSET";
+        id: string;
+        url: string;
+        label?: string;
+      },
       opts?: { additive?: boolean },
     ) => {
       chatInsertRef.current?.pick(
-        { kind: ref.kind ?? "VERSION", id: ref.id, url: ref.url, label: ref.label },
+        {
+          kind: ref.kind ?? "VERSION",
+          id: ref.id,
+          url: ref.url,
+          label: ref.label,
+        },
         opts,
       );
     },
@@ -474,10 +502,22 @@ function Workspace() {
   const [assetPickerOpen, setAssetPickerOpen] = useState(false);
   const [templateReferences, setTemplateReferences] = useState<RefAsset[]>([]);
   const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
+  const [resourceConfigById, setResourceConfigById] = useState<
+    Record<
+      string,
+      { mode: AssetInvocationMode; exactTransform: ExactAssetTransform }
+    >
+  >({});
+  const [activeFrame, setActiveFrame] = useState({
+    width: 1024,
+    height: 1024,
+    label: "1:1 · 1K",
+  });
   useEffect(() => {
     if (!projectId) {
       setReferences([]);
       setTemplateReferences([]);
+      setResourceConfigById({});
       return;
     }
     let cancelled = false;
@@ -492,21 +532,48 @@ function Workspace() {
       )
         .then((links) => {
           if (cancelled) return;
-          const seen = new Set(tray.map((r) => r.id));
-          const fromServer: RefAsset[] = links
-            .filter(
-              (l) =>
-                !seen.has(l.asset.id) &&
-                (l.asset.libraryKind ?? "MATERIAL") === "MATERIAL",
-            )
-            .map((l) => ({
-              id: l.asset.id,
-              fileName: l.asset.fileName,
-              thumbUrl: assetThumbUrl(wsId, l.asset.id, l.asset.url),
+          const materialLinks = links.filter(
+            (link) => (link.asset.libraryKind ?? "MATERIAL") === "MATERIAL",
+          );
+          const templateLinks = links.filter(
+            (link) => link.asset.libraryKind === "TEMPLATE",
+          );
+          const seen = new Set(tray.map((resource) => resource.id));
+          const fromServer: RefAsset[] = materialLinks
+            .filter((link) => !seen.has(link.asset.id))
+            .map((link) => ({
+              id: link.asset.id,
+              fileName: link.asset.fileName,
+              thumbUrl: assetThumbUrl(wsId, link.asset.id, link.asset.url),
             }));
-          if (fromServer.length > 0) {
-            setReferences((prev) => [...prev, ...fromServer]);
-          }
+          setReferences([...tray, ...fromServer].slice(0, 8));
+          setTemplateReferences(
+            templateLinks.slice(0, 8).map((link) => ({
+              id: link.asset.id,
+              fileName: link.asset.fileName,
+              thumbUrl: assetThumbUrl(wsId, link.asset.id, link.asset.url),
+            })),
+          );
+          setResourceConfigById((previous) => {
+            const next = { ...previous };
+            links.forEach((link, index) => {
+              const libraryKind = link.asset.libraryKind ?? "MATERIAL";
+              next[link.asset.id] = {
+                mode:
+                  link.usageMode ??
+                  (libraryKind === "MATERIAL" ? "EXACT" : "REFERENCE"),
+                exactTransform:
+                  link.exactTransform ?? defaultExactTransform(index),
+              };
+            });
+            tray.forEach((resource, index) => {
+              next[resource.id] ??= {
+                mode: "EXACT",
+                exactTransform: defaultExactTransform(index),
+              };
+            });
+            return next;
+          });
         })
         .catch(() => {
           /* tray-only fallback */
@@ -523,6 +590,11 @@ function Workspace() {
     if (!projectId) return;
     removeReference(wsId, projectId, assetId);
     setReferences((prev) => prev.filter((r) => r.id !== assetId));
+    setResourceConfigById((previous) => {
+      const next = { ...previous };
+      delete next[assetId];
+      return next;
+    });
     // E11/E12 — also drop the durable server link (best-effort).
     apiFetch(`/api/workspaces/${wsId}/projects/${projectId}/assets`, {
       method: "DELETE",
@@ -534,27 +606,134 @@ function Workspace() {
     const next = [...references];
     for (const item of items) {
       if (next.some((r) => r.id === item.id)) continue;
-      if (next.length >= 8) break;
+      if (next.length + templateReferences.length >= 8) break;
       next.push(item);
       addReference(wsId, projectId, item);
+      const exactTransform = defaultExactTransform(next.length - 1);
+      setResourceConfigById((previous) => ({
+        ...previous,
+        [item.id]: { mode: "EXACT", exactTransform },
+      }));
       apiFetch(`/api/workspaces/${wsId}/projects/${projectId}/assets`, {
         method: "POST",
-        body: JSON.stringify({ assetId: item.id, kind: "REFERENCE" }),
-      }).catch(() => {});
+        body: JSON.stringify({
+          assetId: item.id,
+          kind: "REFERENCE",
+          usageMode: "EXACT",
+          exactTransform,
+        }),
+      }).catch((error) =>
+        setActionErr(
+          error instanceof Error ? error.message : "保存素材用途失败",
+        ),
+      );
     }
     setReferences(next);
   }
   function addTemplateReferences(items: RefAsset[]) {
+    if (!projectId) return;
     const next = [...templateReferences];
     for (const item of items) {
       if (next.some((r) => r.id === item.id)) continue;
-      if (next.length >= 8) break;
+      if (next.length + references.length >= 8) break;
       next.push(item);
+      const exactTransform = defaultExactTransform(
+        references.length + next.length - 1,
+      );
+      setResourceConfigById((previous) => ({
+        ...previous,
+        [item.id]: { mode: "REFERENCE", exactTransform },
+      }));
+      apiFetch(`/api/workspaces/${wsId}/projects/${projectId}/assets`, {
+        method: "POST",
+        body: JSON.stringify({
+          assetId: item.id,
+          kind: "REFERENCE",
+          usageMode: "REFERENCE",
+          exactTransform,
+        }),
+      }).catch((error) =>
+        setActionErr(
+          error instanceof Error ? error.message : "保存参考图用途失败",
+        ),
+      );
     }
     setTemplateReferences(next);
   }
   function dropTemplateReference(assetId: string) {
     setTemplateReferences((prev) => prev.filter((r) => r.id !== assetId));
+    setResourceConfigById((previous) => {
+      const next = { ...previous };
+      delete next[assetId];
+      return next;
+    });
+    if (!projectId) return;
+    apiFetch(`/api/workspaces/${wsId}/projects/${projectId}/assets`, {
+      method: "DELETE",
+      body: JSON.stringify({ assetId, kind: "REFERENCE" }),
+    }).catch(() => {});
+  }
+  const workspaceResources = useMemo<WorkspaceResourceUsage[]>(() => {
+    const material = references.map((resource) => ({
+      ...resource,
+      libraryKind: "MATERIAL" as const,
+    }));
+    const templates = templateReferences.map((resource) => ({
+      ...resource,
+      libraryKind: "TEMPLATE" as const,
+    }));
+    return [...material, ...templates].slice(0, 8).map((resource, index) => {
+      const config = resourceConfigById[resource.id] ?? {
+        mode:
+          resource.libraryKind === "MATERIAL"
+            ? ("EXACT" as const)
+            : ("REFERENCE" as const),
+        exactTransform: defaultExactTransform(index),
+      };
+      return { ...resource, ...config };
+    });
+  }, [references, resourceConfigById, templateReferences]);
+  const assetUsages = useMemo<AssetUsageInput[]>(
+    () =>
+      workspaceResources.map((resource, order) =>
+        resource.mode === "EXACT"
+          ? {
+              assetId: resource.id,
+              mode: "EXACT",
+              order,
+              exactTransform: resource.exactTransform,
+            }
+          : {
+              assetId: resource.id,
+              mode: resource.mode,
+              order,
+            },
+      ),
+    [workspaceResources],
+  );
+  function persistResourceUsage(
+    assetId: string,
+    mode: AssetInvocationMode,
+    exactTransform: ExactAssetTransform,
+  ) {
+    if (!projectId) return;
+    setResourceConfigById((previous) => ({
+      ...previous,
+      [assetId]: { mode, exactTransform },
+    }));
+    apiFetch(`/api/workspaces/${wsId}/projects/${projectId}/assets`, {
+      method: "POST",
+      body: JSON.stringify({
+        assetId,
+        kind: "REFERENCE",
+        usageMode: mode,
+        exactTransform,
+      }),
+    }).catch((error) =>
+      setActionErr(
+        error instanceof Error ? error.message : "保存资源调用方式失败",
+      ),
+    );
   }
 
   // F11 · 生成额度展示 — read-only quota status.
@@ -1064,6 +1243,7 @@ function Workspace() {
           body: JSON.stringify({
             op,
             payload: sized,
+            ...(assetUsages.length > 0 ? { assetUsages } : {}),
           }),
         },
       );
@@ -1147,15 +1327,29 @@ function Workspace() {
         return;
       }
       if (pick.assetId) {
+        const configuredResource = resourceConfigById[pick.assetId];
+        if (configuredResource) {
+          setActionErr(
+            configuredResource.mode === "EXACT"
+              ? "这是锁定素材，不会作为模型参考图；请在左上角“本次创作资源”中调整布局。"
+              : "这是已配置的项目资源，请在左上角面板调整融合或参考方式。",
+          );
+          return;
+        }
         chatPickImage(
-          { kind: "ASSET", id: pick.assetId, url: pick.imageUrl, label: "上传图" },
+          {
+            kind: "ASSET",
+            id: pick.assetId,
+            url: pick.imageUrl,
+            label: "上传图",
+          },
           opts,
         );
       }
     },
     // viewGeneration 是组件体内声明的函数（身份随渲染变化），与 versions 同列
     // 依赖即可——本回调本就随 versions 变化重建。
-    [versions, history, chatPickImage, viewGeneration],
+    [versions, history, chatPickImage, viewGeneration, resourceConfigById],
   );
 
   // 上传图片到画布:走真实素材上传(R2)→ 公网 URL + 真实尺寸(从 resolution 串解析)。
@@ -1309,7 +1503,7 @@ function Workspace() {
 
       <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_390px]">
         {/* Canvas */}
-        <div className="flex min-h-0 flex-col bg-background p-3">
+        <div className="relative flex min-h-0 flex-col bg-background p-3">
           <OpenCanvas
             seedVersions={seedVersionsAll}
             seedReady={historyLoaded}
@@ -1324,8 +1518,8 @@ function Workspace() {
             selectNonce={selectNonce}
             fitKey={genId ?? undefined}
             onUploadImage={onCanvasUploadImage}
-            materialAssets={references}
-            templateAssets={templateReferences}
+            materialAssets={[]}
+            templateAssets={[]}
             onOpenMaterialLibrary={() => setAssetPickerOpen(true)}
             onOpenTemplateLibrary={() => setTemplatePickerOpen(true)}
             onRemoveMaterial={dropReference}
@@ -1370,6 +1564,34 @@ function Workspace() {
                 : undefined,
             }}
           />
+          <ResourceUsagePanel
+            resources={workspaceResources}
+            frame={activeFrame}
+            onAddMaterial={() => setAssetPickerOpen(true)}
+            onAddReference={() => setTemplatePickerOpen(true)}
+            onModeChange={(assetId, mode) => {
+              const current =
+                resourceConfigById[assetId] ??
+                ({
+                  mode,
+                  exactTransform: defaultExactTransform(),
+                } as const);
+              persistResourceUsage(assetId, mode, current.exactTransform);
+            }}
+            onTransformChange={(assetId, transform) => {
+              const current = resourceConfigById[assetId];
+              persistResourceUsage(
+                assetId,
+                current?.mode ?? "EXACT",
+                transform,
+              );
+            }}
+            onRemove={(assetId, libraryKind) =>
+              libraryKind === "MATERIAL"
+                ? dropReference(assetId)
+                : dropTemplateReference(assetId)
+            }
+          />
         </div>
 
         {/* Prompt panel */}
@@ -1383,6 +1605,21 @@ function Workspace() {
             onViewGeneration={viewGeneration}
             onSubmitted={onChatSubmitted}
             presetBrief={chatPresetBrief}
+            assetUsages={assetUsages}
+            onSizeSelectionChange={(_selection, resolved) => {
+              const next = {
+                width: resolved.width,
+                height: resolved.height,
+                label: `${resolved.requestedRatio ?? resolved.label} · ${resolved.resolutionTier ?? "1K"}`,
+              };
+              setActiveFrame((current) =>
+                current.width === next.width &&
+                current.height === next.height &&
+                current.label === next.label
+                  ? current
+                  : next,
+              );
+            }}
             insertRef={chatInsertRef}
             onComposerRefsChange={setChatComposerRefs}
             onPasteImage={(files) => chatUploadFilesRef.current?.(files)}
@@ -1395,7 +1632,7 @@ function Workspace() {
           wsId={wsId}
           libraryKind="MATERIAL"
           title="选择素材"
-          description="素材会加入画布底部素材托盘，可点击或拖拽到画布中自由摆放。"
+          description="素材默认采用锁定使用：保留主体身份，可在输出画框中旋转、缩放、裁切和局部显示。"
           existingIds={references.map((r) => r.id)}
           onClose={() => setAssetPickerOpen(false)}
           onAdd={(items) => {
@@ -1410,7 +1647,7 @@ function Workspace() {
           wsId={wsId}
           libraryKind="TEMPLATE"
           title="选择参考图"
-          description="参考图会加入画布模板托盘，可放到画布后作为 AI 对话的图像引用。"
+          description="参考图默认仅参考风格、配色和构图；添加后可以切换为智能融合。"
           existingIds={templateReferences.map((r) => r.id)}
           onClose={() => setTemplatePickerOpen(false)}
           onAdd={(items) => {
@@ -2177,7 +2414,7 @@ function WorkspaceAssetPicker({
               }
               className="h-10 rounded-full bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-50"
             >
-              {libraryKind === "MATERIAL" ? "添加到画布托盘" : "加入参考图"}
+              {libraryKind === "MATERIAL" ? "添加为锁定素材" : "加入参考图"}
             </button>
           </div>
         </div>

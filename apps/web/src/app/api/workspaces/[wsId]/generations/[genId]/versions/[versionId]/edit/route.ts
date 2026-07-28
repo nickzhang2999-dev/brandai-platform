@@ -1,5 +1,9 @@
 import { prisma } from "@brandai/db";
-import { EditVersionInput, WatermarkOverlayInput } from "@brandai/contracts";
+import {
+  AssetUsageInput,
+  EditVersionInput,
+  WatermarkOverlayInput,
+} from "@brandai/contracts";
 import { ApiException, handleError, ok, parse, requireUser } from "@/lib/api";
 import { requireOwnedWorkspace, requireWorkspaceRole } from "@/lib/workspace";
 import { editQueue } from "@/lib/queue";
@@ -79,6 +83,27 @@ export async function POST(
     const watermarkOverlays = (input.watermarkOverlays ?? []).map((overlay) =>
       WatermarkOverlayInput.parse(overlay),
     );
+    const assetUsages = (input.assetUsages ?? []).map((usage) =>
+      AssetUsageInput.parse(usage),
+    );
+    const exactAssetIds = assetUsages
+      .filter((usage) => usage.mode === "EXACT")
+      .map((usage) => usage.assetId);
+    if (exactAssetIds.length > 0) {
+      const usable = await prisma.asset.findMany({
+        where: {
+          id: { in: exactAssetIds },
+          workspaceId: wsId,
+          availableForGeneration: true,
+          deprecatedAt: null,
+          mimeType: { startsWith: "image/" },
+        },
+        select: { id: true },
+      });
+      if (usable.length !== new Set(exactAssetIds).size) {
+        throw new ApiException(400, "EXACT 素材不在本品牌空间或已失效");
+      }
+    }
 
     const task = await createTask({ workspaceId: wsId, kind: "EDIT" });
     const jobData: EditJobData = {
@@ -88,6 +113,7 @@ export async function POST(
       op: input.op,
       payload: input.payload ?? {},
       watermarkOverlays,
+      ...(assetUsages.length > 0 ? { assetUsages } : {}),
       taskId: task.id,
     };
     const job = await editQueue.add("edit", jobData, {

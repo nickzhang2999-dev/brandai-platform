@@ -47,10 +47,15 @@ export function resolveChatBrandPolicy({
     brandRules: [],
     aiConstraints: {
       ...aiConstraints,
-      promptAdditions: [],
-      referenceImages: aiConstraints.referenceImages.filter((reference) =>
-        (reference.note ?? "").startsWith("IMAGE_INPUT:"),
+      promptAdditions: aiConstraints.promptAdditions.filter((addition) =>
+        addition.startsWith("[EXACT_LAYOUT]"),
       ),
+      referenceImages: aiConstraints.referenceImages.filter((reference) => {
+        const note = reference.note ?? "";
+        return (
+          note.startsWith("IMAGE_INPUT:") || note.startsWith("ASSET_USAGE:")
+        );
+      }),
     },
     promptMode: "direct",
     mode: "FREE",

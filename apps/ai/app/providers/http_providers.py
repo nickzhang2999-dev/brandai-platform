@@ -128,7 +128,7 @@ _GPT_IMAGE_2_MAX_EDGE = 3_840
 # contract's `CreateGenerationInput.referenceAssets` max (8) so the full allowed
 # set of "100% 调用" assets reaches the model — never silently dropped. OpenAI's
 # edit API itself documents up to 16 GPT-image inputs, so 8 leaves headroom.
-_MAX_IMG2IMG_REFS = 8
+_MAX_IMG2IMG_REFS = 16
 
 # Best-effort USD price per generated image, by provider kind → quality → size.
 # gpt-image-1 is token-priced (image output $40/1M tokens); these are OpenAI's
@@ -577,7 +577,12 @@ class HttpImageProvider(ImageProvider):
         # Forward the full allowed set of STRICT refs (bounded by the contract's
         # max, not an arbitrary 4) — dropping any would leave a "100% 调用" asset
         # out of the composited image.
-        refs = [r for r in references if r.get("url")][:_MAX_IMG2IMG_REFS]
+        refs = [r for r in references if r.get("url")]
+        if len(refs) > _MAX_IMG2IMG_REFS:
+            raise ValueError(
+                f"at most {_MAX_IMG2IMG_REFS} image inputs are supported; "
+                f"got {len(refs)}"
+            )
         effective_model = model or self.model or "gpt-image-2"
         size = _resolve_openai_size(width, height, effective_model)
         started = time.perf_counter()

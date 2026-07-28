@@ -1,6 +1,7 @@
 import { prisma } from "@brandai/db";
 import {
   CreateGenerationInput,
+  AssetUsageInput,
   resolveGenerationSize,
   resolveGenerationDefaults,
   WatermarkOverlayInput,
@@ -132,6 +133,33 @@ export async function POST(
     });
     if (!project || project.workspaceId !== wsId) {
       throw new ApiException(404, "Project not found in this workspace");
+    }
+    const assetUsages = (input.assetUsages ?? []).map((usage) =>
+      AssetUsageInput.parse(usage),
+    );
+    if (assetUsages.length > 0) {
+      const usageIds = assetUsages.map((usage) => usage.assetId);
+      if (new Set(usageIds).size !== usageIds.length) {
+        throw new ApiException(400, "同一资源不能以多种调用方式重复提交");
+      }
+      const usable = await prisma.asset.findMany({
+        where: {
+          id: { in: usageIds },
+          workspaceId: wsId,
+          availableForGeneration: true,
+          deprecatedAt: null,
+          mimeType: { startsWith: "image/" },
+        },
+        select: { id: true },
+      });
+      if (usable.length !== usageIds.length) {
+        const ok = new Set(usable.map((asset) => asset.id));
+        const bad = usageIds.filter((id) => !ok.has(id));
+        throw new ApiException(
+          400,
+          `创作资源不可用于生成（不在本品牌空间或已失效）：${bad.join(", ")}`,
+        );
+      }
     }
     // V0.0.13 — 对话面板图像输入：归属校验（IDOR）+ 解析展示 URL。
     // displayText 只存用户原文；引用图以结构化 chip 存 chatContext，
@@ -394,6 +422,7 @@ export async function POST(
       ...(imageInputs.length > 0
         ? { imageInputs: imageInputs.map((r) => ({ kind: r.kind, id: r.id })) }
         : {}),
+      ...(assetUsages.length > 0 ? { assetUsages } : {}),
     };
     const job = await generateQueue.add("generate", jobData, {
       removeOnComplete: 50,
