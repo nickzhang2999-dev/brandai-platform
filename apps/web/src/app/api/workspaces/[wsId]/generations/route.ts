@@ -1,6 +1,7 @@
 import { prisma } from "@brandai/db";
 import {
   CreateGenerationInput,
+  resolveGenerationSize,
   resolveGenerationDefaults,
   WatermarkOverlayInput,
 } from "@brandai/contracts";
@@ -64,6 +65,17 @@ export async function POST(
     await requireWorkspaceRole(wsId, user.id, "EDITOR");
 
     const input = parse(CreateGenerationInput, await req.json());
+    let generationTargets = input.targets;
+    if (input.sizeSelection) {
+      try {
+        generationTargets = [resolveGenerationSize(input.sizeSelection)];
+      } catch (err) {
+        throw new ApiException(
+          400,
+          err instanceof Error ? err.message : "无效的图片尺寸设置",
+        );
+      }
+    }
     const legacyReferenceAssets = Array.from(
       new Map(
         [
@@ -366,8 +378,8 @@ export async function POST(
       // P2.0 — pass the target size list through to the worker. The
       // synchronous hard-block gate above runs once and covers the whole
       // batch; AI precheck happens inside the worker.
-      ...(input.targets && input.targets.length > 0
-        ? { targets: input.targets }
+      ...(generationTargets && generationTargets.length > 0
+        ? { targets: generationTargets }
         : {}),
       // F7 / F9 / L8 — thread per-generation style keywords + reference asset
       // ids to the worker (merged into AIConstraints there).

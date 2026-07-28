@@ -74,12 +74,22 @@ class _RecordingOpenAIProvider:
                 "width": width,
                 "height": height,
                 "n": n,
+                "quality": quality,
+                "model": model,
             }
         )
         return ["data:image/png;base64,iVBORw0KGgo=" for _ in range(n)]
 
     async def generate(self, prompt, *, width, height, n, negative=None, extra=None):
-        self.generate_calls.append({"prompt": prompt, "n": n})
+        self.generate_calls.append(
+            {
+                "prompt": prompt,
+                "width": width,
+                "height": height,
+                "n": n,
+                "extra": extra,
+            }
+        )
         return ["data:image/png;base64,iVBORw0KGgo=" for _ in range(n)]
 
     async def edit(self, image_url, op, payload):
@@ -138,6 +148,109 @@ def test_single_strict_ref_regression_unchanged(client):
     p = r.json()["versions"][0]["params"]
     assert p["generationPath"] == "strict_image_input"
     assert p["strictReferenceImage"]["url"] == "https://cdn/logo.png"
+
+
+def test_resolution_tier_maps_quality_for_text_generation(client):
+    provider = _RecordingOpenAIProvider()
+    r = _post_with(
+        client,
+        provider,
+        _payload(
+            targets=[
+                {
+                    "key": "chat-1k-1x1",
+                    "label": "1K · 1:1",
+                    "width": 1024,
+                    "height": 1024,
+                    "ratioKey": "1:1",
+                    "resolutionTier": "1K",
+                    "requestedRatio": "1:1",
+                },
+                {
+                    "key": "chat-2k-1x1",
+                    "label": "2K · 1:1",
+                    "width": 2048,
+                    "height": 2048,
+                    "ratioKey": "1:1",
+                    "resolutionTier": "2K",
+                    "requestedRatio": "1:1",
+                },
+            ]
+        ),
+    )
+    assert r.status_code == 200
+    assert [call["extra"]["quality"] for call in provider.generate_calls] == [
+        "medium",
+        "high",
+    ]
+    versions = r.json()["versions"]
+    assert [v["params"]["quality"] for v in versions] == ["medium", "high"]
+    assert versions[1]["params"]["resolutionTier"] == "2K"
+    assert versions[1]["params"]["requestedWidth"] == 2048
+
+
+def test_resolution_tier_maps_high_quality_for_brand_kit_edit_path(client):
+    provider = _RecordingOpenAIProvider()
+    refs = [
+        _strict_ref(
+            "https://cdn/brand-logo.png",
+            note="BRAND_LOGO_LOCKED: authoritative project Brand Kit logo",
+        )
+    ]
+    r = _post_with(
+        client,
+        provider,
+        _payload(
+            aiConstraints=_constraints(refs),
+            targets=[
+                {
+                    "key": "chat-2k-4x5",
+                    "label": "2K · 4:5",
+                    "width": 2048,
+                    "height": 2560,
+                    "ratioKey": "4:5",
+                    "resolutionTier": "2K",
+                }
+            ],
+        ),
+    )
+    assert r.status_code == 200
+    assert provider.ref_calls[0]["quality"] == "high"
+    assert provider.ref_calls[0]["width"] == 2048
+    assert provider.ref_calls[0]["height"] == 2560
+    assert r.json()["versions"][0]["params"]["quality"] == "high"
+
+
+def test_gpt_image_2_gateway_uses_same_brand_kit_multipart_path(client):
+    provider = _RecordingOpenAIProvider()
+    provider.kind = "generic"
+    refs = [
+        _strict_ref(
+            "https://cdn/brand-logo.png",
+            note="BRAND_LOGO_LOCKED: authoritative project Brand Kit logo",
+        )
+    ]
+    r = _post_with(
+        client,
+        provider,
+        _payload(
+            aiConstraints=_constraints(refs),
+            targets=[
+                {
+                    "key": "chat-1k-1x1",
+                    "label": "1K · 1:1",
+                    "width": 1024,
+                    "height": 1024,
+                    "ratioKey": "1:1",
+                    "resolutionTier": "1K",
+                }
+            ],
+        ),
+    )
+    assert r.status_code == 200
+    assert len(provider.ref_calls) == 1
+    assert provider.ref_calls[0]["quality"] == "medium"
+    assert provider.edit_calls == []
 
 
 def test_more_than_eight_strict_refs_rejected(client):

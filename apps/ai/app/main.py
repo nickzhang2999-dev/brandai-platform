@@ -18,7 +18,6 @@ from .providers.base import ImageProvider, VLMProvider
 from .providers.http_providers import (
     _DEFAULT_IMAGE_QUALITY,
     _estimate_cost_usd,
-    _snap_openai_size,
 )
 from .schemas import (
     ComplianceCheckRequest,
@@ -44,16 +43,33 @@ from .schemas import (
 )
 
 
-def _call_cost(kind: str, width: int, height: int, n: int) -> float | None:
-    """T-conn-b — best-effort USD for one generate call. openai sizes are snapped
-    to the priced set; other vendors use the literal canvas; mock/unpriced → None."""
-    size = _snap_openai_size(width, height) if kind == "openai" else f"{width}x{height}"
-    return _estimate_cost_usd(kind, size, _DEFAULT_IMAGE_QUALITY, n)
+def _call_cost(
+    kind: str,
+    width: int,
+    height: int,
+    n: int,
+    quality: str = _DEFAULT_IMAGE_QUALITY,
+    model: str | None = None,
+) -> float | None:
+    """Best-effort USD using the literal requested canvas and real quality.
+
+    Arbitrary gpt-image-2 canvases are token-priced, so sizes without an
+    official per-image estimate return None instead of inheriting a fake
+    snapped-size cost.
+    """
+    return _estimate_cost_usd(
+        kind,
+        f"{width}x{height}",
+        quality,
+        n,
+        model,
+    )
+
 
 async def _probe_image_size(image_ref: str) -> tuple[int, int] | None:
     """K5 — decode the actual pixel W×H of a generated image.
 
-    Handles both ``data:`` URLs (gpt-image-1 returns base64) and hosted http(s)
+    Handles both ``data:`` URLs (gpt-image-* returns base64) and hosted http(s)
     URLs (fetched SSRF-guarded — these are our own generator output, so the
     initial host is trusted; redirect hops are validated). Best-effort: returns
     None on any failure so a probe miss never breaks generation — the worker
@@ -537,6 +553,7 @@ async def generate(
         *,
         width: int,
         height: int,
+        quality: str | None = None,
         extra_params: dict[str, Any] | None = None,
     ) -> GeneratedVersion:
         if not strict_refs:
@@ -585,7 +602,18 @@ async def generate(
             )
         if negative:
             strict_prompt += "\n\nAvoid: " + "; ".join(s for s in negative if s)
-        if kind == "openai" and hasattr(provider, "generate_with_references"):
+        effective_quality = (
+            quality
+            or (provider_extra or {}).get("quality")
+            or _DEFAULT_IMAGE_QUALITY
+        )
+        openai_image_semantics = (
+            kind == "openai"
+            or (model or "").split("/")[-1] == "gpt-image-2"
+        )
+        if openai_image_semantics and hasattr(
+            provider, "generate_with_references"
+        ):
             # 单图与多图共用同一条 /images/edits multipart 路径与同一个响应
             # 解析器（刻意规避 prd_agent「多图走独立 Vision 分支 + 独立解析」
             # 导致的 "Vision API 响应格式不支持" bug）。
@@ -595,7 +623,7 @@ async def generate(
                 width=width,
                 height=height,
                 n=1,
-                quality=(provider_extra or {}).get("quality"),
+                quality=effective_quality,
                 model=(provider_extra or {}).get("model"),
             )
             if not urls:
@@ -615,6 +643,7 @@ async def generate(
                     "prompt": strict_prompt,
                     "width": width,
                     "height": height,
+                    "quality": effective_quality,
                     **(
                         {
                             "additional_reference_urls": [
@@ -629,6 +658,7 @@ async def generate(
         actual = await _probe_image_size(image_url)
         params_extra: dict[str, Any] = {
             "generationPath": "strict_image_input",
+            "quality": effective_quality,
             # Legacy singular key (first ref) + V0.0.13 plural echo of ALL refs
             # so callers can prove every reference rode through (多图生图 A3).
             "strictReferenceImage": strict_ref,
@@ -656,14 +686,22 @@ async def generate(
     kind = getattr(provider, "kind", "mock")
     model = getattr(provider, "model", "") or None
 
-    async def _emit(gw: int, gh: int, gn: int) -> list[str]:
+    async def _emit(
+        gw: int,
+        gh: int,
+        gn: int,
+        quality: str | None = None,
+    ) -> list[str]:
+        call_extra = dict(provider_extra)
+        if quality:
+            call_extra["quality"] = quality
         return await provider.generate(
             prompt,
             width=gw,
             height=gh,
             n=gn,
             negative=negative or None,
-            extra=provider_extra or None,
+            extra=call_extra or None,
         )
 
     # P2.0 — multi-size fan-out. When targets are present, ignore versionCount
@@ -677,19 +715,46 @@ async def generate(
         tok_sum = 0
         any_tok = False
         for t in req.targets:
+            target_quality = (
+                "high" if t.resolutionTier == "2K" else _DEFAULT_IMAGE_QUALITY
+            )
+            target_params = {
+                "targetKey": t.key,
+                "targetLabel": t.label,
+                "quality": target_quality,
+                "requestedWidth": t.width,
+                "requestedHeight": t.height,
+                **({"ratioKey": t.ratioKey} if t.ratioKey else {}),
+                **(
+                    {"resolutionTier": t.resolutionTier}
+                    if t.resolutionTier
+                    else {}
+                ),
+                **(
+                    {"requestedRatio": t.requestedRatio}
+                    if t.requestedRatio
+                    else {}
+                ),
+            }
             if strict_ref:
                 versions.append(
                     await _strict_edit_version(
                         width=t.width,
                         height=t.height,
-                        extra_params={"targetKey": t.key, "targetLabel": t.label},
+                        quality=target_quality,
+                        extra_params=target_params,
                     )
                 )
             else:
-                urls = await _emit(t.width, t.height, 1)
-            # A provider may return no image for a target (filtered/empty
-            # response). Surface a controlled 502 with the failing target rather
-            # than an opaque 500 IndexError on urls[0].
+                urls = await _emit(
+                    t.width,
+                    t.height,
+                    1,
+                    quality=target_quality,
+                )
+                # A provider may return no image for a target (filtered/empty
+                # response). Surface a controlled 502 with the failing target
+                # rather than an opaque 500 IndexError on urls[0].
                 if not urls:
                     raise HTTPException(
                         status_code=502,
@@ -708,8 +773,7 @@ async def generate(
                         actualHeight=actual[1] if actual else None,
                         params=_echo_params(
                             {
-                                "targetKey": t.key,
-                                "targetLabel": t.label,
+                                **target_params,
                                 **(
                                     {"actualWidth": actual[0], "actualHeight": actual[1]}
                                     if actual
@@ -719,7 +783,14 @@ async def generate(
                         ),
                     )
                 )
-            c = _call_cost(kind, t.width, t.height, 1)
+            c = _call_cost(
+                kind,
+                t.width,
+                t.height,
+                1,
+                target_quality,
+                model,
+            )
             if c is not None:
                 total_cost += c
                 any_cost = True
@@ -739,9 +810,16 @@ async def generate(
         return GenerateResponse(versions=versions, usage=usage)
 
     started = time.perf_counter()
+    legacy_quality = (
+        (provider_extra or {}).get("quality") or _DEFAULT_IMAGE_QUALITY
+    )
     if strict_ref:
         versions = [
-            await _strict_edit_version(width=w, height=h)
+            await _strict_edit_version(
+                width=w,
+                height=h,
+                quality=legacy_quality,
+            )
             for _ in range(req.versionCount)
         ]
         return GenerateResponse(
@@ -751,18 +829,32 @@ async def generate(
                 model=model,
                 size=f"{w}x{h}",
                 imageCount=len(versions),
-                costUsd=_call_cost(kind, w, h, len(versions)),
+                costUsd=_call_cost(
+                    kind,
+                    w,
+                    h,
+                    len(versions),
+                    legacy_quality,
+                    model,
+                ),
                 latencyMs=int((time.perf_counter() - started) * 1000),
                 totalTokens=getattr(provider, "last_total_tokens", None),
             ),
         )
-    urls = await _emit(w, h, req.versionCount)
+    urls = await _emit(w, h, req.versionCount, quality=legacy_quality)
     usage = GenerateUsage(
         provider=kind,
         model=model,
         size=f"{w}x{h}",
         imageCount=len(urls),
-        costUsd=_call_cost(kind, w, h, len(urls)),
+        costUsd=_call_cost(
+            kind,
+            w,
+            h,
+            len(urls),
+            legacy_quality,
+            model,
+        ),
         latencyMs=int((time.perf_counter() - started) * 1000),
         totalTokens=getattr(provider, "last_total_tokens", None),
     )
@@ -777,9 +869,14 @@ async def generate(
                 actualWidth=actual[0] if actual else None,
                 actualHeight=actual[1] if actual else None,
                 params=_echo_params(
-                    {"actualWidth": actual[0], "actualHeight": actual[1]}
-                    if actual
-                    else {}
+                    {
+                        "quality": legacy_quality,
+                        **(
+                            {"actualWidth": actual[0], "actualHeight": actual[1]}
+                            if actual
+                            else {}
+                        ),
+                    }
                 ),
             )
         )

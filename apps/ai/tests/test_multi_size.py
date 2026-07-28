@@ -43,7 +43,7 @@ def test_generate_targets_emits_one_image_per_size(client):
     assert by_key["banner"]["width"] != by_key["banner"]["height"]
 
 
-# --- K5: record the ACTUAL decoded image size (OpenAI snaps to its set) ---
+# --- K5: record the ACTUAL decoded image size (provider output may differ) ---
 
 
 def _png_data_url(w: int, h: int) -> str:

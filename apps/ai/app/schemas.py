@@ -199,6 +199,27 @@ class SizeSpec(BaseModel):
     label: str
     width: int = Field(gt=0, le=8192)
     height: int = Field(gt=0, le=8192)
+    # V0.0.19 — optional workbench size provenance. Legacy channel targets and
+    # edit RESIZE payloads remain valid without these fields.
+    ratioKey: Optional[
+        Literal[
+            "1:1",
+            "4:5",
+            "3:4",
+            "2:3",
+            "9:16",
+            "5:4",
+            "4:3",
+            "3:2",
+            "16:10",
+            "16:9",
+            "2.35:1",
+            "3:1",
+            "custom",
+        ]
+    ] = None
+    resolutionTier: Optional[Literal["1K", "2K"]] = None
+    requestedRatio: Optional[str] = Field(default=None, max_length=50)
 
 
 class GenerateRequest(BaseModel):
@@ -231,8 +252,8 @@ class GeneratedVersion(BaseModel):
     imageUrl: str
     width: int
     height: int
-    # K5 — actual decoded pixel dimensions of the returned image (OpenAI snaps to
-    # its supported size set, so this can differ from the requested width/height).
+    # K5 — actual decoded pixel dimensions of the returned image. gpt-image-2
+    # keeps validated literal sizes; legacy models/gateways may still differ.
     # exclude_none keeps them omitted when undecodable / mock.
     actualWidth: Optional[int] = None
     actualHeight: Optional[int] = None

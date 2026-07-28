@@ -201,8 +201,97 @@ export const SizeSpec = z.object({
   label: z.string(),
   width: z.number().int().positive().max(8192),
   height: z.number().int().positive().max(8192),
+  /**
+   * V0.0.19 — generation-size provenance. Optional so legacy channel targets
+   * and edit RESIZE payloads remain wire-compatible.
+   */
+  ratioKey: z
+    .enum([
+      "1:1",
+      "4:5",
+      "3:4",
+      "2:3",
+      "9:16",
+      "5:4",
+      "4:3",
+      "3:2",
+      "16:10",
+      "16:9",
+      "2.35:1",
+      "3:1",
+      "custom",
+    ])
+    .optional(),
+  resolutionTier: z.enum(["1K", "2K"]).optional(),
+  requestedRatio: z.string().max(50).optional(),
 });
 export type SizeSpec = z.infer<typeof SizeSpec>;
+
+export const GenerationResolutionTier = z.enum(["1K", "2K"]);
+export type GenerationResolutionTier = z.infer<typeof GenerationResolutionTier>;
+
+export const GenerationAspectRatioKey = z.enum([
+  "1:1",
+  "4:5",
+  "3:4",
+  "2:3",
+  "9:16",
+  "5:4",
+  "4:3",
+  "3:2",
+  "16:10",
+  "16:9",
+  "2.35:1",
+  "3:1",
+  "custom",
+]);
+export type GenerationAspectRatioKey = z.infer<typeof GenerationAspectRatioKey>;
+
+export const CustomAspectRatio = z.object({
+  width: z.number().finite().positive().max(10_000),
+  height: z.number().finite().positive().max(10_000),
+});
+export type CustomAspectRatio = z.infer<typeof CustomAspectRatio>;
+
+/**
+ * The UI submits intent, not raw provider pixels or quality. The API resolves
+ * this selection through the shared, server-authoritative size matrix.
+ */
+export const GenerationSizeSelection = z
+  .object({
+    ratioKey: GenerationAspectRatioKey,
+    resolutionTier: GenerationResolutionTier,
+    customRatio: CustomAspectRatio.optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.ratioKey === "custom" && !value.customRatio) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["customRatio"],
+        message: "自定义比例需要填写宽和高",
+      });
+      return;
+    }
+    if (value.ratioKey !== "custom" && value.customRatio) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["customRatio"],
+        message: "预设比例不能携带 customRatio",
+      });
+      return;
+    }
+    if (value.customRatio) {
+      const ratio = value.customRatio.width / value.customRatio.height;
+      if (ratio < 1 / 3 || ratio > 3) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["customRatio"],
+          message: "自定义比例需在 1:3 到 3:1 之间",
+        });
+      }
+    }
+  });
+export type GenerationSizeSelection = z.infer<typeof GenerationSizeSelection>;
 
 /**
  * Channel size presets surfaced in the generation wizard's multi-size picker.

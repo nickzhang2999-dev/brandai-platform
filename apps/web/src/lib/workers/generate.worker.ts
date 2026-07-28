@@ -34,7 +34,7 @@ import { resolveChatBrandPolicy } from "@/lib/chat-brand-policy";
 /**
  * K5 — zero-dependency pixel-size probe for a base64 `data:` URL, used as a
  * fallback when the AI service's own probe is unavailable (observed on the CDS
- * gray AI container). Reads the PNG IHDR (gpt-image-1 returns PNG) or the JPEG
+ * gray AI container). Reads the PNG IHDR (gpt-image-* returns PNG) or the JPEG
  * SOF marker directly from the decoded bytes. Returns null on anything it can't
  * parse, so a miss never breaks generation — the requested w×h stays the truth.
  */
@@ -919,7 +919,7 @@ export async function runGenerateJob(
       v: GenerateResponse["versions"][number],
       index: number,
     ): Promise<string> {
-      // gpt-image-1 returns a giant base64 data: URL (~2 MB). Upload it to
+      // gpt-image-* returns a giant base64 data: URL. Upload it to
       // object storage and persist the resulting public URL instead of bloating
       // Postgres. Non-data URLs (e.g. mock provider hosted URLs) pass through.
       // K5 — prefer the AI service's probed size; fall back to a local
@@ -962,8 +962,9 @@ export async function runGenerateJob(
                 }
               : {}),
             sceneType,
-            // K5 — persist the ACTUAL returned pixel size (OpenAI snaps the
-            // requested canvas). The AI service also echoes these into
+            // K5 — persist the ACTUAL returned pixel size. gpt-image-2 keeps
+            // validated literal sizes, while legacy models/gateways may differ.
+            // The AI service also echoes these into
             // `v.params`; stamping from the typed response fields here makes the
             // record robust even if a provider drops the param echo. Absent when
             // the size probe failed / mock provider (requested w×h stays truth).

@@ -9,7 +9,7 @@ import {
   RuleStrength,
   SceneType,
 } from "./enums";
-import { SizeSpec } from "./ai";
+import { GenerationSizeSelection, SizeSpec } from "./ai";
 import { Asset } from "./entities";
 
 /** Web BFF (Next.js Route Handlers) request schemas. */
@@ -164,6 +164,11 @@ export const CreateGenerationInput = z.object({
    * versionCount path.
    */
   targets: z.array(SizeSpec).max(12).optional(),
+  /**
+   * V0.0.19 — workbench ratio/clarity intent. The API resolves this into an
+   * enriched SizeSpec so clients cannot spoof provider pixels or quality.
+   */
+  sizeSelection: GenerationSizeSelection.optional(),
   /**
    * M3 — text rendering strategy threaded down to the AI service's
    * GenerateRequest. `direct` (default) keeps legacy behavior; `layered` steers

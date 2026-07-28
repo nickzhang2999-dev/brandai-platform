@@ -1,13 +1,7 @@
 import { z } from "zod";
 import { prisma } from "@brandai/db";
 import { SizeSpec } from "@brandai/contracts";
-import {
-  ApiException,
-  handleError,
-  ok,
-  parse,
-  requireUser,
-} from "@/lib/api";
+import { ApiException, handleError, ok, parse, requireUser } from "@/lib/api";
 import {
   requireOwnedWorkspace,
   getWorkspaceRole,
@@ -43,11 +37,7 @@ const JOB_STATE_MAP: Record<
   failed: "FAILED",
 };
 
-async function loadOwned(
-  wsId: string,
-  genId: string,
-  userId: string,
-) {
+async function loadOwned(wsId: string, genId: string, userId: string) {
   await requireOwnedWorkspace(wsId, userId);
   const row = await prisma.generation.findUnique({
     where: { id: genId },
@@ -87,8 +77,7 @@ export async function GET(
           jobId: String(j.id),
           status,
           progress: typeof j.progress === "number" ? j.progress : 0,
-          failedReason:
-            status === "FAILED" ? j.failedReason : undefined,
+          failedReason: status === "FAILED" ? j.failedReason : undefined,
         };
       }
     }
@@ -171,14 +160,27 @@ export async function POST(
         const p = (v.params ?? {}) as {
           targetKey?: unknown;
           targetLabel?: unknown;
+          ratioKey?: unknown;
+          resolutionTier?: unknown;
+          requestedRatio?: unknown;
         };
         if (typeof p.targetKey !== "string") return null;
-        return {
+        const candidate = {
           key: p.targetKey,
-          label: typeof p.targetLabel === "string" ? p.targetLabel : p.targetKey,
+          label:
+            typeof p.targetLabel === "string" ? p.targetLabel : p.targetKey,
           width: v.width,
           height: v.height,
+          ...(typeof p.ratioKey === "string" ? { ratioKey: p.ratioKey } : {}),
+          ...(typeof p.resolutionTier === "string"
+            ? { resolutionTier: p.resolutionTier }
+            : {}),
+          ...(typeof p.requestedRatio === "string"
+            ? { requestedRatio: p.requestedRatio }
+            : {}),
         };
+        const parsed = SizeSpec.safeParse(candidate);
+        return parsed.success ? parsed.data : null;
       })
       .filter((t): t is SizeSpec => t !== null);
 

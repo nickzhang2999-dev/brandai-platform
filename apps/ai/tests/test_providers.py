@@ -82,6 +82,50 @@ def test_build_body_openai_translation():
     assert "seed" not in body and "cfg" not in body and "aspect_ratio" not in body
 
 
+def test_build_body_gpt_image_2_keeps_literal_size_and_quality():
+    p = HttpImageProvider(OPENAI, "k", model="gpt-image-2")
+    body = p._build_body(
+        "a wide KV",
+        2560,
+        1440,
+        1,
+        None,
+        {"quality": "high"},
+    )
+    assert body["model"] == "gpt-image-2"
+    assert body["size"] == "2560x1440"
+    assert body["quality"] == "high"
+
+
+def test_gpt_image_2_compatible_gateway_keeps_quality_and_literal_size():
+    p = HttpImageProvider(
+        "https://gateway.example.com/v1",
+        "k",
+        model="openai/gpt-image-2",
+    )
+    body = p._build_body(
+        "a wide KV",
+        2560,
+        1440,
+        1,
+        ["blur"],
+        {"quality": "high", "seed": 7},
+    )
+    assert body["size"] == "2560x1440"
+    assert body["quality"] == "high"
+    assert body["prompt"] == "a wide KV\n\nAvoid: blur"
+    assert "negative_prompt" not in body
+    assert "seed" not in body
+
+
+def test_build_body_gpt_image_2_rejects_invalid_literal_size():
+    p = HttpImageProvider(OPENAI, "k", model="gpt-image-2")
+    with pytest.raises(ValueError, match="multiples of 16"):
+        p._build_body("bad", 1920, 1080, 1, None, None)
+    with pytest.raises(ValueError, match="<= 3840"):
+        p._build_body("bad", 4096, 1024, 1, None, None)
+
+
 def test_extract_refs_url_and_b64():
     assert _extract_image_refs({"data": [{"url": "http://x/y.png"}]}) == ["http://x/y.png"]
     refs = _extract_image_refs({"data": [{"b64_json": "QUJD"}]})
@@ -95,6 +139,15 @@ def test_estimate_cost():
     assert _estimate_cost_usd("openai", "1536x1024", "high", 1) == pytest.approx(0.25)
     assert _estimate_cost_usd("openai", "999x999", "medium", 1) is None
     assert _estimate_cost_usd("generic", "1024x1024", "medium", 1) is None
+    assert _estimate_cost_usd(
+        "openai", "1024x1024", "high", 1, "gpt-image-2"
+    ) == pytest.approx(0.211)
+    assert (
+        _estimate_cost_usd(
+            "openai", "2048x2048", "high", 1, "gpt-image-2"
+        )
+        is None
+    )
 
 
 @pytest.mark.asyncio
@@ -199,21 +252,56 @@ async def test_generate_with_references_posts_images_to_edits():
         # Two STRICT refs → two repeated `image[]` multipart parts + the prompt.
         seen["image_parts"] = body.count(b'name="image[]"')
         seen["has_prompt"] = b'name="prompt"' in body
-        seen["size"] = b"1536x1024" in body  # wide target snaps here
+        seen["size"] = b"1920x1088" in body
         return httpx.Response(200, json={"data": [{"url": "http://img/out.png"}]})
 
     ref_a = _png_data_uri(Image.new("RGB", (8, 8), (10, 20, 30)))
     ref_b = _png_data_uri(Image.new("RGB", (8, 8), (40, 50, 60)))
-    p = HttpImageProvider(OPENAI, "k", transport=httpx.MockTransport(handler))
+    p = HttpImageProvider(
+        OPENAI,
+        "k",
+        model="gpt-image-2",
+        transport=httpx.MockTransport(handler),
+    )
     out = await p.generate_with_references(
         "compose a poster around the locked logo",
         [{"url": ref_a}, {"url": ref_b}],
         width=1920,
-        height=1080,
+        height=1088,
         n=1,
     )
     assert out == ["http://img/out.png"]
     assert seen == {"image_parts": 2, "has_prompt": True, "size": True}
+
+
+@pytest.mark.asyncio
+async def test_gpt_image_2_references_keep_literal_size_and_high_quality():
+    seen: dict[str, bool] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = request.content
+        seen["size"] = b"2048x2560" in body
+        seen["quality"] = b"high" in body
+        seen["model"] = b"gpt-image-2" in body
+        return httpx.Response(200, json={"data": [{"url": "http://img/out.png"}]})
+
+    ref = _png_data_uri(Image.new("RGB", (8, 8), (10, 20, 30)))
+    p = HttpImageProvider(
+        OPENAI,
+        "k",
+        model="gpt-image-2",
+        transport=httpx.MockTransport(handler),
+    )
+    out = await p.generate_with_references(
+        "compose a portrait KV",
+        [{"url": ref}],
+        width=2048,
+        height=2560,
+        n=1,
+        quality="high",
+    )
+    assert out == ["http://img/out.png"]
+    assert seen == {"size": True, "quality": True, "model": True}
 
 
 @pytest.mark.asyncio
