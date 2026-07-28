@@ -580,7 +580,7 @@ export function ChatPanel({
           sceneType,
           sellingPoint: buildModelBrief(payload.displayText).trim(),
           versionCount: 1,
-          // V0.0.19 — only send ratio/clarity intent. The API resolves the
+          // V0.0.20 — only send ratio/clarity intent. The API resolves the
           // canonical pixels and the AI service maps 1K→medium / 2K→high.
           sizeSelection: sizeSelectionState.selection,
           ...(payload.imageInputs.length > 0

@@ -165,7 +165,7 @@ export const CreateGenerationInput = z.object({
    */
   targets: z.array(SizeSpec).max(12).optional(),
   /**
-   * V0.0.19 — workbench ratio/clarity intent. The API resolves this into an
+   * V0.0.20 — workbench ratio/clarity intent. The API resolves this into an
    * enriched SizeSpec so clients cannot spoof provider pixels or quality.
    */
   sizeSelection: GenerationSizeSelection.optional(),

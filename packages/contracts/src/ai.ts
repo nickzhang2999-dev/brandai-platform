@@ -202,7 +202,7 @@ export const SizeSpec = z.object({
   width: z.number().int().positive().max(8192),
   height: z.number().int().positive().max(8192),
   /**
-   * V0.0.19 — generation-size provenance. Optional so legacy channel targets
+   * V0.0.20 — generation-size provenance. Optional so legacy channel targets
    * and edit RESIZE payloads remain wire-compatible.
    */
   ratioKey: z

@@ -199,7 +199,7 @@ class SizeSpec(BaseModel):
     label: str
     width: int = Field(gt=0, le=8192)
     height: int = Field(gt=0, le=8192)
-    # V0.0.19 — optional workbench size provenance. Legacy channel targets and
+    # V0.0.20 — optional workbench size provenance. Legacy channel targets and
     # edit RESIZE payloads remain valid without these fields.
     ratioKey: Optional[
         Literal[

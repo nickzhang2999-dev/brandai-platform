@@ -15,7 +15,7 @@ export interface GenerationAspectRatioPreset {
 }
 
 /**
- * V0.0.19 — the 12 supported product ratios. 2K always doubles both 1K edges,
+ * V0.0.20 — the 12 supported product ratios. 2K always doubles both 1K edges,
  * producing four times the pixels instead of merely changing a display label.
  */
 export const GENERATION_ASPECT_RATIO_PRESETS: readonly GenerationAspectRatioPreset[] =
