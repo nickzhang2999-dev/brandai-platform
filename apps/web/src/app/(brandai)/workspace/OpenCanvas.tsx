@@ -167,6 +167,9 @@ export function OpenCanvas({
   templateAssets = [],
   onOpenMaterialLibrary,
   onOpenTemplateLibrary,
+  resourceCount = 0,
+  resourcePanelOpen = false,
+  onToggleResourcePanel,
   onRemoveMaterial,
   onRemoveTemplate,
   onUserPickImage,
@@ -207,6 +210,9 @@ export function OpenCanvas({
   templateAssets?: CanvasLibraryAsset[];
   onOpenMaterialLibrary?: () => void;
   onOpenTemplateLibrary?: () => void;
+  resourceCount?: number;
+  resourcePanelOpen?: boolean;
+  onToggleResourcePanel?: () => void;
   onRemoveMaterial?: (assetId: string) => void;
   onRemoveTemplate?: (assetId: string) => void;
   /** 用户「真实点击」某图片 item（出图变体或上传/素材图；非拖拽、非程序化选择同步）
@@ -546,9 +552,7 @@ export function OpenCanvas({
         // （regenerate dropStaleRoots）的死 tile——留着会渲染出点选即报错的
         // 幽灵图。仅在 seedReady（新 key 的 history 已加载）时剪，避免把
         // 水合恢复的本项目 tile 在 seed 就位前误删。
-        .filter(
-          (it) => !it.versionId || !seedReady || byId.has(it.versionId),
-        )
+        .filter((it) => !it.versionId || !seedReady || byId.has(it.versionId))
         .map((it) => {
           // 版本 id 不变但 imageUrl/尺寸后续可能被轮询更新(如占位→真图) → 同步到
           // 已存在的画布 tile,否则会停在旧值/空白(Bugbot)。只同步图源与自然尺寸,
@@ -936,7 +940,9 @@ export function OpenCanvas({
    */
   const uploadFiles = useCallback(
     async (files: File[], at?: { sx: number; sy: number }) => {
-      const imgs = files.filter((f) => f.type.startsWith("image/")).slice(0, 20);
+      const imgs = files
+        .filter((f) => f.type.startsWith("image/"))
+        .slice(0, 20);
       if (imgs.length === 0) return;
       setUploadError(null);
       // V0.0.13h — 先本地预览秒上画布，再后台持久化（prd_agent 同款体感）：
@@ -953,7 +959,8 @@ export function OpenCanvas({
       const probeSize = (src: string) =>
         new Promise<{ w: number; h: number }>((resolve) => {
           const im = new Image();
-          im.onload = () => resolve({ w: im.naturalWidth, h: im.naturalHeight });
+          im.onload = () =>
+            resolve({ w: im.naturalWidth, h: im.naturalHeight });
           im.onerror = () => resolve({ w: 0, h: 0 });
           im.src = src;
         });
@@ -1022,7 +1029,9 @@ export function OpenCanvas({
                 ),
               );
               setUploadError(
-                err instanceof Error ? err.message : "上传失败（图片未持久化，刷新会丢）",
+                err instanceof Error
+                  ? err.message
+                  : "上传失败（图片未持久化，刷新会丢）",
               );
             },
           ),
@@ -1463,9 +1472,9 @@ export function OpenCanvas({
         // 对话引用态（prd_agent 画布同款）：灰罩✓ = 灰待选；序号角标 = 已确认。
         const refSt =
           it.kind === "image"
-            ? ((it.versionId && chatRefStates?.[it.versionId]) ||
-                (it.assetId && chatRefStates?.[it.assetId]) ||
-                null)
+            ? (it.versionId && chatRefStates?.[it.versionId]) ||
+              (it.assetId && chatRefStates?.[it.assetId]) ||
+              null
             : null;
         return (
           <div
@@ -1838,6 +1847,14 @@ export function OpenCanvas({
         >
           模板
         </DockBtn>
+        <DockBtn
+          active={resourcePanelOpen}
+          title="创作资源"
+          badge={resourceCount || undefined}
+          onClick={onToggleResourcePanel}
+        >
+          创作资源
+        </DockBtn>
         <span className="h-6 w-px bg-border" />
         <DockBtn title="本地上传图片" onClick={triggerUpload}>
           上传
@@ -1977,179 +1994,192 @@ export function OpenCanvas({
           arm-then-confirm:点 op chip 只「选中操作」(高亮),输入指令后回车/点「出图」
           才真正改图;局部重画(mask)点了直接开涂抹层(自带指令+确认)。布局固定不随
           交互增减元素,避免居中工具条左右抖动。*/}
-      {soloVersion ? (() => {
-        // V0.0.13h — 操作条贴图（prd_agent ImageQuickActionBar 位置语义）：
-        // 浮在选中图片正上方居中、跟随图片与相机变换；贴近画布顶部时翻到图片下方。
-        const soloIt = items.find((i) => selectedKeys.length === 1 && i.key === selectedKeys[0]);
-        const cx = soloIt ? (soloIt.x + soloIt.w / 2) * zoom + camera.x : 0;
-        const topY = soloIt ? soloIt.y * zoom + camera.y : 0;
-        const bottomY = soloIt ? (soloIt.y + soloIt.h) * zoom + camera.y : 0;
-        const flip = topY < 120; // 上方放不下 → 放图片下方
-        const barStyle: React.CSSProperties = soloIt
-          ? {
-              left: Math.max(160, Math.min(cx, 99999)),
-              top: flip ? bottomY + 12 : undefined,
-              bottom: flip ? undefined : undefined,
-              transform: "translate(-50%, 0)",
-              ...(flip ? {} : { top: Math.max(8, topY - 12), transform: "translate(-50%, -100%)" }),
-            }
-          : { left: "50%", top: "4.5rem", transform: "translateX(-50%)" };
-        return (
-        <div
-          onPointerDown={(e) => e.stopPropagation()}
-          className="absolute z-20 flex max-w-[calc(100%-8rem)] flex-wrap items-center justify-center gap-1.5 rounded-2xl border border-border bg-card/95 px-2.5 py-2 shadow-[0_14px_40px_rgba(30,30,60,0.12)] backdrop-blur"
-          style={barStyle}
-        >
-          {edit.ops.map((o) => {
-            const active = o.mask ? false : armedOp === o.value;
-            return (
-              <button
-                key={o.value}
-                type="button"
-                disabled={edit.busy}
-                aria-pressed={active}
-                onClick={() => {
-                  if (o.mask) {
-                    edit.onOpenMask(soloVersion);
-                  } else {
-                    // 仅「选中」该操作,不立即改图(等指令 + 确认)。
-                    setArmedOp((prev) => (prev === o.value ? null : o.value));
-                  }
-                }}
-                title={
-                  o.mask
-                    ? "在图片上涂抹要重绘的区域"
-                    : `选「${o.label}」,再输入指令出图`
-                }
-                className={[
-                  "rounded-full px-2.5 py-1 text-xs transition-colors disabled:opacity-50",
-                  o.mask
-                    ? "bg-gradient-to-br from-primary to-accent font-medium text-primary-foreground shadow-[0_6px_16px_rgba(124,92,255,0.24)]"
-                    : active
-                      ? "bg-accent-soft font-medium text-primary ring-1 ring-primary/40"
-                      : "border border-border text-muted-foreground hover:bg-muted",
-                ].join(" ")}
-              >
-                {o.label}
-              </button>
+      {soloVersion
+        ? (() => {
+            // V0.0.13h — 操作条贴图（prd_agent ImageQuickActionBar 位置语义）：
+            // 浮在选中图片正上方居中、跟随图片与相机变换；贴近画布顶部时翻到图片下方。
+            const soloIt = items.find(
+              (i) => selectedKeys.length === 1 && i.key === selectedKeys[0],
             );
-          })}
-          <span className="mx-0.5 h-5 w-px bg-border" />
-          <input
-            value={edit.instr}
-            onChange={(e) => edit.onInstrChange(e.target.value)}
-            onPointerDown={(e) => e.stopPropagation()}
-            onKeyDown={(e) => {
-              if (
-                e.key === "Enter" &&
-                armedOp &&
-                edit.instr.trim() &&
-                !edit.busy
-              ) {
-                e.preventDefault();
-                edit.onRun(soloVersion, armedOp);
-              }
-            }}
-            placeholder={
-              armedOp
-                ? `描述「${edit.ops.find((o) => o.value === armedOp)?.label ?? "修改"}」细节,回车出图…`
-                : "先选上方操作,再描述修改…"
-            }
-            disabled={edit.busy}
-            className="h-8 w-44 rounded-lg border border-border bg-background px-2.5 text-xs text-foreground outline-none focus:border-primary/40 disabled:opacity-50"
-          />
-          <button
-            type="button"
-            // 必须先选操作 + 有非空指令才可出图 —— 否则空 prompt 会触发一次真实 provider
-            // 改图,白烧配额且结果含糊(Codex P2:旧表单原本 guard 了 !instr.trim())。
-            disabled={edit.busy || !armedOp || !edit.instr.trim()}
-            onClick={() => {
-              if (armedOp && edit.instr.trim() && !edit.busy)
-                edit.onRun(soloVersion, armedOp);
-            }}
-            title={
-              !armedOp
-                ? "先选一个操作"
-                : !edit.instr.trim()
-                  ? "先输入修改指令"
-                  : "用上方选中的操作 + 指令改图"
-            }
-            className="h-8 rounded-lg bg-gradient-to-br from-primary to-accent px-3 text-xs font-medium text-primary-foreground shadow-[0_6px_16px_rgba(124,92,255,0.24)] transition-opacity disabled:opacity-40"
-          >
-            {edit.busy ? "改图中…" : "出图"}
-          </button>
-
-          {/* V0.0.13e — 终选/交付/审阅（原下方面板已删，动作跟随画布选中） */}
-          {edit.delivery ? (
-            <>
-              <span className="mx-0.5 h-5 w-px bg-border" />
-              <button
-                type="button"
-                onClick={edit.delivery.onMarkFinal}
-                disabled={
-                  edit.delivery.busy === "final" || edit.delivery.isFinal
+            const cx = soloIt ? (soloIt.x + soloIt.w / 2) * zoom + camera.x : 0;
+            const topY = soloIt ? soloIt.y * zoom + camera.y : 0;
+            const bottomY = soloIt
+              ? (soloIt.y + soloIt.h) * zoom + camera.y
+              : 0;
+            const flip = topY < 120; // 上方放不下 → 放图片下方
+            const barStyle: React.CSSProperties = soloIt
+              ? {
+                  left: Math.max(160, Math.min(cx, 99999)),
+                  top: flip ? bottomY + 12 : undefined,
+                  bottom: flip ? undefined : undefined,
+                  transform: "translate(-50%, 0)",
+                  ...(flip
+                    ? {}
+                    : {
+                        top: Math.max(8, topY - 12),
+                        transform: "translate(-50%, -100%)",
+                      }),
                 }
-                className="rounded-full border border-success/40 px-2.5 py-1 text-xs text-success transition-colors hover:bg-success/10 disabled:opacity-60"
+              : { left: "50%", top: "4.5rem", transform: "translateX(-50%)" };
+            return (
+              <div
+                onPointerDown={(e) => e.stopPropagation()}
+                className="absolute z-20 flex max-w-[calc(100%-8rem)] flex-wrap items-center justify-center gap-1.5 rounded-2xl border border-border bg-card/95 px-2.5 py-2 shadow-[0_14px_40px_rgba(30,30,60,0.12)] backdrop-blur"
+                style={barStyle}
               >
-                {edit.delivery.isFinal ? "✓ 终稿" : "设为终稿"}
-              </button>
-              <button
-                type="button"
-                onClick={edit.delivery.onExport}
-                disabled={edit.delivery.busy === "export"}
-                className="rounded-full border border-primary/40 px-2.5 py-1 text-xs text-primary transition-colors hover:bg-accent-soft disabled:opacity-60"
-              >
-                {edit.delivery.busy === "export"
-                  ? "打包中…"
-                  : edit.delivery.hasFinal
-                    ? "导出(终稿)"
-                    : "导出(当前图)"}
-              </button>
-              {edit.delivery.canSubmitReview ? (
+                {edit.ops.map((o) => {
+                  const active = o.mask ? false : armedOp === o.value;
+                  return (
+                    <button
+                      key={o.value}
+                      type="button"
+                      disabled={edit.busy}
+                      aria-pressed={active}
+                      onClick={() => {
+                        if (o.mask) {
+                          edit.onOpenMask(soloVersion);
+                        } else {
+                          // 仅「选中」该操作,不立即改图(等指令 + 确认)。
+                          setArmedOp((prev) =>
+                            prev === o.value ? null : o.value,
+                          );
+                        }
+                      }}
+                      title={
+                        o.mask
+                          ? "在图片上涂抹要重绘的区域"
+                          : `选「${o.label}」,再输入指令出图`
+                      }
+                      className={[
+                        "rounded-full px-2.5 py-1 text-xs transition-colors disabled:opacity-50",
+                        o.mask
+                          ? "bg-gradient-to-br from-primary to-accent font-medium text-primary-foreground shadow-[0_6px_16px_rgba(124,92,255,0.24)]"
+                          : active
+                            ? "bg-accent-soft font-medium text-primary ring-1 ring-primary/40"
+                            : "border border-border text-muted-foreground hover:bg-muted",
+                      ].join(" ")}
+                    >
+                      {o.label}
+                    </button>
+                  );
+                })}
+                <span className="mx-0.5 h-5 w-px bg-border" />
+                <input
+                  value={edit.instr}
+                  onChange={(e) => edit.onInstrChange(e.target.value)}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onKeyDown={(e) => {
+                    if (
+                      e.key === "Enter" &&
+                      armedOp &&
+                      edit.instr.trim() &&
+                      !edit.busy
+                    ) {
+                      e.preventDefault();
+                      edit.onRun(soloVersion, armedOp);
+                    }
+                  }}
+                  placeholder={
+                    armedOp
+                      ? `描述「${edit.ops.find((o) => o.value === armedOp)?.label ?? "修改"}」细节,回车出图…`
+                      : "先选上方操作,再描述修改…"
+                  }
+                  disabled={edit.busy}
+                  className="h-8 w-44 rounded-lg border border-border bg-background px-2.5 text-xs text-foreground outline-none focus:border-primary/40 disabled:opacity-50"
+                />
                 <button
                   type="button"
-                  onClick={edit.delivery.onSubmitReview}
-                  disabled={edit.delivery.reviewBusy}
-                  className="rounded-full border border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted disabled:opacity-60"
+                  // 必须先选操作 + 有非空指令才可出图 —— 否则空 prompt 会触发一次真实 provider
+                  // 改图,白烧配额且结果含糊(Codex P2:旧表单原本 guard 了 !instr.trim())。
+                  disabled={edit.busy || !armedOp || !edit.instr.trim()}
+                  onClick={() => {
+                    if (armedOp && edit.instr.trim() && !edit.busy)
+                      edit.onRun(soloVersion, armedOp);
+                  }}
+                  title={
+                    !armedOp
+                      ? "先选一个操作"
+                      : !edit.instr.trim()
+                        ? "先输入修改指令"
+                        : "用上方选中的操作 + 指令改图"
+                  }
+                  className="h-8 rounded-lg bg-gradient-to-br from-primary to-accent px-3 text-xs font-medium text-primary-foreground shadow-[0_6px_16px_rgba(124,92,255,0.24)] transition-opacity disabled:opacity-40"
                 >
-                  提交审阅
+                  {edit.busy ? "改图中…" : "出图"}
                 </button>
-              ) : null}
-              {edit.delivery.canDecideReview ? (
-                <>
-                  <button
-                    type="button"
-                    onClick={edit.delivery.onApprove}
-                    disabled={edit.delivery.reviewBusy}
-                    className="rounded-full border border-success/40 px-2.5 py-1 text-xs text-success transition-colors hover:bg-success/10 disabled:opacity-60"
-                  >
-                    通过
-                  </button>
-                  <button
-                    type="button"
-                    onClick={edit.delivery.onOpenReject}
-                    disabled={edit.delivery.reviewBusy}
-                    className="rounded-full border border-destructive/40 px-2.5 py-1 text-xs text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-60"
-                  >
-                    驳回
-                  </button>
-                </>
-              ) : null}
-              {edit.delivery.reviewStatus ? (
-                <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
-                  {edit.delivery.reviewStatus}
-                </span>
-              ) : null}
-              {edit.delivery.error ? (
-                <span className="text-[10px] text-destructive">
-                  {edit.delivery.error}
-                </span>
-              ) : null}
-            </>
-          ) : null}
-        </div>
-        );
-      })() : null}
+
+                {/* V0.0.13e — 终选/交付/审阅（原下方面板已删，动作跟随画布选中） */}
+                {edit.delivery ? (
+                  <>
+                    <span className="mx-0.5 h-5 w-px bg-border" />
+                    <button
+                      type="button"
+                      onClick={edit.delivery.onMarkFinal}
+                      disabled={
+                        edit.delivery.busy === "final" || edit.delivery.isFinal
+                      }
+                      className="rounded-full border border-success/40 px-2.5 py-1 text-xs text-success transition-colors hover:bg-success/10 disabled:opacity-60"
+                    >
+                      {edit.delivery.isFinal ? "✓ 终稿" : "设为终稿"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={edit.delivery.onExport}
+                      disabled={edit.delivery.busy === "export"}
+                      className="rounded-full border border-primary/40 px-2.5 py-1 text-xs text-primary transition-colors hover:bg-accent-soft disabled:opacity-60"
+                    >
+                      {edit.delivery.busy === "export"
+                        ? "打包中…"
+                        : edit.delivery.hasFinal
+                          ? "导出(终稿)"
+                          : "导出(当前图)"}
+                    </button>
+                    {edit.delivery.canSubmitReview ? (
+                      <button
+                        type="button"
+                        onClick={edit.delivery.onSubmitReview}
+                        disabled={edit.delivery.reviewBusy}
+                        className="rounded-full border border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted disabled:opacity-60"
+                      >
+                        提交审阅
+                      </button>
+                    ) : null}
+                    {edit.delivery.canDecideReview ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={edit.delivery.onApprove}
+                          disabled={edit.delivery.reviewBusy}
+                          className="rounded-full border border-success/40 px-2.5 py-1 text-xs text-success transition-colors hover:bg-success/10 disabled:opacity-60"
+                        >
+                          通过
+                        </button>
+                        <button
+                          type="button"
+                          onClick={edit.delivery.onOpenReject}
+                          disabled={edit.delivery.reviewBusy}
+                          className="rounded-full border border-destructive/40 px-2.5 py-1 text-xs text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-60"
+                        >
+                          驳回
+                        </button>
+                      </>
+                    ) : null}
+                    {edit.delivery.reviewStatus ? (
+                      <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
+                        {edit.delivery.reviewStatus}
+                      </span>
+                    ) : null}
+                    {edit.delivery.error ? (
+                      <span className="text-[10px] text-destructive">
+                        {edit.delivery.error}
+                      </span>
+                    ) : null}
+                  </>
+                ) : null}
+              </div>
+            );
+          })()
+        : null}
     </div>
   );
 }

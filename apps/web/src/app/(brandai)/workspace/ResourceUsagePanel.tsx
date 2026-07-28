@@ -42,23 +42,26 @@ const MODE_META: Record<
 };
 
 export function ResourceUsagePanel({
+  open,
   resources,
   frame,
+  onOpenChange,
   onAddMaterial,
   onAddReference,
   onModeChange,
   onTransformChange,
   onRemove,
 }: {
+  open: boolean;
   resources: WorkspaceResourceUsage[];
   frame: { width: number; height: number; label: string };
+  onOpenChange: (open: boolean) => void;
   onAddMaterial: () => void;
   onAddReference: () => void;
   onModeChange: (assetId: string, mode: AssetInvocationMode) => void;
   onTransformChange: (assetId: string, transform: ExactAssetTransform) => void;
   onRemove: (assetId: string, libraryKind: "MATERIAL" | "TEMPLATE") => void;
 }) {
-  const [open, setOpen] = useState(true);
   const [editingId, setEditingId] = useState<string | null>(null);
   const editing = resources.find((resource) => resource.id === editingId);
   const exactCount = resources.filter(
@@ -70,17 +73,10 @@ export function ResourceUsagePanel({
     <>
       <div
         className="absolute left-4 top-4 z-30"
+        data-testid="resource-usage-panel"
         onPointerDown={(event) => event.stopPropagation()}
       >
-        {!open ? (
-          <button
-            type="button"
-            onClick={() => setOpen(true)}
-            className="rounded-full border border-border bg-card/95 px-4 py-2 text-xs font-semibold text-foreground shadow-lg backdrop-blur"
-          >
-            创作资源 · {resources.length}
-          </button>
-        ) : (
+        {open ? (
           <section className="flex max-h-[calc(100vh-9rem)] w-[320px] flex-col overflow-hidden rounded-3xl border border-border bg-card/95 shadow-[0_16px_50px_rgba(30,30,60,0.14)] backdrop-blur">
             <header className="border-b border-border p-4">
               <div className="flex items-center justify-between gap-3">
@@ -92,7 +88,7 @@ export function ResourceUsagePanel({
                 </div>
                 <button
                   type="button"
-                  onClick={() => setOpen(false)}
+                  onClick={() => onOpenChange(false)}
                   aria-label="收起创作资源"
                   className="flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground hover:bg-muted"
                 >
@@ -206,7 +202,7 @@ export function ResourceUsagePanel({
               锁定素材不会发送给模型；融合与参考会作为真实图片输入。
             </footer>
           </section>
-        )}
+        ) : null}
       </div>
       {editing ? (
         <ExactAssetEditor

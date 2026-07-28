@@ -513,6 +513,7 @@ function Workspace() {
     height: 1024,
     label: "1:1 · 1K",
   });
+  const [resourcePanelOpen, setResourcePanelOpen] = useState(true);
   useEffect(() => {
     if (!projectId) {
       setReferences([]);
@@ -1522,6 +1523,11 @@ function Workspace() {
             templateAssets={[]}
             onOpenMaterialLibrary={() => setAssetPickerOpen(true)}
             onOpenTemplateLibrary={() => setTemplatePickerOpen(true)}
+            resourceCount={workspaceResources.length}
+            resourcePanelOpen={resourcePanelOpen}
+            onToggleResourcePanel={() =>
+              setResourcePanelOpen((current) => !current)
+            }
             onRemoveMaterial={dropReference}
             onRemoveTemplate={dropTemplateReference}
             onUserPickImage={onCanvasUserPickImage}
@@ -1565,8 +1571,10 @@ function Workspace() {
             }}
           />
           <ResourceUsagePanel
+            open={resourcePanelOpen}
             resources={workspaceResources}
             frame={activeFrame}
+            onOpenChange={setResourcePanelOpen}
             onAddMaterial={() => setAssetPickerOpen(true)}
             onAddReference={() => setTemplatePickerOpen(true)}
             onModeChange={(assetId, mode) => {
