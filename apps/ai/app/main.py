@@ -144,13 +144,22 @@ _RISK_LEXICON = {
     "AUTHORITY": ["官方认证", "国家级", "行业第一", "权威推荐"],
 }
 
+PARSER_REVISION = "grounded-six-slot-r6"
+GENERATION_REVISION = "gpt-image-2-size-quality-r1"
+
 
 @app.get("/health")
 async def health():
-    # Exposed only through the authenticated/web health aggregator. The parser
-    # revision makes cross-branch CDS routing mistakes observable without
-    # exposing provider credentials or the internal AI API publicly.
-    return {"status": "ok", "parserRevision": "grounded-six-slot-r6"}
+    # Exposed only through the web health aggregator. Both revisions are
+    # compatibility gates for shared CDS Docker DNS: parserRevision protects
+    # manual parsing, while generationRevision prevents a new worker from
+    # silently selecting an older branch's AI container that still snaps
+    # arbitrary gpt-image-2 sizes back to the legacy three fixed dimensions.
+    return {
+        "status": "ok",
+        "parserRevision": PARSER_REVISION,
+        "generationRevision": GENERATION_REVISION,
+    }
 
 
 @app.post("/v1/diag")

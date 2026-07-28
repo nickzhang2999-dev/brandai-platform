@@ -23,6 +23,7 @@ import { createSummarizeWorker } from "./summarize.worker";
 import { sweepStaleGenerations } from "@/lib/generations";
 import { queuePrefix } from "@/lib/queue";
 import {
+  REQUIRED_AI_GENERATION_REVISION,
   REQUIRED_AI_PARSER_REVISION,
   resolveAiService,
   type AiServiceResolution,
@@ -54,8 +55,10 @@ http
         count: workers.length,
         queuePrefix,
         requiredAiParserRevision: REQUIRED_AI_PARSER_REVISION,
+        requiredAiGenerationRevision: REQUIRED_AI_GENERATION_REVISION,
         aiResolution: aiService?.source ?? "checking",
         aiParserRevision: aiService?.parserRevision ?? null,
+        aiGenerationRevision: aiService?.generationRevision ?? null,
         ...(bootError ? { error: bootError } : {}),
       }),
     );
@@ -80,7 +83,9 @@ try {
     .then((resolution) => {
       aiService = resolution;
       console.log(
-        `[workers] AI service: ${resolution.source} ${resolution.parserRevision ?? "unknown-revision"}`,
+        `[workers] AI service: ${resolution.source} parser=${
+          resolution.parserRevision ?? "unknown"
+        } generation=${resolution.generationRevision ?? "unknown"}`,
       );
     })
     .catch((error) => {

@@ -1,6 +1,7 @@
 import { resolve4 } from "node:dns/promises";
 
 export const REQUIRED_AI_PARSER_REVISION = "grounded-six-slot-r6";
+export const REQUIRED_AI_GENERATION_REVISION = "gpt-image-2-size-quality-r1";
 
 const CONFIGURED_BASE =
   process.env.BRANDAI_AI_SERVICE_URL ??
@@ -11,8 +12,9 @@ const PROBE_TIMEOUT_MS = 2_000;
 
 export type AiServiceResolution = {
   base: string;
-  source: "configured" | "revision-match" | "fallback";
+  source: "configured" | "revision-match";
   parserRevision?: string;
+  generationRevision?: string;
 };
 
 let cachedResolution: { value: AiServiceResolution; expiresAt: number } | null =
@@ -31,13 +33,20 @@ async function probe(base: string): Promise<AiServiceResolution | null> {
       signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
     });
     if (!response.ok) return null;
-    const body = (await response.json()) as { parserRevision?: unknown };
+    const body = (await response.json()) as {
+      parserRevision?: unknown;
+      generationRevision?: unknown;
+    };
     return {
       base,
       source: "revision-match",
       parserRevision:
         typeof body.parserRevision === "string"
           ? body.parserRevision
+          : undefined,
+      generationRevision:
+        typeof body.generationRevision === "string"
+          ? body.generationRevision
           : undefined,
     };
   } catch {
@@ -49,7 +58,8 @@ async function probe(base: string): Promise<AiServiceResolution | null> {
  * CDS historically attached every branch to one Docker network. The bare
  * service alias `ai` can therefore resolve to several branch containers and
  * round-robin into stale code. Resolve every A record and select the service
- * that advertises the parser contract required by this web/worker revision.
+ * that advertises both parser and image-generation contracts required by this
+ * web/worker revision.
  *
  * Explicit non-`ai` URLs remain authoritative for local, production, and
  * operator-managed deployments.
@@ -78,20 +88,25 @@ export async function resolveAiService(): Promise<AiServiceResolution> {
     const results = await Promise.all(candidates.map(probe));
     const match = results.find(
       (result) =>
-        result?.parserRevision === REQUIRED_AI_PARSER_REVISION,
+        result?.parserRevision === REQUIRED_AI_PARSER_REVISION &&
+        result.generationRevision === REQUIRED_AI_GENERATION_REVISION,
     );
     if (match) {
       cachedResolution = { value: match, expiresAt: now + CACHE_MS };
       return match;
     }
-  } catch {
-    // Docker DNS can be temporarily unavailable during a rolling deploy.
+  } catch (error) {
+    throw new Error(
+      `AI service discovery failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
   }
 
-  const value: AiServiceResolution = {
-    base: CONFIGURED_BASE.replace(/\/$/, ""),
-    source: "fallback",
-  };
-  cachedResolution = { value, expiresAt: now + 2_000 };
-  return value;
+  // Fail closed. Falling back to the shared `ai` alias can round-robin into an
+  // older branch and silently return the wrong dimensions/quality. A visible
+  // retryable generation failure is safer than persisting a false 3:1 result.
+  throw new Error(
+    "No compatible AI service found for the required parser and generation revisions",
+  );
 }
