@@ -288,13 +288,19 @@ model WatermarkPreset {
 // assetId 同 workspace（路由层 IDOR 校验，§3.5 隔离规则 2）。kind 用 String 而非新
 // enum，避免在共享 CDS Postgres 上 CREATE TYPE 的跨分支耦合。
 model ProjectAsset {
-  id        String   @id @default(cuid())
-  projectId String
-  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  assetId   String
-  asset     Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
-  kind      String   @default("MEMBER") // MEMBER | REFERENCE
-  createdAt DateTime @default(now())
+  id             String   @id @default(cuid())
+  projectId      String
+  project        Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  assetId        String
+  asset          Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  kind           String   @default("MEMBER") // MEMBER | REFERENCE
+  // V0.0.21 — EXACT | ADAPTIVE | REFERENCE. Null keeps legacy links readable;
+  // callers infer MATERIAL→EXACT and TEMPLATE→REFERENCE.
+  usageMode      String?
+  // ExactAssetTransform JSON. Only meaningful when usageMode=EXACT.
+  exactTransform Json?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   @@unique([projectId, assetId, kind])
   @@index([projectId])

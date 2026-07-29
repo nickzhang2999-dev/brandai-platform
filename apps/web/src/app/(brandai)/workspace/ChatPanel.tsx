@@ -9,7 +9,18 @@ import {
   type MutableRefObject,
 } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import type { Generation, WatermarkOverlayInput } from "@brandai/contracts";
+import {
+  GENERATION_ASPECT_RATIO_PRESETS,
+  GenerationSizeSelection as GenerationSizeSelectionSchema,
+  resolveGenerationSize,
+  type Generation,
+  type AssetUsageInput,
+  type GenerationAspectRatioKey,
+  type GenerationResolutionTier,
+  type GenerationSizeSelection,
+  type SizeSpec,
+  type WatermarkOverlayInput,
+} from "@brandai/contracts";
 import { apiFetch } from "@/lib/client";
 import {
   buildModelBrief,
@@ -35,7 +46,8 @@ import {
  *     placeholder 切换为「点击此处确认选择，或继续输入...」。
  *  2. chip 解剖 1:1：inline-flex h-20px gap-4px pad 0 6px 0 4px 圆角 4px；
  *     14×14 缩略图（圆角 3）+ 13px 语义标签（>8 字符截为 6+…，maxWidth 80）。
- *  3. 底栏 1:1：左「1K · 比例」尺寸 chip（弹出 分辨率+比例小矩形网格）；
+ *  3. 底栏：比例与清晰度分别选择；12 个预设比例 + 自定义比例，1K/2K
+ *     分别映射 gpt-image-2 的 medium/high quality。
  *     右 模型 chip + 圆形发送箭头（h-7 w-7 rounded-full）。
  *  4. 会话流只投影**对话来源**（chatContext 存在）的生成——表单历史的
  *     brief 不再"莫名其妙"出现。
@@ -68,13 +80,6 @@ interface ChatContextShape {
   displayText?: string;
   imageInputs?: { kind: "VERSION" | "ASSET"; id: string; url?: string }[];
 }
-
-/** 尺寸 chip 的选项（gpt-image-2 支持的 1K 档三比例）。 */
-const SIZE_OPTIONS = [
-  { ratio: "1:1", width: 1024, height: 1024 },
-  { ratio: "2:3", width: 1024, height: 1536 },
-  { ratio: "3:2", width: 1536, height: 1024 },
-] as const;
 
 function fmtTime(iso: string): string {
   return new Date(iso).toLocaleString("zh-CN", {
@@ -167,7 +172,11 @@ function InlineChip({ ordinal, url }: { ordinal: number; url?: string }) {
     >
       {url ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={url} alt={`引用 ${ordinal}`} className="h-6 w-6 object-cover" />
+        <img
+          src={url}
+          alt={`引用 ${ordinal}`}
+          className="h-6 w-6 object-cover"
+        />
       ) : (
         <span className="flex h-6 w-6 items-center justify-center bg-muted text-[9px] text-muted-foreground">
           图{ordinal}
@@ -221,6 +230,8 @@ export function ChatPanel({
   onSubmitted,
   presetBrief,
   watermarkOverlays,
+  assetUsages,
+  onSizeSelectionChange,
   insertRef,
   onComposerRefsChange,
   onPasteImage,
@@ -232,6 +243,12 @@ export function ChatPanel({
       入口（生成表单已删），不透传的话已配置水印的 Campaign 出图会静默丢
       logo/水印——worker 对 chat-origin 同样支持确定性合成（Codex P2）。 */
   watermarkOverlays?: WatermarkOverlayInput[];
+  /** V0.0.21 — server-authoritative project resources and their execution mode. */
+  assetUsages?: AssetUsageInput[];
+  onSizeSelectionChange?: (
+    selection: GenerationSizeSelection,
+    resolved: SizeSpec,
+  ) => void;
   onViewGeneration: (generationId: string) => void;
   /** 提交成功后回调（新 generation + jobId）——页面切换选中出图，让新图直接
       落画布轮询，不必等用户手点「查看」（Codex P2）。 */
@@ -257,9 +274,61 @@ export function ChatPanel({
   // 重复 POST /generations（重复扣配额 + 重复起 job）。
   const sendingRef = useRef(false);
   const [err, setErr] = useState<string | null>(null);
-  const [sizeOpen, setSizeOpen] = useState(false);
-  const [sizeIdx, setSizeIdx] = useState(0);
+  const [ratioOpen, setRatioOpen] = useState(false);
+  const [tierOpen, setTierOpen] = useState(false);
+  const [ratioKey, setRatioKey] = useState<GenerationAspectRatioKey>("1:1");
+  const [resolutionTier, setResolutionTier] =
+    useState<GenerationResolutionTier>("1K");
+  const [customRatioWidth, setCustomRatioWidth] = useState("4");
+  const [customRatioHeight, setCustomRatioHeight] = useState("5");
   const [now, setNow] = useState(() => Date.now());
+
+  const sizeSelectionState = useMemo(() => {
+    const candidate: GenerationSizeSelection =
+      ratioKey === "custom"
+        ? {
+            ratioKey,
+            resolutionTier,
+            customRatio: {
+              width: Number(customRatioWidth),
+              height: Number(customRatioHeight),
+            },
+          }
+        : { ratioKey, resolutionTier };
+    const parsed = GenerationSizeSelectionSchema.safeParse(candidate);
+    if (!parsed.success) {
+      return {
+        selection: null,
+        resolved: null,
+        error: parsed.error.issues[0]?.message ?? "请输入有效的自定义比例",
+      };
+    }
+    try {
+      return {
+        selection: parsed.data,
+        resolved: resolveGenerationSize(parsed.data),
+        error: null,
+      };
+    } catch (error) {
+      return {
+        selection: null,
+        resolved: null,
+        error: error instanceof Error ? error.message : "无法解析图片尺寸",
+      };
+    }
+  }, [customRatioHeight, customRatioWidth, ratioKey, resolutionTier]);
+  useEffect(() => {
+    if (sizeSelectionState.selection && sizeSelectionState.resolved) {
+      onSizeSelectionChange?.(
+        sizeSelectionState.selection,
+        sizeSelectionState.resolved,
+      );
+    }
+  }, [
+    onSizeSelectionChange,
+    sizeSelectionState.resolved,
+    sizeSelectionState.selection,
+  ]);
 
   const { data: history = [] } = useQuery<Generation[]>({
     queryKey: ["brandai-project-gens", wsId, projectId],
@@ -318,7 +387,10 @@ export function ChatPanel({
       chips.length === 0 && (el.textContent ?? "").trim() === "",
     );
     onComposerRefsChange?.(
-      chips.map((c) => ({ id: c.dataset.id ?? "", ready: c.dataset.ready === "1" })),
+      chips.map((c) => ({
+        id: c.dataset.id ?? "",
+        ready: c.dataset.ready === "1",
+      })),
     );
   }, [onComposerRefsChange]);
 
@@ -384,9 +456,9 @@ export function ChatPanel({
   const confirmPending = useCallback(() => {
     const el = composerRef.current;
     if (!el) return;
-    el.querySelectorAll<HTMLElement>('[data-chat-chip][data-ready="0"]').forEach(
-      (c) => applyChipReadyStyle(c, true),
-    );
+    el.querySelectorAll<HTMLElement>(
+      '[data-chat-chip][data-ready="0"]',
+    ).forEach((c) => applyChipReadyStyle(c, true));
     syncComposerState();
   }, [syncComposerState]);
 
@@ -394,9 +466,9 @@ export function ChatPanel({
   const clearPending = useCallback(() => {
     const el = composerRef.current;
     if (!el) return;
-    el.querySelectorAll<HTMLElement>('[data-chat-chip][data-ready="0"]').forEach(
-      (c) => c.remove(),
-    );
+    el.querySelectorAll<HTMLElement>(
+      '[data-chat-chip][data-ready="0"]',
+    ).forEach((c) => c.remove());
     syncComposerState();
   }, [syncComposerState]);
 
@@ -493,7 +565,8 @@ export function ChatPanel({
           tokens.push({ type: "text", text: "\n" });
           return;
         }
-        if (topLevel && tokens.length > 0) tokens.push({ type: "text", text: "\n" });
+        if (topLevel && tokens.length > 0)
+          tokens.push({ type: "text", text: "\n" });
         walk(child, false);
       });
     };
@@ -511,7 +584,10 @@ export function ChatPanel({
       setErr("请先选择项目");
       return false;
     }
-    const size = SIZE_OPTIONS[sizeIdx] ?? SIZE_OPTIONS[0];
+    if (!sizeSelectionState.selection) {
+      setErr(sizeSelectionState.error ?? "请检查图片比例设置");
+      return false;
+    }
     sendingRef.current = true;
     setSending(true);
     setErr(null);
@@ -526,15 +602,9 @@ export function ChatPanel({
           sceneType,
           sellingPoint: buildModelBrief(payload.displayText).trim(),
           versionCount: 1,
-          // 尺寸 chip → 单 target（1K 档，比例即用户所选）。
-          targets: [
-            {
-              key: `chat-1k-${size.ratio.replace(":", "x")}`,
-              label: `1K·${size.ratio}`,
-              width: size.width,
-              height: size.height,
-            },
-          ],
+          // V0.0.20 — only send ratio/clarity intent. The API resolves the
+          // canonical pixels and the AI service maps 1K→medium / 2K→high.
+          sizeSelection: sizeSelectionState.selection,
           ...(payload.imageInputs.length > 0
             ? {
                 imageInputs: payload.imageInputs.map((r) => ({
@@ -543,6 +613,7 @@ export function ChatPanel({
                 })),
               }
             : {}),
+          ...(assetUsages && assetUsages.length > 0 ? { assetUsages } : {}),
           // Campaign 配置的水印/logo 与旧表单提交同口径透传（Codex P2）：
           // direct prompt 只改提示词组装，水印是安全底线之一、照叠。
           ...(watermarkOverlays && watermarkOverlays.length > 0
@@ -580,7 +651,9 @@ export function ChatPanel({
     if (!el) return;
     // 发送前自动确认所有待选（TwoPhase handleSubmit 的移植）。
     confirmPending();
-    const { displayText, imageInputs } = serializeComposerTokens(domToTokens(el));
+    const { displayText, imageInputs } = serializeComposerTokens(
+      domToTokens(el),
+    );
     if (displayText.trim() === "" && imageInputs.length === 0) return;
     const ok = await submit({ displayText, imageInputs });
     // 失败（配额/引用失效/网络抖动）保留提示词与 chip，让用户修改后重试。
@@ -600,8 +673,6 @@ export function ChatPanel({
       })),
     });
   }
-
-  const size = SIZE_OPTIONS[sizeIdx] ?? SIZE_OPTIONS[0];
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -716,7 +787,9 @@ export function ChatPanel({
                               </button>
                               <span className="absolute bottom-1 left-1 rounded-full bg-card/90 px-1.5 py-0.5 text-[10px] text-foreground">
                                 {v.width}×{v.height}
-                                {chips.length > 0 ? ` · 图生图×${chips.length}` : ""}
+                                {chips.length > 0
+                                  ? ` · 图生图×${chips.length}`
+                                  : ""}
                               </span>
                               <button
                                 type="button"
@@ -746,7 +819,11 @@ export function ChatPanel({
         {pendingCount > 0 ? (
           <div className="absolute -top-3 right-1 z-10 flex items-center gap-1.5 rounded-full border border-border bg-card px-2 py-0.5 text-[10px] text-muted-foreground shadow-sm">
             <span>
-              待确认 <span className="font-semibold text-foreground">{pendingCount}</span> 张
+              待确认{" "}
+              <span className="font-semibold text-foreground">
+                {pendingCount}
+              </span>{" "}
+              张
             </span>
             <button
               type="button"
@@ -800,7 +877,11 @@ export function ChatPanel({
               }}
               onInput={syncComposerState}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                if (
+                  e.key === "Enter" &&
+                  !e.shiftKey &&
+                  !e.nativeEvent.isComposing
+                ) {
                   e.preventDefault();
                   void send();
                 }
@@ -868,7 +949,8 @@ export function ChatPanel({
                   e.preventDefault();
                   e.clipboardData.setData("text/plain", out);
                   const sel = window.getSelection();
-                  if (sel && sel.rangeCount > 0) sel.getRangeAt(0).deleteContents();
+                  if (sel && sel.rangeCount > 0)
+                    sel.getRangeAt(0).deleteContents();
                   syncComposerState();
                 }
               }}
@@ -876,70 +958,219 @@ export function ChatPanel({
           </div>
         </div>
 
-        {/* 底栏：左 尺寸chip · 右 模型chip + 圆形发送 */}
+        {/* 底栏：左 比例 + 清晰度 · 右 模型chip + 圆形发送 */}
         <div className="mt-1 flex items-center justify-between gap-1.5">
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setSizeOpen((v) => !v)}
-              className={[
-                "h-7 rounded-full px-2.5 text-[11px] font-semibold transition-colors",
-                sizeOpen
-                  ? "bg-accent-soft text-primary"
-                  : "border border-border bg-card text-muted-foreground hover:text-foreground",
-              ].join(" ")}
-            >
-              1K · {size.ratio} <span aria-hidden>▾</span>
-            </button>
-            {sizeOpen ? (
-              <div className="absolute bottom-9 left-0 z-20 w-[220px] rounded-2xl border border-border bg-card p-3 shadow-lg">
-                <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  分辨率
+          <div className="flex min-w-0 items-center gap-1">
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => {
+                  setRatioOpen((value) => !value);
+                  setTierOpen(false);
+                }}
+                title={
+                  sizeSelectionState.resolved
+                    ? `${sizeSelectionState.resolved.width}×${sizeSelectionState.resolved.height}`
+                    : (sizeSelectionState.error ?? undefined)
+                }
+                className={[
+                  "h-7 rounded-full px-2.5 text-[11px] font-semibold transition-colors",
+                  ratioOpen
+                    ? "bg-accent-soft text-primary"
+                    : "border border-border bg-card text-muted-foreground hover:text-foreground",
+                ].join(" ")}
+              >
+                比例 ·{" "}
+                {ratioKey === "custom"
+                  ? `${customRatioWidth || "?"}:${customRatioHeight || "?"}`
+                  : ratioKey}{" "}
+                <span aria-hidden>▾</span>
+              </button>
+              {ratioOpen ? (
+                <div className="absolute bottom-9 left-0 z-20 w-[344px] rounded-2xl border border-border bg-card p-3 shadow-lg">
+                  <div className="mb-2 flex items-center justify-between">
+                    <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                      比例
+                    </span>
+                    {sizeSelectionState.resolved ? (
+                      <span className="text-[10px] text-muted-foreground">
+                        {sizeSelectionState.resolved.width}×
+                        {sizeSelectionState.resolved.height}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="grid grid-cols-4 gap-1.5">
+                    {GENERATION_ASPECT_RATIO_PRESETS.map((option) => {
+                      const active = option.key === ratioKey;
+                      const { width: rw, height: rh } =
+                        option.sizes[resolutionTier];
+                      const w =
+                        rw >= rh ? 24 : Math.max(8, Math.round((24 * rw) / rh));
+                      const h =
+                        rh >= rw ? 24 : Math.max(8, Math.round((24 * rh) / rw));
+                      return (
+                        <button
+                          key={option.key}
+                          type="button"
+                          title={`${option.usage} · ${rw}×${rh}`}
+                          onClick={() => {
+                            setRatioKey(option.key);
+                            setRatioOpen(false);
+                          }}
+                          className={[
+                            "flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl border px-1 py-1.5 text-[10px] transition-colors",
+                            active
+                              ? "border-primary/60 bg-accent-soft text-primary"
+                              : "border-border text-muted-foreground hover:border-primary/30",
+                          ].join(" ")}
+                        >
+                          <span
+                            className={[
+                              "rounded-[3px] border",
+                              active
+                                ? "border-primary"
+                                : "border-muted-foreground/50",
+                            ].join(" ")}
+                            style={{ width: w, height: h }}
+                          />
+                          {option.key}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setRatioKey("custom")}
+                    className={[
+                      "mt-2 w-full rounded-xl border px-2 py-1.5 text-left text-[10px] transition-colors",
+                      ratioKey === "custom"
+                        ? "border-primary/60 bg-accent-soft text-primary"
+                        : "border-border text-muted-foreground hover:border-primary/30",
+                    ].join(" ")}
+                  >
+                    自定义比例
+                  </button>
+                  {ratioKey === "custom" ? (
+                    <div className="mt-2">
+                      <div className="flex items-center gap-2">
+                        <label className="flex flex-1 items-center gap-1 rounded-lg border border-border bg-background px-2">
+                          <span className="text-[10px] text-muted-foreground">
+                            宽
+                          </span>
+                          <input
+                            type="number"
+                            min="0.01"
+                            max="10000"
+                            step="any"
+                            value={customRatioWidth}
+                            onChange={(event) =>
+                              setCustomRatioWidth(event.target.value)
+                            }
+                            className="h-8 min-w-0 flex-1 bg-transparent text-xs outline-none"
+                            aria-label="自定义比例宽"
+                          />
+                        </label>
+                        <span className="text-xs text-muted-foreground">:</span>
+                        <label className="flex flex-1 items-center gap-1 rounded-lg border border-border bg-background px-2">
+                          <span className="text-[10px] text-muted-foreground">
+                            高
+                          </span>
+                          <input
+                            type="number"
+                            min="0.01"
+                            max="10000"
+                            step="any"
+                            value={customRatioHeight}
+                            onChange={(event) =>
+                              setCustomRatioHeight(event.target.value)
+                            }
+                            className="h-8 min-w-0 flex-1 bg-transparent text-xs outline-none"
+                            aria-label="自定义比例高"
+                          />
+                        </label>
+                      </div>
+                      <p
+                        className={[
+                          "mt-1 text-[10px]",
+                          sizeSelectionState.error
+                            ? "text-destructive"
+                            : "text-muted-foreground",
+                        ].join(" ")}
+                      >
+                        {sizeSelectionState.error ??
+                          `接口范围 1:3～3:1 · 实际 ${sizeSelectionState.resolved?.width}×${sizeSelectionState.resolved?.height}`}
+                      </p>
+                    </div>
+                  ) : null}
                 </div>
-                <div className="mb-2 flex gap-1.5">
-                  <span className="rounded-full bg-accent-soft px-2.5 py-1 text-[11px] font-semibold text-primary">
-                    1K
-                  </span>
-                </div>
-                <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  Size
-                </div>
-                <div className="grid grid-cols-3 gap-1.5">
-                  {SIZE_OPTIONS.map((o, i) => {
-                    const activeOpt = i === sizeIdx;
-                    const rw = o.width;
-                    const rh = o.height;
-                    const w = rw >= rh ? 22 : Math.round((22 * rw) / rh);
-                    const h = rh >= rw ? 22 : Math.round((22 * rh) / rw);
+              ) : null}
+            </div>
+
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => {
+                  setTierOpen((value) => !value);
+                  setRatioOpen(false);
+                }}
+                className={[
+                  "h-7 rounded-full px-2.5 text-[11px] font-semibold transition-colors",
+                  tierOpen
+                    ? "bg-accent-soft text-primary"
+                    : "border border-border bg-card text-muted-foreground hover:text-foreground",
+                ].join(" ")}
+              >
+                清晰度 · {resolutionTier} <span aria-hidden>▾</span>
+              </button>
+              {tierOpen ? (
+                <div className="absolute bottom-9 left-0 z-20 w-[230px] rounded-2xl border border-border bg-card p-2 shadow-lg">
+                  {(
+                    [
+                      {
+                        tier: "1K",
+                        title: "1K 标准",
+                        note: "约 100 万像素 · quality medium",
+                      },
+                      {
+                        tier: "2K",
+                        title: "2K 高清",
+                        note: "宽高各 2 倍 · quality high",
+                      },
+                    ] as const
+                  ).map((option) => {
+                    const active = option.tier === resolutionTier;
                     return (
                       <button
-                        key={o.ratio}
+                        key={option.tier}
                         type="button"
                         onClick={() => {
-                          setSizeIdx(i);
-                          setSizeOpen(false);
+                          setResolutionTier(option.tier);
+                          setTierOpen(false);
                         }}
                         className={[
-                          "flex flex-col items-center gap-1 rounded-xl border px-2 py-1.5 text-[10px] transition-colors",
-                          activeOpt
-                            ? "border-primary/60 bg-accent-soft text-primary"
-                            : "border-border text-muted-foreground hover:border-primary/30",
+                          "block w-full rounded-xl border px-3 py-2 text-left transition-colors [&+&]:mt-1.5",
+                          active
+                            ? "border-primary/60 bg-accent-soft"
+                            : "border-border hover:border-primary/30",
                         ].join(" ")}
                       >
                         <span
                           className={[
-                            "rounded-[3px] border",
-                            activeOpt ? "border-primary" : "border-muted-foreground/50",
+                            "block text-xs font-semibold",
+                            active ? "text-primary" : "text-foreground",
                           ].join(" ")}
-                          style={{ width: w, height: h }}
-                        />
-                        {o.ratio}
+                        >
+                          {option.title}
+                        </span>
+                        <span className="mt-0.5 block text-[10px] text-muted-foreground">
+                          {option.note}
+                        </span>
                       </button>
                     );
                   })}
                 </div>
-              </div>
-            ) : null}
+              ) : null}
+            </div>
           </div>
 
           <div className="flex items-center gap-1.5">
@@ -956,7 +1187,11 @@ export function ChatPanel({
             <button
               type="button"
               onClick={() => void send()}
-              disabled={sending || (composerEmpty && chipCount === 0)}
+              disabled={
+                sending ||
+                !sizeSelectionState.selection ||
+                (composerEmpty && chipCount === 0)
+              }
               title="发送（Enter）"
               aria-label="发送"
               className="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-primary-foreground transition-opacity disabled:opacity-50"
@@ -983,7 +1218,9 @@ export function ChatPanel({
             </button>
           </div>
         </div>
-        {err ? <p className="mt-1.5 text-[11px] text-destructive">{err}</p> : null}
+        {err ? (
+          <p className="mt-1.5 text-[11px] text-destructive">{err}</p>
+        ) : null}
       </div>
     </div>
   );

@@ -36,9 +36,7 @@ describe("SizeSpec — contract shape", () => {
   });
 
   it("rejects a size missing required keys", () => {
-    expect(SizeSpec.safeParse({ width: 100, height: 100 }).success).toBe(
-      false,
-    );
+    expect(SizeSpec.safeParse({ width: 100, height: 100 }).success).toBe(false);
   });
 });
 
@@ -76,9 +74,19 @@ describe("GenerateRequest / CreateGenerationInput — targets", () => {
       sellingPoint: "x",
       scene: "y",
       versionCount: 1,
-      targets: [
-        { key: "detail", label: "详情页", width: 750, height: 1000 },
-      ],
+      targets: [{ key: "detail", label: "详情页", width: 750, height: 1000 }],
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it("CreateGenerationInput accepts server-resolved ratio/clarity intent", () => {
+    const r = CreateGenerationInput.safeParse({
+      projectId: "p1",
+      sceneType: "ECOM_MAIN",
+      sizeSelection: {
+        ratioKey: "9:16",
+        resolutionTier: "2K",
+      },
     });
     expect(r.success).toBe(true);
   });

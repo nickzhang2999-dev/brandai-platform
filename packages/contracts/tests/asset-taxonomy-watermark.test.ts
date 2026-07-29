@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   Asset,
+  AssetUsageInput,
   AssetInvocationMode,
   AssetLibraryKind,
   CreateAssetInput,
   EditVersionInput,
   CreateGenerationInput,
   GeneratedAsset,
+  ExactAssetTransform,
   WatermarkOverlayInput,
 } from "../src/index";
 
@@ -175,5 +177,53 @@ describe("Watermark generation contract — V0.0.9", () => {
         })),
       }).success,
     ).toBe(false);
+  });
+});
+
+describe("Project resource usage — V0.0.21", () => {
+  it("defaults identity-locked geometry and allows partial-frame placement", () => {
+    const parsed = AssetUsageInput.parse({
+      assetId: "chicken-leg",
+      mode: "EXACT",
+      exactTransform: {
+        xRatio: 1.1,
+        yRatio: 0.5,
+        widthRatio: 0.42,
+        rotationDeg: 28,
+        crop: { left: 0.1, top: 0, right: 0.2, bottom: 0 },
+      },
+    });
+
+    expect(parsed.mode).toBe("EXACT");
+    if (parsed.mode !== "EXACT") throw new Error("expected EXACT");
+    expect(parsed.exactTransform.flipX).toBe(false);
+    expect(parsed.exactTransform.rotationDeg).toBe(28);
+    expect(parsed.exactTransform.crop.right).toBe(0.2);
+  });
+
+  it("rejects crop settings that erase all visible content", () => {
+    expect(
+      ExactAssetTransform.safeParse({
+        crop: { left: 0.6, right: 0.4, top: 0, bottom: 0 },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("accepts all three explicit generation semantics", () => {
+    const common = {
+      projectId: "p1",
+      sceneType: "ECOM_MAIN",
+      assetUsages: [
+        { assetId: "a1", mode: "EXACT", order: 0 },
+        { assetId: "a2", mode: "ADAPTIVE", order: 1 },
+        { assetId: "a3", mode: "REFERENCE", order: 2 },
+      ],
+    };
+    const parsed = CreateGenerationInput.parse(common);
+    expect(parsed.assetUsages?.map((usage) => usage.mode)).toEqual([
+      "EXACT",
+      "ADAPTIVE",
+      "REFERENCE",
+    ]);
   });
 });

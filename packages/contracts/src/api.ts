@@ -9,8 +9,9 @@ import {
   RuleStrength,
   SceneType,
 } from "./enums";
-import { SizeSpec } from "./ai";
+import { GenerationSizeSelection, SizeSpec } from "./ai";
 import { Asset } from "./entities";
+import { AssetUsageInput, ExactAssetTransform } from "./resource-usage";
 
 /** Web BFF (Next.js Route Handlers) request schemas. */
 
@@ -165,6 +166,11 @@ export const CreateGenerationInput = z.object({
    */
   targets: z.array(SizeSpec).max(12).optional(),
   /**
+   * V0.0.20 — workbench ratio/clarity intent. The API resolves this into an
+   * enriched SizeSpec so clients cannot spoof provider pixels or quality.
+   */
+  sizeSelection: GenerationSizeSelection.optional(),
+  /**
    * M3 — text rendering strategy threaded down to the AI service's
    * GenerateRequest. `direct` (default) keeps legacy behavior; `layered` steers
    * the model to leave clean negative space and render NO text, so the client
@@ -217,6 +223,13 @@ export const CreateGenerationInput = z.object({
    */
   imageInputs: z.array(ImageInputRef).max(8).optional(),
   /**
+   * V0.0.21 — project resources with explicit execution semantics. EXACT
+   * layers never reach the image provider; ADAPTIVE/REFERENCE are ordered real
+   * image inputs. Kept separate from chat imageInputs so the resource panel is
+   * server-authoritative and auditable.
+   */
+  assetUsages: z.array(AssetUsageInput).max(8).optional(),
+  /**
    * V0.0.13 — 会话气泡里展示的用户原文。与模型 prompt 彻底分离（规避
    * prd_agent「引用块/文件名泄漏进可见消息」bug）：本字段仅存展示，服务端
    * 不对它做任何拼接。Frozen-additive。
@@ -251,6 +264,11 @@ export const EditVersionInput = z.object({
    * returned.
    */
   watermarkOverlays: z.array(WatermarkOverlayInput).max(8).optional(),
+  /**
+   * V0.0.21 — EXACT resources are re-composited after the AI edits the clean
+   * base image. Omitted requests inherit the source version's asset usages.
+   */
+  assetUsages: z.array(AssetUsageInput).max(8).optional(),
 });
 export type EditVersionInput = z.infer<typeof EditVersionInput>;
 
@@ -288,6 +306,8 @@ export type ProjectAssetKind = z.infer<typeof ProjectAssetKind>;
 export const LinkProjectAssetInput = z.object({
   assetId: z.string(),
   kind: ProjectAssetKind.default("MEMBER"),
+  usageMode: AssetInvocationMode.optional(),
+  exactTransform: ExactAssetTransform.optional(),
 });
 export type LinkProjectAssetInput = z.infer<typeof LinkProjectAssetInput>;
 
@@ -295,6 +315,8 @@ export const ProjectAssetLink = z.object({
   id: z.string(),
   projectId: z.string(),
   kind: ProjectAssetKind,
+  usageMode: AssetInvocationMode.optional(),
+  exactTransform: ExactAssetTransform.optional(),
   createdAt: z.string(),
   asset: Asset,
 });

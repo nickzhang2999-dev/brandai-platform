@@ -117,15 +117,18 @@ _MAX_SCRAPE_TEXT = 6000
 _MANUAL_BATCH_PAGES = 8
 _MAX_MANUAL_ASSETS = 72
 
-# gpt-image-1 only accepts these three sizes (plus "auto"); any other W×H is a
-# hard 400. We snap the requested canvas to the nearest by aspect ratio.
+# Legacy gpt-image models accept this fixed set. gpt-image-2 accepts arbitrary
+# validated sizes and must never be silently snapped to these three canvases.
 _OPENAI_SIZES = ("1024x1024", "1024x1536", "1536x1024")
 _DEFAULT_IMAGE_QUALITY = "medium"
+_GPT_IMAGE_2_MIN_PIXELS = 655_360
+_GPT_IMAGE_2_MAX_PIXELS = 8_294_400
+_GPT_IMAGE_2_MAX_EDGE = 3_840
 # Max STRICT reference images forwarded to /images/edits. Matches the web
 # contract's `CreateGenerationInput.referenceAssets` max (8) so the full allowed
 # set of "100% 调用" assets reaches the model — never silently dropped. OpenAI's
 # edit API itself documents up to 16 GPT-image inputs, so 8 leaves headroom.
-_MAX_IMG2IMG_REFS = 8
+_MAX_IMG2IMG_REFS = 16
 
 # Best-effort USD price per generated image, by provider kind → quality → size.
 # gpt-image-1 is token-priced (image output $40/1M tokens); these are OpenAI's
@@ -137,6 +140,15 @@ _IMAGE_PRICE_USD: dict[str, dict[str, dict[str, float]]] = {
         "medium": {"1024x1024": 0.042, "1024x1536": 0.063, "1536x1024": 0.063},
         "high": {"1024x1024": 0.167, "1024x1536": 0.25, "1536x1024": 0.25},
     },
+}
+
+# gpt-image-2's published popular-size estimates. Arbitrary canvases are
+# token-priced, so an unknown literal size deliberately returns None instead of
+# recording a fabricated snapped-size estimate.
+_GPT_IMAGE_2_PRICE_USD: dict[str, dict[str, float]] = {
+    "low": {"1024x1024": 0.006, "1024x1536": 0.005, "1536x1024": 0.005},
+    "medium": {"1024x1024": 0.053, "1024x1536": 0.041, "1536x1024": 0.041},
+    "high": {"1024x1024": 0.211, "1024x1536": 0.165, "1536x1024": 0.165},
 }
 
 
@@ -159,6 +171,37 @@ def _snap_openai_size(width: int, height: int) -> str:
     if ar > 1.18:
         return "1536x1024"
     return "1024x1024"
+
+
+def _is_gpt_image_2_model(model: str | None) -> bool:
+    return bool(model) and str(model).split("/")[-1] == "gpt-image-2"
+
+
+def _validate_gpt_image_2_size(width: int, height: int) -> None:
+    """Enforce the official gpt-image-2 arbitrary-size limits before the call."""
+    if width <= 0 or height <= 0:
+        raise ValueError("gpt-image-2 width and height must be positive")
+    if width > _GPT_IMAGE_2_MAX_EDGE or height > _GPT_IMAGE_2_MAX_EDGE:
+        raise ValueError(
+            f"gpt-image-2 width and height must be <= {_GPT_IMAGE_2_MAX_EDGE}"
+        )
+    if width % 16 != 0 or height % 16 != 0:
+        raise ValueError("gpt-image-2 width and height must be multiples of 16")
+    pixels = width * height
+    if pixels < _GPT_IMAGE_2_MIN_PIXELS or pixels > _GPT_IMAGE_2_MAX_PIXELS:
+        raise ValueError(
+            "gpt-image-2 total pixels must be between "
+            f"{_GPT_IMAGE_2_MIN_PIXELS} and {_GPT_IMAGE_2_MAX_PIXELS}"
+        )
+    if max(width, height) / min(width, height) > 3:
+        raise ValueError("gpt-image-2 long/short edge ratio must be <= 3")
+
+
+def _resolve_openai_size(width: int, height: int, model: str | None) -> str:
+    if _is_gpt_image_2_model(model):
+        _validate_gpt_image_2_size(width, height)
+        return f"{width}x{height}"
+    return _snap_openai_size(width, height)
 
 
 def _edit_image_part(raw: bytes, idx: int) -> tuple[str, tuple[str, bytes, str]]:
@@ -248,8 +291,17 @@ def _edit_prompt(op: str, payload: dict[str, Any]) -> str:
 
 
 def _estimate_cost_usd(
-    kind: str, size: str, quality: str, n: int
+    kind: str,
+    size: str,
+    quality: str,
+    n: int,
+    model: str | None = None,
 ) -> float | None:
+    if kind == "openai" and _is_gpt_image_2_model(model):
+        per = _GPT_IMAGE_2_PRICE_USD.get(
+            quality or _DEFAULT_IMAGE_QUALITY, {}
+        ).get(size)
+        return round(per * n, 4) if per is not None else None
     table = _IMAGE_PRICE_USD.get(kind)
     if not table:
         return None
@@ -335,11 +387,16 @@ class HttpImageProvider(ImageProvider):
         negative: list[str] | None,
         extra: dict[str, Any] | None,
     ) -> dict[str, Any]:
-        # OpenAI/gpt-image-1 only accepts a fixed size set → snap; other
-        # gateways take the literal canvas.
+        # Per-request model wins over the configured default. gpt-image-2
+        # accepts literal validated sizes; legacy OpenAI image models retain the
+        # fixed-size snap for backward compatibility.
+        model = (extra or {}).get("model") or self.model
+        openai_image_semantics = (
+            self.kind == "openai" or _is_gpt_image_2_model(model)
+        )
         size = (
-            _snap_openai_size(width, height)
-            if self.kind == "openai"
+            _resolve_openai_size(width, height, model)
+            if openai_image_semantics
             else f"{width}x{height}"
         )
         # OpenAI's gpt-image-* doesn't accept negative_prompt — fold the
@@ -347,7 +404,7 @@ class HttpImageProvider(ImageProvider):
         # clause so the signal isn't lost. Other gateways still get the
         # structured negative_prompt below.
         effective_prompt = prompt
-        if negative and self.kind == "openai":
+        if negative and openai_image_semantics:
             avoid = "; ".join(s for s in negative if s)
             if avoid:
                 effective_prompt = f"{prompt}\n\nAvoid: {avoid}"
@@ -356,14 +413,13 @@ class HttpImageProvider(ImageProvider):
             "size": size,
             "n": n,
         }
-        # Per-request model wins over the env default; either gets sent so
-        # OpenAI-compatible gateways (which require an explicit model) work.
-        model = (extra or {}).get("model") or self.model
+        # Either model source gets sent so OpenAI-compatible gateways (which
+        # require an explicit model) work.
         if model:
             body["model"] = model
-        if self.kind == "openai":
-            # gpt-image-1 supports quality low|medium|high (cost scales ~15× across
-            # them). Default medium; caller may override via extra["quality"].
+        if openai_image_semantics:
+            # gpt-image-* supports quality low|medium|high|auto. Workbench calls
+            # explicitly map 1K→medium and 2K→high in main.py.
             body["quality"] = (extra or {}).get("quality") or _DEFAULT_IMAGE_QUALITY
             # gpt-image-1 returns b64 and rejects response_format; DALL·E accepts
             # response_format=url. Let the caller opt in via extra["response_format"].
@@ -373,12 +429,12 @@ class HttpImageProvider(ImageProvider):
         # gpt-image-* endpoint validates strictly and 400s on unknown keys
         # ("Unknown parameter: 'negative_prompt'"), so for kind="openai" we
         # fold the constraints into the positive prompt up-stream instead.
-        if negative and self.kind != "openai":
+        if negative and not openai_image_semantics:
             body["negative_prompt"] = ", ".join(negative)
         # 这些参数只对 SD 风格网关有意义。OpenAI gpt-image-* 严格校验、对未知字段
         # 400(同 negative_prompt),且 aspect_ratio 已在 main.py 折进 width/height,
         # 故 kind="openai" 一律不带,避免带 machineRules 的真实出图被 400。
-        if extra and self.kind != "openai":
+        if extra and not openai_image_semantics:
             for key in ("aspect_ratio", "cfg", "seed"):
                 if key in extra:
                     body[key] = extra[key]
@@ -465,7 +521,11 @@ class HttpImageProvider(ImageProvider):
                     "latency_ms": round((time.perf_counter() - started) * 1000),
                     "status": status,
                     "cost_usd": _estimate_cost_usd(
-                        self.kind, body.get("size", ""), body.get("quality", ""), n
+                        self.kind,
+                        body.get("size", ""),
+                        body.get("quality", ""),
+                        n,
+                        body.get("model"),
                     ),
                     "error": error,
                 },
@@ -517,8 +577,14 @@ class HttpImageProvider(ImageProvider):
         # Forward the full allowed set of STRICT refs (bounded by the contract's
         # max, not an arbitrary 4) — dropping any would leave a "100% 调用" asset
         # out of the composited image.
-        refs = [r for r in references if r.get("url")][:_MAX_IMG2IMG_REFS]
-        size = _snap_openai_size(width, height)
+        refs = [r for r in references if r.get("url")]
+        if len(refs) > _MAX_IMG2IMG_REFS:
+            raise ValueError(
+                f"at most {_MAX_IMG2IMG_REFS} image inputs are supported; "
+                f"got {len(refs)}"
+            )
+        effective_model = model or self.model or "gpt-image-2"
+        size = _resolve_openai_size(width, height, effective_model)
         started = time.perf_counter()
         status = 0
         error: str | None = None
@@ -544,7 +610,7 @@ class HttpImageProvider(ImageProvider):
                     files=img_files,
                     data={
                         "prompt": prompt,
-                        "model": model or self.model or "gpt-image-2",
+                        "model": effective_model,
                         "size": size,
                         "n": str(n),
                         "quality": quality or _DEFAULT_IMAGE_QUALITY,
@@ -570,10 +636,11 @@ class HttpImageProvider(ImageProvider):
                 "image.generate.img2img",
                 extra={
                     "provider": self.kind,
-                    "model": model or self.model,
+                    "model": effective_model,
                     "n": n,
                     "refs": len(refs),
                     "size": size,
+                    "quality": quality or _DEFAULT_IMAGE_QUALITY,
                     "latency_ms": round((time.perf_counter() - started) * 1000),
                     "status": status,
                     "error": error,
