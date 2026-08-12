@@ -28,9 +28,7 @@ type SpeechRecognitionLike = {
   onerror: ((e: unknown) => void) | null;
   onend: (() => void) | null;
 };
-function getSpeechRecognitionCtor():
-  | (new () => SpeechRecognitionLike)
-  | null {
+function getSpeechRecognitionCtor(): (new () => SpeechRecognitionLike) | null {
   if (typeof window === "undefined") return null;
   const w = window as unknown as {
     SpeechRecognition?: new () => SpeechRecognitionLike;
@@ -40,6 +38,8 @@ function getSpeechRecognitionCtor():
 }
 
 export type AIInputProps = {
+  /** 首页沉浸式大输入框；默认保持通用紫色 AI 输入原语。 */
+  variant?: "default" | "hero";
   value: string;
   onChange: (next: string) => void;
   /** Enter（不带 Shift）或主动作时触发；附 attachment 可选透传给宿主。 */
@@ -62,6 +62,7 @@ export type AIInputProps = {
 };
 
 export function AIInput({
+  variant = "default",
   value,
   onChange,
   onSubmit,
@@ -129,7 +130,9 @@ export function AIInput({
       transcript = transcript.trim();
       if (transcript) {
         const cur = valueRef.current;
-        const next = cur ? `${cur}${cur.endsWith(" ") ? "" : " "}${transcript}` : transcript;
+        const next = cur
+          ? `${cur}${cur.endsWith(" ") ? "" : " "}${transcript}`
+          : transcript;
         onChangeRef.current(next);
       }
     };
@@ -155,7 +158,14 @@ export function AIInput({
 
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex flex-col gap-3 rounded-[32px] border border-primary/15 bg-card p-4 shadow-[0_24px_70px_rgba(124,92,255,0.12)]">
+      <div
+        className={[
+          "flex flex-col gap-3 bg-card",
+          variant === "hero"
+            ? "min-h-[164px] rounded-[18px] border border-border p-3 shadow-[0_18px_48px_rgba(124,92,255,0.12)]"
+            : "rounded-[32px] border border-primary/15 p-4 shadow-[0_24px_70px_rgba(124,92,255,0.12)]",
+        ].join(" ")}
+      >
         {topSlot}
         <textarea
           value={value}
@@ -169,7 +179,12 @@ export function AIInput({
           }}
           rows={rows}
           placeholder={placeholder}
-          className="min-h-[52px] w-full resize-none border-0 bg-transparent px-2 py-1 text-sm outline-none placeholder:text-muted-foreground disabled:opacity-60"
+          className={[
+            "w-full resize-none border-0 bg-transparent text-sm outline-none placeholder:text-muted-foreground disabled:opacity-60",
+            variant === "hero"
+              ? "min-h-[104px] px-1 py-1"
+              : "min-h-[52px] px-2 py-1",
+          ].join(" ")}
         />
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-1.5">
@@ -223,7 +238,9 @@ export function AIInput({
         </div>
       </div>
       {listening ? (
-        <p className="px-2 text-[11px] text-primary">正在聆听… 说完会自动转写</p>
+        <p className="px-2 text-[11px] text-primary">
+          正在聆听… 说完会自动转写
+        </p>
       ) : null}
       {voiceErr ? (
         <p className="px-2 text-[11px] text-destructive">{voiceErr}</p>

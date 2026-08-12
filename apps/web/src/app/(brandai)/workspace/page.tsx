@@ -13,6 +13,16 @@ import {
 import { useSearchParams, usePathname } from "next/navigation";
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  BookImage,
+  ChevronDown,
+  FileImage,
+  Images,
+  LayoutTemplate,
+  Settings,
+  Sparkles,
+  WandSparkles,
+} from "lucide-react";
 import type {
   Asset,
   BrandRule,
@@ -265,7 +275,7 @@ export default function WorkspacePage() {
 }
 
 function Workspace() {
-  const { wsId, brandName, brands } = useBrand();
+  const { wsId, brandName, brands, switchBrand } = useBrand();
   const search = useSearchParams();
   const pathname = usePathname();
   const presetProject = search.get("project");
@@ -513,7 +523,7 @@ function Workspace() {
     height: 1024,
     label: "1:1 · 1K",
   });
-  const [resourcePanelOpen, setResourcePanelOpen] = useState(true);
+  const [resourcePanelOpen, setResourcePanelOpen] = useState(false);
   useEffect(() => {
     if (!projectId) {
       setReferences([]);
@@ -1445,66 +1455,71 @@ function Workspace() {
   }
 
   return (
-    <div className="flex h-screen flex-col">
-      <div className="flex items-center justify-between border-b border-border bg-card px-6 py-3">
-        {/* F1 · 顶部路径 — 当前品牌套件 / 项目名（可切换 + 回项目列表）/ 工作台 */}
-        <nav
-          aria-label="项目路径"
-          className="flex items-center gap-2 text-sm text-muted-foreground"
-        >
-          <Link
-            href="/campaigns"
-            className="font-medium text-foreground transition-colors hover:text-primary"
-            title="返回项目列表"
-          >
-            {brandName}
-          </Link>
-          <span aria-hidden className="text-muted-foreground/60">
-            /
-          </span>
-          <span className="inline-flex items-center gap-1">
+    <div className="flex h-screen flex-col bg-card">
+      <div className="flex h-16 shrink-0 items-center justify-between border-b border-border bg-accent-soft/65 px-5">
+        {/* F1 · 顶部路径 — 黑色胶囊选择器对应设计稿，状态仍由服务端权威。 */}
+        <nav aria-label="项目路径" className="flex min-w-0 items-center gap-3">
+          <label className="relative block">
+            <span className="sr-only">当前品牌套件</span>
             <select
-              value={projectId ?? ""}
-              onChange={(e) => setProjectId(e.target.value || null)}
-              aria-label="当前项目"
-              className="max-w-[16rem] rounded-lg border border-border bg-background px-2 py-1 text-sm font-medium text-foreground outline-none focus:border-primary/40"
+              value={wsId}
+              onChange={(event) => switchBrand(event.target.value)}
+              className="h-10 max-w-[180px] appearance-none rounded-full border border-foreground bg-foreground py-0 pl-5 pr-10 text-sm font-medium text-background outline-none focus-visible:ring-2 focus-visible:ring-primary/35"
             >
-              {projects.length === 0 ? (
-                <option value="">无项目，请先去项目页创建</option>
+              {!brands.some((brand) => brand.id === wsId) ? (
+                <option value={wsId}>{brandName}</option>
               ) : null}
-              {projects.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
+              {brands.map((brand) => (
+                <option key={brand.id} value={brand.id}>
+                  {brand.name}
                 </option>
               ))}
             </select>
-            <Link
-              href="/campaigns"
-              aria-label="返回项目列表"
-              title="返回项目列表"
-              className="text-xs text-muted-foreground transition-colors hover:text-primary"
+            <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-background" />
+          </label>
+
+          <label className="relative block">
+            <span className="sr-only">当前项目</span>
+            <select
+              value={projectId ?? ""}
+              onChange={(event) => setProjectId(event.target.value || null)}
+              className="h-10 max-w-[220px] appearance-none rounded-full border border-foreground bg-foreground py-0 pl-5 pr-10 text-sm font-medium text-background outline-none focus-visible:ring-2 focus-visible:ring-primary/35"
             >
-              ↩
-            </Link>
-          </span>
-          <span aria-hidden className="text-muted-foreground/60">
-            /
-          </span>
-          <span className="font-medium text-foreground">工作台</span>
-          <span className="ml-2 inline-flex items-center rounded-full border border-primary/20 bg-accent-soft px-2.5 py-1 text-xs font-medium text-primary">
+              {projects.length === 0 ? (
+                <option value="">无项目，请先创建</option>
+              ) : null}
+              {projects.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.name}
+                </option>
+              ))}
+            </select>
+            <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-background" />
+          </label>
+
+          <span className="hidden truncate text-xs text-muted-foreground md:inline">
             {kitEnabled
-              ? `品牌套件自动应用 · ${confirmedBrandRuleCount} 条规则`
+              ? `${confirmedBrandRuleCount} 条品牌规则`
               : "品牌套件暂未应用"}
           </span>
         </nav>
+
         <div className="flex items-center gap-3">
           <StatusPill status={status} timedOut={timedOut} />
+          <Link
+            href="/brand-knowledge"
+            className="hidden h-10 items-center rounded-full bg-primary/10 px-5 text-sm font-medium text-primary transition-colors hover:bg-primary hover:text-primary-foreground sm:flex"
+          >
+            新建品牌套件
+          </Link>
         </div>
       </div>
 
-      <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_390px]">
+      <div className="grid min-h-0 flex-1 grid-cols-[64px_minmax(0,1fr)_minmax(320px,360px)]">
+        <WorkspaceRail />
+
         {/* Canvas */}
-        <div className="relative flex min-h-0 flex-col bg-background p-3">
+        <div className="relative flex min-h-0 flex-col bg-background">
           <OpenCanvas
             seedVersions={seedVersionsAll}
             seedReady={historyLoaded}
@@ -1603,7 +1618,7 @@ function Workspace() {
         </div>
 
         {/* Prompt panel */}
-        <aside className="flex min-h-0 flex-col overflow-hidden border-l border-border bg-card p-6">
+        <aside className="flex min-h-0 flex-col overflow-hidden border-l border-border bg-card p-5">
           {/* V0.0.13d — 生成面板已删除：AI 设计师对话是唯一右栏（用户指令，
               对齐 prd_agent 视觉创作「画布 + 对话」单面板形态）。 */}
           <ChatPanel
@@ -1693,6 +1708,55 @@ function Workspace() {
         />
       ) : null}
     </div>
+  );
+}
+
+function WorkspaceRail() {
+  const items = [
+    { href: "/brand-knowledge", label: "品牌套件", icon: BookImage },
+    { href: "/campaigns", label: "项目库", icon: Sparkles },
+    { href: "/workspace", label: "项目", icon: WandSparkles, active: true },
+    { href: "/assets", label: "素材库", icon: Images },
+    { href: "/templates", label: "模板库", icon: LayoutTemplate },
+    { href: "/generated", label: "生成图", icon: FileImage },
+  ];
+
+  return (
+    <aside className="flex min-h-0 flex-col items-center border-r border-border bg-card py-5">
+      <nav aria-label="工作台导航" className="flex flex-col items-center gap-3">
+        {items.map((item) => {
+          const Icon = item.icon;
+          return (
+            <Link
+              key={`${item.href}-${item.label}`}
+              href={item.href}
+              title={item.label}
+              aria-label={item.label}
+              aria-current={item.active ? "page" : undefined}
+              className={[
+                "flex h-10 items-center justify-center rounded-full text-muted-foreground transition-colors",
+                item.active
+                  ? "w-[58px] gap-1.5 bg-accent-soft px-3 text-primary"
+                  : "w-10 hover:bg-muted hover:text-foreground",
+              ].join(" ")}
+            >
+              <Icon className="h-4 w-4 shrink-0" />
+              {item.active ? (
+                <span className="text-xs font-medium">{item.label}</span>
+              ) : null}
+            </Link>
+          );
+        })}
+      </nav>
+      <Link
+        href="/account"
+        title="账号设置"
+        aria-label="账号设置"
+        className="mt-auto flex h-10 w-10 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+      >
+        <Settings className="h-4 w-4" />
+      </Link>
+    </aside>
   );
 }
 

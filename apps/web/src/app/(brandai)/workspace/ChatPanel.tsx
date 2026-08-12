@@ -677,13 +677,10 @@ export function ChatPanel({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {/* 头部 */}
-      <div className="shrink-0 pb-2">
-        <div className="text-sm font-semibold text-foreground">
-          Hi，我是你的 AI 设计师
-        </div>
-        <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">
-          点选画布/变体/历史图片即可插入引用（先灰色待选，再点一次或点输入区变
-          实体色确认，第三次点取消）；直接输入文字即文生图。
+      <div className="shrink-0 border-b border-border pb-4">
+        <div className="text-sm font-semibold text-foreground">AI 设计师</div>
+        <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+          描述需求，或点选画布图片作为引用继续创作。
         </p>
       </div>
 
@@ -815,7 +812,7 @@ export function ChatPanel({
       </div>
 
       {/* 输入面板（物理移植：surface-inset 容器 + 待确认徽标 + 底栏） */}
-      <div className="relative mt-2 shrink-0 pb-12">
+      <div className="relative mt-3 shrink-0 rounded-2xl border border-border bg-card p-3 shadow-[0_14px_36px_rgba(75,62,122,0.08)]">
         {pendingCount > 0 ? (
           <div className="absolute -top-3 right-1 z-10 flex items-center gap-1.5 rounded-full border border-border bg-card px-2 py-0.5 text-[10px] text-muted-foreground shadow-sm">
             <span>
@@ -836,7 +833,7 @@ export function ChatPanel({
         ) : null}
 
         <div
-          className="rounded-[12px] border border-border bg-background p-2 shadow-[inset_0_1px_3px_rgba(0,0,0,0.06)] focus-within:border-primary/40"
+          className="rounded-xl bg-background/55 p-2 focus-within:bg-background"
           style={{ cursor: "text" }}
           onClick={(e) => {
             // 点击输入区任意处 = 确认待选（TwoPhase handleContainerClick）。
@@ -870,8 +867,8 @@ export function ChatPanel({
               data-testid="chat-composer"
               className="w-full overflow-y-auto outline-none"
               style={{
-                minHeight: 96,
-                maxHeight: 132,
+                minHeight: 104,
+                maxHeight: 150,
                 fontSize: 14,
                 lineHeight: "20px",
               }}
@@ -959,7 +956,7 @@ export function ChatPanel({
         </div>
 
         {/* 底栏：左 比例 + 清晰度 · 右 模型chip + 圆形发送 */}
-        <div className="mt-1 flex items-center justify-between gap-1.5">
+        <div className="mt-2 flex items-center justify-between gap-1.5">
           <div className="flex min-w-0 items-center gap-1">
             <div className="relative">
               <button
@@ -1194,7 +1191,7 @@ export function ChatPanel({
               }
               title="发送（Enter）"
               aria-label="发送"
-              className="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-primary-foreground transition-opacity disabled:opacity-50"
+              className="flex h-8 w-8 items-center justify-center rounded-full bg-foreground text-background transition-transform hover:scale-105 disabled:opacity-50"
             >
               {sending ? (
                 <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-primary-foreground border-t-transparent" />

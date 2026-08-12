@@ -5,16 +5,23 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { signOut } from "next-auth/react";
 import {
+  BookImage,
+  ChevronDown,
   CircleHelp,
   FileImage,
-  Folder,
+  FolderKanban,
   Home,
+  Images,
   Info,
+  LayoutTemplate,
   MoreHorizontal,
   Pencil,
   Plus,
+  Settings,
+  Sparkles,
   Trash2,
   UserRound,
+  WandSparkles,
 } from "lucide-react";
 import type { BrandWorkspace } from "@brandai/contracts";
 import { navItems } from "@/lib/brandai-mock";
@@ -22,9 +29,10 @@ import { NotificationCenter } from "./notification-center";
 import { useBrand } from "./brand-context";
 
 /**
- * BrandAI 左侧导航壳。常规产品页使用 236px 主导航；品牌套件路由切换为
+ * BrandAI 左侧导航壳。常规产品页使用 188px 主导航；品牌套件路由切换为
  * Lovart 式 60px 全局图标栏 + 260px 套件卡片栏。紫色设计语言：选中项用
- * lavender 底 + violet 文字。品牌名/用户来自真实会话。
+ * lavender 底 + violet 文字。首页与工作台按新版设计使用各自的沉浸式壳，
+ * 不重复渲染共享侧栏。品牌名/用户来自真实会话。
  */
 export function BrandSidebar({
   children,
@@ -56,6 +64,8 @@ export function BrandSidebar({
   );
 
   const isBrandKitPage = pathname.startsWith("/brand-knowledge");
+  const isStandalonePage =
+    pathname === "/" || pathname.startsWith("/workspace");
 
   useEffect(() => {
     if (!brandMenuId) return;
@@ -75,283 +85,305 @@ export function BrandSidebar({
     href === "/" ? pathname === "/" : pathname.startsWith(href);
 
   return (
-    <div className="flex min-h-screen bg-background text-foreground">
-      <aside
-        className={[
-          "sticky top-0 flex h-screen shrink-0 border-r border-border bg-card",
-          isBrandKitPage
-            ? "w-[320px] flex-row"
-            : "w-[236px] flex-col px-4 py-6",
-        ].join(" ")}
-      >
-        {/* Logo */}
-        {!isBrandKitPage ? (
-          <Link href="/" className="mb-7 flex items-center px-2">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src="/brand/nova-art-lab-logo.png"
-              alt="NOVA ART LAB"
-              className="h-12 w-[156px] object-contain object-left"
-            />
-          </Link>
-        ) : null}
+    <div
+      className={[
+        "flex min-h-screen bg-background text-foreground",
+        pathname.startsWith("/workspace") ? "h-screen overflow-hidden" : "",
+      ].join(" ")}
+    >
+      {!isStandalonePage ? (
+        <aside
+          className={[
+            "sticky top-0 flex h-screen shrink-0 border-r border-border bg-card",
+            isBrandKitPage
+              ? "w-[320px] flex-row"
+              : "w-[188px] flex-col px-5 py-7",
+          ].join(" ")}
+        >
+          {/* Logo */}
+          {!isBrandKitPage ? (
+            <Link href="/" className="mb-7 flex items-center justify-center">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/brand/nova-art-lab-logo.png"
+                alt="NOVA ART LAB"
+                className="h-14 w-[138px] object-contain"
+              />
+            </Link>
+          ) : null}
 
-        {isBrandKitPage ? (
-          <>
-            <nav
-              aria-label="全局导航"
-              className="flex w-[60px] shrink-0 flex-col items-center border-r border-border py-3"
-            >
-              <Link
-                href="/"
-                aria-label="BrandAI 首页"
-                className="flex h-9 w-9 items-center justify-center rounded-full bg-foreground text-xs font-semibold text-background"
+          {isBrandKitPage ? (
+            <>
+              <nav
+                aria-label="全局导航"
+                className="flex w-[60px] shrink-0 flex-col items-center border-r border-border py-3"
               >
-                BR
-              </Link>
-              <Link
-                href="/campaigns"
-                aria-label="创建新项目"
-                className="mt-5 flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-              >
-                <Plus className="h-4 w-4" />
-              </Link>
-              <div className="mt-2 flex flex-col gap-1.5">
                 <Link
                   href="/"
-                  aria-label="首页"
-                  className="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                  aria-label="BrandAI 首页"
+                  className="flex h-9 w-9 items-center justify-center rounded-full bg-foreground text-xs font-semibold text-background"
                 >
-                  <Home className="h-4 w-4" />
+                  BR
                 </Link>
                 <Link
                   href="/campaigns"
-                  aria-label="项目"
-                  className="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                  aria-label="创建新项目"
+                  className="mt-5 flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                 >
-                  <Folder className="h-4 w-4" />
+                  <Plus className="h-4 w-4" />
                 </Link>
-                <Link
-                  href="/brand-knowledge"
-                  aria-label="品牌套件"
-                  aria-current="page"
-                  className="flex h-9 w-9 items-center justify-center rounded-lg bg-accent-soft text-primary"
-                >
-                  <FileImage className="h-4 w-4" />
-                </Link>
+                <div className="mt-2 flex flex-col gap-1.5">
+                  <Link
+                    href="/"
+                    aria-label="首页"
+                    className="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                  >
+                    <Home className="h-4 w-4" />
+                  </Link>
+                  <Link
+                    href="/campaigns"
+                    aria-label="项目"
+                    className="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                  >
+                    <FolderKanban className="h-4 w-4" />
+                  </Link>
+                  <Link
+                    href="/brand-knowledge"
+                    aria-label="品牌套件"
+                    aria-current="page"
+                    className="flex h-9 w-9 items-center justify-center rounded-lg bg-accent-soft text-primary"
+                  >
+                    <FileImage className="h-4 w-4" />
+                  </Link>
+                  <Link
+                    href="/account"
+                    aria-label="账号设置"
+                    className="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                  >
+                    <UserRound className="h-4 w-4" />
+                  </Link>
+                </div>
                 <Link
                   href="/account"
-                  aria-label="账号设置"
-                  className="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                  aria-label="帮助"
+                  className="mt-auto flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                 >
-                  <UserRound className="h-4 w-4" />
+                  <CircleHelp className="h-4 w-4" />
                 </Link>
-              </div>
-              <Link
-                href="/account"
-                aria-label="帮助"
-                className="mt-auto flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-              >
-                <CircleHelp className="h-4 w-4" />
-              </Link>
-            </nav>
+              </nav>
 
-            <div className="flex min-w-0 flex-1 flex-col px-3 py-4">
-              <div className="flex h-8 items-center justify-between px-1">
-                <div className="flex items-center gap-1.5">
-                  <h1 className="text-sm font-semibold">我的品牌套件</h1>
-                  <span className="rounded-full bg-accent-soft px-1.5 py-0.5 text-[9px] font-medium text-primary">
-                    Beta
-                  </span>
+              <div className="flex min-w-0 flex-1 flex-col px-3 py-4">
+                <div className="flex h-8 items-center justify-between px-1">
+                  <div className="flex items-center gap-1.5">
+                    <h1 className="text-sm font-semibold">我的品牌套件</h1>
+                    <span className="rounded-full bg-accent-soft px-1.5 py-0.5 text-[9px] font-medium text-primary">
+                      Beta
+                    </span>
+                  </div>
+                  <Info className="h-3.5 w-3.5 text-muted-foreground" />
                 </div>
-                <Info className="h-3.5 w-3.5 text-muted-foreground" />
-              </div>
-              <button
-                type="button"
-                onClick={() => setCreatingBrand(true)}
-                className="mt-2 flex h-9 w-full cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-border bg-background text-xs font-medium transition-colors duration-200 hover:border-primary/35 hover:bg-accent-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
-              >
-                <Plus className="h-4 w-4" />
-                新建
-              </button>
-              <div className="mt-4 min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
-                {brands.map((brand) => {
-                  const active = brand.id === wsId;
-                  const canManage = brand.ownerId === brandUser.id;
-                  return (
-                    <div
-                      key={brand.id}
-                      className={[
-                        "group relative overflow-visible rounded-lg border p-1 transition-colors duration-200",
-                        active
-                          ? "border-primary/45 bg-accent-soft/45"
-                          : "border-transparent hover:border-border hover:bg-muted/45",
-                      ].join(" ")}
-                    >
-                      <button
-                        type="button"
-                        aria-current={active ? "page" : undefined}
-                        onClick={() => {
-                          if (!active) switchBrand(brand.id);
-                        }}
-                        className="w-full cursor-pointer text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                <button
+                  type="button"
+                  onClick={() => setCreatingBrand(true)}
+                  className="mt-2 flex h-9 w-full cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-border bg-background text-xs font-medium transition-colors duration-200 hover:border-primary/35 hover:bg-accent-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                >
+                  <Plus className="h-4 w-4" />
+                  新建
+                </button>
+                <div className="mt-4 min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
+                  {brands.map((brand) => {
+                    const active = brand.id === wsId;
+                    const canManage = brand.ownerId === brandUser.id;
+                    return (
+                      <div
+                        key={brand.id}
+                        className={[
+                          "group relative overflow-visible rounded-lg border p-1 transition-colors duration-200",
+                          active
+                            ? "border-primary/45 bg-accent-soft/45"
+                            : "border-transparent hover:border-border hover:bg-muted/45",
+                        ].join(" ")}
                       >
-                        <span className="flex aspect-[16/9] w-full items-center justify-center overflow-hidden rounded-md bg-muted">
-                          {brand.coverImage ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img
-                              src={brand.coverImage}
-                              alt=""
-                              className="h-full w-full object-cover"
-                            />
-                          ) : (
-                            <FileImage className="h-7 w-7 text-muted-foreground/55" />
-                          )}
-                        </span>
-                        <span className="mt-1.5 block truncate px-1 pr-8 text-[11px] font-medium">
-                          {brand.name}
-                        </span>
-                      </button>
-                      {canManage ? (
                         <button
                           type="button"
-                          aria-label={`管理${brand.name}`}
-                          aria-haspopup="menu"
-                          aria-expanded={brandMenuId === brand.id}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            setBrandMenuId((current) =>
-                              current === brand.id ? null : brand.id,
-                            );
+                          aria-current={active ? "page" : undefined}
+                          onClick={() => {
+                            if (!active) switchBrand(brand.id);
                           }}
-                          className="absolute bottom-1 right-1 flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg text-muted-foreground opacity-0 transition-opacity hover:bg-background hover:text-foreground focus:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 group-hover:opacity-100"
+                          className="w-full cursor-pointer text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
                         >
-                          <MoreHorizontal className="h-4 w-4" />
+                          <span className="flex aspect-[16/9] w-full items-center justify-center overflow-hidden rounded-md bg-muted">
+                            {brand.coverImage ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                src={brand.coverImage}
+                                alt=""
+                                className="h-full w-full object-cover"
+                              />
+                            ) : (
+                              <FileImage className="h-7 w-7 text-muted-foreground/55" />
+                            )}
+                          </span>
+                          <span className="mt-1.5 block truncate px-1 pr-8 text-[11px] font-medium">
+                            {brand.name}
+                          </span>
                         </button>
-                      ) : null}
-                      {brandMenuId === brand.id ? (
-                        <div
-                          role="menu"
-                          onClick={(event) => event.stopPropagation()}
-                          className="absolute bottom-9 right-1 z-50 w-32 overflow-hidden rounded-xl border border-border bg-card py-1 shadow-[0_16px_40px_rgba(30,30,60,0.16)]"
-                        >
+                        {canManage ? (
                           <button
                             type="button"
-                            role="menuitem"
-                            onClick={() => {
-                              setRenamingBrand(brand);
-                              setBrandMenuId(null);
+                            aria-label={`管理${brand.name}`}
+                            aria-haspopup="menu"
+                            aria-expanded={brandMenuId === brand.id}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setBrandMenuId((current) =>
+                                current === brand.id ? null : brand.id,
+                              );
                             }}
-                            className="flex h-10 w-full cursor-pointer items-center gap-2 px-3 text-left text-xs transition-colors hover:bg-muted"
+                            className="absolute bottom-1 right-1 flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg text-muted-foreground opacity-0 transition-opacity hover:bg-background hover:text-foreground focus:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 group-hover:opacity-100"
                           >
-                            <Pencil className="h-3.5 w-3.5" />
-                            改名
+                            <MoreHorizontal className="h-4 w-4" />
                           </button>
-                          <button
-                            type="button"
-                            role="menuitem"
-                            onClick={() => {
-                              setDeletingBrand(brand);
-                              setBrandMenuId(null);
-                            }}
-                            className="flex h-10 w-full cursor-pointer items-center gap-2 px-3 text-left text-xs text-destructive transition-colors hover:bg-destructive/10"
+                        ) : null}
+                        {brandMenuId === brand.id ? (
+                          <div
+                            role="menu"
+                            onClick={(event) => event.stopPropagation()}
+                            className="absolute bottom-9 right-1 z-50 w-32 overflow-hidden rounded-xl border border-border bg-card py-1 shadow-[0_16px_40px_rgba(30,30,60,0.16)]"
                           >
-                            <Trash2 className="h-3.5 w-3.5" />
-                            删除
-                          </button>
-                        </div>
-                      ) : null}
-                    </div>
-                  );
-                })}
+                            <button
+                              type="button"
+                              role="menuitem"
+                              onClick={() => {
+                                setRenamingBrand(brand);
+                                setBrandMenuId(null);
+                              }}
+                              className="flex h-10 w-full cursor-pointer items-center gap-2 px-3 text-left text-xs transition-colors hover:bg-muted"
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                              改名
+                            </button>
+                            <button
+                              type="button"
+                              role="menuitem"
+                              onClick={() => {
+                                setDeletingBrand(brand);
+                                setBrandMenuId(null);
+                              }}
+                              className="flex h-10 w-full cursor-pointer items-center gap-2 px-3 text-left text-xs text-destructive transition-colors hover:bg-destructive/10"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                              删除
+                            </button>
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
-          </>
-        ) : (
-          <>
-            <div className="mb-5 flex flex-col gap-3 border-b border-border pb-5">
-              <label className="flex flex-col gap-1.5 px-1">
-                <span className="text-[11px] font-medium text-muted-foreground">
-                  当前品牌套件
-                </span>
-                <select
-                  value={wsId}
-                  onChange={(event) => switchBrand(event.target.value)}
-                  aria-label="切换品牌"
-                  className="h-10 w-full rounded-lg border border-border bg-background px-2 text-sm outline-none focus:border-primary/40"
-                >
-                  {brands.length === 0 ? (
-                    <option value={wsId}>请先创建品牌套件</option>
-                  ) : (
-                    brands.map((brand) => (
-                      <option key={brand.id} value={brand.id}>
-                        {brand.name}
-                      </option>
-                    ))
-                  )}
-                </select>
-              </label>
-              <button
-                type="button"
-                onClick={() => setCreatingBrand(true)}
-                className="mx-1 flex h-9 items-center justify-center rounded-lg border border-primary/25 bg-accent-soft text-sm font-medium text-primary transition-colors hover:bg-primary hover:text-primary-foreground"
-              >
-                ＋ 创建品牌套件
-              </button>
-            </div>
+            </>
+          ) : (
+            <>
+              <div className="mb-9">
+                <label className="relative block">
+                  <select
+                    value={wsId}
+                    onChange={(event) => {
+                      if (event.target.value === "__create__") {
+                        setCreatingBrand(true);
+                        return;
+                      }
+                      switchBrand(event.target.value);
+                    }}
+                    aria-label="切换品牌"
+                    className="h-11 w-full appearance-none rounded-full border border-foreground bg-foreground px-4 pr-10 text-sm font-medium text-background outline-none transition-opacity hover:opacity-90 focus-visible:ring-2 focus-visible:ring-primary/35"
+                  >
+                    {brands.length === 0 ? (
+                      <option value={wsId}>请先创建品牌套件</option>
+                    ) : (
+                      brands.map((brand) => (
+                        <option key={brand.id} value={brand.id}>
+                          {brand.name}
+                        </option>
+                      ))
+                    )}
+                    <option value="__create__">＋ 新建品牌套件</option>
+                  </select>
+                  <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-background" />
+                </label>
+              </div>
 
-            <nav className="flex flex-1 flex-col gap-1.5">
-              {navItems
-                .filter((item) => !item.hidden)
-                .map((item) => {
-                  const active = isActive(item.href);
-                  return (
-                    <Link
-                      key={item.key}
-                      href={item.href}
-                      className={[
-                        "flex items-center gap-3 rounded-2xl px-3 py-2.5 text-sm transition-colors",
-                        active
-                          ? "bg-accent-soft font-medium text-primary"
-                          : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                      ].join(" ")}
-                    >
-                      <span className="w-5 text-center text-base">
-                        {item.icon}
-                      </span>
-                      {item.label}
-                    </Link>
-                  );
-                })}
-            </nav>
-          </>
-        )}
+              <nav aria-label="产品导航" className="flex flex-1 flex-col gap-2">
+                {navItems
+                  .filter((item) => !item.hidden && item.key !== "home")
+                  .sort(
+                    (a, b) =>
+                      [
+                        "brand-knowledge",
+                        "workspace",
+                        "campaigns",
+                        "assets",
+                        "templates",
+                        "generated",
+                      ].indexOf(a.key) -
+                      [
+                        "brand-knowledge",
+                        "workspace",
+                        "campaigns",
+                        "assets",
+                        "templates",
+                        "generated",
+                      ].indexOf(b.key),
+                  )
+                  .map((item) => {
+                    const active = isActive(item.href);
+                    return (
+                      <Link
+                        key={item.key}
+                        href={item.href}
+                        className={[
+                          "flex h-11 items-center gap-3 rounded-full px-3.5 text-sm transition-colors",
+                          active
+                            ? "bg-accent-soft font-medium text-primary"
+                            : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                        ].join(" ")}
+                      >
+                        <NavIcon navKey={item.key} />
+                        {item.label}
+                      </Link>
+                    );
+                  })}
+              </nav>
+            </>
+          )}
 
-        {/* Settings + user */}
-        <div
-          className={[
-            "mt-4 flex flex-col gap-2",
-            isBrandKitPage ? "hidden" : "",
-          ].join(" ")}
-        >
-          <Link
-            href="/account"
-            className="flex items-center gap-3 rounded-2xl px-3 py-2.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          {/* Settings + user */}
+          <div
+            className={[
+              "mt-4 flex flex-col gap-2",
+              isBrandKitPage ? "hidden" : "",
+            ].join(" ")}
           >
-            <span className="w-5 text-center text-base">⚙</span>
-            账号设置
-          </Link>
-          {/* A2 · 用户信息区 — avatar / name / position(email) + 个人菜单 */}
-          <UserMenu user={user} brandName={brandName} isAdmin={isAdmin} />
-        </div>
-      </aside>
+            <Link
+              href="/account"
+              className="flex h-10 items-center gap-3 rounded-full px-3 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              <Settings className="h-4 w-4" />
+              账号设置
+            </Link>
+            {/* A2 · 用户信息区 — avatar / name / position(email) + 个人菜单 */}
+            <UserMenu user={user} brandName={brandName} isAdmin={isAdmin} />
+          </div>
+        </aside>
+      ) : null}
 
       <main className="min-w-0 flex-1">{children}</main>
 
       {/* A3 / L3 — top-bar notification entry (bell + inbox). Fixed top-right so
           it sits consistently over every product page, including the
           full-height workspace, without shifting page layout. */}
-      {!isBrandKitPage ? (
+      {!isBrandKitPage && !isStandalonePage ? (
         <div className="fixed right-4 top-4 z-40">
           <NotificationCenter wsId={wsId} />
         </div>
@@ -389,6 +421,26 @@ export function BrandSidebar({
       ) : null}
     </div>
   );
+}
+
+function NavIcon({ navKey }: { navKey: string }) {
+  const className = "h-4 w-4 shrink-0";
+  switch (navKey) {
+    case "brand-knowledge":
+      return <BookImage className={className} />;
+    case "workspace":
+      return <WandSparkles className={className} />;
+    case "campaigns":
+      return <Sparkles className={className} />;
+    case "assets":
+      return <Images className={className} />;
+    case "templates":
+      return <LayoutTemplate className={className} />;
+    case "generated":
+      return <FileImage className={className} />;
+    default:
+      return <FolderKanban className={className} />;
+  }
 }
 
 function CreateBrandDialog({

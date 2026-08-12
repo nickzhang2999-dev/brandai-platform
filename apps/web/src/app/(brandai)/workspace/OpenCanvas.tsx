@@ -1427,10 +1427,10 @@ export function OpenCanvas({
           void uploadFiles(files, { sx: lp.x, sy: lp.y });
         }
       }}
-      className="relative min-h-[560px] flex-1 select-none overflow-hidden rounded-[28px] border border-border bg-card"
+      className="relative min-h-[560px] flex-1 select-none overflow-hidden bg-card"
       style={{
         backgroundImage:
-          "radial-gradient(circle at 1px 1px, rgba(124,92,255,0.12) 1px, transparent 0)",
+          "radial-gradient(circle at 1px 1px, rgb(var(--primary) / 0.10) 1px, transparent 0)",
         backgroundSize: `${18 * zoom}px ${18 * zoom}px`,
         backgroundPosition: `${camera.x}px ${camera.y}px`,
         cursor: placing ? "crosshair" : handCursor ? "grab" : "default",
@@ -1691,12 +1691,12 @@ export function OpenCanvas({
       {/* 顶部缩放工具条 */}
       <div
         onPointerDown={(e) => e.stopPropagation()}
-        className="absolute left-1/2 top-4 z-20 flex -translate-x-1/2 items-center gap-2 rounded-2xl border border-border bg-card/95 px-3 py-2 text-xs text-foreground shadow-[0_14px_40px_rgba(30,30,60,0.12)] backdrop-blur"
+        className="absolute left-1/2 top-4 z-20 flex -translate-x-1/2 items-center gap-2 rounded-full bg-foreground px-3 py-1.5 text-xs text-background shadow-[0_14px_40px_rgba(30,30,60,0.14)]"
       >
         <button
           type="button"
           onClick={() => zoomByButton(0.83)}
-          className="flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          className="flex h-7 w-7 items-center justify-center rounded-full text-background/70 transition-colors hover:bg-background/10 hover:text-background"
           aria-label="缩小"
         >
           −
@@ -1707,23 +1707,23 @@ export function OpenCanvas({
         <button
           type="button"
           onClick={() => zoomByButton(1.2)}
-          className="flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          className="flex h-7 w-7 items-center justify-center rounded-full text-background/70 transition-colors hover:bg-background/10 hover:text-background"
           aria-label="放大"
         >
           +
         </button>
-        <span className="h-5 w-px bg-border" />
+        <span className="h-5 w-px bg-background/20" />
         <button
           type="button"
           onClick={fitToContent}
-          className="rounded-lg px-2 py-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          className="rounded-full px-2 py-1 text-background/70 transition-colors hover:bg-background/10 hover:text-background"
         >
           适配
         </button>
         <button
           type="button"
           onClick={() => zoomByButton(1 / zoom)}
-          className="rounded-lg px-2 py-1 font-mono text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          className="rounded-full px-2 py-1 font-mono text-background/70 transition-colors hover:bg-background/10 hover:text-background"
         >
           100%
         </button>
@@ -1732,7 +1732,7 @@ export function OpenCanvas({
       {/* 左侧工具栏(真实工具) */}
       <div
         onPointerDown={(e) => e.stopPropagation()}
-        className="absolute left-4 top-1/2 z-20 flex -translate-y-1/2 flex-col gap-1.5 rounded-2xl border border-border bg-card/95 p-2 shadow-[0_14px_40px_rgba(30,30,60,0.12)] backdrop-blur"
+        className="absolute left-3 top-1/2 z-20 flex -translate-y-1/2 flex-col gap-1 rounded-full bg-card/95 p-1.5 shadow-[0_14px_40px_rgba(30,30,60,0.12)] backdrop-blur"
       >
         <ToolBtn
           active={tool === "select" && !placing}
@@ -1824,7 +1824,7 @@ export function OpenCanvas({
       {/* Lovart-style 快捷工具坞:把素材库/模板库/上传/粘贴入口放到画布操作区。 */}
       <div
         onPointerDown={(e) => e.stopPropagation()}
-        className="absolute bottom-4 left-1/2 z-30 flex -translate-x-1/2 items-center gap-1.5 rounded-2xl border border-border bg-card/95 p-2 shadow-[0_14px_40px_rgba(30,30,60,0.14)] backdrop-blur"
+        className="absolute bottom-5 left-1/2 z-30 flex -translate-x-1/2 items-center gap-1 rounded-full bg-foreground p-1.5 shadow-[0_16px_42px_rgba(31,31,42,0.20)]"
       >
         <DockBtn
           active={tool === "select" && !placing}
@@ -1835,8 +1835,13 @@ export function OpenCanvas({
         </DockBtn>
         <DockBtn
           title="素材库"
-          badge={materialAssets.length || undefined}
-          onClick={() => onOpenMaterialLibrary?.()}
+          active={resourcePanelOpen}
+          badge={resourceCount || materialAssets.length || undefined}
+          onClick={() =>
+            resourceCount
+              ? onToggleResourcePanel?.()
+              : onOpenMaterialLibrary?.()
+          }
         >
           素材
         </DockBtn>
@@ -1847,33 +1852,8 @@ export function OpenCanvas({
         >
           模板
         </DockBtn>
-        <DockBtn
-          active={resourcePanelOpen}
-          title="创作资源"
-          badge={resourceCount || undefined}
-          onClick={onToggleResourcePanel}
-        >
-          创作资源
-        </DockBtn>
-        <span className="h-6 w-px bg-border" />
         <DockBtn title="本地上传图片" onClick={triggerUpload}>
           上传
-        </DockBtn>
-        <DockBtn title="复制图片后在画布直接粘贴">粘贴</DockBtn>
-        <span className="h-6 w-px bg-border" />
-        <DockBtn
-          active={placing?.kind === "text"}
-          title="添加文字"
-          onClick={() => setPlacing({ kind: "text" })}
-        >
-          文字
-        </DockBtn>
-        <DockBtn
-          active={placing?.kind === "shape" && placing.shapeType === "rect"}
-          title="添加矩形"
-          onClick={() => setPlacing({ kind: "shape", shapeType: "rect" })}
-        >
-          方形
         </DockBtn>
       </div>
 
@@ -2288,9 +2268,9 @@ function ToolBtn({
       onClick={onClick}
       onPointerDown={(e) => e.stopPropagation()}
       className={[
-        "flex h-9 w-9 items-center justify-center rounded-xl text-base transition-colors disabled:opacity-35",
+        "flex h-9 w-9 items-center justify-center rounded-full text-base transition-colors disabled:opacity-35",
         active
-          ? "bg-primary text-primary-foreground"
+          ? "bg-foreground text-background"
           : "text-muted-foreground hover:bg-muted hover:text-foreground",
       ].join(" ")}
     >
@@ -2323,10 +2303,10 @@ function DockBtn({
       onClick={onClick}
       onPointerDown={(e) => e.stopPropagation()}
       className={[
-        "relative flex h-9 min-w-9 items-center justify-center rounded-xl px-2.5 text-xs font-medium transition-colors disabled:opacity-35",
+        "relative flex h-9 min-w-9 items-center justify-center rounded-full px-3 text-xs font-medium transition-colors disabled:opacity-35",
         active
-          ? "bg-primary text-primary-foreground"
-          : "text-muted-foreground hover:bg-muted hover:text-foreground",
+          ? "bg-background/15 text-background"
+          : "text-background/80 hover:bg-background/10 hover:text-background",
       ].join(" ")}
     >
       {children}

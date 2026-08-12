@@ -4,24 +4,15 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { Project, TaskState } from "@brandai/contracts";
+import type { TaskState } from "@brandai/contracts";
+import { ArrowRight, LoaderCircle, SendHorizontal } from "lucide-react";
 import { apiFetch } from "@/lib/client";
-import { quickActions } from "@/lib/brandai-mock";
 import { useBrand } from "./brand-context";
 import { AIInput } from "./ai-input";
-import { gradientFor } from "./_ui";
-import { RecommendedBrands } from "./recommended-brands";
 
 /**
- * P01 · 首页 — AI 入口 + 近期项目速览。真实数据：当前品牌的 Campaign 列表。
+ * P01 · 首页 — 新版沉浸式 AI 入口。左侧品牌视觉，右侧直接发起真实 AI 拆解。
  */
-type Status = "DRAFT" | "IN_PROGRESS" | "COMPLETED";
-const STATUS_META: Record<Status, { label: string; tone: string }> = {
-  DRAFT: { label: "草稿", tone: "warning" },
-  IN_PROGRESS: { label: "进行中", tone: "primary" },
-  COMPLETED: { label: "已完成", tone: "success" },
-};
-
 const POLL_INTERVAL_MS = 2500;
 const POLL_CAP_MS = 6 * 60 * 1000; // §2.2 有界中间态
 
@@ -46,12 +37,6 @@ export default function HomePage() {
   const { wsId, brandName, user } = useBrand();
   const router = useRouter();
   const qc = useQueryClient();
-
-  const { data: projects = [] } = useQuery({
-    queryKey: ["brandai-projects", wsId],
-    queryFn: () =>
-      apiFetch<Project[]>(`/api/workspaces/${wsId}/projects?latestCover=1`),
-  });
 
   // B2 · 首页 AI 拆解 — REAL async decomposition (§2). Submit brief → POST
   // 202 {taskId, jobId} → poll the task for status, then read the decomposed
@@ -82,7 +67,8 @@ export default function HomePage() {
 
   const { data: task } = useQuery<TaskState>({
     queryKey: ["brandai-task", wsId, taskId],
-    queryFn: () => apiFetch<TaskState>(`/api/workspaces/${wsId}/tasks/${taskId}`),
+    queryFn: () =>
+      apiFetch<TaskState>(`/api/workspaces/${wsId}/tasks/${taskId}`),
     enabled: !!taskId,
     refetchInterval: (q) => {
       const s = q.state.data?.status;
@@ -134,10 +120,7 @@ export default function HomePage() {
       const params = new URLSearchParams();
       if (result?.projectId) params.set("project", result.projectId);
       // The decomposed selling point seeds the workspace 卖点 (brief fallback).
-      params.set(
-        "brief",
-        (result?.sellingPoint || brief).trim().slice(0, 500),
-      );
+      params.set("brief", (result?.sellingPoint || brief).trim().slice(0, 500));
       if (result?.scene) params.set("scene", result.scene.slice(0, 500));
       if (result?.sceneType) params.set("sceneType", result.sceneType);
       if (result?.styleKeywords?.length) {
@@ -161,200 +144,127 @@ export default function HomePage() {
   const failed = status === "FAILED" || timedOut;
 
   return (
-    <div className="mx-auto max-w-[1180px] px-10 py-10">
-      <section className="pt-4 text-center">
-        <h1 className="text-[44px] font-[650] leading-tight tracking-tight">
-          你好，{user.name}
-        </h1>
-        <p className="mt-3 text-base text-muted-foreground">
-          用一句话描述你的品牌广告需求，BrandAI 帮你 AI 拆解、立项并受控出图。
-        </p>
-      </section>
-
-      <section className="mx-auto mt-8 max-w-3xl">
-        <AIInput
-          value={brief}
-          onChange={setBrief}
-          onSubmit={handleStart}
-          disabled={busy}
-          placeholder={`例如：为 ${brandName} 做一组小红书种草主视觉，清透水光风格…`}
-          primaryAction={
-            <button
-              type="button"
-              onClick={handleStart}
-              disabled={busy}
-              className="h-11 shrink-0 rounded-[18px] bg-gradient-to-br from-primary to-accent px-6 text-sm font-medium text-primary-foreground shadow-[0_12px_28px_rgba(124,92,255,0.26)] transition-opacity disabled:opacity-70"
-            >
-              {busy
-                ? status === "RUNNING"
-                  ? "AI 拆解中…"
-                  : "正在受理…"
-                : brief.trim()
-                  ? "AI 拆解并开始创作"
-                  : "去出图"}
-            </button>
-          }
+    <div className="min-h-screen bg-card lg:grid lg:grid-cols-[minmax(420px,42%)_1fr]">
+      <section className="relative h-[34vh] min-h-[250px] overflow-hidden lg:h-screen lg:min-h-0">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/brand/brandai-hero-orb.jpg"
+          alt="紫色粒子构成的 BrandAI 抽象球体"
+          className="h-full w-full object-cover"
         />
-        <p className="mt-2 pl-6 text-xs text-muted-foreground">
-          提交后 BrandAI 会用 AI 拆解出核心卖点、画面场景与风格关键词，立项为草稿
-          项目，并把拆解结果预填进工作台（服务端异步处理，可离开稍后查看）。
-        </p>
-        {busy ? (
-          <p className="mt-2 pl-6 text-xs text-primary">
-            {status === "RUNNING"
-              ? "AI 正在拆解你的需求，完成后将自动进入工作台…"
-              : "已受理，正在排队拆解…"}
-          </p>
-        ) : null}
-        {start.isError ? (
-          <p className="mt-2 pl-6 text-xs text-destructive">
-            提交失败：
-            {start.error instanceof Error ? start.error.message : "请重试"}
-          </p>
-        ) : null}
-        {failed && !start.isError ? (
-          <p className="mt-2 pl-6 text-xs text-destructive">
-            AI 拆解未完成（可能超时或失败）。
-            <button
-              type="button"
-              onClick={() => {
-                setTaskId(null);
-                setJobId(null);
-                setTimedOut(false);
-              }}
-              className="ml-1 underline hover:text-destructive/80"
-            >
-              重试
-            </button>
-          </p>
-        ) : null}
+        <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-card/5 via-transparent to-primary/10" />
       </section>
 
-      <section className="mt-10 grid grid-cols-2 gap-[18px] lg:grid-cols-4">
-        {quickActions.map((a) => (
+      <section className="relative flex min-h-[66vh] flex-col overflow-hidden bg-gradient-to-br from-card via-card to-accent-soft/70 lg:min-h-screen">
+        <nav
+          aria-label="首页导航"
+          className="flex h-20 shrink-0 items-center justify-center gap-7 px-6 text-xs text-muted-foreground sm:justify-end sm:gap-10 sm:px-12 lg:px-16"
+        >
           <Link
-            key={a.title}
-            href={a.href}
-            className="group flex flex-col gap-3 rounded-3xl border border-border bg-card p-5 shadow-[0_8px_24px_rgba(30,30,60,0.06)] transition-all hover:-translate-y-0.5 hover:border-primary/30"
+            className="transition-colors hover:text-foreground"
+            href="/brand-knowledge"
           >
-            <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-accent-soft text-lg text-primary">
-              {a.icon}
-            </span>
-            <span className="text-[15px] font-semibold">{a.title}</span>
-            <span className="text-xs leading-relaxed text-muted-foreground">
-              {a.desc}
-            </span>
+            品牌套件
           </Link>
-        ))}
-      </section>
-
-      <section className="mt-12">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-2xl font-semibold">近期项目</h2>
-          <Link href="/campaigns" className="text-sm text-primary hover:underline">
-            查看全部
-          </Link>
-        </div>
-        {projects.length === 0 ? (
           <Link
+            className="transition-colors hover:text-foreground"
             href="/campaigns"
-            className="flex flex-col items-center rounded-3xl border border-dashed border-border bg-card p-12 text-center transition-colors hover:border-primary/30"
           >
-            <span className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-accent-soft text-xl text-primary">
-              ＋
-            </span>
-            <span className="text-sm font-medium">创建第一个项目</span>
-            <span className="mt-1 text-xs text-muted-foreground">
-              围绕营销项目管理需求、出图与交付
-            </span>
+            项目库
           </Link>
-        ) : (
-          <div className="grid auto-cols-[minmax(260px,1fr)] grid-flow-col gap-[18px] overflow-x-auto pb-2">
-            {projects.map((c) => {
-              const s = STATUS_META[(c.status ?? "DRAFT") as Status];
-              return (
-                <Link
-                  key={c.id}
-                  href="/campaigns"
-                  className="flex flex-col overflow-hidden rounded-3xl border border-border bg-card shadow-[0_8px_24px_rgba(30,30,60,0.06)] transition-all hover:-translate-y-0.5"
-                >
-                  <CampaignCover
-                    campaignId={c.id}
-                    imageUrl={c.coverImage}
-                    name={c.name}
-                  />
-                  <div className="flex flex-1 flex-col gap-2 p-4">
-                    <div className="flex items-center gap-2">
-                      <span className={badgeCls(s.tone)}>{s.label}</span>
-                      <span className="text-xs text-muted-foreground">
-                        {brandName}
-                      </span>
-                    </div>
-                    <div className="text-sm font-semibold">{c.name}</div>
-                    <ProgressBar value={c.progress ?? 0} />
-                  </div>
-                </Link>
-              );
-            })}
+          <Link
+            className="transition-colors hover:text-foreground"
+            href="/assets"
+          >
+            素材库
+          </Link>
+          <Link
+            className="ml-auto transition-colors hover:text-foreground sm:ml-8"
+            href="/account"
+          >
+            账号设置
+          </Link>
+        </nav>
+
+        <div className="mx-auto grid w-full max-w-[780px] flex-1 grid-rows-[1fr_auto] px-6 pb-8 sm:px-12 lg:px-16 lg:pb-[8vh]">
+          <div className="flex flex-col items-center justify-center pb-10 text-center lg:pb-2">
+            <h1 className="text-[34px] font-bold tracking-[0.02em] sm:text-[42px]">
+              您好，{user.name}
+            </h1>
+            <p className="mt-4 text-sm text-muted-foreground sm:text-base">
+              用一句话总结您的品牌，让 BrandAI 帮您拆解
+            </p>
           </div>
-        )}
+
+          <div className="w-full">
+            <Link
+              href="/brand-knowledge"
+              className="mb-2 inline-flex h-10 items-center gap-4 rounded-xl bg-foreground px-4 text-sm font-medium text-background transition-transform hover:-translate-y-0.5"
+            >
+              创建品牌套件
+              <ArrowRight className="h-4 w-4" />
+            </Link>
+            <AIInput
+              variant="hero"
+              value={brief}
+              onChange={setBrief}
+              onSubmit={handleStart}
+              disabled={busy}
+              rows={5}
+              placeholder={`简单描述您的需求，BrandAI 将自动拆解「${brandName}」的品牌调性`}
+              primaryAction={
+                <button
+                  type="button"
+                  onClick={handleStart}
+                  disabled={busy}
+                  aria-label={busy ? "正在拆解需求" : "发送需求"}
+                  title={busy ? "正在拆解需求" : "发送需求"}
+                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-foreground text-background shadow-[0_10px_24px_rgba(31,31,42,0.18)] transition-transform hover:scale-105 disabled:opacity-60"
+                >
+                  {busy ? (
+                    <LoaderCircle className="h-5 w-5 animate-spin" />
+                  ) : (
+                    <SendHorizontal className="h-5 w-5" />
+                  )}
+                </button>
+              }
+            />
+            <div className="mt-2 min-h-5 px-2 text-xs">
+              {busy ? (
+                <p className="text-primary">
+                  {status === "RUNNING"
+                    ? "AI 正在拆解需求，完成后将自动进入工作台…"
+                    : "已受理，正在排队拆解…"}
+                </p>
+              ) : null}
+              {start.isError ? (
+                <p className="text-destructive">
+                  提交失败：
+                  {start.error instanceof Error
+                    ? start.error.message
+                    : "请重试"}
+                </p>
+              ) : null}
+              {failed && !start.isError ? (
+                <p className="text-destructive">
+                  AI 拆解未完成。
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTaskId(null);
+                      setJobId(null);
+                      setTimedOut(false);
+                    }}
+                    className="ml-1 underline hover:text-destructive/80"
+                  >
+                    重试
+                  </button>
+                </p>
+              ) : null}
+            </div>
+          </div>
+        </div>
       </section>
-
-      {/* L2 / B5 / H14 · 推荐品牌瀑布流 — REAL BrandWorkspace rows the user can
-          see (owned / member-of). Honest empty state when none. */}
-      <RecommendedBrands />
-    </div>
-  );
-}
-
-function CampaignCover({
-  campaignId,
-  imageUrl,
-  name,
-}: {
-  campaignId: string;
-  imageUrl?: string;
-  name: string;
-}) {
-  const [failed, setFailed] = useState(false);
-
-  if (!imageUrl || failed) {
-    return <div className="h-32" style={{ background: gradientFor(campaignId) }} />;
-  }
-
-  return (
-    <div className="h-32 overflow-hidden">
-      {/* Dynamic storage and provider URLs cannot be safely enumerated for next/image. */}
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={imageUrl}
-        alt={`${name} 最新生成图`}
-        className="h-full w-full object-cover"
-        onError={() => setFailed(true)}
-      />
-    </div>
-  );
-}
-
-function badgeCls(tone: string) {
-  const map: Record<string, string> = {
-    primary: "bg-accent-soft text-primary",
-    success: "bg-success/10 text-success",
-    warning: "bg-warning/10 text-warning",
-  };
-  return `rounded-full px-2.5 py-0.5 text-[11px] font-medium ${map[tone] ?? map.primary}`;
-}
-
-function ProgressBar({ value }: { value: number }) {
-  return (
-    <div className="mt-1 flex items-center gap-2">
-      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
-        <div
-          className="h-full rounded-full bg-gradient-to-r from-primary to-accent"
-          style={{ width: `${value}%` }}
-        />
-      </div>
-      <span className="text-[11px] text-muted-foreground">{value}%</span>
     </div>
   );
 }

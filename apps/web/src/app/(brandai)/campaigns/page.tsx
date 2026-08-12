@@ -1,18 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { BrandRule, Project, TaskState } from "@brandai/contracts";
 import { Button } from "@brandai/ui";
+import { Pencil, Plus, SlidersHorizontal } from "lucide-react";
 import { apiFetch } from "@/lib/client";
 import { useBrand } from "../brand-context";
-import {
-  Chip,
-  gradientFor,
-  PageHeader,
-  ProgressBar,
-  StatusBadge,
-} from "../_ui";
+import { Chip, gradientFor, StatusBadge } from "../_ui";
 
 /**
  * P02 · 项目 — 左侧项目卡列表 + 右侧 AI 摘要面板。真实数据：
@@ -34,6 +30,7 @@ const SORTS: { key: SortKey; label: string }[] = [
 ];
 
 type RangeKey = "all" | "7" | "30" | "90";
+type ProjectTab = "manage" | "categories" | "archived";
 const RANGES: { key: RangeKey; label: string; days?: number }[] = [
   { key: "all", label: "全部时间" },
   { key: "7", label: "近 7 天", days: 7 },
@@ -48,6 +45,7 @@ export default function CampaignsPage() {
   const [filterKey, setFilterKey] = useState("all");
   const [sortKey, setSortKey] = useState<SortKey>("recent");
   const [rangeKey, setRangeKey] = useState<RangeKey>("all");
+  const [projectTab, setProjectTab] = useState<ProjectTab>("manage");
   const [q, setQ] = useState("");
   const [creating, setCreating] = useState(false);
   // Lifecycle action target: which transition the confirm dialog is for.
@@ -84,6 +82,9 @@ export default function CampaignsPage() {
     const needle = q.trim().toLowerCase();
 
     const list = projects.filter((p) => {
+      if (projectTab === "archived" ? !p.archivedAt : !!p.archivedAt) {
+        return false;
+      }
       if (f?.status && (p.status ?? "DRAFT") !== f.status) return false;
       if (needle) {
         const inName = p.name.toLowerCase().includes(needle);
@@ -112,7 +113,7 @@ export default function CampaignsPage() {
       }
     });
     return sorted;
-  }, [projects, filterKey, q, sortKey, rangeKey, brandName]);
+  }, [projects, filterKey, q, sortKey, rangeKey, brandName, projectTab]);
 
   // Only ever select from the FILTERED set — falling back to projects[0] when
   // filters match nothing would make the summary panel + lifecycle actions
@@ -123,218 +124,261 @@ export default function CampaignsPage() {
   const dialogProject = projects.find((p) => p.id === dialogProjectId) ?? null;
 
   return (
-    <div className="mx-auto max-w-[1180px] px-10 py-10">
-      <PageHeader
-        title="项目"
-        subtitle={`集中管理「${brandName}」品牌下的营销项目`}
-        action={
-          <Button size="lg" onClick={() => setCreating(true)}>
-            ＋ 创建新项目
-          </Button>
-        }
-      />
+    <div className="min-h-screen bg-gradient-to-br from-card via-accent-soft/45 to-accent-soft px-6 py-7 lg:px-10 lg:py-9">
+      <div className="mx-auto max-w-[1180px]">
+        <header className="mb-10 flex flex-wrap items-center justify-between gap-4">
+          <nav
+            aria-label="项目视图"
+            className="flex items-center gap-8 text-sm text-muted-foreground"
+          >
+            {(
+              [
+                ["manage", "管理项目"],
+                ["categories", "项目分类"],
+                ["archived", "已归档项目"],
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setProjectTab(key)}
+                className={[
+                  "border-b py-2 transition-colors",
+                  projectTab === key
+                    ? "border-foreground font-medium text-foreground"
+                    : "border-transparent hover:text-foreground",
+                ].join(" ")}
+              >
+                {label}
+              </button>
+            ))}
+          </nav>
 
-      <div className="mb-6 flex flex-wrap items-center gap-3">
-        <input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="搜索项目 / 品牌名称…"
-          className="h-10 flex-1 rounded-full border border-border bg-card px-4 text-sm outline-none focus:border-primary/40 focus:shadow-[0_0_0_4px_rgba(124,92,255,0.08)]"
-        />
-        <select
-          value={filterKey}
-          onChange={(e) => setFilterKey(e.target.value)}
-          aria-label="项目状态"
-          className="h-9 rounded-full border border-border bg-card px-4 text-sm text-muted-foreground outline-none transition-colors hover:bg-muted focus:border-primary/40 focus:shadow-[0_0_0_4px_rgba(124,92,255,0.08)]"
-        >
-          {FILTERS.map((f) => (
-            <option key={f.key} value={f.key}>
-              {f.label}
-            </option>
-          ))}
-        </select>
-        <select
-          value={rangeKey}
-          onChange={(e) => setRangeKey(e.target.value as RangeKey)}
-          aria-label="时间范围"
-          className="h-9 rounded-full border border-border bg-card px-4 text-sm text-muted-foreground outline-none transition-colors hover:bg-muted focus:border-primary/40 focus:shadow-[0_0_0_4px_rgba(124,92,255,0.08)]"
-        >
-          {RANGES.map((r) => (
-            <option key={r.key} value={r.key}>
-              {r.label}
-            </option>
-          ))}
-        </select>
-        <select
-          value={sortKey}
-          onChange={(e) => setSortKey(e.target.value as SortKey)}
-          aria-label="排序方式"
-          className="h-9 rounded-full border border-border bg-card px-4 text-sm text-muted-foreground outline-none transition-colors hover:bg-muted focus:border-primary/40 focus:shadow-[0_0_0_4px_rgba(124,92,255,0.08)]"
-        >
-          {SORTS.map((s) => (
-            <option key={s.key} value={s.key}>
-              {`排序：${s.label}`}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      {isLoading ? (
-        <div className="rounded-3xl border border-border bg-card p-16 text-center text-sm text-muted-foreground">
-          加载中…
-        </div>
-      ) : projects.length === 0 ? (
-        <EmptyState onCreate={() => setCreating(true)} />
-      ) : (
-        <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
-          <div className="flex flex-col gap-[18px]">
-            {filtered.map((c) => {
-              const isActive = c.id === active?.id;
-              const status = (c.status ?? "DRAFT") as Status;
-              return (
-                <button
-                  key={c.id}
-                  onClick={() => setActiveId(c.id)}
-                  className={[
-                    "grid grid-cols-[190px_1fr] gap-[18px] rounded-3xl border bg-card p-4 text-left transition-all",
-                    isActive
-                      ? "border-primary/40 shadow-[0_18px_50px_rgba(124,92,255,0.12)]"
-                      : "border-border shadow-[0_8px_24px_rgba(30,30,60,0.06)] hover:border-primary/25",
-                  ].join(" ")}
-                >
-                  <div
-                    className="h-[150px] rounded-[20px]"
-                    style={{ background: gradientFor(c.id) }}
-                  />
-                  <div className="flex flex-col gap-2">
-                    <div className="flex items-center gap-2">
-                      <StatusBadge status={status} />
-                      {c.archivedAt ? <Chip>已归档</Chip> : null}
-                      <span className="text-xs text-muted-foreground">
-                        {brandName}
-                      </span>
-                    </div>
-                    <div className="text-[17px] font-semibold">{c.name}</div>
-                    <p className="line-clamp-2 text-xs leading-relaxed text-muted-foreground">
-                      {c.description || c.campaign || "暂无描述"}
-                    </p>
-                    {c.tags && c.tags.length > 0 ? (
-                      <div className="flex flex-wrap gap-1.5">
-                        {c.tags.map((t) => (
-                          <Chip key={t}>{t}</Chip>
-                        ))}
-                      </div>
-                    ) : null}
-                    <ProgressBar value={c.progress ?? 0} />
-                  </div>
-                </button>
-              );
-            })}
-            {filtered.length === 0 ? (
-              <div className="rounded-3xl border border-dashed border-border p-10 text-center text-sm text-muted-foreground">
-                没有符合条件的项目
+          <div className="flex items-center gap-4 text-sm text-muted-foreground">
+            <details className="relative">
+              <summary className="flex cursor-pointer list-none items-center gap-1.5 rounded-full px-3 py-2 transition-colors hover:bg-card hover:text-foreground">
+                <SlidersHorizontal className="h-4 w-4" />
+                筛选
+              </summary>
+              <div className="absolute right-0 top-11 z-30 w-[320px] space-y-3 rounded-2xl border border-border bg-card p-4 shadow-[0_20px_55px_rgba(31,31,42,0.14)]">
+                <input
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                  placeholder="搜索项目 / 品牌名称…"
+                  className="h-10 w-full rounded-xl border border-border bg-background px-3 text-sm outline-none focus:border-primary/40"
+                />
+                <div className="grid grid-cols-3 gap-2">
+                  <select
+                    value={filterKey}
+                    onChange={(e) => setFilterKey(e.target.value)}
+                    aria-label="项目状态"
+                    className="h-9 min-w-0 rounded-xl border border-border bg-card px-2 text-xs text-muted-foreground outline-none"
+                  >
+                    {FILTERS.map((f) => (
+                      <option key={f.key} value={f.key}>
+                        {f.label}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={rangeKey}
+                    onChange={(e) => setRangeKey(e.target.value as RangeKey)}
+                    aria-label="时间范围"
+                    className="h-9 min-w-0 rounded-xl border border-border bg-card px-2 text-xs text-muted-foreground outline-none"
+                  >
+                    {RANGES.map((r) => (
+                      <option key={r.key} value={r.key}>
+                        {r.label}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={sortKey}
+                    onChange={(e) => setSortKey(e.target.value as SortKey)}
+                    aria-label="排序方式"
+                    className="h-9 min-w-0 rounded-xl border border-border bg-card px-2 text-xs text-muted-foreground outline-none"
+                  >
+                    {SORTS.map((s) => (
+                      <option key={s.key} value={s.key}>
+                        {s.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
-            ) : null}
+            </details>
+            <Link
+              href="/account"
+              className="transition-colors hover:text-foreground"
+            >
+              账号设置
+            </Link>
           </div>
+        </header>
 
-          <aside className="sticky top-6 h-fit rounded-3xl border border-border bg-card p-6 shadow-[0_8px_24px_rgba(30,30,60,0.06)]">
-            <div className="mb-1 flex items-center gap-2">
-              <span className="flex h-7 w-7 items-center justify-center rounded-xl bg-accent-soft text-sm text-primary">
-                ✦
-              </span>
-              <span className="text-sm font-semibold">AI 项目摘要</span>
+        {isLoading ? (
+          <div className="rounded-2xl border border-border bg-card p-16 text-center text-sm text-muted-foreground">
+            加载中…
+          </div>
+        ) : (
+          <>
+            <div className="grid gap-7 sm:grid-cols-2 xl:grid-cols-3">
+              {filtered.map((project) => {
+                const isActive = project.id === active?.id;
+                const status = (project.status ?? "DRAFT") as Status;
+                return (
+                  <article
+                    key={project.id}
+                    className={[
+                      "group relative overflow-hidden rounded-2xl border bg-card p-3 shadow-[0_12px_30px_rgba(75,62,122,0.10)] transition-all hover:-translate-y-1 hover:shadow-[0_18px_40px_rgba(75,62,122,0.15)]",
+                      isActive ? "border-primary/45" : "border-border",
+                    ].join(" ")}
+                  >
+                    <button
+                      type="button"
+                      aria-pressed={isActive}
+                      onClick={() => setActiveId(project.id)}
+                      className="block w-full text-left"
+                    >
+                      <div
+                        className="relative aspect-[16/8.5] overflow-hidden rounded-xl"
+                        style={{ background: gradientFor(project.id) }}
+                      >
+                        {project.coverImage ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={project.coverImage}
+                            alt=""
+                            className="h-full w-full object-cover"
+                          />
+                        ) : null}
+                        <span className="absolute right-2 top-2">
+                          <StatusBadge status={status} />
+                        </span>
+                      </div>
+                      <div className="px-1 pb-1 pt-4">
+                        <h2 className="truncate text-base font-semibold">
+                          {project.name}
+                        </h2>
+                        <p className="mt-2 truncate text-xs text-muted-foreground">
+                          {project.description ||
+                            project.campaign ||
+                            "暂无描述"}
+                        </p>
+                      </div>
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`编辑${project.name}`}
+                      onClick={() => {
+                        setActiveId(project.id);
+                        setDialogProjectId(project.id);
+                        setEditingSummary(true);
+                      }}
+                      className="absolute bottom-3 right-3 flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent-soft hover:text-primary"
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </button>
+                  </article>
+                );
+              })}
+
+              <button
+                type="button"
+                onClick={() => setCreating(true)}
+                className="group flex min-h-[220px] items-center justify-center rounded-2xl border border-dashed border-primary/15 bg-accent-soft/70 text-primary/25 transition-colors hover:border-primary/35 hover:bg-accent-soft hover:text-primary/55"
+                aria-label="创建新项目"
+              >
+                <Plus className="h-20 w-20 stroke-1" />
+              </button>
             </div>
-            <div className="mt-3 text-[15px] font-semibold">
-              {active?.name ?? "—"}
-            </div>
-            <p className="mt-2 rounded-2xl bg-accent-soft/60 p-4 text-xs leading-relaxed text-foreground/80">
-              {active?.aiSummary ||
-                "该项目尚无 AI 摘要。点击下方「AI 自动生成摘要」，或进入工作台出图、补充需求后，这里会沉淀项目进展与下一步建议。"}
-            </p>
+
+            {filtered.length === 0 ? (
+              <p className="mt-5 text-center text-sm text-muted-foreground">
+                当前视图没有符合条件的项目，可新建项目或调整筛选条件。
+              </p>
+            ) : null}
+
             {active ? (
-              <AutoSummaryButton
-                wsId={active.workspaceId}
-                projectId={active.id}
-                onDone={invalidate}
-              />
-            ) : null}
-            {active ? (
-              <div className="mt-2 text-[11px] text-muted-foreground">
-                当前状态：
-                <span className="font-medium text-foreground/80">
-                  {active.archivedAt
-                    ? "已归档"
-                    : STATUS_LABEL[(active.status ?? "DRAFT") as Status]}
-                </span>
-              </div>
-            ) : null}
-            {active?.channels && active.channels.length > 0 ? (
-              <div className="mt-4">
-                <div className="mb-2 text-xs text-muted-foreground">
-                  投放渠道
+              <section className="mt-10 grid gap-6 rounded-2xl border border-border bg-card/90 p-6 shadow-[0_12px_35px_rgba(75,62,122,0.08)] lg:grid-cols-[1fr_auto]">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-semibold">AI 项目摘要</span>
+                    <StatusBadge
+                      status={(active.status ?? "DRAFT") as Status}
+                    />
+                    {active.archivedAt ? <Chip>已归档</Chip> : null}
+                  </div>
+                  <h2 className="mt-3 text-lg font-semibold">{active.name}</h2>
+                  <p className="mt-2 max-w-3xl rounded-xl bg-accent-soft/60 p-4 text-xs leading-relaxed text-foreground/80">
+                    {active.aiSummary ||
+                      "该项目尚无 AI 摘要。可自动生成摘要，或进入工作台继续创作。"}
+                  </p>
+                  <AutoSummaryButton
+                    wsId={active.workspaceId}
+                    projectId={active.id}
+                    onDone={invalidate}
+                  />
+                  {active.channels && active.channels.length > 0 ? (
+                    <div className="mt-3 flex flex-wrap gap-1.5">
+                      {active.channels.map((channel) => (
+                        <Chip key={channel}>{channel}</Chip>
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {active.channels.map((ch) => (
-                    <Chip key={ch}>{ch}</Chip>
-                  ))}
+
+                <div className="flex min-w-[180px] flex-col gap-2">
+                  <Link href={`/workspace?project=${active.id}`}>
+                    <Button variant="primary" className="w-full justify-center">
+                      进入工作台出图
+                    </Button>
+                  </Link>
+                  <Button
+                    variant="outline"
+                    className="w-full justify-center"
+                    onClick={() => {
+                      setDialogProjectId(active.id);
+                      setEditingSummary(true);
+                    }}
+                  >
+                    补充需求
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="w-full justify-center"
+                    onClick={() => setViewingRules(true)}
+                  >
+                    查看规范
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="w-full justify-center"
+                    disabled={(active.status ?? "DRAFT") !== "DRAFT"}
+                    onClick={() => {
+                      setDialogProjectId(active.id);
+                      setConfirmAction("submit");
+                    }}
+                  >
+                    提交终审
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="w-full justify-center"
+                    disabled={(active.status ?? "DRAFT") === "COMPLETED"}
+                    onClick={() => {
+                      setDialogProjectId(active.id);
+                      setConfirmAction("archive");
+                    }}
+                  >
+                    归档项目
+                  </Button>
                 </div>
-              </div>
+              </section>
             ) : null}
-            <div className="mt-5 flex flex-col gap-2">
-              <a
-                href={active ? `/workspace?project=${active.id}` : "/workspace"}
-              >
-                <Button variant="primary" className="w-full justify-center">
-                  进入工作台出图
-                </Button>
-              </a>
-              <Button
-                variant="outline"
-                className="w-full justify-center"
-                disabled={!active}
-                onClick={() => {
-                  if (!active) return;
-                  setDialogProjectId(active.id);
-                  setEditingSummary(true);
-                }}
-              >
-                补充需求
-              </Button>
-              <Button
-                variant="outline"
-                className="w-full justify-center"
-                onClick={() => setViewingRules(true)}
-              >
-                查看规范
-              </Button>
-              <Button
-                variant="outline"
-                className="w-full justify-center"
-                disabled={!active || (active.status ?? "DRAFT") !== "DRAFT"}
-                onClick={() => {
-                  if (!active) return;
-                  setDialogProjectId(active.id);
-                  setConfirmAction("submit");
-                }}
-              >
-                提交终审
-              </Button>
-              <Button
-                variant="outline"
-                className="w-full justify-center"
-                disabled={!active || (active.status ?? "DRAFT") === "COMPLETED"}
-                onClick={() => {
-                  if (!active) return;
-                  setDialogProjectId(active.id);
-                  setConfirmAction("archive");
-                }}
-              >
-                归档项目
-              </Button>
-            </div>
-          </aside>
-        </div>
-      )}
+          </>
+        )}
+      </div>
 
       {creating ? (
         <CreateDialog
@@ -820,23 +864,6 @@ function ModalShell({
       >
         {children}
       </div>
-    </div>
-  );
-}
-
-function EmptyState({ onCreate }: { onCreate: () => void }) {
-  return (
-    <div className="rounded-3xl border border-dashed border-border bg-card p-16 text-center">
-      <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-accent-soft text-2xl text-primary">
-        ◳
-      </div>
-      <div className="text-lg font-semibold">还没有项目</div>
-      <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
-        创建你的第一个营销项目，围绕它管理需求、出图与交付。
-      </p>
-      <Button size="lg" className="mt-6" onClick={onCreate}>
-        ＋ 创建新项目
-      </Button>
     </div>
   );
 }
