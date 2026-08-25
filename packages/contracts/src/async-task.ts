@@ -45,3 +45,34 @@ export const TaskState = z.object({
   updatedAt: z.string(),
 });
 export type TaskState = z.infer<typeof TaskState>;
+
+/* ------------------------------------------------------------------ *
+ * 客户端中间态上界（§2.4）的起算点
+ * ------------------------------------------------------------------ */
+
+/**
+ * 这一刻算不算「等太久了」。
+ *
+ * 判据的要害是**起算点**,不是那个 6 分钟。worker 侧的看门狗是从任务**开跑**才
+ * 计时的,客户端若从**提交**计时,两边就不是同一个口径:worker 并发为 1,前面压着
+ * 一条真上游分解(实测 12–110 秒,慢的更久)时,后一条能在 PENDING 里躺很久。
+ * 客户端会在这条任务还没轮到它跑的时候判它超时——而它其实一切正常。
+ *
+ * 所以排队不吃工作预算:见到 RUNNING 就重新起算,两边同口径。
+ *
+ * 排队本身仍然有界(仍从 `submittedAt` 起算),否则 Redis 挂了、worker 没起来时
+ * 会无限转圈。区别只在于:排队超时不代表这次分解失败,调用方该保住任务线索让它
+ * 可续,而不是把 taskId 抹掉逼用户重新花一次钱。
+ */
+export function isTaskWatchExpired(input: {
+  /** 提交时刻。 */
+  submittedAt: number;
+  /** 首次观察到 RUNNING 的时刻；还在排队时为 0。 */
+  runningAt: number;
+  now: number;
+  capMs: number;
+}): boolean {
+  const from = input.runningAt > 0 ? input.runningAt : input.submittedAt;
+  if (from <= 0) return false;
+  return input.now - from > input.capMs;
+}

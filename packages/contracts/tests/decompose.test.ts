@@ -3,6 +3,8 @@ import {
   DecomposeRequest,
   DecomposeResponse,
   DecomposeVersionInput,
+  DECOMPOSE_LAYER_MAX,
+  LAYER_SET_PATCH_MAX,
   LayerSetView,
   MEASURED_THIN_ACCENT_COVERAGE,
   THIN_INK_COVERAGE_MAX,
@@ -240,6 +242,27 @@ describe("图层组更新入参", () => {
     expect(() => UpdateLayerSetInput.parse({ layers: [] })).toThrow();
     expect(() =>
       UpdateLayerSetInput.parse({ layers: [{ versionId: "v", opacity: 1.5 }] }),
+    ).toThrow();
+  });
+
+  it("上游超发出来的组照样能整组调层序（PATCH 上界不许借用请求上界）", () => {
+    // 请求最多 10 层,但上游允许超发、本仓库有意保留。面板调一次层序是整组
+    // 重新发号,借用 10 会让这样一组永远调不动——用户无法自救的死锁。
+    const overDelivered = Array.from({ length: DECOMPOSE_LAYER_MAX + 3 }, (_, i) => ({
+      versionId: `v-${i}`,
+      z: i,
+    }));
+    expect(
+      UpdateLayerSetInput.parse({ layers: overDelivered }).layers,
+    ).toHaveLength(DECOMPOSE_LAYER_MAX + 3);
+
+    // 体量护栏仍在:超过 `LAYER_SET_PATCH_MAX` 直接拒。
+    expect(() =>
+      UpdateLayerSetInput.parse({
+        layers: Array.from({ length: LAYER_SET_PATCH_MAX + 1 }, (_, i) => ({
+          versionId: `v-${i}`,
+        })),
+      }),
     ).toThrow();
   });
 });

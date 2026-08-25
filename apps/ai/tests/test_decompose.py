@@ -191,3 +191,21 @@ def test_pydantic_bounds_mirror_the_zod_contract():
         "/v1/decompose",
         json={"imageUrl": SOURCE, "layerCount": 10, "intent": "x" * 500},
     ).status_code == 200
+
+
+def test_decomposed_layer_size_must_be_positive():
+    """响应侧同样要对齐:Zod 是 `.int().positive()`,裸 `int` 会放行 0 / 负数。
+
+    web 侧拿这两个数当画布落位的宽高,0 宽的图层框选不中、也导不出——症状出在
+    前端,根因却是这条没对齐的边界。
+    """
+    import pytest
+    from pydantic import ValidationError
+
+    from app.schemas import DecomposedLayer
+
+    assert DecomposedLayer(imageUrl=SOURCE, width=1, height=1).width == 1
+    for bad in ({"width": 0, "height": 8}, {"width": 8, "height": 0},
+                {"width": -1, "height": 8}):
+        with pytest.raises(ValidationError):
+            DecomposedLayer(imageUrl=SOURCE, **bad)

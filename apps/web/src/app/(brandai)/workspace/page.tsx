@@ -32,6 +32,7 @@ import type {
 import {
   CHANNEL_SIZES,
   ExactAssetTransform as ExactAssetTransformSchema,
+  isTaskWatchExpired,
   readLayerMeta,
   resolveGenerationDefaults,
 } from "@brandai/contracts";
@@ -1083,7 +1084,28 @@ function Workspace() {
   const [layerCount, setLayerCount] = useState(4);
   const [layerIntent, setLayerIntent] = useState("");
   const [openLayerSetId, setOpenLayerSetId] = useState<string | null>(null);
+  /**
+   * 中间态上界(§2.4)的**起算点**——提交时先记提交时刻,轮询首次看到 RUNNING
+   * 时**重新起算**。
+   *
+   * 不这么做的话排队会吃掉工作预算:worker 并发是 1,前面压着一条真上游分解
+   * (12–110 秒,慢的更久)时后一条能在 PENDING 里躺很久;而 worker 侧的看门狗
+   * 是从**开跑**才计时的。两边起算点不一致,客户端就会在任务还没轮到它跑的时候
+   * 判超时。restart 之后两边同口径,排队多久都不误判。
+   */
   const decomposeStartedAt = useRef(0);
+  /** 首次观察到 RUNNING 的时刻;还在排队时为 0。判据见 `isTaskWatchExpired`。 */
+  const decomposeRunningAt = useRef(0);
+  const decomposeWatchExpired = useCallback(
+    () =>
+      isTaskWatchExpired({
+        submittedAt: decomposeStartedAt.current,
+        runningAt: decomposeRunningAt.current,
+        now: Date.now(),
+        capMs: POLL_CAP_MS,
+      }),
+    [],
+  );
   /**
    * 发起这次分解时**当时**的 generation / campaign。
    *
@@ -1102,14 +1124,17 @@ function Workspace() {
     refetchInterval: (q) => {
       const s = q.state.data?.status;
       if (s === "SUCCEEDED" || s === "FAILED") return false;
-      if (
-        decomposeStartedAt.current > 0 &&
-        Date.now() - decomposeStartedAt.current > POLL_CAP_MS
-      )
-        return false;
+      if (decomposeWatchExpired()) return false;
       return 2500;
     },
   });
+
+  // 排队结束、真正开跑,上界重新起算(见 `decomposeStartedAt` 上的注释)。
+  useEffect(() => {
+    if (decomposePoll?.status !== "RUNNING") return;
+    if (decomposeRunningAt.current > 0) return;
+    decomposeRunningAt.current = Date.now();
+  }, [decomposePoll?.status]);
 
   useEffect(() => {
     const s = decomposePoll?.status;
@@ -1141,23 +1166,23 @@ function Workspace() {
   }, [decomposePoll, qc, wsId, genId, projectId, syncDecomposeTaskUrl]);
 
   // §2.4 中间态上界:分解卡死就解锁并给出口,不无限显示「分解中…」。
+  //
+  // **上界到了只停止跟,不销毁线索**:`?decomposeTask=` 这几个参数原样留在地址栏,
+  // 刷新一次就会被上面那个续跑 effect 重新捡起来。客户端等腻了不等于服务端失败——
+  // 服务端状态才是权威(§2.2),这一单是花过钱的,把 taskId 抹掉等于逼用户再花一次。
   useEffect(() => {
     if (!decomposeTaskId) return;
     const t = setInterval(() => {
-      if (
-        decomposeStartedAt.current > 0 &&
-        Date.now() - decomposeStartedAt.current > POLL_CAP_MS
-      ) {
+      if (decomposeWatchExpired()) {
         setDecomposeTaskId(null);
-        syncDecomposeTaskUrl(null);
         setActionErr(
-          "图层分解超时:可能仍在后台跑,稍后刷新画布查看,或重试一次。",
+          "图层分解等太久了:任务仍在后台跑,刷新页面可以继续跟进度,结果出来会回到这张图下面。",
         );
         qc.invalidateQueries({ queryKey: ["brandai-gen", wsId, genId] });
       }
     }, 3000);
     return () => clearInterval(t);
-  }, [decomposeTaskId, qc, wsId, genId, syncDecomposeTaskUrl]);
+  }, [decomposeTaskId, qc, wsId, genId, decomposeWatchExpired]);
 
   // 刷新续跑:读 `?decomposeTask=`,还在跑就重新挂上轮询,已经跑完就直接把结果
   // 拉出来(并打开对应图层组),不让用户对着一个"什么都没发生"的画布重拆一次。
@@ -1177,6 +1202,9 @@ function Workspace() {
           // 起始时刻已不可考,从"现在"重新起算中间态上界(§2.4)——宁可多等一轮,
           // 也好过刷新一次就立刻判超时。
           decomposeStartedAt.current = Date.now();
+          // 捡回来时已在跑,就别再让它被"首次 RUNNING"重置一次上界。
+          decomposeRunningAt.current =
+            task.status === "RUNNING" ? Date.now() : 0;
           if (srcGen) {
             decomposeCtx.current = { genId: srcGen, projectId: srcProject };
           }
@@ -1211,6 +1239,7 @@ function Workspace() {
       if (!genId || decomposeTaskId) return;
       setActionErr(null);
       decomposeStartedAt.current = Date.now();
+      decomposeRunningAt.current = 0;
       decomposeCtx.current = { genId, projectId: projectId ?? "" };
       try {
         const res = await apiFetch<{ taskId: string; layerSetId: string }>(

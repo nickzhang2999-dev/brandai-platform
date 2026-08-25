@@ -383,6 +383,20 @@ export const LayerSetView = z.object({
 });
 export type LayerSetView = z.infer<typeof LayerSetView>;
 
+/**
+ * 一次 PATCH 最多带几条。
+ *
+ * **刻意不复用 `DECOMPOSE_LAYER_MAX`(=10)**:那是"一次请求要拆几层"的上界,
+ * 而这里是"改一组已经存在的图层"。上游允许超发(`requestedLayerCount` 上的注释
+ * 写明"上游可能超发或少给"),超发的层本仓库有意保留、不丢弃——于是一组真的可能
+ * 有 11 层。而面板调一次层序是**整组重新发号**(`LayerPanel.move()` 提交全组),
+ * 借用 10 这个数就会让超发的组永远调不了层序:一个由上游决定、用户无法自救的死锁。
+ *
+ * 这个数字只是"别让人一次糊几万条进来"的体量护栏,不承载语义。真正的正确性
+ * 判据在路由里:每一条 versionId 都必须属于本组,不属于就 400。
+ */
+export const LAYER_SET_PATCH_MAX = 64;
+
 /** 改显隐 / 不透明度 / 层序。服务端权威——刷新、换设备、分享都读同一份。 */
 export const UpdateLayerSetInput = z.object({
   layers: z
@@ -395,7 +409,7 @@ export const UpdateLayerSetInput = z.object({
       }),
     )
     .min(1)
-    .max(10),
+    .max(LAYER_SET_PATCH_MAX),
 });
 export type UpdateLayerSetInput = z.infer<typeof UpdateLayerSetInput>;
 

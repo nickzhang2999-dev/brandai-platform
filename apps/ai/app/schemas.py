@@ -315,8 +315,11 @@ class DecomposeRequest(BaseModel):
 
 class DecomposedLayer(BaseModel):
     imageUrl: str
-    width: int
-    height: int
+    # 与 Zod 侧 `z.number().int().positive()` 逐字对齐。裸 `int` 会放行 0 / 负数,
+    # 而 web 侧读回来会拿它当画布落位的宽高——0 宽的图层框选不中、也导不出,
+    # 症状出在前端,根因却在这条没对齐的边界上。
+    width: int = Field(gt=0)
+    height: int = Field(gt=0)
 
 
 class DecomposeResponse(BaseModel):
