@@ -173,6 +173,7 @@ async def health():
 async def diag(
     image: ImageProvider = Depends(resolve_image_provider),
     vlm: VLMProvider = Depends(resolve_vlm_provider),
+    layer: LayerProvider = Depends(resolve_layer_provider),
 ):
     """Cheap self-check for the resolved image + vlm providers.
 
@@ -182,9 +183,11 @@ async def diag(
     (bad key 401, unreachable endpoint, etc.) in seconds."""
     img = await image.check()
     vis = await vlm.check()
+    lay = await layer.check()
     return {
         "image": {"ok": img.ok, "detail": img.detail},
         "vlm": {"ok": vis.ok, "detail": vis.detail},
+        "layer": {"ok": lay.ok, "detail": lay.detail},
     }
 
 

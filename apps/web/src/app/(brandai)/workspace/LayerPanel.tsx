@@ -5,6 +5,7 @@ import type { LayerSetView } from "@brandai/contracts";
 import {
   canExportFlattened,
   canExportLayeredDocument,
+  isEmptyCoverage,
 } from "@brandai/contracts";
 import { apiFetch } from "@/lib/client";
 
@@ -154,6 +155,15 @@ export function LayerPanel({
             <div className="min-w-0 flex-1">
               <div className="truncate text-xs text-foreground">
                 第 {layer.index + 1} 层
+                {isEmptyCoverage(layer.inkCoverage) ? (
+                  <span
+                    data-testid="layer-empty-badge"
+                    title="这一层上游没给内容（多半是层数要得比画面里的元素还多）。它不会被自动隐藏——你可以自己关掉，或把层数调小重拆一次。"
+                    className="ml-1 rounded bg-muted px-1 text-[10px] text-muted-foreground"
+                  >
+                    空
+                  </span>
+                ) : null}
                 {layer.thin ? (
                   <span
                     data-testid="layer-thin-badge"

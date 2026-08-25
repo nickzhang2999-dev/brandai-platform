@@ -72,6 +72,9 @@ export async function POST() {
     return ok({
       image: providers.image,
       vlm: providers.vlm,
+      // 分层上游也要能当场自测:管理员刚在上面存了 fal 密钥,却只能测出图/视觉,
+      // 那这一栏就是个存进去看不见回音的黑箱。
+      layer: providers.layer,
       storage,
     });
   } catch (err) {

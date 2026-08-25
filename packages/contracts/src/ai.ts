@@ -552,5 +552,12 @@ const DiagItem = z.object({ ok: z.boolean(), detail: z.string() });
 export const DiagResponse = z.object({
   image: DiagItem,
   vlm: DiagItem,
+  /**
+   * 图层分解上游的自检结果。
+   *
+   * 后台能存分层密钥却测不了它，等于让管理员把「密钥对不对」推迟到某次真拆解
+   * 失败时才知道——最小输入的连带义务是**当场能自测**（`minimal-user-input.md`）。
+   */
+  layer: DiagItem,
 });
 export type DiagResponse = z.infer<typeof DiagResponse>;

@@ -11,6 +11,7 @@ import {
   canExportLayeredDocument,
   compareLayerOrder,
   groupVersionsIntoLayerSets,
+  isEmptyCoverage,
   isThinCoverage,
   planLayerSetRect,
   readLayerMeta,
@@ -140,6 +141,34 @@ describe("细层判据（真上游实测反例）", () => {
   it("正常内容层不会被误标细层", () => {
     expect(isThinCoverage(0.113)).toBe(false);
     expect(THIN_INK_COVERAGE_MAX).toBeLessThan(0.113);
+  });
+});
+
+describe("空层判据（真上游实测：层数要多了就会返回全透明层）", () => {
+  it("实墨为 0 判为空层", () => {
+    // 2026-08-25 实测:海报（背景+杯子+徽标 三个可分对象）要 4 层,上游返回的
+    // 第二层实墨 0.000%。
+    expect(isEmptyCoverage(0)).toBe(true);
+  });
+
+  it("空与细互斥：0.12% 的角标是细层，不是空层", () => {
+    expect(isEmptyCoverage(MEASURED_THIN_ACCENT_COVERAGE)).toBe(false);
+    expect(isThinCoverage(MEASURED_THIN_ACCENT_COVERAGE)).toBe(true);
+  });
+
+  it("空层判据不是覆盖率阈值：任何大于 0 的覆盖率都不算空", () => {
+    // 这条守住的正是 prd_agent 的老路——用一个"很小的数"当空层线,把真实的细
+    // 描边判成空并隐藏。这里只认 0。
+    expect(isEmptyCoverage(1e-9)).toBe(false);
+    expect(isEmptyCoverage(THIN_INK_COVERAGE_MAX)).toBe(false);
+  });
+
+  it("空层照样是可导出的图层，不被吞掉", () => {
+    // 空层写进 PSD 也是一层（用户在 Photoshop 里能看到"这一层是空的"）,所以
+    // 分层文档的开关与它无关。
+    expect(
+      canExportLayeredDocument([{ imageUrl: "https://x/empty.png" }]),
+    ).toBe(true);
   });
 });
 

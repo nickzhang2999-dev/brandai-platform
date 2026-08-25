@@ -2171,6 +2171,11 @@ def _coerce_ingest(
     return {"images": images, "copies": copies, "sellingPoints": selling}
 
 
+# 队列状态探针用的空请求 id:一个永不存在的全零 uuid。它只用来让 fal 校验密钥
+# 并回一句"没这个请求",不触发任何推理。
+_FAL_PROBE_REQUEST_ID = "00000000-0000-0000-0000-000000000000"
+
+
 class FalLayerProvider(LayerProvider):
     """fal.ai `qwen-image-layered` — one image in, N RGBA layers out.
 
@@ -2262,17 +2267,43 @@ class FalLayerProvider(LayerProvider):
             "model": self.model,
         }
 
+    def probe_url(self) -> str:
+        """A cheap endpoint that answers auth without starting an inference.
+
+        `fal.run/<model>` is the **synchronous inference** endpoint: posting an
+        empty body there does not bounce back a fast 422 — it goes into the
+        queue and the probe times out (measured 2026-08-25: `ReadTimeout` with a
+        perfectly good key, i.e. the self-check reported "key rejected" for a key
+        that works). The queue's status endpoint is the right door: it answers
+        the SAME auth in ~0.4 s and runs no model.
+
+        Measured on the live service:
+          * good key → 200 (`{"status":"COMPLETED", ...}` for the zero request id)
+          * bad key  → 401 `{"detail":"invalid key credentials"}`
+        """
+        # base_url is ".../<owner>/<model>"; the queue host mirrors that path.
+        path = self.base_url.split("fal.run/", 1)[-1] if "fal.run/" in self.base_url else ""
+        if not path:
+            return ""
+        return f"https://queue.fal.run/{path}/requests/{_FAL_PROBE_REQUEST_ID}/status"
+
     async def check(self) -> ProviderCheck:
-        """Auth probe. A deliberately invalid body must NOT be answered with 401
-        when the key is good — so 401/403 means "bad key" and a 4xx validation
-        error means "key accepted, endpoint reachable"."""
+        """Auth + reachability probe. Never raises, never starts an inference."""
         if not self.api_key:
             return ProviderCheck(False, "未配置分层上游密钥")
+        url = self.probe_url()
+        if not url:
+            # 自定义网关地址:形状未知,不猜。说清楚"没测",别报一个假的绿。
+            return ProviderCheck(
+                True, f"已配密钥;自定义端点 {self.base_url} 无自检探针,未验证"
+            )
         try:
             async with httpx.AsyncClient(timeout=_CHECK_TIMEOUT) as c:
-                r = await c.post(self.base_url, headers=self._headers(), json={})
+                r = await c.get(url, headers={"Authorization": f"Key {self.api_key}"})
             if r.status_code in (401, 403):
                 return ProviderCheck(False, f"密钥被拒绝 ({r.status_code})")
-            return ProviderCheck(True, f"可达 ({r.status_code})")
+            if r.status_code >= 500:
+                return ProviderCheck(False, f"上游异常 ({r.status_code})")
+            return ProviderCheck(True, f"密钥可用 ({self.model})")
         except Exception as exc:  # noqa: BLE001 — probe must never raise
             return ProviderCheck(False, f"{type(exc).__name__}: {exc}")

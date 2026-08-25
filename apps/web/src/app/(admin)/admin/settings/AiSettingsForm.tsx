@@ -38,6 +38,19 @@ const KIND_LABEL: Record<Kind, string> = {
   layer: "图层分解",
 };
 
+/**
+ * 每一类上游的**占位示例**。留空时后端各自有默认值，占位符只是告诉管理员
+ * 「这一栏该长什么样」——所以必须按类给，不能三类共用一个。
+ *
+ * 2026-08-25 真机截图抓到:图层分解那一栏的 Model 占位符显示 `gpt-4o`（一个聊天
+ * 模型），照着填必然打不通 fal。占位符是给人抄的，抄错方向比留空更糟。
+ */
+const KIND_PLACEHOLDER: Record<Kind, { provider: string; model: string }> = {
+  image: { provider: "openai", model: "gpt-image-2" },
+  vlm: { provider: "openai", model: "gpt-4o" },
+  layer: { provider: "fal", model: "fal-ai/qwen-image-layered" },
+};
+
 const LABELS: Record<Kind, { title: string; hint: string }> = {
   image: {
     title: "出图 (Image)",
@@ -85,6 +98,7 @@ export function AiSettingsForm({ initial }: { initial: Masked }) {
   const [testResult, setTestResult] = useState<{
     image: { ok: boolean; detail: string };
     vlm: { ok: boolean; detail: string };
+    layer: { ok: boolean; detail: string };
     storage: { ok: boolean; detail: string };
   } | null>(null);
   const [testError, setTestError] = useState<string | null>(null);
@@ -220,7 +234,7 @@ export function AiSettingsForm({ initial }: { initial: Masked }) {
                 <Label>Provider</Label>
                 <Input
                   value={p.provider}
-                  placeholder="openai"
+                  placeholder={KIND_PLACEHOLDER[kind].provider}
                   autoComplete="off"
                   data-1p-ignore
                   data-lpignore="true"
@@ -242,7 +256,7 @@ export function AiSettingsForm({ initial }: { initial: Masked }) {
                 <Label>Model</Label>
                 <Input
                   value={p.model}
-                  placeholder={kind === "image" ? "gpt-image-2" : "gpt-4o"}
+                  placeholder={KIND_PLACEHOLDER[kind].model}
                   autoComplete="off"
                   data-1p-ignore
                   data-lpignore="true"
@@ -423,6 +437,7 @@ export function AiSettingsForm({ initial }: { initial: Masked }) {
                 [
                   ["出图", testResult!.image],
                   ["视觉", testResult!.vlm],
+                  ["图层分解", testResult!.layer],
                   ["存储", testResult!.storage],
                 ] as const
               ).map(([label, r]) => (

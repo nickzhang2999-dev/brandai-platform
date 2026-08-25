@@ -137,3 +137,39 @@ async def test_mock_provider_layer_order_is_bottom_up():
     assert first.getchannel("A").getextrema() == (255, 255)
     for item in result["layers"][1:]:
         assert _decode(item["imageUrl"]).getchannel("A").getextrema()[0] == 0
+
+
+def test_diag_reports_the_layer_provider():
+    """后台「测试连接」必须能测到分层上游。
+
+    这条守的是接线:`FalLayerProvider.check()` 写好了却没人调用,后台就只剩
+    出图/视觉两栏——管理员存进去的分层密钥没有任何回音。
+    """
+    body = client.post("/v1/diag", json={}).json()
+    assert set(body) >= {"image", "vlm", "layer"}
+    assert body["layer"]["ok"] is True
+    assert body["layer"]["detail"]
+
+
+def test_fal_probe_never_hits_the_inference_endpoint():
+    """自检探针走队列状态口,不走同步推理口。
+
+    2026-08-25 实测:往 `fal.run/<model>` POST 空体不会秒回 422,而是进队列然后
+    把探针拖到 ReadTimeout——好密钥被自检报成"不可用"。所以探针 URL 必须是
+    queue 主机上的 requests/<id>/status。
+    """
+    from app.providers.http_providers import FalLayerProvider
+
+    url = FalLayerProvider("", "k").probe_url()
+    assert url.startswith("https://queue.fal.run/")
+    assert url.endswith("/status")
+    assert "fal-ai/qwen-image-layered" in url
+    # 同步推理口一个字都不能出现在探针里。
+    assert not url.startswith("https://fal.run/")
+
+
+def test_fal_probe_declines_to_guess_for_a_custom_gateway():
+    """自定义端点形状未知就明说"未验证",不报一个假的绿。"""
+    from app.providers.http_providers import FalLayerProvider
+
+    assert FalLayerProvider("https://gw.example.com/layer", "k").probe_url() == ""

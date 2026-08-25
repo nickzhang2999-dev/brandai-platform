@@ -30,6 +30,23 @@ export function isThinCoverage(inkCoverage: number): boolean {
   return inkCoverage > 0 && inkCoverage <= THIN_INK_COVERAGE_MAX;
 }
 
+/**
+ * 真空层:一个实墨像素都没有。
+ *
+ * 2026-08-25 真上游实测:同一张海报要 4 层,画面里只有 3 个可分对象,上游就会返回
+ * 一层**完全透明**的产物（实墨 0.000%）。它和"细层"是两回事——细层有内容只是很
+ * 少（不能隐藏），空层是真的什么都没有。
+ *
+ * 判据刻意用 `=== 0` 而不是"小于某个很小的数":覆盖率阈值判空正是 prd_agent 那条
+ * 把 0.12% 的角标判成空层的老路。0 就是 0,没有第二种解释。
+ *
+ * 空层同样**不自动隐藏**——它照样占一行、写明「空」,用户才知道"不是漏了一层,
+ * 是层数要多了"。悄悄吞掉它，用户只会数出 3 层然后怀疑功能坏了。
+ */
+export function isEmptyCoverage(inkCoverage: number): boolean {
+  return inkCoverage === 0;
+}
+
 export interface LayerOrderKey {
   /** 叠放次序,越大越靠上。 */
   z: number;
