@@ -132,9 +132,17 @@ export async function runDecomposeJob(
     const decomposedAt = new Date().toISOString();
     const versionIds: string[] = [];
 
-    // 逐层落库。**不在中途 abort**:上游可能给出比请求更多的层,那些层已经付过费,
-    // 提前收工就等于把它们丢掉(prd_agent 的收集侧就是收满即断流,多给的层永远
-    // 到不了画布)。这里把 emit 出来的每一层都收下。
+    // 先把每一层备好(拉字节 → 分析 → 上传),**一层都不落库**;最后一次性提交。
+    //
+    // 逐层 create 的话,这一组在库里会有一段"半成品可见期":用户在这中间刷新,
+    // 历史会把不完整的一组播种到画布上,而完成后的那次 invalidate 只把剩下的几层
+    // 当 `freshAll` 送进来——`planLayerSetRect` 看见原来那块地已被占,就把后半截
+    // 摆到**第二块矩形**上。一组图层被劈成两半，还都在画布上。
+    //
+    // **不在中途 abort**:上游可能给出比请求更多的层,那些层已经付过费,提前收工
+    // 就等于把它们丢掉(prd_agent 的收集侧就是收满即断流,多给的层永远到不了画布)。
+    // 这里把 emit 出来的每一层都收下。
+    const prepared: Prisma.GenerationVersionCreateInput[] = [];
     for (let i = 0; i < result.layers.length; i++) {
       const layer = result.layers[i]!;
       const { buf, mime } = await fetchLayerBytes(layer.imageUrl);
@@ -145,9 +153,8 @@ export async function runDecomposeJob(
         `generations/${workspaceId}/layers`,
       );
 
-      const created = await prisma.generationVersion.create({
-        data: {
-          generationId,
+      prepared.push({
+          generation: { connect: { id: generationId } },
           index: nextIndex++,
           imageUrl: storedUrl,
           width: analysis.width || layer.width,
@@ -180,14 +187,20 @@ export async function runDecomposeJob(
               decomposedAt,
             },
           } as Prisma.InputJsonValue,
-        },
       });
-      versionIds.push(created.id);
 
-      const pct = 30 + Math.round(((i + 1) / result.layers.length) * 65);
+      // 备料阶段占 30→95;真正落库在循环之后。
+      const pct = 30 + Math.round(((i + 1) / result.layers.length) * 60);
       await job.updateProgress(pct);
       await setProgress(taskId, pct);
     }
+
+    // 一次事务把整组提交:要么这一组完整出现,要么一层都不出现。半成品可见期
+    // 归零,前面那条失败回滚也就只剩下"事务之外出岔子"这一道兜底。
+    const createdRows = await prisma.$transaction(
+      prepared.map((data) => prisma.generationVersion.create({ data })),
+    );
+    versionIds.push(...createdRows.map((r) => r.id));
 
     await job.updateProgress(100);
     await markSucceeded(taskId, {
@@ -196,9 +209,10 @@ export async function runDecomposeJob(
     });
     return { generationId, sourceVersionId: source.id, layerSetId, versionIds };
   } catch (err) {
-    // 逐层落库,所以中途失败会留下"看着像一组、其实缺层"的残骸:它照样能渲染、
-    // 能导出,而重试只会再造一组新的,不会修好这一组。失败就把这一组整体撤掉,
-    // 让用户看到的要么是完整的一组,要么什么都没有。
+    // 兜底撤销。整组落库已经改成一次事务,正常情况下失败时库里本就没有半成品;
+    // 但事务**之后**仍有可能出岔子(markSucceeded 失败、进程被杀),那时这一组已
+    // 经可见却没被标成功。留着这一句,让"要么完整、要么没有"这条不变量在事务之
+    // 外也成立。
     //
     // 删除条件与所有读路径同源(`params.layerSetId === layerSetId`),而 layerSetId
     // 是本次 job 现生成的 uuid,不会误伤别的组。撤销本身再失败也不能盖掉真正的

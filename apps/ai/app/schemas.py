@@ -306,8 +306,11 @@ class DecomposeRequest(BaseModel):
     """
 
     imageUrl: str
-    layerCount: int = 4
-    intent: Optional[str] = None
+    # 边界必须与 Zod 侧逐字对齐(1–10 / intent ≤500),不能只靠 provider 里那句
+    # clamp 兜着:任何不经 web 路由直接打 FastAPI 的调用方,看到的会是另一套契约,
+    # 能提交规范判为非法的请求。CLAUDE.md 明写「契约改动两边同时改」。
+    layerCount: int = Field(default=4, ge=1, le=10)
+    intent: Optional[str] = Field(default=None, max_length=500)
 
 
 class DecomposedLayer(BaseModel):

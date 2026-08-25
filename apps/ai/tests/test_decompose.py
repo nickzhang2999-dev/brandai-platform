@@ -173,3 +173,21 @@ def test_fal_probe_declines_to_guess_for_a_custom_gateway():
     from app.providers.http_providers import FalLayerProvider
 
     assert FalLayerProvider("https://gw.example.com/layer", "k").probe_url() == ""
+
+
+def test_pydantic_bounds_mirror_the_zod_contract():
+    """两侧契约必须逐字对齐,不能只靠 provider 里的 clamp 兜着。
+
+    不经 web 路由直接打 FastAPI 的调用方(内部服务、脚本)看到的就是这一份;
+    它比 Zod 宽的话,那些调用方能提交规范判为非法的请求,而且 clamp 会把错误
+    悄悄改成一个"能跑"的值——用户永远不知道自己要的 12 层被改成了 10 层。
+    """
+    for bad in ({"imageUrl": SOURCE, "layerCount": 0},
+                {"imageUrl": SOURCE, "layerCount": 11},
+                {"imageUrl": SOURCE, "intent": "x" * 501}):
+        assert client.post("/v1/decompose", json=bad).status_code == 422, bad
+    # 边界内仍然放行
+    assert client.post(
+        "/v1/decompose",
+        json={"imageUrl": SOURCE, "layerCount": 10, "intent": "x" * 500},
+    ).status_code == 200

@@ -1059,13 +1059,27 @@ function Workspace() {
    * 用独立的 `decomposeTask` 而不是通用的 `task`:这一页同时可能有别的异步流,
    * 共用一个键会互相顶掉。参数名不同,复原逻辑仍照 rule-workbench 的 `?task=`。
    */
-  const syncDecomposeTaskUrl = useCallback((id: string | null) => {
-    if (typeof window === "undefined") return;
-    const url = new URL(window.location.href);
-    if (id) url.searchParams.set("decomposeTask", id);
-    else url.searchParams.delete("decomposeTask");
-    window.history.replaceState(null, "", url.toString());
-  }, []);
+  const syncDecomposeTaskUrl = useCallback(
+    (id: string | null, ctx?: { genId: string; projectId: string }) => {
+      if (typeof window === "undefined") return;
+      const url = new URL(window.location.href);
+      if (id) {
+        url.searchParams.set("decomposeTask", id);
+        // 来源必须写成**自己的**参数。第一版复原时读的是实时的 `?gen=`,而那个
+        // 参数会随用户切换出图而变——切到 B 再刷新,就把 B 当成了这个任务的来源,
+        // 完成时拿 A 的 layerSetId 去 B 底下开,正好是这条闸门本来要防的 404。
+        if (ctx?.genId) url.searchParams.set("decomposeGen", ctx.genId);
+        if (ctx?.projectId)
+          url.searchParams.set("decomposeProject", ctx.projectId);
+      } else {
+        url.searchParams.delete("decomposeTask");
+        url.searchParams.delete("decomposeGen");
+        url.searchParams.delete("decomposeProject");
+      }
+      window.history.replaceState(null, "", url.toString());
+    },
+    [],
+  );
   const [layerCount, setLayerCount] = useState(4);
   const [layerIntent, setLayerIntent] = useState("");
   const [openLayerSetId, setOpenLayerSetId] = useState<string | null>(null);
@@ -1149,7 +1163,11 @@ function Workspace() {
   // 拉出来(并打开对应图层组),不让用户对着一个"什么都没发生"的画布重拆一次。
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const t = new URLSearchParams(window.location.search).get("decomposeTask");
+    const params = new URLSearchParams(window.location.search);
+    const t = params.get("decomposeTask");
+    // 来源取这两个专属参数,不取实时的 `?gen=`/`?project=`——后者会随切换而变。
+    const srcGen = params.get("decomposeGen") ?? "";
+    const srcProject = params.get("decomposeProject") ?? "";
     if (!t || !wsId) return;
     let cancelled = false;
     void apiFetch<TaskState>(`/api/workspaces/${wsId}/tasks/${t}`)
@@ -1159,19 +1177,23 @@ function Workspace() {
           // 起始时刻已不可考,从"现在"重新起算中间态上界(§2.4)——宁可多等一轮,
           // 也好过刷新一次就立刻判超时。
           decomposeStartedAt.current = Date.now();
-          // URL 里的 `?gen=`/`?project=` 是提交那一刻写下的,与这个任务同源。
-          const url = new URLSearchParams(window.location.search);
-          const g = url.get("gen");
-          const p = url.get("project");
-          if (g) decomposeCtx.current = { genId: g, projectId: p ?? "" };
+          if (srcGen) {
+            decomposeCtx.current = { genId: srcGen, projectId: srcProject };
+          }
           setDecomposeTaskId(t);
           return;
         }
         syncDecomposeTaskUrl(null);
         if (task.status === "SUCCEEDED") {
-          qc.invalidateQueries({ queryKey: ["brandai-gen", wsId] });
+          // 刷新回来时任务已经跑完:按**来源**刷新,并且只有用户此刻正停在那条
+          // generation 上才开面板。开在别条上只会是一个 generation 作用域的 404。
+          qc.invalidateQueries({
+            queryKey: ["brandai-gen", wsId, srcGen || undefined],
+          });
           qc.invalidateQueries({ queryKey: ["brandai-project-gens", wsId] });
-          if (task.refId) setOpenLayerSetId(task.refId);
+          if (task.refId && srcGen && srcGen === genId) {
+            setOpenLayerSetId(task.refId);
+          }
         }
       })
       .catch(() => {
@@ -1205,7 +1227,10 @@ function Workspace() {
           },
         );
         setDecomposeTaskId(res.taskId);
-        syncDecomposeTaskUrl(res.taskId);
+        syncDecomposeTaskUrl(res.taskId, {
+          genId,
+          projectId: projectId ?? "",
+        });
       } catch (err) {
         decomposeStartedAt.current = 0;
         setActionErr(
