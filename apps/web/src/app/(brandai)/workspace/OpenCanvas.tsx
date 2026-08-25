@@ -490,6 +490,12 @@ export function OpenCanvas({
               ...(it.assetId ? { assetId: it.assetId } : {}),
               ...(it.naturalW ? { naturalW: it.naturalW } : {}),
               ...(it.naturalH ? { naturalH: it.naturalH } : {}),
+              // 组身份写进画布 JSON:显隐/层序是服务端权威(不存),但"这块属于哪
+              // 一组"是布局血缘。不存它,播种数据到达之前的那一帧里分组是散的。
+              ...(it.layerSetId ? { layerSetId: it.layerSetId } : {}),
+              ...(typeof it.layerIndex === "number"
+                ? { layerIndex: it.layerIndex }
+                : {}),
             }
           : it.kind === "shape"
             ? {
@@ -645,6 +651,8 @@ export function OpenCanvas({
         const meta = readLayerMeta(byId.get(it.versionId)?.params);
         if (!meta) return it;
         if (
+          it.layerSetId === meta.setId &&
+          it.layerIndex === meta.index &&
           it.layerHidden === meta.hidden &&
           it.layerOpacity === meta.opacity &&
           it.layerZ === meta.z
@@ -652,6 +660,12 @@ export function OpenCanvas({
           return it;
         return {
           ...it,
+          // 组身份也要补:画布 JSON 里可能没有它(旧构建存的、或超预算被裁掉的),
+          // 而 paintOrder 靠 layerSetId 分组。缺了它,刷新之后每一层都被当成独立
+          // 元素,服务端的 layerZ 就不再生效——用户调过的层序看着"自己弹回去了"。
+          // params 是 SSOT,所以这里无条件按它回填,不依赖画布 JSON 存没存。
+          layerSetId: meta.setId,
+          layerIndex: meta.index,
           layerHidden: meta.hidden,
           layerOpacity: meta.opacity,
           layerZ: meta.z,
@@ -1694,7 +1708,15 @@ export function OpenCanvas({
                 alt="画布图片"
                 draggable={false}
                 className="h-full w-full rounded-[6px] object-contain"
-                style={{ background: "rgb(244 240 255 / 0.5)" }}
+                style={{
+                  // 那层淡紫底是普通图片的占位色。图层组是**叠**在同一块矩形上
+                  // 的 RGBA:每一层的透明像素都垫一次 50% 淡紫,四层叠起来就是
+                  // 四道紫雾盖住下面的层,「叠起来跟原图一样」这条不变量当场作废。
+                  // 所以分解产物一律不垫底——它本来就该是透明的。
+                  ...(it.layerSetId
+                    ? {}
+                    : { background: "rgb(244 240 255 / 0.5)" }),
+                }}
                 onLoad={(e) => {
                   const img = e.currentTarget;
                   if (!it.naturalW && img.naturalWidth) {

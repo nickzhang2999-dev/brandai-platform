@@ -1047,6 +1047,25 @@ function Workspace() {
    * generation,N 个图层子版本经 seedVersions 以**一组**的形态落到画布上。
    * 真上游实测 12–42 秒,所以中间态必须有界(§2.4),超时给可读出口而不是转圈。 */
   const [decomposeTaskId, setDecomposeTaskId] = useState<string | null>(null);
+
+  /**
+   * 把分解任务 id 钉在 URL 上（`?decomposeTask=`）。
+   *
+   * §2.2:客户端提交后可以关掉、刷新、离开,请求照样跑完、稍后浮现。任务 id 只
+   * 存在组件 state 里的话,刷新之后这一页既不续跑轮询、也不显示"分解中",而
+   * generation 已是终态、历史查询没有轮询间隔——于是拆好的图层在这一次会话里
+   * 根本不浮现,用户还会以为没提交成功,再花一次钱重拆。
+   *
+   * 用独立的 `decomposeTask` 而不是通用的 `task`:这一页同时可能有别的异步流,
+   * 共用一个键会互相顶掉。参数名不同,复原逻辑仍照 rule-workbench 的 `?task=`。
+   */
+  const syncDecomposeTaskUrl = useCallback((id: string | null) => {
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    if (id) url.searchParams.set("decomposeTask", id);
+    else url.searchParams.delete("decomposeTask");
+    window.history.replaceState(null, "", url.toString());
+  }, []);
   const [layerCount, setLayerCount] = useState(4);
   const [layerIntent, setLayerIntent] = useState("");
   const [openLayerSetId, setOpenLayerSetId] = useState<string | null>(null);
@@ -1073,6 +1092,7 @@ function Workspace() {
     const s = decomposePoll?.status;
     if (s !== "SUCCEEDED" && s !== "FAILED") return;
     setDecomposeTaskId(null);
+    syncDecomposeTaskUrl(null);
     if (s === "FAILED") {
       setActionErr(decomposePoll?.error || "图层分解失败,请重试。");
       return;
@@ -1082,7 +1102,7 @@ function Workspace() {
       queryKey: ["brandai-project-gens", wsId, projectId],
     });
     if (decomposePoll?.refId) setOpenLayerSetId(decomposePoll.refId);
-  }, [decomposePoll, qc, wsId, genId, projectId]);
+  }, [decomposePoll, qc, wsId, genId, projectId, syncDecomposeTaskUrl]);
 
   // §2.4 中间态上界:分解卡死就解锁并给出口,不无限显示「分解中…」。
   useEffect(() => {
@@ -1093,6 +1113,7 @@ function Workspace() {
         Date.now() - decomposeStartedAt.current > POLL_CAP_MS
       ) {
         setDecomposeTaskId(null);
+        syncDecomposeTaskUrl(null);
         setActionErr(
           "图层分解超时:可能仍在后台跑,稍后刷新画布查看,或重试一次。",
         );
@@ -1100,7 +1121,41 @@ function Workspace() {
       }
     }, 3000);
     return () => clearInterval(t);
-  }, [decomposeTaskId, qc, wsId, genId]);
+  }, [decomposeTaskId, qc, wsId, genId, syncDecomposeTaskUrl]);
+
+  // 刷新续跑:读 `?decomposeTask=`,还在跑就重新挂上轮询,已经跑完就直接把结果
+  // 拉出来(并打开对应图层组),不让用户对着一个"什么都没发生"的画布重拆一次。
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const t = new URLSearchParams(window.location.search).get("decomposeTask");
+    if (!t || !wsId) return;
+    let cancelled = false;
+    void apiFetch<TaskState>(`/api/workspaces/${wsId}/tasks/${t}`)
+      .then((task) => {
+        if (cancelled) return;
+        if (task.status === "RUNNING" || task.status === "PENDING") {
+          // 起始时刻已不可考,从"现在"重新起算中间态上界(§2.4)——宁可多等一轮,
+          // 也好过刷新一次就立刻判超时。
+          decomposeStartedAt.current = Date.now();
+          setDecomposeTaskId(t);
+          return;
+        }
+        syncDecomposeTaskUrl(null);
+        if (task.status === "SUCCEEDED") {
+          qc.invalidateQueries({ queryKey: ["brandai-gen", wsId] });
+          qc.invalidateQueries({ queryKey: ["brandai-project-gens", wsId] });
+          if (task.refId) setOpenLayerSetId(task.refId);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) syncDecomposeTaskUrl(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // 只在挂载时复原一次:后续状态由轮询驱动。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wsId]);
 
   const runDecompose = useCallback(
     async (version: GenerationVersion) => {
@@ -1122,6 +1177,7 @@ function Workspace() {
           },
         );
         setDecomposeTaskId(res.taskId);
+        syncDecomposeTaskUrl(res.taskId);
       } catch (err) {
         decomposeStartedAt.current = 0;
         setActionErr(
@@ -1129,7 +1185,7 @@ function Workspace() {
         );
       }
     },
-    [wsId, genId, decomposeTaskId, layerCount, layerIntent],
+    [wsId, genId, decomposeTaskId, layerCount, layerIntent, syncDecomposeTaskUrl],
   );
 
   // 改图 server-authoritative:POST→202→轮询 edit job→成功后刷新主 generation,
