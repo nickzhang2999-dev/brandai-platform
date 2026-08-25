@@ -37,7 +37,7 @@ import {
   resolveGenerationDefaults,
 } from "@brandai/contracts";
 import type { TaskState } from "@brandai/contracts";
-import { apiFetch, assetThumbUrl } from "@/lib/client";
+import { ApiFetchError, apiFetch, assetThumbUrl } from "@/lib/client";
 import { planTiers, upgradeContactEmail } from "@/lib/brandai-mock";
 import { validateImageUploadFile } from "@/lib/upload-limits";
 import {
@@ -1116,7 +1116,7 @@ function Workspace() {
    */
   const decomposeCtx = useRef<{ genId: string; projectId: string } | null>(null);
 
-  const { data: decomposePoll } = useQuery<TaskState>({
+  const { data: decomposePoll, error: decomposePollErr } = useQuery<TaskState>({
     queryKey: ["brandai-decompose", wsId, decomposeTaskId],
     queryFn: () =>
       apiFetch<TaskState>(`/api/workspaces/${wsId}/tasks/${decomposeTaskId}`),
@@ -1128,6 +1128,19 @@ function Workspace() {
       return 2500;
     },
   });
+
+  // 轮询问到"服务端明确说没有这个任务"才收摊。同一条判据的另一端:上面那个
+  // 续跑分支遇到网络失败时会挂上轮询等它重试,那这里就必须真的能认出 404,
+  // 否则那条链只是从"误删线索"换成了"永远锁着"。
+  useEffect(() => {
+    if (!decomposeTaskId || !decomposePollErr) return;
+    const status =
+      decomposePollErr instanceof ApiFetchError ? decomposePollErr.status : 0;
+    if (status !== 404 && status !== 403) return;
+    setDecomposeTaskId(null);
+    syncDecomposeTaskUrl(null);
+    setActionErr("上次那次图层分解的任务记录已经不在了,需要的话重新拆一次。");
+  }, [decomposeTaskId, decomposePollErr, syncDecomposeTaskUrl]);
 
   // 排队结束、真正开跑,上界重新起算(见 `decomposeStartedAt` 上的注释)。
   useEffect(() => {
@@ -1204,20 +1217,21 @@ function Workspace() {
     const srcProject = params.get("decomposeProject") ?? "";
     if (!t || !wsId) return;
     let cancelled = false;
+    /** 重新挂上轮询:起始时刻已不可考,从"现在"重新起算中间态上界(§2.4)。 */
+    const reattach = (running: boolean) => {
+      decomposeStartedAt.current = Date.now();
+      // 捡回来时已在跑,就别再让它被"首次 RUNNING"重置一次上界。
+      decomposeRunningAt.current = running ? Date.now() : 0;
+      if (srcGen) {
+        decomposeCtx.current = { genId: srcGen, projectId: srcProject };
+      }
+      setDecomposeTaskId(t);
+    };
     void apiFetch<TaskState>(`/api/workspaces/${wsId}/tasks/${t}`)
       .then((task) => {
         if (cancelled) return;
         if (task.status === "RUNNING" || task.status === "PENDING") {
-          // 起始时刻已不可考,从"现在"重新起算中间态上界(§2.4)——宁可多等一轮,
-          // 也好过刷新一次就立刻判超时。
-          decomposeStartedAt.current = Date.now();
-          // 捡回来时已在跑,就别再让它被"首次 RUNNING"重置一次上界。
-          decomposeRunningAt.current =
-            task.status === "RUNNING" ? Date.now() : 0;
-          if (srcGen) {
-            decomposeCtx.current = { genId: srcGen, projectId: srcProject };
-          }
-          setDecomposeTaskId(t);
+          reattach(task.status === "RUNNING");
           return;
         }
         syncDecomposeTaskUrl(null);
@@ -1233,8 +1247,25 @@ function Workspace() {
           }
         }
       })
-      .catch(() => {
-        if (!cancelled) syncDecomposeTaskUrl(null);
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        // **只有服务端明确说"没有这个任务"才清线索。**
+        //
+        // 网络抖一下、网关 502、请求超时——这些统统只说明"这次没问到",不说明
+        // 那一单不存在。旧写法把所有失败当同一种,于是一次抖动就把地址栏里唯一
+        // 指向那一单的参数删了,而 `decomposeTaskId` 还是 null:闸也没了,线索也
+        // 没了,用户下一步就是再花一次钱重拆,而第一单还在后台好好跑着。
+        const status = err instanceof ApiFetchError ? err.status : 0;
+        if (status === 404 || status === 403) {
+          syncDecomposeTaskUrl(null);
+          return;
+        }
+        // 问不到就先当它还在跑:挂上轮询让它自己去重试,真跑完了下一拍就收到
+        // 终态并收拾干净;真没了也会在轮询里拿到 404。
+        reattach(false);
+        setActionErr(
+          "没能读到上次那次图层分解的状态(网络问题),正在重试。它仍在后台跑,不用重新提交。",
+        );
       });
     return () => {
       cancelled = true;

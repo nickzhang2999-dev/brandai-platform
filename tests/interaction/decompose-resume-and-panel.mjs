@@ -1,23 +1,28 @@
 /**
- * 第六轮 review 的两条行为红绿（一次性脚本，跑完随 PR 一起留档）。
+ * 第六 / 七轮 review 的三条行为红绿（一次性脚本，跑完随 PR 一起留档）。
  *
  *  A) 不透明度滑杆：拖到底再松手，落库的值必须是**松手的位置**。
  *     旧写法 `disabled={busy}` 会在第一次 onChange 发出 PATCH 后立刻禁用输入框，
  *     浏览器随即中断这次拖拽，值停在划过的第一个中间档。
  *  B) 客户端中间态上界到点之后：按钮必须仍然锁着（别让用户重复下单），
  *     `?decomposeTask=` 三个参数必须仍在地址栏（刷新还能接着跟）。
+ *  C) 刷新续跑时任务 GET 抖了一下（502）：线索同样不许被删——「这次没问到」不等于
+ *     「那一单不存在」。反过来服务端明确说 404 时必须收摊，两端都要验。
  *
  * **这是手动红绿驱动脚本，不是守卫**：它只打印观测值，不做断言，而且 B 那条要先把
  * `POLL_CAP_MS` 与 mock 分解耗时临时改短/改长才有意义（见下面的「怎么跑」）。别把它
  * 接进 CI —— 一个会静默空跑的绿灯比没有测试更糟。
  *
  * 怎么跑（前置起栈与登录见同目录 README.md，额外要 SET=图层组 id）：
- *   A) 直接跑：`ONLY=A node tests/interaction/decompose-round6.mjs`
+ *   A) 直接跑：`ONLY=A node tests/interaction/decompose-resume-and-panel.mjs`
  *      读数看「服务端」那一栏 —— 松手位置是 0，落库就必须是 0。
  *      红：把 LayerPanel 的滑杆改回 `disabled={busy}` + onChange 直接 PATCH。
  *   B) 先临时改两处：`POLL_CAP_MS` 调到 5 秒、mock 的 `decompose()` 前加 25 秒 sleep，
  *      再 `ONLY=B node …`。到点后 URL 三个参数必须还在、按钮必须还锁着。
  *      红：把上界那条 effect 改回「`setDecomposeTaskId(null)` + `syncDecomposeTaskUrl(null)`」。
+ *   C) 同样要先加 mock 的 25 秒 sleep，再 `ONLY=C node …`（502 抖动）、
+ *      `MODE404=1 ONLY=C …`（一直 404）、`MODE404=2 ONLY=C …`（先抖后 404）。
+ *      红：把续跑的 `.catch` 改回「任何失败都 `syncDecomposeTaskUrl(null)`」。
  */
 import { chromium } from "playwright-core";
 for (const k of ["HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy", "ALL_PROXY", "all_proxy"])
@@ -70,7 +75,7 @@ async function selectRasterTile() {
   return false;
 }
 
-if (ONLY !== "B") {
+if (ONLY !== "B" && ONLY !== "C") {
   // ---- A) 滑杆 ----
   await selectLayerTile();
   const panelBtn = page.getByRole("button", { name: "图层面板" });
@@ -100,7 +105,7 @@ if (ONLY !== "B") {
   console.log(`A 滑杆 | 松手位置=0 界面=${shown} 服务端=${server} 拖后禁用=${disabledMidDrag}`);
 }
 
-if (ONLY !== "A") {
+if (ONLY !== "A" && ONLY !== "C") {
   // ---- B) 上界到点之后 ----
   await page.goto(`${BASE}/workspace?project=${PROJECT}&gen=${GEN}`, { waitUntil: "domcontentloaded", timeout: 60000 });
   await page.waitForSelector("[data-testid=canvas-item]", { timeout: 30000 });
@@ -127,6 +132,49 @@ if (ONLY !== "A") {
       `B 上界 | 提交后 task=${urlAfterSubmit ? "有" : "无"} | 到点后 URL=${JSON.stringify(params)} 按钮="${label}" 锁着=${locked}`,
     );
   }
+}
+
+if (ONLY === "C") {
+  // ---- C) 刷新续跑时任务 GET 抖了一下(502)：线索不许被删 ----
+  // 前置同 B：mock 分解要慢到这次分解还活着。
+  await page.goto(`${BASE}/workspace?project=${PROJECT}&gen=${GEN}`, { waitUntil: "domcontentloaded", timeout: 60000 });
+  await page.waitForSelector("[data-testid=canvas-item]", { timeout: 30000 });
+  await page.waitForTimeout(1500);
+  await selectRasterTile();
+  await page.getByRole("button", { name: "图层分解" }).first().click();
+  await page.getByRole("button", { name: "开拆" }).click();
+  await page.waitForTimeout(1500);
+  const before = await page.evaluate(() => new URLSearchParams(location.search).get("decomposeTask"));
+
+  // 只让**续跑那一次** GET 挂掉,之后放行,模拟一次网络抖动。
+  // MODE404=1 时改成「服务端一直说没有这个任务」,验证另一端:那种情况必须收摊。
+  const gone = process.env.MODE404 || "";
+  let blocked = 0;
+  await page.route("**/api/workspaces/*/tasks/*", async (route) => {
+    // MODE404=2:先抖一下(502)让续跑分支挂上轮询,之后一律 404 —— 验证
+    // 「问不到就先当它还在跑,真没了会在轮询里拿到 404 并收摊」这句话成立。
+    if (gone === "2" && blocked++ >= 1)
+      return route.fulfill({ status: 404, contentType: "application/json", body: '{"error":"Task not found"}' });
+    if (gone === "1")
+      return route.fulfill({ status: 404, contentType: "application/json", body: '{"error":"Task not found"}' });
+    if (blocked++ < 1)
+      return route.fulfill({ status: 502, contentType: "application/json", body: '{"error":"bad gateway"}' });
+    return route.fallback();
+  });
+  await page.reload({ waitUntil: "domcontentloaded", timeout: 60000 });
+  await page.waitForSelector("[data-testid=canvas-item]", { timeout: 30000 });
+  await page.waitForTimeout(3000);
+
+  const params = await page.evaluate(() => {
+    const p = new URLSearchParams(location.search);
+    return [p.get("decomposeTask"), p.get("decomposeGen"), p.get("decomposeProject")];
+  });
+  const btn = page.getByRole("button", { name: /图层分解|分解中…/ });
+  const label = (await btn.count()) ? await btn.first().innerText() : "(无)";
+  const locked = (await btn.count()) ? await btn.first().isDisabled() : null;
+  console.log(
+    `C ${gone === "1" ? "404" : gone === "2" ? "抖动→404" : "抖动"} | 提交后 task=${before ? "有" : "无"} | 刷新后 URL=${JSON.stringify(params)} 按钮="${label}" 锁着=${locked}`,
+  );
 }
 
 await b.close();
