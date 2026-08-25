@@ -31,7 +31,14 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 
 from ..config import settings
 from ..ssrf import SSRFError, safe_get
-from .base import ImageProvider, ProviderCheck, VLMProvider
+from .base import (
+    ImageProvider,
+    LayerProvider,
+    ProviderCheck,
+    VLMProvider,
+    build_decompose_prompt,
+    clamp_layer_count,
+)
 
 logger = logging.getLogger("brandai.ai.provider")
 
@@ -2162,3 +2169,110 @@ def _coerce_ingest(
     copies = [str(x) for x in (data.get("copies") or []) if x]
     selling = [str(x) for x in (data.get("sellingPoints") or []) if x]
     return {"images": images, "copies": copies, "sellingPoints": selling}
+
+
+class FalLayerProvider(LayerProvider):
+    """fal.ai `qwen-image-layered` — one image in, N RGBA layers out.
+
+    Wire shape measured against the live endpoint (2026-08-25, MAP key-visual
+    1024×1024):
+
+    * request  ``{image_url, num_layers, output_format, prompt,
+      enable_safety_checker, acceleration}``; ``image_url`` accepts a ``data:``
+      URI but a 1.5 MB inline upload ate most of the wall clock, so callers
+      should pass a fetchable URL whenever storage is configured.
+    * response ``{images: [{url, content_type, width, height}], seed, timings,
+      has_nsfw_concepts}``.
+    * timing   11.7 s (2 layers) and 41.8 s (4 layers) wall clock, 9.8 s / 14.0 s
+      of that inference. The 4-layer call alone blows past a 30 s edge-gateway
+      ceiling — this is why decomposition is a worker job, not an HTTP handler.
+    * output   640×640 for a 1024×1024 input: **the upstream rescales**, so every
+      downstream placement has to convert proportionally rather than treat layer
+      pixels as canvas pixels.
+    """
+
+    DEFAULT_URL = "https://fal.run/fal-ai/qwen-image-layered"
+
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str,
+        model: str = "",
+        transport: httpx.BaseTransport | None = None,
+    ):
+        self.base_url = (base_url or self.DEFAULT_URL).rstrip("/")
+        self.api_key = api_key
+        self.model = model or "fal-ai/qwen-image-layered"
+        self._transport = transport
+
+    def _client(self) -> httpx.AsyncClient:
+        kwargs: dict[str, Any] = {"timeout": settings.http_timeout}
+        if self._transport is not None:
+            kwargs["transport"] = self._transport
+        return httpx.AsyncClient(**kwargs)
+
+    def _headers(self) -> dict[str, str]:
+        return {
+            "Authorization": f"Key {self.api_key}",
+            "content-type": "application/json",
+        }
+
+    async def decompose(
+        self,
+        image_url: str,
+        *,
+        layer_count: int,
+        intent: str | None = None,
+    ) -> dict[str, Any]:
+        n = clamp_layer_count(layer_count)
+        body = {
+            "image_url": image_url,
+            "num_layers": n,
+            "output_format": "png",
+            "enable_safety_checker": True,
+            "acceleration": "regular",
+            "prompt": build_decompose_prompt(intent),
+        }
+        async with self._client() as c:
+            r = await c.post(self.base_url, headers=self._headers(), json=body)
+            r.raise_for_status()
+            data = r.json()
+
+        layers: list[dict[str, Any]] = []
+        for item in data.get("images") or []:
+            if not isinstance(item, dict):
+                continue
+            url = item.get("url")
+            if not url:
+                continue
+            layers.append(
+                {
+                    "imageUrl": url,
+                    "width": int(item.get("width") or 0) or 1,
+                    "height": int(item.get("height") or 0) or 1,
+                }
+            )
+        if not layers:
+            raise ValueError("fal layer decomposition returned no images")
+
+        seed = data.get("seed")
+        return {
+            "layers": layers,
+            "seed": int(seed) if isinstance(seed, (int, float)) else None,
+            "model": self.model,
+        }
+
+    async def check(self) -> ProviderCheck:
+        """Auth probe. A deliberately invalid body must NOT be answered with 401
+        when the key is good — so 401/403 means "bad key" and a 4xx validation
+        error means "key accepted, endpoint reachable"."""
+        if not self.api_key:
+            return ProviderCheck(False, "未配置分层上游密钥")
+        try:
+            async with httpx.AsyncClient(timeout=_CHECK_TIMEOUT) as c:
+                r = await c.post(self.base_url, headers=self._headers(), json={})
+            if r.status_code in (401, 403):
+                return ProviderCheck(False, f"密钥被拒绝 ({r.status_code})")
+            return ProviderCheck(True, f"可达 ({r.status_code})")
+        except Exception as exc:  # noqa: BLE001 — probe must never raise
+            return ProviderCheck(False, f"{type(exc).__name__}: {exc}")

@@ -20,6 +20,13 @@ export interface EffectiveAiSettings {
   image: ProviderConfig;
   vlm: ProviderConfig;
   /**
+   * 图层分解上游（AI 分层）。刻意与 image 分开：fal 的 qwen-image-layered 是
+   * 原生协议（num_layers / image_url），与 OpenAI /images/generations 形状毫无
+   * 共同点，共用一组配置会让每个调用方都得先判断「这半边适用吗」。
+   * 未配密钥 → provider 落到 mock，AI 服务用确定性图层兜底（零 key 可跑）。
+   */
+  layer: ProviderConfig;
+  /**
    * V0.0.13 — admin-configured image system prompt, prepended to every
    * generation prompt by the AI service (GenerateRequest.systemPrompt).
    * Empty → nothing injected. DB wins over IMAGE_SYSTEM_PROMPT env.
@@ -58,6 +65,8 @@ export async function getEffectiveAiSettings(): Promise<EffectiveAiSettings> {
   const row = await prisma.appSetting.findUnique({ where: { id: SINGLETON } });
   const imageKey = safeDecrypt(row?.imageApiKey) || process.env.IMAGE_PROVIDER_API_KEY || "";
   const vlmKey = safeDecrypt(row?.vlmApiKey) || process.env.VLM_PROVIDER_API_KEY || "";
+  const layerKey =
+    safeDecrypt(row?.layerApiKey) || process.env.LAYER_PROVIDER_API_KEY || "";
   return {
     image: {
       provider: resolveProvider(
@@ -79,6 +88,14 @@ export async function getEffectiveAiSettings(): Promise<EffectiveAiSettings> {
       apiKey: vlmKey,
       baseUrl: row?.vlmBaseUrl || process.env.VLM_PROVIDER_BASE_URL || "",
       model: row?.vlmModel || process.env.VLM_MODEL || "",
+    },
+    layer: {
+      // 分层只有一家上游，所以配了密钥就默认 fal——让用户去猜 provider 名字
+      // 属于「系统本来就知道却摆个空框」（最小输入原则）。
+      provider: row?.layerProvider || process.env.LAYER_PROVIDER || (layerKey ? "fal" : "mock"),
+      apiKey: layerKey,
+      baseUrl: row?.layerBaseUrl || process.env.LAYER_PROVIDER_BASE_URL || "",
+      model: row?.layerModel || process.env.LAYER_MODEL || "",
     },
     imageSystemPrompt:
       row?.imageSystemPrompt || process.env.IMAGE_SYSTEM_PROMPT || "",

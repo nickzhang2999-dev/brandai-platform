@@ -22,6 +22,10 @@ export const AsyncTaskKind = z.enum([
   // worker (POST → 202 → client polls). The structured result is read back via
   // the job return value (GET ?jobId=).
   "SUMMARIZE",
+  // 图层分解（AI 分层）。实测真上游一次调用 12–42 秒，第一次就打穿 30 秒边缘
+  // 网关上限 —— 同步这条路拿不到结果，必须走 worker。refId = 图层组 id，
+  // refCount = 实际落库的图层数。
+  "DECOMPOSE",
 ]);
 export type AsyncTaskKind = z.infer<typeof AsyncTaskKind>;
 

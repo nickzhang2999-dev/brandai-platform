@@ -13,8 +13,12 @@ from .config import settings
 from .ssrf import SSRFError, safe_get
 
 logger = logging.getLogger("brandai.ai")
-from .providers import resolve_image_provider, resolve_vlm_provider
-from .providers.base import ImageProvider, VLMProvider
+from .providers import (
+    resolve_image_provider,
+    resolve_layer_provider,
+    resolve_vlm_provider,
+)
+from .providers.base import ImageProvider, LayerProvider, VLMProvider
 from .providers.http_providers import (
     _DEFAULT_IMAGE_QUALITY,
     _estimate_cost_usd,
@@ -24,6 +28,9 @@ from .schemas import (
     ComplianceCheckResponse,
     ComplianceReport,
     ComplianceResult,
+    DecomposeRequest,
+    DecomposeResponse,
+    DecomposedLayer,
     DescribeRequest,
     DescribeResponse,
     EditRequest,
@@ -923,6 +930,57 @@ async def edit(
     h = int(req.payload.get("height", 1024))
     return EditResponse(
         imageUrl=url, width=w, height=h, params={"op": req.op, **req.payload}
+    )
+
+
+@app.post(
+    "/v1/decompose",
+    response_model=DecomposeResponse,
+    response_model_exclude_none=True,
+)
+async def decompose(
+    req: DecomposeRequest,
+    provider: LayerProvider = Depends(resolve_layer_provider),
+):
+    """图层分解:一张图 → N 张可独立编辑的 RGBA 图层。
+
+    这是**动作能力**,不是可选模型:它需要一张输入图,不吃尺寸 / versionCount /
+    sceneType。因此它没有、也不该有任何模型选择器入口。
+
+    实测真上游 12–42 秒,第一次调用就打穿 30 秒边缘网关上限——调用方必须是
+    worker,绝不能是 HTTP handler(§2.1)。
+    """
+    if not (req.imageUrl or "").strip():
+        raise HTTPException(status_code=400, detail="imageUrl is required")
+    started = time.perf_counter()
+    result = await provider.decompose(
+        req.imageUrl,
+        layer_count=req.layerCount,
+        intent=req.intent,
+    )
+    latency_ms = int((time.perf_counter() - started) * 1000)
+
+    layers = [
+        DecomposedLayer(
+            imageUrl=item["imageUrl"],
+            width=int(item.get("width") or 1),
+            height=int(item.get("height") or 1),
+        )
+        for item in result.get("layers", [])
+    ]
+    if not layers:
+        raise HTTPException(status_code=502, detail="layer provider returned no layers")
+
+    model = result.get("model")
+    return DecomposeResponse(
+        layers=layers,
+        seed=result.get("seed"),
+        usage=GenerateUsage(
+            provider=type(provider).__name__,
+            model=model if isinstance(model, str) else None,
+            imageCount=len(layers),
+            latencyMs=latency_ms,
+        ),
     )
 
 

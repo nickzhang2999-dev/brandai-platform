@@ -293,6 +293,37 @@ class EditResponse(BaseModel):
     params: dict[str, Any] = {}
 
 
+DECOMPOSE_LAYER_MIN = 1
+DECOMPOSE_LAYER_MAX = 10
+
+
+class DecomposeRequest(BaseModel):
+    """Mirror of contracts/ai.ts DecomposeRequest.
+
+    Layer decomposition is an ACTION capability, not a selectable model: it
+    needs an input image, ignores size / versionCount / sceneType, and returns
+    a set of RGBA layers rather than a finished image.
+    """
+
+    imageUrl: str
+    layerCount: int = 4
+    intent: Optional[str] = None
+
+
+class DecomposedLayer(BaseModel):
+    imageUrl: str
+    width: int
+    height: int
+
+
+class DecomposeResponse(BaseModel):
+    layers: list[DecomposedLayer]
+    # Upstream seed — the only handle on "can this split be reproduced?".
+    # Kept on the wire so the web side can persist it with the layer set.
+    seed: Optional[int] = None
+    usage: Optional[GenerateUsage] = None
+
+
 class TermIn(BaseModel):
     type: str
     term: str

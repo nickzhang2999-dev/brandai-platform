@@ -4,8 +4,8 @@ from functools import lru_cache
 from fastapi import Request
 
 from ..config import settings
-from .base import ImageProvider, VLMProvider
-from .mock import MockImageProvider, MockVLMProvider
+from .base import ImageProvider, LayerProvider, VLMProvider
+from .mock import MockImageProvider, MockLayerProvider, MockVLMProvider
 
 # HttpImageProvider / HttpVLMProvider 只会 OpenAI 形状的 /images/generations 与
 # /chat/completions,所以这里的默认端点必须是 OpenAI 兼容网关地址。Gemini 走
@@ -76,3 +76,48 @@ def resolve_vlm_provider(request: Request) -> VLMProvider:
         provider.lower(), _IMAGE_ENDPOINTS["openai"]
     )
     return HttpVLMProvider(base_url, key, model=h.get("X-OV-Vlm-Model") or "")
+
+
+# 图层分解上游预设。目前只有 fal 一家；新增一家只需在这里加一行 + 一个适配器，
+# 不必动任何业务代码（"兼容多个分层模型"那条按这个形状扩）。
+_LAYER_ENDPOINTS = {
+    "fal": "https://fal.run/fal-ai/qwen-image-layered",
+}
+
+
+def _build_layer_provider(
+    provider: str, key: str, base_url: str, model: str
+) -> LayerProvider:
+    if not key or not provider or provider.lower() == "mock":
+        return MockLayerProvider()
+    from .http_providers import FalLayerProvider
+
+    url = base_url or _LAYER_ENDPOINTS.get(
+        provider.lower(), _LAYER_ENDPOINTS["fal"]
+    )
+    return FalLayerProvider(url, key, model=model)
+
+
+@lru_cache
+def get_layer_provider() -> LayerProvider:
+    return _build_layer_provider(
+        settings.layer_provider,
+        settings.layer_api_key,
+        settings.layer_base_url,
+        settings.layer_model,
+    )
+
+
+def resolve_layer_provider(request: Request) -> LayerProvider:
+    """Per-request layer provider from X-OV-Layer-* headers; else env fallback."""
+    h = request.headers
+    provider = (h.get("X-OV-Layer-Provider") or "").strip()
+    key = (h.get("X-OV-Layer-Key") or "").strip()
+    if not key or not provider or provider.lower() == "mock":
+        return get_layer_provider()
+    return _build_layer_provider(
+        provider,
+        key,
+        (h.get("X-OV-Layer-Base-Url") or "").strip(),
+        (h.get("X-OV-Layer-Model") or "").strip(),
+    )

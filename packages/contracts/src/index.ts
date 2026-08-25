@@ -17,3 +17,4 @@ export * from "./resource-usage";
 // existing top-level names; consumers do `import { VI } from "@brandai/contracts"`.
 export * as VI from "./vi/index";
 export * from "./canvas";
+export * from "./layer-set";
