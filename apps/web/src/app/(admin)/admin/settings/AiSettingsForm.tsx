@@ -71,7 +71,7 @@ const LABELS: Record<Kind, { title: string; hint: string }> = {
 export function AiSettingsForm({ initial }: { initial: Masked }) {
   // Prefill the provider so it's never left blank — a blank provider with a key
   // silently falls back to the mock provider (no real calls, no error).
-  const [data, setData] = useState<Masked>({
+  const [initialView] = useState<Masked>(() => ({
     image: { ...initial.image, provider: initial.image.provider || "openai" },
     vlm: { ...initial.vlm, provider: initial.vlm.provider || "openai" },
     // 分层只有一家上游,配了密钥却让用户去猜 provider 名字属于"系统本来就知道
@@ -79,7 +79,12 @@ export function AiSettingsForm({ initial }: { initial: Masked }) {
     layer: { ...initial.layer, provider: initial.layer.provider || "fal" },
     storage: { ...initial.storage },
     imageSystemPrompt: initial.imageSystemPrompt ?? "",
-  });
+  }));
+  // 服务端那一份的「屏幕表示」。判脏只靠它与 data 的差,不靠给每个 setter 手动
+  // 打脏标记——那种写法漏一个 setter 就静默失真。基线取预填之后的值,否则页面一
+  // 打开就是脏的(预填本身不是用户的改动)。
+  const [saved, setSaved] = useState<Masked>(initialView);
+  const [data, setData] = useState<Masked>(initialView);
   // New keys typed by the admin; empty = leave the stored key unchanged.
   const [keys, setKeys] = useState<Record<Kind, string>>({
     image: "",
@@ -118,7 +123,7 @@ export function AiSettingsForm({ initial }: { initial: Masked }) {
     clearKey?: Kind;
     clearStorageSecret?: boolean;
     clearAccessKey?: boolean;
-  }) {
+  }): Promise<boolean> {
     // Confirm before overwriting an already-stored API key — guards against a
     // browser/password-manager autofill silently replacing a working key. The
     // dedicated "清除已存密钥" path (which passes clearKey) is NOT gated.
@@ -128,7 +133,7 @@ export function AiSettingsForm({ initial }: { initial: Masked }) {
           const ok = window.confirm(
             `你正在替换已配置的「${KIND_LABEL[kind]}」密钥,确认覆盖?`,
           );
-          if (!ok) return;
+          if (!ok) return false;
         }
       }
     }
@@ -163,15 +168,39 @@ export function AiSettingsForm({ initial }: { initial: Masked }) {
       }
       const fresh = (await res.json()) as Masked;
       setData(fresh);
+      setSaved(fresh);
       setKeys({ image: "", vlm: "", layer: "" });
       setStorageSecret("");
       setStorageAccessKey("");
       setMsg({ ok: true, text: "已保存,即时生效。" });
+      return true;
     } catch (err) {
       setMsg({ ok: false, text: err instanceof Error ? err.message : "保存失败" });
+      return false;
     } finally {
       setSaving(false);
     }
+  }
+
+  /**
+   * 表单里有没有「敲了但还没保存」的东西。
+   *
+   * 2026-08-25 用户实测踩到:在图层分解那栏粘好 fal 密钥、直接点「测试连接」,
+   * 自检回「mock(无 key,占位模式)」——因为自检读的是**库里已保存**的配置,看不见
+   * 框里的字。按钮就摆在保存旁边却测的是另一份状态,这是最小惊讶问题,不是用户
+   * 操作错。所以有未保存改动时按钮改成「保存并测试」,先落库再自检。
+   */
+  const dirty =
+    JSON.stringify(data) !== JSON.stringify(saved) ||
+    !!keys.image ||
+    !!keys.vlm ||
+    !!keys.layer ||
+    !!storageSecret ||
+    !!storageAccessKey;
+
+  async function saveAndTest() {
+    if (dirty && !(await save())) return;
+    await runTest();
   }
 
   function pack(kind: Kind): Record<string, string | null> {
@@ -429,6 +458,10 @@ export function AiSettingsForm({ initial }: { initial: Masked }) {
       {(testResult || testError) && (
         <CreamCard>
           <h2 className="font-serif text-lg text-foreground">连接自检结果</h2>
+          <p className="mt-1 text-xs text-muted-foreground">
+            自检读的是<strong className="font-medium">已保存</strong>的配置。框里
+            改了还没保存时,下面的按钮会变成「保存并测试」,先落库再测。
+          </p>
           {testError ? (
             <p className="mt-2 text-sm text-destructive">{testError}</p>
           ) : (
@@ -463,10 +496,16 @@ export function AiSettingsForm({ initial }: { initial: Masked }) {
         </Button>
         <Button
           variant="outline"
-          onClick={runTest}
-          disabled={testing}
+          onClick={() => void saveAndTest()}
+          disabled={testing || saving}
         >
-          {testing ? "测试中…" : "测试连接"}
+          {testing
+            ? "测试中…"
+            : saving
+              ? "保存中…"
+              : dirty
+                ? "保存并测试"
+                : "测试连接"}
         </Button>
       </div>
     </div>
