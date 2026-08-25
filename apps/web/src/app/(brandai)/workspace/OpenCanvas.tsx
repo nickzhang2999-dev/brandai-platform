@@ -737,8 +737,17 @@ export function OpenCanvas({
               w: 280,
               h: 280,
             };
-        const rect = planLayerSetRect(anchor, occupiedAll);
-        occupiedAll.push(rect);
+        // 这一组已经有成员落在画布上了,就**回到它那块地**,别另开一块。
+        //
+        // 会发生是因为持久化有 200 条上限,它可能从一组中间切开:刷新后先落地的
+        // 几层进了 `synced`,漏掉的几层留在 `freshAll` 里。此时若照常 `planLayerSetRect`,
+        // 那几层会被摆到另一块矩形上——服务端明明是一组,画布上却永久裂成两处。
+        // 这正是本 PR 反复守的那条不变量:一组图层必须以**一个对象**出现。
+        const seated = settled.find((it) => it.layerSetId === set.setId);
+        const rect = seated
+          ? { x: seated.x, y: seated.y, w: seated.w, h: seated.h }
+          : planLayerSetRect(anchor, occupiedAll);
+        if (!seated) occupiedAll.push(rect);
         for (const version of set.layers) {
           const meta = readLayerMeta(version.params);
           placedSets.push({

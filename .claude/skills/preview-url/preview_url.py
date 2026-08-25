@@ -141,11 +141,29 @@ def _backend_preview(branch: str, branch_slug: str):
     branches = data if isinstance(data, list) else data.get("branches", data.get("data", []))
     if not isinstance(branches, list):
         return None
+
+    def _same_project(b):
+        """全量列表里必须按项目过滤,否则会捡到别人家的同名分支。
+
+        实测 `/api/branches` 不带过滤时返回 52 条、横跨十几个 CDS 项目,其中
+        `branch == "main"` 就有四条(prd-agent / mdimp / mytapd / metersphere…)。
+        只按分支名匹配的话,本仓库一旦发生在 main 上取地址,拿到的是**别的项目**
+        的 previewUrl —— 它长得完全正常,于是交付里贴出去的、冒烟打过去的,都是
+        另一个应用。
+        """
+        if not pid:
+            return True
+        got = b.get("projectId") or b.get("projectSlug") or ""
+        # 记录没带项目字段就不敢认(宁可回落到"未确认"的告警路径)。
+        return bool(got) and str(got) == pid
+
     # 优先按 git 分支名匹配(权威);兼容旧行为再按 previewSlug 兜一手。
     for key in ("branch", "previewSlug"):
         want = branch if key == "branch" else branch_slug
         for b in branches:
             if not isinstance(b, dict) or b.get(key) != want:
+                continue
+            if not _same_project(b):
                 continue
             url = (b.get("previewUrl") or "").strip()
             if url:

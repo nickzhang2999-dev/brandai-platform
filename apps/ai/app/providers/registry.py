@@ -113,7 +113,14 @@ def resolve_layer_provider(request: Request) -> LayerProvider:
     h = request.headers
     provider = (h.get("X-OV-Layer-Provider") or "").strip()
     key = (h.get("X-OV-Layer-Key") or "").strip()
-    if not key or not provider or provider.lower() == "mock":
+    # 管理员在后台明确选了 mock,就给他 mock —— 哪怕进程 env 里配着一把真的 fal
+    # 密钥。落进 `get_layer_provider()` 的话读的是 env,于是"我特地切到 mock 跑一遍
+    # 交互"会变成一次真实的、要付钱的分解,而界面上什么都不会提示。
+    #
+    # 只请求没带 provider/key 时才谈"env 兜底"——那才是真的没人表过态。
+    if provider.lower() == "mock":
+        return MockLayerProvider()
+    if not key or not provider:
         return get_layer_provider()
     return _build_layer_provider(
         provider,

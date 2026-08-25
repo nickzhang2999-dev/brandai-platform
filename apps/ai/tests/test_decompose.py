@@ -234,3 +234,43 @@ def test_decomposed_layer_size_must_be_positive():
                 {"width": -1, "height": 8}):
         with pytest.raises(ValidationError):
             DecomposedLayer(imageUrl=SOURCE, **bad)
+
+
+def test_explicit_mock_header_is_honored_over_env(monkeypatch):
+    """后台明确选了 mock,就不许落回 env 里那把真密钥。
+
+    否则"我特地切到 mock 跑一遍交互"会变成一次真实的、要付钱的分解,而且界面上
+    没有任何提示。只有请求根本没表态(没带 provider/key)时才谈 env 兜底。
+
+    必须把 env 兜底**造成真 provider**才测得出来:测试环境默认 LAYER_PROVIDER=mock,
+    那样两种写法都返回 Mock,用例恒绿——测不出任何东西。
+    """
+    from starlette.datastructures import Headers
+
+    from app.providers import registry
+    from app.providers.http_providers import FalLayerProvider
+    from app.providers.mock import MockLayerProvider
+
+    env_provider = FalLayerProvider("", "env-real-key")
+    monkeypatch.setattr(registry, "get_layer_provider", lambda: env_provider)
+
+    class _Req:
+        def __init__(self, h):
+            self.headers = Headers(h)
+
+    # ① 明确 mock（还带着一把兜底来的 key）—— 必须是 mock，不许拿到 env 那个。
+    got = registry.resolve_layer_provider(
+        _Req({"X-OV-Layer-Provider": "mock", "X-OV-Layer-Key": "sk-real-looking-key"})
+    )
+    assert isinstance(got, MockLayerProvider)
+    assert got is not env_provider
+
+    # ② 请求没表态 —— 这才轮到 env 兜底。
+    got = registry.resolve_layer_provider(_Req({}))
+    assert got is env_provider
+
+    # ③ 明确 fal + key —— 走真适配器，且不是 env 那个实例。
+    got = registry.resolve_layer_provider(
+        _Req({"X-OV-Layer-Provider": "fal", "X-OV-Layer-Key": "k"})
+    )
+    assert isinstance(got, FalLayerProvider) and got is not env_provider
