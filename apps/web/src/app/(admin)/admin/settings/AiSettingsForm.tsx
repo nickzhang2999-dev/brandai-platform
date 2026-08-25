@@ -459,8 +459,8 @@ export function AiSettingsForm({ initial }: { initial: Masked }) {
         <CreamCard>
           <h2 className="font-serif text-lg text-foreground">连接自检结果</h2>
           <p className="mt-1 text-xs text-muted-foreground">
-            自检读的是<strong className="font-medium">已保存</strong>的配置。框里
-            改了还没保存时,下面的按钮会变成「保存并测试」,先落库再测。
+            自检读的是<strong className="font-medium">已保存</strong>
+            的配置。框里改了还没保存时,下面的按钮会变成「保存并测试」,先落库再测。
           </p>
           {testError ? (
             <p className="mt-2 text-sm text-destructive">{testError}</p>
