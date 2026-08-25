@@ -2293,9 +2293,13 @@ class FalLayerProvider(LayerProvider):
             return ProviderCheck(False, "未配置分层上游密钥")
         url = self.probe_url()
         if not url:
-            # 自定义网关地址:形状未知,不猜。说清楚"没测",别报一个假的绿。
+            # 自定义网关地址:形状未知,不猜探针。但"没测"必须**长得像没测**——
+            # 上一版这里返回 ok=True,后台照样画一个绿勾,于是地址写错、密钥被拒
+            # 都能通过「测试连接」,直到某次真拆解(花钱的)才发现。
             return ProviderCheck(
-                True, f"已配密钥;自定义端点 {self.base_url} 无自检探针,未验证"
+                False,
+                f"已配密钥;自定义端点 {self.base_url} 没有自检探针,本次未验证",
+                unverified=True,
             )
         try:
             async with httpx.AsyncClient(timeout=_CHECK_TIMEOUT) as c:

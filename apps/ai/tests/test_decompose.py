@@ -175,6 +175,31 @@ def test_fal_probe_declines_to_guess_for_a_custom_gateway():
     assert FalLayerProvider("https://gw.example.com/layer", "k").probe_url() == ""
 
 
+def test_unprobed_custom_gateway_is_not_reported_as_healthy():
+    """"没测过"必须长得像没测过——不能是 ok=True(后台会画成绿勾)。
+
+    地址写错、密钥被拒都会照样通过「测试连接」,直到某次真拆解才发现,而那是
+    花钱的。三态里它属于第三态:既不是绿也不是红。
+    """
+    import asyncio
+
+    from app.providers.http_providers import FalLayerProvider
+
+    check = asyncio.run(
+        FalLayerProvider("https://gw.example.com/layer", "k").check()
+    )
+    assert check.unverified is True
+    assert check.ok is False
+    assert "未验证" in check.detail
+
+
+def test_diag_carries_the_third_state_through_to_the_wire():
+    """三态要一路透到后台那一屏,中间任何一层压掉它就退化成假的绿。"""
+    body = client.post("/v1/diag", json={}).json()
+    for key in ("image", "vlm", "layer"):
+        assert "unverified" in body[key], key
+
+
 def test_pydantic_bounds_mirror_the_zod_contract():
     """两侧契约必须逐字对齐,不能只靠 provider 里的 clamp 兜着。
 

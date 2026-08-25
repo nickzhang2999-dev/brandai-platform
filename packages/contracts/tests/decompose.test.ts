@@ -4,6 +4,7 @@ import {
   DecomposeResponse,
   DecomposeVersionInput,
   DECOMPOSE_LAYER_MAX,
+  DiagResponse,
   LAYER_SET_PATCH_MAX,
   LayerSetView,
   MEASURED_THIN_ACCENT_COVERAGE,
@@ -438,5 +439,20 @@ describe("从图层派生新版本必须先摘掉组身份", () => {
     expect(grouped.sets).toHaveLength(1);
     expect(grouped.sets[0]!.layers.map((l) => l.id)).toEqual(["v-layer"]);
     expect(grouped.plain.map((p) => p.id)).toEqual(["v-edited"]);
+  });
+});
+
+describe("自检结果是三态", () => {
+  it("「没测过」有独立的一格，不许折进 ok", () => {
+    // 折进 ok 的话后台会给它画一个绿勾——管理员正是靠那个勾判断上游能不能用。
+    const parsed = DiagResponse.parse({
+      image: { ok: true, detail: "密钥可用" },
+      vlm: { ok: false, detail: "密钥被拒绝 (401)" },
+      layer: { ok: false, detail: "自定义端点无探针", unverified: true },
+    });
+    expect(parsed.layer.unverified).toBe(true);
+    expect(parsed.layer.ok).toBe(false);
+    // 旧版 AI 服务不带这个字段:按两态解析，不破坏兼容。
+    expect(parsed.image.unverified).toBeUndefined();
   });
 });

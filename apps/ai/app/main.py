@@ -184,10 +184,12 @@ async def diag(
     img = await image.check()
     vis = await vlm.check()
     lay = await layer.check()
+    # `unverified` 一律带上:自检的三态(绿 / 红 / 没测过)要一路透到后台那一屏,
+    # 中间任何一层把它压掉,「没测过」就会退化成一个假的绿勾。
     return {
-        "image": {"ok": img.ok, "detail": img.detail},
-        "vlm": {"ok": vis.ok, "detail": vis.detail},
-        "layer": {"ok": lay.ok, "detail": lay.detail},
+        "image": {"ok": img.ok, "detail": img.detail, "unverified": img.unverified},
+        "vlm": {"ok": vis.ok, "detail": vis.detail, "unverified": vis.unverified},
+        "layer": {"ok": lay.ok, "detail": lay.detail, "unverified": lay.unverified},
     }
 
 

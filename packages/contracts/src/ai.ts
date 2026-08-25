@@ -548,7 +548,20 @@ export type ComplianceCheckResponse = z.infer<typeof ComplianceCheckResponse>;
 // POST /v1/diag — per-provider self-check (auth + reachability). Each item is a
 // boolean ok plus an operator-readable detail (provider OK / "<status>: body" /
 // exception). The storage check is web-only and shaped in the web route.
-const DiagItem = z.object({ ok: z.boolean(), detail: z.string() });
+/**
+ * 自检结果是**三态**,不是两态:绿(测过、通了)、红(测过、不通)、
+ * 没测过(`unverified`)。
+ *
+ * 少了第三态就只能把「没测过」塞进绿的那一格——后台会给它画一个绿勾,而管理员
+ * 恰恰是靠那个勾判断"这个上游能用"。自定义网关地址没有已知的探针形状,填错了、
+ * 密钥被拒都照样得勾,直到某次真拆解(花钱的)才发现。`unverified` 缺省(旧版
+ * AI 服务)按两态处理,不破坏兼容。
+ */
+const DiagItem = z.object({
+  ok: z.boolean(),
+  detail: z.string(),
+  unverified: z.boolean().optional(),
+});
 export const DiagResponse = z.object({
   image: DiagItem,
   vlm: DiagItem,

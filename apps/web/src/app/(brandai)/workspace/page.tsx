@@ -1165,21 +1165,30 @@ function Workspace() {
     }
   }, [decomposePoll, qc, wsId, genId, projectId, syncDecomposeTaskUrl]);
 
-  // §2.4 中间态上界:分解卡死就解锁并给出口,不无限显示「分解中…」。
+  // §2.4 中间态上界:等太久就停止跟,并说清下一步。
   //
-  // **上界到了只停止跟,不销毁线索**:`?decomposeTask=` 这几个参数原样留在地址栏,
-  // 刷新一次就会被上面那个续跑 effect 重新捡起来。客户端等腻了不等于服务端失败——
-  // 服务端状态才是权威(§2.2),这一单是花过钱的,把 taskId 抹掉等于逼用户再花一次。
+  // **只停止跟,不销毁任何东西**——地址栏的 `?decomposeTask=` 这几个参数、以及
+  // `decomposeTaskId` 本身(它同时是「别再提交一单」的闸)都原样留着。
+  //
+  // 这两样各丢一样都会把用户推去再花一次钱:抹掉 URL 参数,刷新就找不回这一单;
+  // 抹掉 taskId,按钮当场解锁,再点一次就是第二单**而且会覆盖掉指向第一单的那几个
+  // URL 参数**,第一单从此没人认领。客户端等腻了不等于服务端失败——服务端状态才是
+  // 权威(§2.2)。
+  //
+  // 出口是刷新:续跑 effect 会重新拉一次任务,已终态就收拾干净并解锁,还在跑就
+  // 重新挂上轮询。轮询停了也不是死路,窗口重新获得焦点时 React Query 还会再探一次。
   useEffect(() => {
     if (!decomposeTaskId) return;
+    let notified = false;
     const t = setInterval(() => {
-      if (decomposeWatchExpired()) {
-        setDecomposeTaskId(null);
-        setActionErr(
-          "图层分解等太久了:任务仍在后台跑,刷新页面可以继续跟进度,结果出来会回到这张图下面。",
-        );
-        qc.invalidateQueries({ queryKey: ["brandai-gen", wsId, genId] });
-      }
+      if (notified || !decomposeWatchExpired()) return;
+      // 只播报一次:这条 effect 不再自我了结(taskId 留着),不设闸就会每 3 秒
+      // 重复 invalidate 一轮。
+      notified = true;
+      setActionErr(
+        "图层分解等太久了:任务仍在后台跑,按钮先锁着以免重复下单。刷新页面可以继续跟进度,结果出来会回到这张图下面。",
+      );
+      qc.invalidateQueries({ queryKey: ["brandai-gen", wsId, genId] });
     }, 3000);
     return () => clearInterval(t);
   }, [decomposeTaskId, qc, wsId, genId, decomposeWatchExpired]);

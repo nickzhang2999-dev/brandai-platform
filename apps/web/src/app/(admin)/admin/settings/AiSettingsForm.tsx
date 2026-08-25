@@ -32,6 +32,18 @@ interface Masked {
 
 type Kind = "image" | "vlm" | "layer";
 
+/**
+ * 自检的一行。三态:绿(测过、通了)/ 红(测过、不通)/ 没测过。
+ *
+ * `unverified` 不能被折进 `ok`——管理员就是靠这一行判断"这个上游能不能用",
+ * 把「没测过」画成绿勾等于替他下了一个没有依据的结论。
+ */
+interface DiagLine {
+  ok: boolean;
+  detail: string;
+  unverified?: boolean;
+}
+
 const KIND_LABEL: Record<Kind, string> = {
   image: "出图",
   vlm: "视觉",
@@ -101,10 +113,10 @@ export function AiSettingsForm({ initial }: { initial: Masked }) {
   // 测试连接 self-check state.
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{
-    image: { ok: boolean; detail: string };
-    vlm: { ok: boolean; detail: string };
-    layer: { ok: boolean; detail: string };
-    storage: { ok: boolean; detail: string };
+    image: DiagLine;
+    vlm: DiagLine;
+    layer: DiagLine;
+    storage: DiagLine;
   } | null>(null);
   const [testError, setTestError] = useState<string | null>(null);
 
@@ -476,9 +488,16 @@ export function AiSettingsForm({ initial }: { initial: Masked }) {
               ).map(([label, r]) => (
                 <li key={label} className="text-sm">
                   <span
-                    className={r.ok ? "text-success" : "text-destructive"}
+                    className={
+                      r.unverified
+                        ? "text-muted-foreground"
+                        : r.ok
+                          ? "text-success"
+                          : "text-destructive"
+                    }
                   >
-                    {r.ok ? "✅" : "❌"} {label}
+                    {r.unverified ? "—" : r.ok ? "✅" : "❌"} {label}
+                    {r.unverified ? "（未验证）" : ""}
                   </span>
                   <span className="ml-2 font-mono text-xs text-muted-foreground break-all">
                     {r.detail}

@@ -298,12 +298,26 @@ export async function runDecomposeJob(
       await rollbackLayerSet();
       throw new Error("提交后判超时,已撤销本组图层");
     }
+    // **在这里认领终态**,而不是等 markSucceeded 写完。
+    //
+    // 只判不认领的话还剩一条缝:看门狗恰在下面几个 await 之间烧掉,`failOnce` 会
+    // 回滚整组并把任务标 FAILED,而这条链稍后照样把 SUCCEEDED 写上去——用户拿到
+    // 一个成功的任务,`refId` 却指向一组已经被删掉的图层。判据与置位之间没有
+    // await,单线程下插不进第二个写入者,这一句就是那把锁。
+    settled = true;
 
-    await job.updateProgress(100);
-    await markSucceeded(taskId, {
-      refId: layerSetId,
-      refCount: versionIds.length,
-    });
+    try {
+      await job.updateProgress(100);
+      await markSucceeded(taskId, {
+        refId: layerSetId,
+        refCount: versionIds.length,
+      });
+    } catch (writeErr) {
+      // 认领了却没写成(库挂了/进程被打断)。这时必须把认领让出去,否则下面的
+      // `failOnce` 看见 settled 会直接返回,留下"整组可见 + 任务永远 RUNNING"。
+      settled = false;
+      throw writeErr;
+    }
     return { generationId, sourceVersionId: source.id, layerSetId, versionIds };
   } catch (err) {
     // 兜底撤销。整组落库已经是一次事务,正常情况下失败时库里本就没有半成品;

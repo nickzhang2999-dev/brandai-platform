@@ -12,6 +12,8 @@ import { getEffectiveStorage } from "@/lib/settings";
 interface CheckResult {
   ok: boolean;
   detail: string;
+  /** 什么都没探测过——既不是绿也不是红。三态的第三态,见 contracts 的 `DiagItem`。 */
+  unverified?: boolean;
 }
 
 /**

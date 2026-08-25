@@ -5,11 +5,19 @@ from typing import Any
 
 class ProviderCheck:
     """Result of a cheap reachability/auth self-check. `ok` plus a short,
-    operator-readable `detail` (status + body snippet, or exception name)."""
+    operator-readable `detail` (status + body snippet, or exception name).
 
-    def __init__(self, ok: bool, detail: str):
+    `unverified` is the third state: nothing was actually probed, so this
+    result proves nothing either way. It exists because "we didn't test it"
+    was previously reported as `ok=True` and rendered as a green check —
+    a typo'd gateway or a rejected key passed 「测试连接」 and was only
+    discovered by a paid job later. Green must mean *measured* green.
+    """
+
+    def __init__(self, ok: bool, detail: str, unverified: bool = False):
         self.ok = ok
         self.detail = detail
+        self.unverified = unverified
 
 
 class ImageProvider(ABC):

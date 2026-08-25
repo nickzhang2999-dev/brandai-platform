@@ -33,6 +33,15 @@ export function LayerPanel({
   const [view, setView] = useState<LayerSetView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  /**
+   * 正在拖的那几根不透明度滑杆的当前值(versionId → 0..1)。
+   *
+   * 滑杆**不能**跟着 `busy` 一起 disable:原生 range 的第一次 `onChange` 就会发出
+   * PATCH,`busy` 立刻置真,输入框在拖拽中途被禁用——浏览器随即中断这次拖拽,值
+   * 停在用户刚划过的第一个中间档，而不是他松手的位置。所以拖拽期间只更新这份本地
+   * 草稿,松手(或键盘操作结束)时才落库。
+   */
+  const [draft, setDraft] = useState<Record<string, number>>({});
 
   const base = `/api/workspaces/${wsId}/generations/${generationId}/layer-sets/${setId}`;
 
@@ -75,6 +84,27 @@ export function LayerPanel({
       }
     },
     [base, onChanged],
+  );
+
+  /** 松手才落库:与服务端一致就什么都不做,免得每次点一下都白发一次 PATCH。 */
+  const commitOpacity = useCallback(
+    async (versionId: string, current: number) => {
+      const next = draft[versionId];
+      const clear = () =>
+        setDraft((d) => {
+          if (!(versionId in d)) return d;
+          const { [versionId]: _drop, ...rest } = d;
+          return rest;
+        });
+      if (next === undefined || next === current) {
+        clear();
+        return;
+      }
+      // 先落库再清草稿:反过来的话,服务端回包到达之前滑杆会先弹回旧值闪一下。
+      await patch([{ versionId, opacity: next }]);
+      clear();
+    },
+    [draft, patch],
   );
 
   const move = (versionId: string, dir: -1 | 1) => {
@@ -187,16 +217,21 @@ export function LayerPanel({
               aria-label="不透明度"
               min={0}
               max={100}
-              value={Math.round(layer.opacity * 100)}
-              disabled={busy}
-              onChange={(e) =>
-                void patch([
-                  {
-                    versionId: layer.versionId,
-                    opacity: Number(e.target.value) / 100,
-                  },
-                ])
+              value={Math.round(
+                (draft[layer.versionId] ?? layer.opacity) * 100,
+              )}
+              // 刻意不写 `disabled={busy}`：拖到一半被禁用会中断这次拖拽。
+              onChange={(e) => {
+                const v = Number(e.target.value) / 100;
+                setDraft((d) => ({ ...d, [layer.versionId]: v }));
+              }}
+              onPointerUp={() =>
+                void commitOpacity(layer.versionId, layer.opacity)
               }
+              onKeyUp={() =>
+                void commitOpacity(layer.versionId, layer.opacity)
+              }
+              onBlur={() => void commitOpacity(layer.versionId, layer.opacity)}
               className="w-14 shrink-0 accent-primary"
             />
             <span className="flex shrink-0 flex-col">
