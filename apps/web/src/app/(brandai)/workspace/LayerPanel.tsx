@@ -149,8 +149,9 @@ export function LayerPanel({
             <img
               src={layer.imageUrl}
               alt={`图层 ${i + 1}`}
-              className="h-8 w-8 shrink-0 rounded object-contain"
-              style={{ background: "rgb(244 240 255 / 0.6)" }}
+              // 缩略图垫一层浅底，透明区域才看得出形状。走语义 token:硬编码那串
+              // lavender 在深色主题下是错的(`--accent-soft` 那时是 48 40 80)。
+              className="h-8 w-8 shrink-0 rounded bg-accent-soft/60 object-contain"
             />
             <div className="min-w-0 flex-1">
               <div className="truncate text-xs text-foreground">

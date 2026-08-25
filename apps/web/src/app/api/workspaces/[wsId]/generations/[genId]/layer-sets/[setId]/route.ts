@@ -78,16 +78,24 @@ export async function PATCH(
       }
     }
 
+    // 先把要改的行一次读齐,再把所有更新放进**一个事务**。
+    //
+    // 逐条提交的话,一次调序(它天生就是"给每一层重新发号"、要改 N 行)中途出错
+    // 就会留下一半新号一半旧号——往往直接撞出重复的 z;而且即便最终成功,期间
+    // 并发的 GET / 导出也会读到那个中间序。层序只有一个口径,那它就得整体生效。
+    const rows = await prisma.generationVersion.findMany({
+      where: { id: { in: input.layers.map((p) => p.versionId) } },
+    });
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    const updates = [];
     for (const patch of input.layers) {
-      const row = await prisma.generationVersion.findUnique({
-        where: { id: patch.versionId },
-      });
+      const row = byId.get(patch.versionId);
       if (!row || !isLayerVersion(row.params, setId)) continue;
       const current =
         row.params && typeof row.params === "object"
           ? (row.params as Record<string, unknown>)
           : {};
-      await prisma.generationVersion.update({
+      updates.push({
         where: { id: patch.versionId },
         data: {
           params: {
@@ -100,6 +108,12 @@ export async function PATCH(
           } as Prisma.InputJsonValue,
         },
       });
+    }
+
+    if (updates.length > 0) {
+      await prisma.$transaction(
+        updates.map((u) => prisma.generationVersion.update(u)),
+      );
     }
 
     return ok(await loadSet(wsId, genId, setId));

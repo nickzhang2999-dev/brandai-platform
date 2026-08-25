@@ -64,6 +64,22 @@ async function fetchLayerBytes(url: string): Promise<{ buf: Buffer; mime: string
   return { buf, mime: res.headers.get("content-type") || "image/png" };
 }
 
+/**
+ * §2.4 看门狗上界。
+ *
+ * 真上游实测最长 110 秒(1.5MB data-URL 入参那次),再加 N 层的下载与全幅 alpha
+ * 扫描,6 分钟足够宽。取这个值还有一层考虑:客户端的中间态上界也是 6 分钟,两边
+ * 对齐,不会出现"页面已经放弃、服务端还标着 RUNNING"的长期不一致。
+ */
+const TIMEOUT_MS = 6 * 60_000;
+
+class DecomposeTimeoutError extends Error {
+  constructor() {
+    super(`图层分解超时（超过 ${Math.round(TIMEOUT_MS / 1000)} 秒）`);
+    this.name = "DecomposeTimeoutError";
+  }
+}
+
 export async function runDecomposeJob(
   job: Job<DecomposeJobData>,
 ): Promise<DecomposeJobResult> {
@@ -77,6 +93,68 @@ export async function runDecomposeJob(
     taskId,
   } = job.data;
 
+  // §2.4:整条流程与 TIMEOUT_MS 赛跑,超时落进外层 catch → 任务标 FAILED。
+  //
+  // 这一条对分解尤其要紧:它是全仓**唯一** concurrency:1 的 worker(其余都是 2),
+  // 卡死一个 job 不只是这一次拆解永远 RUNNING,而是把整条分解队列堵死——后面所有
+  // 人的分解都排在它后面。
+  //
+  // Promise.race 只决定外层 await 看见谁,**不会取消**里面那条链(AI fetch 没有
+  // AbortController)。所以让外层先写终态:`markFailed` 之后即使孤儿链稍后跑完,
+  // 它落库的那一组也会被 catch 里的整组回滚清掉,不会留下"任务失败但图层却在"。
+  let watchdog: NodeJS.Timeout | null = null;
+  const timeout = new Promise<never>((_, reject) => {
+    watchdog = setTimeout(() => reject(new DecomposeTimeoutError()), TIMEOUT_MS);
+  });
+  const clearWatchdog = () => {
+    if (watchdog) clearTimeout(watchdog);
+    watchdog = null;
+  };
+
+  /**
+   * 终态只许写一次,谁先到算谁的(看门狗或内层的失败)。
+   *
+   * 超时之后那条孤儿链还在跑,它可能稍后把整组提交进库;`rollbackLayerSet` 用的
+   * 是与所有读路径同源的条件,所以无论先后,最终留下的都是"任务 FAILED + 这一组
+   * 不存在",不会出现"任务失败但图层却在画布上"。
+   */
+  let settled = false;
+  const rollbackLayerSet = async () => {
+    try {
+      const removed = await prisma.generationVersion.deleteMany({
+        where: {
+          generationId,
+          params: { path: ["layerSetId"], equals: layerSetId },
+        },
+      });
+      if (removed.count > 0) {
+        console.warn(
+          `[decompose] rolled back ${removed.count} partial layer(s) of set ${layerSetId}`,
+        );
+      }
+    } catch (cleanupErr) {
+      // 撤销失败不能盖掉真正的失败原因——那才是用户要看的那一句。
+      console.error("[decompose] rollback failed", cleanupErr);
+    }
+  };
+  const failOnce = async (err: unknown) => {
+    if (settled) return;
+    settled = true;
+    await rollbackLayerSet();
+    await markFailed(taskId, String(err));
+  };
+
+  try {
+    const out = await Promise.race([runDecomposeInner(), timeout]);
+    clearWatchdog();
+    return out;
+  } catch (err) {
+    clearWatchdog();
+    await failOnce(err);
+    throw err;
+  }
+
+  async function runDecomposeInner(): Promise<DecomposeJobResult> {
   try {
     await job.updateProgress(5);
     await markRunning(taskId, 5);
@@ -145,6 +223,7 @@ export async function runDecomposeJob(
     const prepared: Prisma.GenerationVersionCreateInput[] = [];
     for (let i = 0; i < result.layers.length; i++) {
       const layer = result.layers[i]!;
+
       const { buf, mime } = await fetchLayerBytes(layer.imageUrl);
       const analysis = await analyzeLayerImage(buf);
       const dataUrl = `data:${mime};base64,${buf.toString("base64")}`;
@@ -195,12 +274,30 @@ export async function runDecomposeJob(
       await setProgress(taskId, pct);
     }
 
+    // 已经被判超时就别再提交了。
+    //
+    // Promise.race 不会取消这条链:看门狗写完 FAILED 之后它还在跑,跑完照样能把
+    // 整组插进去——那时用户看到的是"任务失败,可图层却在画布上"。实测过:不加这
+    // 道闸,超时后该组仍残留 4 行。
+    if (settled) {
+      throw new Error(
+        `已超时并判失败,丢弃迟到的 ${prepared.length} 层分解结果`,
+      );
+    }
+
     // 一次事务把整组提交:要么这一组完整出现,要么一层都不出现。半成品可见期
     // 归零,前面那条失败回滚也就只剩下"事务之外出岔子"这一道兜底。
     const createdRows = await prisma.$transaction(
       prepared.map((data) => prisma.generationVersion.create({ data })),
     );
     versionIds.push(...createdRows.map((r) => r.id));
+
+    // 提交与那道闸之间还有一线窗口(毫秒级)。真在这一瞬翻成 settled,就把刚提交
+    // 的这一组撤掉——"要么完整出现、要么不存在"这条不变量不留缝。
+    if (settled) {
+      await rollbackLayerSet();
+      throw new Error("提交后判超时,已撤销本组图层");
+    }
 
     await job.updateProgress(100);
     await markSucceeded(taskId, {
@@ -209,31 +306,12 @@ export async function runDecomposeJob(
     });
     return { generationId, sourceVersionId: source.id, layerSetId, versionIds };
   } catch (err) {
-    // 兜底撤销。整组落库已经改成一次事务,正常情况下失败时库里本就没有半成品;
-    // 但事务**之后**仍有可能出岔子(markSucceeded 失败、进程被杀),那时这一组已
-    // 经可见却没被标成功。留着这一句,让"要么完整、要么没有"这条不变量在事务之
-    // 外也成立。
-    //
-    // 删除条件与所有读路径同源(`params.layerSetId === layerSetId`),而 layerSetId
-    // 是本次 job 现生成的 uuid,不会误伤别的组。撤销本身再失败也不能盖掉真正的
-    // 失败原因——那才是用户要看的那一句。
-    try {
-      const removed = await prisma.generationVersion.deleteMany({
-        where: {
-          generationId,
-          params: { path: ["layerSetId"], equals: layerSetId },
-        },
-      });
-      if (removed.count > 0) {
-        console.warn(
-          `[decompose] rolled back ${removed.count} partial layer(s) of set ${layerSetId}`,
-        );
-      }
-    } catch (cleanupErr) {
-      console.error("[decompose] rollback failed", cleanupErr);
-    }
-    await markFailed(taskId, String(err));
+    // 兜底撤销。整组落库已经是一次事务,正常情况下失败时库里本就没有半成品;
+    // 但事务**之后**仍可能出岔子(markSucceeded 失败、进程被杀),那时这一组已经
+    // 可见却没被标成功。让"要么完整、要么没有"在事务之外也成立。
+    await failOnce(err);
     throw err;
+  }
   }
 }
 
