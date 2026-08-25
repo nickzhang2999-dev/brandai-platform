@@ -212,3 +212,15 @@ export function serializeLayerSet(
     layers,
   };
 }
+
+/**
+ * 这张图是不是矢量（SVG）。
+ *
+ * 分层上游只接受位图；mock 出图给的恰恰是 SVG 占位图，所以没配真实出图上游的
+ * 环境里，"拆一下试试"必然撞上这条。拦在入口比让用户等 20 秒换一句英文
+ * image_load_error 好。
+ */
+export function isVectorImage(url: string): boolean {
+  const u = (url || "").trim().toLowerCase();
+  return u.startsWith("data:image/svg") || /\.svg(\?|#|$)/.test(u);
+}

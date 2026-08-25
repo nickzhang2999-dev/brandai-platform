@@ -268,6 +268,33 @@ export function OpenCanvas({
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  /**
+   * 选中操作条的实测宽度 + 舞台宽度。
+   *
+   * 用来把操作条「推」回舞台内，而不是把它压窄——这两件事在 CSS 里长得很像，
+   * 但差别是致命的：绝对定位元素只写 `left` 不写 `right` 时，浏览器**先**按
+   * 「从 left 到容器右沿」算可用宽度，**再**做 `translate(-50%)` 位移。于是选中
+   * 的图越靠左，操作条被算得越窄（实测：舞台 850、允许 722、实际只有 514，右边
+   * 白白空着 258），wrap 成六行，看着就像有一面无形的墙。
+   *
+   * 解法是给它 `width: max-content` 把尺寸从「可用宽度」里解绑，上限改成按舞台
+   * 算的具体像素，再用实测宽度夹住 left。
+   */
+  const [stageW, setStageW] = useState(0);
+  const [opBarW, setOpBarW] = useState(0);
+  const opBarRoRef = useRef<ResizeObserver | null>(null);
+  const opBarRef = useCallback((node: HTMLDivElement | null) => {
+    opBarRoRef.current?.disconnect();
+    opBarRoRef.current = null;
+    if (!node) {
+      setOpBarW(0);
+      return;
+    }
+    const ro = new ResizeObserver(() => setOpBarW(node.offsetWidth));
+    ro.observe(node);
+    opBarRoRef.current = ro;
+    setOpBarW(node.offsetWidth);
+  }, []);
   const editTextRef = useRef<HTMLTextAreaElement>(null);
   const gestureRef = useRef<Gesture>(null);
   const movedRef = useRef(false);
@@ -929,6 +956,16 @@ export function OpenCanvas({
     }
     fitToContent();
   }, [items, fitKey, fitToContent]);
+
+  // ---- 舞台宽度(操作条落位要用,窗口/侧栏变化都得跟) ----
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    setStageW(el.clientWidth);
+    const ro = new ResizeObserver(() => setStageW(el.clientWidth));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   // ---- wheel 手势(passive:false,只绑一次) ----
   useEffect(() => {
@@ -1626,6 +1663,9 @@ export function OpenCanvas({
             data-testid="canvas-item"
             data-kind={it.kind}
             data-selected={isSel ? "1" : "0"}
+            // 分解产物在画布上和普通图长得一样,但工具条给的是「图层面板」而不是
+            // 「图层分解」。把组身份挂出来,真测才分得清自己选中的是哪一种。
+            {...(it.layerSetId ? { "data-layer-set": it.layerSetId } : {})}
             className="group/citem"
             onPointerDown={(e) => beginItemDrag(e, it.key)}
             onDoubleClick={(e) => {
@@ -2154,11 +2194,25 @@ export function OpenCanvas({
               ? (soloIt.y + soloIt.h) * zoom + camera.y
               : 0;
             const flip = topY < 120; // 上方放不下 → 放图片下方
+            // 只留一条窄边距,其余整条舞台宽度都归操作条用。
+            const GUTTER = 12;
+            // 用实测宽度把它夹回舞台内:贴边时是整条**平移**,不是被压窄。
+            const half = opBarW / 2;
+            const clampedCx =
+              stageW > 0 && opBarW > 0
+                ? Math.min(
+                    Math.max(cx, half + GUTTER),
+                    Math.max(half + GUTTER, stageW - half - GUTTER),
+                  )
+                : cx;
             const barStyle: React.CSSProperties = soloIt
               ? {
-                  left: Math.max(160, Math.min(cx, 99999)),
+                  left: clampedCx,
+                  // width:max-content 是关键——不写它,宽度会被「从 left 到右沿」
+                  // 的可用宽度悄悄限死(见 opBarW 处的注释)。
+                  width: "max-content",
+                  ...(stageW > 0 ? { maxWidth: stageW - GUTTER * 2 } : {}),
                   top: flip ? bottomY + 12 : undefined,
-                  bottom: flip ? undefined : undefined,
                   transform: "translate(-50%, 0)",
                   ...(flip
                     ? {}
@@ -2167,7 +2221,13 @@ export function OpenCanvas({
                         transform: "translate(-50%, -100%)",
                       }),
                 }
-              : { left: "50%", top: "4.5rem", transform: "translateX(-50%)" };
+              : {
+                  left: "50%",
+                  top: "4.5rem",
+                  width: "max-content",
+                  ...(stageW > 0 ? { maxWidth: stageW - GUTTER * 2 } : {}),
+                  transform: "translateX(-50%)",
+                };
             return (
               <div
                 onPointerDown={(e) => e.stopPropagation()}
@@ -2175,7 +2235,8 @@ export function OpenCanvas({
                 // 元素靠近画布下沿时它正好落在坞的矩形上,而坞层级更高——于是「改色」
                 // 「局部重画」这些按钮看得见、点不动(浏览器真测里是 "intercepts
                 // pointer events" 超时)。这是选区上下文操作,应当压过常驻坞。
-                className="absolute z-40 flex max-w-[calc(100%-8rem)] flex-wrap items-center justify-center gap-1.5 rounded-2xl border border-border bg-card/95 px-2.5 py-2 shadow-[0_14px_40px_rgba(30,30,60,0.12)] backdrop-blur"
+                ref={opBarRef}
+                className="absolute z-40 flex flex-wrap items-center justify-center gap-1.5 rounded-2xl border border-border bg-card/95 px-2.5 py-2 shadow-[0_14px_40px_rgba(30,30,60,0.12)] backdrop-blur"
                 style={barStyle}
               >
                 {edit.ops.map((o) => {

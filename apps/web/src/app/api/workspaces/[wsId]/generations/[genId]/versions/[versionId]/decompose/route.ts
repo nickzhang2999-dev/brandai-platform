@@ -5,7 +5,7 @@ import { ApiException, handleError, ok, requireUser } from "@/lib/api";
 import { requireOwnedWorkspace, requireWorkspaceRole } from "@/lib/workspace";
 import { decomposeQueue } from "@/lib/queue";
 import { createTask } from "@/lib/async-tasks";
-import { isLayerVersion } from "@/lib/layers";
+import { isLayerVersion, isVectorImage } from "@/lib/layers";
 import type { DecomposeJobData } from "@/lib/workers/decompose.worker";
 
 /**
@@ -48,6 +48,15 @@ export async function POST(
     // 拆一张图层本身没有意义:它已经是分解产物,再拆一次只会得到它自己。
     if (isLayerVersion(version.params)) {
       throw new ApiException(400, "该版本已经是图层，不能再次分解");
+    }
+    // 矢量占位图不是位图,分层上游读不了。不拦的话要等排队 → 调上游 → 22 秒后
+    // 拿一句英文的 image_load_error,用户只看到任务 FAILED 而不知道为什么
+    // (mock 出图给的就是 SVG 占位,所以这条在没配真出图上游的环境里必踩)。
+    if (isVectorImage(version.imageUrl)) {
+      throw new ApiException(
+        400,
+        "这张是矢量占位图(SVG)，分层上游只接受位图。先用真实出图上游出一张图再拆。",
+      );
     }
 
     // 直接用 schema 自己的 parse:带 .default() 的 schema 输入/输出类型不同,

@@ -116,8 +116,31 @@ if ((await closeMask.count()) > 0) {
   await page.waitForTimeout(600);
 }
 
+/**
+ * 选一张**位图**来拆。
+ *
+ * mock 出图给的是 SVG 占位图,而分层上游只吃位图——`.first()` 恰好选到它时,
+ * 后面五步会连锁失败,而根因跟画布一点关系都没有(2026-08-25 踩过:worker 日志
+ * 里是上游 422 image_load_error)。所以这里显式跳过 SVG 图块。
+ */
+const selectRasterTile = async () => {
+  // 位图 + 不是分解产物:分解产物的工具条给的是「图层面板」,选中它这一步必红。
+  const tiles = page.locator(
+    "[data-testid=canvas-item][data-kind=image]:not([data-layer-set])",
+  );
+  const n = await tiles.count();
+  for (let i = n - 1; i >= 0; i--) {
+    const src = await tiles.nth(i).locator("img").first().getAttribute("src");
+    if (src && !src.startsWith("data:image/svg")) {
+      await tiles.nth(i).click({ timeout: 8000 }).catch(() => {});
+      return true;
+    }
+  }
+  return false;
+};
+
 await step("选中图片→出现「图层分解」入口", async () => {
-  await page.locator("[data-testid=canvas-item][data-kind=image]").first().click();
+  await selectRasterTile();
   await page.waitForTimeout(500);
   const n = await page.locator('button:has-text("图层分解")').count();
   return { ok: n > 0, detail: `入口 ${n} 个` };
@@ -175,11 +198,30 @@ await step("图层面板自动打开且列出每一层", async () => {
   return { ok: rows >= 4, detail: `${rows} 行` };
 });
 
-await step("细层被标出来，但没有被默认隐藏", async () => {
+await step("覆盖率不决定显隐（细层标记不等于隐藏）", async () => {
   // prd_agent 的缺陷:覆盖率低于 0.2% 判空并默认隐藏,实测那组 0.12% 的角标就被藏了。
+  //
+  // 判据只能断言**规则**,不能断言「这次上游一定给出一个细层」——同一张图不同
+  // seed 有时四层都不细,那样断言会因为数据而红,和代码无关(2026-08-25 踩过)。
+  // 规则有两条:① 一层都不许被默认隐藏;② 标了「细」的那些,覆盖率必须真的很小。
+  const rows = await page.locator("[data-testid=layer-row]").count();
+  const hiddenRows = await page
+    .locator('[data-testid=layer-row][data-hidden="1"]')
+    .count();
   const thin = await page.locator("[data-testid=layer-thin-badge]").count();
-  const hiddenRows = await page.locator('[data-testid=layer-row][data-hidden="1"]').count();
-  return { ok: thin >= 1 && hiddenRows === 0, detail: `细层 ${thin} 个 / 默认隐藏 ${hiddenRows} 个` };
+  const thinCoverageOk = await page.evaluate(() => {
+    const badged = [...document.querySelectorAll("[data-testid=layer-row]")].filter(
+      (r) => r.querySelector("[data-testid=layer-thin-badge]"),
+    );
+    return badged.every((r) => {
+      const m = /覆盖\s*([\d.]+)%/.exec(r.textContent || "");
+      return m && Number(m[1]) > 0 && Number(m[1]) <= 0.5;
+    });
+  });
+  return {
+    ok: rows > 0 && hiddenRows === 0 && thinCoverageOk,
+    detail: `${rows} 层 / 默认隐藏 ${hiddenRows} / 细层 ${thin}（覆盖率都 ≤0.5%: ${thinCoverageOk}）`,
+  };
 });
 
 await step("隐藏一层→画布上少一块", async () => {
