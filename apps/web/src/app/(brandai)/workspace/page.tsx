@@ -1070,6 +1070,15 @@ function Workspace() {
   const [layerIntent, setLayerIntent] = useState("");
   const [openLayerSetId, setOpenLayerSetId] = useState<string | null>(null);
   const decomposeStartedAt = useRef(0);
+  /**
+   * 发起这次分解时**当时**的 generation / campaign。
+   *
+   * 分解真上游要 12–110 秒,这期间用户完全可能切到别的出图或别的 Campaign。
+   * 完成回调若用「此刻的」genId,就会拿另一条 generation 去开这一组图层——而
+   * layer-set 读接口是 generation 作用域的,面板直接 404,刷的也是错的那条历史。
+   * 付过费的结果其实好端端存在原来那条 generation 下面,只是找不着了。
+   */
+  const decomposeCtx = useRef<{ genId: string; projectId: string } | null>(null);
 
   const { data: decomposePoll } = useQuery<TaskState>({
     queryKey: ["brandai-decompose", wsId, decomposeTaskId],
@@ -1097,11 +1106,24 @@ function Workspace() {
       setActionErr(decomposePoll?.error || "图层分解失败,请重试。");
       return;
     }
-    qc.invalidateQueries({ queryKey: ["brandai-gen", wsId, genId] });
-    qc.invalidateQueries({
-      queryKey: ["brandai-project-gens", wsId, projectId],
-    });
-    if (decomposePoll?.refId) setOpenLayerSetId(decomposePoll.refId);
+    // 一律按**发起时**的 generation/campaign 刷新与开面板,不按此刻的。
+    const ctx =
+      decomposeCtx.current ?? { genId: genId ?? "", projectId: projectId ?? "" };
+    decomposeCtx.current = null;
+    if (ctx.genId) {
+      qc.invalidateQueries({ queryKey: ["brandai-gen", wsId, ctx.genId] });
+    }
+    if (ctx.projectId) {
+      qc.invalidateQueries({
+        queryKey: ["brandai-project-gens", wsId, ctx.projectId],
+      });
+    }
+    // 只有用户还停在那条 generation 上时才自动开面板。已经切走了就别硬开——
+    // 面板是 generation 作用域的,开出来只会是一个 404。结果不会丢:上面那次
+    // invalidate 会让他切回去时看到。
+    if (decomposePoll?.refId && ctx.genId && ctx.genId === genId) {
+      setOpenLayerSetId(decomposePoll.refId);
+    }
   }, [decomposePoll, qc, wsId, genId, projectId, syncDecomposeTaskUrl]);
 
   // §2.4 中间态上界:分解卡死就解锁并给出口,不无限显示「分解中…」。
@@ -1137,6 +1159,11 @@ function Workspace() {
           // 起始时刻已不可考,从"现在"重新起算中间态上界(§2.4)——宁可多等一轮,
           // 也好过刷新一次就立刻判超时。
           decomposeStartedAt.current = Date.now();
+          // URL 里的 `?gen=`/`?project=` 是提交那一刻写下的,与这个任务同源。
+          const url = new URLSearchParams(window.location.search);
+          const g = url.get("gen");
+          const p = url.get("project");
+          if (g) decomposeCtx.current = { genId: g, projectId: p ?? "" };
           setDecomposeTaskId(t);
           return;
         }
@@ -1162,6 +1189,7 @@ function Workspace() {
       if (!genId || decomposeTaskId) return;
       setActionErr(null);
       decomposeStartedAt.current = Date.now();
+      decomposeCtx.current = { genId, projectId: projectId ?? "" };
       try {
         const res = await apiFetch<{ taskId: string; layerSetId: string }>(
           `/api/workspaces/${wsId}/generations/${genId}/versions/${version.id}/decompose`,
@@ -1185,7 +1213,15 @@ function Workspace() {
         );
       }
     },
-    [wsId, genId, decomposeTaskId, layerCount, layerIntent, syncDecomposeTaskUrl],
+    [
+      wsId,
+      genId,
+      projectId,
+      decomposeTaskId,
+      layerCount,
+      layerIntent,
+      syncDecomposeTaskUrl,
+    ],
   );
 
   // 改图 server-authoritative:POST→202→轮询 edit job→成功后刷新主 generation,

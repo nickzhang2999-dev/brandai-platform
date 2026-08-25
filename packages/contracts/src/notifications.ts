@@ -22,6 +22,7 @@ export const NotificationKind = z.enum([
   "DESCRIBE",
   "INGEST",
   "SUMMARIZE",
+  "DECOMPOSE",
 ]);
 export type NotificationKind = z.infer<typeof NotificationKind>;
 

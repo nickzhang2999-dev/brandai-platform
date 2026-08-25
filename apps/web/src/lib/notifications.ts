@@ -42,6 +42,10 @@ const TASK_KIND_META: Record<
   // SUMMARIZE covers both brief-decompose (homepage 立项) and campaign AI
   // summary — both write a Campaign, so the inbox links to the Campaign list.
   SUMMARIZE: { kind: "SUMMARIZE", label: "AI 摘要", href: "/campaigns" },
+  // 图层分解跑 12–110 秒，用户完全可能中途离开这一页。漏登记这一条的话，它的
+  // 终态会被下面那句 `kind: { in: Object.keys(TASK_KIND_META) }` 直接滤掉——任务
+  // 在服务端跑完了，收件箱里却什么都没有（§2.3 要求终态必须有通知）。
+  DECOMPOSE: { kind: "DECOMPOSE", label: "图层分解", href: "/workspace" },
 };
 
 /**

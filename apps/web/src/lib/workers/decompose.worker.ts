@@ -196,6 +196,28 @@ export async function runDecomposeJob(
     });
     return { generationId, sourceVersionId: source.id, layerSetId, versionIds };
   } catch (err) {
+    // 逐层落库,所以中途失败会留下"看着像一组、其实缺层"的残骸:它照样能渲染、
+    // 能导出,而重试只会再造一组新的,不会修好这一组。失败就把这一组整体撤掉,
+    // 让用户看到的要么是完整的一组,要么什么都没有。
+    //
+    // 删除条件与所有读路径同源(`params.layerSetId === layerSetId`),而 layerSetId
+    // 是本次 job 现生成的 uuid,不会误伤别的组。撤销本身再失败也不能盖掉真正的
+    // 失败原因——那才是用户要看的那一句。
+    try {
+      const removed = await prisma.generationVersion.deleteMany({
+        where: {
+          generationId,
+          params: { path: ["layerSetId"], equals: layerSetId },
+        },
+      });
+      if (removed.count > 0) {
+        console.warn(
+          `[decompose] rolled back ${removed.count} partial layer(s) of set ${layerSetId}`,
+        );
+      }
+    } catch (cleanupErr) {
+      console.error("[decompose] rollback failed", cleanupErr);
+    }
     await markFailed(taskId, String(err));
     throw err;
   }

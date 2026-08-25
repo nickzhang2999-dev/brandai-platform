@@ -11,8 +11,10 @@ import {
   canExportLayeredDocument,
   compareLayerOrder,
   groupVersionsIntoLayerSets,
+  LAYER_PARAM_KEYS,
   isEmptyCoverage,
   isThinCoverage,
+  stripLayerMeta,
   planLayerSetRect,
   readLayerMeta,
   sortLayers,
@@ -372,5 +374,46 @@ describe("图层组落位", () => {
     }));
     const rect = planLayerSetRect(source, wall);
     expect(Number.isFinite(rect.x)).toBe(true);
+  });
+});
+
+describe("从图层派生新版本必须先摘掉组身份", () => {
+  const layerParams = {
+    imageKind: "GENERATED",
+    layerRole: "layer",
+    layerSetId: "set-1",
+    layerIndex: 2,
+    layerZ: 2,
+    layerHidden: false,
+    layerOpacity: 1,
+    layerBounds: { left: 1, top: 2, width: 3, height: 4 },
+    layerInkCoverage: 0.12,
+    layerThin: false,
+    decompose: { sourceVersionId: "v-src" },
+    watermarkOverlays: [{ assetId: "a-1" }],
+  };
+
+  it("摘干净之后 readLayerMeta 认不出它是图层", () => {
+    // 这条就是缺陷本体:改图 worker 把 sourceParams 整个抄进子版本,于是改完一层
+    // 之后组里出现两个同 index 的成员,画布叠两遍、导出也导两份。
+    expect(readLayerMeta(layerParams)).not.toBeNull();
+    expect(readLayerMeta(stripLayerMeta(layerParams))).toBeNull();
+  });
+
+  it("只摘图层身份，其余字段一个不动", () => {
+    const out = stripLayerMeta(layerParams) as Record<string, unknown>;
+    expect(out.imageKind).toBe("GENERATED");
+    expect(out.watermarkOverlays).toEqual([{ assetId: "a-1" }]);
+    for (const key of LAYER_PARAM_KEYS) expect(key in out).toBe(false);
+  });
+
+  it("摘过之后不会再被聚进任何图层组", () => {
+    const grouped = groupVersionsIntoLayerSets([
+      { id: "v-layer", params: layerParams },
+      { id: "v-edited", params: stripLayerMeta(layerParams) },
+    ]);
+    expect(grouped.sets).toHaveLength(1);
+    expect(grouped.sets[0]!.layers.map((l) => l.id)).toEqual(["v-layer"]);
+    expect(grouped.plain.map((p) => p.id)).toEqual(["v-edited"]);
   });
 });

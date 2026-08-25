@@ -150,6 +150,39 @@ export function readLayerMeta(params: unknown): LayerMeta | null {
   };
 }
 
+/**
+ * `params` 里属于「图层身份」的那几把钥匙。
+ *
+ * 单列一份是因为它是**契约**:worker 写它、`readLayerMeta` 读它、layer-set 查询
+ * 按 `layerSetId` 过滤、画布按 `layerSetId` 分组。任何"从一个图层派生出新版本"
+ * 的链路(改图/局部重画/加水印…)都必须先把它们摘干净,否则派生出来的那一版会被
+ * 当成同一组里的**第二个同序号成员**——组凭空变大,画布叠两遍,PSD/ZIP 也导两份。
+ */
+export const LAYER_PARAM_KEYS = [
+  "layerRole",
+  "layerSetId",
+  "layerIndex",
+  "layerZ",
+  "layerHidden",
+  "layerOpacity",
+  "layerBounds",
+  "layerInkCoverage",
+  "layerThin",
+  "decompose",
+] as const;
+
+/**
+ * 摘掉图层身份,其余字段原样保留。
+ *
+ * 语义是「这一版不再属于任何图层组」,不是「这一版替换了原来那层」——替换是另一
+ * 套血缘(要重算包围盒与覆盖率、要继承 z、要让原层退场),不在此处臆造。
+ */
+export function stripLayerMeta<T extends object>(params: T): Partial<T> {
+  const out: Record<string, unknown> = { ...(params as Record<string, unknown>) };
+  for (const key of LAYER_PARAM_KEYS) delete out[key];
+  return out as Partial<T>;
+}
+
 export interface VersionWithParams {
   id: string;
   params: unknown;
