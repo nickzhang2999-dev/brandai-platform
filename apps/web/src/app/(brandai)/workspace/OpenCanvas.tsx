@@ -9,6 +9,11 @@ import {
   type MutableRefObject,
 } from "react";
 import type { GenerationVersion } from "@brandai/contracts";
+import {
+  groupVersionsIntoLayerSets,
+  planLayerSetRect,
+  readLayerMeta,
+} from "@brandai/contracts";
 
 /**
  * 开放世界画布 —— 迁移自 prd_agent 视觉创作 AdvancedVisualAgentTab 的无限平面画布
@@ -26,6 +31,8 @@ import type { GenerationVersion } from "@brandai/contracts";
 export type CanvasItemKind = "image" | "shape" | "text";
 export type ShapeType = "rect" | "circle" | "triangle" | "star";
 
+type LayerRect = { x: number; y: number; w: number; h: number };
+
 export type CanvasItem = {
   key: string;
   kind: CanvasItemKind;
@@ -42,6 +49,13 @@ export type CanvasItem = {
   /** 上传同步态（仅本地内存，不持久化）：pending=本地预览已上画布、资产上传中；
    *  failed=上传失败（刷新会丢）。undefined/synced=已持久。 */
   syncStatus?: "pending" | "synced" | "failed";
+  /** 图层分解产物:属于哪一组、是第几层。有值即表示这块是一个图层。 */
+  layerSetId?: string;
+  layerIndex?: number;
+  /** 服务端权威的呈现态,由 seedVersions 同步下来(不进画布 JSON,避免双事实源)。 */
+  layerHidden?: boolean;
+  layerOpacity?: number;
+  layerZ?: number;
   // shape
   shapeType?: ShapeType;
   fill?: string;
@@ -131,6 +145,22 @@ export type CanvasEditBridge = {
   onInstrChange: (v: string) => void;
   onRun: (version: GenerationVersion, op: string) => void;
   onOpenMask: (version: GenerationVersion) => void;
+  /**
+   * 图层分解(AI 分层)。刻意不放进 `ops`:那一排每项都是「一进一出」走 /edit,
+   * 而分解是「一进 N 出」走自己的任务链路,共用同一个提交函数只会把两种语义
+   * 揉在一起。它也不吃 `instr`——层数与拆法由自己的气泡收集。
+   */
+  decompose?: {
+    busy: boolean;
+    layerCount: number;
+    onLayerCountChange: (n: number) => void;
+    intent: string;
+    onIntentChange: (v: string) => void;
+    onRun: (version: GenerationVersion) => void;
+    /** 选中的这块属于某个图层组时给出组 id,用来开图层面板。 */
+    activeSetId?: string | null;
+    onOpenPanel?: (setId: string) => void;
+  };
   /** V0.0.13e — 终选/交付/审阅（BrandAI 特有业务，视觉创作无此概念）：
    *  下方独立面板已删，动作挪进画布选中工具条（跟随画布选中，交互形态与
    *  视觉创作的「选中即操作」一致）。 */
@@ -266,6 +296,8 @@ export function OpenCanvas({
   // 选中出图变体后「待执行的改图操作」(arm)。点 op chip 只是选中操作(不立即发图),
   // 输入指令后回车/点「出图」才真正改图——避免「点一下就锁死整条工具条」。
   const [armedOp, setArmedOp] = useState<string | null>(null);
+  /** 「图层分解」的层数/拆法气泡是否展开。点一下先问怎么拆,不闷头按默认开拆。 */
+  const [decomposeOpen, setDecomposeOpen] = useState(false);
 
   const commitTextEdit = useCallback((key: string, value: string) => {
     setItems((prev) =>
@@ -576,15 +608,46 @@ export function OpenCanvas({
       const have = new Set(
         kept.filter((it) => it.versionId).map((it) => it.versionId),
       );
-      const fresh = seedVersions.filter(
+      const freshAll = seedVersions.filter(
         (v) => !have.has(v.id) && !removedVersionIdsRef.current.has(v.id),
       );
-      if (fresh.length === 0) return kept;
+      // 已在画布上的图层 tile 也要跟着服务端的显隐/不透明度/层序走 —— 它们是
+      // 服务端权威状态(刷新、换设备、分享都读同一份),不进画布 JSON。
+      const synced = kept.map((it) => {
+        if (!it.versionId) return it;
+        const meta = readLayerMeta(byId.get(it.versionId)?.params);
+        if (!meta) return it;
+        if (
+          it.layerHidden === meta.hidden &&
+          it.layerOpacity === meta.opacity &&
+          it.layerZ === meta.z
+        )
+          return it;
+        return {
+          ...it,
+          layerHidden: meta.hidden,
+          layerOpacity: meta.opacity,
+          layerZ: meta.z,
+        };
+      });
+      if (freshAll.length === 0) return synced;
+
+      // 图层组必须以**组**为单位出现:一次拆 4 层不是画布上凭空多出四张散图,
+      // 而是原图右侧多出一个可拆解的副本(默认叠放,看着和原图一样)。
+      const grouped = groupVersionsIntoLayerSets(freshAll);
+      const fresh = grouped.plain;
+      const occupied: LayerRect[] = synced.map((it) => ({
+        x: it.x,
+        y: it.y,
+        w: it.w,
+        h: it.h,
+      }));
+
       // 新 tile 落在现有内容包围盒下方（避免与累积的旧图/手动元素重叠）。
       // 4 列换行：历史 generation 全量回填（老项目首次进入）可能一次落几十张，
       // 单行会拉出超长横条。
-      const maxY = kept.length
-        ? Math.max(...kept.map((it) => it.y + it.h))
+      const maxY = occupied.length
+        ? Math.max(...occupied.map((b) => b.y + b.h))
         : -64;
       const COLS = 4;
       let rowY = maxY + 64;
@@ -602,9 +665,87 @@ export function OpenCanvas({
         rowH = Math.max(rowH, item.h);
         return placed;
       });
-      return [...kept, ...add];
+
+      // 图层组落位放在最后:它要贴着**源图 tile**的右侧,而首屏时源图自己也在
+      // 这一批 fresh 里,先算组就会拿不到它 —— 组和普通图会一起挤在原点。
+      const settled = [...synced, ...add];
+      const occupiedAll: LayerRect[] = settled.map((it) => ({
+        x: it.x,
+        y: it.y,
+        w: it.w,
+        h: it.h,
+      }));
+      const placedSets: CanvasItem[] = [];
+      for (const set of grouped.sets) {
+        const sourceTile = set.sourceVersionId
+          ? settled.find((it) => it.versionId === set.sourceVersionId)
+          : undefined;
+        const anchor: LayerRect = sourceTile
+          ? {
+              x: sourceTile.x,
+              y: sourceTile.y,
+              w: sourceTile.w,
+              h: sourceTile.h,
+            }
+          : {
+              x: 0,
+              y:
+                (occupiedAll.length
+                  ? Math.max(...occupiedAll.map((b) => b.y + b.h))
+                  : -64) + 64,
+              w: 280,
+              h: 280,
+            };
+        const rect = planLayerSetRect(anchor, occupiedAll);
+        occupiedAll.push(rect);
+        for (const version of set.layers) {
+          const meta = readLayerMeta(version.params);
+          placedSets.push({
+            key: `v-${version.id}`,
+            kind: "image",
+            versionId: version.id,
+            imageUrl: version.imageUrl,
+            naturalW: version.width,
+            naturalH: version.height,
+            x: rect.x,
+            y: rect.y,
+            w: rect.w,
+            h: rect.h,
+            layerSetId: set.setId,
+            layerIndex: meta?.index ?? 0,
+            layerHidden: meta?.hidden ?? false,
+            layerOpacity: meta?.opacity ?? 1,
+            layerZ: meta?.z ?? meta?.index ?? 0,
+          });
+        }
+      }
+      return [...settled, ...placedSets];
     });
   }, [seedVersions, seedReady]);
+
+  /**
+   * 绘制顺序:DOM 顺序即叠放顺序。
+   *
+   * 图层组内部按服务端的 layerZ 排,组与组、组与其它元素之间维持原有顺序
+   * (以该组第一个成员的位置为锚)。**层序只有这一个口径**——prd_agent 的多选
+   * 导出另起了一份数组序,于是用户调过层序之后导出的文档与画布对不上。
+   */
+  const paintOrder = useMemo(() => {
+    const anchorIndex = new Map<string, number>();
+    items.forEach((it, i) => {
+      if (it.layerSetId && !anchorIndex.has(it.layerSetId))
+        anchorIndex.set(it.layerSetId, i);
+    });
+    return items
+      .map((it, i) => ({
+        it,
+        group: it.layerSetId ? anchorIndex.get(it.layerSetId)! : i,
+        z: typeof it.layerZ === "number" ? it.layerZ : 0,
+        i,
+      }))
+      .sort((a, b) => a.group - b.group || a.z - b.z || a.i - b.i)
+      .map((entry) => entry.it);
+  }, [items]);
 
   // items 变化后(尤其切 generation 时版本 tile 被裁剪)把 selected 收敛到仍存在的 key ——
   // 否则被移除版本的 key 残留在 selected 里,图层/删除条仍高亮可点、键盘操作打到「幽灵
@@ -1463,7 +1604,10 @@ export function OpenCanvas({
       ) : null}
 
       {/* items */}
-      {items.map((it) => {
+      {paintOrder.map((it) => {
+        // 隐藏的图层整块不渲染:它仍在数据里(导出分层文档时照样写进去并标隐藏),
+        // 只是画布上不占视觉。可见性由图层面板控制,不由覆盖率猜。
+        if (it.layerHidden) return null;
         const left = it.x * zoom + camera.x;
         const top = it.y * zoom + camera.y;
         const w = it.w * zoom;
@@ -1498,6 +1642,9 @@ export function OpenCanvas({
               width: w,
               height: h,
               cursor: handCursor ? "inherit" : "move",
+              ...(typeof it.layerOpacity === "number" && it.layerOpacity < 1
+                ? { opacity: it.layerOpacity }
+                : {}),
             }}
           >
             {it.kind === "image" && it.imageUrl ? (
@@ -2024,7 +2171,11 @@ export function OpenCanvas({
             return (
               <div
                 onPointerDown={(e) => e.stopPropagation()}
-                className="absolute z-20 flex max-w-[calc(100%-8rem)] flex-wrap items-center justify-center gap-1.5 rounded-2xl border border-border bg-card/95 px-2.5 py-2 shadow-[0_14px_40px_rgba(30,30,60,0.12)] backdrop-blur"
+                // z-40:选中工具条必须压过底部资源坞(z-30)。工具条跟随选中元素定位,
+                // 元素靠近画布下沿时它正好落在坞的矩形上,而坞层级更高——于是「改色」
+                // 「局部重画」这些按钮看得见、点不动(浏览器真测里是 "intercepts
+                // pointer events" 超时)。这是选区上下文操作,应当压过常驻坞。
+                className="absolute z-40 flex max-w-[calc(100%-8rem)] flex-wrap items-center justify-center gap-1.5 rounded-2xl border border-border bg-card/95 px-2.5 py-2 shadow-[0_14px_40px_rgba(30,30,60,0.12)] backdrop-blur"
                 style={barStyle}
               >
                 {edit.ops.map((o) => {
@@ -2107,6 +2258,117 @@ export function OpenCanvas({
                 >
                   {edit.busy ? "改图中…" : "出图"}
                 </button>
+
+                {/* 图层分解（AI 分层）。单独成段:它一进 N 出，不走上面那条
+                    「选操作 + 指令 → 出图」的改图链路。 */}
+                {edit.decompose ? (
+                  <>
+                    <span className="mx-0.5 h-5 w-px bg-border" />
+                    {edit.decompose.activeSetId ? (
+                      <button
+                        type="button"
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onClick={() =>
+                          edit.decompose?.onOpenPanel?.(
+                            edit.decompose.activeSetId!,
+                          )
+                        }
+                        title="打开这一组的图层面板"
+                        className="rounded-full border border-primary/40 bg-accent-soft px-2.5 py-1 text-xs font-medium text-primary"
+                      >
+                        图层面板
+                      </button>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          onPointerDown={(e) => e.stopPropagation()}
+                          onClick={() =>
+                            setDecomposeOpen((prev) => !prev)
+                          }
+                          disabled={edit.decompose.busy}
+                          title="把这张图拆成多张可独立编辑的透明图层"
+                          className={[
+                            "rounded-full px-2.5 py-1 text-xs transition-colors disabled:opacity-50",
+                            decomposeOpen
+                              ? "bg-accent-soft font-medium text-primary ring-1 ring-primary/40"
+                              : "border border-border text-muted-foreground hover:bg-muted",
+                          ].join(" ")}
+                        >
+                          {edit.decompose.busy ? "分解中…" : "图层分解"}
+                        </button>
+                        {decomposeOpen ? (
+                          <span
+                            className="flex items-center gap-1.5 rounded-lg border border-border bg-background px-2 py-1"
+                            onPointerDown={(e) => e.stopPropagation()}
+                          >
+                            <span className="text-[11px] text-muted-foreground">
+                              层数
+                            </span>
+                            <button
+                              type="button"
+                              aria-label="减少层数"
+                              disabled={edit.decompose.layerCount <= 1}
+                              onClick={() =>
+                                edit.decompose?.onLayerCountChange(
+                                  edit.decompose.layerCount - 1,
+                                )
+                              }
+                              className="h-5 w-5 rounded border border-border text-xs leading-none text-muted-foreground disabled:opacity-40"
+                            >
+                              -
+                            </button>
+                            <span
+                              data-testid="layer-count-value"
+                              className="w-4 text-center font-mono text-xs tabular-nums text-foreground"
+                            >
+                              {edit.decompose.layerCount}
+                            </span>
+                            <button
+                              type="button"
+                              aria-label="增加层数"
+                              disabled={edit.decompose.layerCount >= 10}
+                              onClick={() =>
+                                edit.decompose?.onLayerCountChange(
+                                  edit.decompose.layerCount + 1,
+                                )
+                              }
+                              className="h-5 w-5 rounded border border-border text-xs leading-none text-muted-foreground disabled:opacity-40"
+                            >
+                              +
+                            </button>
+                            <input
+                              value={edit.decompose.intent}
+                              onChange={(e) =>
+                                edit.decompose?.onIntentChange(e.target.value)
+                              }
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" && !edit.decompose?.busy) {
+                                  e.preventDefault();
+                                  edit.decompose?.onRun(soloVersion);
+                                  setDecomposeOpen(false);
+                                }
+                              }}
+                              placeholder="怎么拆？如「logo 单独一层」，可留空"
+                              className="h-7 w-52 rounded-md border border-border bg-background px-2 text-xs text-foreground outline-none focus:border-primary/40"
+                            />
+                            <button
+                              type="button"
+                              disabled={edit.decompose.busy}
+                              onClick={() => {
+                                edit.decompose?.onRun(soloVersion);
+                                setDecomposeOpen(false);
+                              }}
+                              className="h-7 rounded-md bg-gradient-to-br from-primary to-accent px-2.5 text-xs font-medium text-primary-foreground disabled:opacity-40"
+                            >
+                              开拆
+                            </button>
+                          </span>
+                        ) : null}
+                      </>
+                    )}
+                  </>
+                ) : null}
 
                 {/* V0.0.13e — 终选/交付/审阅（原下方面板已删，动作跟随画布选中） */}
                 {edit.delivery ? (

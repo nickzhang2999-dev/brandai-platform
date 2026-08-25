@@ -32,8 +32,10 @@ import type {
 import {
   CHANNEL_SIZES,
   ExactAssetTransform as ExactAssetTransformSchema,
+  readLayerMeta,
   resolveGenerationDefaults,
 } from "@brandai/contracts";
+import type { TaskState } from "@brandai/contracts";
 import { apiFetch, assetThumbUrl } from "@/lib/client";
 import { planTiers, upgradeContactEmail } from "@/lib/brandai-mock";
 import { validateImageUploadFile } from "@/lib/upload-limits";
@@ -47,6 +49,7 @@ import {
 import { useBrand } from "../brand-context";
 import { MaskPaintCanvas } from "./MaskPaintCanvas";
 import { OpenCanvas } from "./OpenCanvas";
+import { LayerPanel } from "./LayerPanel";
 import { ChatPanel, type ChatComposerApi } from "./ChatPanel";
 import {
   ResourceUsagePanel,
@@ -987,6 +990,11 @@ function Workspace() {
   const running =
     !!genId && ACTIVE_GENERATION_STATUSES.has(status ?? "") && !timedOut;
   const current = versions[activeVariant] ?? versions[0];
+  /** 画布上选中的这块是不是某个图层组的成员——决定工具条给「图层分解」还是「图层面板」。 */
+  const currentLayerMeta = useMemo(
+    () => readLayerMeta(current?.params),
+    [current],
+  );
   const editBaseVersion =
     versions.find((v) => v.id === editBaseVersionId) ?? current ?? null;
 
@@ -1033,6 +1041,96 @@ function Workspace() {
   const [busy, setBusy] = useState<null | "edit" | "final" | "export">(null);
   // 局部重画 —— 蒙版绘制覆盖层开关（迁移自 prd_agent 视觉创作）。
   const [maskOpen, setMaskOpen] = useState(false);
+
+  /* ---------------- 图层分解（AI 分层，迁移自 prd_agent 视觉创作） ----------------
+   * server-authoritative:POST → 202 拿 taskId/layerSetId → 轮询任务 → 成功后刷新
+   * generation,N 个图层子版本经 seedVersions 以**一组**的形态落到画布上。
+   * 真上游实测 12–42 秒,所以中间态必须有界(§2.4),超时给可读出口而不是转圈。 */
+  const [decomposeTaskId, setDecomposeTaskId] = useState<string | null>(null);
+  const [layerCount, setLayerCount] = useState(4);
+  const [layerIntent, setLayerIntent] = useState("");
+  const [openLayerSetId, setOpenLayerSetId] = useState<string | null>(null);
+  const decomposeStartedAt = useRef(0);
+
+  const { data: decomposePoll } = useQuery<TaskState>({
+    queryKey: ["brandai-decompose", wsId, decomposeTaskId],
+    queryFn: () =>
+      apiFetch<TaskState>(`/api/workspaces/${wsId}/tasks/${decomposeTaskId}`),
+    enabled: !!decomposeTaskId,
+    refetchInterval: (q) => {
+      const s = q.state.data?.status;
+      if (s === "SUCCEEDED" || s === "FAILED") return false;
+      if (
+        decomposeStartedAt.current > 0 &&
+        Date.now() - decomposeStartedAt.current > POLL_CAP_MS
+      )
+        return false;
+      return 2500;
+    },
+  });
+
+  useEffect(() => {
+    const s = decomposePoll?.status;
+    if (s !== "SUCCEEDED" && s !== "FAILED") return;
+    setDecomposeTaskId(null);
+    if (s === "FAILED") {
+      setActionErr(decomposePoll?.error || "图层分解失败,请重试。");
+      return;
+    }
+    qc.invalidateQueries({ queryKey: ["brandai-gen", wsId, genId] });
+    qc.invalidateQueries({
+      queryKey: ["brandai-project-gens", wsId, projectId],
+    });
+    if (decomposePoll?.refId) setOpenLayerSetId(decomposePoll.refId);
+  }, [decomposePoll, qc, wsId, genId, projectId]);
+
+  // §2.4 中间态上界:分解卡死就解锁并给出口,不无限显示「分解中…」。
+  useEffect(() => {
+    if (!decomposeTaskId) return;
+    const t = setInterval(() => {
+      if (
+        decomposeStartedAt.current > 0 &&
+        Date.now() - decomposeStartedAt.current > POLL_CAP_MS
+      ) {
+        setDecomposeTaskId(null);
+        setActionErr(
+          "图层分解超时:可能仍在后台跑,稍后刷新画布查看,或重试一次。",
+        );
+        qc.invalidateQueries({ queryKey: ["brandai-gen", wsId, genId] });
+      }
+    }, 3000);
+    return () => clearInterval(t);
+  }, [decomposeTaskId, qc, wsId, genId]);
+
+  const runDecompose = useCallback(
+    async (version: GenerationVersion) => {
+      if (!genId || decomposeTaskId) return;
+      setActionErr(null);
+      decomposeStartedAt.current = Date.now();
+      try {
+        const res = await apiFetch<{ taskId: string; layerSetId: string }>(
+          `/api/workspaces/${wsId}/generations/${genId}/versions/${version.id}/decompose`,
+          {
+            method: "POST",
+            // 层数与拆法**只从这次请求带**:它们是花钱的请求参数,不从设备偏好
+            // 继承(prd_agent 存 localStorage,共享浏览器上前一个人选的层数会被
+            // 下一个账号原样继承,而入口不显示层数,用户没机会发现)。
+            body: JSON.stringify({
+              layerCount,
+              ...(layerIntent.trim() ? { intent: layerIntent.trim() } : {}),
+            }),
+          },
+        );
+        setDecomposeTaskId(res.taskId);
+      } catch (err) {
+        decomposeStartedAt.current = 0;
+        setActionErr(
+          err instanceof Error ? err.message : "图层分解提交失败",
+        );
+      }
+    },
+    [wsId, genId, decomposeTaskId, layerCount, layerIntent],
+  );
 
   // 改图 server-authoritative:POST→202→轮询 edit job→成功后刷新主 generation,
   // 新的子版本(parentVersionId)就会出现在变体条里。
@@ -1543,6 +1641,17 @@ function Workspace() {
               onRun: (version, op) =>
                 void runEdit(op, { prompt: editInstr.trim() }, version),
               onOpenMask: (version) => openMaskPaint(version),
+              decompose: {
+                busy: !!decomposeTaskId,
+                layerCount,
+                onLayerCountChange: (n) =>
+                  setLayerCount(Math.max(1, Math.min(10, n))),
+                intent: layerIntent,
+                onIntentChange: setLayerIntent,
+                onRun: (version) => void runDecompose(version),
+                activeSetId: currentLayerMeta?.setId ?? null,
+                onOpenPanel: (setId) => setOpenLayerSetId(setId),
+              },
               // V0.0.13e — 终选/交付/审阅挪进画布选中工具条（原下方面板已删）。
               delivery: current
                 ? {
@@ -1570,6 +1679,21 @@ function Workspace() {
                 : undefined,
             }}
           />
+          {openLayerSetId && genId ? (
+            <LayerPanel
+              wsId={wsId}
+              generationId={genId}
+              setId={openLayerSetId}
+              onClose={() => setOpenLayerSetId(null)}
+              onChanged={() => {
+                // 显隐/层序是服务端权威:改完重新拉版本,画布按新的 layerZ 重绘。
+                qc.invalidateQueries({ queryKey: ["brandai-gen", wsId, genId] });
+                qc.invalidateQueries({
+                  queryKey: ["brandai-project-gens", wsId, projectId],
+                });
+              }}
+            />
+          ) : null}
           <ResourceUsagePanel
             open={resourcePanelOpen}
             resources={workspaceResources}

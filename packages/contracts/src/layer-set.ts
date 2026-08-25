@@ -67,3 +67,185 @@ export function canExportFlattened(
 ): boolean {
   return layers.some((layer) => !layer.hidden && !!layer.imageUrl);
 }
+
+/* ------------------------------------------------------------------ *
+ * 从 GenerationVersion.params 读图层元数据
+ *
+ * 图层是普通的出图子版本（方案 A），身份全写在 params 里。读法只此一份：
+ * worker 写、BFF 读、画布渲染、导出排序全走它，避免四处各自 `as any` 取字段。
+ * ------------------------------------------------------------------ */
+
+export interface LayerMeta {
+  setId: string;
+  index: number;
+  z: number;
+  hidden: boolean;
+  opacity: number;
+  thin: boolean;
+  inkCoverage: number;
+  bounds?: { left: number; top: number; width: number; height: number };
+  sourceVersionId?: string;
+}
+
+function pickNumber(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+/** 不是分解产物时返回 null。 */
+export function readLayerMeta(params: unknown): LayerMeta | null {
+  if (!params || typeof params !== "object" || Array.isArray(params)) return null;
+  const p = params as Record<string, unknown>;
+  if (p.layerRole !== "layer") return null;
+  const setId = typeof p.layerSetId === "string" ? p.layerSetId : "";
+  if (!setId) return null;
+
+  const index = pickNumber(p.layerIndex, 0);
+  const boundsRaw =
+    p.layerBounds && typeof p.layerBounds === "object"
+      ? (p.layerBounds as Record<string, unknown>)
+      : null;
+  const decompose =
+    p.decompose && typeof p.decompose === "object"
+      ? (p.decompose as Record<string, unknown>)
+      : null;
+
+  return {
+    setId,
+    index,
+    z: pickNumber(p.layerZ, index),
+    hidden: p.layerHidden === true,
+    opacity: pickNumber(p.layerOpacity, 1),
+    thin: p.layerThin === true,
+    inkCoverage: pickNumber(p.layerInkCoverage, 0),
+    ...(boundsRaw && typeof boundsRaw.width === "number"
+      ? {
+          bounds: {
+            left: pickNumber(boundsRaw.left, 0),
+            top: pickNumber(boundsRaw.top, 0),
+            width: pickNumber(boundsRaw.width, 0),
+            height: pickNumber(boundsRaw.height, 0),
+          },
+        }
+      : {}),
+    ...(decompose && typeof decompose.sourceVersionId === "string"
+      ? { sourceVersionId: decompose.sourceVersionId }
+      : {}),
+  };
+}
+
+export interface VersionWithParams {
+  id: string;
+  params: unknown;
+}
+
+export interface GroupedVersions<T extends VersionWithParams> {
+  /** 普通出图 / 改图子版本——画布按老规矩逐张平铺。 */
+  plain: T[];
+  /** 分解产物，按图层组聚。画布把一组当**一个对象**摆，不是 N 张散图。 */
+  sets: { setId: string; sourceVersionId?: string; layers: T[] }[];
+}
+
+/**
+ * 把版本列表拆成「普通图」与「图层组」。
+ *
+ * 不分开的话，一次拆 4 层就会在画布上凭空多出四张看不懂的散图——这正是方案 A
+ * 的必配项：图层组必须以组为单位出现。
+ */
+export function groupVersionsIntoLayerSets<T extends VersionWithParams>(
+  versions: readonly T[],
+): GroupedVersions<T> {
+  const plain: T[] = [];
+  const order: string[] = [];
+  const bySet = new Map<string, { sourceVersionId?: string; layers: T[] }>();
+
+  for (const version of versions) {
+    const meta = readLayerMeta(version.params);
+    if (!meta) {
+      plain.push(version);
+      continue;
+    }
+    let bucket = bySet.get(meta.setId);
+    if (!bucket) {
+      bucket = {
+        ...(meta.sourceVersionId ? { sourceVersionId: meta.sourceVersionId } : {}),
+        layers: [],
+      };
+      bySet.set(meta.setId, bucket);
+      order.push(meta.setId);
+    }
+    bucket.layers.push(version);
+  }
+
+  return {
+    plain,
+    sets: order.map((setId) => {
+      const bucket = bySet.get(setId)!;
+      const layers = [...bucket.layers].sort((a, b) => {
+        const ma = readLayerMeta(a.params)!;
+        const mb = readLayerMeta(b.params)!;
+        return compareLayerOrder(ma, mb);
+      });
+      return {
+        setId,
+        ...(bucket.sourceVersionId
+          ? { sourceVersionId: bucket.sourceVersionId }
+          : {}),
+        layers,
+      };
+    }),
+  };
+}
+
+/* ------------------------------------------------------------------ *
+ * 图层组在画布上的落位
+ * ------------------------------------------------------------------ */
+
+export interface Rect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/**
+ * 给这一组图层挑一块空地:原图右侧、与原图等大、不压住画布上任何既有元素。
+ *
+ * 两条都不能省（都是 prd_agent 用真实反馈换来的）:
+ * - **原图必须原封不动**。副本盖在原图上会让用户失去参照，也让"拆坏了重来"
+ *   变成不可能。
+ * - **同一张图拆多次要各占一块地**。第二次拆不是覆盖第一次，而是右边再多一份，
+ *   两次结果并排才能比较着挑。
+ *
+ * 找法很朴素:从原图右侧第一格起一格一格往右挪，直到这一格不与任何既有元素相交。
+ * 上限 24 格是防呆——真挪不动就落在最后一格上，宁可重叠也不能死循环。
+ */
+export function planLayerSetRect(
+  source: Rect,
+  occupied: readonly Rect[],
+  gap = 120,
+): Rect {
+  const w = Math.max(1, Math.round(source.w));
+  const h = Math.max(1, Math.round(source.h));
+  const y = Math.round(source.y);
+  const step = w + gap;
+  const boxes = occupied.filter((b) => b.w > 0 && b.h > 0);
+  const hits = (x: number) =>
+    boxes.some(
+      (b) => x + w > b.x && b.x + b.w > x && y + h > b.y && b.y + b.h > y,
+    );
+
+  let x = Math.round(source.x) + step;
+  for (let i = 0; i < 24 && hits(x); i++) x += step;
+  return { x, y, w, h };
+}
+
+/**
+ * 图层组默认**叠放**（stacked）:每一块都落在同一块矩形上，叠起来看着和原图
+ * 一模一样，区别只是现在每块都能单独选中、拖动。
+ *
+ * 不默认摊开成一排:用户多数时候只是想"把某个部件挪一点"，摊开之后他还得自己
+ * 拼回去，那是倒忙。
+ */
+export function planStackedLayerRects(rect: Rect, count: number): Rect[] {
+  return Array.from({ length: Math.max(0, count) }, () => ({ ...rect }));
+}

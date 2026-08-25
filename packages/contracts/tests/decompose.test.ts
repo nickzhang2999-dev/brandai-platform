@@ -10,7 +10,10 @@ import {
   canExportFlattened,
   canExportLayeredDocument,
   compareLayerOrder,
+  groupVersionsIntoLayerSets,
   isThinCoverage,
+  planLayerSetRect,
+  readLayerMeta,
   sortLayers,
 } from "../src/index";
 
@@ -207,5 +210,138 @@ describe("图层组更新入参", () => {
     expect(() =>
       UpdateLayerSetInput.parse({ layers: [{ versionId: "v", opacity: 1.5 }] }),
     ).toThrow();
+  });
+});
+
+
+describe("从 params 读图层身份", () => {
+  const layerParams = (over: Record<string, unknown> = {}) => ({
+    layerRole: "layer",
+    layerSetId: "set-1",
+    layerIndex: 2,
+    layerZ: 5,
+    layerHidden: true,
+    layerOpacity: 0.5,
+    layerThin: true,
+    layerInkCoverage: 0.0012,
+    layerBounds: { left: 226, top: 257, width: 142, height: 250 },
+    decompose: { sourceVersionId: "v-src" },
+    ...over,
+  });
+
+  it("普通出图 / 改图子版本读不出图层身份", () => {
+    expect(readLayerMeta({ imageKind: "GENERATED" })).toBeNull();
+    expect(readLayerMeta({ edit: { op: "RECOLOR" } })).toBeNull();
+    expect(readLayerMeta(null)).toBeNull();
+    expect(readLayerMeta("nope")).toBeNull();
+  });
+
+  it("缺 layerSetId 不算图层——没有组身份的图层是孤儿", () => {
+    expect(readLayerMeta(layerParams({ layerSetId: undefined }))).toBeNull();
+  });
+
+  it("读全套呈现态与实测包围盒", () => {
+    expect(readLayerMeta(layerParams())).toEqual({
+      setId: "set-1",
+      index: 2,
+      z: 5,
+      hidden: true,
+      opacity: 0.5,
+      thin: true,
+      inkCoverage: 0.0012,
+      bounds: { left: 226, top: 257, width: 142, height: 250 },
+      sourceVersionId: "v-src",
+    });
+  });
+
+  it("层序缺省时回落到分解序号，不回落到 0", () => {
+    expect(readLayerMeta(layerParams({ layerZ: undefined }))!.z).toBe(2);
+  });
+
+  it("显隐缺省是可见、不透明度缺省是 1", () => {
+    const meta = readLayerMeta(
+      layerParams({ layerHidden: undefined, layerOpacity: undefined }),
+    )!;
+    expect(meta.hidden).toBe(false);
+    expect(meta.opacity).toBe(1);
+  });
+});
+
+describe("画布上按组聚合", () => {
+  const plain = (id: string) => ({ id, params: { imageKind: "GENERATED" } });
+  const layer = (id: string, setId: string, index: number, z = index) => ({
+    id,
+    params: {
+      layerRole: "layer",
+      layerSetId: setId,
+      layerIndex: index,
+      layerZ: z,
+      decompose: { sourceVersionId: "v-src" },
+    },
+  });
+
+  it("普通图与图层组分开——一次拆 4 层不该在画布上变成四张散图", () => {
+    const g = groupVersionsIntoLayerSets([
+      plain("a"),
+      layer("l0", "s1", 0),
+      layer("l1", "s1", 1),
+      plain("b"),
+    ]);
+    expect(g.plain.map((v) => v.id)).toEqual(["a", "b"]);
+    expect(g.sets).toHaveLength(1);
+    expect(g.sets[0]!.layers.map((v) => v.id)).toEqual(["l0", "l1"]);
+    expect(g.sets[0]!.sourceVersionId).toBe("v-src");
+  });
+
+  it("同一张图拆两次是两组，不是一组", () => {
+    const g = groupVersionsIntoLayerSets([
+      layer("a0", "s1", 0),
+      layer("b0", "s2", 0),
+      layer("a1", "s1", 1),
+    ]);
+    expect(g.sets.map((s) => s.setId)).toEqual(["s1", "s2"]);
+    expect(g.sets[0]!.layers).toHaveLength(2);
+  });
+
+  it("组内按层序排，不按到达顺序", () => {
+    const g = groupVersionsIntoLayerSets([
+      layer("top", "s1", 0, 9),
+      layer("bottom", "s1", 1, 0),
+    ]);
+    expect(g.sets[0]!.layers.map((v) => v.id)).toEqual(["bottom", "top"]);
+  });
+});
+
+describe("图层组落位", () => {
+  const source = { x: 0, y: 0, w: 400, h: 400 };
+
+  it("默认落在原图右侧，不盖住原图", () => {
+    const rect = planLayerSetRect(source, [source]);
+    expect(rect.x).toBeGreaterThanOrEqual(source.x + source.w);
+    expect(rect.y).toBe(source.y);
+    expect(rect).toMatchObject({ w: 400, h: 400 });
+  });
+
+  it("右侧被占了就继续往右找空地——重拆不覆盖上一次的结果", () => {
+    const first = planLayerSetRect(source, [source]);
+    const second = planLayerSetRect(source, [source, first]);
+    expect(second.x).toBeGreaterThan(first.x);
+  });
+
+  it("叠放：一组里每块都落在同一块矩形上，看着和原图一样", () => {
+    const rect = planLayerSetRect(source, [source]);
+    const stacked = Array.from({ length: 4 }, () => rect);
+    expect(new Set(stacked.map((r) => `${r.x},${r.y}`)).size).toBe(1);
+  });
+
+  it("挪不动时也会停下，不死循环", () => {
+    const wall = Array.from({ length: 60 }, (_, i) => ({
+      x: i * 520,
+      y: 0,
+      w: 400,
+      h: 400,
+    }));
+    const rect = planLayerSetRect(source, wall);
+    expect(Number.isFinite(rect.x)).toBe(true);
   });
 });

@@ -99,6 +99,128 @@ await step("改色arm(不立即出图·空指令禁用)", async () => { await pa
 await step("出图→真改图→新子版本", async () => { const v = await byKind("image"); await page.locator('input[placeholder*="描述"]').first().fill("暖色调"); await page.locator('button:has-text("出图")').first().click(); let g = false; for (let i = 0; i < 18; i++) { if ((await byKind("image")) >= v + 1) { g = true; break; } await page.waitForTimeout(2000); } return { ok: g, detail: `image ${v}→${await byKind("image")}` }; });
 await step("局部重画→蒙版层", async () => { await page.locator("[data-testid=canvas-item][data-kind=image]").first().click(); await page.waitForTimeout(400); await page.locator('button:has-text("局部重画")').first().click(); await page.waitForTimeout(800); const m = (await page.locator("canvas").count()) > 0 || (await page.locator("text=/涂抹|画笔|蒙版|重绘|擦除/").count()) > 0; return { ok: m }; });
 
+
+// ---------------------------------------------------------------- 图层分解（AI 分层）
+// 迁移自 prd_agent 视觉创作。这一段验的是「用户真的能用它」:入口在不在、点下去
+// 先不先问拆法、产物有没有真的落到画布上、显隐/层序改完刷新还在不在。
+// 前置:本地栈 LAYER_PROVIDER=mock（确定性 RGBA 图层，零 key）。
+let decomposeSetId = null;
+
+// 上一段留下的蒙版绘制覆盖层会盖住整块画布,先收掉再继续(否则这一段的第一次
+// 点击就会被它拦下,报成"入口点不动")。
+await page.keyboard.press("Escape");
+await page.waitForTimeout(800);
+const closeMask = page.locator('button:has-text("取消"), button:has-text("关闭")');
+if ((await closeMask.count()) > 0) {
+  await closeMask.first().click({ timeout: 3000 }).catch(() => {});
+  await page.waitForTimeout(600);
+}
+
+await step("选中图片→出现「图层分解」入口", async () => {
+  await page.locator("[data-testid=canvas-item][data-kind=image]").first().click();
+  await page.waitForTimeout(500);
+  const n = await page.locator('button:has-text("图层分解")').count();
+  return { ok: n > 0, detail: `入口 ${n} 个` };
+});
+
+await step("点下去先问拆法与层数（不闷头按默认开拆）", async () => {
+  const before = await byKind("image");
+  await page.locator('button:has-text("图层分解")').first().click();
+  await page.waitForTimeout(400);
+  const hasCount = (await page.locator('button[aria-label="增加层数"]').count()) > 0;
+  const hasIntent = (await page.locator('input[placeholder*="怎么拆"]').count()) > 0;
+  const after = await byKind("image");
+  // 关键:开了气泡但**没有**开始出图——层数是花钱的参数,不许点一下就直接烧。
+  return {
+    ok: hasCount && hasIntent && after === before,
+    detail: `层数控件=${hasCount} 拆法输入=${hasIntent} 未提前开拆=${after === before}`,
+  };
+});
+
+await step("层数可调（1-10）", async () => {
+  const read = () =>
+    page.locator("[data-testid=layer-count-value]").first().textContent();
+  const start = (await read())?.trim();
+  await page.locator('button[aria-label="增加层数"]').first().click();
+  await page.waitForTimeout(150);
+  const up = (await read())?.trim();
+  await page.locator('button[aria-label="减少层数"]').first().click();
+  await page.waitForTimeout(150);
+  const back = (await read())?.trim();
+  return { ok: up !== start && back === start, detail: `${start}→${up}→${back}` };
+});
+
+await step("开拆→N 块图层真的落到画布上（不是 spinner）", async () => {
+  const before = await byKind("image");
+  await page.locator('input[placeholder*="怎么拆"]').first().fill("角标单独一层");
+  await page.locator('button:has-text("开拆")').first().click();
+  let after = before;
+  for (let i = 0; i < 60; i++) {
+    await page.waitForTimeout(2000);
+    after = await byKind("image");
+    if (after >= before + 4) break;
+  }
+  return { ok: after >= before + 4, detail: `image ${before}→${after}（请求 4 层）` };
+});
+
+await step("图层面板自动打开且列出每一层", async () => {
+  // 等的是**行**不是面板容器:面板一挂载就在,但它要再拉一次 layer-sets 才有行。
+  // 只等容器出现就数行,数到的是 0 —— 那是判据比它该管的范围窄。
+  let rows = 0;
+  for (let i = 0; i < 30; i++) {
+    rows = await page.locator("[data-testid=layer-row]").count();
+    if (rows >= 4) break;
+    await page.waitForTimeout(1000);
+  }
+  return { ok: rows >= 4, detail: `${rows} 行` };
+});
+
+await step("细层被标出来，但没有被默认隐藏", async () => {
+  // prd_agent 的缺陷:覆盖率低于 0.2% 判空并默认隐藏,实测那组 0.12% 的角标就被藏了。
+  const thin = await page.locator("[data-testid=layer-thin-badge]").count();
+  const hiddenRows = await page.locator('[data-testid=layer-row][data-hidden="1"]').count();
+  return { ok: thin >= 1 && hiddenRows === 0, detail: `细层 ${thin} 个 / 默认隐藏 ${hiddenRows} 个` };
+});
+
+await step("隐藏一层→画布上少一块", async () => {
+  const before = await byKind("image");
+  await page.locator('button[aria-label="隐藏该图层"]').first().click();
+  let after = before;
+  for (let i = 0; i < 15; i++) {
+    await page.waitForTimeout(1000);
+    after = await byKind("image");
+    if (after === before - 1) break;
+  }
+  return { ok: after === before - 1, detail: `image ${before}→${after}` };
+});
+
+await step("刷新后显隐仍在（服务端权威，不是本地状态）", async () => {
+  const before = await byKind("image");
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(6000);
+  const after = await byKind("image");
+  return { ok: after === before, detail: `刷新前 ${before} / 刷新后 ${after}` };
+});
+
+await step("导出 PSD 可用（即使有层被隐藏）", async () => {
+  await page.locator("[data-testid=canvas-item][data-kind=image]").last().click();
+  await page.waitForTimeout(600);
+  const openPanel = page.locator('button:has-text("图层面板")');
+  if ((await openPanel.count()) > 0) {
+    await openPanel.first().click();
+    await page.waitForTimeout(1200);
+  }
+  const psd = page.locator("[data-testid=export-psd]");
+  const n = await psd.count();
+  const href = n ? await psd.first().getAttribute("href") : "";
+  const disabled = n ? await psd.first().getAttribute("aria-disabled") : "true";
+  if (href) decomposeSetId = (href.match(/layer-sets\/([^/]+)\//) || [])[1] ?? null;
+  return {
+    ok: n > 0 && disabled !== "true" && !!href,
+    detail: `按钮=${n} 可用=${disabled !== "true"}`,
+  };
+});
+
 await page.screenshot({ path: `${OUT}/canvas-functions.png` }).catch(() => {});
 const pass = R.filter((r) => r.ok).length;
 console.log(`\n=== ${pass}/${R.length} PASS ===`);

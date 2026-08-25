@@ -24,12 +24,19 @@ interface MaskedStorage {
 interface Masked {
   image: MaskedProvider;
   vlm: MaskedProvider;
+  layer: MaskedProvider;
   storage: MaskedStorage;
   /** V0.0.13 — 图像系统提示词（非密，直接读写） */
   imageSystemPrompt: string;
 }
 
-type Kind = "image" | "vlm";
+type Kind = "image" | "vlm" | "layer";
+
+const KIND_LABEL: Record<Kind, string> = {
+  image: "出图",
+  vlm: "视觉",
+  layer: "图层分解",
+};
 
 const LABELS: Record<Kind, { title: string; hint: string }> = {
   image: {
@@ -40,6 +47,12 @@ const LABELS: Record<Kind, { title: string; hint: string }> = {
     title: "视觉理解 (VLM)",
     hint: "识别/合规/抓站。OpenRouter 填 baseUrl=https://openrouter.ai/api/v1、model=openai/gpt-4o。",
   },
+  layer: {
+    title: "图层分解 (AI 分层)",
+    hint:
+      "把一张图拆成多张可独立编辑的 RGBA 图层。目前上游只有 fal:provider=fal、" +
+      "baseUrl 留空即用 fal-ai/qwen-image-layered。不配密钥则回落 mock(功能照跑,产物是确定性色块)。",
+  },
 };
 
 export function AiSettingsForm({ initial }: { initial: Masked }) {
@@ -48,11 +61,18 @@ export function AiSettingsForm({ initial }: { initial: Masked }) {
   const [data, setData] = useState<Masked>({
     image: { ...initial.image, provider: initial.image.provider || "openai" },
     vlm: { ...initial.vlm, provider: initial.vlm.provider || "openai" },
+    // 分层只有一家上游,配了密钥却让用户去猜 provider 名字属于"系统本来就知道
+    // 却摆个空框"——直接预填 fal。
+    layer: { ...initial.layer, provider: initial.layer.provider || "fal" },
     storage: { ...initial.storage },
     imageSystemPrompt: initial.imageSystemPrompt ?? "",
   });
   // New keys typed by the admin; empty = leave the stored key unchanged.
-  const [keys, setKeys] = useState<Record<Kind, string>>({ image: "", vlm: "" });
+  const [keys, setKeys] = useState<Record<Kind, string>>({
+    image: "",
+    vlm: "",
+    layer: "",
+  });
   // New storage secret key typed by the admin; empty = leave stored unchanged.
   const [storageSecret, setStorageSecret] = useState("");
   // Storage access key id. Not part of the masked view (write-only here); empty
@@ -89,10 +109,10 @@ export function AiSettingsForm({ initial }: { initial: Masked }) {
     // browser/password-manager autofill silently replacing a working key. The
     // dedicated "清除已存密钥" path (which passes clearKey) is NOT gated.
     if (!opts?.clearKey) {
-      for (const kind of ["image", "vlm"] as Kind[]) {
+      for (const kind of ["image", "vlm", "layer"] as Kind[]) {
         if (keys[kind] && data[kind].apiKeySet) {
           const ok = window.confirm(
-            `你正在替换已配置的「${kind === "image" ? "出图" : "视觉"}」密钥,确认覆盖?`,
+            `你正在替换已配置的「${KIND_LABEL[kind]}」密钥,确认覆盖?`,
           );
           if (!ok) return;
         }
@@ -103,11 +123,13 @@ export function AiSettingsForm({ initial }: { initial: Masked }) {
     const body: {
       image: Record<string, string | null>;
       vlm: Record<string, string | null>;
+      layer: Record<string, string | null>;
       storage: Record<string, string | boolean | null>;
       imageSystemPrompt: string;
     } = {
       image: pack("image"),
       vlm: pack("vlm"),
+      layer: pack("layer"),
       storage: packStorage(),
       // 非密字段：总是随保存提交（"" = 清空，回退 env/无提示词）。
       imageSystemPrompt: data.imageSystemPrompt,
@@ -127,7 +149,7 @@ export function AiSettingsForm({ initial }: { initial: Masked }) {
       }
       const fresh = (await res.json()) as Masked;
       setData(fresh);
-      setKeys({ image: "", vlm: "" });
+      setKeys({ image: "", vlm: "", layer: "" });
       setStorageSecret("");
       setStorageAccessKey("");
       setMsg({ ok: true, text: "已保存,即时生效。" });
@@ -187,7 +209,7 @@ export function AiSettingsForm({ initial }: { initial: Masked }) {
 
   return (
     <div className="mt-6 flex flex-col gap-5">
-      {(["image", "vlm"] as Kind[]).map((kind) => {
+      {(["image", "vlm", "layer"] as Kind[]).map((kind) => {
         const p = data[kind];
         return (
           <CreamCard key={kind}>

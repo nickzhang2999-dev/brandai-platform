@@ -170,6 +170,8 @@ export interface MaskedStorage {
 export interface MaskedAiSettings {
   image: MaskedProvider;
   vlm: MaskedProvider;
+  /** 图层分解上游（AI 分层）。 */
+  layer: MaskedProvider;
   storage: MaskedStorage;
   /** V0.0.13 — 非密字段，admin 页直接读写。 */
   imageSystemPrompt: string;
@@ -202,6 +204,12 @@ export async function getMaskedAiSettings(): Promise<MaskedAiSettings> {
       baseUrl: row?.vlmBaseUrl ?? "",
       model: row?.vlmModel ?? "",
       ...masked(row?.vlmApiKey, process.env.VLM_PROVIDER_API_KEY),
+    },
+    layer: {
+      provider: row?.layerProvider ?? "",
+      baseUrl: row?.layerBaseUrl ?? "",
+      model: row?.layerModel ?? "",
+      ...masked(row?.layerApiKey, process.env.LAYER_PROVIDER_API_KEY),
     },
     storage: {
       endpoint: row?.storageEndpoint ?? "",
@@ -242,6 +250,7 @@ export interface StorageInput {
 export interface AiSettingsInput {
   image?: ProviderInput;
   vlm?: ProviderInput;
+  layer?: ProviderInput;
   storage?: StorageInput;
   // undefined → leave unchanged; "" → clear (falls back to env / no prompt).
   imageSystemPrompt?: string;
@@ -249,7 +258,7 @@ export interface AiSettingsInput {
 
 function applyProvider(
   data: Record<string, string | null>,
-  prefix: "image" | "vlm",
+  prefix: "image" | "vlm" | "layer",
   input: ProviderInput | undefined,
 ) {
   if (!input) return;
@@ -283,7 +292,12 @@ function applyStorage(
   }
 }
 
-const SECRET_FIELDS = new Set(["imageApiKey", "vlmApiKey", "storageSecretKey"]);
+const SECRET_FIELDS = new Set([
+  "imageApiKey",
+  "vlmApiKey",
+  "layerApiKey",
+  "storageSecretKey",
+]);
 
 export async function updateAiSettings(
   input: AiSettingsInput,
@@ -292,6 +306,7 @@ export async function updateAiSettings(
   const data: Record<string, string | null> = {};
   applyProvider(data, "image", input.image);
   applyProvider(data, "vlm", input.vlm);
+  applyProvider(data, "layer", input.layer);
   applyStorage(data, input.storage);
   if (input.imageSystemPrompt !== undefined) {
     data.imageSystemPrompt = input.imageSystemPrompt.trim() || null;
