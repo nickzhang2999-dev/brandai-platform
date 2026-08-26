@@ -24,12 +24,44 @@ interface MaskedStorage {
 interface Masked {
   image: MaskedProvider;
   vlm: MaskedProvider;
+  layer: MaskedProvider;
   storage: MaskedStorage;
   /** V0.0.13 — 图像系统提示词（非密，直接读写） */
   imageSystemPrompt: string;
 }
 
-type Kind = "image" | "vlm";
+type Kind = "image" | "vlm" | "layer";
+
+/**
+ * 自检的一行。三态:绿(测过、通了)/ 红(测过、不通)/ 没测过。
+ *
+ * `unverified` 不能被折进 `ok`——管理员就是靠这一行判断"这个上游能不能用",
+ * 把「没测过」画成绿勾等于替他下了一个没有依据的结论。
+ */
+interface DiagLine {
+  ok: boolean;
+  detail: string;
+  unverified?: boolean;
+}
+
+const KIND_LABEL: Record<Kind, string> = {
+  image: "出图",
+  vlm: "视觉",
+  layer: "图层分解",
+};
+
+/**
+ * 每一类上游的**占位示例**。留空时后端各自有默认值，占位符只是告诉管理员
+ * 「这一栏该长什么样」——所以必须按类给，不能三类共用一个。
+ *
+ * 2026-08-25 真机截图抓到:图层分解那一栏的 Model 占位符显示 `gpt-4o`（一个聊天
+ * 模型），照着填必然打不通 fal。占位符是给人抄的，抄错方向比留空更糟。
+ */
+const KIND_PLACEHOLDER: Record<Kind, { provider: string; model: string }> = {
+  image: { provider: "openai", model: "gpt-image-2" },
+  vlm: { provider: "openai", model: "gpt-4o" },
+  layer: { provider: "fal", model: "fal-ai/qwen-image-layered" },
+};
 
 const LABELS: Record<Kind, { title: string; hint: string }> = {
   image: {
@@ -40,19 +72,37 @@ const LABELS: Record<Kind, { title: string; hint: string }> = {
     title: "视觉理解 (VLM)",
     hint: "识别/合规/抓站。OpenRouter 填 baseUrl=https://openrouter.ai/api/v1、model=openai/gpt-4o。",
   },
+  layer: {
+    title: "图层分解 (AI 分层)",
+    hint:
+      "把一张图拆成多张可独立编辑的 RGBA 图层。目前上游只有 fal:provider=fal、" +
+      "baseUrl 留空即用 fal-ai/qwen-image-layered。不配密钥则回落 mock(功能照跑,产物是确定性色块)。",
+  },
 };
 
 export function AiSettingsForm({ initial }: { initial: Masked }) {
   // Prefill the provider so it's never left blank — a blank provider with a key
   // silently falls back to the mock provider (no real calls, no error).
-  const [data, setData] = useState<Masked>({
+  const [initialView] = useState<Masked>(() => ({
     image: { ...initial.image, provider: initial.image.provider || "openai" },
     vlm: { ...initial.vlm, provider: initial.vlm.provider || "openai" },
+    // 分层只有一家上游,配了密钥却让用户去猜 provider 名字属于"系统本来就知道
+    // 却摆个空框"——直接预填 fal。
+    layer: { ...initial.layer, provider: initial.layer.provider || "fal" },
     storage: { ...initial.storage },
     imageSystemPrompt: initial.imageSystemPrompt ?? "",
-  });
+  }));
+  // 服务端那一份的「屏幕表示」。判脏只靠它与 data 的差,不靠给每个 setter 手动
+  // 打脏标记——那种写法漏一个 setter 就静默失真。基线取预填之后的值,否则页面一
+  // 打开就是脏的(预填本身不是用户的改动)。
+  const [saved, setSaved] = useState<Masked>(initialView);
+  const [data, setData] = useState<Masked>(initialView);
   // New keys typed by the admin; empty = leave the stored key unchanged.
-  const [keys, setKeys] = useState<Record<Kind, string>>({ image: "", vlm: "" });
+  const [keys, setKeys] = useState<Record<Kind, string>>({
+    image: "",
+    vlm: "",
+    layer: "",
+  });
   // New storage secret key typed by the admin; empty = leave stored unchanged.
   const [storageSecret, setStorageSecret] = useState("");
   // Storage access key id. Not part of the masked view (write-only here); empty
@@ -63,9 +113,10 @@ export function AiSettingsForm({ initial }: { initial: Masked }) {
   // 测试连接 self-check state.
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{
-    image: { ok: boolean; detail: string };
-    vlm: { ok: boolean; detail: string };
-    storage: { ok: boolean; detail: string };
+    image: DiagLine;
+    vlm: DiagLine;
+    layer: DiagLine;
+    storage: DiagLine;
   } | null>(null);
   const [testError, setTestError] = useState<string | null>(null);
 
@@ -84,17 +135,17 @@ export function AiSettingsForm({ initial }: { initial: Masked }) {
     clearKey?: Kind;
     clearStorageSecret?: boolean;
     clearAccessKey?: boolean;
-  }) {
+  }): Promise<boolean> {
     // Confirm before overwriting an already-stored API key — guards against a
     // browser/password-manager autofill silently replacing a working key. The
     // dedicated "清除已存密钥" path (which passes clearKey) is NOT gated.
     if (!opts?.clearKey) {
-      for (const kind of ["image", "vlm"] as Kind[]) {
+      for (const kind of ["image", "vlm", "layer"] as Kind[]) {
         if (keys[kind] && data[kind].apiKeySet) {
           const ok = window.confirm(
-            `你正在替换已配置的「${kind === "image" ? "出图" : "视觉"}」密钥,确认覆盖?`,
+            `你正在替换已配置的「${KIND_LABEL[kind]}」密钥,确认覆盖?`,
           );
-          if (!ok) return;
+          if (!ok) return false;
         }
       }
     }
@@ -103,11 +154,13 @@ export function AiSettingsForm({ initial }: { initial: Masked }) {
     const body: {
       image: Record<string, string | null>;
       vlm: Record<string, string | null>;
+      layer: Record<string, string | null>;
       storage: Record<string, string | boolean | null>;
       imageSystemPrompt: string;
     } = {
       image: pack("image"),
       vlm: pack("vlm"),
+      layer: pack("layer"),
       storage: packStorage(),
       // 非密字段：总是随保存提交（"" = 清空，回退 env/无提示词）。
       imageSystemPrompt: data.imageSystemPrompt,
@@ -127,15 +180,39 @@ export function AiSettingsForm({ initial }: { initial: Masked }) {
       }
       const fresh = (await res.json()) as Masked;
       setData(fresh);
-      setKeys({ image: "", vlm: "" });
+      setSaved(fresh);
+      setKeys({ image: "", vlm: "", layer: "" });
       setStorageSecret("");
       setStorageAccessKey("");
       setMsg({ ok: true, text: "已保存,即时生效。" });
+      return true;
     } catch (err) {
       setMsg({ ok: false, text: err instanceof Error ? err.message : "保存失败" });
+      return false;
     } finally {
       setSaving(false);
     }
+  }
+
+  /**
+   * 表单里有没有「敲了但还没保存」的东西。
+   *
+   * 2026-08-25 用户实测踩到:在图层分解那栏粘好 fal 密钥、直接点「测试连接」,
+   * 自检回「mock(无 key,占位模式)」——因为自检读的是**库里已保存**的配置,看不见
+   * 框里的字。按钮就摆在保存旁边却测的是另一份状态,这是最小惊讶问题,不是用户
+   * 操作错。所以有未保存改动时按钮改成「保存并测试」,先落库再自检。
+   */
+  const dirty =
+    JSON.stringify(data) !== JSON.stringify(saved) ||
+    !!keys.image ||
+    !!keys.vlm ||
+    !!keys.layer ||
+    !!storageSecret ||
+    !!storageAccessKey;
+
+  async function saveAndTest() {
+    if (dirty && !(await save())) return;
+    await runTest();
   }
 
   function pack(kind: Kind): Record<string, string | null> {
@@ -187,7 +264,7 @@ export function AiSettingsForm({ initial }: { initial: Masked }) {
 
   return (
     <div className="mt-6 flex flex-col gap-5">
-      {(["image", "vlm"] as Kind[]).map((kind) => {
+      {(["image", "vlm", "layer"] as Kind[]).map((kind) => {
         const p = data[kind];
         return (
           <CreamCard key={kind}>
@@ -198,7 +275,7 @@ export function AiSettingsForm({ initial }: { initial: Masked }) {
                 <Label>Provider</Label>
                 <Input
                   value={p.provider}
-                  placeholder="openai"
+                  placeholder={KIND_PLACEHOLDER[kind].provider}
                   autoComplete="off"
                   data-1p-ignore
                   data-lpignore="true"
@@ -220,7 +297,7 @@ export function AiSettingsForm({ initial }: { initial: Masked }) {
                 <Label>Model</Label>
                 <Input
                   value={p.model}
-                  placeholder={kind === "image" ? "gpt-image-2" : "gpt-4o"}
+                  placeholder={KIND_PLACEHOLDER[kind].model}
                   autoComplete="off"
                   data-1p-ignore
                   data-lpignore="true"
@@ -393,6 +470,10 @@ export function AiSettingsForm({ initial }: { initial: Masked }) {
       {(testResult || testError) && (
         <CreamCard>
           <h2 className="font-serif text-lg text-foreground">连接自检结果</h2>
+          <p className="mt-1 text-xs text-muted-foreground">
+            自检读的是<strong className="font-medium">已保存</strong>
+            的配置。框里改了还没保存时,下面的按钮会变成「保存并测试」,先落库再测。
+          </p>
           {testError ? (
             <p className="mt-2 text-sm text-destructive">{testError}</p>
           ) : (
@@ -401,14 +482,22 @@ export function AiSettingsForm({ initial }: { initial: Masked }) {
                 [
                   ["出图", testResult!.image],
                   ["视觉", testResult!.vlm],
+                  ["图层分解", testResult!.layer],
                   ["存储", testResult!.storage],
                 ] as const
               ).map(([label, r]) => (
                 <li key={label} className="text-sm">
                   <span
-                    className={r.ok ? "text-success" : "text-destructive"}
+                    className={
+                      r.unverified
+                        ? "text-muted-foreground"
+                        : r.ok
+                          ? "text-success"
+                          : "text-destructive"
+                    }
                   >
-                    {r.ok ? "✅" : "❌"} {label}
+                    {r.unverified ? "—" : r.ok ? "✅" : "❌"} {label}
+                    {r.unverified ? "（未验证）" : ""}
                   </span>
                   <span className="ml-2 font-mono text-xs text-muted-foreground break-all">
                     {r.detail}
@@ -426,10 +515,16 @@ export function AiSettingsForm({ initial }: { initial: Masked }) {
         </Button>
         <Button
           variant="outline"
-          onClick={runTest}
-          disabled={testing}
+          onClick={() => void saveAndTest()}
+          disabled={testing || saving}
         >
-          {testing ? "测试中…" : "测试连接"}
+          {testing
+            ? "测试中…"
+            : saving
+              ? "保存中…"
+              : dirty
+                ? "保存并测试"
+                : "测试连接"}
         </Button>
       </div>
     </div>

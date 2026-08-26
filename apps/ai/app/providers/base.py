@@ -5,11 +5,19 @@ from typing import Any
 
 class ProviderCheck:
     """Result of a cheap reachability/auth self-check. `ok` plus a short,
-    operator-readable `detail` (status + body snippet, or exception name)."""
+    operator-readable `detail` (status + body snippet, or exception name).
 
-    def __init__(self, ok: bool, detail: str):
+    `unverified` is the third state: nothing was actually probed, so this
+    result proves nothing either way. It exists because "we didn't test it"
+    was previously reported as `ok=True` and rendered as a green check —
+    a typo'd gateway or a rejected key passed 「测试连接」 and was only
+    discovered by a paid job later. Green must mean *measured* green.
+    """
+
+    def __init__(self, ok: bool, detail: str, unverified: bool = False):
         self.ok = ok
         self.detail = detail
+        self.unverified = unverified
 
 
 class ImageProvider(ABC):
@@ -113,3 +121,66 @@ class VLMProvider(ABC):
     @abstractmethod
     async def check(self) -> "ProviderCheck":
         """Cheap auth + reachability probe (never raises). See ProviderCheck."""
+
+
+# --------------------------------------------------------------------------- #
+# 图层分解（AI 分层）
+# --------------------------------------------------------------------------- #
+
+_DECOMPOSE_PROMPT = (
+    "Decompose this image into semantically distinct editable RGBA layers. "
+    "Preserve composition and transparent edges."
+)
+
+
+def build_decompose_prompt(intent: str | None) -> str:
+    """Fold the user's own words into the decomposition prompt.
+
+    A layer COUNT cannot express "just separate the person from the scenery" —
+    asking for 2 layers may well return "person + ice cream". So the intent is
+    the primary handle and the count is only an expected value.
+
+    The user's sentence is appended VERBATIM: no rewriting, no translating,
+    no "improving". Rewriting it is deciding for them (least astonishment).
+    """
+    wish = (intent or "").strip()
+    if not wish:
+        return _DECOMPOSE_PROMPT
+    return f"{_DECOMPOSE_PROMPT}\nUser intent for how to split (follow it): {wish}"
+
+
+def clamp_layer_count(value: Any) -> int:
+    """1–10, matching the contract and the upstream's accepted range."""
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return 4
+    return max(1, min(10, n))
+
+
+class LayerProvider(ABC):
+    """Decompose ONE image into N RGBA layers.
+
+    Deliberately a separate ABC from ImageProvider: the wire shape has nothing
+    in common with OpenAI's /images/generations (no size, no n, no prompt-only
+    path), and folding it in would push a second protocol into HttpImageProvider
+    where every caller would then have to know which half applies.
+    """
+
+    @abstractmethod
+    async def decompose(
+        self,
+        image_url: str,
+        *,
+        layer_count: int,
+        intent: str | None = None,
+    ) -> dict[str, Any]:
+        """Return ``{"layers": [{"imageUrl", "width", "height"}, ...],
+        "seed": int | None, "model": str | None}``.
+
+        Layer order is bottom-up: index 0 sits at the back.
+        """
+
+    @abstractmethod
+    async def check(self) -> "ProviderCheck":
+        """Cheap auth + reachability probe (never raises)."""

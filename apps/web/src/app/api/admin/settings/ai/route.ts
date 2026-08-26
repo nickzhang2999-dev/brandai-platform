@@ -41,6 +41,9 @@ const StorageInput = z.object({
 const UpdateInput = z.object({
   image: ProviderInput.optional(),
   vlm: ProviderInput.optional(),
+  // 图层分解上游。与 image 分开:fal 的 qwen-image-layered 是原生协议,
+  // 和 OpenAI /images/generations 形状毫无共同点。
+  layer: ProviderInput.optional(),
   storage: StorageInput.optional(),
   // V0.0.13 — 图像系统提示词（非密）。omitted → unchanged; "" → clear.
   imageSystemPrompt: z.string().max(4000).optional(),

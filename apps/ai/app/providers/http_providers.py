@@ -31,7 +31,14 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 
 from ..config import settings
 from ..ssrf import SSRFError, safe_get
-from .base import ImageProvider, ProviderCheck, VLMProvider
+from .base import (
+    ImageProvider,
+    LayerProvider,
+    ProviderCheck,
+    VLMProvider,
+    build_decompose_prompt,
+    clamp_layer_count,
+)
 
 logger = logging.getLogger("brandai.ai.provider")
 
@@ -2162,3 +2169,145 @@ def _coerce_ingest(
     copies = [str(x) for x in (data.get("copies") or []) if x]
     selling = [str(x) for x in (data.get("sellingPoints") or []) if x]
     return {"images": images, "copies": copies, "sellingPoints": selling}
+
+
+# 队列状态探针用的空请求 id:一个永不存在的全零 uuid。它只用来让 fal 校验密钥
+# 并回一句"没这个请求",不触发任何推理。
+_FAL_PROBE_REQUEST_ID = "00000000-0000-0000-0000-000000000000"
+
+
+class FalLayerProvider(LayerProvider):
+    """fal.ai `qwen-image-layered` — one image in, N RGBA layers out.
+
+    Wire shape measured against the live endpoint (2026-08-25, MAP key-visual
+    1024×1024):
+
+    * request  ``{image_url, num_layers, output_format, prompt,
+      enable_safety_checker, acceleration}``; ``image_url`` accepts a ``data:``
+      URI but a 1.5 MB inline upload ate most of the wall clock, so callers
+      should pass a fetchable URL whenever storage is configured.
+    * response ``{images: [{url, content_type, width, height}], seed, timings,
+      has_nsfw_concepts}``.
+    * timing   11.7 s (2 layers) and 41.8 s (4 layers) wall clock, 9.8 s / 14.0 s
+      of that inference. The 4-layer call alone blows past a 30 s edge-gateway
+      ceiling — this is why decomposition is a worker job, not an HTTP handler.
+    * output   640×640 for a 1024×1024 input: **the upstream rescales**, so every
+      downstream placement has to convert proportionally rather than treat layer
+      pixels as canvas pixels.
+    """
+
+    DEFAULT_URL = "https://fal.run/fal-ai/qwen-image-layered"
+
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str,
+        model: str = "",
+        transport: httpx.BaseTransport | None = None,
+    ):
+        self.base_url = (base_url or self.DEFAULT_URL).rstrip("/")
+        self.api_key = api_key
+        self.model = model or "fal-ai/qwen-image-layered"
+        self._transport = transport
+
+    def _client(self) -> httpx.AsyncClient:
+        kwargs: dict[str, Any] = {"timeout": settings.http_timeout}
+        if self._transport is not None:
+            kwargs["transport"] = self._transport
+        return httpx.AsyncClient(**kwargs)
+
+    def _headers(self) -> dict[str, str]:
+        return {
+            "Authorization": f"Key {self.api_key}",
+            "content-type": "application/json",
+        }
+
+    async def decompose(
+        self,
+        image_url: str,
+        *,
+        layer_count: int,
+        intent: str | None = None,
+    ) -> dict[str, Any]:
+        n = clamp_layer_count(layer_count)
+        body = {
+            "image_url": image_url,
+            "num_layers": n,
+            "output_format": "png",
+            "enable_safety_checker": True,
+            "acceleration": "regular",
+            "prompt": build_decompose_prompt(intent),
+        }
+        async with self._client() as c:
+            r = await c.post(self.base_url, headers=self._headers(), json=body)
+            r.raise_for_status()
+            data = r.json()
+
+        layers: list[dict[str, Any]] = []
+        for item in data.get("images") or []:
+            if not isinstance(item, dict):
+                continue
+            url = item.get("url")
+            if not url:
+                continue
+            layers.append(
+                {
+                    "imageUrl": url,
+                    "width": int(item.get("width") or 0) or 1,
+                    "height": int(item.get("height") or 0) or 1,
+                }
+            )
+        if not layers:
+            raise ValueError("fal layer decomposition returned no images")
+
+        seed = data.get("seed")
+        return {
+            "layers": layers,
+            "seed": int(seed) if isinstance(seed, (int, float)) else None,
+            "model": self.model,
+        }
+
+    def probe_url(self) -> str:
+        """A cheap endpoint that answers auth without starting an inference.
+
+        `fal.run/<model>` is the **synchronous inference** endpoint: posting an
+        empty body there does not bounce back a fast 422 — it goes into the
+        queue and the probe times out (measured 2026-08-25: `ReadTimeout` with a
+        perfectly good key, i.e. the self-check reported "key rejected" for a key
+        that works). The queue's status endpoint is the right door: it answers
+        the SAME auth in ~0.4 s and runs no model.
+
+        Measured on the live service:
+          * good key → 200 (`{"status":"COMPLETED", ...}` for the zero request id)
+          * bad key  → 401 `{"detail":"invalid key credentials"}`
+        """
+        # base_url is ".../<owner>/<model>"; the queue host mirrors that path.
+        path = self.base_url.split("fal.run/", 1)[-1] if "fal.run/" in self.base_url else ""
+        if not path:
+            return ""
+        return f"https://queue.fal.run/{path}/requests/{_FAL_PROBE_REQUEST_ID}/status"
+
+    async def check(self) -> ProviderCheck:
+        """Auth + reachability probe. Never raises, never starts an inference."""
+        if not self.api_key:
+            return ProviderCheck(False, "未配置分层上游密钥")
+        url = self.probe_url()
+        if not url:
+            # 自定义网关地址:形状未知,不猜探针。但"没测"必须**长得像没测**——
+            # 上一版这里返回 ok=True,后台照样画一个绿勾,于是地址写错、密钥被拒
+            # 都能通过「测试连接」,直到某次真拆解(花钱的)才发现。
+            return ProviderCheck(
+                False,
+                f"已配密钥;自定义端点 {self.base_url} 没有自检探针,本次未验证",
+                unverified=True,
+            )
+        try:
+            async with httpx.AsyncClient(timeout=_CHECK_TIMEOUT) as c:
+                r = await c.get(url, headers={"Authorization": f"Key {self.api_key}"})
+            if r.status_code in (401, 403):
+                return ProviderCheck(False, f"密钥被拒绝 ({r.status_code})")
+            if r.status_code >= 500:
+                return ProviderCheck(False, f"上游异常 ({r.status_code})")
+            return ProviderCheck(True, f"密钥可用 ({self.model})")
+        except Exception as exc:  # noqa: BLE001 — probe must never raise
+            return ProviderCheck(False, f"{type(exc).__name__}: {exc}")

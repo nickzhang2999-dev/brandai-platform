@@ -322,6 +322,97 @@ export const ProjectAssetLink = z.object({
 });
 export type ProjectAssetLink = z.infer<typeof ProjectAssetLink>;
 
+/* ------------------------------------------------------------------ *
+ * 图层分解（AI 分层）—— BFF 侧契约
+ *
+ * 存放位置的取舍（方案 A）：一次分解产出 N 个 `GenerationVersion` 子版本，
+ * 父版本 = 被拆的那一版。这样导出、终稿、素材库回流、配额、审批全部沿用
+ * 现成链路，不用为图层再造四条支路；代价是变体网格必须把一个图层组折叠成
+ * 一张卡（`params.layerRole === "layer"` 的版本不单独占格）。
+ * ------------------------------------------------------------------ */
+
+export const DecomposeVersionInput = z.object({
+  layerCount: z.number().int().min(1).max(10).default(4),
+  intent: z.string().trim().max(500).optional(),
+});
+export type DecomposeVersionInput = z.infer<typeof DecomposeVersionInput>;
+
+/** 实墨包围盒，坐标相对图层自身像素。求不出（整层全透明）时缺省。 */
+export const LayerBounds = z.object({
+  left: z.number().int().nonnegative(),
+  top: z.number().int().nonnegative(),
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
+});
+export type LayerBounds = z.infer<typeof LayerBounds>;
+
+export const LayerView = z.object({
+  versionId: z.string(),
+  /** 在本组内的序号，0 起。上游返回顺序即叠放顺序（先返回的在下）。 */
+  index: z.number().int().nonnegative(),
+  imageUrl: z.string(),
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
+  bounds: LayerBounds.optional(),
+  /** 实墨（alpha ≥ 64）像素占全幅的比例，0–1。 */
+  inkCoverage: z.number().min(0).max(1),
+  /**
+   * 细层标记：实墨覆盖率极低。**只是标记，不是「空层」，绝不据此默认隐藏。**
+   * 真上游实测里那组绿色取景框角标覆盖率只有 0.12%，是真实设计元素；
+   * prd_agent 的 0.2% 空层线会把它默认藏起来，用户以为没拆出来。
+   */
+  thin: z.boolean(),
+  hidden: z.boolean(),
+  opacity: z.number().min(0).max(1),
+  /** 叠放次序，越大越靠上。默认等于 index。 */
+  z: z.number().int(),
+});
+export type LayerView = z.infer<typeof LayerView>;
+
+export const LayerSetView = z.object({
+  setId: z.string(),
+  generationId: z.string(),
+  sourceVersionId: z.string(),
+  /** 请求的层数；与 `layers.length` 不一定相等（上游可能超发或少给）。 */
+  requestedLayerCount: z.number().int().positive(),
+  intent: z.string().optional(),
+  seed: z.number().int().optional(),
+  provider: z.string().optional(),
+  createdAt: z.string(),
+  layers: z.array(LayerView),
+});
+export type LayerSetView = z.infer<typeof LayerSetView>;
+
+/**
+ * 一次 PATCH 最多带几条。
+ *
+ * **刻意不复用 `DECOMPOSE_LAYER_MAX`(=10)**:那是"一次请求要拆几层"的上界,
+ * 而这里是"改一组已经存在的图层"。上游允许超发(`requestedLayerCount` 上的注释
+ * 写明"上游可能超发或少给"),超发的层本仓库有意保留、不丢弃——于是一组真的可能
+ * 有 11 层。而面板调一次层序是**整组重新发号**(`LayerPanel.move()` 提交全组),
+ * 借用 10 这个数就会让超发的组永远调不了层序:一个由上游决定、用户无法自救的死锁。
+ *
+ * 这个数字只是"别让人一次糊几万条进来"的体量护栏,不承载语义。真正的正确性
+ * 判据在路由里:每一条 versionId 都必须属于本组,不属于就 400。
+ */
+export const LAYER_SET_PATCH_MAX = 64;
+
+/** 改显隐 / 不透明度 / 层序。服务端权威——刷新、换设备、分享都读同一份。 */
+export const UpdateLayerSetInput = z.object({
+  layers: z
+    .array(
+      z.object({
+        versionId: z.string(),
+        hidden: z.boolean().optional(),
+        opacity: z.number().min(0).max(1).optional(),
+        z: z.number().int().optional(),
+      }),
+    )
+    .min(1)
+    .max(LAYER_SET_PATCH_MAX),
+});
+export type UpdateLayerSetInput = z.infer<typeof UpdateLayerSetInput>;
+
 export const ApiError = z.object({
   error: z.string(),
   details: z.unknown().optional(),

@@ -32,9 +32,12 @@ import type {
 import {
   CHANNEL_SIZES,
   ExactAssetTransform as ExactAssetTransformSchema,
+  isTaskWatchExpired,
+  readLayerMeta,
   resolveGenerationDefaults,
 } from "@brandai/contracts";
-import { apiFetch, assetThumbUrl } from "@/lib/client";
+import type { TaskState } from "@brandai/contracts";
+import { ApiFetchError, apiFetch, assetThumbUrl } from "@/lib/client";
 import { planTiers, upgradeContactEmail } from "@/lib/brandai-mock";
 import { validateImageUploadFile } from "@/lib/upload-limits";
 import {
@@ -47,6 +50,7 @@ import {
 import { useBrand } from "../brand-context";
 import { MaskPaintCanvas } from "./MaskPaintCanvas";
 import { OpenCanvas } from "./OpenCanvas";
+import { LayerPanel } from "./LayerPanel";
 import { ChatPanel, type ChatComposerApi } from "./ChatPanel";
 import {
   ResourceUsagePanel,
@@ -987,6 +991,11 @@ function Workspace() {
   const running =
     !!genId && ACTIVE_GENERATION_STATUSES.has(status ?? "") && !timedOut;
   const current = versions[activeVariant] ?? versions[0];
+  /** 画布上选中的这块是不是某个图层组的成员——决定工具条给「图层分解」还是「图层面板」。 */
+  const currentLayerMeta = useMemo(
+    () => readLayerMeta(current?.params),
+    [current],
+  );
   const editBaseVersion =
     versions.find((v) => v.id === editBaseVersionId) ?? current ?? null;
 
@@ -1033,6 +1042,281 @@ function Workspace() {
   const [busy, setBusy] = useState<null | "edit" | "final" | "export">(null);
   // 局部重画 —— 蒙版绘制覆盖层开关（迁移自 prd_agent 视觉创作）。
   const [maskOpen, setMaskOpen] = useState(false);
+
+  /* ---------------- 图层分解（AI 分层，迁移自 prd_agent 视觉创作） ----------------
+   * server-authoritative:POST → 202 拿 taskId/layerSetId → 轮询任务 → 成功后刷新
+   * generation,N 个图层子版本经 seedVersions 以**一组**的形态落到画布上。
+   * 真上游实测 12–42 秒,所以中间态必须有界(§2.4),超时给可读出口而不是转圈。 */
+  const [decomposeTaskId, setDecomposeTaskId] = useState<string | null>(null);
+
+  /**
+   * 把分解任务 id 钉在 URL 上（`?decomposeTask=`）。
+   *
+   * §2.2:客户端提交后可以关掉、刷新、离开,请求照样跑完、稍后浮现。任务 id 只
+   * 存在组件 state 里的话,刷新之后这一页既不续跑轮询、也不显示"分解中",而
+   * generation 已是终态、历史查询没有轮询间隔——于是拆好的图层在这一次会话里
+   * 根本不浮现,用户还会以为没提交成功,再花一次钱重拆。
+   *
+   * 用独立的 `decomposeTask` 而不是通用的 `task`:这一页同时可能有别的异步流,
+   * 共用一个键会互相顶掉。参数名不同,复原逻辑仍照 rule-workbench 的 `?task=`。
+   */
+  const syncDecomposeTaskUrl = useCallback(
+    (id: string | null, ctx?: { genId: string; projectId: string }) => {
+      if (typeof window === "undefined") return;
+      const url = new URL(window.location.href);
+      if (id) {
+        url.searchParams.set("decomposeTask", id);
+        // 来源必须写成**自己的**参数。第一版复原时读的是实时的 `?gen=`,而那个
+        // 参数会随用户切换出图而变——切到 B 再刷新,就把 B 当成了这个任务的来源,
+        // 完成时拿 A 的 layerSetId 去 B 底下开,正好是这条闸门本来要防的 404。
+        if (ctx?.genId) url.searchParams.set("decomposeGen", ctx.genId);
+        if (ctx?.projectId)
+          url.searchParams.set("decomposeProject", ctx.projectId);
+      } else {
+        url.searchParams.delete("decomposeTask");
+        url.searchParams.delete("decomposeGen");
+        url.searchParams.delete("decomposeProject");
+      }
+      window.history.replaceState(null, "", url.toString());
+    },
+    [],
+  );
+  const [layerCount, setLayerCount] = useState(4);
+  const [layerIntent, setLayerIntent] = useState("");
+  const [openLayerSetId, setOpenLayerSetId] = useState<string | null>(null);
+  /**
+   * 中间态上界(§2.4)的**起算点**——提交时先记提交时刻,轮询首次看到 RUNNING
+   * 时**重新起算**。
+   *
+   * 不这么做的话排队会吃掉工作预算:worker 并发是 1,前面压着一条真上游分解
+   * (12–110 秒,慢的更久)时后一条能在 PENDING 里躺很久;而 worker 侧的看门狗
+   * 是从**开跑**才计时的。两边起算点不一致,客户端就会在任务还没轮到它跑的时候
+   * 判超时。restart 之后两边同口径,排队多久都不误判。
+   */
+  const decomposeStartedAt = useRef(0);
+  /** 首次观察到 RUNNING 的时刻;还在排队时为 0。判据见 `isTaskWatchExpired`。 */
+  const decomposeRunningAt = useRef(0);
+  const decomposeWatchExpired = useCallback(
+    () =>
+      isTaskWatchExpired({
+        submittedAt: decomposeStartedAt.current,
+        runningAt: decomposeRunningAt.current,
+        now: Date.now(),
+        capMs: POLL_CAP_MS,
+      }),
+    [],
+  );
+  /**
+   * 发起这次分解时**当时**的 generation / campaign。
+   *
+   * 分解真上游要 12–110 秒,这期间用户完全可能切到别的出图或别的 Campaign。
+   * 完成回调若用「此刻的」genId,就会拿另一条 generation 去开这一组图层——而
+   * layer-set 读接口是 generation 作用域的,面板直接 404,刷的也是错的那条历史。
+   * 付过费的结果其实好端端存在原来那条 generation 下面,只是找不着了。
+   */
+  const decomposeCtx = useRef<{ genId: string; projectId: string } | null>(null);
+
+  const { data: decomposePoll, error: decomposePollErr } = useQuery<TaskState>({
+    queryKey: ["brandai-decompose", wsId, decomposeTaskId],
+    queryFn: () =>
+      apiFetch<TaskState>(`/api/workspaces/${wsId}/tasks/${decomposeTaskId}`),
+    enabled: !!decomposeTaskId,
+    refetchInterval: (q) => {
+      const s = q.state.data?.status;
+      if (s === "SUCCEEDED" || s === "FAILED") return false;
+      if (decomposeWatchExpired()) return false;
+      return 2500;
+    },
+  });
+
+  // 轮询问到"服务端明确说没有这个任务"才收摊。同一条判据的另一端:上面那个
+  // 续跑分支遇到网络失败时会挂上轮询等它重试,那这里就必须真的能认出 404,
+  // 否则那条链只是从"误删线索"换成了"永远锁着"。
+  useEffect(() => {
+    if (!decomposeTaskId || !decomposePollErr) return;
+    const status =
+      decomposePollErr instanceof ApiFetchError ? decomposePollErr.status : 0;
+    if (status !== 404 && status !== 403) return;
+    setDecomposeTaskId(null);
+    syncDecomposeTaskUrl(null);
+    setActionErr("上次那次图层分解的任务记录已经不在了,需要的话重新拆一次。");
+  }, [decomposeTaskId, decomposePollErr, syncDecomposeTaskUrl]);
+
+  // 排队结束、真正开跑,上界重新起算(见 `decomposeStartedAt` 上的注释)。
+  useEffect(() => {
+    if (decomposePoll?.status !== "RUNNING") return;
+    if (decomposeRunningAt.current > 0) return;
+    decomposeRunningAt.current = Date.now();
+  }, [decomposePoll?.status]);
+
+  useEffect(() => {
+    const s = decomposePoll?.status;
+    if (s !== "SUCCEEDED" && s !== "FAILED") return;
+    setDecomposeTaskId(null);
+    syncDecomposeTaskUrl(null);
+    if (s === "FAILED") {
+      setActionErr(decomposePoll?.error || "图层分解失败,请重试。");
+      return;
+    }
+    // 一律按**发起时**的 generation/campaign 刷新与开面板,不按此刻的。
+    const ctx =
+      decomposeCtx.current ?? { genId: genId ?? "", projectId: projectId ?? "" };
+    decomposeCtx.current = null;
+    if (ctx.genId) {
+      qc.invalidateQueries({ queryKey: ["brandai-gen", wsId, ctx.genId] });
+    }
+    if (ctx.projectId) {
+      qc.invalidateQueries({
+        queryKey: ["brandai-project-gens", wsId, ctx.projectId],
+      });
+    }
+    // 只有用户还停在那条 generation 上时才自动开面板。已经切走了就别硬开——
+    // 面板是 generation 作用域的,开出来只会是一个 404。结果不会丢:上面那次
+    // invalidate 会让他切回去时看到。
+    if (decomposePoll?.refId && ctx.genId && ctx.genId === genId) {
+      setOpenLayerSetId(decomposePoll.refId);
+    }
+  }, [decomposePoll, qc, wsId, genId, projectId, syncDecomposeTaskUrl]);
+
+  // §2.4 中间态上界:等太久就停止跟,并说清下一步。
+  //
+  // **只停止跟,不销毁任何东西**——地址栏的 `?decomposeTask=` 这几个参数、以及
+  // `decomposeTaskId` 本身(它同时是「别再提交一单」的闸)都原样留着。
+  //
+  // 这两样各丢一样都会把用户推去再花一次钱:抹掉 URL 参数,刷新就找不回这一单;
+  // 抹掉 taskId,按钮当场解锁,再点一次就是第二单**而且会覆盖掉指向第一单的那几个
+  // URL 参数**,第一单从此没人认领。客户端等腻了不等于服务端失败——服务端状态才是
+  // 权威(§2.2)。
+  //
+  // 出口是刷新:续跑 effect 会重新拉一次任务,已终态就收拾干净并解锁,还在跑就
+  // 重新挂上轮询。轮询停了也不是死路,窗口重新获得焦点时 React Query 还会再探一次。
+  useEffect(() => {
+    if (!decomposeTaskId) return;
+    let notified = false;
+    const t = setInterval(() => {
+      if (notified || !decomposeWatchExpired()) return;
+      // 只播报一次:这条 effect 不再自我了结(taskId 留着),不设闸就会每 3 秒
+      // 重复 invalidate 一轮。
+      notified = true;
+      setActionErr(
+        "图层分解等太久了:任务仍在后台跑,按钮先锁着以免重复下单。刷新页面可以继续跟进度,结果出来会回到这张图下面。",
+      );
+      qc.invalidateQueries({ queryKey: ["brandai-gen", wsId, genId] });
+    }, 3000);
+    return () => clearInterval(t);
+  }, [decomposeTaskId, qc, wsId, genId, decomposeWatchExpired]);
+
+  // 刷新续跑:读 `?decomposeTask=`,还在跑就重新挂上轮询,已经跑完就直接把结果
+  // 拉出来(并打开对应图层组),不让用户对着一个"什么都没发生"的画布重拆一次。
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const t = params.get("decomposeTask");
+    // 来源取这两个专属参数,不取实时的 `?gen=`/`?project=`——后者会随切换而变。
+    const srcGen = params.get("decomposeGen") ?? "";
+    const srcProject = params.get("decomposeProject") ?? "";
+    if (!t || !wsId) return;
+    let cancelled = false;
+    /** 重新挂上轮询:起始时刻已不可考,从"现在"重新起算中间态上界(§2.4)。 */
+    const reattach = (running: boolean) => {
+      decomposeStartedAt.current = Date.now();
+      // 捡回来时已在跑,就别再让它被"首次 RUNNING"重置一次上界。
+      decomposeRunningAt.current = running ? Date.now() : 0;
+      if (srcGen) {
+        decomposeCtx.current = { genId: srcGen, projectId: srcProject };
+      }
+      setDecomposeTaskId(t);
+    };
+    void apiFetch<TaskState>(`/api/workspaces/${wsId}/tasks/${t}`)
+      .then((task) => {
+        if (cancelled) return;
+        if (task.status === "RUNNING" || task.status === "PENDING") {
+          reattach(task.status === "RUNNING");
+          return;
+        }
+        syncDecomposeTaskUrl(null);
+        if (task.status === "SUCCEEDED") {
+          // 刷新回来时任务已经跑完:按**来源**刷新,并且只有用户此刻正停在那条
+          // generation 上才开面板。开在别条上只会是一个 generation 作用域的 404。
+          qc.invalidateQueries({
+            queryKey: ["brandai-gen", wsId, srcGen || undefined],
+          });
+          qc.invalidateQueries({ queryKey: ["brandai-project-gens", wsId] });
+          if (task.refId && srcGen && srcGen === genId) {
+            setOpenLayerSetId(task.refId);
+          }
+        }
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        // **只有服务端明确说"没有这个任务"才清线索。**
+        //
+        // 网络抖一下、网关 502、请求超时——这些统统只说明"这次没问到",不说明
+        // 那一单不存在。旧写法把所有失败当同一种,于是一次抖动就把地址栏里唯一
+        // 指向那一单的参数删了,而 `decomposeTaskId` 还是 null:闸也没了,线索也
+        // 没了,用户下一步就是再花一次钱重拆,而第一单还在后台好好跑着。
+        const status = err instanceof ApiFetchError ? err.status : 0;
+        if (status === 404 || status === 403) {
+          syncDecomposeTaskUrl(null);
+          return;
+        }
+        // 问不到就先当它还在跑:挂上轮询让它自己去重试,真跑完了下一拍就收到
+        // 终态并收拾干净;真没了也会在轮询里拿到 404。
+        reattach(false);
+        setActionErr(
+          "没能读到上次那次图层分解的状态(网络问题),正在重试。它仍在后台跑,不用重新提交。",
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+    // 只在挂载时复原一次:后续状态由轮询驱动。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wsId]);
+
+  const runDecompose = useCallback(
+    async (version: GenerationVersion) => {
+      if (!genId || decomposeTaskId) return;
+      setActionErr(null);
+      decomposeStartedAt.current = Date.now();
+      decomposeRunningAt.current = 0;
+      decomposeCtx.current = { genId, projectId: projectId ?? "" };
+      try {
+        const res = await apiFetch<{ taskId: string; layerSetId: string }>(
+          `/api/workspaces/${wsId}/generations/${genId}/versions/${version.id}/decompose`,
+          {
+            method: "POST",
+            // 层数与拆法**只从这次请求带**:它们是花钱的请求参数,不从设备偏好
+            // 继承(prd_agent 存 localStorage,共享浏览器上前一个人选的层数会被
+            // 下一个账号原样继承,而入口不显示层数,用户没机会发现)。
+            body: JSON.stringify({
+              layerCount,
+              ...(layerIntent.trim() ? { intent: layerIntent.trim() } : {}),
+            }),
+          },
+        );
+        setDecomposeTaskId(res.taskId);
+        syncDecomposeTaskUrl(res.taskId, {
+          genId,
+          projectId: projectId ?? "",
+        });
+      } catch (err) {
+        decomposeStartedAt.current = 0;
+        setActionErr(
+          err instanceof Error ? err.message : "图层分解提交失败",
+        );
+      }
+    },
+    [
+      wsId,
+      genId,
+      projectId,
+      decomposeTaskId,
+      layerCount,
+      layerIntent,
+      syncDecomposeTaskUrl,
+    ],
+  );
 
   // 改图 server-authoritative:POST→202→轮询 edit job→成功后刷新主 generation,
   // 新的子版本(parentVersionId)就会出现在变体条里。
@@ -1543,6 +1827,17 @@ function Workspace() {
               onRun: (version, op) =>
                 void runEdit(op, { prompt: editInstr.trim() }, version),
               onOpenMask: (version) => openMaskPaint(version),
+              decompose: {
+                busy: !!decomposeTaskId,
+                layerCount,
+                onLayerCountChange: (n) =>
+                  setLayerCount(Math.max(1, Math.min(10, n))),
+                intent: layerIntent,
+                onIntentChange: setLayerIntent,
+                onRun: (version) => void runDecompose(version),
+                activeSetId: currentLayerMeta?.setId ?? null,
+                onOpenPanel: (setId) => setOpenLayerSetId(setId),
+              },
               // V0.0.13e — 终选/交付/审阅挪进画布选中工具条（原下方面板已删）。
               delivery: current
                 ? {
@@ -1570,6 +1865,21 @@ function Workspace() {
                 : undefined,
             }}
           />
+          {openLayerSetId && genId ? (
+            <LayerPanel
+              wsId={wsId}
+              generationId={genId}
+              setId={openLayerSetId}
+              onClose={() => setOpenLayerSetId(null)}
+              onChanged={() => {
+                // 显隐/层序是服务端权威:改完重新拉版本,画布按新的 layerZ 重绘。
+                qc.invalidateQueries({ queryKey: ["brandai-gen", wsId, genId] });
+                qc.invalidateQueries({
+                  queryKey: ["brandai-project-gens", wsId, projectId],
+                });
+              }}
+            />
+          ) : null}
           <ResourceUsagePanel
             open={resourcePanelOpen}
             resources={workspaceResources}

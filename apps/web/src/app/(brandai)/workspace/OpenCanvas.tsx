@@ -9,6 +9,11 @@ import {
   type MutableRefObject,
 } from "react";
 import type { GenerationVersion } from "@brandai/contracts";
+import {
+  groupVersionsIntoLayerSets,
+  planLayerSetRect,
+  readLayerMeta,
+} from "@brandai/contracts";
 
 /**
  * 开放世界画布 —— 迁移自 prd_agent 视觉创作 AdvancedVisualAgentTab 的无限平面画布
@@ -26,6 +31,8 @@ import type { GenerationVersion } from "@brandai/contracts";
 export type CanvasItemKind = "image" | "shape" | "text";
 export type ShapeType = "rect" | "circle" | "triangle" | "star";
 
+type LayerRect = { x: number; y: number; w: number; h: number };
+
 export type CanvasItem = {
   key: string;
   kind: CanvasItemKind;
@@ -42,6 +49,13 @@ export type CanvasItem = {
   /** 上传同步态（仅本地内存，不持久化）：pending=本地预览已上画布、资产上传中；
    *  failed=上传失败（刷新会丢）。undefined/synced=已持久。 */
   syncStatus?: "pending" | "synced" | "failed";
+  /** 图层分解产物:属于哪一组、是第几层。有值即表示这块是一个图层。 */
+  layerSetId?: string;
+  layerIndex?: number;
+  /** 服务端权威的呈现态,由 seedVersions 同步下来(不进画布 JSON,避免双事实源)。 */
+  layerHidden?: boolean;
+  layerOpacity?: number;
+  layerZ?: number;
   // shape
   shapeType?: ShapeType;
   fill?: string;
@@ -131,6 +145,22 @@ export type CanvasEditBridge = {
   onInstrChange: (v: string) => void;
   onRun: (version: GenerationVersion, op: string) => void;
   onOpenMask: (version: GenerationVersion) => void;
+  /**
+   * 图层分解(AI 分层)。刻意不放进 `ops`:那一排每项都是「一进一出」走 /edit,
+   * 而分解是「一进 N 出」走自己的任务链路,共用同一个提交函数只会把两种语义
+   * 揉在一起。它也不吃 `instr`——层数与拆法由自己的气泡收集。
+   */
+  decompose?: {
+    busy: boolean;
+    layerCount: number;
+    onLayerCountChange: (n: number) => void;
+    intent: string;
+    onIntentChange: (v: string) => void;
+    onRun: (version: GenerationVersion) => void;
+    /** 选中的这块属于某个图层组时给出组 id,用来开图层面板。 */
+    activeSetId?: string | null;
+    onOpenPanel?: (setId: string) => void;
+  };
   /** V0.0.13e — 终选/交付/审阅（BrandAI 特有业务，视觉创作无此概念）：
    *  下方独立面板已删，动作挪进画布选中工具条（跟随画布选中，交互形态与
    *  视觉创作的「选中即操作」一致）。 */
@@ -238,6 +268,33 @@ export function OpenCanvas({
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  /**
+   * 选中操作条的实测宽度 + 舞台宽度。
+   *
+   * 用来把操作条「推」回舞台内，而不是把它压窄——这两件事在 CSS 里长得很像，
+   * 但差别是致命的：绝对定位元素只写 `left` 不写 `right` 时，浏览器**先**按
+   * 「从 left 到容器右沿」算可用宽度，**再**做 `translate(-50%)` 位移。于是选中
+   * 的图越靠左，操作条被算得越窄（实测：舞台 850、允许 722、实际只有 514，右边
+   * 白白空着 258），wrap 成六行，看着就像有一面无形的墙。
+   *
+   * 解法是给它 `width: max-content` 把尺寸从「可用宽度」里解绑，上限改成按舞台
+   * 算的具体像素，再用实测宽度夹住 left。
+   */
+  const [stageW, setStageW] = useState(0);
+  const [opBarW, setOpBarW] = useState(0);
+  const opBarRoRef = useRef<ResizeObserver | null>(null);
+  const opBarRef = useCallback((node: HTMLDivElement | null) => {
+    opBarRoRef.current?.disconnect();
+    opBarRoRef.current = null;
+    if (!node) {
+      setOpBarW(0);
+      return;
+    }
+    const ro = new ResizeObserver(() => setOpBarW(node.offsetWidth));
+    ro.observe(node);
+    opBarRoRef.current = ro;
+    setOpBarW(node.offsetWidth);
+  }, []);
   const editTextRef = useRef<HTMLTextAreaElement>(null);
   const gestureRef = useRef<Gesture>(null);
   const movedRef = useRef(false);
@@ -266,6 +323,8 @@ export function OpenCanvas({
   // 选中出图变体后「待执行的改图操作」(arm)。点 op chip 只是选中操作(不立即发图),
   // 输入指令后回车/点「出图」才真正改图——避免「点一下就锁死整条工具条」。
   const [armedOp, setArmedOp] = useState<string | null>(null);
+  /** 「图层分解」的层数/拆法气泡是否展开。点一下先问怎么拆,不闷头按默认开拆。 */
+  const [decomposeOpen, setDecomposeOpen] = useState(false);
 
   const commitTextEdit = useCallback((key: string, value: string) => {
     setItems((prev) =>
@@ -431,6 +490,12 @@ export function OpenCanvas({
               ...(it.assetId ? { assetId: it.assetId } : {}),
               ...(it.naturalW ? { naturalW: it.naturalW } : {}),
               ...(it.naturalH ? { naturalH: it.naturalH } : {}),
+              // 组身份写进画布 JSON:显隐/层序是服务端权威(不存),但"这块属于哪
+              // 一组"是布局血缘。不存它,播种数据到达之前的那一帧里分组是散的。
+              ...(it.layerSetId ? { layerSetId: it.layerSetId } : {}),
+              ...(typeof it.layerIndex === "number"
+                ? { layerIndex: it.layerIndex }
+                : {}),
             }
           : it.kind === "shape"
             ? {
@@ -576,15 +641,54 @@ export function OpenCanvas({
       const have = new Set(
         kept.filter((it) => it.versionId).map((it) => it.versionId),
       );
-      const fresh = seedVersions.filter(
+      const freshAll = seedVersions.filter(
         (v) => !have.has(v.id) && !removedVersionIdsRef.current.has(v.id),
       );
-      if (fresh.length === 0) return kept;
+      // 已在画布上的图层 tile 也要跟着服务端的显隐/不透明度/层序走 —— 它们是
+      // 服务端权威状态(刷新、换设备、分享都读同一份),不进画布 JSON。
+      const synced = kept.map((it) => {
+        if (!it.versionId) return it;
+        const meta = readLayerMeta(byId.get(it.versionId)?.params);
+        if (!meta) return it;
+        if (
+          it.layerSetId === meta.setId &&
+          it.layerIndex === meta.index &&
+          it.layerHidden === meta.hidden &&
+          it.layerOpacity === meta.opacity &&
+          it.layerZ === meta.z
+        )
+          return it;
+        return {
+          ...it,
+          // 组身份也要补:画布 JSON 里可能没有它(旧构建存的、或超预算被裁掉的),
+          // 而 paintOrder 靠 layerSetId 分组。缺了它,刷新之后每一层都被当成独立
+          // 元素,服务端的 layerZ 就不再生效——用户调过的层序看着"自己弹回去了"。
+          // params 是 SSOT,所以这里无条件按它回填,不依赖画布 JSON 存没存。
+          layerSetId: meta.setId,
+          layerIndex: meta.index,
+          layerHidden: meta.hidden,
+          layerOpacity: meta.opacity,
+          layerZ: meta.z,
+        };
+      });
+      if (freshAll.length === 0) return synced;
+
+      // 图层组必须以**组**为单位出现:一次拆 4 层不是画布上凭空多出四张散图,
+      // 而是原图右侧多出一个可拆解的副本(默认叠放,看着和原图一样)。
+      const grouped = groupVersionsIntoLayerSets(freshAll);
+      const fresh = grouped.plain;
+      const occupied: LayerRect[] = synced.map((it) => ({
+        x: it.x,
+        y: it.y,
+        w: it.w,
+        h: it.h,
+      }));
+
       // 新 tile 落在现有内容包围盒下方（避免与累积的旧图/手动元素重叠）。
       // 4 列换行：历史 generation 全量回填（老项目首次进入）可能一次落几十张，
       // 单行会拉出超长横条。
-      const maxY = kept.length
-        ? Math.max(...kept.map((it) => it.y + it.h))
+      const maxY = occupied.length
+        ? Math.max(...occupied.map((b) => b.y + b.h))
         : -64;
       const COLS = 4;
       let rowY = maxY + 64;
@@ -602,9 +706,96 @@ export function OpenCanvas({
         rowH = Math.max(rowH, item.h);
         return placed;
       });
-      return [...kept, ...add];
+
+      // 图层组落位放在最后:它要贴着**源图 tile**的右侧,而首屏时源图自己也在
+      // 这一批 fresh 里,先算组就会拿不到它 —— 组和普通图会一起挤在原点。
+      const settled = [...synced, ...add];
+      const occupiedAll: LayerRect[] = settled.map((it) => ({
+        x: it.x,
+        y: it.y,
+        w: it.w,
+        h: it.h,
+      }));
+      const placedSets: CanvasItem[] = [];
+      for (const set of grouped.sets) {
+        const sourceTile = set.sourceVersionId
+          ? settled.find((it) => it.versionId === set.sourceVersionId)
+          : undefined;
+        const anchor: LayerRect = sourceTile
+          ? {
+              x: sourceTile.x,
+              y: sourceTile.y,
+              w: sourceTile.w,
+              h: sourceTile.h,
+            }
+          : {
+              x: 0,
+              y:
+                (occupiedAll.length
+                  ? Math.max(...occupiedAll.map((b) => b.y + b.h))
+                  : -64) + 64,
+              w: 280,
+              h: 280,
+            };
+        // 这一组已经有成员落在画布上了,就**回到它那块地**,别另开一块。
+        //
+        // 会发生是因为持久化有 200 条上限,它可能从一组中间切开:刷新后先落地的
+        // 几层进了 `synced`,漏掉的几层留在 `freshAll` 里。此时若照常 `planLayerSetRect`,
+        // 那几层会被摆到另一块矩形上——服务端明明是一组,画布上却永久裂成两处。
+        // 这正是本 PR 反复守的那条不变量:一组图层必须以**一个对象**出现。
+        const seated = settled.find((it) => it.layerSetId === set.setId);
+        const rect = seated
+          ? { x: seated.x, y: seated.y, w: seated.w, h: seated.h }
+          : planLayerSetRect(anchor, occupiedAll);
+        if (!seated) occupiedAll.push(rect);
+        for (const version of set.layers) {
+          const meta = readLayerMeta(version.params);
+          placedSets.push({
+            key: `v-${version.id}`,
+            kind: "image",
+            versionId: version.id,
+            imageUrl: version.imageUrl,
+            naturalW: version.width,
+            naturalH: version.height,
+            x: rect.x,
+            y: rect.y,
+            w: rect.w,
+            h: rect.h,
+            layerSetId: set.setId,
+            layerIndex: meta?.index ?? 0,
+            layerHidden: meta?.hidden ?? false,
+            layerOpacity: meta?.opacity ?? 1,
+            layerZ: meta?.z ?? meta?.index ?? 0,
+          });
+        }
+      }
+      return [...settled, ...placedSets];
     });
   }, [seedVersions, seedReady]);
+
+  /**
+   * 绘制顺序:DOM 顺序即叠放顺序。
+   *
+   * 图层组内部按服务端的 layerZ 排,组与组、组与其它元素之间维持原有顺序
+   * (以该组第一个成员的位置为锚)。**层序只有这一个口径**——prd_agent 的多选
+   * 导出另起了一份数组序,于是用户调过层序之后导出的文档与画布对不上。
+   */
+  const paintOrder = useMemo(() => {
+    const anchorIndex = new Map<string, number>();
+    items.forEach((it, i) => {
+      if (it.layerSetId && !anchorIndex.has(it.layerSetId))
+        anchorIndex.set(it.layerSetId, i);
+    });
+    return items
+      .map((it, i) => ({
+        it,
+        group: it.layerSetId ? anchorIndex.get(it.layerSetId)! : i,
+        z: typeof it.layerZ === "number" ? it.layerZ : 0,
+        i,
+      }))
+      .sort((a, b) => a.group - b.group || a.z - b.z || a.i - b.i)
+      .map((entry) => entry.it);
+  }, [items]);
 
   // items 变化后(尤其切 generation 时版本 tile 被裁剪)把 selected 收敛到仍存在的 key ——
   // 否则被移除版本的 key 残留在 selected 里,图层/删除条仍高亮可点、键盘操作打到「幽灵
@@ -788,6 +979,16 @@ export function OpenCanvas({
     }
     fitToContent();
   }, [items, fitKey, fitToContent]);
+
+  // ---- 舞台宽度(操作条落位要用,窗口/侧栏变化都得跟) ----
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    setStageW(el.clientWidth);
+    const ro = new ResizeObserver(() => setStageW(el.clientWidth));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   // ---- wheel 手势(passive:false,只绑一次) ----
   useEffect(() => {
@@ -1463,7 +1664,10 @@ export function OpenCanvas({
       ) : null}
 
       {/* items */}
-      {items.map((it) => {
+      {paintOrder.map((it) => {
+        // 隐藏的图层整块不渲染:它仍在数据里(导出分层文档时照样写进去并标隐藏),
+        // 只是画布上不占视觉。可见性由图层面板控制,不由覆盖率猜。
+        if (it.layerHidden) return null;
         const left = it.x * zoom + camera.x;
         const top = it.y * zoom + camera.y;
         const w = it.w * zoom;
@@ -1482,6 +1686,9 @@ export function OpenCanvas({
             data-testid="canvas-item"
             data-kind={it.kind}
             data-selected={isSel ? "1" : "0"}
+            // 分解产物在画布上和普通图长得一样,但工具条给的是「图层面板」而不是
+            // 「图层分解」。把组身份挂出来,真测才分得清自己选中的是哪一种。
+            {...(it.layerSetId ? { "data-layer-set": it.layerSetId } : {})}
             className="group/citem"
             onPointerDown={(e) => beginItemDrag(e, it.key)}
             onDoubleClick={(e) => {
@@ -1498,6 +1705,9 @@ export function OpenCanvas({
               width: w,
               height: h,
               cursor: handCursor ? "inherit" : "move",
+              ...(typeof it.layerOpacity === "number" && it.layerOpacity < 1
+                ? { opacity: it.layerOpacity }
+                : {}),
             }}
           >
             {it.kind === "image" && it.imageUrl ? (
@@ -1507,7 +1717,15 @@ export function OpenCanvas({
                 alt="画布图片"
                 draggable={false}
                 className="h-full w-full rounded-[6px] object-contain"
-                style={{ background: "rgb(244 240 255 / 0.5)" }}
+                style={{
+                  // 那层淡紫底是普通图片的占位色。图层组是**叠**在同一块矩形上
+                  // 的 RGBA:每一层的透明像素都垫一次 50% 淡紫,四层叠起来就是
+                  // 四道紫雾盖住下面的层,「叠起来跟原图一样」这条不变量当场作废。
+                  // 所以分解产物一律不垫底——它本来就该是透明的。
+                  ...(it.layerSetId
+                    ? {}
+                    : { background: "rgb(244 240 255 / 0.5)" }),
+                }}
                 onLoad={(e) => {
                   const img = e.currentTarget;
                   if (!it.naturalW && img.naturalWidth) {
@@ -2007,11 +2225,25 @@ export function OpenCanvas({
               ? (soloIt.y + soloIt.h) * zoom + camera.y
               : 0;
             const flip = topY < 120; // 上方放不下 → 放图片下方
+            // 只留一条窄边距,其余整条舞台宽度都归操作条用。
+            const GUTTER = 12;
+            // 用实测宽度把它夹回舞台内:贴边时是整条**平移**,不是被压窄。
+            const half = opBarW / 2;
+            const clampedCx =
+              stageW > 0 && opBarW > 0
+                ? Math.min(
+                    Math.max(cx, half + GUTTER),
+                    Math.max(half + GUTTER, stageW - half - GUTTER),
+                  )
+                : cx;
             const barStyle: React.CSSProperties = soloIt
               ? {
-                  left: Math.max(160, Math.min(cx, 99999)),
+                  left: clampedCx,
+                  // width:max-content 是关键——不写它,宽度会被「从 left 到右沿」
+                  // 的可用宽度悄悄限死(见 opBarW 处的注释)。
+                  width: "max-content",
+                  ...(stageW > 0 ? { maxWidth: stageW - GUTTER * 2 } : {}),
                   top: flip ? bottomY + 12 : undefined,
-                  bottom: flip ? undefined : undefined,
                   transform: "translate(-50%, 0)",
                   ...(flip
                     ? {}
@@ -2020,11 +2252,22 @@ export function OpenCanvas({
                         transform: "translate(-50%, -100%)",
                       }),
                 }
-              : { left: "50%", top: "4.5rem", transform: "translateX(-50%)" };
+              : {
+                  left: "50%",
+                  top: "4.5rem",
+                  width: "max-content",
+                  ...(stageW > 0 ? { maxWidth: stageW - GUTTER * 2 } : {}),
+                  transform: "translateX(-50%)",
+                };
             return (
               <div
                 onPointerDown={(e) => e.stopPropagation()}
-                className="absolute z-20 flex max-w-[calc(100%-8rem)] flex-wrap items-center justify-center gap-1.5 rounded-2xl border border-border bg-card/95 px-2.5 py-2 shadow-[0_14px_40px_rgba(30,30,60,0.12)] backdrop-blur"
+                // z-40:选中工具条必须压过底部资源坞(z-30)。工具条跟随选中元素定位,
+                // 元素靠近画布下沿时它正好落在坞的矩形上,而坞层级更高——于是「改色」
+                // 「局部重画」这些按钮看得见、点不动(浏览器真测里是 "intercepts
+                // pointer events" 超时)。这是选区上下文操作,应当压过常驻坞。
+                ref={opBarRef}
+                className="absolute z-40 flex flex-wrap items-center justify-center gap-1.5 rounded-2xl border border-border bg-card/95 px-2.5 py-2 shadow-[0_14px_40px_rgba(30,30,60,0.12)] backdrop-blur"
                 style={barStyle}
               >
                 {edit.ops.map((o) => {
@@ -2107,6 +2350,117 @@ export function OpenCanvas({
                 >
                   {edit.busy ? "改图中…" : "出图"}
                 </button>
+
+                {/* 图层分解（AI 分层）。单独成段:它一进 N 出，不走上面那条
+                    「选操作 + 指令 → 出图」的改图链路。 */}
+                {edit.decompose ? (
+                  <>
+                    <span className="mx-0.5 h-5 w-px bg-border" />
+                    {edit.decompose.activeSetId ? (
+                      <button
+                        type="button"
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onClick={() =>
+                          edit.decompose?.onOpenPanel?.(
+                            edit.decompose.activeSetId!,
+                          )
+                        }
+                        title="打开这一组的图层面板"
+                        className="rounded-full border border-primary/40 bg-accent-soft px-2.5 py-1 text-xs font-medium text-primary"
+                      >
+                        图层面板
+                      </button>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          onPointerDown={(e) => e.stopPropagation()}
+                          onClick={() =>
+                            setDecomposeOpen((prev) => !prev)
+                          }
+                          disabled={edit.decompose.busy}
+                          title="把这张图拆成多张可独立编辑的透明图层"
+                          className={[
+                            "rounded-full px-2.5 py-1 text-xs transition-colors disabled:opacity-50",
+                            decomposeOpen
+                              ? "bg-accent-soft font-medium text-primary ring-1 ring-primary/40"
+                              : "border border-border text-muted-foreground hover:bg-muted",
+                          ].join(" ")}
+                        >
+                          {edit.decompose.busy ? "分解中…" : "图层分解"}
+                        </button>
+                        {decomposeOpen ? (
+                          <span
+                            className="flex items-center gap-1.5 rounded-lg border border-border bg-background px-2 py-1"
+                            onPointerDown={(e) => e.stopPropagation()}
+                          >
+                            <span className="text-[11px] text-muted-foreground">
+                              层数
+                            </span>
+                            <button
+                              type="button"
+                              aria-label="减少层数"
+                              disabled={edit.decompose.layerCount <= 1}
+                              onClick={() =>
+                                edit.decompose?.onLayerCountChange(
+                                  edit.decompose.layerCount - 1,
+                                )
+                              }
+                              className="h-5 w-5 rounded border border-border text-xs leading-none text-muted-foreground disabled:opacity-40"
+                            >
+                              -
+                            </button>
+                            <span
+                              data-testid="layer-count-value"
+                              className="w-4 text-center font-mono text-xs tabular-nums text-foreground"
+                            >
+                              {edit.decompose.layerCount}
+                            </span>
+                            <button
+                              type="button"
+                              aria-label="增加层数"
+                              disabled={edit.decompose.layerCount >= 10}
+                              onClick={() =>
+                                edit.decompose?.onLayerCountChange(
+                                  edit.decompose.layerCount + 1,
+                                )
+                              }
+                              className="h-5 w-5 rounded border border-border text-xs leading-none text-muted-foreground disabled:opacity-40"
+                            >
+                              +
+                            </button>
+                            <input
+                              value={edit.decompose.intent}
+                              onChange={(e) =>
+                                edit.decompose?.onIntentChange(e.target.value)
+                              }
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" && !edit.decompose?.busy) {
+                                  e.preventDefault();
+                                  edit.decompose?.onRun(soloVersion);
+                                  setDecomposeOpen(false);
+                                }
+                              }}
+                              placeholder="怎么拆？如「logo 单独一层」，可留空"
+                              className="h-7 w-52 rounded-md border border-border bg-background px-2 text-xs text-foreground outline-none focus:border-primary/40"
+                            />
+                            <button
+                              type="button"
+                              disabled={edit.decompose.busy}
+                              onClick={() => {
+                                edit.decompose?.onRun(soloVersion);
+                                setDecomposeOpen(false);
+                              }}
+                              className="h-7 rounded-md bg-gradient-to-br from-primary to-accent px-2.5 text-xs font-medium text-primary-foreground disabled:opacity-40"
+                            >
+                              开拆
+                            </button>
+                          </span>
+                        ) : null}
+                      </>
+                    )}
+                  </>
+                ) : null}
 
                 {/* V0.0.13e — 终选/交付/审阅（原下方面板已删，动作跟随画布选中） */}
                 {edit.delivery ? (

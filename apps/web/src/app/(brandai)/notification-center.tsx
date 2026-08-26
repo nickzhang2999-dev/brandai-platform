@@ -39,6 +39,7 @@ const KIND_ICON: Record<string, string> = {
   PARSE_MANUAL: "▦",
   DESCRIBE: "❝",
   INGEST: "⤓",
+  DECOMPOSE: "▤",
 };
 
 export function NotificationCenter({ wsId }: { wsId: string }) {

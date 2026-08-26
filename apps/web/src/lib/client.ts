@@ -1,5 +1,23 @@
 "use client";
 
+/**
+ * 带 HTTP 状态码的请求错误。
+ *
+ * 有些调用方要区分「服务端明确说这东西不存在(404)」和「这次没问到(网络断了/
+ * 502/超时)」——两者的正确反应相反:前者该清理本地线索,后者必须原样留着重试。
+ * 只给一句 message 的话,调用方只能把所有失败当同一种,于是一次抖动就会把
+ * 「还在跑的那一单」的线索删掉。
+ */
+export class ApiFetchError extends Error {
+  /** 0 表示请求根本没发出去/没拿到响应(网络层失败)。 */
+  readonly status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "ApiFetchError";
+    this.status = status;
+  }
+}
+
 /** Tiny typed fetch wrapper for client components (TanStack Query). */
 export async function apiFetch<T>(
   url: string,
@@ -20,7 +38,10 @@ export async function apiFetch<T>(
     } catch {
       /* ignore */
     }
-    throw new Error(detail || `Request failed (${res.status})`);
+    throw new ApiFetchError(
+      detail || `Request failed (${res.status})`,
+      res.status,
+    );
   }
   return (await res.json()) as T;
 }
