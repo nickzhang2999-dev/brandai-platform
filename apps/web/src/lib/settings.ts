@@ -423,9 +423,17 @@ export async function getProvidersHealth(): Promise<ProvidersHealth> {
       configured: fromDb || fromEnv,
       source: fromDb ? "db" : fromEnv ? "env" : "none",
       provider: effective,
+      // 只有**最终真的跑 mock**时这一位才有意义。
+      //
+      // 第一版写成"env 或 db 里出现过 mock 就算数",拿真实部署一照就露馅:线上
+      // CDS 项目 env 里留着 `IMAGE_PROVIDER=mock`(首启兜底),而 db 里是 openai——
+      // 生效的是 openai,却被标成 deliberateMock=true。这一位是给守卫放行用的,
+      // 误报意味着"哪天 db 值被清空、静默退回 mock"时守卫会挥手放行,正好放过
+      // 它要防的那件事。
       deliberateMock:
-        (envProvider || "").trim().toLowerCase() === "mock" ||
-        (dbProvider || "").trim().toLowerCase() === "mock",
+        effective.trim().toLowerCase() === "mock" &&
+        ((envProvider || "").trim().toLowerCase() === "mock" ||
+          (dbProvider || "").trim().toLowerCase() === "mock"),
     };
   };
   const ai = await getEffectiveAiSettings();
