@@ -8,6 +8,8 @@
  *     `?decomposeTask=` 三个参数必须仍在地址栏（刷新还能接着跟）。
  *  C) 刷新续跑时任务 GET 抖了一下（502）：线索同样不许被删——「这次没问到」不等于
  *     「那一单不存在」。反过来服务端明确说 404 时必须收摊，两端都要验。
+ *  D) 刷新续跑时占位图必须回到源图那一块上：只捡回 `decomposeTaskId` 不够，
+ *     占位图挂在**源版本**上，源版本没捡回来，用户刷新一下「正在拆」的灰底就凭空消失。
  *
  * **这是手动红绿驱动脚本，不是守卫**：它只打印观测值，不做断言，而且 B 那条要先把
  * `POLL_CAP_MS` 与 mock 分解耗时临时改短/改长才有意义（见下面的「怎么跑」）。别把它
@@ -23,6 +25,10 @@
  *   C) 同样要先加 mock 的 25 秒 sleep，再 `ONLY=C node …`（502 抖动）、
  *      `MODE404=1 ONLY=C …`（一直 404）、`MODE404=2 ONLY=C …`（先抖后 404）。
  *      红：把续跑的 `.catch` 改回「任何失败都 `syncDecomposeTaskUrl(null)`」。
+ *   D) 同样要先加 mock 的 25 秒 sleep（否则刷新时它已经跑完了），再 `ONLY=D node …`。
+ *      红绿在同一次运行里做完：去掉 `decomposeVersion` 再刷新那一次，就是修复前的行为。
+ *      本地跑 mock 分解要先把上游设成**有意的 mock**（`AppSetting.layerProvider='mock'`），
+ *      否则会被「禁止静默降级」那道 409 预检挡下——那道闸是对的，别为了跑脚本去拆它。
  */
 import { chromium } from "playwright-core";
 for (const k of ["HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy", "ALL_PROXY", "all_proxy"])
@@ -75,7 +81,7 @@ async function selectRasterTile() {
   return false;
 }
 
-if (ONLY !== "B" && ONLY !== "C") {
+if (ONLY !== "B" && ONLY !== "C" && ONLY !== "D") {
   // ---- A) 滑杆 ----
   await selectLayerTile();
   const panelBtn = page.getByRole("button", { name: "图层面板" });
@@ -105,7 +111,7 @@ if (ONLY !== "B" && ONLY !== "C") {
   console.log(`A 滑杆 | 松手位置=0 界面=${shown} 服务端=${server} 拖后禁用=${disabledMidDrag}`);
 }
 
-if (ONLY !== "A" && ONLY !== "C") {
+if (ONLY !== "A" && ONLY !== "C" && ONLY !== "D") {
   // ---- B) 上界到点之后 ----
   await page.goto(`${BASE}/workspace?project=${PROJECT}&gen=${GEN}`, { waitUntil: "domcontentloaded", timeout: 60000 });
   await page.waitForSelector("[data-testid=canvas-item]", { timeout: 30000 });
@@ -175,6 +181,63 @@ if (ONLY === "C") {
   console.log(
     `C ${gone === "1" ? "404" : gone === "2" ? "抖动→404" : "抖动"} | 提交后 task=${before ? "有" : "无"} | 刷新后 URL=${JSON.stringify(params)} 按钮="${label}" 锁着=${locked}`,
   );
+}
+
+if (ONLY === "D") {
+  // ---- D) 刷新续跑时,占位图必须回到源图那一块上 ----
+  //
+  // 续跑只捡回 `decomposeTaskId` 是不够的:占位图挂在**源版本**上,源版本没捡回来
+  // 就没有占位图 —— 用户刷新一下,「正在拆」的灰底凭空消失,只剩右下角队列在转。
+  // 红绿在同一次运行里做完:带 `decomposeVersion` 刷新(修复后的行为)与去掉它再
+  // 刷新(修复前的行为)各看一次占位图在不在。
+  //
+  // 这一单直接用页面里的 fetch 下,不走工具条:D 要验的是「URL → 占位图」,
+  // 用画布点选去下单只会把选 tile、开气泡这些与本题无关的抖动算进来。
+  // 前置:mock 的 `decompose()` 前加 25 秒 sleep(同 B/C),否则刷新时它已经跑完了。
+  await page.goto(`${BASE}/workspace?project=${PROJECT}&gen=${GEN}`, { waitUntil: "domcontentloaded", timeout: 60000 });
+  await page.waitForSelector("[data-testid=canvas-item]", { timeout: 30000 });
+  await page.waitForTimeout(1500);
+  const sub = await page.evaluate(async ([ws, gen]) => {
+    const g = await (await fetch(`/api/workspaces/${ws}/generations/${gen}`)).json();
+    // 源版本 = 这条 generation 上的原始出图(不是分解产物)。
+    const v = (g.generation?.versions ?? []).find((x) => !x.params?.layerSetId);
+    if (!v) return { err: "没有可分解的源版本" };
+    const r = await fetch(
+      `/api/workspaces/${ws}/generations/${gen}/versions/${v.id}/decompose`,
+      { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ layerCount: 4 }) },
+    );
+    const j = await r.json();
+    return { status: r.status, taskId: j.taskId, versionId: v.id, err: j?.error?.message };
+  }, [WS, GEN]);
+  if (!sub.taskId) {
+    console.log(`D FAIL | 下单没成功:${JSON.stringify(sub)}`);
+  } else {
+    const withVersion = new URL(`${BASE}/workspace`);
+    withVersion.searchParams.set("project", PROJECT);
+    withVersion.searchParams.set("gen", GEN);
+    withVersion.searchParams.set("decomposeTask", sub.taskId);
+    withVersion.searchParams.set("decomposeGen", GEN);
+    withVersion.searchParams.set("decomposeProject", PROJECT);
+    withVersion.searchParams.set("decomposeVersion", sub.versionId);
+
+    const placeholdersAfter = async (u) => {
+      await page.goto(u.toString(), { waitUntil: "domcontentloaded", timeout: 60000 });
+      await page.waitForSelector("[data-testid=canvas-item]", { timeout: 30000 });
+      await page.waitForTimeout(3000);
+      return page.locator("[data-testid=decompose-placeholder]").count();
+    };
+    const withParam = await placeholdersAfter(withVersion);
+    const stripped = new URL(withVersion.toString());
+    stripped.searchParams.delete("decomposeVersion");
+    const withoutParam = await placeholdersAfter(stripped);
+
+    console.log(`D 刷新占位图 | 带 decomposeVersion=${withParam} | 去掉该参数=${withoutParam}`);
+    console.log(
+      withParam === 1 && withoutParam === 0
+        ? "D PASS | 带参数刷新占位图回来了,去掉参数就没有(正是修复前的样子)"
+        : "D FAIL | 见上面两个计数",
+    );
+  }
 }
 
 await b.close();

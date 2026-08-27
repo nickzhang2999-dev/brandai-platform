@@ -168,9 +168,24 @@ export function LayerPanel({
             key={layer.versionId}
             data-testid="layer-row"
             data-hidden={layer.hidden ? "1" : "0"}
-            onClick={() => onFocusLayer?.(layer.versionId)}
-            title="点这一行可以在画布上选中这一层"
-            className="flex cursor-pointer items-center gap-2 rounded-lg border border-border/60 px-2 py-1.5 transition-colors hover:border-primary/40 hover:bg-accent-soft/40"
+            // 隐藏的层在画布上整块不渲染,没有 DOM 也就画不出选中框。点它「选中」
+            // 只会是一次没有任何反馈的点击——不如不接,并把原因写在 title 里。
+            onClick={
+              layer.hidden
+                ? undefined
+                : () => onFocusLayer?.(layer.versionId)
+            }
+            title={
+              layer.hidden
+                ? "这一层是隐藏的,画布上没有它。先点左边的「隐」打开,才能在画布上选中"
+                : "点这一行可以在画布上选中这一层"
+            }
+            className={[
+              "flex items-center gap-2 rounded-lg border border-border/60 px-2 py-1.5 transition-colors",
+              layer.hidden
+                ? "opacity-60"
+                : "cursor-pointer hover:border-primary/40 hover:bg-accent-soft/40",
+            ].join(" ")}
           >
             <button
               type="button"
