@@ -153,6 +153,24 @@ BrandAI 终态 = **多租户 SaaS 品牌视觉 AI 平台**：多客户 / 多用�
 1. `pnpm test && pnpm -F web typecheck && pnpm -F web build` 全绿。
 2. commit 用真实 subject（非 "WIP"），分支 `claude/<slug>`。
 3. push；compose 改了才走 pending-import 审批，否则 `branch deploy` 即可。**不建 PR 除非用户明确要求。**
+3.5 **合并进 `main` ≠ 发布到正式版（binding，2026-08-27 用一整轮返工换来的）。** 本项目有**两个**部署，别混：
+
+| | 域名 | queuePrefix | 怎么更新 |
+|---|---|---|---|
+| main 分支预览 | `main-brandai-platform.geole.me` | `brandai-main` | push/合并即自动部署 |
+| **正式版** | **`www.novartlab.com`** | `brandai-prod` | **只有点 CDS 的「发布」按钮才更新** |
+
+  正式版走 CDS 发布目标 `brandai-novartlab-local-prod`（SSH 跑 `./cds-release-novartlab.sh`），**不跟 main 自动走**。
+  所以「合并了」「main 预览上验过了」都**不代表用户手里那个站变了**——事故当天正式版还停在四天前的 commit，
+  三个修复一个都没上，而我拿 main 预览的健康探针当"正式环境已修复"汇报了两次。
+
+  判据（拿得到、不靠猜）：`curl https://www.novartlab.com/api/health` 与 `.../main-…/api/health` 比**字段**——
+  新增字段没出现就是没发布。发布链路（用 `AI_ACCESS_KEY` 打 `https://cds.geole.me`，头是 `X-AI-Access-Key`）：
+  `GET /api/releases/targets` 找目标 → `POST /api/releases/branches/brandai-platform-main/preflight` 九项全绿
+  → `POST .../runs`（带 `expectedCommitSha`）→ 轮 `GET /api/releases/runs/:id` 到 `success`。
+  发布期间正式站会 502 几分钟（`next build`），属正常；`preflight` 会告诉你可回滚版本是哪个。
+  **未经用户明确指示不得发布正式版。**
+
 4. **push 后必给 CDS 预览地址（binding，用户每次都要）** —— 跑 `python3 .claude/skills/preview-url/preview_url.py` 取根域，按本次改动的真实路由拼功能页路径，回复里贴一行 `【预览】<url>{路径}`；顺手 `curl .../api/health` 期望 `{"web":"ok","ai":"ok",...}`。**禁止自己 slugify / 手拼 `.geole.me`**（唯一入口是该脚本，见 `preview-url` 技能）。交付回复里漏这一行 = 没交付完。
 5. **更新 `README.md` 顶部「进度表」对应行的状态/日期**（本仓库最重要的文档·单一事实源），并同步对应 SSOT 文档（`docs/` 下产品/UI/字段文档）。
 6. **提需求调整须自带归因代号** —— 凡建议改/加/补需求，标一个代号 + 一句根因，记入 `docs/10_需求调整归因表.md`：**N** 新增需求 · **S** 需求没想清楚 · **I** 没按需求做 · **O** 可见性·验收缺口（做了但页面上看不到/没法确认） · **R** 优化·重构提议 · **E** 环境·部署·运行时（代码对但线上跑旧 commit/缓存/测错环境——判 E 前须 `cds-deploy-verify` 运行时取证，别冤枉 AI）。归因不裁决，聚合后看分布定基础设施投向（O/S 多→CDS 预览+视觉测试+DoD 前置；I 多→CI 回归；E 多→上线判据自动化）。用户侧入口是 **`/prd` 技能**（`.claude/skills/prd/`）：抛一句感受 → 闸门追问到三要素具体 → 落 `docs/prd-intake/` + 回填 docs/10。
