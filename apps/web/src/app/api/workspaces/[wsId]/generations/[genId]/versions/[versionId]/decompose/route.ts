@@ -6,6 +6,7 @@ import { requireOwnedWorkspace, requireWorkspaceRole } from "@/lib/workspace";
 import { decomposeQueue } from "@/lib/queue";
 import { createTask } from "@/lib/async-tasks";
 import { isLayerVersion, isVectorImage } from "@/lib/layers";
+import { getProvidersHealth, isProviderUsable } from "@/lib/settings";
 import type { DecomposeJobData } from "@/lib/workers/decompose.worker";
 
 /**
@@ -56,6 +57,20 @@ export async function POST(
       throw new ApiException(
         400,
         "这张是矢量占位图(SVG)，分层上游只接受位图。先用真实出图上游出一张图再拆。",
+      );
+    }
+
+    // 没配上游就当场说清楚,别让用户拿到一张占位图还以为是"生成结果"。
+    //
+    // 2026-08-27 线上事故:分层这一路解析成了 `MockLayerProvider`,0 秒返回 4 张
+    // 深色占位图,任务标 SUCCEEDED、日志里模型写着 `mock-layer`,而用户看到的只是
+    // "生成的图不对"。整条链每一层都"正常",没有一个错误——因为没配上游时系统
+    // **静默降级**成了占位实现。快检属于 §2.1 允许的动作(只读 DB,不碰慢调用)。
+    const providers = await getProvidersHealth();
+    if (!isProviderUsable(providers.layer)) {
+      throw new ApiException(
+        409,
+        "还没配置图层分解上游。去「管理后台 → 设置 → AI 服务」填入分层密钥并点「保存并测试」,再回来重试。",
       );
     }
 
