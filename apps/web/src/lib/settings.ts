@@ -364,3 +364,107 @@ export async function setRegistrationOpen(
     `[registration] ${open ? "OPENED" : "CLOSED"} by ${actor.email ?? actor.id}`,
   );
 }
+
+/* ------------------------------------------------------------------ *
+ * 上游配置健康（谁配了、配在哪一层、是不是占位实现）
+ * ------------------------------------------------------------------ */
+
+export type ProviderSource = "db" | "env" | "none";
+
+export interface ProviderHealth {
+  /** 有没有真正可用的密钥。false = 这一路只能跑占位实现。 */
+  configured: boolean;
+  /** 密钥来自哪一层。none = 谁都没配。 */
+  source: ProviderSource;
+  /** 生效的 provider 名（不含密钥）。 */
+  provider: string;
+  /**
+   * 部署方**明确**要求跑占位实现（env 里写死 `*_PROVIDER=mock`）。
+   *
+   * 这一位是「没配置」和「故意用 mock」的分界线。本地开发写 `LAYER_PROVIDER=mock`
+   * 是正当的；线上一个空库既没有 db 值也没有 env 值，那就是**没配**，不该当成
+   * 「选择了 mock」。
+   */
+  deliberateMock: boolean;
+}
+
+export interface ProvidersHealth {
+  image: ProviderHealth;
+  vlm: ProviderHealth;
+  layer: ProviderHealth;
+  storage: { configured: boolean; source: ProviderSource };
+}
+
+/**
+ * 上游配置的自检快照——**不含任何密钥**，因此可以挂在无鉴权的 /api/health 上。
+ *
+ * 为什么要有这东西：2026-08-26 线上事故。PR 合并后 CDS 建了一个全新的 `main`
+ * 部署，而 `cds-compose.yml` 里 postgres 是**每个分支各一份**——密钥存在
+ * `AppSetting` 表里，也就存在旧分支自己的库里。新库是空的，于是
+ * `providerHeaders()` 连请求头都不发、AI 服务落到 env、env 又没定义 `LAYER_PROVIDER`、
+ * `config.py` 默认 `"mock"`，最终 `MockLayerProvider` 输出一张深色占位图，任务还标
+ * SUCCEEDED。整条链每一层都"正常"，没有任何错误，用户只看到"生成的图不对"。
+ *
+ * 判据必须是**外部可核对**的：不登录后台、不看容器日志，`curl /api/health` 就能
+ * 看出"这个部署没配 key"。
+ */
+export async function getProvidersHealth(): Promise<ProvidersHealth> {
+  const row = await prisma.appSetting.findUnique({ where: { id: SINGLETON } });
+  const line = (
+    dbKey: string | null | undefined,
+    envKey: string | undefined,
+    dbProvider: string | null | undefined,
+    envProvider: string | undefined,
+    effective: string,
+  ): ProviderHealth => {
+    const fromDb = !!safeDecrypt(dbKey);
+    const fromEnv = !!(envKey || "").trim();
+    return {
+      configured: fromDb || fromEnv,
+      source: fromDb ? "db" : fromEnv ? "env" : "none",
+      provider: effective,
+      deliberateMock:
+        (envProvider || "").trim().toLowerCase() === "mock" ||
+        (dbProvider || "").trim().toLowerCase() === "mock",
+    };
+  };
+  const ai = await getEffectiveAiSettings();
+  const storage = await getEffectiveStorage();
+  return {
+    image: line(
+      row?.imageApiKey,
+      process.env.IMAGE_PROVIDER_API_KEY,
+      row?.imageProvider,
+      process.env.IMAGE_PROVIDER,
+      ai.image.provider,
+    ),
+    vlm: line(
+      row?.vlmApiKey,
+      process.env.VLM_PROVIDER_API_KEY,
+      row?.vlmProvider,
+      process.env.VLM_PROVIDER,
+      ai.vlm.provider,
+    ),
+    layer: line(
+      row?.layerApiKey,
+      process.env.LAYER_PROVIDER_API_KEY,
+      row?.layerProvider,
+      process.env.LAYER_PROVIDER,
+      ai.layer.provider,
+    ),
+    storage: {
+      configured: storage.configured,
+      source: row?.storageSecretKey ? "db" : storage.configured ? "env" : "none",
+    },
+  };
+}
+
+/**
+ * 这一路上游能不能真干活。
+ *
+ * `false` 的含义是明确的：**没人配过它**，跑下去只会拿到占位产物。部署方明确
+ * 写了 `*_PROVIDER=mock` 时返回 true —— 那是有人做过的选择，不是漏配。
+ */
+export function isProviderUsable(h: ProviderHealth): boolean {
+  return h.configured || h.deliberateMock;
+}

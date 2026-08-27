@@ -7,6 +7,7 @@ import { recordUsage } from "@/lib/usage";
 import { uploadDataUrlImage } from "@/lib/s3";
 import { safeFetch } from "@/lib/ssrf";
 import { analyzeLayerImage } from "@/lib/layers";
+import { getProvidersHealth } from "@/lib/settings";
 import {
   markRunning,
   setProgress,
@@ -177,6 +178,23 @@ export async function runDecomposeJob(
     const result = DecomposeResponse.parse(raw);
     if (result.layers.length === 0) {
       throw new Error("layer provider returned no layers");
+    }
+
+    // **判据读的是真正跑了什么,不是配置说了什么。**
+    //
+    // 2026-08-27 线上事故的正面防线:那次后台自检是绿的(web 容器解析到 fal、
+    // 探针 200),真正的分解却跑了 `MockLayerProvider`——0 秒返回 4 张深色占位图,
+    // 任务标 SUCCEEDED。配置面的快检看不出这种事,因为配置面看起来完全正常;
+    // 只有回执里的 `usage.provider` 说了实话。
+    //
+    // 部署方明确要 mock(env 写死 `LAYER_PROVIDER=mock`,本地开发的正常姿势)时放行。
+    const ranMock = /^Mock/i.test(result.usage?.provider ?? "");
+    if (ranMock && !(await getProvidersHealth()).layer.deliberateMock) {
+      throw new Error(
+        `图层分解跑的是占位实现(${result.usage?.provider}/${result.usage?.model}),不是真实上游。` +
+          `多半是分层密钥没配到这个部署上——去「管理后台 → 设置 → AI 服务」确认「图层分解」那一栏,` +
+          `或 curl /api/health 看 providers.layer 是否 configured。`,
+      );
     }
 
     await job.updateProgress(30);
