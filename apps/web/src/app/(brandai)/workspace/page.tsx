@@ -1061,7 +1061,10 @@ function Workspace() {
    * 共用一个键会互相顶掉。参数名不同,复原逻辑仍照 rule-workbench 的 `?task=`。
    */
   const syncDecomposeTaskUrl = useCallback(
-    (id: string | null, ctx?: { genId: string; projectId: string }) => {
+    (
+      id: string | null,
+      ctx?: { genId: string; projectId: string; versionId?: string },
+    ) => {
       if (typeof window === "undefined") return;
       const url = new URL(window.location.href);
       if (id) {
@@ -1072,10 +1075,16 @@ function Workspace() {
         if (ctx?.genId) url.searchParams.set("decomposeGen", ctx.genId);
         if (ctx?.projectId)
           url.searchParams.set("decomposeProject", ctx.projectId);
+        // 占位图挂在**源版本**那块图上。刷新捡回任务时如果不知道源版本是谁,
+        // 画布上就没有占位图——用户刷新一下,那块「正在拆」的灰底就凭空消失了,
+        // 只剩右下角队列在转,正是这个功能要治的那种「不知道在发生什么」。
+        if (ctx?.versionId)
+          url.searchParams.set("decomposeVersion", ctx.versionId);
       } else {
         url.searchParams.delete("decomposeTask");
         url.searchParams.delete("decomposeGen");
         url.searchParams.delete("decomposeProject");
+        url.searchParams.delete("decomposeVersion");
       }
       window.history.replaceState(null, "", url.toString());
     },
@@ -1227,6 +1236,7 @@ function Workspace() {
     // 来源取这两个专属参数,不取实时的 `?gen=`/`?project=`——后者会随切换而变。
     const srcGen = params.get("decomposeGen") ?? "";
     const srcProject = params.get("decomposeProject") ?? "";
+    const srcVersion = params.get("decomposeVersion") ?? "";
     if (!t || !wsId) return;
     let cancelled = false;
     /** 重新挂上轮询:起始时刻已不可考,从"现在"重新起算中间态上界(§2.4)。 */
@@ -1236,6 +1246,11 @@ function Workspace() {
       decomposeRunningAt.current = running ? Date.now() : 0;
       if (srcGen) {
         decomposeCtx.current = { genId: srcGen, projectId: srcProject };
+      }
+      // 源版本一并复原,占位图才会重新出现在它该在的那块图上(只在用户此刻正停在
+      // 那条 generation 上时才成立——挂到别条上会是一块指向不存在版本的灰底)。
+      if (srcVersion && srcGen && srcGen === genId) {
+        setDecomposeSourceVersionId(srcVersion);
       }
       setDecomposeTaskId(t);
     };
@@ -1323,6 +1338,7 @@ function Workspace() {
         syncDecomposeTaskUrl(res.taskId, {
           genId,
           projectId: projectId ?? "",
+          versionId: version.id,
         });
       } catch (err) {
         decomposeStartedAt.current = 0;

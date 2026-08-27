@@ -126,6 +126,13 @@ type Gesture =
       start: Map<string, { x: number; y: number }>;
       /** 本次手势按下的 item key —— 抬起且未拖动时视为「真实点击」该 item。 */
       tapKey?: string;
+      /**
+       * 按下时这个叠放组里已经有一层被选中（且组里可见层 >1）。
+       *
+       * 只有这种情况下,抬手且没拖动才往下钻一层——第一次点这组只选最上面那层,
+       * 不能一按就跳走。见 `onStageUp` 的 B 段。
+       */
+      cycleStack?: boolean;
     }
   | {
       type: "resize";
@@ -1459,8 +1466,24 @@ export function OpenCanvas({
     [toWorld, onUserPickImage],
   );
 
+  /**
+   * 一个叠放组里**看得见**的那几层,按绘制序排(先 layerZ 再 layerIndex,最上面的在最后)。
+   *
+   * 隐藏层不进这个栈:它在画布上 `return null`(见渲染处),根本没有 DOM,选中框
+   * 无处可画。把它留在栈里,重复点击就会「钻」到一层看不见也拖不动的东西上,
+   * 用户看到的是点击没反应。排序口径与画布渲染、面板、导出同源。
+   */
+  const visibleLayerStack = (setId: string) =>
+    items
+      .filter((i) => i.layerSetId === setId && !i.layerHidden)
+      .sort(
+        (a, b) =>
+          (a.layerZ ?? a.layerIndex ?? 0) - (b.layerZ ?? b.layerIndex ?? 0) ||
+          (a.layerIndex ?? 0) - (b.layerIndex ?? 0),
+      );
+
   const beginItemDrag = (e: React.PointerEvent, rawKey: string) => {
-    // 组内循环可能把选择改到另一层(见下方 B 段),所以是 let 不是 const。
+    // 组内叠放时按下的未必是要拖的那层(见下方 B 段),所以是 let 不是 const。
     let key = rawKey;
     if (e.button !== 0) return;
     e.stopPropagation();
@@ -1485,31 +1508,23 @@ export function OpenCanvas({
       }
       lastTapRef.current = { key, t: Date.now() };
     }
-    // B) 叠放组里「同一处再点一次 → 往下选一层」。
+    // B) 叠放组:按下**不换层**,拖的永远是画着选中框的那一层。
     //
     // 默认叠放时同一组的 N 层占同一块矩形,浏览器命中测试永远把事件交给最上面那个
-    // DOM 元素,于是下层永远点不到——本 PR 自己写下的「每块都能单独选中、拖动」这半句
-    // 因此不成立。Figma / PS 的老习惯就是重复点击往下钻,这里照做。
+    // DOM 元素。往下钻要靠重复点击(见 `onStageUp` 的 B 段),但那件事必须发生在
+    // **抬手且没拖动**的时候:放在按下里的话,用户按住已选中的第 2 层想拖,按下这
+    // 一瞬间选择已经跳到第 3 层,拖走的是另一块——手上拖的和眼睛看的对不上。
     //
-    // 只在**同一组内**循环,不跨组、不碰普通图:命中语义的改动范围压到最小。
+    // 所以按下时反过来:这一组里已经有一层被选中,就继续按住它;此时记 `cycleStack`,
+    // 让抬手那一步知道「这是同一组的再一次点击,可以往下钻」。
+    let cycleStack = false;
     const tapped = items.find((i) => i.key === rawKey);
-    if (tapped?.layerSetId && !e.shiftKey) {
-      // 组内按绘制序排(与画布渲染、面板、导出同一个口径:先 layerZ 再 layerIndex),
-      // 最上面的排在最后。
-      const stack = items
-        .filter((i) => i.layerSetId === tapped.layerSetId)
-        .sort(
-          (a, b) =>
-            (a.layerZ ?? a.layerIndex ?? 0) - (b.layerZ ?? b.layerIndex ?? 0) ||
-            (a.layerIndex ?? 0) - (b.layerIndex ?? 0),
-        );
-      if (stack.length > 1 && selected.size === 1) {
-        const curIdx = stack.findIndex((i) => selected.has(i.key));
-        if (curIdx >= 0) {
-          // 当前已选组内某一层 → 往下一层走,到底了回到最上面。
-          const next = curIdx === 0 ? stack.length - 1 : curIdx - 1;
-          key = stack[next]!.key;
-        }
+    if (tapped?.layerSetId && !e.shiftKey && selected.size === 1) {
+      const stack = visibleLayerStack(tapped.layerSetId);
+      const cur = stack.find((i) => selected.has(i.key));
+      if (cur && stack.length > 1) {
+        key = cur.key;
+        cycleStack = true;
       }
     }
 
@@ -1532,6 +1547,7 @@ export function OpenCanvas({
       sy: e.clientY,
       start,
       tapKey: key,
+      cycleStack,
     };
     movedRef.current = false;
   };
@@ -1673,13 +1689,31 @@ export function OpenCanvas({
         onBlankClick?.();
       }
     }
-    // 「真实点击」图片 item（按下即抬起、未拖动）→ 上报用户点选（replace；
-    // Shift/Ctrl/Cmd = additive 累加）。只在此处上报：程序化选择同步
-    // （activeVersionId/selectNonce/回调身份变化）永不触发。
-    if (g.type === "move" && !movedRef.current && g.tapKey && onUserPickImage) {
-      const it = items.find((i) => i.key === g.tapKey);
+    if (g.type === "move" && !movedRef.current && g.tapKey) {
+      // B) 叠放组「同一处再点一次 → 往下选一层」,到底了回到最上面。
+      //
+      // 判定放在抬手这一步:按下时不动选择(那样会拖错层),只有确认这一下是**点击**
+      // 而不是拖拽,才把选择往下推。`cycleStack` 在按下时就记好了——它保证这一组
+      // 本来就有选中层,第一次点这组仍然只选最上面那层。
+      let picked = g.tapKey;
+      const tapped = items.find((i) => i.key === g.tapKey);
+      if (g.cycleStack && tapped?.layerSetId && !e.shiftKey) {
+        const stack = visibleLayerStack(tapped.layerSetId);
+        const curIdx = stack.findIndex((i) => i.key === g.tapKey);
+        if (stack.length > 1 && curIdx >= 0) {
+          picked = stack[curIdx === 0 ? stack.length - 1 : curIdx - 1]!.key;
+          setSelected(new Set([picked]));
+        }
+      }
+      // 「真实点击」图片 item（按下即抬起、未拖动）→ 上报用户点选（replace；
+      // Shift/Ctrl/Cmd = additive 累加）。只在此处上报：程序化选择同步
+      // （activeVersionId/selectNonce/回调身份变化）永不触发。
+      // 上报的是**钻完之后**那一层:否则灰待选 chip 会挂在上一层上,与选中框不符。
+      const it = onUserPickImage
+        ? items.find((i) => i.key === picked)
+        : undefined;
       if (it?.kind === "image" && it.imageUrl && (it.versionId || it.assetId)) {
-        onUserPickImage(
+        onUserPickImage?.(
           {
             versionId: it.versionId,
             assetId: it.assetId,
