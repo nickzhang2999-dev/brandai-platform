@@ -51,6 +51,35 @@ export const markSucceeded = (
 export const markFailed = (taskId: string | undefined, error: string) =>
   safeUpdate(taskId, { status: "FAILED", error: error.slice(0, 500) });
 
+/**
+ * 写「成功」终态，**写不成就抛**。
+ *
+ * `safeUpdate` 吞异常是给进度更新用的：进度写丢了无所谓，下一拍会补。终态不一样
+ * ——写丢了任务会永远停在 RUNNING：图层已经提交、BullMQ 判 job 成功，而客户端
+ * 那边（"除非服务端明确说 404/403 否则保住线索、保持锁着"）会一直锁着等一个
+ * 永远不来的完成通知。
+ *
+ * 调用方必须已经**认领过终态**（decompose worker 里的 `settled = true`），并在
+ * 捕获到这里抛出的异常时把认领让出去，好让失败路径接手回滚 + 标 FAILED。
+ *
+ * 只给分层用，不动其它 kind 的既有行为——那属于扩范围。
+ */
+export async function markSucceededOrThrow(
+  taskId: string | undefined,
+  ref?: { refId?: string; refCount?: number },
+): Promise<void> {
+  if (!taskId) return;
+  await prisma.asyncTask.update({
+    where: { id: taskId },
+    data: {
+      status: "SUCCEEDED",
+      progress: 100,
+      refId: ref?.refId ?? null,
+      refCount: ref?.refCount ?? 0,
+    },
+  });
+}
+
 export async function getTask(
   workspaceId: string,
   taskId: string,

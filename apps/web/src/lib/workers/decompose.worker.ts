@@ -11,7 +11,7 @@ import { getProvidersHealth } from "@/lib/settings";
 import {
   markRunning,
   setProgress,
-  markSucceeded,
+  markSucceededOrThrow,
   markFailed,
 } from "@/lib/async-tasks";
 
@@ -326,7 +326,9 @@ export async function runDecomposeJob(
 
     try {
       await job.updateProgress(100);
-      await markSucceeded(taskId, {
+      // 走会抛的变体:终态写丢了必须让外层知道,否则任务永远停在 RUNNING,
+      // 而图层已经提交、客户端还锁着等一个永远不来的完成通知。
+      await markSucceededOrThrow(taskId, {
         refId: layerSetId,
         refCount: versionIds.length,
       });
