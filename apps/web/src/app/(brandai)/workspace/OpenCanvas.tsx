@@ -160,6 +160,15 @@ export type CanvasEditBridge = {
     /** 选中的这块属于某个图层组时给出组 id,用来开图层面板。 */
     activeSetId?: string | null;
     onOpenPanel?: (setId: string) => void;
+    /**
+     * 正在被分解的那一版（有值 = 分解在跑）。
+     *
+     * 画布据此在**结果将要落的那块地**上先摆一个占位图。真上游要 12–110 秒，期间
+     * 画布上什么都不长，只有工具条上一个「分解中…」——等于让用户对着一块空地发呆
+     * （`CLAUDE.md §6`：静止超过 2 秒即缺陷）。占位图用的是与真结果**同一个落位函数**，
+     * 所以结果出来时是原地长出来，不会跳到别处。
+     */
+    pendingSourceVersionId?: string | null;
   };
   /** V0.0.13e — 终选/交付/审阅（BrandAI 特有业务，视觉创作无此概念）：
    *  下方独立面板已删，动作挪进画布选中工具条（跟随画布选中，交互形态与
@@ -191,6 +200,8 @@ export function OpenCanvas({
   onSelectVersion,
   activeVersionId,
   selectNonce,
+  focusVersionId,
+  focusNonce,
   fitKey,
   onUploadImage,
   materialAssets = [],
@@ -226,6 +237,16 @@ export function OpenCanvas({
   /** 点变体缩略图的显式信号:每次 +1 都强制把 activeVersionId 的 tile 重新选中 ——
    *  即便 activeVersionId 未变(点的是已选变体),也能从「清选」态一键回到选中。 */
   selectNonce?: number;
+  /**
+   * 「把画布上这一张选中」的外部请求（图层面板点行时用）。
+   *
+   * 与 `activeVersionId` 分开是因为语义不同：那个是「当前变体」，会驱动改图/终稿
+   * 整条工具条；这个只是把选择挪过去，不改变谁是当前变体——点一层图层不该让它变成
+   * 「当前出图」。
+   */
+  focusVersionId?: string | null;
+  /** 每次 +1 强制重新应用一次，哪怕 `focusVersionId` 没变（连点同一行也要生效）。 */
+  focusNonce?: number;
   /** 触发「自动适配」的 key(= 当前 generation id):变化=切了 generation,重新适配一次
    *  取景;同一 generation 内新增改图子版本不重置(不夺走用户手动缩放/平移)。 */
   fitKey?: string;
@@ -868,6 +889,74 @@ export function OpenCanvas({
       });
     }
   }, [activeVersionId, items]);
+
+  /**
+   * 分解在跑时，结果**将要**落的那块地。
+   *
+   * 用的是与真结果同一个 `planLayerSetRect`（同一个口径，不抄第二份），所以图层组
+   * 出来时是在占位图原地长出来的，不会跳到别处——「变化可感知」要求的是看得见的
+   * 连续，而不是凭空一闪。
+   */
+  const pendingRect = useMemo(() => {
+    const srcId = edit?.decompose?.pendingSourceVersionId;
+    if (!srcId) return null;
+    const src = items.find((i) => i.versionId === srcId);
+    if (!src) return null;
+    const occupied = items.map((i) => ({ x: i.x, y: i.y, w: i.w, h: i.h }));
+    return planLayerSetRect({ x: src.x, y: src.y, w: src.w, h: src.h }, occupied);
+  }, [edit?.decompose?.pendingSourceVersionId, items]);
+
+  /**
+   * 占位图一出现就把那块地带进视野。
+   *
+   * 不带的话占位图形同虚设:`planLayerSetRect` 是在**世界坐标**里往右找空地,画布上
+   * 元素一多就会找到视口外去(实测落在 x=1910,而视口只有 1500 宽)——用户盯着一块
+   * 什么都没发生的画布等 12–110 秒,和没有占位图一模一样。
+   *
+   * 只在它**整块**在视野外时挪,而且只挪最小距离:分解是用户刚刚对选中图触发的,
+   * 把结果要落的地方带进来是他预期之内的;但没必要因此打断他的取景。
+   */
+  const pannedForRef = useRef<string>("");
+  useEffect(() => {
+    if (!pendingRect) return;
+    const token = `${pendingRect.x},${pendingRect.y}`;
+    if (pannedForRef.current === token) return;
+    const r = containerRef.current?.getBoundingClientRect();
+    if (!r) return;
+    pannedForRef.current = token;
+    setCamera((cam) => {
+      const left = pendingRect.x * zoom + cam.x;
+      const top = pendingRect.y * zoom + cam.y;
+      const right = left + pendingRect.w * zoom;
+      const bottom = top + pendingRect.h * zoom;
+      const pad = 32;
+      let dx = 0;
+      let dy = 0;
+      if (right > r.width - pad) dx = r.width - pad - right;
+      else if (left < pad) dx = pad - left;
+      if (bottom > r.height - pad) dy = r.height - pad - bottom;
+      else if (top < pad) dy = pad - top;
+      return dx || dy ? { x: cam.x + dx, y: cam.y + dy } : cam;
+    });
+  }, [pendingRect, zoom]);
+
+  // A) 图层面板点某一行 → 把画布上那一层选中。
+  //
+  // 这是「下层图层选不中」的确定可用出口:默认叠放时 N 层占同一块矩形,DOM 命中测试
+  // 永远给最上面那层,画布上点不到下层。面板每行本来就一一对应一层,点行选中最直接,
+  // 而且不碰画布的命中语义(风险最小的那一半)。
+  const appliedFocusRef = useRef<string>("");
+  useEffect(() => {
+    if (!focusVersionId) return;
+    const token = `${focusVersionId}#${focusNonce ?? 0}`;
+    if (appliedFocusRef.current === token) return;
+    const it = items.find((i) => i.versionId === focusVersionId);
+    if (!it) return; // tile 还没挂载:不推进 token,等它出现再选
+    appliedFocusRef.current = token;
+    setSelected((prev) =>
+      prev.size === 1 && prev.has(it.key) ? prev : new Set([it.key]),
+    );
+  }, [focusVersionId, focusNonce, items]);
   // 点变体缩略图的显式重选:每次 selectNonce +1(用户点了缩略图)都把 activeVersionId 的
   // tile 重新选中——即便 activeVersionId 未变(点的是已选变体、上面 ref 守卫会跳过),也能
   // 从「点空白清选」态一键回到条↔画布同步,消除「清选后点缩略图无反应」死锁(Bugbot Med)。
@@ -1370,7 +1459,9 @@ export function OpenCanvas({
     [toWorld, onUserPickImage],
   );
 
-  const beginItemDrag = (e: React.PointerEvent, key: string) => {
+  const beginItemDrag = (e: React.PointerEvent, rawKey: string) => {
+    // 组内循环可能把选择改到另一层(见下方 B 段),所以是 let 不是 const。
+    let key = rawKey;
     if (e.button !== 0) return;
     e.stopPropagation();
     if (placing) {
@@ -1394,6 +1485,34 @@ export function OpenCanvas({
       }
       lastTapRef.current = { key, t: Date.now() };
     }
+    // B) 叠放组里「同一处再点一次 → 往下选一层」。
+    //
+    // 默认叠放时同一组的 N 层占同一块矩形,浏览器命中测试永远把事件交给最上面那个
+    // DOM 元素,于是下层永远点不到——本 PR 自己写下的「每块都能单独选中、拖动」这半句
+    // 因此不成立。Figma / PS 的老习惯就是重复点击往下钻,这里照做。
+    //
+    // 只在**同一组内**循环,不跨组、不碰普通图:命中语义的改动范围压到最小。
+    const tapped = items.find((i) => i.key === rawKey);
+    if (tapped?.layerSetId && !e.shiftKey) {
+      // 组内按绘制序排(与画布渲染、面板、导出同一个口径:先 layerZ 再 layerIndex),
+      // 最上面的排在最后。
+      const stack = items
+        .filter((i) => i.layerSetId === tapped.layerSetId)
+        .sort(
+          (a, b) =>
+            (a.layerZ ?? a.layerIndex ?? 0) - (b.layerZ ?? b.layerIndex ?? 0) ||
+            (a.layerIndex ?? 0) - (b.layerIndex ?? 0),
+        );
+      if (stack.length > 1 && selected.size === 1) {
+        const curIdx = stack.findIndex((i) => selected.has(i.key));
+        if (curIdx >= 0) {
+          // 当前已选组内某一层 → 往下一层走,到底了回到最上面。
+          const next = curIdx === 0 ? stack.length - 1 : curIdx - 1;
+          key = stack[next]!.key;
+        }
+      }
+    }
+
     containerRef.current?.setPointerCapture(e.pointerId);
     let nextSel = selected;
     if (e.shiftKey) {
@@ -1663,6 +1782,40 @@ export function OpenCanvas({
         </div>
       ) : null}
 
+      {/* 分解占位图：结果落地之前，那块地先长出来 */}
+      {pendingRect ? (
+        <div
+          data-testid="decompose-placeholder"
+          className="pointer-events-none absolute z-10 flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-primary/40 bg-accent-soft/40"
+          style={{
+            left: pendingRect.x * zoom + camera.x,
+            top: pendingRect.y * zoom + camera.y,
+            width: pendingRect.w * zoom,
+            height: pendingRect.h * zoom,
+          }}
+        >
+          {/* 一层一根，逐根错峰呼吸：让「拆成 N 层」这件事本身可见，
+              而不是一个通用 spinner（`artifact-is-experience`：等待期要有产物的形状）。 */}
+          <div className="flex w-1/2 flex-col gap-1.5">
+            {Array.from({
+              length: Math.max(1, Math.min(10, edit?.decompose?.layerCount ?? 4)),
+            }).map((_, i) => (
+              <span
+                key={i}
+                className="h-2 rounded-full bg-primary/30 motion-safe:animate-pulse"
+                style={{ animationDelay: `${i * 180}ms` }}
+              />
+            ))}
+          </div>
+          <span className="text-[11px] font-medium text-primary">
+            正在拆成 {edit?.decompose?.layerCount ?? 4} 层…
+          </span>
+          <span className="text-[10px] text-muted-foreground">
+            结果会落在这里
+          </span>
+        </div>
+      ) : null}
+
       {/* items */}
       {paintOrder.map((it) => {
         // 隐藏的图层整块不渲染:它仍在数据里(导出分层文档时照样写进去并标隐藏),
@@ -1689,6 +1842,9 @@ export function OpenCanvas({
             // 分解产物在画布上和普通图长得一样,但工具条给的是「图层面板」而不是
             // 「图层分解」。把组身份挂出来,真测才分得清自己选中的是哪一种。
             {...(it.layerSetId ? { "data-layer-set": it.layerSetId } : {})}
+            {...(it.layerSetId
+              ? { "data-layer-index": String(it.layerIndex ?? 0) }
+              : {})}
             className="group/citem"
             onPointerDown={(e) => beginItemDrag(e, it.key)}
             onDoubleClick={(e) => {

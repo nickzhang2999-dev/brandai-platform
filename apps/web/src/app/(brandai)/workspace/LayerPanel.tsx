@@ -22,11 +22,19 @@ export function LayerPanel({
   setId,
   onClose,
   onChanged,
+  onFocusLayer,
 }: {
   wsId: string;
   generationId: string;
   setId: string;
   onClose: () => void;
+  /**
+   * 点某一行 → 把画布上那一层选中。
+   *
+   * 这是「下层图层选不中」的确定出口:默认叠放时 N 层占同一块矩形,浏览器命中测试
+   * 永远给最上面那层。面板每行本来就一一对应一层,点行选中最直接。
+   */
+  onFocusLayer?: (versionId: string) => void;
   /** 面板改完之后让画布重新拉一次版本（显隐/层序要立刻反映到画布上）。 */
   onChanged: () => void;
 }) {
@@ -160,7 +168,9 @@ export function LayerPanel({
             key={layer.versionId}
             data-testid="layer-row"
             data-hidden={layer.hidden ? "1" : "0"}
-            className="flex items-center gap-2 rounded-lg border border-border/60 px-2 py-1.5"
+            onClick={() => onFocusLayer?.(layer.versionId)}
+            title="点这一行可以在画布上选中这一层"
+            className="flex cursor-pointer items-center gap-2 rounded-lg border border-border/60 px-2 py-1.5 transition-colors hover:border-primary/40 hover:bg-accent-soft/40"
           >
             <button
               type="button"

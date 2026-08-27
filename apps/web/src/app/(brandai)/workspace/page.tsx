@@ -1084,6 +1084,9 @@ function Workspace() {
   const [layerCount, setLayerCount] = useState(4);
   const [layerIntent, setLayerIntent] = useState("");
   const [openLayerSetId, setOpenLayerSetId] = useState<string | null>(null);
+  /** 图层面板点行 → 请求画布选中那一层（A 方案，见 LayerPanel 的 onFocusLayer）。 */
+  const [focusLayerVersionId, setFocusLayerVersionId] = useState<string | null>(null);
+  const [focusLayerNonce, setFocusLayerNonce] = useState(0);
   /**
    * 中间态上界(§2.4)的**起算点**——提交时先记提交时刻,轮询首次看到 RUNNING
    * 时**重新起算**。
@@ -1093,6 +1096,14 @@ function Workspace() {
    * 是从**开跑**才计时的。两边起算点不一致,客户端就会在任务还没轮到它跑的时候
    * 判超时。restart 之后两边同口径,排队多久都不误判。
    */
+  /** 正在被分解的那一版；画布据此在结果将要落的那块地先摆占位图。 */
+  const [decomposeSourceVersionId, setDecomposeSourceVersionId] = useState<
+    string | null
+  >(null);
+  /** 提交在途（POST 还没回来）。同步闸，见 `runDecompose` 开头的注释。 */
+  const decomposeInFlight = useRef(false);
+  /** 上面那个 ref 在 UI 上的影子：ref 变化不触发重渲染，按钮得靠 state 才会灰。 */
+  const [decomposeSubmitting, setDecomposeSubmitting] = useState(false);
   const decomposeStartedAt = useRef(0);
   /** 首次观察到 RUNNING 的时刻;还在排队时为 0。判据见 `isTaskWatchExpired`。 */
   const decomposeRunningAt = useRef(0);
@@ -1153,6 +1164,7 @@ function Workspace() {
     const s = decomposePoll?.status;
     if (s !== "SUCCEEDED" && s !== "FAILED") return;
     setDecomposeTaskId(null);
+    setDecomposeSourceVersionId(null);
     syncDecomposeTaskUrl(null);
     if (s === "FAILED") {
       setActionErr(decomposePoll?.error || "图层分解失败,请重试。");
@@ -1276,7 +1288,19 @@ function Workspace() {
 
   const runDecompose = useCallback(
     async (version: GenerationVersion) => {
-      if (!genId || decomposeTaskId) return;
+      // **在 await 之前同步上闸。**
+      //
+      // `decomposeTaskId` 是 React state,POST 返回之后才 set——在那之前它一直是
+      // null,所以双击「开拆」、或者回车再补一下鼠标,两次调用都能过这道闸。后果不
+      // 只是下两单(每单都花钱):第二发的 `syncDecomposeTaskUrl` 会覆盖掉指向第一发
+      // 的三个 URL 参数,**第一单从此没人认领**。
+      //
+      // ref 是同步的,判断与置位之间没有 await,插不进第二次调用;`submitting` 只是
+      // 它在 UI 上的影子(ref 变化不触发重渲染,按钮得靠 state 才会灰掉)。
+      if (!genId || decomposeTaskId || decomposeInFlight.current) return;
+      decomposeInFlight.current = true;
+      setDecomposeSubmitting(true);
+      setDecomposeSourceVersionId(version.id);
       setActionErr(null);
       decomposeStartedAt.current = Date.now();
       decomposeRunningAt.current = 0;
@@ -1302,9 +1326,15 @@ function Workspace() {
         });
       } catch (err) {
         decomposeStartedAt.current = 0;
+        setDecomposeSourceVersionId(null);
         setActionErr(
           err instanceof Error ? err.message : "图层分解提交失败",
         );
+      } finally {
+        // 提交阶段结束就放闸:成功的话 `decomposeTaskId` 已经接管(它一直锁到终态),
+        // 失败的话本来就该让用户能再试一次。
+        decomposeInFlight.current = false;
+        setDecomposeSubmitting(false);
       }
     },
     [
@@ -1801,6 +1831,8 @@ function Workspace() {
             onSelectVersion={onCanvasSelectVersion}
             activeVersionId={current?.id ?? null}
             selectNonce={selectNonce}
+            focusVersionId={focusLayerVersionId}
+            focusNonce={focusLayerNonce}
             fitKey={genId ?? undefined}
             onUploadImage={onCanvasUploadImage}
             materialAssets={[]}
@@ -1828,7 +1860,7 @@ function Workspace() {
                 void runEdit(op, { prompt: editInstr.trim() }, version),
               onOpenMask: (version) => openMaskPaint(version),
               decompose: {
-                busy: !!decomposeTaskId,
+                busy: !!decomposeTaskId || decomposeSubmitting,
                 layerCount,
                 onLayerCountChange: (n) =>
                   setLayerCount(Math.max(1, Math.min(10, n))),
@@ -1836,6 +1868,9 @@ function Workspace() {
                 onIntentChange: setLayerIntent,
                 onRun: (version) => void runDecompose(version),
                 activeSetId: currentLayerMeta?.setId ?? null,
+                pendingSourceVersionId: decomposeTaskId
+                  ? decomposeSourceVersionId
+                  : null,
                 onOpenPanel: (setId) => setOpenLayerSetId(setId),
               },
               // V0.0.13e — 终选/交付/审阅挪进画布选中工具条（原下方面板已删）。
@@ -1871,6 +1906,11 @@ function Workspace() {
               generationId={genId}
               setId={openLayerSetId}
               onClose={() => setOpenLayerSetId(null)}
+              onFocusLayer={(versionId) => {
+                // 连点同一行也要生效,所以 nonce 每次都推进。
+                setFocusLayerVersionId(versionId);
+                setFocusLayerNonce((n) => n + 1);
+              }}
               onChanged={() => {
                 // 显隐/层序是服务端权威:改完重新拉版本,画布按新的 layerZ 重绘。
                 qc.invalidateQueries({ queryKey: ["brandai-gen", wsId, genId] });
