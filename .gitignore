@@ -13,6 +13,7 @@ coverage/
 *.log
 .env
 .env.local
+.cds.env
 .DS_Store
 __pycache__/
 *.pyc
