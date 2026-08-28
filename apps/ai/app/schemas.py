@@ -293,6 +293,43 @@ class EditResponse(BaseModel):
     params: dict[str, Any] = {}
 
 
+DECOMPOSE_LAYER_MIN = 1
+DECOMPOSE_LAYER_MAX = 10
+
+
+class DecomposeRequest(BaseModel):
+    """Mirror of contracts/ai.ts DecomposeRequest.
+
+    Layer decomposition is an ACTION capability, not a selectable model: it
+    needs an input image, ignores size / versionCount / sceneType, and returns
+    a set of RGBA layers rather than a finished image.
+    """
+
+    imageUrl: str
+    # 边界必须与 Zod 侧逐字对齐(1–10 / intent ≤500),不能只靠 provider 里那句
+    # clamp 兜着:任何不经 web 路由直接打 FastAPI 的调用方,看到的会是另一套契约,
+    # 能提交规范判为非法的请求。CLAUDE.md 明写「契约改动两边同时改」。
+    layerCount: int = Field(default=4, ge=1, le=10)
+    intent: Optional[str] = Field(default=None, max_length=500)
+
+
+class DecomposedLayer(BaseModel):
+    imageUrl: str
+    # 与 Zod 侧 `z.number().int().positive()` 逐字对齐。裸 `int` 会放行 0 / 负数,
+    # 而 web 侧读回来会拿它当画布落位的宽高——0 宽的图层框选不中、也导不出,
+    # 症状出在前端,根因却在这条没对齐的边界上。
+    width: int = Field(gt=0)
+    height: int = Field(gt=0)
+
+
+class DecomposeResponse(BaseModel):
+    layers: list[DecomposedLayer]
+    # Upstream seed — the only handle on "can this split be reproduced?".
+    # Kept on the wire so the web side can persist it with the layer set.
+    seed: Optional[int] = None
+    usage: Optional[GenerateUsage] = None
+
+
 class TermIn(BaseModel):
     type: str
     term: str

@@ -20,6 +20,7 @@ import { createEditWorker } from "./edit.worker";
 import { createDescribeWorker } from "./describe.worker";
 import { createIngestWorker } from "./ingest.worker";
 import { createSummarizeWorker } from "./summarize.worker";
+import { createDecomposeWorker } from "./decompose.worker";
 import { sweepStaleGenerations } from "@/lib/generations";
 import { queuePrefix } from "@/lib/queue";
 import {
@@ -76,6 +77,7 @@ try {
     createDescribeWorker(),
     createIngestWorker(),
     createSummarizeWorker(),
+    createDecomposeWorker(),
   );
   workersReady = true;
   console.log(`[workers] started: ${workers.length} worker(s)`);

@@ -470,6 +470,52 @@ export const EditResponse = z.object({
 });
 export type EditResponse = z.infer<typeof EditResponse>;
 
+// POST /v1/decompose — 图层分解（迁移自 prd_agent 视觉创作的 AI 分层能力）。
+//
+// 它不是「一个可选的模型」，是一个**动作能力**：必须先有一张图，不吃尺寸 /
+// versionCount / sceneType，产物是一组 RGBA 图层而不是一张成品图。因此它永远
+// 不出现在任何模型或尺寸选择器里，只能被「选中一张图之后的操作」点名调用。
+//
+// 命名刻意避开 “layered” 一词：本仓库的 `textMode: "layered"` 指的是「让模型
+// 留白不烤字、前端叠真文字」，与把图拆成多张 RGBA 图层完全是两件事。
+export const DECOMPOSE_LAYER_MIN = 1;
+export const DECOMPOSE_LAYER_MAX = 10;
+
+export const DecomposeRequest = z.object({
+  imageUrl: z.string(),
+  /** 要拆几层。上游是必填参数，不是「期望值」——给多少就必须凑够多少。 */
+  layerCount: z
+    .number()
+    .int()
+    .min(DECOMPOSE_LAYER_MIN)
+    .max(DECOMPOSE_LAYER_MAX)
+    .default(4),
+  /**
+   * 用户用自然语言说的拆法（「logo 单独一层」「不要切开人物」）。
+   * 原样附进提示词，不改写、不翻译——改写等于替用户做决定。
+   */
+  intent: z.string().max(500).optional(),
+});
+export type DecomposeRequest = z.infer<typeof DecomposeRequest>;
+
+export const DecomposedLayer = z.object({
+  imageUrl: z.string(),
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
+});
+export type DecomposedLayer = z.infer<typeof DecomposedLayer>;
+
+export const DecomposeResponse = z.object({
+  layers: z.array(DecomposedLayer),
+  /**
+   * 上游随机种子。实测 fal 会回它，而它是「同一张图重拆能不能复现」的唯一抓手，
+   * 所以必须一路透传到图层组落库，不能像 prd_agent 那样在转换层丢掉。
+   */
+  seed: z.number().int().optional(),
+  usage: GenerateUsage.optional(),
+});
+export type DecomposeResponse = z.infer<typeof DecomposeResponse>;
+
 // POST /v1/compliance/check
 export const ComplianceCheckRequest = z.object({
   text: z.string().optional(),
@@ -502,9 +548,29 @@ export type ComplianceCheckResponse = z.infer<typeof ComplianceCheckResponse>;
 // POST /v1/diag — per-provider self-check (auth + reachability). Each item is a
 // boolean ok plus an operator-readable detail (provider OK / "<status>: body" /
 // exception). The storage check is web-only and shaped in the web route.
-const DiagItem = z.object({ ok: z.boolean(), detail: z.string() });
+/**
+ * 自检结果是**三态**,不是两态:绿(测过、通了)、红(测过、不通)、
+ * 没测过(`unverified`)。
+ *
+ * 少了第三态就只能把「没测过」塞进绿的那一格——后台会给它画一个绿勾,而管理员
+ * 恰恰是靠那个勾判断"这个上游能用"。自定义网关地址没有已知的探针形状,填错了、
+ * 密钥被拒都照样得勾,直到某次真拆解(花钱的)才发现。`unverified` 缺省(旧版
+ * AI 服务)按两态处理,不破坏兼容。
+ */
+const DiagItem = z.object({
+  ok: z.boolean(),
+  detail: z.string(),
+  unverified: z.boolean().optional(),
+});
 export const DiagResponse = z.object({
   image: DiagItem,
   vlm: DiagItem,
+  /**
+   * 图层分解上游的自检结果。
+   *
+   * 后台能存分层密钥却测不了它，等于让管理员把「密钥对不对」推迟到某次真拆解
+   * 失败时才知道——最小输入的连带义务是**当场能自测**（`minimal-user-input.md`）。
+   */
+  layer: DiagItem,
 });
 export type DiagResponse = z.infer<typeof DiagResponse>;

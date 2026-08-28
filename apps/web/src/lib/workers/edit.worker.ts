@@ -6,6 +6,7 @@ import {
   EditResponse,
   AssetUsageInput,
   WatermarkOverlayInput as WatermarkOverlaySchema,
+  stripLayerMeta,
   type AssetUsageInput as AssetUsageInputType,
   type WatermarkOverlayInput,
 } from "@brandai/contracts";
@@ -347,7 +348,13 @@ export async function runEditJob(
         params: {
           // Carry forward the source params (applied rules / scene) then
           // record this edit so M6 can trace the lineage and what changed.
-          ...sourceParams,
+          //
+          // 但**图层身份不继承**:源版本若本身是某个图层组的成员,抄过来会让组里
+          // 多出一个同 index 的成员——画布叠两遍、PSD/ZIP 也导两份,而且抄来的包
+          // 围盒/覆盖率描述的还是改动前的像素。改图产出的是一张普通新版本,不是
+          // 「替换掉那一层」;替换是另一套血缘(重算包围盒、继承 z、原层退场),不
+          // 在这里臆造。
+          ...stripLayerMeta(sourceParams),
           ...resultParamsNoMask,
           ...(effectiveAssetUsages.length > 0
             ? { assetUsages: effectiveAssetUsages }

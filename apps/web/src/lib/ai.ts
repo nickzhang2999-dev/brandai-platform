@@ -1,6 +1,8 @@
 import type {
   ComplianceCheckRequest,
   ComplianceCheckResponse,
+  DecomposeRequest,
+  DecomposeResponse,
   DescribeRequest,
   DescribeResponse,
   DiagResponse,
@@ -33,6 +35,12 @@ async function providerHeaders(): Promise<Record<string, string>> {
     h["X-OV-Image-Key"] = s.image.apiKey;
     if (s.image.baseUrl) h["X-OV-Image-Base-Url"] = s.image.baseUrl;
     if (s.image.model) h["X-OV-Image-Model"] = s.image.model;
+  }
+  if (s.layer.apiKey) {
+    h["X-OV-Layer-Provider"] = s.layer.provider;
+    h["X-OV-Layer-Key"] = s.layer.apiKey;
+    if (s.layer.baseUrl) h["X-OV-Layer-Base-Url"] = s.layer.baseUrl;
+    if (s.layer.model) h["X-OV-Layer-Model"] = s.layer.model;
   }
   if (s.vlm.apiKey) {
     h["X-OV-Vlm-Provider"] = s.vlm.provider;
@@ -74,6 +82,12 @@ export const ai = {
   generate: (b: GenerateRequest) =>
     call<GenerateRequest, GenerateResponse>("/v1/generate", b),
   edit: (b: EditRequest) => call<EditRequest, EditResponse>("/v1/edit", b),
+  /**
+   * 图层分解。只有 worker 该调它——实测真上游 12–42 秒，第一次调用就打穿
+   * 30 秒边缘网关上限（§2.1：AI 调用不许出现在 HTTP handler 里）。
+   */
+  decompose: (b: DecomposeRequest) =>
+    call<DecomposeRequest, DecomposeResponse>("/v1/decompose", b),
   complianceCheck: (b: ComplianceCheckRequest) =>
     call<ComplianceCheckRequest, ComplianceCheckResponse>(
       "/v1/compliance/check",

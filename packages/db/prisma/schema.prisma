@@ -606,6 +606,12 @@ model AppSetting {
   // V0.0.13 — 管理员配置的图像系统提示词。worker 每次出图注入
   // GenerateRequest.systemPrompt，AI 服务把它置于 prompt 首部。空 → 不注入。
   imageSystemPrompt String?
+  // 图层分解上游（AI 分层）。与 image/vlm 分开配置：fal 的 qwen-image-layered
+  // 是原生协议，和 OpenAI /images/generations 形状毫无共同点。空 → mock。
+  layerProvider String?
+  layerApiKey   String?
+  layerBaseUrl  String?
+  layerModel    String?
   // Generated-image object storage (S3-compatible: Tencent COS / Cloudflare R2 /
   // internal MinIO). storageSecretKey holds AES ciphertext like imageApiKey;
   // storageForcePathStyle is stored as text "true"/"false" to keep the

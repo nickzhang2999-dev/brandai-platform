@@ -48,3 +48,10 @@ export const summarizeQueue = new Queue("summarize", {
   connection,
   prefix: queuePrefix,
 });
+// 图层分解(AI 分层)。一次调用产 N 张图层,耗时 12-42 秒 —— 与其它慢调用同样
+// 走 worker,前缀约定一致。concurrency 压到 1:每个 job 自己就要拉 N 张图回来
+// 做实墨包围盒计算,并发叠加会把 worker 容器的内存打满。
+export const decomposeQueue = new Queue("decompose", {
+  connection,
+  prefix: queuePrefix,
+});

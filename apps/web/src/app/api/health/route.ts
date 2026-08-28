@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { resolve4 } from "node:dns/promises";
 import { resolveAiService } from "@/lib/ai-service";
 import { queuePrefix } from "@/lib/queue-prefix";
+import { getProvidersHealth } from "@/lib/settings";
 
 const REQUIRED_WORKER_REVISION = "ai-discovery-r2";
 
@@ -62,9 +63,13 @@ export async function GET() {
   const aiService = await resolveAiService();
   const aiBase = aiService.base;
   const workerBase = process.env.WORKER_HEALTH_URL ?? "http://worker:3001";
-  const [ai, worker] = await Promise.all([
+  const [ai, worker, providers] = await Promise.all([
     probe(`${aiBase}/health`),
     resolveWorkerHealth(workerBase),
+    // 不含任何密钥,所以可以挂在无鉴权探针上。见 settings.ts::getProvidersHealth
+    // 的注释:一个全新部署的空库会让整条链静默降级成占位实现,而每一层都"正常",
+    // 唯一能不登录就看出来的地方就是这里。
+    getProvidersHealth().catch(() => null),
   ]);
   return NextResponse.json({
     web: "ok",
@@ -77,5 +82,6 @@ export async function GET() {
     // "ok"/"starting"/"error" with a reason, even on its 503 forensics path);
     // only fall back to "down" when the port is truly unreachable.
     worker: worker.body ?? (worker.ok ? "ok" : "down"),
+    providers,
   });
 }

@@ -35,6 +35,21 @@ export const CanvasImageItemSchema = z.object({
   assetId: z.string().optional(),
   naturalW: z.number().optional(),
   naturalH: z.number().optional(),
+  /**
+   * 图层分解元数据（frozen-additive，全部可选 → 既有画布负载原样通过）。
+   *
+   * `layerSetId` 说「这块是哪一次分解的产物」（产物血缘，解组不该抹掉）；
+   * `groupId` 说「这些东西现在被框在一起」（用户的组织意图，随时可改）。
+   * 落地时两者初值相同，之后各走各的——这一条是从 prd_agent 直接搬来的，
+   * 那边把两个语义混用过一次，导致「解组」在刷新后被静默撤销。
+   *
+   * 摆位/显隐/层序**不在这里**：它们是服务端权威的，读 layer-sets 接口，
+   * 不进画布 JSON，否则又会出现两份事实源。
+   */
+  layerSetId: z.string().max(64).optional(),
+  layerIndex: z.number().int().nonnegative().optional(),
+  layerRole: z.enum(["source", "layer"]).optional(),
+  groupId: z.string().max(64).optional(),
 });
 
 export const CanvasShapeItemSchema = z.object({

@@ -1,9 +1,18 @@
 """Deterministic mock provider — lets the whole P0 loop run with no API keys."""
 import base64
 import hashlib
+import io
 from typing import Any
 
-from .base import ImageProvider, ProviderCheck, VLMProvider
+from PIL import Image, ImageDraw
+
+from .base import (
+    ImageProvider,
+    LayerProvider,
+    ProviderCheck,
+    VLMProvider,
+    clamp_layer_count,
+)
 
 _MOCK_CHECK_DETAIL = "mock (无 key,占位模式)"
 
@@ -270,6 +279,109 @@ class MockVLMProvider(VLMProvider):
                 "siteName": "OpenVisual Demo",
             },
         }
+
+    async def check(self) -> ProviderCheck:
+        return ProviderCheck(True, _MOCK_CHECK_DETAIL)
+
+
+class MockLayerProvider(LayerProvider):
+    """Deterministic layer decomposition — real RGBA PNGs, zero keys.
+
+    Unlike the SVG placeholders above this emits actual raster layers, because
+    the two hardest predicates in this feature are pixel predicates and they
+    must be runnable with no upstream:
+
+    * **composite restores the source** — alpha-compositing the whole set must
+      reproduce the flattened image. One predicate catches dropped layers,
+      reversed order, eaten alpha and over-cropping at once.
+    * **a thin layer is not an empty layer** — the last layer is deliberately a
+      2px outline (ink coverage well under 1%), mirroring the real upstream's
+      thin accent layer. Anything that treats low coverage as "empty" and
+      hides it by default goes red here.
+    """
+
+    CANVAS = 512
+    _BG = (24, 22, 34, 255)
+    _FILLS = [
+        (124, 92, 255, 255),
+        (92, 200, 150, 255),
+        (224, 168, 60, 255),
+        (240, 133, 122, 255),
+        (110, 170, 240, 255),
+        (200, 120, 200, 255),
+        (140, 210, 110, 255),
+        (250, 210, 90, 255),
+    ]
+
+    @staticmethod
+    def _png_data_url(img: "Image.Image") -> str:
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+    async def decompose(
+        self,
+        image_url: str,
+        *,
+        layer_count: int,
+        intent: str | None = None,
+    ) -> dict[str, Any]:
+        n = clamp_layer_count(layer_count)
+        size = self.CANVAS
+        layers: list[dict[str, Any]] = []
+
+        base = Image.new("RGBA", (size, size), self._BG)
+        layers.append(
+            {"imageUrl": self._png_data_url(base), "width": size, "height": size}
+        )
+
+        # Middle layers: solid blocks on transparency, laid out on a diagonal so
+        # every layer has a distinct bounding box (a set of identical boxes
+        # would let a "did it really split?" assertion pass for free).
+        for i in range(1, n):
+            layer = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+            draw = ImageDraw.Draw(layer)
+            if i == n - 1 and n >= 3:
+                # Thin accent layer — viewfinder corner brackets, mirroring the
+                # real upstream's thinnest layer (measured 0.12% ink). Roughly
+                # 0.17% here: comfortably under the thin marker line and just as
+                # comfortably above zero, so "thin" and "empty" stay distinct.
+                inset, seg, w = 40, 28, 2
+                lo, hi = inset, size - inset
+                accent = (120, 255, 90, 255)
+                def _bar(x0: int, y0: int, x1: int, y1: int) -> None:
+                    draw.rectangle(
+                        [min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)],
+                        fill=accent,
+                    )
+
+                for cx, cy, dx, dy in (
+                    (lo, lo, 1, 1),
+                    (hi, lo, -1, 1),
+                    (lo, hi, 1, -1),
+                    (hi, hi, -1, -1),
+                ):
+                    _bar(cx, cy, cx + dx * seg, cy + dy * w)  # horizontal arm
+                    _bar(cx, cy, cx + dx * w, cy + dy * seg)  # vertical arm
+            else:
+                fill = self._FILLS[(i - 1) % len(self._FILLS)]
+                step = max(24, size // (n + 2))
+                x0 = 32 + (i - 1) * step
+                y0 = 48 + (i - 1) * step
+                draw.rectangle(
+                    [x0, y0, min(x0 + 160, size - 8), min(y0 + 120, size - 8)],
+                    fill=fill,
+                )
+            layers.append(
+                {"imageUrl": self._png_data_url(layer), "width": size, "height": size}
+            )
+
+        # Stable, input-derived seed: the same image + count + intent reproduces
+        # the same split, which is exactly what the real seed is for.
+        digest = hashlib.sha1(
+            f"{image_url}|{n}|{(intent or '').strip()}".encode()
+        ).hexdigest()[:8]
+        return {"layers": layers, "seed": int(digest, 16), "model": "mock-layer"}
 
     async def check(self) -> ProviderCheck:
         return ProviderCheck(True, _MOCK_CHECK_DETAIL)

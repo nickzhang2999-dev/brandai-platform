@@ -62,9 +62,11 @@ def test_probe_image_size_decodes_data_url():
 
     from app.main import _probe_image_size
 
-    out = asyncio.get_event_loop().run_until_complete(
-        _probe_image_size(_png_data_url(640, 480))
-    )
+    # asyncio.run 而不是 get_event_loop():后者在 3.10+ 只有"当前线程已有 loop"
+    # 时才成立,而 pytest-asyncio 跑完任一 async 用例就会把 loop 关掉。这条用例
+    # 以前只是**靠文件名排序**恰好跑在所有 async 用例之前才通过——加一个字母序
+    # 更靠前的 async 测试文件就会翻红(2026-08-25 加 test_decompose.py 时撞上)。
+    out = asyncio.run(_probe_image_size(_png_data_url(640, 480)))
     assert out == (640, 480)
 
 
@@ -75,9 +77,8 @@ def test_probe_image_size_returns_none_on_undecodable():
 
     # The mock provider emits an SVG data URL, which PIL can't decode → None,
     # so the requested width/height stay the only recorded dimensions.
-    loop = asyncio.get_event_loop()
-    assert loop.run_until_complete(_probe_image_size("data:image/svg+xml;base64,Zm9v")) is None
-    assert loop.run_until_complete(_probe_image_size("not-a-url")) is None
+    assert asyncio.run(_probe_image_size("data:image/svg+xml;base64,Zm9v")) is None
+    assert asyncio.run(_probe_image_size("not-a-url")) is None
 
 
 def test_generate_mock_svg_keeps_requested_size_no_actual(client):
