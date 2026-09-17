@@ -4,6 +4,7 @@ import { ApiException, handleError, requireUser } from "@/lib/api";
 import { requireOwnedWorkspace } from "@/lib/workspace";
 import { safeFetch } from "@/lib/ssrf";
 import { getObjectStream } from "@/lib/s3";
+import { getEffectiveStorage } from "@/lib/settings";
 import {
   IMAGE_PREVIEW_WIDTH,
   imagePreviewEtag,
@@ -65,19 +66,9 @@ export async function GET(
 
     const cacheControl = "private, max-age=3600";
 
-    if (previewWidth) {
-      if (!asset.previewStorageKey) {
-        await enqueueImagePreview({ workspaceId: wsId, assetId });
-        return Response.json(
-          { status: "PENDING", message: "Asset preview is being prepared" },
-          { status: 202, headers: { "retry-after": "2" } },
-        );
-      }
+    if (previewWidth && asset.previewStorageKey) {
       const readSignal = AbortSignal.timeout(10_000);
-      const object = await getObjectStream(
-        asset.previewStorageKey,
-        readSignal,
-      );
+      const object = await getObjectStream(asset.previewStorageKey, readSignal);
       const preview = await nodeStreamToBuffer(
         object.body,
         4 * 1024 * 1024,
@@ -90,6 +81,22 @@ export async function GET(
           "x-content-type-options": "nosniff",
         },
       });
+    }
+
+    if (previewWidth) {
+      const hasInlineSource =
+        asset.storageKey.startsWith("data:") || asset.url.startsWith("data:");
+      const storage = hasInlineSource ? null : await getEffectiveStorage();
+      if (!hasInlineSource && storage?.configured) {
+        await enqueueImagePreview({ workspaceId: wsId, assetId });
+        return Response.json(
+          { status: "PENDING", message: "Asset preview is being prepared" },
+          { status: 202, headers: { "retry-after": "2" } },
+        );
+      }
+      // Inline sources cannot be consumed as S3 keys, and without configured
+      // storage no generated preview can be persisted. Fall through to the
+      // existing authenticated raw path instead of polling an impossible job.
     }
 
     if (isAbsoluteUrl(asset.storageKey) || isAbsoluteUrl(asset.url)) {
