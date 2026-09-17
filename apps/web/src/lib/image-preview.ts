@@ -3,6 +3,7 @@ import type { Readable } from "node:stream";
 
 export const IMAGE_PREVIEW_MAX_SOURCE_BYTES = 32 * 1024 * 1024;
 export const IMAGE_PREVIEW_CACHE_CONTROL = "private, max-age=86400, immutable";
+export const IMAGE_PREVIEW_WIDTH = 768;
 
 const ALLOWED_WIDTHS = [320, 512, 768, 1024] as const;
 

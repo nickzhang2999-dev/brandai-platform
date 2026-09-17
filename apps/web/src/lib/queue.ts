@@ -55,3 +55,9 @@ export const decomposeQueue = new Queue("decompose", {
   connection,
   prefix: queuePrefix,
 });
+// 画布缩略图涉及对象存储读取 + Sharp 转码，必须在 worker 里完成；GET 只鉴权、
+// 读取已生成的小图，缺失时入队后快速返回。
+export const imagePreviewQueue = new Queue("image-preview", {
+  connection,
+  prefix: queuePrefix,
+});

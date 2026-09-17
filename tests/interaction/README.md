@@ -66,6 +66,15 @@ WS=$WS PROJECT=$PROJECT GEN=$GEN SESSION_TOKEN=$TOKEN OUT=/tmp \
 ```
 预期：除「加图片上传」（本地无对象存储→500，部署环境正常）外全 PASS。
 
+画布恢复失败的有界退出与“禁止空数据自动保存”回归：
+
+```bash
+WS=$WS PROJECT=$EMPTY_PROJECT SESSION_TOKEN=$TOKEN \
+  node tests/interaction/canvas-restore-failure.mjs
+```
+
+`EMPTY_PROJECT` 必须是没有生成记录的空项目；脚本会把画布恢复 GET 注入为 503，并断言错误态出现、spinner 消失且没有发出 PUT。
+
 ---
 
 ## 覆盖的功能

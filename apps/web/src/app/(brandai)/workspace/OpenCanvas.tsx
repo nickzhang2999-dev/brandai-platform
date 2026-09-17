@@ -507,6 +507,10 @@ export function OpenCanvas({
    * 出图变体 tile 由 seedVersions（Generation 服务端数据）权威重建，不入画布 JSON——
    * 这也是 F19 ⑨ 用户定夺的「画布=持久开放世界工作台，变体 tile 随出图进出」语义。 */
   const [hydrated, setHydrated] = useState(!persist);
+  // 恢复进度和“允许自动保存”是两个状态：读取失败后必须结束 spinner，但绝不能
+  // 放开空画布 autosave 覆盖服务端数据。
+  const [restorePending, setRestorePending] = useState(Boolean(persist));
+  const [restoreError, setRestoreError] = useState<string | null>(null);
   const suppressNextFitRef = useRef(false);
   const lastSavedRef = useRef("");
   const persistWs = persist?.wsId;
@@ -514,10 +518,14 @@ export function OpenCanvas({
   useEffect(() => {
     if (!persistWs || !persistProject) {
       setHydrated(true);
+      setRestorePending(false);
+      setRestoreError(null);
       return;
     }
     let cancelled = false;
     setHydrated(false);
+    setRestorePending(true);
+    setRestoreError(null);
     // 切 Campaign（Codex P2）：先清掉上一项目残留在内存的 items——否则下方
     // 恢复合并的 extra 过滤会把 A 项目的版本 tile 保进 B 的画布，且随后的
     // 自动保存会把它们持久化进 B 的 ProjectCanvas（route 归属校验只到
@@ -592,7 +600,16 @@ export function OpenCanvas({
         // 保存会把空画布 PUT 覆盖服务端已存状态。代价是失败这次会话的
         // 编辑不入库（画布仍可用，刷新即重试恢复+恢复保存），比静默清库安全。
         // 真空画布不受影响：route 无记录时返回 200 空态，restored 照常为真。
-        if (!cancelled && restored) setHydrated(true);
+        if (!cancelled) {
+          setRestorePending(false);
+          if (restored) {
+            setHydrated(true);
+          } else {
+            setRestoreError(
+              "项目画布恢复失败，请刷新页面重试；本次不会覆盖已保存内容。",
+            );
+          }
+        }
       }
     })();
     return () => {
@@ -1040,7 +1057,10 @@ export function OpenCanvas({
     const src = items.find((i) => i.versionId === srcId);
     if (!src) return null;
     const occupied = items.map((i) => ({ x: i.x, y: i.y, w: i.w, h: i.h }));
-    return planLayerSetRect({ x: src.x, y: src.y, w: src.w, h: src.h }, occupied);
+    return planLayerSetRect(
+      { x: src.x, y: src.y, w: src.w, h: src.h },
+      occupied,
+    );
   }, [edit?.decompose?.pendingSourceVersionId, items]);
 
   /**
@@ -1962,7 +1982,10 @@ export function OpenCanvas({
               而不是一个通用 spinner（`artifact-is-experience`：等待期要有产物的形状）。 */}
           <div className="flex w-1/2 flex-col gap-1.5">
             {Array.from({
-              length: Math.max(1, Math.min(10, edit?.decompose?.layerCount ?? 4)),
+              length: Math.max(
+                1,
+                Math.min(10, edit?.decompose?.layerCount ?? 4),
+              ),
             }).map((_, i) => (
               <span
                 key={i}
@@ -2205,7 +2228,8 @@ export function OpenCanvas({
       {/* 空态引导 */}
       {items.length === 0 ? (
         <CanvasEmpty
-          restoring={!hydrated || restoring}
+          restoring={restorePending || restoring}
+          restoreError={restoreError}
           running={running}
           status={status}
           timedOut={timedOut}
@@ -2682,9 +2706,7 @@ export function OpenCanvas({
                         <button
                           type="button"
                           onPointerDown={(e) => e.stopPropagation()}
-                          onClick={() =>
-                            setDecomposeOpen((prev) => !prev)
-                          }
+                          onClick={() => setDecomposeOpen((prev) => !prev)}
                           disabled={edit.decompose.busy}
                           title="把这张图拆成多张可独立编辑的透明图层"
                           className={[
@@ -2742,7 +2764,10 @@ export function OpenCanvas({
                                 edit.decompose?.onIntentChange(e.target.value)
                               }
                               onKeyDown={(e) => {
-                                if (e.key === "Enter" && !edit.decompose?.busy) {
+                                if (
+                                  e.key === "Enter" &&
+                                  !edit.decompose?.busy
+                                ) {
                                   e.preventDefault();
                                   edit.decompose?.onRun(soloVersion);
                                   setDecomposeOpen(false);
@@ -2882,12 +2907,14 @@ function ShapeView({ item }: { item: CanvasItem }) {
 
 function CanvasEmpty({
   restoring,
+  restoreError,
   running,
   status,
   timedOut,
   error,
 }: {
   restoring: boolean;
+  restoreError: string | null;
   running: boolean;
   status: string | null;
   timedOut: boolean;
@@ -2903,6 +2930,13 @@ function CanvasEmpty({
           </div>
           <p className="mt-1 text-xs text-muted-foreground">
             当前作品会优先显示，其余历史图片随后加载。
+          </p>
+        </>
+      ) : restoreError ? (
+        <>
+          <div className="text-sm text-destructive">画布恢复失败</div>
+          <p className="mt-1 max-w-sm text-xs text-muted-foreground">
+            {restoreError}
           </p>
         </>
       ) : timedOut ? (

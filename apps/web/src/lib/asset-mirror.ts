@@ -1,5 +1,6 @@
 import { prisma } from "@brandai/db";
 import { getEffectiveStorage } from "@/lib/settings";
+import { imagePreviewQueue } from "@/lib/queue";
 
 const EXT_MIME: Record<string, string> = {
   png: "image/png",
@@ -14,11 +15,7 @@ const EXT_MIME: Record<string, string> = {
  */
 export function assetCategoryForScene(
   sceneType?: string | null,
-):
-  | "ECOM"
-  | "SOCIAL"
-  | "KV"
-  | "OTHER" {
+): "ECOM" | "SOCIAL" | "KV" | "OTHER" {
   switch (sceneType) {
     case "ECOM_MAIN":
     case "SELLING_POINT":
@@ -61,6 +58,8 @@ export async function mirrorGenerationVersionToAsset(opts: {
   /** 文件名标签（不含扩展名）；扩展名由 storageKey 推出后追加。 */
   fileLabel: string;
   aiDescription?: string;
+  /** Worker 自己补镜像时关闭二次入队，避免同一个 job 自我唤醒。 */
+  enqueuePreview?: boolean;
   /** @returns 是否实际新建了镜像 Asset（true=已回流；false=跳过/失败）。回填端点据此计数。 */
 }): Promise<boolean> {
   try {
@@ -87,7 +86,7 @@ export async function mirrorGenerationVersionToAsset(opts: {
       return Math.max(0, Math.floor((b64.length * 3) / 4) - pad);
     })();
 
-    await prisma.asset.create({
+    const asset = await prisma.asset.create({
       data: {
         workspaceId: opts.workspaceId,
         category: assetCategoryForScene(opts.sceneType),
@@ -107,6 +106,29 @@ export async function mirrorGenerationVersionToAsset(opts: {
         ...(opts.aiDescription ? { aiDescription: opts.aiDescription } : {}),
       },
     });
+    if (opts.enqueuePreview !== false) {
+      try {
+        await imagePreviewQueue.add(
+          "build",
+          {
+            workspaceId: opts.workspaceId,
+            versionId: opts.generationVersionId,
+          },
+          {
+            jobId: `version-${opts.generationVersionId}`,
+            attempts: 3,
+            backoff: { type: "exponential", delay: 2_000 },
+            removeOnComplete: true,
+            removeOnFail: true,
+          },
+        );
+      } catch (err) {
+        // 镜像 Asset 已经成功，是权威产物；缩略图可由首次 GET 再次入队。
+        console.warn(
+          `[asset-mirror] preview enqueue failed for asset ${asset.id}: ${String(err)}`,
+        );
+      }
+    }
     return true;
   } catch (err) {
     // 幂等冲突（同一版本已回流）或任何写失败都不致命 —— 出图本身已成功。

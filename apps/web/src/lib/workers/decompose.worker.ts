@@ -8,6 +8,7 @@ import { uploadDataUrlImage } from "@/lib/s3";
 import { safeFetch } from "@/lib/ssrf";
 import { analyzeLayerImage } from "@/lib/layers";
 import { getProvidersHealth } from "@/lib/settings";
+import { mirrorGenerationVersionToAsset } from "@/lib/asset-mirror";
 import {
   markRunning,
   setProgress,
@@ -50,10 +51,13 @@ export interface DecomposeJobResult {
  * 上游(fal)返回的是**临时** URL,过期就取不到了,所以必须当场下载并转存到我们
  * 自己的存储;顺带这份字节正好用来算实墨包围盒,不必为分析再拉一次。
  */
-async function fetchLayerBytes(url: string): Promise<{ buf: Buffer; mime: string }> {
+async function fetchLayerBytes(
+  url: string,
+): Promise<{ buf: Buffer; mime: string }> {
   if (url.startsWith("data:")) {
     const match = /^data:([^;,]+)(;base64)?,(.*)$/s.exec(url);
-    if (!match || !match[2]) throw new Error("unsupported inline layer payload");
+    if (!match || !match[2])
+      throw new Error("unsupported inline layer payload");
     return {
       buf: Buffer.from(match[3] ?? "", "base64"),
       mime: match[1] || "image/png",
@@ -105,7 +109,10 @@ export async function runDecomposeJob(
   // 它落库的那一组也会被 catch 里的整组回滚清掉,不会留下"任务失败但图层却在"。
   let watchdog: NodeJS.Timeout | null = null;
   const timeout = new Promise<never>((_, reject) => {
-    watchdog = setTimeout(() => reject(new DecomposeTimeoutError()), TIMEOUT_MS);
+    watchdog = setTimeout(
+      () => reject(new DecomposeTimeoutError()),
+      TIMEOUT_MS,
+    );
   });
   const clearWatchdog = () => {
     if (watchdog) clearTimeout(watchdog);
@@ -251,39 +258,39 @@ export async function runDecomposeJob(
       );
 
       prepared.push({
-          generation: { connect: { id: generationId } },
-          index: nextIndex++,
-          imageUrl: storedUrl,
-          width: analysis.width || layer.width,
-          height: analysis.height || layer.height,
-          parentVersionId: source.id,
-          isFinal: false,
-          params: {
-            ...sourceParams,
-            imageKind: "GENERATED",
-            layerRole: "layer",
-            layerSetId,
-            layerIndex: i,
-            // 显隐一律默认可见。细层(实墨覆盖率极低)只打标记不隐藏——真上游
-            // 实测那组绿色角标覆盖率 0.12%,是真实设计元素;按覆盖率自动隐藏
-            // 会让用户以为模型没拆出来。
-            layerHidden: false,
-            layerOpacity: 1,
-            layerZ: i,
-            ...(analysis.bounds ? { layerBounds: analysis.bounds } : {}),
-            layerInkCoverage: analysis.inkCoverage,
-            layerThin: analysis.thin,
-            decompose: {
-              sourceVersionId: source.id,
-              requestedLayerCount: layerCount,
-              ...(intent ? { intent } : {}),
-              ...(result.seed !== undefined ? { seed: result.seed } : {}),
-              ...(result.usage?.provider
-                ? { provider: result.usage.provider }
-                : {}),
-              decomposedAt,
-            },
-          } as Prisma.InputJsonValue,
+        generation: { connect: { id: generationId } },
+        index: nextIndex++,
+        imageUrl: storedUrl,
+        width: analysis.width || layer.width,
+        height: analysis.height || layer.height,
+        parentVersionId: source.id,
+        isFinal: false,
+        params: {
+          ...sourceParams,
+          imageKind: "GENERATED",
+          layerRole: "layer",
+          layerSetId,
+          layerIndex: i,
+          // 显隐一律默认可见。细层(实墨覆盖率极低)只打标记不隐藏——真上游
+          // 实测那组绿色角标覆盖率 0.12%,是真实设计元素;按覆盖率自动隐藏
+          // 会让用户以为模型没拆出来。
+          layerHidden: false,
+          layerOpacity: 1,
+          layerZ: i,
+          ...(analysis.bounds ? { layerBounds: analysis.bounds } : {}),
+          layerInkCoverage: analysis.inkCoverage,
+          layerThin: analysis.thin,
+          decompose: {
+            sourceVersionId: source.id,
+            requestedLayerCount: layerCount,
+            ...(intent ? { intent } : {}),
+            ...(result.seed !== undefined ? { seed: result.seed } : {}),
+            ...(result.usage?.provider
+              ? { provider: result.usage.provider }
+              : {}),
+            decomposedAt,
+          },
+        } as Prisma.InputJsonValue,
       });
 
       // 备料阶段占 30→95;真正落库在循环之后。
@@ -316,6 +323,20 @@ export async function runDecomposeJob(
       await rollbackLayerSet();
       throw new Error("提交后判超时,已撤销本组图层");
     }
+
+    // 分解产物与普通出图/改图一致地建立本地镜像，并由镜像流程把有界 WebP
+    // 交给 image-preview worker。预览 GET 因此不需要抓远端原图或现场跑 Sharp。
+    for (const row of createdRows) {
+      await mirrorGenerationVersionToAsset({
+        workspaceId,
+        generationVersionId: row.id,
+        imageUrl: row.imageUrl,
+        width: row.width,
+        height: row.height,
+        fileLabel: `分解图层 #${row.index + 1}`,
+        aiDescription: intent || "AI 分解图层",
+      });
+    }
     // **在这里认领终态**,而不是等 markSucceeded 写完。
     //
     // 只判不认领的话还剩一条缝:看门狗恰在下面几个 await 之间烧掉,`failOnce` 会
@@ -338,7 +359,12 @@ export async function runDecomposeJob(
       settled = false;
       throw writeErr;
     }
-    return { generationId, sourceVersionId: source.id, layerSetId, versionIds };
+    return {
+      generationId,
+      sourceVersionId: source.id,
+      layerSetId,
+      versionIds,
+    };
   } catch (err) {
     // 兜底撤销。整组落库已经是一次事务,正常情况下失败时库里本就没有半成品;
     // 但事务**之后**仍可能出岔子(markSucceeded 失败、进程被杀),那时这一组已经
