@@ -30,7 +30,10 @@ export const generateQueue = new Queue("generate", {
   connection,
   prefix: queuePrefix,
 });
-export const editQueue = new Queue("edit", { connection, prefix: queuePrefix });
+export const editQueue = new Queue("edit", {
+  connection,
+  prefix: queuePrefix,
+});
 // E9/E10 — asset auto-tagging (describe). Same prefix convention as the others.
 export const describeQueue = new Queue("describe", {
   connection,
@@ -61,3 +64,46 @@ export const imagePreviewQueue = new Queue("image-preview", {
   connection,
   prefix: queuePrefix,
 });
+
+const IMAGE_PREVIEW_ENQUEUE_TIMEOUT_MS = 1_000;
+
+/**
+ * Cache-miss image GETs must remain bounded even when Redis is unavailable.
+ * The shared BullMQ connection intentionally retries forever for workers, so a
+ * direct `queue.add()` await can otherwise pin the HTTP request indefinitely.
+ * A timed-out add remains observed (no unhandled rejection); the browser's
+ * retryable 202 will make a later request try enqueueing again.
+ */
+export async function enqueueImagePreview(
+  data: { workspaceId: string; versionId?: string; assetId?: string },
+): Promise<boolean> {
+  const jobId = data.versionId
+    ? `version-${data.versionId}`
+    : `asset-${data.assetId}`;
+  const enqueue = imagePreviewQueue
+    .add("build", data, {
+      jobId,
+      attempts: 3,
+      backoff: { type: "exponential", delay: 2_000 },
+      removeOnComplete: true,
+      removeOnFail: true,
+    })
+    .then(() => true)
+    .catch((error) => {
+      console.error(`[image-preview] enqueue ${jobId} failed:`, error);
+      return false;
+    });
+
+  let timer: NodeJS.Timeout | undefined;
+  const timedOut = new Promise<false>((resolve) => {
+    timer = setTimeout(() => resolve(false), IMAGE_PREVIEW_ENQUEUE_TIMEOUT_MS);
+  });
+  const queued = await Promise.race([enqueue, timedOut]);
+  if (timer) clearTimeout(timer);
+  if (!queued) {
+    console.warn(
+      `[image-preview] enqueue ${jobId} unavailable after ${IMAGE_PREVIEW_ENQUEUE_TIMEOUT_MS}ms; client will retry`,
+    );
+  }
+  return queued;
+}

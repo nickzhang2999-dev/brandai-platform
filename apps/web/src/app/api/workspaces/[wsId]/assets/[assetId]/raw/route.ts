@@ -11,7 +11,7 @@ import {
   nodeStreamToBuffer,
   parseImagePreviewWidth,
 } from "@/lib/image-preview";
-import { imagePreviewQueue } from "@/lib/queue";
+import { enqueueImagePreview } from "@/lib/queue";
 
 /**
  * M-A · 资产公网代理 — streams an asset's bytes back over the canonical public
@@ -67,17 +67,7 @@ export async function GET(
 
     if (previewWidth) {
       if (!asset.previewStorageKey) {
-        await imagePreviewQueue.add(
-          "build",
-          { workspaceId: wsId, assetId },
-          {
-            jobId: `asset-${assetId}`,
-            attempts: 3,
-            backoff: { type: "exponential", delay: 2_000 },
-            removeOnComplete: true,
-            removeOnFail: true,
-          },
-        );
+        await enqueueImagePreview({ workspaceId: wsId, assetId });
         return Response.json(
           { status: "PENDING", message: "Asset preview is being prepared" },
           { status: 202, headers: { "retry-after": "2" } },

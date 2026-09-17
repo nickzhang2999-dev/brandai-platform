@@ -7,7 +7,7 @@ import {
   nodeStreamToBuffer,
 } from "@/lib/image-preview";
 import { getObjectStream } from "@/lib/s3";
-import { imagePreviewQueue } from "@/lib/queue";
+import { enqueueImagePreview } from "@/lib/queue";
 import { requireWorkspaceRole } from "@/lib/workspace";
 
 export const runtime = "nodejs";
@@ -40,17 +40,7 @@ export async function GET(
 
     const mirror = version.mirrorAsset;
     if (!mirror?.previewStorageKey) {
-      await imagePreviewQueue.add(
-        "build",
-        { workspaceId: wsId, versionId },
-        {
-          jobId: `version-${versionId}`,
-          attempts: 3,
-          backoff: { type: "exponential", delay: 2_000 },
-          removeOnComplete: true,
-          removeOnFail: true,
-        },
-      );
+      await enqueueImagePreview({ workspaceId: wsId, versionId });
       return Response.json(
         { status: "PENDING", message: "Canvas preview is being prepared" },
         { status: 202, headers: { "retry-after": "2" } },
