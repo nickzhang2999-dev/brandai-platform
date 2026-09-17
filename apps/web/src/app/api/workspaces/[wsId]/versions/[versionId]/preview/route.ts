@@ -60,6 +60,7 @@ export async function GET(
               location: version.imageUrl,
               "cache-control": "private, max-age=3600",
               "referrer-policy": "no-referrer",
+              vary: "Cookie",
             },
           });
         }

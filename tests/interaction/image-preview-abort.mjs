@@ -65,6 +65,29 @@ if (!oversizedCancelled)
   throw new Error("oversized Web stream was not cancelled");
 console.log("PASS | oversized Web stream is cancelled");
 
+let preAbortedWebCancelled = false;
+const preAbortedWeb = new ReadableStream({
+  cancel() {
+    preAbortedWebCancelled = true;
+  },
+});
+await expectAbort("pre-aborted Web stream is cancelled", async () => {
+  const controller = new AbortController();
+  controller.abort(new Error("preview abort regression"));
+  await webStreamToBuffer(preAbortedWeb, 1024, controller.signal);
+});
+if (!preAbortedWebCancelled)
+  throw new Error("pre-aborted Web stream cancel hook was not called");
+
+const preAbortedNode = new PassThrough();
+await expectAbort("pre-aborted Node stream is destroyed", async () => {
+  const controller = new AbortController();
+  controller.abort(new Error("preview abort regression"));
+  await nodeStreamToBuffer(preAbortedNode, 1024, controller.signal);
+});
+if (!preAbortedNode.destroyed)
+  throw new Error("pre-aborted Node stream was not destroyed");
+
 await expectAbort("Sharp is not started after abort", async () => {
   const controller = new AbortController();
   controller.abort(new Error("preview abort regression"));

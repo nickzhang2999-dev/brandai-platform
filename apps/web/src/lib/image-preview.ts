@@ -56,6 +56,9 @@ export async function webStreamToBuffer(
   };
   signal?.addEventListener("abort", onAbort, { once: true });
   try {
+    if (signal?.aborted) {
+      await reader.cancel(signal.reason).catch(() => {});
+    }
     signal?.throwIfAborted();
     while (true) {
       const { done, value } = await reader.read();
@@ -99,6 +102,7 @@ export async function nodeStreamToBuffer(
   };
   signal?.addEventListener("abort", onAbort, { once: true });
   try {
+    if (signal?.aborted) stream.destroy();
     signal?.throwIfAborted();
     for await (const chunk of stream) {
       signal?.throwIfAborted();
