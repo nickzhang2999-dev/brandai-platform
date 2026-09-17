@@ -57,9 +57,20 @@ export function assetThumbUrl(
   wsId: string,
   assetId: string,
   fallbackUrl: string,
+  previewWidth?: number,
 ): string {
   if (process.env.NEXT_PUBLIC_ASSET_PROXY === "0") return fallbackUrl;
-  return `/api/workspaces/${wsId}/assets/${assetId}/raw`;
+  const base = `/api/workspaces/${wsId}/assets/${assetId}/raw`;
+  return previewWidth ? `${base}?w=${previewWidth}` : base;
+}
+
+/** Compact, authenticated canvas preview for a GenerationVersion. */
+export function versionPreviewUrl(
+  wsId: string,
+  versionId: string,
+  previewWidth = 768,
+): string {
+  return `/api/workspaces/${wsId}/versions/${versionId}/preview?w=${previewWidth}`;
 }
 
 export const CATEGORY_LABELS: Record<string, string> = {

@@ -14,6 +14,7 @@ import {
   planLayerSetRect,
   readLayerMeta,
 } from "@brandai/contracts";
+import { assetThumbUrl, versionPreviewUrl } from "@/lib/client";
 
 /**
  * 开放世界画布 —— 迁移自 prd_agent 视觉创作 AdvancedVisualAgentTab 的无限平面画布
@@ -111,6 +112,130 @@ function imageItemFromVersion(v: GenerationVersion, idx: number): CanvasItem {
   };
 }
 
+function CanvasPreviewImage({
+  item,
+  workspaceId,
+  priority,
+  delayMs,
+  onOriginalLoad,
+}: {
+  item: CanvasItem;
+  workspaceId: string;
+  priority: boolean;
+  delayMs: number;
+  onOriginalLoad: (width: number, height: number) => void;
+}) {
+  const originalSrc = item.imageUrl ?? "";
+  const previewSrc = useMemo(() => {
+    if (item.versionId)
+      return versionPreviewUrl(workspaceId, item.versionId, 768);
+    if (item.assetId)
+      return assetThumbUrl(workspaceId, item.assetId, originalSrc, 768);
+    return originalSrc;
+  }, [item.assetId, item.versionId, originalSrc, workspaceId]);
+  const [requestedSrc, setRequestedSrc] = useState<string | null>(
+    priority ? previewSrc : null,
+  );
+  const [loaded, setLoaded] = useState(false);
+  const [previewFailed, setPreviewFailed] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const requestTimerRef = useRef<number | null>(null);
+  const [initialDelayMs] = useState(delayMs);
+
+  useEffect(() => {
+    setLoaded(false);
+    setPreviewFailed(false);
+    setFailed(false);
+    setRequestedSrc(null);
+    requestTimerRef.current = window.setTimeout(
+      () => setRequestedSrc(previewSrc),
+      initialDelayMs,
+    );
+    return () => {
+      if (requestTimerRef.current != null)
+        window.clearTimeout(requestTimerRef.current);
+      requestTimerRef.current = null;
+    };
+  }, [initialDelayMs, previewSrc]);
+
+  // Selection only accelerates a request. Deselecting an already-visible tile
+  // must never blank it and start the delay again.
+  useEffect(() => {
+    if (!priority) return;
+    if (requestTimerRef.current != null)
+      window.clearTimeout(requestTimerRef.current);
+    requestTimerRef.current = null;
+    setRequestedSrc(previewSrc);
+  }, [previewSrc, priority]);
+
+  const renderedSrc = previewFailed ? originalSrc : requestedSrc;
+  return (
+    <>
+      {!loaded && !failed ? (
+        <div
+          data-testid="canvas-image-loading"
+          className="pointer-events-none absolute inset-0 flex items-center justify-center overflow-hidden rounded-[6px] bg-accent-soft/60"
+        >
+          <span className="h-full w-full motion-safe:animate-pulse bg-gradient-to-r from-transparent via-card/70 to-transparent" />
+          {priority ? (
+            <span className="absolute text-[10px] font-medium text-muted-foreground">
+              正在显示图片…
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+      {renderedSrc ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          key={renderedSrc}
+          src={renderedSrc}
+          alt="画布图片"
+          draggable={false}
+          decoding="async"
+          loading={priority ? "eager" : "lazy"}
+          fetchPriority={priority ? "high" : "low"}
+          className={`h-full w-full rounded-[6px] object-contain transition-opacity duration-200 ${loaded ? "opacity-100" : "opacity-0"}`}
+          style={{
+            // 图层组是透明 RGBA 叠放，不能给每一层垫紫色背景。
+            ...(item.layerSetId
+              ? {}
+              : { background: "rgb(244 240 255 / 0.5)" }),
+          }}
+          onLoad={(event) => {
+            setLoaded(true);
+            setFailed(false);
+            if (
+              renderedSrc === originalSrc &&
+              !item.naturalW &&
+              event.currentTarget.naturalWidth
+            ) {
+              onOriginalLoad(
+                event.currentTarget.naturalWidth,
+                event.currentTarget.naturalHeight,
+              );
+            }
+          }}
+          onError={() => {
+            // Preview generation is best-effort. A legacy/corrupt source must
+            // not make an image disappear if its original URL still renders.
+            if (!previewFailed && previewSrc !== originalSrc) {
+              setPreviewFailed(true);
+              setLoaded(false);
+              return;
+            }
+            setFailed(true);
+          }}
+        />
+      ) : null}
+      {failed ? (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-[6px] bg-muted text-[10px] text-muted-foreground">
+          图片加载失败
+        </div>
+      ) : null}
+    </>
+  );
+}
+
 type Gesture =
   | { type: "pan"; sx: number; sy: number; cam: { x: number; y: number } }
   | {
@@ -198,8 +323,10 @@ export type CanvasEditBridge = {
 };
 
 export function OpenCanvas({
+  workspaceId,
   seedVersions,
   seedReady = false,
+  restoring = false,
   running,
   status,
   timedOut,
@@ -227,11 +354,14 @@ export function OpenCanvas({
   uploadFilesRef,
   edit,
 }: {
+  workspaceId: string;
   seedVersions: GenerationVersion[];
   /** 当前 Campaign 的历史查询是否已成功加载。seed 成员剪枝只在 true 时执行——
    *  切 Campaign 后新 key 的 history 尚未返回时 seed 短暂为空/不全，此时剪枝会
    *  把水合恢复的本项目版本 tile 误删（丢自定义布局）。 */
   seedReady?: boolean;
+  /** 项目历史/画布仍在恢复时展示明确进度，避免先闪一个误导性的空画布。 */
+  restoring?: boolean;
   running: boolean;
   status: string | null;
   timedOut: boolean;
@@ -1851,7 +1981,7 @@ export function OpenCanvas({
       ) : null}
 
       {/* items */}
-      {paintOrder.map((it) => {
+      {paintOrder.map((it, paintIndex) => {
         // 隐藏的图层整块不渲染:它仍在数据里(导出分层文档时照样写进去并标隐藏),
         // 只是画布上不占视觉。可见性由图层面板控制,不由覆盖率猜。
         if (it.layerHidden) return null;
@@ -1901,36 +2031,22 @@ export function OpenCanvas({
             }}
           >
             {it.kind === "image" && it.imageUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={it.imageUrl}
-                alt="画布图片"
-                draggable={false}
-                className="h-full w-full rounded-[6px] object-contain"
-                style={{
-                  // 那层淡紫底是普通图片的占位色。图层组是**叠**在同一块矩形上
-                  // 的 RGBA:每一层的透明像素都垫一次 50% 淡紫,四层叠起来就是
-                  // 四道紫雾盖住下面的层,「叠起来跟原图一样」这条不变量当场作废。
-                  // 所以分解产物一律不垫底——它本来就该是透明的。
-                  ...(it.layerSetId
-                    ? {}
-                    : { background: "rgb(244 240 255 / 0.5)" }),
-                }}
-                onLoad={(e) => {
-                  const img = e.currentTarget;
-                  if (!it.naturalW && img.naturalWidth) {
-                    setItems((prev) =>
-                      prev.map((p) =>
-                        p.key === it.key
-                          ? {
-                              ...p,
-                              naturalW: img.naturalWidth,
-                              naturalH: img.naturalHeight,
-                            }
-                          : p,
-                      ),
-                    );
-                  }
+              <CanvasPreviewImage
+                item={it}
+                workspaceId={workspaceId}
+                priority={
+                  isSel || (!!it.versionId && it.versionId === activeVersionId)
+                }
+                // First/current image starts immediately; the rest enter in
+                // small waves so 30+ historical tiles cannot monopolise the
+                // connection before the user sees anything.
+                delayMs={120 + Math.floor(paintIndex / 3) * 220}
+                onOriginalLoad={(naturalW, naturalH) => {
+                  setItems((prev) =>
+                    prev.map((p) =>
+                      p.key === it.key ? { ...p, naturalW, naturalH } : p,
+                    ),
+                  );
                 }}
               />
             ) : it.kind === "shape" ? (
@@ -2089,6 +2205,7 @@ export function OpenCanvas({
       {/* 空态引导 */}
       {items.length === 0 ? (
         <CanvasEmpty
+          restoring={!hydrated || restoring}
           running={running}
           status={status}
           timedOut={timedOut}
@@ -2764,11 +2881,13 @@ function ShapeView({ item }: { item: CanvasItem }) {
 }
 
 function CanvasEmpty({
+  restoring,
   running,
   status,
   timedOut,
   error,
 }: {
+  restoring: boolean;
   running: boolean;
   status: string | null;
   timedOut: boolean;
@@ -2776,7 +2895,17 @@ function CanvasEmpty({
 }) {
   return (
     <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
-      {timedOut ? (
+      {restoring ? (
+        <>
+          <div className="h-10 w-10 animate-spin rounded-full border-2 border-accent-soft border-t-primary" />
+          <div className="mt-3 text-sm font-medium text-foreground">
+            正在恢复项目画布…
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            当前作品会优先显示，其余历史图片随后加载。
+          </p>
+        </>
+      ) : timedOut ? (
         <>
           <div className="text-sm text-warning">生成超时</div>
           <p className="mt-1 text-xs text-muted-foreground">

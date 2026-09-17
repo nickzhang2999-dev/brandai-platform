@@ -1,6 +1,10 @@
 # BrandAI — 品牌项目视觉 AI 生成平台
 
-> **当前开发版本：V0.0.21**（2026-07-28）
+> **当前开发版本：V0.0.22**（2026-09-17）
+>
+> V0.0.22：修复正式工作台“卡很久才显示”的首屏体验。项目历史仍完整保留在开放画布，但不再让浏览器同时下载几十张 1K/1.5K 原图：画布改用受权限保护的 768px WebP 预览，当前选中图高优先级加载，其余图片分批进入；素材代理同样支持有界缩略图与 ETag。历史和持久化画布恢复期间显示明确进度，不再先闪一个误导性的空画布。原图仍是改图、蒙版和导出的服务端权威来源，画质与交付链路不降级。
+>
+> V0.0.22 门禁：L1 254（contracts 248 + UI 6）、AI pytest 155、Web typecheck、production build、Prisma schema validate 全部通过；本地真浏览器核心画布交互 25/25，通过 33 图预览压力测试（30 个 WebP 响应共 219.4 KiB，请求跨度 1.965 秒）。压力测试使用 mock 交互数据，仅验证传输、调度与交互，不作为真 provider 生成质量证据。
 >
 > V0.0.21：AI 工作台新增项目级“本次创作资源”面板，用户必须为每张素材/参考图明确选择 **锁定使用（EXACT）/ 智能融合（ADAPTIVE）/ 仅参考（REFERENCE）**。EXACT 锁定的是对象身份与源像素，不是锁死构图：允许在当前输出画框中确定性旋转、缩放、镜像、裁切、局部露出和调整层级，但绝不交给模型重绘或替换（鸡腿仍是同一只鸡腿，不能变成鸭腿）；ADAPTIVE 与 REFERENCE 都作为真实图片进入 `/images/edits`，前者要求主体可识别但允许视觉融合，后者只影响风格、配色和构图。生成和后续改图均保存干净底图，并在模型返回后重新合成 EXACT 素材，避免多次编辑污染锁定对象。
 >
@@ -213,6 +217,7 @@
 
 | F22  | 项目创作资源三语义（锁定使用 / 智能融合 / 仅参考）                  | V0.0.21 素材语义收敛    | ✅                                      | `workspace/ResourceUsagePanel.tsx` + `contracts/resource-usage.ts` + `lib/exact-assets.ts` + generation/edit routes/workers + AI `/images/edits`                                                                               | 项目素材和参考图不再共用一个含糊托盘。用户逐项定义调用方式并持久化到 `ProjectAsset`：**EXACT 锁定对象身份和源像素**，允许旋转、缩放、镜像、裁切、局部露出与层级调整，模型只生成底图，Worker 在生成/改图后确定性合成；**ADAPTIVE** 作为真实模型图片输入，要求主体保持可识别但允许光影/透视/视觉处理融合；**REFERENCE** 作为真实模型图片输入，仅借鉴风格、配色、构图，不保证主体出现。版本参数记录用途、干净底图、实际合成素材和合成方式；失效、跨空间或完全位于画框外的锁定素材失败关闭。                                                                 | 新增 2026-07-28                                                                                                                          |
 | F23  | 图层分解（AI 分层，迁移自 prd_agent 视觉创作）                      | 迁移自 prd_agent 视觉创作 | ✅ **已验收（本地真浏览器 30/30）** | `POST /generations/[genId]/versions/[versionId]/decompose` → `decompose.worker.ts` → `apps/ai /v1/decompose`（mock + fal）→ N 个图层子版本；读写 `GET/PATCH /generations/[genId]/layer-sets/[setId]` | 真上游 fal `qwen-image-layered` 实测通过（4 层 41.8s / 2 层 11.7s，输出 640×640，叠回原图平均通道差 3.3/255）。服务端算实墨包围盒（sharp），层序/显隐服务端权威。**细层不当空层**：实测那组角标实墨覆盖率 0.12%，只标记不隐藏。UI:画布操作条「图层分解」→ 先问层数与拆法 → 组以**一组**落在原图右侧(默认叠放) → 图层面板改显隐/不透明度/层序(服务端权威) → 导出 PSD/ZIP/合成 PNG。判据:contracts 34 条 + apps/ai 15 条 + 画布真浏览器 30/30(含分解 9 条),已做红绿闭环。管理端入口:`/admin/settings` →「图层分解 (AI 分层)」(provider/baseUrl/model/密钥 + 「测试连接」当场自检,实测「密钥可用 (fal-ai/qwen-image-layered)」)。顺带修好三条既有缺陷:选中工具条 z-20 被底部资源坞 z-30 压住「改色/局部重画」看得见点不动;分层那栏 Model 占位符错写成 gpt-4o;分层上游自检探针打在同步推理口上导致好密钥超时(改走 queue 状态口)。**2026-08-27 三批加固**:① 禁止静默降级——`/api/health` 暴露 `providers` 段(不含密钥)、decompose 入队前没配上游直接 409、worker 读回执 `usage.provider`,真跑了占位实现就判 FAILED 一层不落库;② 下层图层可选中(面板点行 + 组内重复点击往下钻)+ 分层期间原地占位图;③ Codex 第十轮四条:循环挪到抬手才生效(按下换层会拖错层)、隐藏层不进点击栈、刷新续跑连源版本一起复原(占位图不再消失)、交互驱动脚本改成会红会退非零。红绿证据见 `tests/interaction/layer-selection.mjs`(A/B/C)与 `decompose-resume-and-panel.mjs`(D)。**2026-08-27 正式版真人验收通过**:`www.novartlab.com` 发布 `37da033` 后走真人路径(登录→工作台→选图→图层分解),等 228 秒到产物可见,图层块 4→8,面板 seed 2023857555、四层覆盖 100%/80.15%/8.36%/4.53%;服务端记录同一条 generation 上 08:38/08:40 两组为 `MockLayerProvider`(用户遇到的占位图)、13:45 这组为 `FalLayerProvider`。注意**合并 main ≠ 发布正式版**,见 `CLAUDE.md §4.3.5` |
+| F24  | 工作台首屏与历史图片渐进加载                                        | V0.0.22 性能修复          | ✅                                      | `workspace/OpenCanvas.tsx` + `versions/[versionId]/preview` + `assets/[assetId]/raw?w=` + `lib/image-preview.ts`                                                                                                               | 保留项目全量历史版本的开放画布语义；显示面改用 768px WebP 预览，当前图优先、其余错峰加载，并用骨架/恢复状态消除长时间空白。预览宽度固定档位、源图上限 32MiB、ETag + 浏览器私有缓存；原始 `GenerationVersion.imageUrl` 不变，改图/蒙版/导出继续读取原图。 | 新增 2026-09-17                                                                                                                          |
 
 ## G · P06 模板库
 

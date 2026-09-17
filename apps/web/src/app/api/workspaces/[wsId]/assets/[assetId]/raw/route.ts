@@ -4,6 +4,14 @@ import { ApiException, handleError, requireUser } from "@/lib/api";
 import { requireOwnedWorkspace } from "@/lib/workspace";
 import { safeFetch } from "@/lib/ssrf";
 import { getObjectStream } from "@/lib/s3";
+import {
+  imagePreviewEtag,
+  imagePreviewHeaders,
+  nodeStreamToBuffer,
+  parseImagePreviewWidth,
+  renderImagePreview,
+  webStreamToBuffer,
+} from "@/lib/image-preview";
 
 /**
  * M-A · 资产公网代理 — streams an asset's bytes back over the canonical public
@@ -31,7 +39,7 @@ function inlineSafeImage(contentType: string): boolean {
 }
 
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ wsId: string; assetId: string }> },
 ) {
   try {
@@ -42,6 +50,17 @@ export async function GET(
     const asset = await prisma.asset.findUnique({ where: { id: assetId } });
     if (!asset || asset.workspaceId !== wsId) {
       throw new ApiException(404, "Asset not found");
+    }
+
+    const previewWidth = parseImagePreviewWidth(req);
+    const previewEtag = previewWidth
+      ? imagePreviewEtag(`asset-${asset.id}`, previewWidth)
+      : null;
+    if (previewEtag && req.headers.get("if-none-match") === previewEtag) {
+      return new Response(null, {
+        status: 304,
+        headers: imagePreviewHeaders(previewEtag),
+      });
     }
 
     const cacheControl = "private, max-age=3600";
@@ -63,6 +82,17 @@ export async function GET(
       // text/html 即使带 nosniff 也会在同源被当页面执行(存储型 XSS)。非图片一律
       // 降级为 octet-stream + attachment,绝不在 app 源下内联渲染。
       const isImg = inlineSafeImage(upstreamType);
+      if (previewWidth && isImg) {
+        const source = await webStreamToBuffer(upstream.body);
+        const preview = await renderImagePreview(source, previewWidth);
+        return new Response(new Uint8Array(preview), {
+          headers: {
+            "content-type": "image/webp",
+            ...imagePreviewHeaders(previewEtag!, preview.byteLength),
+            "x-content-type-options": "nosniff",
+          },
+        });
+      }
       const headers: Record<string, string> = {
         "content-type": isImg ? upstreamType : "application/octet-stream",
         "cache-control": cacheControl,
@@ -78,8 +108,21 @@ export async function GET(
     // 上传端接受任意 File 并原样存 mimeType:上传 text/html 经此 /raw 会在 app 源
     // 内联执行(存储型 XSS)。与 WEBSITE 分支同策:非图片降级 octet-stream + 附件。
     const resolvedType =
-      asset.mimeType && asset.mimeType !== "image/*" ? asset.mimeType : contentType;
+      asset.mimeType && asset.mimeType !== "image/*"
+        ? asset.mimeType
+        : contentType;
     const isImg = inlineSafeImage(resolvedType || "");
+    if (previewWidth && isImg) {
+      const source = await nodeStreamToBuffer(body);
+      const preview = await renderImagePreview(source, previewWidth);
+      return new Response(new Uint8Array(preview), {
+        headers: {
+          "content-type": "image/webp",
+          ...imagePreviewHeaders(previewEtag!, preview.byteLength),
+          "x-content-type-options": "nosniff",
+        },
+      });
+    }
     const headers: Record<string, string> = {
       "content-type": isImg ? resolvedType : "application/octet-stream",
       ...(contentLength ? { "content-length": String(contentLength) } : {}),

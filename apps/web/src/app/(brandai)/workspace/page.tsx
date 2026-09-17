@@ -751,9 +751,11 @@ function Workspace() {
   // 历史出图回看 — 进入工作台默认能看到本 Campaign 已生成的图，而不是空态。
   // 接现成的 GET /generations?projectId=（listProjectGenerations，newest first）。
   // 修复「产出蒸发」：刷新/切项目/换设备后历史出图不再消失。
-  const { data: history = [], isSuccess: historyLoaded } = useQuery<
-    Generation[]
-  >({
+  const {
+    data: history = [],
+    isSuccess: historyLoaded,
+    isLoading: historyLoading,
+  } = useQuery<Generation[]>({
     queryKey: ["brandai-project-gens", wsId, projectId],
     queryFn: () =>
       apiFetch<Generation[]>(
@@ -1836,8 +1838,10 @@ function Workspace() {
         {/* Canvas */}
         <div className="relative flex min-h-0 flex-col bg-background p-3">
           <OpenCanvas
+            workspaceId={wsId}
             seedVersions={seedVersionsAll}
             seedReady={historyLoaded}
+            restoring={historyLoading}
             running={running}
             status={status}
             timedOut={timedOut}
