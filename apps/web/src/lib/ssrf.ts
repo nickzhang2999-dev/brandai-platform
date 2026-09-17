@@ -126,14 +126,18 @@ export async function assertSafePublicUrl(raw: string): Promise<void> {
 export async function safeFetch(
   url: string,
   maxRedirects = 4,
+  signal?: AbortSignal,
 ): Promise<Response> {
   let current = url;
   for (let hop = 0; hop <= maxRedirects; hop++) {
+    signal?.throwIfAborted();
     await assertSafePublicUrl(current);
-    const res = await fetch(current, { redirect: "manual" });
+    signal?.throwIfAborted();
+    const res = await fetch(current, { redirect: "manual", signal });
     if (res.status >= 300 && res.status < 400) {
       const loc = res.headers.get("location");
       if (!loc) return res; // 3xx 但无 Location,交给调用方
+      await res.body?.cancel();
       current = new URL(loc, current).toString(); // 解析相对跳转,下轮再校验
       continue;
     }

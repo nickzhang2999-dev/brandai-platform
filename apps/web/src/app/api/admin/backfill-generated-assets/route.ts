@@ -55,6 +55,10 @@ export async function POST() {
           sceneType: gv.generation.sceneType,
           fileLabel: `${(gv.generation.scene || "AI 出图").slice(0, 40)} #${gv.index + 1}`,
           aiDescription: gv.generation.scene || undefined,
+          // This maintenance endpoint scans up to 5,000 rows serially. Do not
+          // add a bounded Redis wait to every row; first canvas access will
+          // enqueue the idempotent preview job lazily.
+          enqueuePreview: false,
         });
         if (did) mirrored += 1;
         else skipped += 1; // 未配存储 / URL 不在存储域 / 写失败 —— 已 warn，不致命。

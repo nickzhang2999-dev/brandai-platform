@@ -96,7 +96,7 @@ await step("删除选中(按钮)", async () => { const c = await items(); await 
 await step("Delete键删除", async () => { const sh = page.locator("[data-testid=canvas-item][data-kind=shape]").first(); if (!(await sh.count())) return { ok: false }; const a = await sh.boundingBox(); await page.mouse.click(a.x + a.width / 2, a.y + a.height / 2); await page.waitForTimeout(200); const c = await items(); await page.keyboard.press("Delete"); await page.waitForTimeout(300); return { ok: (await items()) === c - 1 }; });
 await step("选中变体→操作条", async () => { await page.locator("[data-testid=canvas-item][data-kind=image]").first().click(); await page.waitForTimeout(500); return { ok: (await page.locator('button:has-text("出图")').count()) > 0 }; });
 await step("改色arm(不立即出图·空指令禁用)", async () => { await page.locator('button:has-text("改色")').first().click(); await page.waitForTimeout(300); const armed = await page.locator('button[aria-pressed="true"]:has-text("改色")').count(); const emptyDisabled = !(await page.locator('button:has-text("出图")').first().isEnabled()); await page.locator('input[placeholder*="描述"]').first().fill("暖色调"); await page.waitForTimeout(150); const filledEnabled = await page.locator('button:has-text("出图")').first().isEnabled(); return { ok: armed > 0 && emptyDisabled && filledEnabled, detail: `armed=${armed>0} 空=禁用:${emptyDisabled} 填后=启用:${filledEnabled}` }; });
-await step("出图→真改图→新子版本", async () => { const v = await byKind("image"); await page.locator('input[placeholder*="描述"]').first().fill("暖色调"); await page.locator('button:has-text("出图")').first().click(); let g = false; for (let i = 0; i < 18; i++) { if ((await byKind("image")) >= v + 1) { g = true; break; } await page.waitForTimeout(2000); } return { ok: g, detail: `image ${v}→${await byKind("image")}` }; });
+await step("出图→真改图→新子版本", async () => { const v = await byKind("image"); await page.locator('input[placeholder*="描述"]').first().fill("暖色调"); await page.locator('button:has-text("出图")').first().click(); let g = false; for (let i = 0; i < 18; i++) { if ((await byKind("image")) >= v + 1) { g = true; break; } await page.waitForTimeout(2000); } const inline = await page.locator('[data-testid=canvas-item][data-kind=image] img').evaluateAll((images) => images.some((image) => image.getAttribute("src")?.startsWith("data:image/"))); return { ok: g && inline, detail: `image ${v}→${await byKind("image")} inline=${inline}` }; });
 await step("局部重画→蒙版层", async () => { await page.locator("[data-testid=canvas-item][data-kind=image]").first().click(); await page.waitForTimeout(400); await page.locator('button:has-text("局部重画")').first().click(); await page.waitForTimeout(800); const m = (await page.locator("canvas").count()) > 0 || (await page.locator("text=/涂抹|画笔|蒙版|重绘|擦除/").count()) > 0; return { ok: m }; });
 
 
@@ -128,13 +128,30 @@ const selectRasterTile = async () => {
   const tiles = page.locator(
     "[data-testid=canvas-item][data-kind=image]:not([data-layer-set])",
   );
-  const n = await tiles.count();
-  for (let i = n - 1; i >= 0; i--) {
-    const src = await tiles.nth(i).locator("img").first().getAttribute("src");
-    if (src && !src.startsWith("data:image/svg")) {
-      await tiles.nth(i).click({ timeout: 8000 }).catch(() => {});
-      return true;
+  // Worker 冷预览会先返 202,新编辑出的 mock SVG 此时也曾短暂披着
+  // `/preview` URL。只看 src 会误把尚未解码的 SVG 当位图；等到浏览器
+  // 真正解码成功（naturalWidth > 0）后再选。
+  for (let attempt = 0; attempt < 30; attempt++) {
+    const n = await tiles.count();
+    for (let i = 0; i < n; i++) {
+      const image = tiles.nth(i).locator("img").first();
+      const decoded = await image
+        .evaluate((img) => ({
+          src: img.getAttribute("src") || "",
+          complete: img.complete,
+          naturalWidth: img.naturalWidth,
+        }))
+        .catch(() => ({ src: "", complete: false, naturalWidth: 0 }));
+      if (
+        decoded.complete &&
+        decoded.naturalWidth > 0 &&
+        !decoded.src.startsWith("data:image/svg")
+      ) {
+        await tiles.nth(i).click({ timeout: 8000 }).catch(() => {});
+        return true;
+      }
     }
+    await page.waitForTimeout(400);
   }
   return false;
 };
@@ -245,7 +262,13 @@ await step("刷新后显隐仍在（服务端权威，不是本地状态）", as
 });
 
 await step("导出 PSD 可用（即使有层被隐藏）", async () => {
-  await page.locator("[data-testid=canvas-item][data-kind=image]").last().click();
+  // 刷新后普通版本图和分层图会按服务端顺序重建，`last()` 不保证
+  // 仍是分层产物。必须显式选带组身份的图，否则实际测的是普通图
+  // 工具条，会把正常的 PSD 功能误报为缺失。
+  await page
+    .locator("[data-testid=canvas-item][data-kind=image][data-layer-set]")
+    .last()
+    .click();
   await page.waitForTimeout(600);
   const openPanel = page.locator('button:has-text("图层面板")');
   if ((await openPanel.count()) > 0) {

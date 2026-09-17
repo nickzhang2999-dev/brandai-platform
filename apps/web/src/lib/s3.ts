@@ -2,6 +2,7 @@ import {
   S3Client,
   PutObjectCommand,
   GetObjectCommand,
+  DeleteObjectCommand,
 } from "@aws-sdk/client-s3";
 import { randomUUID } from "node:crypto";
 import type { Readable } from "node:stream";
@@ -107,6 +108,7 @@ export async function uploadBuffer(
   body: Buffer,
   contentType: string,
   keyPrefix: string,
+  signal?: AbortSignal,
 ): Promise<{ key: string; url: string }> {
   const cfg = await getEffectiveStorage();
   if (!cfg.configured) {
@@ -133,6 +135,7 @@ export async function uploadBuffer(
       Body: body,
       ContentType: contentType,
     }),
+    { abortSignal: signal },
   );
 
   const base = cfg.publicUrl.replace(/\/+$/, "");
@@ -145,7 +148,7 @@ export async function uploadBuffer(
  * reachable origin rather than the internal MinIO that the web container can't
  * resolve.
  */
-export async function getObjectStream(key: string): Promise<{
+export async function getObjectStream(key: string, signal?: AbortSignal): Promise<{
   body: Readable;
   contentType: string;
   contentLength?: number;
@@ -162,10 +165,32 @@ export async function getObjectStream(key: string): Promise<{
   });
   const res = await client.send(
     new GetObjectCommand({ Bucket: cfg.bucket, Key: key }),
+    { abortSignal: signal },
   );
   return {
     body: res.Body as Readable,
     contentType: res.ContentType ?? "application/octet-stream",
     contentLength: res.ContentLength,
   };
+}
+
+/** Delete an object from the currently configured storage backend. */
+export async function deleteObject(
+  key: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  const cfg = await getEffectiveStorage();
+  const client = new S3Client({
+    region: cfg.region,
+    endpoint: cfg.endpoint,
+    forcePathStyle: cfg.forcePathStyle,
+    credentials: {
+      accessKeyId: cfg.accessKey,
+      secretAccessKey: cfg.secretKey,
+    },
+  });
+  await client.send(
+    new DeleteObjectCommand({ Bucket: cfg.bucket, Key: key }),
+    { abortSignal: signal },
+  );
 }
