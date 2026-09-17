@@ -98,7 +98,10 @@ export async function enqueueImagePreview(
         attempts: 3,
         backoff: { type: "exponential", delay: 2_000 },
         removeOnComplete: true,
-        removeOnFail: true,
+        // Keep terminal failures beyond the client's two-minute polling
+        // window. Repeated GETs then hit the same failed jobId instead of
+        // multiplying three-attempt fetch/transform cycles for a bad source.
+        removeOnFail: { age: 180, count: 10_000 },
       })
       .then(() => true)
       .catch((error) => {

@@ -73,8 +73,16 @@ export async function GET(
           { status: 202, headers: { "retry-after": "2" } },
         );
       }
-      const object = await getObjectStream(asset.previewStorageKey);
-      const preview = await nodeStreamToBuffer(object.body, 4 * 1024 * 1024);
+      const readSignal = AbortSignal.timeout(10_000);
+      const object = await getObjectStream(
+        asset.previewStorageKey,
+        readSignal,
+      );
+      const preview = await nodeStreamToBuffer(
+        object.body,
+        4 * 1024 * 1024,
+        readSignal,
+      );
       return new Response(new Uint8Array(preview), {
         headers: {
           "content-type": "image/webp",

@@ -200,6 +200,10 @@ async function buildImagePreview(
       storageKey: winner.previewStorageKey,
     };
   }
+  // The DB claim itself is not AbortSignal-aware. If it completed after the
+  // outer watchdog won, retain the now-authoritative object but report this
+  // attempt as timed out; the retry will immediately observe the stored key.
+  signal.throwIfAborted();
   return { assetId: asset.id, storageKey: stored.key };
 }
 
@@ -208,16 +212,24 @@ export async function runImagePreviewJob(
 ): Promise<{ assetId: string; storageKey: string }> {
   const controller = new AbortController();
   let timer: NodeJS.Timeout | undefined;
+  const timeoutError = new Error("canvas preview generation timed out");
   try {
-    timer = setTimeout(
-      () =>
-        controller.abort(new Error("canvas preview generation timed out")),
-      JOB_TIMEOUT_MS,
-    );
-    return await buildImagePreview(job, controller.signal);
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        controller.abort(timeoutError);
+        reject(timeoutError);
+      }, JOB_TIMEOUT_MS);
+    });
+    // Abort-aware fetch/S3/Sharp operations stop themselves. Promise.race is
+    // still required for Prisma waits (for example a locked preview claim), so
+    // an unabortable dependency can never occupy a worker slot indefinitely.
+    return await Promise.race([
+      buildImagePreview(job, controller.signal),
+      timeout,
+    ]);
   } catch (err) {
     if (controller.signal.aborted) {
-      throw new Error("canvas preview generation timed out", { cause: err });
+      throw new Error(timeoutError.message, { cause: err });
     }
     throw err;
   } finally {

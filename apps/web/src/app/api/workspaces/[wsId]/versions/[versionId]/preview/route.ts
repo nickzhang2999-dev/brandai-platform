@@ -59,10 +59,18 @@ export async function GET(
       });
     }
 
-    const object = await getObjectStream(mirror.previewStorageKey);
+    const readSignal = AbortSignal.timeout(10_000);
+    const object = await getObjectStream(
+      mirror.previewStorageKey,
+      readSignal,
+    );
     // Worker output is normally a few dozen KiB. Keep a defensive 4 MiB cap so
     // corrupt object metadata cannot turn this read path into an unbounded one.
-    const preview = await nodeStreamToBuffer(object.body, 4 * 1024 * 1024);
+    const preview = await nodeStreamToBuffer(
+      object.body,
+      4 * 1024 * 1024,
+      readSignal,
+    );
     return new Response(new Uint8Array(preview), {
       headers: {
         "content-type": "image/webp",
