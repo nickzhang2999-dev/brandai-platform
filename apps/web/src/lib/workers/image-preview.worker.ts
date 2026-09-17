@@ -40,6 +40,8 @@ async function buildImagePreview(
         select: {
           id: true,
           storageKey: true,
+          url: true,
+          source: true,
           mimeType: true,
           previewStorageKey: true,
         },
@@ -63,6 +65,8 @@ async function buildImagePreview(
           select: {
             id: true,
             storageKey: true,
+            url: true,
+            source: true,
             mimeType: true,
             previewStorageKey: true,
           },
@@ -92,6 +96,8 @@ async function buildImagePreview(
         select: {
           id: true,
           storageKey: true,
+          url: true,
+          source: true,
           mimeType: true,
           previewStorageKey: true,
         },
@@ -116,7 +122,10 @@ async function buildImagePreview(
   // be an absolute private MinIO presentation URL even when storageKey is a
   // perfectly valid local object key, so choosing it would wrongly send local
   // objects through SSRF rejection instead of S3.
-  const sourceLocation = asset.storageKey;
+  const sourceLocation =
+    asset.source === "WEBSITE" && /^https?:\/\//i.test(asset.url)
+      ? asset.url
+      : asset.storageKey;
   let source: Buffer;
   if (/^https?:\/\//i.test(sourceLocation)) {
     const upstream = await safeFetch(sourceLocation, 4, signal);
