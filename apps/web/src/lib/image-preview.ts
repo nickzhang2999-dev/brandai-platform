@@ -46,13 +46,20 @@ export function imagePreviewHeaders(
 export async function webStreamToBuffer(
   stream: ReadableStream<Uint8Array>,
   maxBytes = IMAGE_PREVIEW_MAX_SOURCE_BYTES,
+  signal?: AbortSignal,
 ): Promise<Buffer> {
   const reader = stream.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
+  const onAbort = () => {
+    void reader.cancel(signal?.reason).catch(() => {});
+  };
+  signal?.addEventListener("abort", onAbort, { once: true });
   try {
+    signal?.throwIfAborted();
     while (true) {
       const { done, value } = await reader.read();
+      signal?.throwIfAborted();
       if (done) break;
       if (!value) continue;
       total += value.byteLength;
@@ -61,6 +68,7 @@ export async function webStreamToBuffer(
       chunks.push(value);
     }
   } finally {
+    signal?.removeEventListener("abort", onAbort);
     reader.releaseLock();
   }
   return Buffer.concat(
@@ -72,17 +80,33 @@ export async function webStreamToBuffer(
 export async function nodeStreamToBuffer(
   stream: Readable,
   maxBytes = IMAGE_PREVIEW_MAX_SOURCE_BYTES,
+  signal?: AbortSignal,
 ): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let total = 0;
-  for await (const chunk of stream) {
-    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    total += bytes.byteLength;
-    if (total > maxBytes) {
-      stream.destroy();
-      throw new Error("image source exceeds preview limit");
+  const onAbort = () => {
+    const reason =
+      signal?.reason instanceof Error
+        ? signal.reason
+        : new Error("image source read aborted");
+    stream.destroy(reason);
+  };
+  signal?.addEventListener("abort", onAbort, { once: true });
+  try {
+    signal?.throwIfAborted();
+    for await (const chunk of stream) {
+      signal?.throwIfAborted();
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      total += bytes.byteLength;
+      if (total > maxBytes) {
+        stream.destroy();
+        throw new Error("image source exceeds preview limit");
+      }
+      chunks.push(bytes);
     }
-    chunks.push(bytes);
+    signal?.throwIfAborted();
+  } finally {
+    signal?.removeEventListener("abort", onAbort);
   }
   return Buffer.concat(chunks, total);
 }
@@ -91,10 +115,23 @@ export async function nodeStreamToBuffer(
 export async function renderImagePreview(
   source: Buffer,
   width: number,
+  signal?: AbortSignal,
 ): Promise<Buffer> {
-  return sharp(source, { failOn: "error", limitInputPixels: 64_000_000 })
+  signal?.throwIfAborted();
+  const pipeline = sharp(source, {
+    failOn: "error",
+    limitInputPixels: 64_000_000,
+  })
     .rotate()
     .resize({ width, withoutEnlargement: true, fit: "inside" })
-    .webp({ quality: 78, alphaQuality: 92, effort: 4 })
-    .toBuffer();
+    .webp({ quality: 78, alphaQuality: 92, effort: 4 });
+  const onAbort = () => pipeline.destroy();
+  signal?.addEventListener("abort", onAbort, { once: true });
+  try {
+    const output = await pipeline.toBuffer();
+    signal?.throwIfAborted();
+    return output;
+  } finally {
+    signal?.removeEventListener("abort", onAbort);
+  }
 }

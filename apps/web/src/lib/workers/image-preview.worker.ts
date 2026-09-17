@@ -2,6 +2,7 @@ import { Worker, type Job } from "bullmq";
 import { prisma } from "@brandai/db";
 import { connection, queuePrefix } from "@/lib/queue";
 import {
+  IMAGE_PREVIEW_MAX_SOURCE_BYTES,
   IMAGE_PREVIEW_WIDTH,
   nodeStreamToBuffer,
   renderImagePreview,
@@ -21,7 +22,9 @@ const JOB_TIMEOUT_MS = 60_000;
 
 async function buildImagePreview(
   job: Job<ImagePreviewJobData>,
+  signal: AbortSignal,
 ): Promise<{ assetId: string; storageKey: string }> {
+  signal.throwIfAborted();
   const { workspaceId, versionId, assetId } = job.data;
   if (!versionId && !assetId) {
     throw new Error("image preview job requires versionId or assetId");
@@ -33,12 +36,12 @@ async function buildImagePreview(
         select: {
           id: true,
           storageKey: true,
-          url: true,
           mimeType: true,
           previewStorageKey: true,
         },
       })
     : null;
+  signal.throwIfAborted();
 
   if (!asset && versionId) {
     const version = await prisma.generationVersion.findFirst({
@@ -56,13 +59,13 @@ async function buildImagePreview(
           select: {
             id: true,
             storageKey: true,
-            url: true,
             mimeType: true,
             previewStorageKey: true,
           },
         },
       },
     });
+    signal.throwIfAborted();
     if (!version)
       throw new Error(`version ${versionId} not found in workspace`);
 
@@ -79,16 +82,17 @@ async function buildImagePreview(
         aiDescription: version.generation.scene || undefined,
         enqueuePreview: false,
       });
+      signal.throwIfAborted();
       asset = await prisma.asset.findFirst({
         where: { workspaceId, generationVersionId: versionId },
         select: {
           id: true,
           storageKey: true,
-          url: true,
           mimeType: true,
           previewStorageKey: true,
         },
       });
+      signal.throwIfAborted();
     }
   }
   if (!asset) {
@@ -99,38 +103,54 @@ async function buildImagePreview(
     );
   }
   if (asset.previewStorageKey) {
+    signal.throwIfAborted();
     return { assetId: asset.id, storageKey: asset.previewStorageKey };
   }
 
-  // Match the canonical raw route: legacy WEBSITE rows can keep the remote
-  // source in `url` while `storageKey` is only a placeholder.
-  const sourceLocation = /^https?:\/\//i.test(asset.url)
-    ? asset.url
-    : asset.storageKey;
+  // `storageKey` is canonical for both shapes: an object key for uploaded /
+  // generated assets, and the remote source URL for WEBSITE assets. `url` can
+  // be an absolute private MinIO presentation URL even when storageKey is a
+  // perfectly valid local object key, so choosing it would wrongly send local
+  // objects through SSRF rejection instead of S3.
+  const sourceLocation = asset.storageKey;
   let source: Buffer;
   if (/^https?:\/\//i.test(sourceLocation)) {
-    const upstream = await safeFetch(sourceLocation);
+    const upstream = await safeFetch(sourceLocation, 4, signal);
     if (!upstream.ok || !upstream.body)
       throw new Error(`asset source fetch failed: ${upstream.status}`);
     const type = upstream.headers.get("content-type") || asset.mimeType;
     if (!type.toLowerCase().startsWith("image/") || /svg/i.test(type)) {
       throw new Error(`asset source is not a safe raster image: ${type}`);
     }
-    source = await webStreamToBuffer(upstream.body);
+    source = await webStreamToBuffer(
+      upstream.body,
+      IMAGE_PREVIEW_MAX_SOURCE_BYTES,
+      signal,
+    );
   } else {
-    const object = await getObjectStream(asset.storageKey);
+    const object = await getObjectStream(asset.storageKey, signal);
     const type = asset.mimeType || object.contentType;
     if (!type.toLowerCase().startsWith("image/") || /svg/i.test(type)) {
       throw new Error(`asset source is not a safe raster image: ${type}`);
     }
-    source = await nodeStreamToBuffer(object.body);
+    source = await nodeStreamToBuffer(
+      object.body,
+      IMAGE_PREVIEW_MAX_SOURCE_BYTES,
+      signal,
+    );
   }
-  const preview = await renderImagePreview(source, IMAGE_PREVIEW_WIDTH);
+  const preview = await renderImagePreview(
+    source,
+    IMAGE_PREVIEW_WIDTH,
+    signal,
+  );
   const stored = await uploadBuffer(
     preview,
     "image/webp",
     `previews/${workspaceId}/canvas`,
+    signal,
   );
+  signal.throwIfAborted();
 
   // Do not let a late duplicate job replace the first immutable preview and
   // strand its object. updateMany makes the claim conditional and idempotent.
@@ -138,11 +158,13 @@ async function buildImagePreview(
     where: { id: asset.id, workspaceId, previewStorageKey: null },
     data: { previewStorageKey: stored.key },
   });
+  signal.throwIfAborted();
   if (claimed.count === 0) {
     const winner = await prisma.asset.findUnique({
       where: { id: asset.id },
       select: { previewStorageKey: true },
     });
+    signal.throwIfAborted();
     return {
       assetId: asset.id,
       storageKey: winner?.previewStorageKey ?? stored.key,
@@ -154,24 +176,27 @@ async function buildImagePreview(
 export async function runImagePreviewJob(
   job: Job<ImagePreviewJobData>,
 ): Promise<{ assetId: string; storageKey: string }> {
+  const controller = new AbortController();
   let timer: NodeJS.Timeout | undefined;
   try {
-    return await Promise.race([
-      buildImagePreview(job),
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(
-          () => reject(new Error("canvas preview generation timed out")),
-          JOB_TIMEOUT_MS,
-        );
-      }),
-    ]);
+    timer = setTimeout(
+      () =>
+        controller.abort(new Error("canvas preview generation timed out")),
+      JOB_TIMEOUT_MS,
+    );
+    return await buildImagePreview(job, controller.signal);
+  } catch (err) {
+    if (controller.signal.aborted) {
+      throw new Error("canvas preview generation timed out", { cause: err });
+    }
+    throw err;
   } finally {
     if (timer) clearTimeout(timer);
   }
 }
 
 export function createImagePreviewWorker() {
-  return new Worker<
+  const worker = new Worker<
     ImagePreviewJobData,
     { assetId: string; storageKey: string }
   >("image-preview", runImagePreviewJob, {
@@ -179,4 +204,8 @@ export function createImagePreviewWorker() {
     prefix: queuePrefix,
     concurrency: 2,
   });
+  worker.on("failed", (job, err) => {
+    console.error(`[image-preview] job ${job?.id} failed:`, err);
+  });
+  return worker;
 }

@@ -141,6 +141,7 @@ function CanvasPreviewImage({
   const [previewRetry, setPreviewRetry] = useState(0);
   const [failed, setFailed] = useState(false);
   const requestTimerRef = useRef<number | null>(null);
+  const previewStartedAtRef = useRef(0);
   const [initialDelayMs] = useState(delayMs);
 
   useEffect(() => {
@@ -149,8 +150,12 @@ function CanvasPreviewImage({
     setPreviewRetry(0);
     setFailed(false);
     setRequestedSrc(null);
+    previewStartedAtRef.current = 0;
     requestTimerRef.current = window.setTimeout(
-      () => setRequestedSrc(previewSrc),
+      () => {
+        previewStartedAtRef.current = Date.now();
+        setRequestedSrc(previewSrc);
+      },
       initialDelayMs,
     );
     return () => {
@@ -164,11 +169,22 @@ function CanvasPreviewImage({
   // must never blank it and start the delay again.
   useEffect(() => {
     if (!priority) return;
+    // A background tile that exhausted its preview deadline deliberately did
+    // not fan out to the original. Once the user selects it, load that single
+    // original immediately so the failure mode remains usable without turning
+    // a long history into dozens of full-resolution downloads.
+    if (failed && previewSrc !== originalSrc) {
+      setFailed(false);
+      setPreviewFailed(true);
+      setLoaded(false);
+      return;
+    }
     if (requestTimerRef.current != null)
       window.clearTimeout(requestTimerRef.current);
     requestTimerRef.current = null;
+    if (!previewStartedAtRef.current) previewStartedAtRef.current = Date.now();
     setRequestedSrc(previewSrc);
-  }, [previewSrc, priority]);
+  }, [failed, originalSrc, previewSrc, priority]);
 
   const renderedSrc = previewFailed ? originalSrc : requestedSrc;
   return (
@@ -223,7 +239,14 @@ function CanvasPreviewImage({
             // it permanently unavailable; otherwise the first historical
             // visit immediately fans back out to every full-resolution image.
             if (!previewFailed && previewSrc !== originalSrc) {
-              if (previewRetry < 6) {
+              // The preview queue intentionally has low concurrency. A long
+              // history can therefore wait well beyond a handful of retries
+              // even though its job is healthy. Keep the skeleton until a
+              // bounded two-minute queue-aware deadline; only then fan out to
+              // the original as the last-resort compatibility path.
+              const elapsed =
+                Date.now() - (previewStartedAtRef.current || Date.now());
+              if (elapsed < 120_000) {
                 const nextRetry = previewRetry + 1;
                 const separator = previewSrc.includes("?") ? "&" : "?";
                 setPreviewRetry(nextRetry);
@@ -238,10 +261,16 @@ function CanvasPreviewImage({
                 );
                 return;
               }
-              // Legacy/corrupt sources still get a final original-image
-              // fallback after the bounded preview window expires.
-              setPreviewFailed(true);
-              setLoaded(false);
+              if (priority) {
+                // Only the actively selected tile may use the original as a
+                // compatibility fallback. Background tiles show a bounded
+                // failure state instead of recreating the full-resolution
+                // download fan-out this preview pipeline is meant to remove.
+                setPreviewFailed(true);
+                setLoaded(false);
+              } else {
+                setFailed(true);
+              }
               return;
             }
             setFailed(true);

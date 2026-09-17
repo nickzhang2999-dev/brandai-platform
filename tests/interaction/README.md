@@ -82,6 +82,12 @@ WS=$WS PROJECT=$PROJECT GEN=$GEN SESSION_TOKEN=$TOKEN \
   node tests/interaction/canvas-preview-cold-retry.mjs
 ```
 
+预览 Worker 的 60 秒看门狗必须真正中止源流与转码，不能只结束外层 Promise：
+
+```bash
+node --experimental-strip-types tests/interaction/image-preview-abort.mjs
+```
+
 ---
 
 ## 覆盖的功能

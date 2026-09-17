@@ -8,7 +8,6 @@ import { uploadDataUrlImage } from "@/lib/s3";
 import { safeFetch } from "@/lib/ssrf";
 import { analyzeLayerImage } from "@/lib/layers";
 import { getProvidersHealth } from "@/lib/settings";
-import { mirrorGenerationVersionToAsset } from "@/lib/asset-mirror";
 import {
   markRunning,
   setProgress,
@@ -324,26 +323,18 @@ export async function runDecomposeJob(
       throw new Error("提交后判超时,已撤销本组图层");
     }
 
-    // 分解产物与普通出图/改图一致地建立本地镜像，并由镜像流程把有界 WebP
-    // 交给 image-preview worker。预览 GET 因此不需要抓远端原图或现场跑 Sharp。
-    for (const row of createdRows) {
-      await mirrorGenerationVersionToAsset({
-        workspaceId,
-        generationVersionId: row.id,
-        imageUrl: row.imageUrl,
-        width: row.width,
-        height: row.height,
-        fileLabel: `分解图层 #${row.index + 1}`,
-        aiDescription: intent || "AI 分解图层",
-      });
-    }
-    // **在这里认领终态**,而不是等 markSucceeded 写完。
+    // **在任何预览镜像 await 之前认领终态**。镜像/预览是成功结果的
+    // 派生加速层，不是分解事务的一部分；若看门狗在镜像循环的 await
+    // 中烧掉，failOnce 会先回滚整组，迟到链却可能再把它写成成功。
     //
     // 只判不认领的话还剩一条缝:看门狗恰在下面几个 await 之间烧掉,`failOnce` 会
     // 回滚整组并把任务标 FAILED,而这条链稍后照样把 SUCCEEDED 写上去——用户拿到
     // 一个成功的任务,`refId` 却指向一组已经被删掉的图层。判据与置位之间没有
     // await,单线程下插不进第二个写入者,这一句就是那把锁。
     settled = true;
+    // 事务结果已被单一写入者认领，后面只剩快速终态 DB 写入，
+    // 不再让 6 分钟看门狗插入第二个终态写入者。
+    clearWatchdog();
 
     try {
       await job.updateProgress(100);
@@ -359,6 +350,10 @@ export async function runDecomposeJob(
       settled = false;
       throw writeErr;
     }
+
+    // 分层预览不再阻塞这条 concurrency:1 队列。画布首次请求该版本的
+    // `/preview` 时会在 image-preview 队列中建镜像和 WebP；真实图层与
+    // DECOMPOSE 终态因此不再被派生加速层的外部 await 绑在一起。
     return {
       generationId,
       sourceVersionId: source.id,

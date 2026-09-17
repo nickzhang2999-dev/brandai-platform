@@ -1,4 +1,7 @@
-/** Cold preview: 202 → bounded browser retry → worker WebP 200, without original fallback. */
+/**
+ * Cold preview: a simulated queue backlog longer than the old 7.75s window,
+ * then 202 → worker WebP 200, without original fallback.
+ */
 import { chromium } from "playwright-core";
 
 for (const key of [
@@ -52,6 +55,18 @@ await context.addCookies([
 
 const page = await context.newPage();
 const statuses = [];
+const holdPreviewUntil = Date.now() + 12_000;
+await page.route("**/api/workspaces/*/versions/*/preview*", async (route) => {
+  if (Date.now() < holdPreviewUntil) {
+    await route.fulfill({
+      status: 202,
+      contentType: "application/json",
+      body: JSON.stringify({ status: "PENDING" }),
+    });
+    return;
+  }
+  await route.continue();
+});
 page.on("response", (response) => {
   if (
     response.url().includes("/versions/") &&
@@ -66,6 +81,17 @@ try {
     waitUntil: "domcontentloaded",
     timeout: 60_000,
   });
+  await page.waitForTimeout(9_000);
+  const earlyImageSource = await page
+    .locator('img[alt="画布图片"]')
+    .first()
+    .getAttribute("src")
+    .catch(() => null);
+  if (earlyImageSource && !earlyImageSource.includes("/preview")) {
+    throw new Error(
+      `preview fell back to the original during queue backlog: ${earlyImageSource}`,
+    );
+  }
   await page.waitForFunction(
     () => {
       const image = document.querySelector('img[alt="画布图片"]');
@@ -77,7 +103,7 @@ try {
       );
     },
     null,
-    { timeout: 20_000 },
+    { timeout: 30_000 },
   );
   if (!statuses.includes(202))
     throw new Error(`cold preview never returned 202: ${statuses.join(",")}`);

@@ -107,6 +107,7 @@ export async function uploadBuffer(
   body: Buffer,
   contentType: string,
   keyPrefix: string,
+  signal?: AbortSignal,
 ): Promise<{ key: string; url: string }> {
   const cfg = await getEffectiveStorage();
   if (!cfg.configured) {
@@ -133,6 +134,7 @@ export async function uploadBuffer(
       Body: body,
       ContentType: contentType,
     }),
+    { abortSignal: signal },
   );
 
   const base = cfg.publicUrl.replace(/\/+$/, "");
@@ -145,7 +147,7 @@ export async function uploadBuffer(
  * reachable origin rather than the internal MinIO that the web container can't
  * resolve.
  */
-export async function getObjectStream(key: string): Promise<{
+export async function getObjectStream(key: string, signal?: AbortSignal): Promise<{
   body: Readable;
   contentType: string;
   contentLength?: number;
@@ -162,6 +164,7 @@ export async function getObjectStream(key: string): Promise<{
   });
   const res = await client.send(
     new GetObjectCommand({ Bucket: cfg.bucket, Key: key }),
+    { abortSignal: signal },
   );
   return {
     body: res.Body as Readable,
