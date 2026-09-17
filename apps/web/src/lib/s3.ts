@@ -2,6 +2,7 @@ import {
   S3Client,
   PutObjectCommand,
   GetObjectCommand,
+  DeleteObjectCommand,
 } from "@aws-sdk/client-s3";
 import { randomUUID } from "node:crypto";
 import type { Readable } from "node:stream";
@@ -171,4 +172,25 @@ export async function getObjectStream(key: string, signal?: AbortSignal): Promis
     contentType: res.ContentType ?? "application/octet-stream",
     contentLength: res.ContentLength,
   };
+}
+
+/** Delete an object from the currently configured storage backend. */
+export async function deleteObject(
+  key: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  const cfg = await getEffectiveStorage();
+  const client = new S3Client({
+    region: cfg.region,
+    endpoint: cfg.endpoint,
+    forcePathStyle: cfg.forcePathStyle,
+    credentials: {
+      accessKeyId: cfg.accessKey,
+      secretAccessKey: cfg.secretKey,
+    },
+  });
+  await client.send(
+    new DeleteObjectCommand({ Bucket: cfg.bucket, Key: key }),
+    { abortSignal: signal },
+  );
 }

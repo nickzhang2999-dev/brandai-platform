@@ -82,6 +82,13 @@ WS=$WS PROJECT=$PROJECT GEN=$GEN SESSION_TOKEN=$TOKEN \
   node tests/interaction/canvas-preview-cold-retry.mjs
 ```
 
+选中图的预览和原图都失败时，必须停在明确错误态，不能重新进入永久 spinner：
+
+```bash
+WS=$WS PROJECT=$PROJECT GEN=$GEN SESSION_TOKEN=$TOKEN \
+  node tests/interaction/canvas-preview-double-failure.mjs
+```
+
 预览 Worker 的 60 秒看门狗必须真正中止源流与转码，不能只结束外层 Promise：
 
 ```bash

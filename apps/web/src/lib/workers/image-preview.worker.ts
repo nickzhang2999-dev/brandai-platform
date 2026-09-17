@@ -8,7 +8,7 @@ import {
   renderImagePreview,
   webStreamToBuffer,
 } from "@/lib/image-preview";
-import { getObjectStream, uploadBuffer } from "@/lib/s3";
+import { deleteObject, getObjectStream, uploadBuffer } from "@/lib/s3";
 import { mirrorGenerationVersionToAsset } from "@/lib/asset-mirror";
 import { safeFetch } from "@/lib/ssrf";
 
@@ -150,24 +150,50 @@ async function buildImagePreview(
     `previews/${workspaceId}/canvas`,
     signal,
   );
-  signal.throwIfAborted();
+
+  try {
+    signal.throwIfAborted();
+  } catch (err) {
+    await deleteObject(stored.key).catch((cleanupErr) =>
+      console.error(
+        `[image-preview] failed to clean aborted upload ${stored.key}:`,
+        cleanupErr,
+      ),
+    );
+    throw err;
+  }
 
   // Do not let a late duplicate job replace the first immutable preview and
-  // strand its object. updateMany makes the claim conditional and idempotent.
-  const claimed = await prisma.asset.updateMany({
-    where: { id: asset.id, workspaceId, previewStorageKey: null },
-    data: { previewStorageKey: stored.key },
-  });
-  signal.throwIfAborted();
+  // strand its object. updateMany makes the claim conditional and idempotent;
+  // the losing upload is removed below.
+  let claimed: { count: number };
+  try {
+    claimed = await prisma.asset.updateMany({
+      where: { id: asset.id, workspaceId, previewStorageKey: null },
+      data: { previewStorageKey: stored.key },
+    });
+  } catch (err) {
+    await deleteObject(stored.key).catch((cleanupErr) =>
+      console.error(
+        `[image-preview] failed to clean unclaimed upload ${stored.key}:`,
+        cleanupErr,
+      ),
+    );
+    throw err;
+  }
   if (claimed.count === 0) {
+    await deleteObject(stored.key);
     const winner = await prisma.asset.findUnique({
       where: { id: asset.id },
       select: { previewStorageKey: true },
     });
     signal.throwIfAborted();
+    if (!winner?.previewStorageKey) {
+      throw new Error(`preview claim for asset ${asset.id} lost without winner`);
+    }
     return {
       assetId: asset.id,
-      storageKey: winner?.previewStorageKey ?? stored.key,
+      storageKey: winner.previewStorageKey,
     };
   }
   return { assetId: asset.id, storageKey: stored.key };

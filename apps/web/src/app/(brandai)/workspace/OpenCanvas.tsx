@@ -127,6 +127,10 @@ function CanvasPreviewImage({
 }) {
   const originalSrc = item.imageUrl ?? "";
   const previewSrc = useMemo(() => {
+    // Freshly generated/edited mock output can be an inline image with no
+    // object-store mirror. Rendering it directly also avoids pointlessly
+    // enqueueing a preview job that can never fetch a data: URL.
+    if (originalSrc.startsWith("data:")) return originalSrc;
     if (item.versionId)
       return versionPreviewUrl(workspaceId, item.versionId, 768);
     if (item.assetId)
@@ -173,7 +177,7 @@ function CanvasPreviewImage({
     // not fan out to the original. Once the user selects it, load that single
     // original immediately so the failure mode remains usable without turning
     // a long history into dozens of full-resolution downloads.
-    if (failed && previewSrc !== originalSrc) {
+    if (failed && !previewFailed && previewSrc !== originalSrc) {
       setFailed(false);
       setPreviewFailed(true);
       setLoaded(false);
@@ -184,7 +188,7 @@ function CanvasPreviewImage({
     requestTimerRef.current = null;
     if (!previewStartedAtRef.current) previewStartedAtRef.current = Date.now();
     setRequestedSrc(previewSrc);
-  }, [failed, originalSrc, previewSrc, priority]);
+  }, [failed, originalSrc, previewFailed, previewSrc, priority]);
 
   const renderedSrc = previewFailed ? originalSrc : requestedSrc;
   return (
