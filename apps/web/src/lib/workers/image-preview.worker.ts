@@ -125,7 +125,7 @@ async function buildImagePreview(
       throw new Error(`asset source fetch failed: ${upstream.status}`);
     }
     const type = upstream.headers.get("content-type") || asset.mimeType;
-    if (!type.toLowerCase().startsWith("image/") || /svg/i.test(type)) {
+    if (!type.toLowerCase().startsWith("image/")) {
       await upstream.body.cancel().catch(() => undefined);
       throw new Error(`asset source is not a safe raster image: ${type}`);
     }
@@ -137,7 +137,8 @@ async function buildImagePreview(
   } else {
     const object = await getObjectStream(asset.storageKey, signal);
     const type = asset.mimeType || object.contentType;
-    if (!type.toLowerCase().startsWith("image/") || /svg/i.test(type)) {
+    if (!type.toLowerCase().startsWith("image/")) {
+      object.body.destroy();
       throw new Error(`asset source is not a safe raster image: ${type}`);
     }
     source = await nodeStreamToBuffer(

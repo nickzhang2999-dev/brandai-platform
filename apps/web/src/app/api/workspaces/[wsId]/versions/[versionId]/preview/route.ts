@@ -8,6 +8,7 @@ import {
 } from "@/lib/image-preview";
 import { getObjectStream } from "@/lib/s3";
 import { enqueueImagePreview } from "@/lib/queue";
+import { getEffectiveStorage } from "@/lib/settings";
 import { requireWorkspaceRole } from "@/lib/workspace";
 
 export const runtime = "nodejs";
@@ -31,6 +32,7 @@ export async function GET(
     const version = await prisma.generationVersion.findFirst({
       where: { id: versionId, generation: { workspaceId: wsId } },
       select: {
+        imageUrl: true,
         mirrorAsset: {
           select: { id: true, previewStorageKey: true },
         },
@@ -40,6 +42,28 @@ export async function GET(
 
     const mirror = version.mirrorAsset;
     if (!mirror?.previewStorageKey) {
+      // Hosted provider URLs and objects on a retired storage domain cannot be
+      // mirrored into the currently configured bucket. Redirect immediately
+      // to the already-supported original source instead of polling a preview
+      // job that can never persist a previewStorageKey.
+      if (/^https?:\/\//i.test(version.imageUrl)) {
+        const storage = await getEffectiveStorage();
+        const publicBase = storage.publicUrl.replace(/\/+$/, "");
+        const belongsToCurrentStorage =
+          storage.configured &&
+          Boolean(publicBase) &&
+          version.imageUrl.startsWith(`${publicBase}/`);
+        if (!belongsToCurrentStorage) {
+          return new Response(null, {
+            status: 307,
+            headers: {
+              location: version.imageUrl,
+              "cache-control": "private, max-age=3600",
+              "referrer-policy": "no-referrer",
+            },
+          });
+        }
+      }
       await enqueueImagePreview({ workspaceId: wsId, versionId });
       return Response.json(
         { status: "PENDING", message: "Canvas preview is being prepared" },
@@ -60,10 +84,7 @@ export async function GET(
     }
 
     const readSignal = AbortSignal.timeout(10_000);
-    const object = await getObjectStream(
-      mirror.previewStorageKey,
-      readSignal,
-    );
+    const object = await getObjectStream(mirror.previewStorageKey, readSignal);
     // Worker output is normally a few dozen KiB. Keep a defensive 4 MiB cap so
     // corrupt object metadata cannot turn this read path into an unbounded one.
     const preview = await nodeStreamToBuffer(
