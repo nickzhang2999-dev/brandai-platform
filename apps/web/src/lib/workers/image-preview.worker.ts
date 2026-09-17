@@ -19,6 +19,10 @@ export interface ImagePreviewJobData {
 }
 
 const JOB_TIMEOUT_MS = 60_000;
+const CLEANUP_TIMEOUT_MS = 5_000;
+
+const deleteUploadedPreview = (key: string) =>
+  deleteObject(key, AbortSignal.timeout(CLEANUP_TIMEOUT_MS));
 
 async function buildImagePreview(
   job: Job<ImagePreviewJobData>,
@@ -154,7 +158,7 @@ async function buildImagePreview(
   try {
     signal.throwIfAborted();
   } catch (err) {
-    await deleteObject(stored.key).catch((cleanupErr) =>
+    await deleteUploadedPreview(stored.key).catch((cleanupErr) =>
       console.error(
         `[image-preview] failed to clean aborted upload ${stored.key}:`,
         cleanupErr,
@@ -173,7 +177,7 @@ async function buildImagePreview(
       data: { previewStorageKey: stored.key },
     });
   } catch (err) {
-    await deleteObject(stored.key).catch((cleanupErr) =>
+    await deleteUploadedPreview(stored.key).catch((cleanupErr) =>
       console.error(
         `[image-preview] failed to clean unclaimed upload ${stored.key}:`,
         cleanupErr,
@@ -182,7 +186,7 @@ async function buildImagePreview(
     throw err;
   }
   if (claimed.count === 0) {
-    await deleteObject(stored.key);
+    await deleteUploadedPreview(stored.key);
     const winner = await prisma.asset.findUnique({
       where: { id: asset.id },
       select: { previewStorageKey: true },
