@@ -16,6 +16,7 @@ for (const key of [
   delete process.env[key];
 
 const BASE = process.env.BASE_URL || "http://127.0.0.1:3000";
+const HANG_RESTORE = process.env.HANG_RESTORE === "1";
 const EXE =
   process.env.CHROME || "/opt/pw-browsers/chromium-1194/chrome-linux/chrome";
 const { WS, PROJECT, GEN, SESSION_TOKEN } = process.env;
@@ -59,6 +60,19 @@ const canvasPath = `/api/workspaces/${WS}/projects/${PROJECT}/canvas`;
 let canvasPuts = 0;
 await page.route(`**${canvasPath}`, async (route) => {
   if (route.request().method() === "GET") {
+    if (HANG_RESTORE) {
+      // Keep the browser request pending beyond the UI watchdog. The fetch
+      // should abort itself and render the same protected failure state.
+      await new Promise((resolve) => setTimeout(resolve, 20_000));
+      await route
+        .fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ items: [] }),
+        })
+        .catch(() => undefined);
+      return;
+    }
     await route.fulfill({
       status: 503,
       contentType: "application/json",
@@ -82,7 +96,7 @@ try {
     .first()
     .waitFor({
       state: "visible",
-      timeout: 15_000,
+      timeout: HANG_RESTORE ? 25_000 : 15_000,
     });
   const restoring = await page
     .getByText("正在恢复项目画布…", { exact: true })
@@ -93,7 +107,9 @@ try {
     throw new Error(
       `failed restore unexpectedly sent ${canvasPuts} canvas PUT(s)`,
     );
-  console.log("PASS | restore failure exits loading | autosave PUT=0");
+  console.log(
+    `PASS | ${HANG_RESTORE ? "restore timeout" : "restore failure"} exits loading | autosave PUT=0`,
+  );
 } finally {
   await browser.close();
 }

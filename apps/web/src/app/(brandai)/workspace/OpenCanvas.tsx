@@ -84,6 +84,7 @@ export type CanvasLibraryAsset = {
 const ZOOM_MIN = 0.1;
 const ZOOM_MAX = 4;
 const MIN_SIZE = 32;
+const CANVAS_RESTORE_TIMEOUT_MS = 15_000;
 const VIOLET = "rgb(124 92 255)";
 const SELECT = "#4A9BFF"; // 与既有工作台选择框一致
 
@@ -155,13 +156,10 @@ function CanvasPreviewImage({
     setFailed(false);
     setRequestedSrc(null);
     previewStartedAtRef.current = 0;
-    requestTimerRef.current = window.setTimeout(
-      () => {
-        previewStartedAtRef.current = Date.now();
-        setRequestedSrc(previewSrc);
-      },
-      initialDelayMs,
-    );
+    requestTimerRef.current = window.setTimeout(() => {
+      previewStartedAtRef.current = Date.now();
+      setRequestedSrc(previewSrc);
+    }, initialDelayMs);
     return () => {
       if (requestTimerRef.current != null)
         window.clearTimeout(requestTimerRef.current);
@@ -577,6 +575,11 @@ export function OpenCanvas({
       return;
     }
     let cancelled = false;
+    const restoreController = new AbortController();
+    const restoreTimer = setTimeout(
+      () => restoreController.abort(new Error("canvas restore timed out")),
+      CANVAS_RESTORE_TIMEOUT_MS,
+    );
     setHydrated(false);
     setRestorePending(true);
     setRestoreError(null);
@@ -594,6 +597,7 @@ export function OpenCanvas({
       try {
         const res = await fetch(
           `/api/workspaces/${persistWs}/projects/${persistProject}/canvas`,
+          { signal: restoreController.signal },
         );
         if (!res.ok) return;
         const data = (await res.json()) as {
@@ -649,6 +653,7 @@ export function OpenCanvas({
       } catch {
         /* 读取异常 → 走下方 finally 的「未恢复不放开保存」路径 */
       } finally {
+        clearTimeout(restoreTimer);
         // 只有成功恢复才放开自动保存（Codex P2）：读取失败（瞬时非 200 /
         // 网络异常）时 items 已被上方作用域清空，若照旧置 hydrated，自动
         // 保存会把空画布 PUT 覆盖服务端已存状态。代价是失败这次会话的
@@ -668,6 +673,8 @@ export function OpenCanvas({
     })();
     return () => {
       cancelled = true;
+      clearTimeout(restoreTimer);
+      restoreController.abort();
     };
   }, [persistWs, persistProject]);
 
