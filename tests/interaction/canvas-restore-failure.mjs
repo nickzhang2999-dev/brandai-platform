@@ -77,10 +77,13 @@ try {
     waitUntil: "domcontentloaded",
     timeout: 60_000,
   });
-  await page.getByText("画布恢复失败", { exact: true }).waitFor({
-    state: "visible",
-    timeout: 15_000,
-  });
+  await page
+    .getByText(/画布恢复失败/)
+    .first()
+    .waitFor({
+      state: "visible",
+      timeout: 15_000,
+    });
   const restoring = await page
     .getByText("正在恢复项目画布…", { exact: true })
     .count();

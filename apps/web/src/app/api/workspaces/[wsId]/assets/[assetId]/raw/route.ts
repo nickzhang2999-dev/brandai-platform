@@ -5,13 +5,13 @@ import { requireOwnedWorkspace } from "@/lib/workspace";
 import { safeFetch } from "@/lib/ssrf";
 import { getObjectStream } from "@/lib/s3";
 import {
+  IMAGE_PREVIEW_WIDTH,
   imagePreviewEtag,
   imagePreviewHeaders,
   nodeStreamToBuffer,
   parseImagePreviewWidth,
-  renderImagePreview,
-  webStreamToBuffer,
 } from "@/lib/image-preview";
+import { imagePreviewQueue } from "@/lib/queue";
 
 /**
  * M-A · 资产公网代理 — streams an asset's bytes back over the canonical public
@@ -54,7 +54,7 @@ export async function GET(
 
     const previewWidth = parseImagePreviewWidth(req);
     const previewEtag = previewWidth
-      ? imagePreviewEtag(`asset-${asset.id}`, previewWidth)
+      ? imagePreviewEtag(`asset-${asset.id}`, IMAGE_PREVIEW_WIDTH, "v2")
       : null;
     if (previewEtag && req.headers.get("if-none-match") === previewEtag) {
       return new Response(null, {
@@ -64,6 +64,35 @@ export async function GET(
     }
 
     const cacheControl = "private, max-age=3600";
+
+    if (previewWidth) {
+      if (!asset.previewStorageKey) {
+        await imagePreviewQueue.add(
+          "build",
+          { workspaceId: wsId, assetId },
+          {
+            jobId: `asset-${assetId}`,
+            attempts: 3,
+            backoff: { type: "exponential", delay: 2_000 },
+            removeOnComplete: true,
+            removeOnFail: true,
+          },
+        );
+        return Response.json(
+          { status: "PENDING", message: "Asset preview is being prepared" },
+          { status: 202, headers: { "retry-after": "2" } },
+        );
+      }
+      const object = await getObjectStream(asset.previewStorageKey);
+      const preview = await nodeStreamToBuffer(object.body, 4 * 1024 * 1024);
+      return new Response(new Uint8Array(preview), {
+        headers: {
+          "content-type": "image/webp",
+          ...imagePreviewHeaders(previewEtag!, preview.byteLength),
+          "x-content-type-options": "nosniff",
+        },
+      });
+    }
 
     if (isAbsoluteUrl(asset.storageKey) || isAbsoluteUrl(asset.url)) {
       const src = isAbsoluteUrl(asset.url) ? asset.url : asset.storageKey;
@@ -82,17 +111,6 @@ export async function GET(
       // text/html 即使带 nosniff 也会在同源被当页面执行(存储型 XSS)。非图片一律
       // 降级为 octet-stream + attachment,绝不在 app 源下内联渲染。
       const isImg = inlineSafeImage(upstreamType);
-      if (previewWidth && isImg) {
-        const source = await webStreamToBuffer(upstream.body);
-        const preview = await renderImagePreview(source, previewWidth);
-        return new Response(new Uint8Array(preview), {
-          headers: {
-            "content-type": "image/webp",
-            ...imagePreviewHeaders(previewEtag!, preview.byteLength),
-            "x-content-type-options": "nosniff",
-          },
-        });
-      }
       const headers: Record<string, string> = {
         "content-type": isImg ? upstreamType : "application/octet-stream",
         "cache-control": cacheControl,
@@ -112,17 +130,6 @@ export async function GET(
         ? asset.mimeType
         : contentType;
     const isImg = inlineSafeImage(resolvedType || "");
-    if (previewWidth && isImg) {
-      const source = await nodeStreamToBuffer(body);
-      const preview = await renderImagePreview(source, previewWidth);
-      return new Response(new Uint8Array(preview), {
-        headers: {
-          "content-type": "image/webp",
-          ...imagePreviewHeaders(previewEtag!, preview.byteLength),
-          "x-content-type-options": "nosniff",
-        },
-      });
-    }
     const headers: Record<string, string> = {
       "content-type": isImg ? resolvedType : "application/octet-stream",
       ...(contentLength ? { "content-length": String(contentLength) } : {}),

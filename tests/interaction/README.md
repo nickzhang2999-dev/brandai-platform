@@ -73,7 +73,14 @@ WS=$WS PROJECT=$EMPTY_PROJECT SESSION_TOKEN=$TOKEN \
   node tests/interaction/canvas-restore-failure.mjs
 ```
 
-`EMPTY_PROJECT` 必须是没有生成记录的空项目；脚本会把画布恢复 GET 注入为 503，并断言错误态出现、spinner 消失且没有发出 PUT。
+脚本会把画布恢复 GET 注入为 503，并断言错误态出现、spinner 消失且没有发出 PUT；传 `GEN` 可覆盖已有生成历史的非空画布，省略则覆盖空画布。
+
+冷预览首访会先收到 202，随后必须在有界重试内拿到 Worker 生成的 WebP，而不是回退整张原图：
+
+```bash
+WS=$WS PROJECT=$PROJECT GEN=$GEN SESSION_TOKEN=$TOKEN \
+  node tests/interaction/canvas-preview-cold-retry.mjs
+```
 
 ---
 

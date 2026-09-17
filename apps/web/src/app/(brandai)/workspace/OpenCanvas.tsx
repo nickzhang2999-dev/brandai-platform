@@ -138,6 +138,7 @@ function CanvasPreviewImage({
   );
   const [loaded, setLoaded] = useState(false);
   const [previewFailed, setPreviewFailed] = useState(false);
+  const [previewRetry, setPreviewRetry] = useState(0);
   const [failed, setFailed] = useState(false);
   const requestTimerRef = useRef<number | null>(null);
   const [initialDelayMs] = useState(delayMs);
@@ -145,6 +146,7 @@ function CanvasPreviewImage({
   useEffect(() => {
     setLoaded(false);
     setPreviewFailed(false);
+    setPreviewRetry(0);
     setFailed(false);
     setRequestedSrc(null);
     requestTimerRef.current = window.setTimeout(
@@ -216,9 +218,28 @@ function CanvasPreviewImage({
             }
           }}
           onError={() => {
-            // Preview generation is best-effort. A legacy/corrupt source must
-            // not make an image disappear if its original URL still renders.
+            // A cold preview returns 202 while its worker runs. Retry the same
+            // authenticated endpoint with bounded backoff before considering
+            // it permanently unavailable; otherwise the first historical
+            // visit immediately fans back out to every full-resolution image.
             if (!previewFailed && previewSrc !== originalSrc) {
+              if (previewRetry < 6) {
+                const nextRetry = previewRetry + 1;
+                const separator = previewSrc.includes("?") ? "&" : "?";
+                setPreviewRetry(nextRetry);
+                setLoaded(false);
+                setRequestedSrc(null);
+                requestTimerRef.current = window.setTimeout(
+                  () =>
+                    setRequestedSrc(
+                      `${previewSrc}${separator}retry=${nextRetry}`,
+                    ),
+                  Math.min(2_000, 250 * 2 ** (nextRetry - 1)),
+                );
+                return;
+              }
+              // Legacy/corrupt sources still get a final original-image
+              // fallback after the bounded preview window expires.
               setPreviewFailed(true);
               setLoaded(false);
               return;
@@ -2235,6 +2256,15 @@ export function OpenCanvas({
           timedOut={timedOut}
           error={error}
         />
+      ) : null}
+
+      {restoreError && items.length > 0 ? (
+        <div
+          data-testid="canvas-restore-error"
+          className="pointer-events-none absolute left-1/2 top-16 z-20 max-w-md -translate-x-1/2 rounded-xl border border-destructive/30 bg-card/95 px-4 py-2 text-center text-xs text-destructive shadow-lg backdrop-blur"
+        >
+          {restoreError}
+        </div>
       ) : null}
 
       {/* 顶部缩放工具条 */}

@@ -128,13 +128,30 @@ const selectRasterTile = async () => {
   const tiles = page.locator(
     "[data-testid=canvas-item][data-kind=image]:not([data-layer-set])",
   );
-  const n = await tiles.count();
-  for (let i = n - 1; i >= 0; i--) {
-    const src = await tiles.nth(i).locator("img").first().getAttribute("src");
-    if (src && !src.startsWith("data:image/svg")) {
-      await tiles.nth(i).click({ timeout: 8000 }).catch(() => {});
-      return true;
+  // Worker 冷预览会先返 202,新编辑出的 mock SVG 此时也曾短暂披着
+  // `/preview` URL。只看 src 会误把尚未解码的 SVG 当位图；等到浏览器
+  // 真正解码成功（naturalWidth > 0）后再选。
+  for (let attempt = 0; attempt < 30; attempt++) {
+    const n = await tiles.count();
+    for (let i = 0; i < n; i++) {
+      const image = tiles.nth(i).locator("img").first();
+      const decoded = await image
+        .evaluate((img) => ({
+          src: img.getAttribute("src") || "",
+          complete: img.complete,
+          naturalWidth: img.naturalWidth,
+        }))
+        .catch(() => ({ src: "", complete: false, naturalWidth: 0 }));
+      if (
+        decoded.complete &&
+        decoded.naturalWidth > 0 &&
+        !decoded.src.startsWith("data:image/svg")
+      ) {
+        await tiles.nth(i).click({ timeout: 8000 }).catch(() => {});
+        return true;
+      }
     }
+    await page.waitForTimeout(400);
   }
   return false;
 };
@@ -245,7 +262,13 @@ await step("刷新后显隐仍在（服务端权威，不是本地状态）", as
 });
 
 await step("导出 PSD 可用（即使有层被隐藏）", async () => {
-  await page.locator("[data-testid=canvas-item][data-kind=image]").last().click();
+  // 刷新后普通版本图和分层图会按服务端顺序重建，`last()` 不保证
+  // 仍是分层产物。必须显式选带组身份的图，否则实际测的是普通图
+  // 工具条，会把正常的 PSD 功能误报为缺失。
+  await page
+    .locator("[data-testid=canvas-item][data-kind=image][data-layer-set]")
+    .last()
+    .click();
   await page.waitForTimeout(600);
   const openPanel = page.locator('button:has-text("图层面板")');
   if ((await openPanel.count()) > 0) {
