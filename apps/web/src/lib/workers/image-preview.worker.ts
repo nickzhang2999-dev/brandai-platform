@@ -120,10 +120,13 @@ async function buildImagePreview(
   let source: Buffer;
   if (/^https?:\/\//i.test(sourceLocation)) {
     const upstream = await safeFetch(sourceLocation, 4, signal);
-    if (!upstream.ok || !upstream.body)
+    if (!upstream.ok || !upstream.body) {
+      await upstream.body?.cancel().catch(() => undefined);
       throw new Error(`asset source fetch failed: ${upstream.status}`);
+    }
     const type = upstream.headers.get("content-type") || asset.mimeType;
     if (!type.toLowerCase().startsWith("image/") || /svg/i.test(type)) {
+      await upstream.body.cancel().catch(() => undefined);
       throw new Error(`asset source is not a safe raster image: ${type}`);
     }
     source = await webStreamToBuffer(
@@ -143,11 +146,7 @@ async function buildImagePreview(
       signal,
     );
   }
-  const preview = await renderImagePreview(
-    source,
-    IMAGE_PREVIEW_WIDTH,
-    signal,
-  );
+  const preview = await renderImagePreview(source, IMAGE_PREVIEW_WIDTH, signal);
   const stored = await uploadBuffer(
     preview,
     "image/webp",
@@ -193,7 +192,9 @@ async function buildImagePreview(
     });
     signal.throwIfAborted();
     if (!winner?.previewStorageKey) {
-      throw new Error(`preview claim for asset ${asset.id} lost without winner`);
+      throw new Error(
+        `preview claim for asset ${asset.id} lost without winner`,
+      );
     }
     return {
       assetId: asset.id,

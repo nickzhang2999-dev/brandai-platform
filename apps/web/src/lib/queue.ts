@@ -76,7 +76,21 @@ export const imagePreviewQueue = new Queue("image-preview", {
 });
 
 const IMAGE_PREVIEW_ENQUEUE_TIMEOUT_MS = 1_000;
+const IMAGE_PREVIEW_FAILED_JOB_TTL_MS = 180_000;
 const inFlightImagePreviewAdds = new Map<string, Promise<boolean>>();
+
+async function removeExpiredFailedImagePreviewJob(jobId: string) {
+  const existing = await imagePreviewQueue.getJob(jobId);
+  if (!existing?.finishedOn) return;
+  if (Date.now() - existing.finishedOn < IMAGE_PREVIEW_FAILED_JOB_TTL_MS)
+    return;
+  if ((await existing.getState()) !== "failed") return;
+
+  // BullMQ's removeOnFail.age is enforced lazily when another job finishes.
+  // Remove this job explicitly on a later request so an otherwise idle queue
+  // can recover after the source becomes available again.
+  await existing.remove();
+}
 
 /**
  * Cache-miss image GETs must remain bounded even when Redis is unavailable.
@@ -84,25 +98,29 @@ const inFlightImagePreviewAdds = new Map<string, Promise<boolean>>();
  * cannot leave a retained Redis command behind. The browser's retryable 202
  * will make a later request try the same idempotent job ID again.
  */
-export async function enqueueImagePreview(
-  data: { workspaceId: string; versionId?: string; assetId?: string },
-): Promise<boolean> {
+export async function enqueueImagePreview(data: {
+  workspaceId: string;
+  versionId?: string;
+  assetId?: string;
+}): Promise<boolean> {
   const jobId = data.versionId
     ? `version-${data.versionId}`
     : `asset-${data.assetId}`;
   let enqueue = inFlightImagePreviewAdds.get(jobId);
   if (!enqueue) {
-    enqueue = imagePreviewQueue
-      .add("build", data, {
-        jobId,
-        attempts: 3,
-        backoff: { type: "exponential", delay: 2_000 },
-        removeOnComplete: true,
-        // Keep terminal failures beyond the client's two-minute polling
-        // window. Repeated GETs then hit the same failed jobId instead of
-        // multiplying three-attempt fetch/transform cycles for a bad source.
-        removeOnFail: { age: 180, count: 10_000 },
-      })
+    enqueue = removeExpiredFailedImagePreviewJob(jobId)
+      .then(() =>
+        imagePreviewQueue.add("build", data, {
+          jobId,
+          attempts: 3,
+          backoff: { type: "exponential", delay: 2_000 },
+          removeOnComplete: true,
+          // Keep terminal failures beyond the client's two-minute polling
+          // window. Repeated GETs then hit the same failed jobId instead of
+          // multiplying three-attempt fetch/transform cycles for a bad source.
+          removeOnFail: { age: 180, count: 10_000 },
+        }),
+      )
       .then(() => true)
       .catch((error) => {
         console.error(`[image-preview] enqueue ${jobId} failed:`, error);
