@@ -107,6 +107,7 @@ export async function runDecomposeJob(
   // AbortController)。所以让外层先写终态:`markFailed` 之后即使孤儿链稍后跑完,
   // 它落库的那一组也会被 catch 里的整组回滚清掉,不会留下"任务失败但图层却在"。
   let watchdog: NodeJS.Timeout | null = null;
+  const deadlineAt = Date.now() + TIMEOUT_MS;
   const timeout = new Promise<never>((_, reject) => {
     watchdog = setTimeout(
       () => reject(new DecomposeTimeoutError()),
@@ -332,23 +333,46 @@ export async function runDecomposeJob(
     // 一个成功的任务,`refId` 却指向一组已经被删掉的图层。判据与置位之间没有
     // await,单线程下插不进第二个写入者,这一句就是那把锁。
     settled = true;
-    // 事务结果已被单一写入者认领，后面只剩快速终态 DB 写入，
-    // 不再让 6 分钟看门狗插入第二个终态写入者。
+    // 把总看门狗剩余的时间原样移交给终态阶段；不能先清掉看门狗再
+    // await BullMQ/DB，否则 Redis 在这里失联会让 concurrency:1 永久堵住。
+    // updateProgress 若迟到恢复，会在写 SUCCEEDED 之前检查 timedOut 并退出。
     clearWatchdog();
-
-    try {
+    let finalizationTimedOut = false;
+    let finalizationTimer: NodeJS.Timeout | undefined;
+    const finalizationTimeout = new DecomposeTimeoutError();
+    const remainingMs = Math.max(1, deadlineAt - Date.now());
+    const finalize = async () => {
       await job.updateProgress(100);
-      // 走会抛的变体:终态写丢了必须让外层知道,否则任务永远停在 RUNNING,
-      // 而图层已经提交、客户端还锁着等一个永远不来的完成通知。
+      if (finalizationTimedOut) throw finalizationTimeout;
       await markSucceededOrThrow(taskId, {
         refId: layerSetId,
         refCount: versionIds.length,
       });
+      // Prisma cannot be cancelled mid-query. If the deadline fired while the
+      // terminal update was in flight, restore FAILED after the late success so
+      // a timed-out job never ends with a contradictory successful task row.
+      if (finalizationTimedOut) {
+        await markFailed(taskId, String(finalizationTimeout));
+        throw finalizationTimeout;
+      }
+    };
+    try {
+      await Promise.race([
+        finalize(),
+        new Promise<never>((_, reject) => {
+          finalizationTimer = setTimeout(() => {
+            finalizationTimedOut = true;
+            reject(finalizationTimeout);
+          }, remainingMs);
+        }),
+      ]);
     } catch (writeErr) {
       // 认领了却没写成(库挂了/进程被打断)。这时必须把认领让出去,否则下面的
       // `failOnce` 看见 settled 会直接返回,留下"整组可见 + 任务永远 RUNNING"。
       settled = false;
       throw writeErr;
+    } finally {
+      if (finalizationTimer) clearTimeout(finalizationTimer);
     }
 
     // 分层预览不再阻塞这条 concurrency:1 队列。画布首次请求该版本的

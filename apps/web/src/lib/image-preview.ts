@@ -63,8 +63,14 @@ export async function webStreamToBuffer(
       if (done) break;
       if (!value) continue;
       total += value.byteLength;
-      if (total > maxBytes)
-        throw new Error("image source exceeds preview limit");
+      if (total > maxBytes) {
+        const error = new Error("image source exceeds preview limit");
+        // Releasing the reader lock does not stop the underlying HTTP body.
+        // Cancel it now so every retry cannot leave another oversized socket
+        // downloading after this job has already failed.
+        await reader.cancel(error).catch(() => {});
+        throw error;
+      }
       chunks.push(value);
     }
   } finally {

@@ -1,6 +1,6 @@
 import { prisma } from "@brandai/db";
 import { getEffectiveStorage } from "@/lib/settings";
-import { imagePreviewQueue } from "@/lib/queue";
+import { enqueueImagePreview } from "@/lib/queue";
 
 const EXT_MIME: Record<string, string> = {
   png: "image/png",
@@ -108,20 +108,10 @@ export async function mirrorGenerationVersionToAsset(opts: {
     });
     if (opts.enqueuePreview !== false) {
       try {
-        await imagePreviewQueue.add(
-          "build",
-          {
-            workspaceId: opts.workspaceId,
-            versionId: opts.generationVersionId,
-          },
-          {
-            jobId: `version-${opts.generationVersionId}`,
-            attempts: 3,
-            backoff: { type: "exponential", delay: 2_000 },
-            removeOnComplete: true,
-            removeOnFail: true,
-          },
-        );
+        await enqueueImagePreview({
+          workspaceId: opts.workspaceId,
+          versionId: opts.generationVersionId,
+        });
       } catch (err) {
         // 镜像 Asset 已经成功，是权威产物；缩略图可由首次 GET 再次入队。
         console.warn(

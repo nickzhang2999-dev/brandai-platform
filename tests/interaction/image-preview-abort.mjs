@@ -52,6 +52,25 @@ await expectAbort("Web stream reader is cancelled on abort", async () => {
 });
 if (!webCancelled) throw new Error("Web stream cancel hook was not called");
 
+let oversizedCancelled = false;
+const oversized = new ReadableStream({
+  start(controller) {
+    controller.enqueue(new Uint8Array([1, 2, 3, 4]));
+  },
+  cancel() {
+    oversizedCancelled = true;
+  },
+});
+try {
+  await webStreamToBuffer(oversized, 3);
+  throw new Error("oversized Web stream did not fail");
+} catch (error) {
+  if (!String(error).includes("exceeds preview limit")) throw error;
+}
+if (!oversizedCancelled)
+  throw new Error("oversized Web stream was not cancelled");
+console.log("PASS | oversized Web stream is cancelled");
+
 await expectAbort("Sharp is not started after abort", async () => {
   const controller = new AbortController();
   controller.abort(new Error("preview abort regression"));
