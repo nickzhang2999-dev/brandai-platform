@@ -17,6 +17,7 @@ for (const key of [
 
 const BASE = process.env.BASE_URL || "http://127.0.0.1:3000";
 const HANG_RESTORE = process.env.HANG_RESTORE === "1";
+const HANG_HISTORY = process.env.HANG_HISTORY === "1";
 const EXE =
   process.env.CHROME || "/opt/pw-browsers/chromium-1194/chrome-linux/chrome";
 const { WS, PROJECT, GEN, SESSION_TOKEN } = process.env;
@@ -58,6 +59,19 @@ await context.addCookies([
 const page = await context.newPage();
 const canvasPath = `/api/workspaces/${WS}/projects/${PROJECT}/canvas`;
 let canvasPuts = 0;
+if (HANG_HISTORY) {
+  await page.route(
+    (url) =>
+      url.pathname === `/api/workspaces/${WS}/generations` &&
+      url.searchParams.get("projectId") === PROJECT,
+    async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 20_000));
+      await route
+        .fulfill({ status: 200, contentType: "application/json", body: "[]" })
+        .catch(() => undefined);
+    },
+  );
+}
 await page.route(`**${canvasPath}`, async (route) => {
   if (route.request().method() === "GET") {
     if (HANG_RESTORE) {
@@ -96,7 +110,7 @@ try {
     .first()
     .waitFor({
       state: "visible",
-      timeout: HANG_RESTORE ? 25_000 : 15_000,
+      timeout: HANG_RESTORE || HANG_HISTORY ? 25_000 : 15_000,
     });
   const restoring = await page
     .getByText("正在恢复项目画布…", { exact: true })
@@ -108,7 +122,7 @@ try {
       `failed restore unexpectedly sent ${canvasPuts} canvas PUT(s)`,
     );
   console.log(
-    `PASS | ${HANG_RESTORE ? "restore timeout" : "restore failure"} exits loading | autosave PUT=0`,
+    `PASS | ${HANG_HISTORY ? "history timeout" : HANG_RESTORE ? "restore timeout" : "restore failure"} exits loading | autosave PUT=0`,
   );
 } finally {
   await browser.close();

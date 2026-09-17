@@ -88,6 +88,13 @@ HANG_RESTORE=1 WS=$WS PROJECT=$EMPTY_PROJECT SESSION_TOKEN=$TOKEN \
   node tests/interaction/canvas-restore-failure.mjs
 ```
 
+历史 generations GET 独立挂起时也必须在 15 秒后退出同一个恢复 spinner：
+
+```bash
+HANG_HISTORY=1 WS=$WS PROJECT=$EMPTY_PROJECT SESSION_TOKEN=$TOKEN \
+  node tests/interaction/canvas-restore-failure.mjs
+```
+
 冷预览首访会先收到 202，随后必须在有界重试内拿到 Worker 生成的 WebP，而不是回退整张原图：
 
 ```bash
