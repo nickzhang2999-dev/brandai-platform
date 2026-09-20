@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import type { GeneratedAsset, Project } from "@brandai/contracts";
 import { apiFetch, assetThumbUrl } from "@/lib/client";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { PageHeader } from "../_ui";
 import { useBrand } from "../brand-context";
 
@@ -22,132 +22,47 @@ const SCENE_LABELS: Record<string, string> = {
   SELLING_POINT: "卖点图",
 };
 
-function GeneratedPreviewImage({ src, alt }: { src: string; alt: string }) {
-  const [retry, setRetry] = useState(0);
-  const [cycle, setCycle] = useState(0);
-  const [loaded, setLoaded] = useState(false);
+function GeneratedPreviewImage({
+  previewSrc,
+  originalSrc,
+  alt,
+}: {
+  previewSrc: string;
+  originalSrc: string;
+  alt: string;
+}) {
+  const [useOriginal, setUseOriginal] = useState(false);
   const [failed, setFailed] = useState(false);
-  const startedAtRef = useRef(0);
-  const retryTimerRef = useRef<number | null>(null);
-  const deadlineTimerRef = useRef<number | null>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const imageRef = useRef<HTMLImageElement>(null);
-  const completedRef = useRef(false);
 
   useEffect(() => {
-    setRetry(0);
-    setLoaded(false);
+    setUseOriginal(false);
     setFailed(false);
-    startedAtRef.current = 0;
-    completedRef.current = false;
-    const startDeadline = () => {
-      if (completedRef.current || startedAtRef.current) return;
-      startedAtRef.current = Date.now();
-      deadlineTimerRef.current = window.setTimeout(() => {
-        deadlineTimerRef.current = null;
-        setFailed(true);
-      }, 120_000);
-    };
-    const container = containerRef.current;
-    const image = imageRef.current;
-    const alreadyLoaded = Boolean(image?.complete && image.naturalWidth);
-    if (alreadyLoaded) {
-      completedRef.current = true;
-      setLoaded(true);
-    }
-    const observer = container && !alreadyLoaded
-      ? new IntersectionObserver(
-          (entries) => {
-            if (!entries.some((entry) => entry.isIntersecting)) return;
-            startDeadline();
-            observer?.disconnect();
-          },
-          { rootMargin: "2500px 0px" },
-        )
-      : null;
-    if (container && observer) observer.observe(container);
-    else if (!alreadyLoaded) startDeadline();
-    return () => {
-      observer?.disconnect();
-      if (retryTimerRef.current != null) {
-        window.clearTimeout(retryTimerRef.current);
-      }
-      if (deadlineTimerRef.current != null) {
-        window.clearTimeout(deadlineTimerRef.current);
-      }
-      retryTimerRef.current = null;
-      deadlineTimerRef.current = null;
-    };
-  }, [cycle, src]);
+  }, [originalSrc, previewSrc]);
 
   if (failed) {
     return (
-      <div className="flex h-48 w-full flex-col items-center justify-center gap-2 bg-muted text-xs text-muted-foreground">
-        <span>图片加载失败</span>
-        <button
-          type="button"
-          onClick={() => setCycle((current) => current + 1)}
-          className="rounded-full border border-primary/20 bg-background px-3 py-1.5 font-medium text-primary transition hover:bg-accent-soft"
-        >
-          重新加载
-        </button>
+      <div className="flex h-48 w-full items-center justify-center bg-muted text-xs text-muted-foreground">
+        图片加载失败
       </div>
     );
   }
 
-  const separator = src.includes("?") ? "&" : "?";
-  const renderedSrc =
-    retry || cycle ? `${src}${separator}retry=${cycle}-${retry}` : src;
   return (
-    <div
-      ref={containerRef}
-      className="relative h-48 w-full overflow-hidden bg-accent-soft/50"
-    >
-      {!loaded ? (
-        <div className="absolute inset-0 motion-safe:animate-pulse bg-gradient-to-r from-transparent via-card/70 to-transparent" />
-      ) : null}
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        ref={imageRef}
-        key={renderedSrc}
-        src={renderedSrc}
-        alt={alt}
-        loading="lazy"
-        decoding="async"
-        className={`h-full w-full object-cover transition-opacity duration-200 ${loaded ? "opacity-100" : "opacity-0"}`}
-        onLoad={() => {
-          completedRef.current = true;
-          if (deadlineTimerRef.current != null) {
-            window.clearTimeout(deadlineTimerRef.current);
-            deadlineTimerRef.current = null;
-          }
-          setLoaded(true);
-        }}
-        onError={() => {
-          const now = Date.now();
-          if (!startedAtRef.current) {
-            startedAtRef.current = now;
-            deadlineTimerRef.current = window.setTimeout(() => {
-              deadlineTimerRef.current = null;
-              setFailed(true);
-            }, 120_000);
-          }
-          if (now - startedAtRef.current >= 120_000) {
-            setFailed(true);
-            return;
-          }
-          if (retryTimerRef.current != null) return;
-          setLoaded(false);
-          retryTimerRef.current = window.setTimeout(
-            () => {
-              retryTimerRef.current = null;
-              setRetry((current) => current + 1);
-            },
-            2_000,
-          );
-        }}
-      />
-    </div>
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={useOriginal ? originalSrc : previewSrc}
+      alt={alt}
+      loading="lazy"
+      decoding="async"
+      className="h-48 w-full object-cover"
+      onError={() => {
+        if (!useOriginal && previewSrc !== originalSrc) {
+          setUseOriginal(true);
+          return;
+        }
+        setFailed(true);
+      }}
+    />
   );
 }
 
@@ -308,7 +223,8 @@ export default function GeneratedImagesPage() {
               className="overflow-hidden rounded-3xl border border-border bg-card shadow-[0_8px_24px_rgba(30,30,60,0.06)]"
             >
               <GeneratedPreviewImage
-                src={assetThumbUrl(wsId, asset.id, asset.url, 768)}
+                previewSrc={assetThumbUrl(wsId, asset.id, asset.url, 768)}
+                originalSrc={assetThumbUrl(wsId, asset.id, asset.url)}
                 alt={asset.fileName}
               />
               <div className="p-5">
