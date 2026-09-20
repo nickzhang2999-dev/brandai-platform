@@ -11,11 +11,13 @@
 ## 一键流程
 
 ### 0) 依赖
+
 ```bash
 npm i -D playwright-core            # 仓库未默认带；沙箱 chromium 在 /opt/pw-browsers
 ```
 
 ### 1) 起栈（无 docker；postgres 必须以 postgres 用户跑）
+
 ```bash
 PGBIN=/usr/lib/postgresql/16/bin; PGDATA=/var/lib/postgresql/brandai-pgdata
 sudo -u postgres $PGBIN/initdb -D $PGDATA -U postgres --auth=trust -E UTF8     # 首次
@@ -43,10 +45,12 @@ pnpm db:push && pnpm db:seed                                   # throwaway 库�
 pnpm -F web worker &
 pnpm -F web dev &                                              # 等日志出现 "Ready in" 再继续
 ```
+
 > dev server 陷阱：验证修复时若"没生效"，先怀疑在测旧代码。**杀干净再起**：
 > `pkill -9 -f next-server` → `rm -rf apps/web/.next` → 重启 → 等 `Ready in`。别信"秒起"的 WEB UP。
 
 ### 2) 登录 + 造数据（拿 WS / PROJECT / GEN / token）
+
 ```bash
 B=http://127.0.0.1:3000; J=/tmp/ck.txt; rm -f $J
 CSRF=$(curl -s -c $J "$B/api/auth/csrf" | python3 -c "import sys,json;print(json.load(sys.stdin)['csrfToken'])")
@@ -60,15 +64,61 @@ echo "WS=$WS PROJECT=$PROJECT GEN=$GEN"   # 等几秒让 mock 出图到 SUCCEEDE
 ```
 
 ### 3) 跑测
+
 ```bash
 WS=$WS PROJECT=$PROJECT GEN=$GEN SESSION_TOKEN=$TOKEN OUT=/tmp \
   node tests/interaction/canvas-functions.mjs
 ```
+
 预期：除「加图片上传」（本地无对象存储→500，部署环境正常）外全 PASS。
+
+画布恢复失败的有界退出与“禁止空数据自动保存”回归：
+
+```bash
+WS=$WS PROJECT=$EMPTY_PROJECT SESSION_TOKEN=$TOKEN \
+  node tests/interaction/canvas-restore-failure.mjs
+```
+
+脚本会把画布恢复 GET 注入为 503，并断言错误态出现、spinner 消失且没有发出 PUT；传 `GEN` 可覆盖已有生成历史的非空画布，省略则覆盖空画布。
+
+挂起的恢复请求也必须在前端超时后进入同一安全失败态：
+
+```bash
+HANG_RESTORE=1 WS=$WS PROJECT=$EMPTY_PROJECT SESSION_TOKEN=$TOKEN \
+  node tests/interaction/canvas-restore-failure.mjs
+```
+
+历史 generations GET 独立挂起时也必须在 15 秒后退出同一个恢复 spinner：
+
+```bash
+HANG_HISTORY=1 WS=$WS PROJECT=$EMPTY_PROJECT SESSION_TOKEN=$TOKEN \
+  node tests/interaction/canvas-restore-failure.mjs
+```
+
+冷预览首访会先收到 202，随后必须在有界重试内拿到 Worker 生成的 WebP，而不是回退整张原图：
+
+```bash
+WS=$WS PROJECT=$PROJECT GEN=$GEN SESSION_TOKEN=$TOKEN \
+  node tests/interaction/canvas-preview-cold-retry.mjs
+```
+
+选中图的预览和原图都失败时，必须停在明确错误态，不能重新进入永久 spinner：
+
+```bash
+WS=$WS PROJECT=$PROJECT GEN=$GEN SESSION_TOKEN=$TOKEN \
+  node tests/interaction/canvas-preview-double-failure.mjs
+```
+
+预览 Worker 的 60 秒看门狗必须真正中止源流与转码，不能只结束外层 Promise：
+
+```bash
+node --experimental-strip-types tests/interaction/image-preview-abort.mjs
+```
 
 ---
 
 ## 覆盖的功能
+
 缩放（放大/缩小/100%/适配）· 无导航环抖动回归 · 放置（矩形/圆/文字）· 双击编辑文字 ·
 拖拽 · 缩放手柄 · 图层（置顶/置底）· 方向键微移 · 删除（按钮 + Delete 键）·
 选中变体→操作条 · 改色 arm（不立即出图）· 出图→真改图→新子版本 · 局部重画→蒙版层。

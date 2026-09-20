@@ -86,6 +86,7 @@ const CANVAS_OPS: { value: string; label: string; mask?: boolean }[] = [
 ];
 
 const POLL_CAP_MS = 6 * 60 * 1000; // §2.2 有界中间态
+const HISTORY_RESTORE_TIMEOUT_MS = 15_000;
 const ACTIVE_GENERATION_STATUSES = new Set(["PENDING", "RUNNING"]);
 
 type WorkspaceMode = "TEXT_TO_IMAGE" | "IMAGE_EDIT" | "INPAINT" | "OUTPAINT";
@@ -751,15 +752,24 @@ function Workspace() {
   // 历史出图回看 — 进入工作台默认能看到本 Campaign 已生成的图，而不是空态。
   // 接现成的 GET /generations?projectId=（listProjectGenerations，newest first）。
   // 修复「产出蒸发」：刷新/切项目/换设备后历史出图不再消失。
-  const { data: history = [], isSuccess: historyLoaded } = useQuery<
-    Generation[]
-  >({
+  const {
+    data: history = [],
+    isSuccess: historyLoaded,
+    isLoading: historyLoading,
+  } = useQuery<Generation[]>({
     queryKey: ["brandai-project-gens", wsId, projectId],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       apiFetch<Generation[]>(
         `/api/workspaces/${wsId}/generations?projectId=${projectId}`,
+        {
+          signal: AbortSignal.any([
+            signal,
+            AbortSignal.timeout(HISTORY_RESTORE_TIMEOUT_MS),
+          ]),
+        },
       ),
     enabled: !!wsId && !!projectId,
+    retry: false,
   });
 
   // H9 · 提交制作确认弹窗 — 提交前先汇总将要生成的内容（场景/卖点/数量/尺寸/风格）
@@ -1094,7 +1104,9 @@ function Workspace() {
   const [layerIntent, setLayerIntent] = useState("");
   const [openLayerSetId, setOpenLayerSetId] = useState<string | null>(null);
   /** 图层面板点行 → 请求画布选中那一层（A 方案，见 LayerPanel 的 onFocusLayer）。 */
-  const [focusLayerVersionId, setFocusLayerVersionId] = useState<string | null>(null);
+  const [focusLayerVersionId, setFocusLayerVersionId] = useState<string | null>(
+    null,
+  );
   const [focusLayerNonce, setFocusLayerNonce] = useState(0);
   /**
    * 中间态上界(§2.4)的**起算点**——提交时先记提交时刻,轮询首次看到 RUNNING
@@ -1134,7 +1146,9 @@ function Workspace() {
    * layer-set 读接口是 generation 作用域的,面板直接 404,刷的也是错的那条历史。
    * 付过费的结果其实好端端存在原来那条 generation 下面,只是找不着了。
    */
-  const decomposeCtx = useRef<{ genId: string; projectId: string } | null>(null);
+  const decomposeCtx = useRef<{ genId: string; projectId: string } | null>(
+    null,
+  );
 
   const { data: decomposePoll, error: decomposePollErr } = useQuery<TaskState>({
     queryKey: ["brandai-decompose", wsId, decomposeTaskId],
@@ -1180,8 +1194,10 @@ function Workspace() {
       return;
     }
     // 一律按**发起时**的 generation/campaign 刷新与开面板,不按此刻的。
-    const ctx =
-      decomposeCtx.current ?? { genId: genId ?? "", projectId: projectId ?? "" };
+    const ctx = decomposeCtx.current ?? {
+      genId: genId ?? "",
+      projectId: projectId ?? "",
+    };
     decomposeCtx.current = null;
     if (ctx.genId) {
       qc.invalidateQueries({ queryKey: ["brandai-gen", wsId, ctx.genId] });
@@ -1343,9 +1359,7 @@ function Workspace() {
       } catch (err) {
         decomposeStartedAt.current = 0;
         setDecomposeSourceVersionId(null);
-        setActionErr(
-          err instanceof Error ? err.message : "图层分解提交失败",
-        );
+        setActionErr(err instanceof Error ? err.message : "图层分解提交失败");
       } finally {
         // 提交阶段结束就放闸:成功的话 `decomposeTaskId` 已经接管(它一直锁到终态),
         // 失败的话本来就该让用户能再试一次。
@@ -1836,8 +1850,10 @@ function Workspace() {
         {/* Canvas */}
         <div className="relative flex min-h-0 flex-col bg-background p-3">
           <OpenCanvas
+            workspaceId={wsId}
             seedVersions={seedVersionsAll}
             seedReady={historyLoaded}
+            restoring={historyLoading}
             running={running}
             status={status}
             timedOut={timedOut}
@@ -1929,7 +1945,9 @@ function Workspace() {
               }}
               onChanged={() => {
                 // 显隐/层序是服务端权威:改完重新拉版本,画布按新的 layerZ 重绘。
-                qc.invalidateQueries({ queryKey: ["brandai-gen", wsId, genId] });
+                qc.invalidateQueries({
+                  queryKey: ["brandai-gen", wsId, genId],
+                });
                 qc.invalidateQueries({
                   queryKey: ["brandai-project-gens", wsId, projectId],
                 });

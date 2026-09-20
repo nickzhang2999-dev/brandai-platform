@@ -14,6 +14,7 @@ import {
   planLayerSetRect,
   readLayerMeta,
 } from "@brandai/contracts";
+import { assetThumbUrl, versionPreviewUrl } from "@/lib/client";
 
 /**
  * 开放世界画布 —— 迁移自 prd_agent 视觉创作 AdvancedVisualAgentTab 的无限平面画布
@@ -83,6 +84,7 @@ export type CanvasLibraryAsset = {
 const ZOOM_MIN = 0.1;
 const ZOOM_MAX = 4;
 const MIN_SIZE = 32;
+const CANVAS_RESTORE_TIMEOUT_MS = 15_000;
 const VIOLET = "rgb(124 92 255)";
 const SELECT = "#4A9BFF"; // 与既有工作台选择框一致
 
@@ -109,6 +111,181 @@ function imageItemFromVersion(v: GenerationVersion, idx: number): CanvasItem {
     w: baseW,
     h: baseH,
   };
+}
+
+function CanvasPreviewImage({
+  item,
+  workspaceId,
+  priority,
+  delayMs,
+  onOriginalLoad,
+}: {
+  item: CanvasItem;
+  workspaceId: string;
+  priority: boolean;
+  delayMs: number;
+  onOriginalLoad: (width: number, height: number) => void;
+}) {
+  const originalSrc = item.imageUrl ?? "";
+  const previewSrc = useMemo(() => {
+    // Freshly generated/edited mock output can be an inline image with no
+    // object-store mirror. Rendering it directly also avoids pointlessly
+    // enqueueing a preview job that can never fetch a data: URL.
+    if (originalSrc.startsWith("data:")) return originalSrc;
+    if (item.versionId)
+      return versionPreviewUrl(workspaceId, item.versionId, 768);
+    if (item.assetId)
+      return assetThumbUrl(workspaceId, item.assetId, originalSrc, 768);
+    return originalSrc;
+  }, [item.assetId, item.versionId, originalSrc, workspaceId]);
+  const [requestedSrc, setRequestedSrc] = useState<string | null>(
+    priority ? previewSrc : null,
+  );
+  const [loaded, setLoaded] = useState(false);
+  const [previewFailed, setPreviewFailed] = useState(false);
+  const [previewRetry, setPreviewRetry] = useState(0);
+  const [failed, setFailed] = useState(false);
+  const requestTimerRef = useRef<number | null>(null);
+  const previewStartedAtRef = useRef(0);
+  const [initialDelayMs] = useState(delayMs);
+
+  useEffect(() => {
+    setLoaded(false);
+    setPreviewFailed(false);
+    setPreviewRetry(0);
+    setFailed(false);
+    setRequestedSrc(null);
+    previewStartedAtRef.current = 0;
+    requestTimerRef.current = window.setTimeout(() => {
+      previewStartedAtRef.current = Date.now();
+      setRequestedSrc(previewSrc);
+    }, initialDelayMs);
+    return () => {
+      if (requestTimerRef.current != null)
+        window.clearTimeout(requestTimerRef.current);
+      requestTimerRef.current = null;
+    };
+  }, [initialDelayMs, previewSrc]);
+
+  // Selection only accelerates a request. Deselecting an already-visible tile
+  // must never blank it and start the delay again.
+  useEffect(() => {
+    if (!priority) return;
+    // A background tile that exhausted its preview deadline deliberately did
+    // not fan out to the original. Once the user selects it, load that single
+    // original immediately so the failure mode remains usable without turning
+    // a long history into dozens of full-resolution downloads.
+    if (failed && !previewFailed && previewSrc !== originalSrc) {
+      setFailed(false);
+      setPreviewFailed(true);
+      setLoaded(false);
+      return;
+    }
+    if (requestTimerRef.current != null)
+      window.clearTimeout(requestTimerRef.current);
+    requestTimerRef.current = null;
+    if (!previewStartedAtRef.current) previewStartedAtRef.current = Date.now();
+    setRequestedSrc(previewSrc);
+  }, [failed, originalSrc, previewFailed, previewSrc, priority]);
+
+  const renderedSrc = previewFailed ? originalSrc : requestedSrc;
+  return (
+    <>
+      {!loaded && !failed ? (
+        <div
+          data-testid="canvas-image-loading"
+          className="pointer-events-none absolute inset-0 flex items-center justify-center overflow-hidden rounded-[6px] bg-accent-soft/60"
+        >
+          <span className="h-full w-full motion-safe:animate-pulse bg-gradient-to-r from-transparent via-card/70 to-transparent" />
+          {priority ? (
+            <span className="absolute text-[10px] font-medium text-muted-foreground">
+              正在显示图片…
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+      {renderedSrc ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          key={renderedSrc}
+          src={renderedSrc}
+          alt="画布图片"
+          draggable={false}
+          decoding="async"
+          loading={priority ? "eager" : "lazy"}
+          fetchPriority={priority ? "high" : "low"}
+          className={`h-full w-full rounded-[6px] object-contain transition-opacity duration-200 ${loaded ? "opacity-100" : "opacity-0"}`}
+          style={{
+            // 图层组是透明 RGBA 叠放，不能给每一层垫紫色背景。
+            ...(item.layerSetId
+              ? {}
+              : { background: "rgb(244 240 255 / 0.5)" }),
+          }}
+          onLoad={(event) => {
+            setLoaded(true);
+            setFailed(false);
+            if (
+              renderedSrc === originalSrc &&
+              !item.naturalW &&
+              event.currentTarget.naturalWidth
+            ) {
+              onOriginalLoad(
+                event.currentTarget.naturalWidth,
+                event.currentTarget.naturalHeight,
+              );
+            }
+          }}
+          onError={() => {
+            // A cold preview returns 202 while its worker runs. Retry the same
+            // authenticated endpoint with bounded backoff before considering
+            // it permanently unavailable; otherwise the first historical
+            // visit immediately fans back out to every full-resolution image.
+            if (!previewFailed && previewSrc !== originalSrc) {
+              // The preview queue intentionally has low concurrency. A long
+              // history can therefore wait well beyond a handful of retries
+              // even though its job is healthy. Keep the skeleton until a
+              // bounded two-minute queue-aware deadline; only then fan out to
+              // the original as the last-resort compatibility path.
+              const elapsed =
+                Date.now() - (previewStartedAtRef.current || Date.now());
+              if (elapsed < 120_000) {
+                const nextRetry = previewRetry + 1;
+                const separator = previewSrc.includes("?") ? "&" : "?";
+                setPreviewRetry(nextRetry);
+                setLoaded(false);
+                setRequestedSrc(null);
+                requestTimerRef.current = window.setTimeout(
+                  () =>
+                    setRequestedSrc(
+                      `${previewSrc}${separator}retry=${nextRetry}`,
+                    ),
+                  Math.min(2_000, 250 * 2 ** (nextRetry - 1)),
+                );
+                return;
+              }
+              if (priority) {
+                // Only the actively selected tile may use the original as a
+                // compatibility fallback. Background tiles show a bounded
+                // failure state instead of recreating the full-resolution
+                // download fan-out this preview pipeline is meant to remove.
+                setPreviewFailed(true);
+                setLoaded(false);
+              } else {
+                setFailed(true);
+              }
+              return;
+            }
+            setFailed(true);
+          }}
+        />
+      ) : null}
+      {failed ? (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-[6px] bg-muted text-[10px] text-muted-foreground">
+          图片加载失败
+        </div>
+      ) : null}
+    </>
+  );
 }
 
 type Gesture =
@@ -198,8 +375,10 @@ export type CanvasEditBridge = {
 };
 
 export function OpenCanvas({
+  workspaceId,
   seedVersions,
   seedReady = false,
+  restoring = false,
   running,
   status,
   timedOut,
@@ -227,11 +406,14 @@ export function OpenCanvas({
   uploadFilesRef,
   edit,
 }: {
+  workspaceId: string;
   seedVersions: GenerationVersion[];
   /** 当前 Campaign 的历史查询是否已成功加载。seed 成员剪枝只在 true 时执行——
    *  切 Campaign 后新 key 的 history 尚未返回时 seed 短暂为空/不全，此时剪枝会
    *  把水合恢复的本项目版本 tile 误删（丢自定义布局）。 */
   seedReady?: boolean;
+  /** 项目历史/画布仍在恢复时展示明确进度，避免先闪一个误导性的空画布。 */
+  restoring?: boolean;
   running: boolean;
   status: string | null;
   timedOut: boolean;
@@ -377,6 +559,10 @@ export function OpenCanvas({
    * 出图变体 tile 由 seedVersions（Generation 服务端数据）权威重建，不入画布 JSON——
    * 这也是 F19 ⑨ 用户定夺的「画布=持久开放世界工作台，变体 tile 随出图进出」语义。 */
   const [hydrated, setHydrated] = useState(!persist);
+  // 恢复进度和“允许自动保存”是两个状态：读取失败后必须结束 spinner，但绝不能
+  // 放开空画布 autosave 覆盖服务端数据。
+  const [restorePending, setRestorePending] = useState(Boolean(persist));
+  const [restoreError, setRestoreError] = useState<string | null>(null);
   const suppressNextFitRef = useRef(false);
   const lastSavedRef = useRef("");
   const persistWs = persist?.wsId;
@@ -384,10 +570,19 @@ export function OpenCanvas({
   useEffect(() => {
     if (!persistWs || !persistProject) {
       setHydrated(true);
+      setRestorePending(false);
+      setRestoreError(null);
       return;
     }
     let cancelled = false;
+    const restoreController = new AbortController();
+    const restoreTimer = setTimeout(
+      () => restoreController.abort(new Error("canvas restore timed out")),
+      CANVAS_RESTORE_TIMEOUT_MS,
+    );
     setHydrated(false);
+    setRestorePending(true);
+    setRestoreError(null);
     // 切 Campaign（Codex P2）：先清掉上一项目残留在内存的 items——否则下方
     // 恢复合并的 extra 过滤会把 A 项目的版本 tile 保进 B 的画布，且随后的
     // 自动保存会把它们持久化进 B 的 ProjectCanvas（route 归属校验只到
@@ -402,6 +597,7 @@ export function OpenCanvas({
       try {
         const res = await fetch(
           `/api/workspaces/${persistWs}/projects/${persistProject}/canvas`,
+          { signal: restoreController.signal },
         );
         if (!res.ok) return;
         const data = (await res.json()) as {
@@ -457,16 +653,28 @@ export function OpenCanvas({
       } catch {
         /* 读取异常 → 走下方 finally 的「未恢复不放开保存」路径 */
       } finally {
+        clearTimeout(restoreTimer);
         // 只有成功恢复才放开自动保存（Codex P2）：读取失败（瞬时非 200 /
         // 网络异常）时 items 已被上方作用域清空，若照旧置 hydrated，自动
         // 保存会把空画布 PUT 覆盖服务端已存状态。代价是失败这次会话的
         // 编辑不入库（画布仍可用，刷新即重试恢复+恢复保存），比静默清库安全。
         // 真空画布不受影响：route 无记录时返回 200 空态，restored 照常为真。
-        if (!cancelled && restored) setHydrated(true);
+        if (!cancelled) {
+          setRestorePending(false);
+          if (restored) {
+            setHydrated(true);
+          } else {
+            setRestoreError(
+              "项目画布恢复失败，请刷新页面重试；本次不会覆盖已保存内容。",
+            );
+          }
+        }
       }
     })();
     return () => {
       cancelled = true;
+      clearTimeout(restoreTimer);
+      restoreController.abort();
     };
   }, [persistWs, persistProject]);
 
@@ -910,7 +1118,10 @@ export function OpenCanvas({
     const src = items.find((i) => i.versionId === srcId);
     if (!src) return null;
     const occupied = items.map((i) => ({ x: i.x, y: i.y, w: i.w, h: i.h }));
-    return planLayerSetRect({ x: src.x, y: src.y, w: src.w, h: src.h }, occupied);
+    return planLayerSetRect(
+      { x: src.x, y: src.y, w: src.w, h: src.h },
+      occupied,
+    );
   }, [edit?.decompose?.pendingSourceVersionId, items]);
 
   /**
@@ -1832,7 +2043,10 @@ export function OpenCanvas({
               而不是一个通用 spinner（`artifact-is-experience`：等待期要有产物的形状）。 */}
           <div className="flex w-1/2 flex-col gap-1.5">
             {Array.from({
-              length: Math.max(1, Math.min(10, edit?.decompose?.layerCount ?? 4)),
+              length: Math.max(
+                1,
+                Math.min(10, edit?.decompose?.layerCount ?? 4),
+              ),
             }).map((_, i) => (
               <span
                 key={i}
@@ -1851,7 +2065,7 @@ export function OpenCanvas({
       ) : null}
 
       {/* items */}
-      {paintOrder.map((it) => {
+      {paintOrder.map((it, paintIndex) => {
         // 隐藏的图层整块不渲染:它仍在数据里(导出分层文档时照样写进去并标隐藏),
         // 只是画布上不占视觉。可见性由图层面板控制,不由覆盖率猜。
         if (it.layerHidden) return null;
@@ -1901,36 +2115,22 @@ export function OpenCanvas({
             }}
           >
             {it.kind === "image" && it.imageUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={it.imageUrl}
-                alt="画布图片"
-                draggable={false}
-                className="h-full w-full rounded-[6px] object-contain"
-                style={{
-                  // 那层淡紫底是普通图片的占位色。图层组是**叠**在同一块矩形上
-                  // 的 RGBA:每一层的透明像素都垫一次 50% 淡紫,四层叠起来就是
-                  // 四道紫雾盖住下面的层,「叠起来跟原图一样」这条不变量当场作废。
-                  // 所以分解产物一律不垫底——它本来就该是透明的。
-                  ...(it.layerSetId
-                    ? {}
-                    : { background: "rgb(244 240 255 / 0.5)" }),
-                }}
-                onLoad={(e) => {
-                  const img = e.currentTarget;
-                  if (!it.naturalW && img.naturalWidth) {
-                    setItems((prev) =>
-                      prev.map((p) =>
-                        p.key === it.key
-                          ? {
-                              ...p,
-                              naturalW: img.naturalWidth,
-                              naturalH: img.naturalHeight,
-                            }
-                          : p,
-                      ),
-                    );
-                  }
+              <CanvasPreviewImage
+                item={it}
+                workspaceId={workspaceId}
+                priority={
+                  isSel || (!!it.versionId && it.versionId === activeVersionId)
+                }
+                // First/current image starts immediately; the rest enter in
+                // small waves so 30+ historical tiles cannot monopolise the
+                // connection before the user sees anything.
+                delayMs={120 + Math.floor(paintIndex / 3) * 220}
+                onOriginalLoad={(naturalW, naturalH) => {
+                  setItems((prev) =>
+                    prev.map((p) =>
+                      p.key === it.key ? { ...p, naturalW, naturalH } : p,
+                    ),
+                  );
                 }}
               />
             ) : it.kind === "shape" ? (
@@ -2089,11 +2289,22 @@ export function OpenCanvas({
       {/* 空态引导 */}
       {items.length === 0 ? (
         <CanvasEmpty
+          restoring={restorePending || restoring}
+          restoreError={restoreError}
           running={running}
           status={status}
           timedOut={timedOut}
           error={error}
         />
+      ) : null}
+
+      {restoreError && items.length > 0 ? (
+        <div
+          data-testid="canvas-restore-error"
+          className="pointer-events-none absolute left-1/2 top-16 z-20 max-w-md -translate-x-1/2 rounded-xl border border-destructive/30 bg-card/95 px-4 py-2 text-center text-xs text-destructive shadow-lg backdrop-blur"
+        >
+          {restoreError}
+        </div>
       ) : null}
 
       {/* 顶部缩放工具条 */}
@@ -2565,9 +2776,7 @@ export function OpenCanvas({
                         <button
                           type="button"
                           onPointerDown={(e) => e.stopPropagation()}
-                          onClick={() =>
-                            setDecomposeOpen((prev) => !prev)
-                          }
+                          onClick={() => setDecomposeOpen((prev) => !prev)}
                           disabled={edit.decompose.busy}
                           title="把这张图拆成多张可独立编辑的透明图层"
                           className={[
@@ -2625,7 +2834,10 @@ export function OpenCanvas({
                                 edit.decompose?.onIntentChange(e.target.value)
                               }
                               onKeyDown={(e) => {
-                                if (e.key === "Enter" && !edit.decompose?.busy) {
+                                if (
+                                  e.key === "Enter" &&
+                                  !edit.decompose?.busy
+                                ) {
                                   e.preventDefault();
                                   edit.decompose?.onRun(soloVersion);
                                   setDecomposeOpen(false);
@@ -2764,11 +2976,15 @@ function ShapeView({ item }: { item: CanvasItem }) {
 }
 
 function CanvasEmpty({
+  restoring,
+  restoreError,
   running,
   status,
   timedOut,
   error,
 }: {
+  restoring: boolean;
+  restoreError: string | null;
   running: boolean;
   status: string | null;
   timedOut: boolean;
@@ -2776,7 +2992,24 @@ function CanvasEmpty({
 }) {
   return (
     <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
-      {timedOut ? (
+      {restoring ? (
+        <>
+          <div className="h-10 w-10 animate-spin rounded-full border-2 border-accent-soft border-t-primary" />
+          <div className="mt-3 text-sm font-medium text-foreground">
+            正在恢复项目画布…
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            当前作品会优先显示，其余历史图片随后加载。
+          </p>
+        </>
+      ) : restoreError ? (
+        <>
+          <div className="text-sm text-destructive">画布恢复失败</div>
+          <p className="mt-1 max-w-sm text-xs text-muted-foreground">
+            {restoreError}
+          </p>
+        </>
+      ) : timedOut ? (
         <>
           <div className="text-sm text-warning">生成超时</div>
           <p className="mt-1 text-xs text-muted-foreground">

@@ -260,6 +260,8 @@ model Asset {
   // 被重新生成删除时，其镜像素材随之清理。
   generationVersionId    String?           @unique
   generationVersion      GenerationVersion? @relation("GenerationVersionMirror", fields: [generationVersionId], references: [id], onDelete: Cascade)
+  // 画布只读取 worker 预生成的有界 WebP；禁止在图片 GET handler 中抓远端原图并现场转码。
+  previewStorageKey      String?
 
   @@index([workspaceId, category])
   @@index([workspaceId, libraryKind])

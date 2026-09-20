@@ -50,10 +50,13 @@ export interface DecomposeJobResult {
  * 上游(fal)返回的是**临时** URL,过期就取不到了,所以必须当场下载并转存到我们
  * 自己的存储;顺带这份字节正好用来算实墨包围盒,不必为分析再拉一次。
  */
-async function fetchLayerBytes(url: string): Promise<{ buf: Buffer; mime: string }> {
+async function fetchLayerBytes(
+  url: string,
+): Promise<{ buf: Buffer; mime: string }> {
   if (url.startsWith("data:")) {
     const match = /^data:([^;,]+)(;base64)?,(.*)$/s.exec(url);
-    if (!match || !match[2]) throw new Error("unsupported inline layer payload");
+    if (!match || !match[2])
+      throw new Error("unsupported inline layer payload");
     return {
       buf: Buffer.from(match[3] ?? "", "base64"),
       mime: match[1] || "image/png",
@@ -104,8 +107,12 @@ export async function runDecomposeJob(
   // AbortController)。所以让外层先写终态:`markFailed` 之后即使孤儿链稍后跑完,
   // 它落库的那一组也会被 catch 里的整组回滚清掉,不会留下"任务失败但图层却在"。
   let watchdog: NodeJS.Timeout | null = null;
+  const deadlineAt = Date.now() + TIMEOUT_MS;
   const timeout = new Promise<never>((_, reject) => {
-    watchdog = setTimeout(() => reject(new DecomposeTimeoutError()), TIMEOUT_MS);
+    watchdog = setTimeout(
+      () => reject(new DecomposeTimeoutError()),
+      TIMEOUT_MS,
+    );
   });
   const clearWatchdog = () => {
     if (watchdog) clearTimeout(watchdog);
@@ -251,39 +258,39 @@ export async function runDecomposeJob(
       );
 
       prepared.push({
-          generation: { connect: { id: generationId } },
-          index: nextIndex++,
-          imageUrl: storedUrl,
-          width: analysis.width || layer.width,
-          height: analysis.height || layer.height,
-          parentVersionId: source.id,
-          isFinal: false,
-          params: {
-            ...sourceParams,
-            imageKind: "GENERATED",
-            layerRole: "layer",
-            layerSetId,
-            layerIndex: i,
-            // 显隐一律默认可见。细层(实墨覆盖率极低)只打标记不隐藏——真上游
-            // 实测那组绿色角标覆盖率 0.12%,是真实设计元素;按覆盖率自动隐藏
-            // 会让用户以为模型没拆出来。
-            layerHidden: false,
-            layerOpacity: 1,
-            layerZ: i,
-            ...(analysis.bounds ? { layerBounds: analysis.bounds } : {}),
-            layerInkCoverage: analysis.inkCoverage,
-            layerThin: analysis.thin,
-            decompose: {
-              sourceVersionId: source.id,
-              requestedLayerCount: layerCount,
-              ...(intent ? { intent } : {}),
-              ...(result.seed !== undefined ? { seed: result.seed } : {}),
-              ...(result.usage?.provider
-                ? { provider: result.usage.provider }
-                : {}),
-              decomposedAt,
-            },
-          } as Prisma.InputJsonValue,
+        generation: { connect: { id: generationId } },
+        index: nextIndex++,
+        imageUrl: storedUrl,
+        width: analysis.width || layer.width,
+        height: analysis.height || layer.height,
+        parentVersionId: source.id,
+        isFinal: false,
+        params: {
+          ...sourceParams,
+          imageKind: "GENERATED",
+          layerRole: "layer",
+          layerSetId,
+          layerIndex: i,
+          // 显隐一律默认可见。细层(实墨覆盖率极低)只打标记不隐藏——真上游
+          // 实测那组绿色角标覆盖率 0.12%,是真实设计元素;按覆盖率自动隐藏
+          // 会让用户以为模型没拆出来。
+          layerHidden: false,
+          layerOpacity: 1,
+          layerZ: i,
+          ...(analysis.bounds ? { layerBounds: analysis.bounds } : {}),
+          layerInkCoverage: analysis.inkCoverage,
+          layerThin: analysis.thin,
+          decompose: {
+            sourceVersionId: source.id,
+            requestedLayerCount: layerCount,
+            ...(intent ? { intent } : {}),
+            ...(result.seed !== undefined ? { seed: result.seed } : {}),
+            ...(result.usage?.provider
+              ? { provider: result.usage.provider }
+              : {}),
+            decomposedAt,
+          },
+        } as Prisma.InputJsonValue,
       });
 
       // 备料阶段占 30→95;真正落库在循环之后。
@@ -316,29 +323,67 @@ export async function runDecomposeJob(
       await rollbackLayerSet();
       throw new Error("提交后判超时,已撤销本组图层");
     }
-    // **在这里认领终态**,而不是等 markSucceeded 写完。
+
+    // **在任何预览镜像 await 之前认领终态**。镜像/预览是成功结果的
+    // 派生加速层，不是分解事务的一部分；若看门狗在镜像循环的 await
+    // 中烧掉，failOnce 会先回滚整组，迟到链却可能再把它写成成功。
     //
     // 只判不认领的话还剩一条缝:看门狗恰在下面几个 await 之间烧掉,`failOnce` 会
     // 回滚整组并把任务标 FAILED,而这条链稍后照样把 SUCCEEDED 写上去——用户拿到
     // 一个成功的任务,`refId` 却指向一组已经被删掉的图层。判据与置位之间没有
     // await,单线程下插不进第二个写入者,这一句就是那把锁。
     settled = true;
-
-    try {
+    // 把总看门狗剩余的时间原样移交给终态阶段；不能先清掉看门狗再
+    // await BullMQ/DB，否则 Redis 在这里失联会让 concurrency:1 永久堵住。
+    // updateProgress 若迟到恢复，会在写 SUCCEEDED 之前检查 timedOut 并退出。
+    clearWatchdog();
+    let finalizationTimedOut = false;
+    let finalizationTimer: NodeJS.Timeout | undefined;
+    const finalizationTimeout = new DecomposeTimeoutError();
+    const remainingMs = Math.max(1, deadlineAt - Date.now());
+    const finalize = async () => {
       await job.updateProgress(100);
-      // 走会抛的变体:终态写丢了必须让外层知道,否则任务永远停在 RUNNING,
-      // 而图层已经提交、客户端还锁着等一个永远不来的完成通知。
+      if (finalizationTimedOut) throw finalizationTimeout;
       await markSucceededOrThrow(taskId, {
         refId: layerSetId,
         refCount: versionIds.length,
       });
+      // Prisma cannot be cancelled mid-query. If the deadline fired while the
+      // terminal update was in flight, restore FAILED after the late success so
+      // a timed-out job never ends with a contradictory successful task row.
+      if (finalizationTimedOut) {
+        await markFailed(taskId, String(finalizationTimeout));
+        throw finalizationTimeout;
+      }
+    };
+    try {
+      await Promise.race([
+        finalize(),
+        new Promise<never>((_, reject) => {
+          finalizationTimer = setTimeout(() => {
+            finalizationTimedOut = true;
+            reject(finalizationTimeout);
+          }, remainingMs);
+        }),
+      ]);
     } catch (writeErr) {
       // 认领了却没写成(库挂了/进程被打断)。这时必须把认领让出去,否则下面的
       // `failOnce` 看见 settled 会直接返回,留下"整组可见 + 任务永远 RUNNING"。
       settled = false;
       throw writeErr;
+    } finally {
+      if (finalizationTimer) clearTimeout(finalizationTimer);
     }
-    return { generationId, sourceVersionId: source.id, layerSetId, versionIds };
+
+    // 分层预览不再阻塞这条 concurrency:1 队列。画布首次请求该版本的
+    // `/preview` 时会在 image-preview 队列中建镜像和 WebP；真实图层与
+    // DECOMPOSE 终态因此不再被派生加速层的外部 await 绑在一起。
+    return {
+      generationId,
+      sourceVersionId: source.id,
+      layerSetId,
+      versionIds,
+    };
   } catch (err) {
     // 兜底撤销。整组落库已经是一次事务,正常情况下失败时库里本就没有半成品;
     // 但事务**之后**仍可能出岔子(markSucceeded 失败、进程被杀),那时这一组已经

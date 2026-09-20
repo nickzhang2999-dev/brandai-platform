@@ -4,6 +4,15 @@ import { ApiException, handleError, requireUser } from "@/lib/api";
 import { requireOwnedWorkspace } from "@/lib/workspace";
 import { safeFetch } from "@/lib/ssrf";
 import { getObjectStream } from "@/lib/s3";
+import { getEffectiveStorage } from "@/lib/settings";
+import {
+  IMAGE_PREVIEW_WIDTH,
+  imagePreviewEtag,
+  imagePreviewHeaders,
+  nodeStreamToBuffer,
+  parseImagePreviewWidth,
+} from "@/lib/image-preview";
+import { enqueueImagePreview } from "@/lib/queue";
 
 /**
  * M-A · 资产公网代理 — streams an asset's bytes back over the canonical public
@@ -31,7 +40,7 @@ function inlineSafeImage(contentType: string): boolean {
 }
 
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ wsId: string; assetId: string }> },
 ) {
   try {
@@ -44,7 +53,51 @@ export async function GET(
       throw new ApiException(404, "Asset not found");
     }
 
+    const previewWidth = parseImagePreviewWidth(req);
+    const previewEtag = previewWidth
+      ? imagePreviewEtag(`asset-${asset.id}`, IMAGE_PREVIEW_WIDTH, "v2")
+      : null;
+    if (previewEtag && req.headers.get("if-none-match") === previewEtag) {
+      return new Response(null, {
+        status: 304,
+        headers: imagePreviewHeaders(previewEtag),
+      });
+    }
+
     const cacheControl = "private, max-age=3600";
+
+    if (previewWidth && asset.previewStorageKey) {
+      const readSignal = AbortSignal.timeout(10_000);
+      const object = await getObjectStream(asset.previewStorageKey, readSignal);
+      const preview = await nodeStreamToBuffer(
+        object.body,
+        4 * 1024 * 1024,
+        readSignal,
+      );
+      return new Response(new Uint8Array(preview), {
+        headers: {
+          "content-type": "image/webp",
+          ...imagePreviewHeaders(previewEtag!, preview.byteLength),
+          "x-content-type-options": "nosniff",
+        },
+      });
+    }
+
+    if (previewWidth) {
+      const hasInlineSource =
+        asset.storageKey.startsWith("data:") || asset.url.startsWith("data:");
+      const storage = hasInlineSource ? null : await getEffectiveStorage();
+      if (!hasInlineSource && storage?.configured) {
+        await enqueueImagePreview({ workspaceId: wsId, assetId });
+        return Response.json(
+          { status: "PENDING", message: "Asset preview is being prepared" },
+          { status: 202, headers: { "retry-after": "2" } },
+        );
+      }
+      // Inline sources cannot be consumed as S3 keys, and without configured
+      // storage no generated preview can be persisted. Fall through to the
+      // existing authenticated raw path instead of polling an impossible job.
+    }
 
     if (isAbsoluteUrl(asset.storageKey) || isAbsoluteUrl(asset.url)) {
       const src = isAbsoluteUrl(asset.url) ? asset.url : asset.storageKey;
@@ -78,7 +131,9 @@ export async function GET(
     // 上传端接受任意 File 并原样存 mimeType:上传 text/html 经此 /raw 会在 app 源
     // 内联执行(存储型 XSS)。与 WEBSITE 分支同策:非图片降级 octet-stream + 附件。
     const resolvedType =
-      asset.mimeType && asset.mimeType !== "image/*" ? asset.mimeType : contentType;
+      asset.mimeType && asset.mimeType !== "image/*"
+        ? asset.mimeType
+        : contentType;
     const isImg = inlineSafeImage(resolvedType || "");
     const headers: Record<string, string> = {
       "content-type": isImg ? resolvedType : "application/octet-stream",
