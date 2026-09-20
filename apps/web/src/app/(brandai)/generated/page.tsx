@@ -123,7 +123,7 @@ function GeneratedPreviewImage({ src, alt }: { src: string; alt: string }) {
               retryTimerRef.current = null;
               setRetry((current) => current + 1);
             },
-            Math.min(2_000, 250 * 2 ** retry),
+            2_000,
           );
         }}
       />
