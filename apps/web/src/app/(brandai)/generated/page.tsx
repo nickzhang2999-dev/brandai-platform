@@ -31,6 +31,7 @@ function GeneratedPreviewImage({ src, alt }: { src: string; alt: string }) {
   const retryTimerRef = useRef<number | null>(null);
   const deadlineTimerRef = useRef<number | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const imageRef = useRef<HTMLImageElement>(null);
   const completedRef = useRef(false);
 
   useEffect(() => {
@@ -48,7 +49,13 @@ function GeneratedPreviewImage({ src, alt }: { src: string; alt: string }) {
       }, 120_000);
     };
     const container = containerRef.current;
-    const observer = container
+    const image = imageRef.current;
+    const alreadyLoaded = Boolean(image?.complete && image.naturalWidth);
+    if (alreadyLoaded) {
+      completedRef.current = true;
+      setLoaded(true);
+    }
+    const observer = container && !alreadyLoaded
       ? new IntersectionObserver(
           (entries) => {
             if (!entries.some((entry) => entry.isIntersecting)) return;
@@ -59,7 +66,7 @@ function GeneratedPreviewImage({ src, alt }: { src: string; alt: string }) {
         )
       : null;
     if (container && observer) observer.observe(container);
-    else startDeadline();
+    else if (!alreadyLoaded) startDeadline();
     return () => {
       observer?.disconnect();
       if (retryTimerRef.current != null) {
@@ -101,6 +108,7 @@ function GeneratedPreviewImage({ src, alt }: { src: string; alt: string }) {
       ) : null}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
+        ref={imageRef}
         key={renderedSrc}
         src={renderedSrc}
         alt={alt}
