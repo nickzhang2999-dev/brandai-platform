@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import type { GeneratedAsset, Project } from "@brandai/contracts";
 import { apiFetch, assetThumbUrl } from "@/lib/client";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { PageHeader } from "../_ui";
 import { useBrand } from "../brand-context";
 
@@ -21,6 +21,50 @@ const SCENE_LABELS: Record<string, string> = {
   CAMPAIGN_KV: "Campaign KV",
   SELLING_POINT: "卖点图",
 };
+
+function GeneratedPreviewImage({
+  previewSrc,
+  originalSrc,
+  alt,
+}: {
+  previewSrc: string;
+  originalSrc: string;
+  alt: string;
+}) {
+  const [useOriginal, setUseOriginal] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    setUseOriginal(false);
+    setFailed(false);
+  }, [originalSrc, previewSrc]);
+
+  if (failed) {
+    return (
+      <div className="flex h-48 w-full items-center justify-center bg-muted text-xs text-muted-foreground">
+        图片加载失败
+      </div>
+    );
+  }
+
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={useOriginal ? originalSrc : previewSrc}
+      alt={alt}
+      loading="lazy"
+      decoding="async"
+      className="h-48 w-full object-cover"
+      onError={() => {
+        if (!useOriginal && previewSrc !== originalSrc) {
+          setUseOriginal(true);
+          return;
+        }
+        setFailed(true);
+      }}
+    />
+  );
+}
 
 /**
  * V0.10 · 生成图 = AI 工作台产出的 GENERATED 镜像。
@@ -178,11 +222,10 @@ export default function GeneratedImagesPage() {
               key={asset.id}
               className="overflow-hidden rounded-3xl border border-border bg-card shadow-[0_8px_24px_rgba(30,30,60,0.06)]"
             >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={assetThumbUrl(wsId, asset.id, asset.url)}
+              <GeneratedPreviewImage
+                previewSrc={assetThumbUrl(wsId, asset.id, asset.url, 768)}
+                originalSrc={assetThumbUrl(wsId, asset.id, asset.url)}
                 alt={asset.fileName}
-                className="h-48 w-full object-cover"
               />
               <div className="p-5">
                 <div className="flex items-start justify-between gap-3">
