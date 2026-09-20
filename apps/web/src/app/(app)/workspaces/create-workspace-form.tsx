@@ -8,6 +8,7 @@ import {
   type BrandWorkspace,
 } from "@brandai/contracts";
 import { Button, Input, Label, Spinner } from "@brandai/ui";
+import { startNavigationProgress } from "@/app/navigation-progress";
 import { apiFetch } from "@/lib/client";
 
 export function CreateWorkspaceForm() {
@@ -30,6 +31,7 @@ export function CreateWorkspaceForm() {
       });
     },
     onSuccess: (ws) => {
+      startNavigationProgress();
       router.push(`/workspaces/${ws.id}`);
       router.refresh();
     },

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Project, TaskState } from "@brandai/contracts";
+import { startNavigationProgress } from "@/app/navigation-progress";
 import { apiFetch } from "@/lib/client";
 import { quickActions } from "@/lib/brandai-mock";
 import { useBrand } from "./brand-context";
@@ -143,6 +144,7 @@ export default function HomePage() {
       if (result?.styleKeywords?.length) {
         params.set("style", result.styleKeywords.slice(0, 20).join(","));
       }
+      startNavigationProgress();
       router.push(`/workspace?${params.toString()}`);
     })();
   }, [status, jobId, wsId, brief, qc, router]);
@@ -151,6 +153,7 @@ export default function HomePage() {
     if (running || start.isPending) return;
     const text = brief.trim();
     if (!text) {
+      startNavigationProgress();
       router.push("/workspace");
       return;
     }

@@ -245,6 +245,7 @@
 | H14  | 卡片·推荐品牌卡                     | doc04§5.7.4 | ✅   | `recommended-brands.tsx`（cover/name/verified/subtitle/slogan/tags） | 见 B5                                                                                    | 接入 2026-06-20           |
 | H15  | 卡片·品牌知识卡                     | doc04§5.7.5 | ✅   | brand-knowledge 富卡片                                               | 8 类富结构卡（见 D4-D9）                                                                 | 2026-06-20                |
 | H16  | 卡片·素材卡                         | doc04§5.7.6 | ✅   | assets                                                               | —                                                                                        | 2026-06-20                |
+| H17  | 全局路由加载反馈（顶部进度条）      | 用户反馈·感知性能 | ✅   | `app/navigation-progress.tsx` + `app/globals.css`                    | 内部链接、前进后退及命令式跳转即时显示；路由完成后收束，15 秒安全兜底并适配减少动态效果  | 新增 2026-09-20           |
 
 ## I · 平台 / 后端能力（产品方案未展开，但实现真实需要——本进度表「超集」部分）
 

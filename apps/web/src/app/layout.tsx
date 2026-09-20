@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import "./globals.css";
 import { CdsPreviewToolbarGuard } from "./cds-preview-toolbar-guard";
+import { NavigationProgress } from "./navigation-progress";
 import { Providers } from "./providers";
 
 export const metadata: Metadata = {
@@ -48,6 +50,9 @@ export default function RootLayout({
       </head>
       <body>
         <CdsPreviewToolbarGuard />
+        <Suspense fallback={null}>
+          <NavigationProgress />
+        </Suspense>
         <Providers>{children}</Providers>
       </body>
     </html>

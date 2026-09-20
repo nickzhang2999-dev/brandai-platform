@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Asset, AssetFolder, Project, TaskState } from "@brandai/contracts";
 import { Button } from "@brandai/ui";
+import { startNavigationProgress } from "@/app/navigation-progress";
 import { apiFetch, assetThumbUrl } from "@/lib/client";
 import {
   MAX_BATCH_IMAGE_UPLOAD_FILES,
@@ -541,6 +542,7 @@ export default function AssetsPage() {
       });
       return r.result;
     }
+    startNavigationProgress();
     router.push(`/workspace?project=${r.project.id}`);
     return r.result;
   }
