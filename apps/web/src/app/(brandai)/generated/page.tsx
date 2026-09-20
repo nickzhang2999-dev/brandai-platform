@@ -24,6 +24,7 @@ const SCENE_LABELS: Record<string, string> = {
 
 function GeneratedPreviewImage({ src, alt }: { src: string; alt: string }) {
   const [retry, setRetry] = useState(0);
+  const [cycle, setCycle] = useState(0);
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
   const startedAtRef = useRef(0);
@@ -68,18 +69,26 @@ function GeneratedPreviewImage({ src, alt }: { src: string; alt: string }) {
       retryTimerRef.current = null;
       deadlineTimerRef.current = null;
     };
-  }, [src]);
+  }, [cycle, src]);
 
   if (failed) {
     return (
-      <div className="flex h-48 w-full items-center justify-center bg-muted text-xs text-muted-foreground">
-        图片加载失败
+      <div className="flex h-48 w-full flex-col items-center justify-center gap-2 bg-muted text-xs text-muted-foreground">
+        <span>图片加载失败</span>
+        <button
+          type="button"
+          onClick={() => setCycle((current) => current + 1)}
+          className="rounded-full border border-primary/20 bg-background px-3 py-1.5 font-medium text-primary transition hover:bg-accent-soft"
+        >
+          重新加载
+        </button>
       </div>
     );
   }
 
   const separator = src.includes("?") ? "&" : "?";
-  const renderedSrc = retry ? `${src}${separator}retry=${retry}` : src;
+  const renderedSrc =
+    retry || cycle ? `${src}${separator}retry=${cycle}-${retry}` : src;
   return (
     <div
       ref={containerRef}
