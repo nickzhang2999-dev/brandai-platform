@@ -26,14 +26,14 @@ function GeneratedPreviewImage({ src, alt }: { src: string; alt: string }) {
   const [retry, setRetry] = useState(0);
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
-  const startedAtRef = useRef(Date.now());
+  const startedAtRef = useRef(0);
   const retryTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     setRetry(0);
     setLoaded(false);
     setFailed(false);
-    startedAtRef.current = Date.now();
+    startedAtRef.current = 0;
     return () => {
       if (retryTimerRef.current != null) {
         window.clearTimeout(retryTimerRef.current);
@@ -67,7 +67,9 @@ function GeneratedPreviewImage({ src, alt }: { src: string; alt: string }) {
         className={`h-full w-full object-cover transition-opacity duration-200 ${loaded ? "opacity-100" : "opacity-0"}`}
         onLoad={() => setLoaded(true)}
         onError={() => {
-          if (Date.now() - startedAtRef.current >= 120_000) {
+          const now = Date.now();
+          if (!startedAtRef.current) startedAtRef.current = now;
+          if (now - startedAtRef.current >= 120_000) {
             setFailed(true);
             return;
           }
