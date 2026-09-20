@@ -31,14 +31,16 @@ function GeneratedPreviewImage({ src, alt }: { src: string; alt: string }) {
   const retryTimerRef = useRef<number | null>(null);
   const deadlineTimerRef = useRef<number | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const completedRef = useRef(false);
 
   useEffect(() => {
     setRetry(0);
     setLoaded(false);
     setFailed(false);
     startedAtRef.current = 0;
+    completedRef.current = false;
     const startDeadline = () => {
-      if (startedAtRef.current) return;
+      if (completedRef.current || startedAtRef.current) return;
       startedAtRef.current = Date.now();
       deadlineTimerRef.current = window.setTimeout(() => {
         deadlineTimerRef.current = null;
@@ -106,6 +108,7 @@ function GeneratedPreviewImage({ src, alt }: { src: string; alt: string }) {
         decoding="async"
         className={`h-full w-full object-cover transition-opacity duration-200 ${loaded ? "opacity-100" : "opacity-0"}`}
         onLoad={() => {
+          completedRef.current = true;
           if (deadlineTimerRef.current != null) {
             window.clearTimeout(deadlineTimerRef.current);
             deadlineTimerRef.current = null;
