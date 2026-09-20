@@ -28,17 +28,45 @@ function GeneratedPreviewImage({ src, alt }: { src: string; alt: string }) {
   const [failed, setFailed] = useState(false);
   const startedAtRef = useRef(0);
   const retryTimerRef = useRef<number | null>(null);
+  const deadlineTimerRef = useRef<number | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setRetry(0);
     setLoaded(false);
     setFailed(false);
     startedAtRef.current = 0;
+    const startDeadline = () => {
+      if (startedAtRef.current) return;
+      startedAtRef.current = Date.now();
+      deadlineTimerRef.current = window.setTimeout(() => {
+        deadlineTimerRef.current = null;
+        setFailed(true);
+      }, 120_000);
+    };
+    const container = containerRef.current;
+    const observer = container
+      ? new IntersectionObserver(
+          (entries) => {
+            if (!entries.some((entry) => entry.isIntersecting)) return;
+            startDeadline();
+            observer?.disconnect();
+          },
+          { rootMargin: "2500px 0px" },
+        )
+      : null;
+    if (container && observer) observer.observe(container);
+    else startDeadline();
     return () => {
+      observer?.disconnect();
       if (retryTimerRef.current != null) {
         window.clearTimeout(retryTimerRef.current);
       }
+      if (deadlineTimerRef.current != null) {
+        window.clearTimeout(deadlineTimerRef.current);
+      }
       retryTimerRef.current = null;
+      deadlineTimerRef.current = null;
     };
   }, [src]);
 
@@ -53,7 +81,10 @@ function GeneratedPreviewImage({ src, alt }: { src: string; alt: string }) {
   const separator = src.includes("?") ? "&" : "?";
   const renderedSrc = retry ? `${src}${separator}retry=${retry}` : src;
   return (
-    <div className="relative h-48 w-full overflow-hidden bg-accent-soft/50">
+    <div
+      ref={containerRef}
+      className="relative h-48 w-full overflow-hidden bg-accent-soft/50"
+    >
       {!loaded ? (
         <div className="absolute inset-0 motion-safe:animate-pulse bg-gradient-to-r from-transparent via-card/70 to-transparent" />
       ) : null}
@@ -65,10 +96,22 @@ function GeneratedPreviewImage({ src, alt }: { src: string; alt: string }) {
         loading="lazy"
         decoding="async"
         className={`h-full w-full object-cover transition-opacity duration-200 ${loaded ? "opacity-100" : "opacity-0"}`}
-        onLoad={() => setLoaded(true)}
+        onLoad={() => {
+          if (deadlineTimerRef.current != null) {
+            window.clearTimeout(deadlineTimerRef.current);
+            deadlineTimerRef.current = null;
+          }
+          setLoaded(true);
+        }}
         onError={() => {
           const now = Date.now();
-          if (!startedAtRef.current) startedAtRef.current = now;
+          if (!startedAtRef.current) {
+            startedAtRef.current = now;
+            deadlineTimerRef.current = window.setTimeout(() => {
+              deadlineTimerRef.current = null;
+              setFailed(true);
+            }, 120_000);
+          }
           if (now - startedAtRef.current >= 120_000) {
             setFailed(true);
             return;
