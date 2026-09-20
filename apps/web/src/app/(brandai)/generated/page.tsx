@@ -180,7 +180,7 @@ export default function GeneratedImagesPage() {
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
-                src={assetThumbUrl(wsId, asset.id, asset.url)}
+                src={assetThumbUrl(wsId, asset.id, asset.url, 768)}
                 alt={asset.fileName}
                 className="h-48 w-full object-cover"
               />
