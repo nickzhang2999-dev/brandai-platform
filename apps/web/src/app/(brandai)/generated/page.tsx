@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import type { GeneratedAsset, Project } from "@brandai/contracts";
 import { apiFetch, assetThumbUrl } from "@/lib/client";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { PageHeader } from "../_ui";
 import { useBrand } from "../brand-context";
 
@@ -21,6 +21,70 @@ const SCENE_LABELS: Record<string, string> = {
   CAMPAIGN_KV: "Campaign KV",
   SELLING_POINT: "卖点图",
 };
+
+function GeneratedPreviewImage({ src, alt }: { src: string; alt: string }) {
+  const [retry, setRetry] = useState(0);
+  const [loaded, setLoaded] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const startedAtRef = useRef(Date.now());
+  const retryTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    setRetry(0);
+    setLoaded(false);
+    setFailed(false);
+    startedAtRef.current = Date.now();
+    return () => {
+      if (retryTimerRef.current != null) {
+        window.clearTimeout(retryTimerRef.current);
+      }
+      retryTimerRef.current = null;
+    };
+  }, [src]);
+
+  if (failed) {
+    return (
+      <div className="flex h-48 w-full items-center justify-center bg-muted text-xs text-muted-foreground">
+        图片加载失败
+      </div>
+    );
+  }
+
+  const separator = src.includes("?") ? "&" : "?";
+  const renderedSrc = retry ? `${src}${separator}retry=${retry}` : src;
+  return (
+    <div className="relative h-48 w-full overflow-hidden bg-accent-soft/50">
+      {!loaded ? (
+        <div className="absolute inset-0 motion-safe:animate-pulse bg-gradient-to-r from-transparent via-card/70 to-transparent" />
+      ) : null}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        key={renderedSrc}
+        src={renderedSrc}
+        alt={alt}
+        loading="lazy"
+        decoding="async"
+        className={`h-full w-full object-cover transition-opacity duration-200 ${loaded ? "opacity-100" : "opacity-0"}`}
+        onLoad={() => setLoaded(true)}
+        onError={() => {
+          if (Date.now() - startedAtRef.current >= 120_000) {
+            setFailed(true);
+            return;
+          }
+          if (retryTimerRef.current != null) return;
+          setLoaded(false);
+          retryTimerRef.current = window.setTimeout(
+            () => {
+              retryTimerRef.current = null;
+              setRetry((current) => current + 1);
+            },
+            Math.min(2_000, 250 * 2 ** retry),
+          );
+        }}
+      />
+    </div>
+  );
+}
 
 /**
  * V0.10 · 生成图 = AI 工作台产出的 GENERATED 镜像。
@@ -178,11 +242,9 @@ export default function GeneratedImagesPage() {
               key={asset.id}
               className="overflow-hidden rounded-3xl border border-border bg-card shadow-[0_8px_24px_rgba(30,30,60,0.06)]"
             >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
+              <GeneratedPreviewImage
                 src={assetThumbUrl(wsId, asset.id, asset.url, 768)}
                 alt={asset.fileName}
-                className="h-48 w-full object-cover"
               />
               <div className="p-5">
                 <div className="flex items-start justify-between gap-3">
