@@ -128,7 +128,8 @@ def check_container(image, expected_sha):
         status, _, body = request('/studio/start/upload', png, cookie=cookie,
                                  headers={'Content-Type': 'image/png', 'X-File-Name': 'ci.png'})
         require(status == 200, 'Image upload failed')
-        upload = json.loads(body)
+        upload = json.loads(body)['asset']
+        require(upload['sha256'] == hashlib.sha256(png).hexdigest(), 'Upload returned a different image')
         checks.append('Image upload through HTTP')
 
         project = api('saveProject', {'projectName': 'Container persistence check'}, cookie)
