@@ -3,11 +3,18 @@ name: Branch Image
 # Only the independent review branch publishes this image. No production deploy.
 on:
   push:
-    branches: [claude/novart-workbench-preview]
+    branches: [claude/novart-workbench-preview, claude/novart-product-integration]
     paths:
       - 'previews/novart-workbench/**'
       - 'scripts/check-novart-container.py'
       - '.github/workflows/branch-image.yml'
+      - '.github/workflows/novart-integration.yml'
+      - 'apps/**'
+      - 'packages/**'
+      - 'deploy/novart/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
   workflow_dispatch:
 
 permissions:
@@ -19,6 +26,10 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  product:
+    if: github.ref == 'refs/heads/claude/novart-product-integration'
+    uses: ./.github/workflows/novart-integration.yml
+
   preview:
     if: github.ref == 'refs/heads/claude/novart-workbench-preview'
     runs-on: ubuntu-latest

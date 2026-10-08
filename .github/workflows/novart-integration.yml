@@ -1,12 +1,12 @@
 name: Novart backend integration
 
 on:
-  push:
-    branches: [claude/novart-product-integration]
+  workflow_call:
   workflow_dispatch:
 
 permissions:
   contents: read
+  packages: write
 
 concurrency:
   group: novart-integration-${{ github.ref }}
@@ -16,7 +16,7 @@ jobs:
   backend:
     if: github.ref == 'refs/heads/claude/novart-product-integration'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     services:
       postgres:
         image: postgres:16-alpine
@@ -81,3 +81,63 @@ jobs:
           done
           test "$ready" = 1
           pnpm -F web exec tsx scripts/verify-workbench-backend.ts
+      - name: Prepare and build immutable CDS images
+        env:
+          REPOSITORY: ${{ github.repository }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          mkdir -p .novart-build/next
+          rsync -a --exclude cache apps/web/.next/ .novart-build/next/
+          WEB_IMAGE="ghcr.io/${REPOSITORY,,}/novart-product-web:sha-${COMMIT_SHA}"
+          AI_IMAGE="ghcr.io/${REPOSITORY,,}/novart-product-ai:sha-${COMMIT_SHA}"
+          echo "WEB_IMAGE=$WEB_IMAGE" >> "$GITHUB_ENV"
+          echo "AI_IMAGE=$AI_IMAGE" >> "$GITHUB_ENV"
+          docker build -f deploy/novart/Dockerfile.web --build-arg COMMIT_SHA="$COMMIT_SHA" \
+            --label "org.opencontainers.image.source=https://github.com/$REPOSITORY" \
+            --label "org.opencontainers.image.revision=$COMMIT_SHA" -t "$WEB_IMAGE" .
+          docker build -f deploy/novart/Dockerfile.ai --build-arg COMMIT_SHA="$COMMIT_SHA" \
+            --label "org.opencontainers.image.source=https://github.com/$REPOSITORY" \
+            --label "org.opencontainers.image.revision=$COMMIT_SHA" -t "$AI_IMAGE" .
+      - name: Check the built containers against the disposable database
+        run: |
+          trap 'docker rm -f novart-ci-web novart-ci-ai novart-ci-worker >/dev/null 2>&1 || true' EXIT
+          docker run -d --name novart-ci-ai --network host "$AI_IMAGE"
+          docker run -d --name novart-ci-web --network host \
+            -e DATABASE_URL -e REDIS_URL -e AUTH_SECRET -e QUOTA_V1 -e AUTH_ALLOW_DEMO \
+            -e AUTH_URL=http://127.0.0.1:3100 -e AI_SERVICE_URL=http://127.0.0.1:8000 \
+            -e WORKER_HEALTH_URL=http://127.0.0.1:3001 "$WEB_IMAGE" \
+            sh -c 'pnpm -F @brandai/db exec prisma migrate deploy && exec pnpm -F web exec next start -p 3100'
+          docker run -d --name novart-ci-worker --network host \
+            -e DATABASE_URL -e REDIS_URL -e AUTH_SECRET -e AI_SERVICE_URL=http://127.0.0.1:8000 \
+            "$WEB_IMAGE" pnpm -F web worker
+          ready=0
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:3100/api/auth/csrf >/dev/null; then ready=1; break; fi
+            sleep 1
+          done
+          if [ "$ready" != 1 ]; then docker logs novart-ci-web; exit 1; fi
+          WORKBENCH_TEST_URL=http://127.0.0.1:3100 pnpm -F web exec tsx scripts/verify-workbench-backend.ts
+          python - <<'PY'
+          import json, time, urllib.request
+          for attempt in range(30):
+              try:
+                  with urllib.request.urlopen('http://127.0.0.1:3100/api/health', timeout=10) as response:
+                      health = json.load(response)
+                  if health['web'] == 'ok' and health['ai'] == 'ok' and health['worker']['worker'] == 'ok':
+                      print('PASS built Web, AI and Worker containers are healthy; no provider calls made')
+                      break
+              except Exception:
+                  pass
+              time.sleep(1)
+          else:
+              raise SystemExit('Built container health checks did not pass')
+          PY
+      - name: Publish checked images
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_ACTOR: ${{ github.actor }}
+        run: |
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GH_ACTOR" --password-stdin
+          docker push "$WEB_IMAGE"
+          docker push "$AI_IMAGE"
+          docker logout ghcr.io

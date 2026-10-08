@@ -1,0 +1,15 @@
+**/node_modules
+**/.next
+**/.turbo
+**/.venv
+**/__pycache__
+**/.pytest_cache
+**/.pnpm-store
+**/.cds
+**/.git
+**/.env*
+**/*.log
+previews
+docs
+.agents
+.claude

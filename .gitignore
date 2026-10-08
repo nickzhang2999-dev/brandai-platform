@@ -24,6 +24,7 @@ prisma/*.db
 
 # build info
 *.tsbuildinfo
+.novart-build/
 
 # Redis runtime snapshot (local stack artifact — never commit)
 dump.rdb

@@ -3,6 +3,7 @@ import { handleError, requireUser, ApiException } from "@/lib/api";
 import { EditorDocumentError } from "@/lib/editor-document-codec";
 import { readEditorDocument, saveEditorDocument } from "@/lib/editor-documents";
 import { readWorkbenchJson } from "@/lib/workbench-request";
+import { isWorkbenchSameOrigin } from "@/lib/workbench-origin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,8 +25,7 @@ export async function GET(_req: Request, { params }: Context) {
 export async function PUT(req: Request, { params }: Context) {
   try {
     const user = await requireUser();
-    const origin = req.headers.get("origin");
-    if (origin && origin !== new URL(req.url).origin) throw new ApiException(403, "Cross-origin write rejected");
+    if (!isWorkbenchSameOrigin(req)) throw new ApiException(403, "Cross-origin write rejected");
     const body = await readWorkbenchJson(req, EDITOR_DOCUMENT_MAX_BYTES + 4096);
     const { wsId, projectId } = await params;
     return respond(await saveEditorDocument(wsId, projectId, user.id, body));

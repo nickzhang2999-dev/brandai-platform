@@ -55,6 +55,7 @@ try {
   const brand = await call("owner", "/api/workspaces", "POST", { name: `Native integration ${run}` }); assert.equal(brand.status, 201);
   const ws = brand.data.id;
   const select = await call("owner", "/api/workbench/session", "POST", { workspaceId: ws });
+  assert.equal(select.status, 200, JSON.stringify(select.data));
   check("brand selection writes the real session-scoped cookie", () => assert.equal(select.data.activeWorkspaceId, ws));
   const reload = await call("owner", "/api/workbench/session");
   check("brand survives another request", () => assert.equal(reload.data.activeWorkspaceId, ws));

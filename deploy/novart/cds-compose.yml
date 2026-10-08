@@ -1,0 +1,91 @@
+# Dedicated integration project only. Never import into the original product project.
+x-cds-project:
+  name: novart-product-integration
+  description: "Novart isolated product integration; native UI binding still in progress"
+  repo: "https://github.com/nickzhang2999-dev/brandai-platform.git"
+
+x-cds-env:
+  CDS_POSTGRES_USER: "${CDS_POSTGRES_USER:-}"
+  CDS_POSTGRES_PASSWORD: "${CDS_POSTGRES_PASSWORD:-}"
+  CDS_POSTGRES_DB: "${CDS_POSTGRES_DB:-}"
+  CDS_DATABASE_URL: "${CDS_DATABASE_URL:-}"
+  CDS_REDIS_PASSWORD: "${CDS_REDIS_PASSWORD:-}"
+  CDS_REDIS_URL: "${CDS_REDIS_URL:-}"
+  CDS_JWT_SECRET: "${CDS_JWT_SECRET:-}"
+x-cds-env-meta:
+  CDS_POSTGRES_PASSWORD: { kind: auto, hint: "Dedicated integration database password" }
+  CDS_REDIS_PASSWORD: { kind: auto, hint: "Dedicated integration queue password" }
+  CDS_DATABASE_URL: { kind: infra-derived, hint: "Dedicated project database" }
+  CDS_REDIS_URL: { kind: infra-derived, hint: "Dedicated project Redis" }
+  CDS_JWT_SECRET: { kind: auto, hint: "Dedicated project session signing secret" }
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    ports: ["5432"]
+    environment:
+      POSTGRES_USER: "${CDS_POSTGRES_USER}"
+      POSTGRES_PASSWORD: "${CDS_POSTGRES_PASSWORD}"
+      POSTGRES_DB: "${CDS_POSTGRES_DB}"
+    volumes: ["novart_integration_pgdata:/var/lib/postgresql/data"]
+  redis:
+    image: redis:7-alpine
+    ports: ["6379"]
+    command: "redis-server --requirepass ${CDS_REDIS_PASSWORD} --appendonly yes"
+    volumes: ["novart_integration_redis:/data"]
+  ai:
+    image: "ghcr.io/nickzhang2999-dev/brandai-platform/novart-product-ai:sha-${CDS_COMMIT_SHA}"
+    working_dir: /app
+    ports: ["8000"]
+    labels:
+      cds.prebuilt-image: "true"
+      cds.role: "api"
+      cds.readiness-path: "/health"
+      cds.readiness-timeout: "90"
+  web:
+    image: "ghcr.io/nickzhang2999-dev/brandai-platform/novart-product-web:sha-${CDS_COMMIT_SHA}"
+    working_dir: /app
+    command: "sh /app/deploy/novart/start-web.sh"
+    ports: ["3000"]
+    depends_on: [postgres, redis, ai]
+    environment:
+      DATABASE_URL: "${CDS_DATABASE_URL}"
+      REDIS_URL: "${CDS_REDIS_URL}"
+      AUTH_SECRET: "${CDS_JWT_SECRET}"
+      SETTINGS_ENC_KEY: "${CDS_JWT_SECRET}"
+      AUTH_TRUST_HOST: "true"
+      AUTH_ALLOW_DEMO: "0"
+      AI_SERVICE_URL: "http://${CDS_AI_HOST}:${CDS_AI_PORT}"
+      WORKER_HEALTH_URL: "http://${CDS_WORKER_HOST}:${CDS_WORKER_PORT}"
+      BRANDAI_QUEUE_PREFIX: "novart-integration"
+    labels:
+      cds.prebuilt-image: "true"
+      cds.role: "web"
+      cds.path-prefix: "/"
+      cds.web-entry-name: "Novart product integration"
+      cds.web-entry-path: "/login"
+      cds.readiness-path: "/login"
+      cds.readiness-timeout: "180"
+  worker:
+    image: "ghcr.io/nickzhang2999-dev/brandai-platform/novart-product-web:sha-${CDS_COMMIT_SHA}"
+    working_dir: /app
+    command: "pnpm -F web worker"
+    ports: ["3001"]
+    depends_on: [postgres, redis, ai]
+    environment:
+      DATABASE_URL: "${CDS_DATABASE_URL}"
+      REDIS_URL: "${CDS_REDIS_URL}"
+      AUTH_SECRET: "${CDS_JWT_SECRET}"
+      SETTINGS_ENC_KEY: "${CDS_JWT_SECRET}"
+      AI_SERVICE_URL: "http://${CDS_AI_HOST}:${CDS_AI_PORT}"
+      WORKER_HEALTH_PORT: "3001"
+      BRANDAI_QUEUE_PREFIX: "novart-integration"
+    labels:
+      cds.prebuilt-image: "true"
+      cds.role: "worker"
+      cds.readiness-path: "/"
+      cds.readiness-timeout: "90"
+
+volumes:
+  novart_integration_pgdata:
+  novart_integration_redis:
