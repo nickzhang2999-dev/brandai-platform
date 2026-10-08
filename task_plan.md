@@ -14,12 +14,13 @@ Ship the first usable integrated product before broad optimization. Preserve the
 First-product journey: sign in -> create/select brand -> create/open project -> upload/reference material -> edit canvas -> request real image generation -> insert result -> save -> close/reopen -> export.
 
 ## Ordered product TODO
-1. [in_progress] Stable independent deployment and real login.
-   - Current: exact b124ef1 images run; Web/AI/Worker healthy; real login works and public callback fixed. Public brand-selection write is blocked by proxy origin mismatch.
-   - Remaining: safely control original-company auto-deploy before another push, publish the locally verified AUTH_URL origin fix, verify public authenticated writes.
+1. [complete] Stable independent deployment and real login.
+   - Current: exact ec5ff74 images run; 14 public HTTPS checks pass, including actual password login, brand selection, native save/reopen, idempotent retry and stale-write rejection.
+   - Release guard: user approved a temporary company push-webhook pause. Paused and verified before push; restored and verified afterward. Main remains running and the original integration card remains idle. Future pushes must use the same verified release guard until permanent branch exclusion is available.
    - Done: one usable public entry, login/logout and brand selection work, new pushes cannot start writes on company shared infrastructure.
-2. [pending] Serve the reviewed frontend as the product entry and connect its pages.
+2. [in_progress] Serve the reviewed frontend as the product entry and connect its pages.
    - Reuse current home, brand, project library, material library and canvas UI. Bind real user/workspace/project state, navigation, refresh and deep links. Replace preview-only identity/file-state paths at this boundary.
+   - Current: reviewed UI build-time export produces 119 hashed assets without project data. Native query/save/list/rename compatibility endpoints implemented; authenticated shell/bootstrap and the remaining UI endpoints still pending. Exported files or API unit tests do not complete page integration.
    - Done: home -> project -> canvas -> project library is coherent, refresh retains the current real project, account/brand changes do not leak state.
 3. [pending] Connect essential brand/project/material data.
    - Reuse workspace/project/brand-rule/upload APIs; configure isolated object storage; connect create/list/rename/archive, upload and material selection.
@@ -41,7 +42,7 @@ First-product journey: sign in -> create/select brand -> create/open project -> 
 - Keep known missing capabilities in the backlog; do not silently delete them to make the completion rate look better.
 
 ## Next execution checkpoint
-Finish TODO 1, then bind the reviewed frontend entry (TODO 2). No additional visual refinement before the integrated main journey works. Check items only against the explicit done criteria; API existence or a running container alone does not complete a product feature.
+TODO 1 passed on ec5ff74. Continue TODO 2 and its native persistence boundary: bind the reviewed frontend entry to actual account/workspace/project state. No additional visual refinement before the integrated main journey works. Check items only against the explicit done criteria; API existence or a running container alone does not complete a product feature.
 
 ## Validation
 Required before push: `pnpm test`, `pnpm test:ai`, `pnpm -F web typecheck`, `pnpm -F web build`. API/database tests must cover workspace authorization, stale revisions, complete document round-trips and asset ownership. Source existence and mock interaction tests do not count as real AI provider acceptance. User forbids Computer Use; do not use it. Record any unavailable runtime validation honestly.
@@ -58,4 +59,4 @@ Required before push: `pnpm test`, `pnpm test:ai`, `pnpm -F web typecheck`, `pnp
 - Windows AI test runner requires Git Bash as npm script_shell; resolved without changing the project script. Service mock alias initially reached real Prisma; corrected test target and reran.
 - Deployment steering: user requested current integration branch on CDS. Prebuilt images and real DB tests passed for b124ef1. Dedicated project creation requires approval (403 with original scoped key).
 - IMPORTANT: original project auto-deploy picked up both pushes and used shared infra. Additive document migration and seed ran. The integration branch is now stopped; main code/services unchanged. Do not push again until automated branch routing is resolved. Preserve audit in docs/novart-product-integration.md and avoid blind data rollback.
-- Independent CDS project 98cfea6cdcbd now runs b124ef1 with separate infrastructure; all three services healthy. Public brand selection exposed a proxy-origin mismatch. Local fix passed all four gates but remains unpushed until original-project auto-deploy routing can be safely managed; public save/reopen and frontend binding remain unaccepted.
+- Independent CDS project 98cfea6cdcbd now runs ec5ff74 with separate infrastructure; proxy-origin repair and public document save/reopen passed. Deployment guard is a verified temporary webhook pause, not a permanent branch exclusion. Frontend binding remains unaccepted.

@@ -1,6 +1,58 @@
 """Pydantic mirrors of @brandai/contracts AI schemas. Keep in sync."""
-from typing import Any, Literal, Optional
-from pydantic import BaseModel, Field
+from typing import Annotated, Any, Literal, Optional
+from pydantic import BaseModel, Field, StringConstraints, field_validator, model_validator
+
+
+NativeProjectId = Annotated[str, StringConstraints(strict=True, min_length=1, max_length=128, pattern=r"^[a-zA-Z0-9_-]+$")]
+NativeProjectName = Annotated[str, StringConstraints(strict=True, strip_whitespace=True, min_length=1, max_length=200, pattern=r"^[^\x00-\x1f\x7f]+$")]
+
+
+class NativeProjectQueryInput(BaseModel):
+    """Mirror of the native editor compatibility boundary; no AI endpoint."""
+    model_config = {"extra": "forbid"}
+    projectId: NativeProjectId
+
+
+class NativeProjectListInput(BaseModel):
+    model_config = {"extra": "forbid"}
+    page: int = Field(default=1, ge=1, le=1000000, strict=True)
+    pageSize: int = Field(default=20, ge=1, le=100, strict=True)
+
+
+class NativeProjectRenameInput(NativeProjectQueryInput):
+    projectName: NativeProjectName
+
+
+class NativeProjectSaveInput(NativeProjectQueryInput):
+    canvas: str = Field(strict=True, min_length=1, max_length=8 * 1024 * 1024, pattern=r"^SHAKKERDATA://")
+    version: str = Field(strict=True, pattern=r"^novart-(0|[1-9][0-9]{0,9})$")
+    projectName: NativeProjectName | None = None
+    projectCoverList: list[Annotated[str, Field(strict=True, max_length=4096)]] | None = Field(default=None, max_length=20)
+    picCount: int | None = Field(default=None, ge=0, le=1000000, strict=True)
+    projectType: Literal[3] | None = None
+    sessionId: str | None = Field(default=None, strict=True, max_length=128)
+    canvasV2Gray: Literal[False] | None = None
+    canvasEvidenceEnabled: Literal[False] | None = None
+
+    @field_validator("version")
+    @classmethod
+    def revision_bound(cls, value):
+        if int(value[7:]) > 2147483646:
+            raise ValueError("Invalid document revision")
+        return value
+
+    @model_validator(mode="before")
+    @classmethod
+    def optional_is_not_nullable(cls, value):
+        if isinstance(value, dict):
+            if any(item is None for item in value.values()):
+                raise ValueError("Optional fields must be omitted, not null")
+            for key in ("canvasV2Gray", "canvasEvidenceEnabled"):
+                if key in value and value[key] is not False:
+                    raise ValueError("Incremental evidence is not supported")
+            if "projectType" in value and (type(value["projectType"]) is not int or value["projectType"] != 3):
+                raise ValueError("Only ordinary native projects are supported")
+        return value
 
 
 class EditorDocumentSaveInput(BaseModel):

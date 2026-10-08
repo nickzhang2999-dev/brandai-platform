@@ -99,5 +99,58 @@ try {
   check("archived project refuses writes", () => { assert.equal(archived.status, 409); assert.equal(archived.data.code, "PROJECT_ARCHIVED"); });
   const after = await call("owner", endpoint);
   check("failed writes and archiving retain the exact document", () => { assert.equal(after.data.canvas, payload.canvas); assert.equal(after.data.revision, 1); assert.equal(after.data.readOnly, true); });
+
+  // The reviewed native editor uses its original request/envelope shape. Test
+  // that boundary through real cookies, HTTP, permissions and the same DB.
+  const native = (actor: string, operation: string, body: unknown, workspace = ws, origin = base) =>
+    call(actor, `/api/canva/project/${operation}?workspaceId=${workspace}`, "POST", body, origin);
+  const nativeProject = await call("owner", `/api/workspaces/${ws}/projects`, "POST", { name: "Native adapter acceptance" });
+  assert.equal(nativeProject.status, 201); const np = nativeProject.data.id;
+  const nativeInitial = await native("owner", "queryProject", { projectId: np });
+  check("native query uses the actual project and initial version", () => {
+    assert.equal(nativeInitial.status, 200); assert.equal(nativeInitial.data.code, 0);
+    assert.equal(nativeInitial.data.data.version, "novart-0"); assert.equal(nativeInitial.data.data.canvas, "");
+  });
+  const nativePayload = { projectId: np, canvas: encode("native adapter"), version: "novart-0", projectName: "Echoed old title", projectCoverList: [], picCount: 0, canvasV2Gray: false, canvasEvidenceEnabled: false };
+  const nativeSaved = await native("owner", "saveProject", nativePayload);
+  check("native full-save persists through the product service", () => { assert.equal(nativeSaved.status, 200); assert.equal(nativeSaved.data.code, 0); assert.equal(nativeSaved.data.data.version, "novart-1"); });
+  const nativeReplay = await native("owner", "saveProject", { ...nativePayload, sessionId: "lost-response-retry" });
+  check("native identical retry remains idempotent without a client mutation UUID", () => {
+    assert.equal(nativeReplay.data.code, 0); assert.equal(nativeReplay.data.data.version, "novart-1");
+  });
+  const nativeConflict = await native("owner", "saveProject", { ...nativePayload, canvas: encode("stale change") });
+  check("native stale save activates the editor's exact conflict envelope", () => {
+    assert.equal(nativeConflict.status, 200); assert.equal(nativeConflict.data.code, 100400); assert.equal(nativeConflict.data.data, null);
+  });
+  const nativeBadVersion = await native("owner", "saveProject", { ...nativePayload, version: "local-old" });
+  check("native foreign revision format is rejected", () => assert.equal(nativeBadVersion.status, 422));
+  const nativeOutsider = await native("outsider", "queryProject", { projectId: np });
+  check("native query denies foreign workspace access", () => assert.equal(nativeOutsider.status, 404));
+  const nativeViewerRead = await native("viewer", "queryProject", { projectId: np });
+  check("native viewer receives a read-only project", () => assert.equal(nativeViewerRead.data.data.readOnly, true));
+  const nativeViewerWrite = await native("viewer", "saveProject", { ...nativePayload, version: "novart-1" });
+  check("native viewer cannot save", () => assert.equal(nativeViewerWrite.status, 403));
+  const nativeCrossOrigin = await native("owner", "saveProject", nativePayload, ws, "https://foreign.invalid");
+  check("native cross-origin writes are denied", () => assert.equal(nativeCrossOrigin.status, 403));
+  const nativeRename = await native("owner", "updateProjectName", { projectId: np, projectName: "Renamed project" });
+  assert.equal(nativeRename.data.code, 0);
+  const nativeAutosave = await native("owner", "saveProject", { ...nativePayload, version: "novart-1", canvas: encode("next native edit") });
+  assert.equal(nativeAutosave.data.code, 0);
+  const nativeReopen = await native("owner", "queryProject", { projectId: np });
+  check("native reopen preserves exact content and autosave cannot revert a renamed project", () => {
+    assert.equal(nativeReopen.data.data.canvas, encode("next native edit")); assert.equal(nativeReopen.data.data.version, "novart-2");
+    assert.equal(nativeReopen.data.data.projectName, "Renamed project");
+  });
+  const nativeList = await native("owner", "lovartProjectList", { page: 1, pageSize: 20 });
+  check("native list contains saved project and excludes archived projects", () => {
+    assert.ok(nativeList.data.data.data.some((x: any) => x.projectId === np && x.hasCanvas));
+    assert.ok(!nativeList.data.data.data.some((x: any) => x.projectId === pid));
+  });
+  const nativeEvidence = await native("owner", "saveProject", { ...nativePayload, version: "novart-2", canvasEvidenceEnabled: true });
+  const nativeUnknown = await native("owner", "getCanvasAccessTicket", { projectId: np });
+  check("unimplemented vendor services are explicit failures", () => { assert.equal(nativeEvidence.status, 422); assert.equal(nativeUnknown.status, 503); });
+  await call("owner", `/api/workspaces/${ws}/projects/${np}`, "PATCH", { archive: true });
+  const nativeArchived = await native("owner", "saveProject", { ...nativePayload, version: "novart-2" });
+  check("native adapter does not accept an archived project's save", () => assert.equal(nativeArchived.status, 409));
   console.log(`Workbench backend: ${passed} checks passed. No AI provider calls performed.`);
 } finally { await prisma.$disconnect(); }
