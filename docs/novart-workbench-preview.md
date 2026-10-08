@@ -2,6 +2,20 @@
 
 独立前端体验程序位于 `claude/novart-workbench-preview` 分支的 `previews/novart-workbench`。现有 Next.js 页面、正式业务接口、数据库结构不变。根 `cds-compose.yml` 保留原产品配置；评审版通过单独的预构建镜像和 CDS 评审项目接入。
 
+## 已部署状态 · 2026-10-08
+
+- CDS 项目：`Novart-Workbench-Preview`（`cd9d15b4c592`），配置导入 `e1104a20c10b` 已由用户批准。
+- 部署分支：`claude/novart-workbench-preview`；运行代码提交 `f720c4449c7a873cc352f429017709deace1572f`。后续仅更新本文的提交不改变运行镜像版本。
+- [实际公开入口](https://novart-workbench-preview-claude-novart-workbench-preview.geole.me/)由官方 `preview-url` 查询取得；根页面为无数据说明页，完整评审入口私下交付，不放进仓库。
+- [CI 37730445329](https://github.com/nickzhang2999-dev/brandai-platform/actions/runs/37730445329) 构建、Linux 容器检查和镜像发布成功。172 个包文件校验和通过。首次 CI 的检查脚本未解包上传响应的 `asset` 字段而失败，已修正；失败轮次没有发布镜像。
+- 镜像 digest：`sha256:a13b01ad8121910adb69aaf6f9c25d5da57572618386434fab2ee94565389308`，已确认可匿名拉取。
+- 运行包 SHA-256：`3fc25117bb05a4e37962948c02a3fa18840b75ba8dbb1141d69d35b07093376b`，公网 `/healthz` 与 CI 一致。
+- 线上检查：重建前 17 项、重建后 13 项 HTTP 检查通过；工作台实际画布入口及其 31 个 JS/CSS 资源均返回正确内容类型和非空内容；确认容器 ID 改变后，项目内容、版本、上传图片与原访问入口仍保留。检查使用合成存储样本，结束后已清理测试项目和图片，项目库为空。
+
+首次部署运行记录 `dr_5036e0374f0dcc7ddf8529a3`，重建验证记录 `dr_a9c08825e4c1dc7fc0b13cf8`。CDS 回读 `deployRuntime.prebuilt: true`、无缺失或异常服务；其基础 profile 的模式标签仍显示“源码/待生效”，属于控制面显示差异，不能据此把已拉取的预构建镜像说成服务器源码编译。
+
+本轮公网检查不使用 Computer Use，也未做公网浏览器指针/键盘自动化。已有本地交互结果仍保留，公网真实浏览器的拖拽、中文输入、导出与触屏需试用复核；未接入真实业务后端和 AI，未合并 main 或发布正式站。
+
 ## 范围
 
 - 首页填写原始需求，选取最多四张 PNG/JPEG/WebP 图片，预览、移除、失败重试，进入同一项目的原画布。
@@ -30,7 +44,7 @@ python print_review_link.py --origin http://127.0.0.1:8769 --room review
 
 浏览器使用 Chrome 或 Edge；服务端不需要安装浏览器、Playwright 或浏览器代理。
 
-## CDS 接续部署
+## CDS 评审部署与维护
 
 本次准备独立分支的 CDS 部署，不发布 `www.novartlab.com`。
 
@@ -44,7 +58,9 @@ python print_review_link.py --origin http://127.0.0.1:8769 --room review
 
 选择独立项目的依据：已核对 CDS 官方源码中的分支额外服务接口，它支持预构建镜像，但提交时会丢弃 `cacheMounts`；预构建模式也不挂源码。Dockerfile 自带的匿名 `VOLUME` 不能保证重建后复用。因此本轮不走分支额外服务，更不把临时保存说成持久化。源码依据为 `inernoro/prd_agent` 的 `cds/src/routes/branches.ts` 与 `cds/src/services/container.ts`；线上具体配置仍须部署后回读验证。
 
-部署顺序：仓库四项门禁 → CI 构建与 Linux 容器检查 → 确认镜像可被 CDS 拉取 → 创建/授权独立评审项目 → 官方 `cdscli verify previews/novart-workbench/cds-compose.preview.yml` → 导入并由有权限的人在 CDS 批准 → 部署同一提交 → 从官方 `preview-url` 读取实际入口。新 GHCR 包默认可能为私有，若 CDS 无拉取权限，需要包所有者配置可见性或正式镜像拉取凭据，不把账号凭据写进配置。
+初始化已完成：官方 `cdscli verify previews/novart-workbench/cds-compose.preview.yml` 为 100/A，无错误或警告；用户已完成项目授权和配置审批。新项目首次 clone 自动探测了根配置中的 web/worker/ai，这三份尚未运行的配置已从独立项目移除，当前仅保留 `workbench-preview-novart-workbench-preview`。原 BrandAI 项目未改动。
+
+后续更新流程：仓库四项门禁 → CI 构建与 Linux 容器检查 → 确认精确 SHA 镜像可被 CDS 拉取 → 核对本项目只有评审 profile、`prebuiltImage: true` 和原持久卷 → 对现有分支执行带 `--commit <40 位 SHA>` 的部署 → 从官方 `preview-url` 读取入口并核对 `/healthz`。配置变化才重新导入子目录的专用 compose；不要导入根产品 compose。重新执行 project clone 会触发根配置探测，必须核对没有重新带入原产品的服务。本次镜像匿名拉取已通过，无需额外配置镜像账号。
 
 线上验收必须验证 `/healthz` 返回 `status: ok`、`service: novart-workbench-preview`，且 `packageSha256` 等于本次 `PACKAGE_MANIFEST.json` 的 SHA-256；在服务内执行 `python print_review_link.py --origin https://实际入口` 私下交付访问链接。随后验证 HTTPS、首页上传、画布编辑保存重开、归档恢复及重建容器后数据仍在。尚未完成的线上检查不能由 CI 绿灯替代。
 
@@ -92,7 +108,7 @@ CDS 镜像在 CI 构建时安装锁定的 Pillow 依赖，运行时不再下载�
 
 交付目录的 `SOURCE_MANIFEST.json` 保留来源文件原始 SHA 和各处适配说明；`PACKAGE_MANIFEST.json` 记录最终交付文件校验值。浏览器测试记录与截图留在本地实验目录，不随公共分支提交。
 
-CDS 分支注册、配置审批、线上 HTTPS 验收与正式发布是后续步骤；当前不把推送成功等同于部署成功。
+CDS 分支注册、配置审批、HTTPS 资源与保存重建检查已完成，见本文顶部。公网真实浏览器交互、真实业务后端接入、合并与正式发布分别验收，不由 Git push 或接口绿灯代替。
 
 ## 后端接入后的原版对照要求
 
