@@ -171,6 +171,7 @@
     "requirements.txt": "e2fe85b176ffadb6e1b3c300a6a40b327305d7d53b5cd3861b250ed1c05c3075",
     "SOURCE_MANIFEST.json": "53e1bdb2944c7683fbc01ed97d3564180dc89b4fd013b417829abb45b2921b7a",
     "start_preview.py": "5008bfbcc53cd7d35eeaa4ebdc35486ee22cee5328e372473b38966644a376a2",
-    "THIRD_PARTY_NOTICES.md": "4cb07e54044897d99addcc83063af72182514c7d83304a31e32a55ba9879e123"
+    "THIRD_PARTY_NOTICES.md": "4cb07e54044897d99addcc83063af72182514c7d83304a31e32a55ba9879e123",
+    "cds-compose.preview.yml": "b6ccd5da5f99412a4d5cf66697ef4d0950f86bae379e24fb71ebf475e980455c"
   }
 }

@@ -1,0 +1,62 @@
+name: Branch Image
+
+# Only the independent review branch publishes this image. No production deploy.
+on:
+  push:
+    branches: [claude/novart-workbench-preview]
+    paths:
+      - 'previews/novart-workbench/**'
+      - 'scripts/check-novart-container.py'
+      - '.github/workflows/branch-image.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: novart-preview-image-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  preview:
+    if: github.ref == 'refs/heads/claude/novart-workbench-preview'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Verify package and build the image
+        env:
+          REPOSITORY: ${{ github.repository }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          IMAGE="ghcr.io/${REPOSITORY,,}/novart-workbench-preview:sha-${COMMIT_SHA}"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+          python3 scripts/check-novart-container.py --verify-package-only
+          docker build --pull \
+            --label "org.opencontainers.image.source=https://github.com/$REPOSITORY" \
+            --label "org.opencontainers.image.revision=$COMMIT_SHA" \
+            --label "org.opencontainers.image.description=NovartLab isolated interaction review; no production AI or business data" \
+            -t "$IMAGE" previews/novart-workbench
+
+      - name: Check Linux startup, HTTP access and persistence across recreation
+        run: python3 scripts/check-novart-container.py --image "$IMAGE"
+
+      - name: Publish the tested image
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_ACTOR: ${{ github.actor }}
+        run: |
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GH_ACTOR" --password-stdin
+          docker push "$IMAGE"
+          docker logout ghcr.io
+          {
+            echo '### Novart preview container'
+            echo "- Tested image: \`$IMAGE\`"
+            echo '- Linux startup, access controls, asset and project persistence passed.'
+            echo '- CDS deployment and public HTTPS verification are separate gates.'
+            echo '- A newly created GHCR package may require owner visibility configuration before CDS can pull it.'
+          } >> "$GITHUB_STEP_SUMMARY"

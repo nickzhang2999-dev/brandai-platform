@@ -1,6 +1,6 @@
 # Novart 独立前端评审版
 
-独立前端体验程序位于 `claude/novart-workbench-preview` 分支的 `previews/novart-workbench`。现有 Next.js 页面、正式业务接口、数据库结构不变。CDS 专用根配置已在本地准备，等待官方 `cdscli verify`，未随本次响应式修复提交；远端根 `cds-compose.yml` 仍为原产品配置。
+独立前端体验程序位于 `claude/novart-workbench-preview` 分支的 `previews/novart-workbench`。现有 Next.js 页面、正式业务接口、数据库结构不变。根 `cds-compose.yml` 保留原产品配置；评审版通过单独的预构建镜像和 CDS 评审项目接入。
 
 ## 范围
 
@@ -34,11 +34,21 @@ python print_review_link.py --origin http://127.0.0.1:8769 --room review
 
 本次准备独立分支的 CDS 部署，不发布 `www.novartlab.com`。
 
-**当前不能直接用远端根 `cds-compose.yml` 来验收体验版，它仍然运行公司原产品。** 本地根配置草案只定义 `workbench-preview` 服务，使用 Python 3.12 镜像、只读源码挂载、独立数据卷和 pip 缓存卷，对外路由到 8769 端口；不启动原产品的 Next.js、AI、数据库或任务 worker。它已通过 Docker Compose 静态解析，但原部署文件要求“提交前必须 `cdscli verify` exit 0”。本机未找到来源可确认的官方 CLI，因此根配置暂不提交。`previews/novart-workbench/compose.preview.yml` 保留为本机 Docker 构建运行选项，不能把它的普通解析结果当成 CDS 官方校验。
+**当前不能直接用远端根 `cds-compose.yml` 来验收体验版，它运行公司原产品。** 官方技能包已经从 CDS 的 `/api/skills/cds-pack/download` 取得，CLI 0.16.6 已完成项目授权和认证检查。旧源码运行草案已通过官方校验，但不会导入：CDS compose 导入会修改项目共享 profile，并不随 Git 分支隔离。
 
-后续部署流程：从 CDS 官方渠道取得校验工具 → `cdscli verify` 通过后提交根配置 → 选择这条分支、导入配置 → 若 CDS 出现配置审批则完成审批 → 部署并确认进程重启 → 验证 `/healthz` 返回 `status: ok`、`service: novart-workbench-preview`，且 `packageSha256` 等于本次 `PACKAGE_MANIFEST.json` 的 SHA-256 → 在服务终端执行 `python print_review_link.py --origin https://实际分支域名` 获取私下交付的访问链接。最后用该链接验证 HTTPS、首页上传、画布编辑保存重开、归档恢复及重建容器后数据仍在。
+本次新增：
 
-启动器只安装锁定的 Pillow 二进制依赖，安装总时限 120 秒；安装失败不会假装健康。默认根路径允许部署平台读取无数据说明页，`/studio`、项目、素材和其他功能入口仍需评审访问 cookie。`packageSha256` 在进程启动时固定，避免把拉到新文件但尚未重启的旧进程当成新版本。
+- `.github/workflows/branch-image.yml`：只在评审分支构建，发布到同一仓库关联的 GHCR 包，使用不可变的 `sha-<40 位提交号>` 标签，不使用其他分支的回退镜像。
+- `scripts/check-novart-container.py`：核对包校验和，在 Linux 容器中验证无登录访问控制、HTTPS cookie、入口资源、图片上传、项目保存、拒绝跨源写入，以及删除容器后复用同一数据卷恢复项目、图片和访问入口。临时数据卷与实际评审数据分开；不打印访问凭证。此检查不替代浏览器交互验收。
+- `previews/novart-workbench/cds-compose.preview.yml`：预构建应用、8769 端口、`/healthz` 探活、明确的用户入口和持久数据卷。**只导入新的独立评审项目，不导入既有 BrandAI Platform 项目。**
+
+选择独立项目的依据：已核对 CDS 官方源码中的分支额外服务接口，它支持预构建镜像，但提交时会丢弃 `cacheMounts`；预构建模式也不挂源码。Dockerfile 自带的匿名 `VOLUME` 不能保证重建后复用。因此本轮不走分支额外服务，更不把临时保存说成持久化。源码依据为 `inernoro/prd_agent` 的 `cds/src/routes/branches.ts` 与 `cds/src/services/container.ts`；线上具体配置仍须部署后回读验证。
+
+部署顺序：仓库四项门禁 → CI 构建与 Linux 容器检查 → 确认镜像可被 CDS 拉取 → 创建/授权独立评审项目 → 官方 `cdscli verify previews/novart-workbench/cds-compose.preview.yml` → 导入并由有权限的人在 CDS 批准 → 部署同一提交 → 从官方 `preview-url` 读取实际入口。新 GHCR 包默认可能为私有，若 CDS 无拉取权限，需要包所有者配置可见性或正式镜像拉取凭据，不把账号凭据写进配置。
+
+线上验收必须验证 `/healthz` 返回 `status: ok`、`service: novart-workbench-preview`，且 `packageSha256` 等于本次 `PACKAGE_MANIFEST.json` 的 SHA-256；在服务内执行 `python print_review_link.py --origin https://实际入口` 私下交付访问链接。随后验证 HTTPS、首页上传、画布编辑保存重开、归档恢复及重建容器后数据仍在。尚未完成的线上检查不能由 CI 绿灯替代。
+
+CDS 镜像在 CI 构建时安装锁定的 Pillow 依赖，运行时不再下载或编译源码。原有本地启动器仍保留 120 秒依赖安装上限。默认根路径允许部署平台读取无数据说明页，`/studio`、项目、素材和其他功能入口仍需评审访问 cookie。`packageSha256` 在进程启动时固定，避免把拉到新文件但尚未重启的旧进程当成新版本。
 
 运行要求：独立 HTTPS 子域名的根路径、同源接口、支持 Service Worker、单实例持久数据目录。不要把它当作纯静态 HTML 服务挂在现有应用的 `/demo` 子路径。HTTPS 网关应透传 `X-Forwarded-Proto`，并允许最多 24 MiB 请求体；单张首页图片仍限制为 10 MiB。
 
@@ -83,3 +93,11 @@ python print_review_link.py --origin http://127.0.0.1:8769 --room review
 交付目录的 `SOURCE_MANIFEST.json` 保留来源文件原始 SHA 和各处适配说明；`PACKAGE_MANIFEST.json` 记录最终交付文件校验值。浏览器测试记录与截图留在本地实验目录，不随公共分支提交。
 
 CDS 分支注册、配置审批、线上 HTTPS 验收与正式发布是后续步骤；当前不把推送成功等同于部署成功。
+
+## 后端接入后的原版对照要求
+
+用户要求：后端整合完成后，对比公司原版前后端与整合版，列清差异。当前固定的公司源码基线为 `e99919a64cd212d5d1b083fd7210842a1962d935`；接入开始前再记录远端 main 的实际提交，若不同则同时保留历史基线和接入基线，避免把同事同期改动算成本次修改。
+
+对照范围：页面与交互、路由和组件、API 与契约、数据库与素材存储、登录和品牌/项目权限、AI worker/队列与失败恢复、构建部署。每项标记直接复用、修改、新增、未接入或删除，并关联文件、接口、测试结果及用户可见变化；重点核对原版功能是否遗漏、原数据能否继续使用、错误和权限是否仍正确。
+
+真实后端闭环通过后，交付代码差异清单、功能对应表、已知差异与回归结果，再评估合并。当前文件存储评审件和未接入的 AI 接口不算真实业务完成。

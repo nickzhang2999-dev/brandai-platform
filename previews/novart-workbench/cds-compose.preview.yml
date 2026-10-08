@@ -1,0 +1,31 @@
+# Import into a dedicated Novart review project, never the existing BrandAI project.
+# CI must publish the exact sha image first. There is intentionally no fallback tag.
+x-cds-project:
+  name: novart-workbench-preview
+  description: "NovartLab independent interactive frontend review"
+  repo: "https://github.com/nickzhang2999-dev/brandai-platform.git"
+
+services:
+  workbench-preview:
+    image: "ghcr.io/nickzhang2999-dev/brandai-platform/novart-workbench-preview:sha-${CDS_COMMIT_SHA}"
+    working_dir: /app
+    command: "python /app/harness/share_runtime.py --host 0.0.0.0 --port 8769 --room preview"
+    ports:
+      - "8769"
+    volumes:
+      - novart_workbench_preview_data_v1:/app/sharing
+    environment:
+      PYTHONUNBUFFERED: "1"
+      PYTHONUTF8: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+    labels:
+      cds.prebuilt-image: "true"
+      cds.role: "web"
+      cds.path-prefix: "/"
+      cds.web-entry-name: "NovartLab frontend review"
+      cds.web-entry-path: "/"
+      cds.readiness-path: "/healthz"
+      cds.readiness-timeout: "90"
+
+volumes:
+  novart_workbench_preview_data_v1:
