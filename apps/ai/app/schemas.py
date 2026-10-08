@@ -3,6 +3,52 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field
 
 
+class EditorDocumentSaveInput(BaseModel):
+    """Mirror of the web-only native document contract; not an AI endpoint."""
+    model_config = {"extra": "forbid"}
+    format: Literal["novart-native-v1"]
+    canvas: str = Field(min_length=1, max_length=8 * 1024 * 1024, pattern=r"^SHAKKERDATA://")
+    revision: int = Field(ge=0, le=2147483646, strict=True)
+    mutationId: str = Field(pattern=r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+
+
+class EditorDocumentView(BaseModel):
+    model_config = {"extra": "forbid"}
+    projectId: str = Field(min_length=1)
+    workspaceId: str = Field(min_length=1)
+    format: Literal["novart-native-v1"]
+    canvas: str
+    revision: int = Field(ge=0, strict=True)
+    checksum: str | None = Field(pattern=r"^[a-f0-9]{64}$")
+    updatedAt: str | None
+    readOnly: bool
+
+
+class SelectWorkbenchWorkspaceInput(BaseModel):
+    model_config = {"extra": "forbid"}
+    workspaceId: str = Field(min_length=1, max_length=128)
+
+
+class WorkbenchSessionUser(BaseModel):
+    model_config = {"extra": "forbid"}
+    id: str
+    name: str
+
+
+class WorkbenchWorkspace(BaseModel):
+    model_config = {"extra": "forbid"}
+    id: str
+    name: str
+    role: Literal["OWNER", "EDITOR", "REVIEWER", "VIEWER"]
+
+
+class WorkbenchSession(BaseModel):
+    model_config = {"extra": "forbid"}
+    user: WorkbenchSessionUser
+    workspaces: list[WorkbenchWorkspace]
+    activeWorkspaceId: str | None
+
+
 class IngestWebsiteRequest(BaseModel):
     url: str
 

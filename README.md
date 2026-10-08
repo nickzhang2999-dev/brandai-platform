@@ -1,12 +1,20 @@
 # BrandAI — 品牌项目视觉 AI 生成平台
 
+## 产品整合分支 · 2026-10-08
+
+| 范围 | 状态 | 说明 |
+| --- | --- | --- |
+| `claude/novart-product-integration` | 后端基础接口与测试已实现；完整产品尚未接通 | [整合进度与验收边界](docs/novart-product-integration.md) |
+
+本分支从已评审的前端分支继续开发，复用公司源码的账号、品牌权限和项目服务，新增完整原生画布保存接口。新版页面仍需逐项接入素材、首页流程及异步任务；API 模块存在不等于页面已经接通。数据库迁移只新增 `EditorDocument`，不替换原 `ProjectCanvas`。独立前端评审部署仍运行原评审提交，不能作为本分支后端验收环境。
+
 ## 独立前端评审分支 · 2026-10-08
 
 | 范围 | 状态 | 入口 |
 | --- | --- | --- |
 | Novart 工作台前端评审版（首页带图、项目归档、原画布编辑） | 独立 CDS 已部署；Linux 容器及公网资源、保存与重建检查通过；业务后端待接入 | [`previews/novart-workbench`](previews/novart-workbench/) · [运行与部署说明](docs/novart-workbench-preview.md) |
 
-这份独立评审程序用于操作与交互评审，使用独立文件存储，不接真实 AI、账号或生产业务数据。原有 Next.js 源码、`main`、正式站及根 `cds-compose.yml` 保持原样。镜像由 `Branch Image` 工作流构建并检查，专用配置位于 `previews/novart-workbench/cds-compose.preview.yml`，只导入独立 CDS 评审项目，避免覆盖原产品的共享服务。屏幕适配覆盖大屏、小笔记本、平板与窄屏浏览器；本分支不代表正式产品已集成或已发布。
+这份独立评审程序用于操作与交互评审，使用独立文件存储，不接真实 AI、账号或生产业务数据。评审分支本身保留原有 Next.js 源码、`main`、正式站及根 `cds-compose.yml`；上述产品整合分支的增量另行记录。镜像由 `Branch Image` 工作流构建并检查，专用配置位于 `previews/novart-workbench/cds-compose.preview.yml`，只导入独立 CDS 评审项目，避免覆盖原产品的共享服务。屏幕适配覆盖大屏、小笔记本、平板与窄屏浏览器；评审版不代表正式产品已集成或已发布。
 
 已部署代码版本为 `f720c4449c7a873cc352f429017709deace1572f`。[CDS 评审服务](https://novart-workbench-preview-claude-novart-workbench-preview.geole.me/)的根页面只提供进入说明，完整访问入口私下交付。线上已验证项目和图片在容器重建后保留；公网浏览器的实际拖拽、输入和导出仍需试用复核，HTTP 检查不代替交互验收。
 

@@ -427,6 +427,7 @@ model Project {
   // backward-compatible).
   archivedAt  DateTime?
   canvas      ProjectCanvas?
+  editorDocument EditorDocument?
 
   @@index([workspaceId])
   @@index([workspaceId, status])
@@ -449,6 +450,24 @@ model ProjectCanvas {
   removedVersionIds Json     @default("[]")
   updatedAt         DateTime @updatedAt
   createdAt         DateTime @default(now())
+
+  @@index([workspaceId])
+}
+
+// Full reviewed editor format; kept separate so older clients cannot truncate it.
+model EditorDocument {
+  id           String   @id @default(cuid())
+  projectId    String   @unique
+  project      Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  workspaceId  String
+  format       String   @default("novart-native-v1")
+  canvas       String   @db.Text
+  revision     Int      @default(1)
+  checksum     String
+  mutationId   String
+  updatedById  String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   @@index([workspaceId])
 }

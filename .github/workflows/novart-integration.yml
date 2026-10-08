@@ -1,0 +1,83 @@
+name: Novart backend integration
+
+on:
+  push:
+    branches: [claude/novart-product-integration]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: novart-integration-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    if: github.ref == 'refs/heads/claude/novart-product-integration'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: integration
+          POSTGRES_PASSWORD: disposable-ci-only
+          POSTGRES_DB: novart_integration_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U integration -d novart_integration_test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+    env:
+      DATABASE_URL: postgresql://integration:disposable-ci-only@127.0.0.1:5432/novart_integration_test
+      REDIS_URL: redis://127.0.0.1:6379
+      AUTH_SECRET: disposable-novart-integration-ci-only
+      AUTH_URL: http://127.0.0.1:3000
+      AUTH_ALLOW_DEMO: '0'
+      QUOTA_V1: '0'
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install locked dependencies
+        run: |
+          pnpm install --frozen-lockfile
+          python -m venv apps/ai/.venv
+          apps/ai/.venv/bin/pip install -r apps/ai/requirements.txt
+      - name: Generate and migrate the disposable database
+        run: |
+          pnpm db:generate
+          pnpm -F @brandai/db exec prisma migrate deploy
+      - name: Repository gates
+        run: |
+          pnpm test
+          pnpm test:ai
+          pnpm -F web typecheck
+          pnpm -F web build
+      - name: Real password login, project and document API tests
+        shell: bash
+        run: |
+          pnpm -F web start > /tmp/novart-integration-server.log 2>&1 &
+          SERVER_PID=$!
+          trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
+          ready=0
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:3000/api/auth/csrf >/dev/null; then ready=1; break; fi
+            sleep 1
+          done
+          test "$ready" = 1
+          pnpm -F web exec tsx scripts/verify-workbench-backend.ts

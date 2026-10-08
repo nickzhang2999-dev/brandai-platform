@@ -18,3 +18,5 @@ export * from "./resource-usage";
 export * as VI from "./vi/index";
 export * from "./canvas";
 export * from "./layer-set";
+export * from "./editor-document";
+export * from "./workbench-session";
