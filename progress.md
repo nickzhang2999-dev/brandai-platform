@@ -76,3 +76,9 @@
 - Build exports 121 manifest-listed assets (~27 MB), copies the compiled output into the image, and runs the reviewed UI against the actual CI app/database before image publication and again against built images. Private preview data is not packaged.
 - Isolated frontend diagnosis found HTTP/1 streaming POST failure; buffering the bounded request body fixed project creation and native-editor startup. This fixture result is not database acceptance. New real CI coverage targets 61 HTTP/DB checks plus a fresh-browser native canvas/draft/profile round-trip.
 - Local L1 322 contracts + 6 UI and AI203 pass; final typecheck and build pass after the stale-brand cookie, original-project archive context, pagehide keepalive and first-brand account-change fixes. Real CI/public validation for this increment is pending.
+
+## Studio browser startup follow-up
+- Candidate a4a3c82 CI 37755457067 passed all 61 real HTTP/database checks and the login/first-brand UI checks, then timed out waiting for the native editor. No images were published and CDS remains at 8474347.
+- Browser diagnostics also detected the original login UI requesting Google Fonts. Replaced the external CSS import with the existing Inter 400/500/600/700 font assets served locally, including the upstream OFL license.
+- Guard native editor probes until the actual canvas DOM and module factory exist. Added bounded frame/script/request diagnostics to the real UI acceptance script; no acceptance assertions removed. Applied the same module readiness rule to the read-only bootstrap.
+- Exact /workflow paths are now workspace-pinned and return an explicit unavailable response rather than an accidental 404. Image upload and AI workflows remain unfinished.

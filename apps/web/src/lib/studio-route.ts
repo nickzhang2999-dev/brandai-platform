@@ -62,7 +62,7 @@ export async function studioRoute(req: Request) {
         case "/studio/draft": return json(await state.saveStudioDraft(workspaceId, user.id, body));
       }
     }
-    if (/^\/(studio|workflow|compare)\//.test(pathname)) throw new ApiException(503, "此功能正在接入，尚未提交操作。请保留当前内容。");
+    if (/^\/(studio|workflow|compare)(?:\/|$)/.test(pathname)) throw new ApiException(503, "此功能正在接入，尚未提交操作。请保留当前内容。");
     return json({ error: "Not found" }, 404);
   } catch (error) {
     if (error instanceof ApiException || error instanceof EditorDocumentError) {

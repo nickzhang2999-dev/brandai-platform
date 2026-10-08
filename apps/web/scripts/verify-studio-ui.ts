@@ -16,6 +16,7 @@ if (database.pathname !== "/novart_integration_test" || !["localhost", "127.0.0.
 }
 const artifacts = path.resolve(process.env.WORKBENCH_UI_ARTIFACTS ?? ".novart-ui-artifacts", `port-${base.port || "80"}`);
 const networkProblems: string[] = [], browserErrors: string[] = [], serverFailures: string[] = [];
+const recentRequests: Array<{ phase: string; path: string; method: string; status?: number; failure?: string; count: number }> = [];
 const privateFixtureValues: string[] = [];
 const contexts: BrowserContext[] = [];
 let browser: Browser | undefined, currentPage: Page | undefined, fixtureUserId: string | undefined, passed = 0;
@@ -26,6 +27,45 @@ function diagnosticMessage(value: string) {
   return text.replace(/https?:\/\/[^\s"'<>]+/g, value => {
     try { const url = new URL(value); return url.origin + url.pathname; } catch { return "[URL]"; }
   }).slice(0, 1600);
+}
+function recordRequest(phase: string, url: string, method: string, status?: number, failure?: string) {
+  const pathname = new URL(url).pathname;
+  if (/\/(?:log\/acceptor|telemetry)(?:\/|$)/.test(pathname)) return;
+  const previous = recentRequests.find(item => item.phase === phase && item.path === pathname && item.method === method && item.status === status && item.failure === failure);
+  if (previous) { previous.count++; return; }
+  recentRequests.push({ phase, path: pathname, method, status, failure: failure ? diagnosticMessage(failure) : undefined, count: 1 });
+  if (recentRequests.length > 50) recentRequests.shift();
+}
+async function frameDiagnostics(page: Page | undefined) {
+  if (!page) return [];
+  return Promise.all(page.frames().map(async frame => {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        frame.evaluate(() => {
+          const win = window as any;
+          const resourceState = (source: string) => {
+            const entries = performance.getEntriesByName(source);
+            return entries.length ? "resource-observed" : "no-resource-entry";
+          };
+          return {
+            path: location.pathname, readyState: document.readyState,
+            startup: [...document.querySelectorAll(".np-startup")].map(node => node.textContent?.slice(0, 600)),
+            canvas: [...document.querySelectorAll(".tl-container, .tl-canvas")].map(node => ({ className: node.className, width: node.getBoundingClientRect().width, height: node.getBoundingClientRect().height })),
+            webpack: { present: Boolean(win.webpackChunk_lovartai_lovart_shell), chunkCount: win.webpackChunk_lovartai_lovart_shell?.length ?? 0 },
+            editorProbe: win.__novartAcceptanceProbe ?? null,
+            scripts: [...document.scripts].map(script => ({
+              path: script.src ? new URL(script.src).pathname : "inline", type: script.type || "javascript", deferred: script.defer,
+              state: script.type === "application/x-novart" ? "waiting-for-bootstrap" : script.src ? resourceState(script.src) : "inline",
+            })).slice(-50),
+          };
+        }),
+        new Promise(resolve => { timeout = setTimeout(() => resolve({ path: new URL(frame.url()).pathname, error: "frame diagnostic timed out" }), 3500); }),
+      ]);
+    } catch (error) {
+      return { path: new URL(frame.url()).pathname, error: diagnosticMessage(error instanceof Error ? error.message : String(error)) };
+    } finally { clearTimeout(timeout); }
+  }));
 }
 async function eventually<T>(label: string, read: () => Promise<T | null | false | undefined>, timeout = 45_000): Promise<T> {
   const deadline = Date.now() + timeout;
@@ -56,17 +96,20 @@ async function newPage(): Promise<Page> {
     } else await route.continue();
   });
   context.on("request", request => {
+    recordRequest("request", request.url(), request.method());
     const url = new URL(request.url());
     if (request.serviceWorker() && ["http:", "https:"].includes(url.protocol) && url.origin !== base.origin) {
       networkProblems.push(`worker outbound request: ${url.origin}${url.pathname}`);
     }
   });
   context.on("response", response => {
+    recordRequest("response", response.url(), response.request().method(), response.status());
     const url = new URL(response.url());
     if (url.origin === base.origin && response.status() >= 400 && !["/studio/unavailable"].includes(url.pathname)) {
       serverFailures.push(`${response.status()} ${url.pathname}`);
     }
   });
+  context.on("requestfailed", request => recordRequest("failed", request.url(), request.method(), undefined, request.failure()?.errorText));
   const page = await context.newPage();
   page.setDefaultTimeout(30_000);
   page.on("pageerror", error => browserErrors.push(error.message.slice(0, 500)));
@@ -88,14 +131,34 @@ async function editorFrame(page: Page, projectId: string) {
   assert.ok(frame, "Project must mount the real editor frame");
   await frame.waitForFunction(() => {
     const win = window as any;
+    const nativeCanvas = document.querySelector(".tl-container, .tl-canvas");
+    const bounds = nativeCanvas?.getBoundingClientRect();
+    const probe: Record<string, unknown> = {
+      nativeDOM: Boolean(nativeCanvas), nativeVisible: Boolean(bounds && bounds.width > 0 && bounds.height > 0),
+      webpackPresent: Boolean(win.webpackChunk_lovartai_lovart_shell), callbackRan: false,
+    };
+    win.__novartAcceptanceProbe = probe;
+    // Never execute a captured module while native scripts are still loading.
+    // Early require() can cache incomplete exports and itself prevent startup.
+    if (!probe.nativeVisible || !probe.webpackPresent) return false;
     try {
       let app: any;
-      win.webpackChunk_lovartai_lovart_shell?.push([[`novart-ui-test-${Date.now()}`], {}, (require: any) => { app = require(37750).pW; }]);
+      win.webpackChunk_lovartai_lovart_shell.push([[`novart-ui-test-${Date.now()}`], {}, (require: any) => {
+        probe.callbackRan = true;
+        probe.moduleFactoryPresent = typeof require.m?.[37750] === "function";
+        if (!probe.moduleFactoryPresent) return;
+        app = require(37750).pW;
+        probe.appType = typeof app;
+        probe.getEditorType = typeof app?.getEditor;
+      }]);
       const editor = app?.getEditor();
+      probe.editorReturned = Boolean(editor);
+      probe.storePresent = Boolean(editor?.store);
+      probe.getCurrentPageShapesType = typeof editor?.getCurrentPageShapes;
       if (!editor?.getCurrentPageShapes || !editor?.store) return false;
       win.__novartAcceptanceEditor = editor;
       return true;
-    } catch { return false; }
+    } catch (error) { probe.error = error instanceof Error ? error.message : String(error); return false; }
   }, undefined, { timeout: 60_000 });
   await expect(frame.locator(".np-startup")).toHaveCount(0, { timeout: 45_000 });
   return frame;
@@ -252,6 +315,8 @@ try {
     networkProblems: networkProblems.slice(-30).map(diagnosticMessage),
     browserErrors: browserErrors.slice(-30).map(diagnosticMessage),
     serverFailures: serverFailures.slice(-30).map(diagnosticMessage),
+    recentRequests,
+    frames: JSON.parse(JSON.stringify(await frameDiagnostics(currentPage), (_key, value: unknown) => typeof value === "string" ? diagnosticMessage(value) : value)),
     page: currentPage ? new URL(currentPage.url()).pathname : null,
   };
   await writeFile(path.join(artifacts, "diagnostics.json"), JSON.stringify(diagnostics, null, 2));

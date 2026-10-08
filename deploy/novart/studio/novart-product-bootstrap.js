@@ -41,7 +41,7 @@
   if (window.BroadcastChannel) { const Original = window.BroadcastChannel; window.BroadcastChannel = class extends Original { constructor(name) { super(prefix + name); } }; }
   const mapped = window.__NOVART_ASSET_MAP__ || {};
   const nativeHosts = new Set(['api.lovart.ai', 'api.lovart.art', 'client.lovart.ai', 'lgw.lovart.ai', 'lgw.lovart.art']);
-  const scopedPath = path => /^\/(studio\/|compare\/api\/|workflow\/|api\/canva\/|api\/www\/)/.test(path);
+  const scopedPath = path => /^\/(studio\/|compare\/api\/|workflow(?:\/|$)|api\/canva\/|api\/www\/)/.test(path);
   function localUrl(value) {
     const url = new URL(String(value), location.href);
     if (url.origin !== location.origin) {
@@ -115,7 +115,22 @@
     }
     if(context.readOnly && location.pathname==='/canvas') {
       const deadline=Date.now()+20000;
-      await new Promise((resolve,reject)=>{const timer=setInterval(()=>{try{let app;window.webpackChunk_lovartai_lovart_shell?.push([['novart-readonly-'+Date.now()],{},require=>{app=require(37750).pW;}]);const editor=app?.getEditor();if(editor){editor.updateInstanceState({isReadonly:true});clearInterval(timer);resolve();}else if(Date.now()>deadline){clearInterval(timer);reject(Error('只读画布未能就绪，请重新打开'));}}catch(_){if(Date.now()>deadline){clearInterval(timer);reject(Error('只读画布未能就绪'));}}},100);});
+      await new Promise((resolve, reject) => {
+        const timer = setInterval(() => {
+          if (Date.now() > deadline) { clearInterval(timer); reject(Error('只读画布未能就绪，请重新打开')); return; }
+          // Wait for native mounting before requiring captured modules. Requiring
+          // an unregistered module can cache incomplete exports during startup.
+          if (!document.querySelector('.tl-container, .tl-canvas')) return;
+          try {
+            let app;
+            window.webpackChunk_lovartai_lovart_shell?.push([['novart-readonly-' + Date.now()], {}, require => {
+              if (typeof require.m?.[37750] === 'function') app = require(37750).pW;
+            }]);
+            const editor = app?.getEditor();
+            if (editor) { editor.updateInstanceState({ isReadonly: true }); clearInterval(timer); resolve(); }
+          } catch (_) { /* Native mounting has not finished; retry within the deadline. */ }
+        }, 100);
+      });
     }
     if (location.pathname === '/canvas') {
       const availability = () => {
