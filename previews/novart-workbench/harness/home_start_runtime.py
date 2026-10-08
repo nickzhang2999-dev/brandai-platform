@@ -46,6 +46,20 @@ class HomeStartRuntime(ProjectLibraryRuntime):
         base = self.server.RequestHandlerClass
 
         class HomeStartHandler(base):
+            def reply(self, data, status=200, mime='application/json; charset=utf-8'):
+                path = urlsplit(self.path).path
+                if status == 200 and isinstance(data, bytes):
+                    if path in ('/studio', '/studio/', '/canvas', '/canvas/') and mime.startswith('text/html'):
+                        tags = (b'<link rel="stylesheet" href="/responsive-layout.css">'
+                            b'<script defer src="/responsive-layout.js"></script>')
+                        data = data.replace(b'</body>', tags + b'</body>', 1)
+                    elif path == '/m21-canvas.js' and 'javascript' in mime:
+                        anchor = b"matchMedia('(max-width:899px)')"
+                        if data.count(anchor) != 1:
+                            return super().reply({'error': 'Responsive layout source mismatch'}, 503)
+                        data = data.replace(anchor, b"matchMedia('(max-width:1099px)')", 1)
+                return super().reply(data, status, mime)
+
             def start_error(self, error):
                 messages = {
                     'REQUEST_CONFLICT': ('这次创建请求的内容已变化，请保留原请求重试，或明确开始新项目。', 409),
@@ -68,7 +82,7 @@ class HomeStartRuntime(ProjectLibraryRuntime):
                 parsed = urlsplit(self.path)
                 if parsed.path in ('/studio', '/studio/'):
                     return self.serve_ui('home-start-studio.html', 'text/html; charset=utf-8')
-                if parsed.path in ('/home-start-studio.js', '/home-start-studio.css', '/home-start-attachments.js'):
+                if parsed.path in ('/home-start-studio.js', '/home-start-studio.css', '/home-start-attachments.js', '/responsive-layout.css', '/responsive-layout.js'):
                     mime = 'text/css' if parsed.path.endswith('.css') else 'application/javascript'
                     return self.serve_ui(parsed.path[1:], mime + '; charset=utf-8')
                 if parsed.path != '/studio/start/job' and not parsed.path.startswith('/studio/start/image/'):

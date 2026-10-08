@@ -27,6 +27,8 @@ class ShareRuntime:
         token_path = data_dir / 'access-key.txt'
         if not token_path.exists(): token_path.write_text(secrets.token_urlsafe(32), encoding='ascii')
         self.key = token_path.read_text(encoding='ascii').strip()
+        manifest_path = ROOT / 'PACKAGE_MANIFEST.json'
+        self.package_sha256 = hashlib.sha256(manifest_path.read_bytes()).hexdigest() if manifest_path.is_file() else None
         self.resource_events = []
         owner = self
 
@@ -76,12 +78,17 @@ class ShareRuntime:
                 if parsed.path == '/healthz' and self.command in ('GET', 'HEAD'):
                     ready = owner.inner.thread.is_alive()
                     return self.send({'status': 'ok' if ready else 'unavailable',
-                        'service': 'novart-workbench-preview'}, 200 if ready else 503)
+                        'service': 'novart-workbench-preview',
+                        'packageSha256': owner.package_sha256}, 200 if ready else 503)
                 if self.command == 'GET' and parsed.path.startswith('/share/'):
                     if not secrets.compare_digest(parsed.path[len('/share/'):], owner.key):
                         return self.send({'error':'评审链接无效'},404)
                     secure = '; Secure' if self.headers.get('X-Forwarded-Proto') == 'https' else ''
                     return self.send(b'',302,extra={'Location':'/share-start','Set-Cookie':'novart_review='+owner.key+'; Path=/; HttpOnly; SameSite=Strict'+secure})
+                if parsed.path == '/' and self.command in ('GET', 'HEAD'):
+                    if self.allowed():
+                        return self.send(b'',302,extra={'Location':'/studio#/home'})
+                    return self.send('''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>NovartLab · 体验评审</title><style>html{color-scheme:light}body{margin:0;min-height:100vh;min-height:100dvh;display:grid;place-items:center;background:#fafafc;color:#26232c;font:16px/1.8 system-ui}main{box-sizing:border-box;width:min(100%,520px);padding:clamp(24px,6vw,48px)}h1{font-size:28px;margin:0 0 16px}p{color:#706c7b;margin:8px 0}</style></head><body><main><h1>NovartLab</h1><p>工作台已准备就绪。</p><p>请使用管理员提供的完整评审链接进入。</p></main></body></html>''',mime='text/html; charset=utf-8')
                 if not self.allowed(): return self.send({'error':'请使用完整的专属评审链接打开'},401)
                 if self.command not in ('GET','HEAD'):
                     origin = self.headers.get('Origin')

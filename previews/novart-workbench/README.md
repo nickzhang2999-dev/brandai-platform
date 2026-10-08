@@ -1,6 +1,6 @@
 # NovartLab 独立前端体验版
 
-本目录是当前“首页带图体验版”的独立运行副本，包含项目库、归档恢复、素材浏览、品牌规范与偏好、原画布编辑和保存。与仓库主应用分开，未修改 `apps/` 或根 `cds-compose.yml`。AI 生成、真实账号、团队权限和正式业务 API 尚未接入。
+本目录是当前“首页带图体验版”的独立运行副本，包含项目库、归档恢复、素材浏览、品牌规范与偏好、原画布编辑和保存。与仓库主应用分开，未修改 `apps/`。AI 生成、真实账号、团队权限和正式业务 API 尚未接入。
 
 首页可添加最多 4 张 PNG/JPEG/WebP 图片，单张不超过 10 MiB。图片和原始需求随项目保留，进入画布后通过原上传入口加入；重复创建恢复同一项目，已确认导入的图片不会因刷新重复加入。归档项目保留内容并停止编辑，恢复后可以继续。
 
@@ -20,7 +20,7 @@ python harness/share_runtime.py --port 8769 --room preview
 python print_review_link.py --origin http://127.0.0.1:8769
 ```
 
-用普通 Chrome/Edge 打开输出的完整链接。`/healthz` 无需认证，域名根路径及项目数据需要访问链接建立的 cookie。访问链接赋予同一演示空间读写权限，不是多用户权限系统，不应贴在公共页面。
+用普通 Chrome/Edge 打开输出的完整链接。`/healthz` 和不含数据的根路径入口说明无需认证，工作台及项目数据需要访问链接建立的 cookie。访问链接赋予同一演示空间读写权限，不是多用户权限系统，不应贴在公共页面。
 
 ## 容器与 CDS 配置选择
 
@@ -29,7 +29,11 @@ docker compose -f compose.preview.yml up --build -d
 docker compose -f compose.preview.yml exec workbench-preview python print_review_link.py --origin https://实际预览域名
 ```
 
-`compose.preview.yml` 是本目录的独立评审服务配置，包含 CDS 根路径路由标签，尚未导入 CDS，也不会改变仓库现有产品部署。需要在 CDS 选择或导入这个服务，配置独立域名根路径和持久卷后才能使用公网链接。导入时必须以本目录解析 `build.context: .`；平台是否允许该构建配置尚未实测。若平台只读取仓库根 `cds-compose.yml`，需另行配置独立服务，不能把当前主业务 Compose 当成本体验版。当前任务仅提交新分支，不表示已完成 CDS 部署。
+上面的 `compose.preview.yml` 用于具备 Docker 构建能力的独立环境。CDS 专用根配置已在本地准备为 Python 镜像、只读相对源码挂载、动态端口和独立数据/缓存卷，不加载公司正式业务服务或环境变量。但原部署文件要求提交前执行官方 `cdscli verify`；本机未找到该工具，故根配置草案暂未提交。**远端根配置仍启动公司原产品，不能直接用它验收本体验版。** 后续先取得官方校验工具并验证配置，再提交、导入并部署本预览分支；若平台要求配置审批，应按实际审批流程执行，不选择正式发布。
+
+已准备的 `start_preview.py` 支持这种部署方式：Pillow 版本正确且可导入时直接启动网关；否则只安装锁定的二进制轮子，单次网络超时 15 秒、重试 1 次，总安装时限 120 秒，失败或超时会非零退出。未启动真实网关前不返回虚假的就绪响应。首次部署仍需在 CDS 实际检查依赖下载和 Linux 容器启动。
+
+部署后用 `/healthz` 的 `packageSha256` 核对启动时的 `PACKAGE_MANIFEST.json` SHA-256。CDS 拉取新代码后还须确认服务进程已重启；单看页面上的“部署成功”不算版本验收。根路径提供无项目数据的入口说明，已有访问 cookie 时跳转工作台。
 
 服务监听容器 `8769`；本机 Compose 默认只绑定 `127.0.0.1:8769`。网关应反向代理到该服务，保留 Host 并设置 `X-Forwarded-Proto: https`。请求体上限至少 24 MiB，读取超时建议 60 秒。不要把接口统一重写到静态 HTML。
 
@@ -50,4 +54,6 @@ docker compose -f compose.preview.yml exec workbench-preview python print_review
 
 本次还修复了普通浏览器下的加载竞态：外壳 ready 早于原编辑器懒加载模块，首页图片交接现在等待原画布及上传入口出现，并确认目标模块已注册后再读取形状。原始第三方文件保持不变。
 
-`docker compose -f compose.preview.yml config --quiet` 已通过静态配置校验；尚未声称 Linux 容器或真实 CDS HTTPS 环境验收通过。
+屏幕适配使用独立的 responsive 覆盖层，窗口缩放不重建画布或修改对象坐标。首页、项目库、素材库、品牌规范和偏好页随宽度排布；小笔记本及平板用可收起的聊天抽屉，窄屏移除旧的画布遮挡提示，工具栏可换行，弹窗和输入框限制在动态视口内。具体实测尺寸和边界见仓库 [交付说明](../../docs/novart-workbench-preview.md)。
+
+本地根 CDS 配置草案和 `compose.preview.yml` 均通过 Docker Compose 静态解析，但官方 `cdscli verify` 未执行，不能以普通解析代替。启动器 8 项边界检查、空 venv 实际安装后网关启动 4 项检查、网关访问隔离 7 项检查通过。Windows 冷启动测得 13.45 秒；它不代表 Linux/CDS 冷启动耗时，也不代表公网 HTTPS 已验收。

@@ -4,9 +4,9 @@
 
 | 范围 | 状态 | 入口 |
 | --- | --- | --- |
-| Novart 工作台前端评审版（首页带图、项目归档、原画布编辑） | 四项仓库门禁与普通浏览器 12 项验证通过；CDS 待部署 | [`previews/novart-workbench`](previews/novart-workbench/) · [运行与部署说明](docs/novart-workbench-preview.md) |
+| Novart 工作台前端评审版（首页带图、项目归档、原画布编辑） | 屏幕适配与四项仓库门禁通过；CDS 根配置待官方校验，尚未部署 | [`previews/novart-workbench`](previews/novart-workbench/) · [运行与部署说明](docs/novart-workbench-preview.md) |
 
-这份独立评审程序用于操作与交互评审，使用独立文件存储，不接真实 AI、账号或生产业务数据。原有 Next.js 应用及根 `cds-compose.yml` 保持原样；CDS 默认部署根配置会运行原应用，部署本评审版需使用目录内的 `compose.preview.yml`。本分支不代表正式产品已集成或已发布。
+这份独立评审程序用于操作与交互评审，使用独立文件存储，不接真实 AI、账号或生产业务数据。原有 Next.js 源码、`main` 和正式站保持原样。CDS 专用根配置已在本地准备，但原部署文件要求的 `cdscli verify` 尚未执行，因此根配置不随本次修复提交；远端根配置仍运行原产品，不能直接用它验收体验版。屏幕适配覆盖大屏、小笔记本、平板与窄屏浏览器；本分支不代表正式产品已集成或已发布。
 
 
 > **当前开发版本：V0.0.22**（2026-09-17）

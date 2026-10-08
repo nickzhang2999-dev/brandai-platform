@@ -1,6 +1,6 @@
 # Novart 独立前端评审版
 
-本次将独立前端体验程序归入 `claude/novart-workbench-preview` 分支。目录为 `previews/novart-workbench`。现有 Next.js 页面、正式业务接口、数据库结构及根 `cds-compose.yml` 不变。
+独立前端体验程序位于 `claude/novart-workbench-preview` 分支的 `previews/novart-workbench`。现有 Next.js 页面、正式业务接口、数据库结构不变。CDS 专用根配置已在本地准备，等待官方 `cdscli verify`，未随本次响应式修复提交；远端根 `cds-compose.yml` 仍为原产品配置。
 
 ## 范围
 
@@ -32,9 +32,13 @@ python print_review_link.py --origin http://127.0.0.1:8769 --room review
 
 ## CDS 接续部署
 
-本次 Git 交付不修改已有 CDS 应用配置，也不发布 `www.novartlab.com`。
+本次准备独立分支的 CDS 部署，不发布 `www.novartlab.com`。
 
-**不能直接用根 `cds-compose.yml` 来验收这个前端：那个文件仍然指向原 Next.js 应用。** 新评审服务的配置是 `previews/novart-workbench/compose.preview.yml`。在 CDS 新建/导入这条评审分支时需要明确使用这份配置；若当前 CDS 页面只允许固定读取根配置，应在后续部署步骤单独调整这条分支的根配置并走配置审批，不覆盖现有 main/正式服务。
+**当前不能直接用远端根 `cds-compose.yml` 来验收体验版，它仍然运行公司原产品。** 本地根配置草案只定义 `workbench-preview` 服务，使用 Python 3.12 镜像、只读源码挂载、独立数据卷和 pip 缓存卷，对外路由到 8769 端口；不启动原产品的 Next.js、AI、数据库或任务 worker。它已通过 Docker Compose 静态解析，但原部署文件要求“提交前必须 `cdscli verify` exit 0”。本机未找到来源可确认的官方 CLI，因此根配置暂不提交。`previews/novart-workbench/compose.preview.yml` 保留为本机 Docker 构建运行选项，不能把它的普通解析结果当成 CDS 官方校验。
+
+后续部署流程：从 CDS 官方渠道取得校验工具 → `cdscli verify` 通过后提交根配置 → 选择这条分支、导入配置 → 若 CDS 出现配置审批则完成审批 → 部署并确认进程重启 → 验证 `/healthz` 返回 `status: ok`、`service: novart-workbench-preview`，且 `packageSha256` 等于本次 `PACKAGE_MANIFEST.json` 的 SHA-256 → 在服务终端执行 `python print_review_link.py --origin https://实际分支域名` 获取私下交付的访问链接。最后用该链接验证 HTTPS、首页上传、画布编辑保存重开、归档恢复及重建容器后数据仍在。
+
+启动器只安装锁定的 Pillow 二进制依赖，安装总时限 120 秒；安装失败不会假装健康。默认根路径允许部署平台读取无数据说明页，`/studio`、项目、素材和其他功能入口仍需评审访问 cookie。`packageSha256` 在进程启动时固定，避免把拉到新文件但尚未重启的旧进程当成新版本。
 
 运行要求：独立 HTTPS 子域名的根路径、同源接口、支持 Service Worker、单实例持久数据目录。不要把它当作纯静态 HTML 服务挂在现有应用的 `/demo` 子路径。HTTPS 网关应透传 `X-Forwarded-Proto`，并允许最多 24 MiB 请求体；单张首页图片仍限制为 10 MiB。
 
@@ -48,6 +52,14 @@ python print_review_link.py --origin http://127.0.0.1:8769 --room review
 
 原 FingerprintSDK agent 脚本加载告警仍是已知边界，与 AI 未接入提示分开记录。已验证的本地交互不能替代 Linux 容器、公网 HTTPS 或真实业务验收。
 
+## 屏幕适配
+
+本轮复查发现旧窄屏提示层会遮挡真实画布，中等宽度下聊天栏挤占画布，窄屏底栏超出视口。现新增独立响应式覆盖层：较窄画布使用聊天抽屉、窄屏工具栏换行、表单随宽度排布、弹窗和聊天限制在动态视口高度内；不通过整体缩放页面来伪装适配，也不重建编辑器或改变对象坐标。
+
+已用普通 Chrome 检查 1920×1080、1440×900、1280×720、1024×768、768×1024、390×844 六档，覆盖首页、项目库、素材库、品牌规范和偏好、弹窗，以及画布底栏按钮、需求/素材浮层和聊天开关。动态改变窗口大小时核对草稿与原画布文档一致。触屏手势和手机软键盘的真实设备行为仍需真机补验，不能由桌面改视口结果代替。
+
+额外补测 844×390 横屏、原生文字/图片属性工具条、字体菜单、图片更多菜单及裁切入口。窄屏关闭聊天时，“保存失败”和“暂未确认保存”仍持续显示；通过服务端故障和恢复确认状态会正确出现/收起，未用隐藏错误换取页面简洁。
+
 ## 验证状态
 
 2026-10-07 实际验证结果：
@@ -59,12 +71,15 @@ python print_review_link.py --origin http://127.0.0.1:8769 --room review
 | `pnpm -F web typecheck` | 退出码 0 |
 | `pnpm -F web build` | 退出码 0，编译及路由构建完成 |
 | 独立入口普通 Chrome 操作 | 12/12 通过；无测试网络代理、请求拦截或登录 cookie 注入 |
-| 独立 Compose 配置解析 | `docker compose -f compose.preview.yml config --quiet` 通过 |
+| 响应式布局与窗口变化 | 六档 86/86，横竖屏补充 30/30；当前版首页两图完整流程回归 12/12 |
+| 窄屏原生属性与保存异常 | 8/8；文字/图片属性、菜单入口、保存失败/未确认及恢复 |
+| Compose 配置解析 | 本地根配置草案及独立 `compose.preview.yml` 均通过普通解析；官方 `cdscli verify` 尚未执行，根配置未提交 |
+| 启动与访问隔离 | 启动器 8 项、冷空 venv 实际网关启动 4 项、网关公开/认证入口 7 项通过 |
 
 浏览器实测覆盖无凭证访问隔离、Service Worker 启动、首页两图预览与上传、原画布保存、原需求保留、中文文字编辑保存、归档只读、恢复继续，以及关闭浏览器和服务后换端口重开原文档且不重复导入。测试中发现外壳就绪早于原编辑器懒加载工具的问题；现已等待画布、上传入口和对应模块注册完成后再读取形状，修复后重测通过。原 FingerprintSDK agent 的加载告警仍存在，未将其记为已修复。
 
-构建期间本地 Redis 未启动，日志有连接拒绝与依赖弃用提示；上述构建结果不代表完整业务服务已启动。Docker daemon 未运行，因此仅完成 Compose 静态解析，尚未验证镜像构建、Linux 容器或公网 HTTPS。验证未调用真实 AI 生成或执行数据库迁移。
+本轮重新运行四项仓库门禁仍全部通过。构建期间本地 Redis 未启动，日志有连接拒绝与依赖弃用提示；上述构建结果不代表完整业务服务已启动。启动器在 Windows 空 venv 真实下载依赖并启动网关耗时 13.45 秒，访问隔离也通过；Docker daemon 未运行，尚未验证镜像构建、Linux 容器或公网 HTTPS。验证未调用真实 AI 生成或执行数据库迁移。
 
-交付目录的 `SOURCE_MANIFEST.json` 记录 158 个来源文件，其中 156 个保持原 SHA，另两处适配有明确说明；`PACKAGE_MANIFEST.json` 记录最终交付文件校验值。浏览器测试记录与截图留在本地实验目录，不随公共分支提交。
+交付目录的 `SOURCE_MANIFEST.json` 保留来源文件原始 SHA 和各处适配说明；`PACKAGE_MANIFEST.json` 记录最终交付文件校验值。浏览器测试记录与截图留在本地实验目录，不随公共分支提交。
 
 CDS 分支注册、配置审批、线上 HTTPS 验收与正式发布是后续步骤；当前不把推送成功等同于部署成功。

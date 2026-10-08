@@ -6,6 +6,7 @@ COPY --chown=app:app harness /app/harness
 COPY --chown=app:app originals /app/originals
 COPY --chown=app:app evidence /app/evidence
 COPY --chown=app:app print_review_link.py /app/print_review_link.py
+COPY --chown=app:app PACKAGE_MANIFEST.json /app/PACKAGE_MANIFEST.json
 RUN mkdir -p /app/sharing && chown app:app /app/sharing
 USER app
 ENV PYTHONUNBUFFERED=1 PYTHONUTF8=1 PYTHONDONTWRITEBYTECODE=1

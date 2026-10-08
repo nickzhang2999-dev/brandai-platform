@@ -173,10 +173,20 @@
     "harness/share_runtime.py": [
       "Instantiate HomeStartRuntime for homepage attachments and archive/restore",
       "Forward the validated X-File-Name upload header",
-      "Expose a non-sensitive unauthenticated /healthz readiness endpoint"
+      "Expose unauthenticated GET/HEAD /healthz with readiness and the SHA-256 of PACKAGE_MANIFEST.json captured at runtime startup; no account, project or access capability data",
+      "Serve a data-free unauthenticated GET/HEAD / landing page for readiness probes; authenticated root requests redirect to /studio#/home; other routes retain capability authentication"
     ],
     "harness/home-start-attachments.js": [
       "Wait for actual native canvas controls and registered webpack module before read-only shape inspection; prevent shell-ready vs lazy-chunk race in ordinary browsers"
+    ],
+    "harness/home_start_runtime.py": [
+      "Load the independent responsive layout stylesheet and script in studio and canvas",
+      "Adapt the delivered M27 layout response at a single checked media-query anchor to show chat as a drawer below 1100px of canvas width; original captured resources and document schemas unchanged"
     ]
+  },
+  "addedFiles": {
+    "harness/responsive-layout.css": "Responsive shell, native controls, chat drawer and dialogs; retain visible save failures and unconfirmed receipts on narrow screens; wrap text/image property toolbars without transforming artwork",
+    "harness/responsive-layout.js": "Update viewport height for resize and visualViewport changes without changing canvas records",
+    "start_preview.py": "Bounded installation of the exact requirements dependency outside the read-only checkout, then replace the bootstrap process with the review gateway"
   }
 }
