@@ -16,6 +16,7 @@ if (database.pathname !== "/novart_integration_test" || !["localhost", "127.0.0.
 }
 const artifacts = path.resolve(process.env.WORKBENCH_UI_ARTIFACTS ?? ".novart-ui-artifacts", `port-${base.port || "80"}`);
 const networkProblems: string[] = [], browserErrors: string[] = [], serverFailures: string[] = [];
+const navigations: Array<{ path: string; main: boolean; at: number }> = [];
 const recentRequests: Array<{ phase: string; path: string; method: string; status?: number; failure?: string; count: number }> = [];
 const privateFixtureValues: string[] = [];
 const contexts: BrowserContext[] = [];
@@ -107,6 +108,7 @@ async function newPage(): Promise<Page> {
   });
   context.on("requestfailed", request => recordRequest("failed", request.url(), request.method(), undefined, request.failure()?.errorText));
   const page = await context.newPage();
+  page.on("framenavigated", frame => navigations.push({ path: new URL(frame.url()).pathname, main: frame === page.mainFrame(), at: Date.now() }));
   page.setDefaultTimeout(30_000);
   page.on("pageerror", error => browserErrors.push(error.message.slice(0, 500)));
   currentPage = page;
@@ -208,7 +210,13 @@ try {
     editor.updateShapes([{ id: ids.shape, type: "geo", x: 110, y: 100 }]);
     editor.selectNone();
   }, { ids, text });
-  await frame.evaluate(() => (window as any).__novartAcceptanceEditor.setCurrentTool("draw"));
+  // Fluent editor setters return the entire live Editor, including window/DOM
+  // references. Return only the selected tool id across the browser boundary.
+  assert.equal(await frame.evaluate(() => {
+    const editor = (window as any).__novartAcceptanceEditor;
+    editor.setCurrentTool("draw");
+    return editor.getCurrentToolId();
+  }), "draw");
   const canvas = frame.locator(".tl-canvas").first(), box = await canvas.boundingBox();
   assert.ok(box && box.width > 400 && box.height > 300, "Native canvas has an actual interactive viewport");
   await page.mouse.move(box.x + 180, box.y + 160);
@@ -216,7 +224,11 @@ try {
   await page.mouse.move(box.x + 250, box.y + 190, { steps: 8 });
   await page.mouse.move(box.x + 300, box.y + 155, { steps: 8 });
   await page.mouse.up();
-  await frame.evaluate(() => (window as any).__novartAcceptanceEditor.setCurrentTool("select"));
+  assert.equal(await frame.evaluate(() => {
+    const editor = (window as any).__novartAcceptanceEditor;
+    editor.setCurrentTool("select");
+    return editor.getCurrentToolId();
+  }), "select");
   const draw = (await currentShapes(frame)).find(shape => shape.type === "draw");
   assert.ok(draw, "A real pointer gesture with the native pen creates a draw shape");
   const document = await eventually("native autosave writes text, moved shape and pen to the database", async () => {
@@ -312,6 +324,7 @@ try {
     browserErrors: browserErrors.slice(-30).map(diagnosticMessage),
     serverFailures: serverFailures.slice(-30).map(diagnosticMessage),
     recentRequests,
+    navigations: navigations.slice(-20),
     frames: JSON.parse(JSON.stringify(await frameDiagnostics(currentPage), (_key, value: unknown) => typeof value === "string" ? diagnosticMessage(value) : value)),
     page: currentPage ? new URL(currentPage.url()).pathname : null,
   };
