@@ -4,7 +4,7 @@
 
 | 范围 | 状态 | 说明 |
 | --- | --- | --- |
-| `claude/novart-product-integration` | 后端基础接口已实现；独立 CDS 镜像与配置已准备，远程重验中；完整产品尚未接通 | [整合进度与验收边界](docs/novart-product-integration.md) |
+| `claude/novart-product-integration` | 后端基础已部署独立 CDS；三服务健康通过；公网 Origin 适配修复已本地验证、待安全推送；完整产品尚未接通 | [整合进度与验收边界](docs/novart-product-integration.md) |
 
 本分支从已评审的前端分支继续开发，复用公司源码的账号、品牌权限和项目服务，新增完整原生画布保存接口。新版页面仍需逐项接入素材、首页流程及异步任务；API 模块存在不等于页面已经接通。数据库迁移只新增 `EditorDocument`，不替换原 `ProjectCanvas`。独立前端评审部署仍运行原评审提交，不能作为本分支后端验收环境。
 

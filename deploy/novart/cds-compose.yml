@@ -36,6 +36,9 @@ services:
   ai:
     image: "ghcr.io/nickzhang2999-dev/brandai-platform/novart-product-ai:sha-${CDS_COMMIT_SHA}"
     working_dir: /app
+    # CDS classifies non-routed services as app profiles when a source bind exists.
+    # Runtime code remains inside the immutable /app image; this bind is read-only.
+    volumes: [".:/cds-source:ro"]
     ports: ["8000"]
     labels:
       cds.prebuilt-image: "true"
@@ -69,6 +72,7 @@ services:
   worker:
     image: "ghcr.io/nickzhang2999-dev/brandai-platform/novart-product-web:sha-${CDS_COMMIT_SHA}"
     working_dir: /app
+    volumes: [".:/cds-source:ro"]
     command: "pnpm -F web worker"
     ports: ["3001"]
     depends_on: [postgres, redis, ai]
