@@ -55,6 +55,67 @@ class NativeProjectSaveInput(NativeProjectQueryInput):
         return value
 
 
+WorkbenchRevision = Annotated[int, Field(ge=0, le=2147483646, strict=True)]
+
+
+class WorkbenchProfile(BaseModel):
+    model_config = {"extra": "forbid", "strict": True}
+    nickname: str = Field(max_length=40)
+    density: Literal["comfortable", "compact"]
+    motion: Literal["system", "reduce"]
+
+
+class WorkbenchBrandDraft(BaseModel):
+    model_config = {"extra": "forbid", "strict": True}
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=60)]
+    colors: list[Annotated[str, StringConstraints(pattern=r"^#[a-fA-F0-9]{6}$")]] = Field(min_length=3, max_length=3)
+    font: Literal["system", "sans", "serif", "mono"]
+    notes: str = Field(max_length=2000)
+
+
+class WorkbenchShellState(BaseModel):
+    model_config = {"extra": "forbid", "strict": True}
+    revision: WorkbenchRevision
+    profile: WorkbenchProfile
+    brand: WorkbenchBrandDraft
+    favorites: list[NativeProjectId] = Field(max_length=100)
+
+
+class WorkbenchShellSaveInput(WorkbenchShellState):
+    group: Literal["profile", "brand", "favorites"]
+
+
+class WorkbenchProjectCreateInput(BaseModel):
+    model_config = {"extra": "forbid", "strict": True}
+    projectName: NativeProjectName
+    brief: str = Field(max_length=6000)
+    requestId: str = Field(pattern=r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+
+
+class WorkbenchContextSaveInput(NativeProjectQueryInput):
+    revision: WorkbenchRevision
+    brief: str = Field(strict=True, max_length=6000)
+    notes: str = Field(strict=True, max_length=4000)
+
+
+class WorkbenchArchiveInput(NativeProjectQueryInput):
+    revision: WorkbenchRevision
+    archived: bool = Field(strict=True)
+    projectVersion: str = Field(strict=True, pattern=r"^novart-(0|[1-9][0-9]{0,9})$")
+
+    @field_validator("projectVersion")
+    @classmethod
+    def revision_bound(cls, value):
+        if int(value[7:]) > 2147483646:
+            raise ValueError("Invalid document revision")
+        return value
+
+
+class WorkbenchDraftSaveInput(NativeProjectQueryInput):
+    revision: WorkbenchRevision
+    inputForm: dict[str, Any] | None
+
+
 class EditorDocumentSaveInput(BaseModel):
     """Mirror of the web-only native document contract; not an AI endpoint."""
     model_config = {"extra": "forbid"}

@@ -4,6 +4,8 @@ import { randomUUID } from "node:crypto";
 import { gzipSync } from "node:zlib";
 import { prisma } from "@brandai/db";
 import { hashPassword } from "../src/lib/password";
+import { verifyStudioShellBackend } from "./verify-studio-shell-backend";
+import { ACTIVE_BRAND_COOKIE } from "../src/lib/brand-cookie";
 
 const base = process.env.WORKBENCH_TEST_URL ?? "http://127.0.0.1:3000";
 const db = new URL(process.env.DATABASE_URL ?? "http://invalid");
@@ -13,9 +15,9 @@ if (db.pathname !== "/novart_integration_test" || !["localhost", "127.0.0.1"].in
 let passed = 0;
 const check = (label: string, fn: () => void) => { fn(); passed++; console.log(`PASS ${label}`); };
 const sessions = new Map<string, Map<string, string>>();
-async function call(actor: string, path: string, method = "GET", body?: unknown, origin = base) {
+async function call(actor: string, path: string, method = "GET", body?: unknown, origin = base, extraHeaders: Record<string, string> = {}) {
   const jar = sessions.get(actor) ?? new Map<string, string>(); sessions.set(actor, jar);
-  const headers: Record<string, string> = { Cookie: [...jar].map(([k, v]) => `${k}=${v}`).join("; ") };
+  const headers: Record<string, string> = { ...extraHeaders, Cookie: [...jar].map(([k, v]) => `${k}=${v}`).join("; ") };
   if (method !== "GET") headers.Origin = origin;
   if (body !== undefined) headers["Content-Type"] = body instanceof URLSearchParams ? "application/x-www-form-urlencoded" : "application/json";
   const response = await fetch(base + path, { method, headers, redirect: "manual",
@@ -44,16 +46,21 @@ const encode = (suffix = "") => "SHAKKERDATA://" + gzipSync(JSON.stringify({
 
 try {
   const run = randomUUID().slice(0, 8), password = randomUUID();
-  const ownerEmail = `native-owner-${run}@example.invalid`, viewerEmail = `native-viewer-${run}@example.invalid`, outsiderEmail = `native-outsider-${run}@example.invalid`;
+  const ownerEmail = `native-owner-${run}@example.invalid`, viewerEmail = `native-viewer-${run}@example.invalid`, outsiderEmail = `native-outsider-${run}@example.invalid`, editorEmail = `native-editor-${run}@example.invalid`;
   // Synthetic account fixtures only; authentication below uses the real password provider.
-  await prisma.user.createMany({ data: await Promise.all([ownerEmail, viewerEmail, outsiderEmail].map(async email => ({ email, name: "Integration test", passwordHash: await hashPassword(password) }))) });
+  await prisma.user.createMany({ data: await Promise.all([ownerEmail, viewerEmail, outsiderEmail, editorEmail].map(async email => ({ email, name: "Integration test", passwordHash: await hashPassword(password) }))) });
   const owner = await login("owner", ownerEmail, password);
   await login("viewer", viewerEmail, password); await login("outsider", outsiderEmail, password);
+  const editor = await login("editor", editorEmail, password);
   check("password login returns a real user and no invented default brand", () => { assert.ok(owner.user.id); assert.equal(owner.activeWorkspaceId, null); });
   const anonymous = await call("anonymous", "/api/workbench/session");
   check("anonymous session denied", () => assert.equal(anonymous.status, 401));
   const brand = await call("owner", "/api/workspaces", "POST", { name: `Native integration ${run}` }); assert.equal(brand.status, 201);
   const ws = brand.data.id;
+  sessions.get("outsider")!.set(ACTIVE_BRAND_COOKIE, ws);
+  const staleCookiePage = await call("outsider", "/studio");
+  check("a previous account's brand cookie does not block a new account's studio", () => assert.equal(staleCookiePage.status, 200));
+  sessions.get("outsider")!.delete(ACTIVE_BRAND_COOKIE);
   const select = await call("owner", "/api/workbench/session", "POST", { workspaceId: ws });
   assert.equal(select.status, 200, JSON.stringify(select.data));
   check("brand selection writes the real session-scoped cookie", () => assert.equal(select.data.activeWorkspaceId, ws));
@@ -64,6 +71,7 @@ try {
   const foreign = await call("outsider", `/api/workbench/session?workspaceId=${ws}`);
   check("explicit foreign brand is rejected rather than silently switched", () => assert.equal(foreign.status, 404));
   const member = await call("owner", `/api/workspaces/${ws}/members`, "POST", { email: viewerEmail, role: "VIEWER" }); assert.equal(member.status, 201);
+  const editorMember = await call("owner", `/api/workspaces/${ws}/members`, "POST", { email: editorEmail, role: "EDITOR" }); assert.equal(editorMember.status, 201);
   const project = await call("owner", `/api/workspaces/${ws}/projects`, "POST", { name: "Native document integration" }); assert.equal(project.status, 201);
   const pid = project.data.id, endpoint = `/api/workspaces/${ws}/projects/${pid}/editor-document`;
   const initial = await call("owner", endpoint);
@@ -152,5 +160,6 @@ try {
   await call("owner", `/api/workspaces/${ws}/projects/${np}`, "PATCH", { archive: true });
   const nativeArchived = await native("owner", "saveProject", { ...nativePayload, version: "novart-2" });
   check("native adapter does not accept an archived project's save", () => assert.equal(nativeArchived.status, 409));
+  await verifyStudioShellBackend({ call, check, base, ws, ownerId: owner.user.id, editorId: editor.user.id, encode });
   console.log(`Workbench backend: ${passed} checks passed. No AI provider calls performed.`);
 } finally { await prisma.$disconnect(); }

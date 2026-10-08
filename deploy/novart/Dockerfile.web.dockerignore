@@ -4,6 +4,7 @@
 **/.venv
 **/__pycache__
 **/.pytest_cache
+**/.novart-ui-artifacts
 **/.pnpm-store
 **/.cds
 **/.git

@@ -131,6 +131,8 @@ model User {
   accounts      Account[]
   sessions      Session[]
   memberships   Membership[]
+  workbenchStates WorkbenchUserState[]
+  workbenchDrafts WorkbenchChatDraft[]
 }
 
 // M-B — Auth.js Prisma adapter tables. Used when OAuth providers are
@@ -213,6 +215,8 @@ model BrandWorkspace {
   terms        ComplianceTerm[]
   prohibitions ProhibitionRule[]
   projects     Project[]
+  workbenchBrand WorkbenchBrandDraft?
+  workbenchUsers WorkbenchUserState[]
 
   @@index([ownerId])
 }
@@ -428,6 +432,8 @@ model Project {
   archivedAt  DateTime?
   canvas      ProjectCanvas?
   editorDocument EditorDocument?
+  workbenchState WorkbenchProjectState?
+  workbenchDrafts WorkbenchChatDraft[]
 
   @@index([workspaceId])
   @@index([workspaceId, status])
@@ -470,6 +476,57 @@ model EditorDocument {
   updatedAt    DateTime @updatedAt
 
   @@index([workspaceId])
+}
+
+// Reviewed UI state has explicit account, workspace and project ownership.
+// These records do not replace confirmed BrandRule / generation inputs.
+model WorkbenchBrandDraft {
+  workspaceId String @id
+  workspace BrandWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  revision Int @default(0)
+  colors String[] @default([])
+  font String @default("system")
+  notes String @default("") @db.Text
+  updatedAt DateTime @updatedAt
+}
+
+model WorkbenchUserState {
+  id String @id @default(cuid())
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspaceId String
+  workspace BrandWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  revision Int @default(0)
+  profile Json
+  favorites String[] @default([])
+  updatedAt DateTime @updatedAt
+  @@unique([userId, workspaceId])
+}
+
+model WorkbenchProjectState {
+  projectId String @id
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  workspaceId String
+  revision Int @default(0)
+  brief String @default("") @db.Text
+  notes String @default("") @db.Text
+  archiveRevision Int @default(0)
+  creationKey String? @unique
+  creationChecksum String?
+  updatedAt DateTime @updatedAt
+  @@index([workspaceId])
+}
+
+model WorkbenchChatDraft {
+  id String @id @default(cuid())
+  projectId String
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  revision Int @default(0)
+  inputForm Json?
+  updatedAt DateTime @updatedAt
+  @@unique([userId, projectId])
 }
 
 model Generation {

@@ -44,6 +44,8 @@ First-product journey: sign in -> create/select brand -> create/open project -> 
 ## Next execution checkpoint
 TODO 1 passed on ec5ff74. Continue TODO 2 and its native persistence boundary: bind the reviewed frontend entry to actual account/workspace/project state. No additional visual refinement before the integrated main journey works. Check items only against the explicit done criteria; API existence or a running container alone does not complete a product feature.
 
+Current candidate binds `/studio` and `/canvas` to real identity, brand, projects, context, favorites, preferences and drafts. Isolated native startup diagnosis passes; actual database/UI acceptance and deployment remain the active checkpoint. Upload/material persistence and AI are still pending and are visibly unavailable in this increment. User explicitly requested three parallel agents; split tests, UI acceptance and build wiring while running memory-intensive local checks sequentially.
+
 ## Validation
 Required before push: `pnpm test`, `pnpm test:ai`, `pnpm -F web typecheck`, `pnpm -F web build`. API/database tests must cover workspace authorization, stale revisions, complete document round-trips and asset ownership. Source existence and mock interaction tests do not count as real AI provider acceptance. User forbids Computer Use; do not use it. Record any unavailable runtime validation honestly.
 

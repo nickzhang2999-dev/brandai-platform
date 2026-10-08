@@ -31,12 +31,13 @@ export function middleware(req: NextRequest) {
     .some((c) => c.name.includes("session-token"));
   if (hasSession) return NextResponse.next();
 
-  if (pathname.startsWith("/api/")) {
+  if (pathname.startsWith("/api/") || /^\/(studio\/|compare\/api\/|workflow\/)/.test(pathname)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const url = req.nextUrl.clone();
   url.pathname = "/login";
-  url.searchParams.set("callbackUrl", pathname);
+  url.search = "";
+  url.searchParams.set("callbackUrl", pathname + req.nextUrl.search);
   return NextResponse.redirect(url);
 }
 

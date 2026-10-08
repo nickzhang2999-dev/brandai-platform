@@ -21,3 +21,4 @@ export * from "./layer-set";
 export * from "./editor-document";
 export * from "./workbench-session";
 export * from "./native-project";
+export * from "./workbench-shell";

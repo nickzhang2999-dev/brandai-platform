@@ -1,6 +1,6 @@
 import { prisma } from "@brandai/db";
 import { CreateWorkspaceInput } from "@brandai/contracts";
-import { handleError, ok, parse, requireUser } from "@/lib/api";
+import { ApiException, handleError, ok, parse, requireUser } from "@/lib/api";
 import { assertCanCreateWorkspace } from "@/lib/quota";
 
 export async function GET() {
@@ -63,6 +63,8 @@ export async function GET() {
 export async function POST(req: Request) {
   try {
     const user = await requireUser();
+    const expectedUser = req.headers.get("X-Novart-User");
+    if (expectedUser && expectedUser !== user.id) throw new ApiException(409, "账号已切换，请重新打开工作台后创建品牌。");
     const input = parse(CreateWorkspaceInput, await req.json());
     // K1 — enforce the plan's maxWorkspaces (tenant cap). Unlimited (-1, the
     // default/owner/admin plan) is a no-op, so phase-1 single-brand creation is

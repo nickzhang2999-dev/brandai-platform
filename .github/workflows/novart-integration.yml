@@ -58,6 +58,10 @@ jobs:
           pnpm install --frozen-lockfile
           python -m venv apps/ai/.venv
           apps/ai/.venv/bin/pip install -r apps/ai/requirements.txt
+          apps/ai/.venv/bin/pip install -r previews/novart-workbench/requirements.txt
+          pnpm -F web exec playwright install --with-deps chromium
+      - name: Compile the authenticated studio assets
+        run: apps/ai/.venv/bin/python scripts/export-novart-studio.py
       - name: Generate and migrate the disposable database
         run: |
           pnpm db:generate
@@ -68,7 +72,50 @@ jobs:
           pnpm test:ai
           pnpm -F web typecheck
           pnpm -F web build
-      - name: Real password login, project and document API tests
+      - name: Prepare concurrent API and UI checks
+        shell: bash
+        run: |
+          cat > "$RUNNER_TEMP/novart-parallel-tests.sh" <<'BASH'
+          #!/usr/bin/env bash
+          set -uo pipefail
+          logs=$(mktemp -d "$RUNNER_TEMP/novart-checks.XXXXXX")
+          trap 'jobs -pr | xargs -r kill 2>/dev/null || true' EXIT
+          pnpm -F web exec tsx scripts/verify-workbench-backend.ts > "$logs/backend.log" 2>&1 &
+          backend_pid=$!
+          pnpm -F web exec tsx scripts/verify-studio-ui.ts > "$logs/ui.log" 2>&1 &
+          ui_pid=$!
+          backend_status=0
+          ui_status=0
+          wait "$backend_pid" || backend_status=$?
+          wait "$ui_pid" || ui_status=$?
+          python - "$logs" <<'PY'
+          import os, re, sys
+          from pathlib import Path
+          from urllib.parse import urlsplit
+          def redact_url(match):
+              try:
+                  value = urlsplit(match.group())
+                  return value.scheme + '://' + (value.hostname or '') + (':' + str(value.port) if value.port else '') + value.path
+              except ValueError:
+                  return '[redacted URL]'
+          for name in ('backend', 'ui'):
+              text = (Path(sys.argv[1]) / (name + '.log')).read_text(errors='replace')
+              for key in ('AUTH_SECRET', 'DATABASE_URL', 'REDIS_URL', 'GH_TOKEN', 'GITHUB_TOKEN'):
+                  if os.environ.get(key): text = text.replace(os.environ[key], '[redacted environment value]')
+              text = re.sub(r'https?://[^\s\"\'<>]+', redact_url, text)
+              text = re.sub(r'[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}', '[redacted email]', text)
+              text = re.sub(r'(?i)\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b', '[redacted fixture UUID]', text)
+              print('::group::' + name + ' integration checks')
+              print(text)
+              print('::endgroup::')
+          PY
+          log_status=$?
+          printf 'API checks exit: %s; UI checks exit: %s\n' "$backend_status" "$ui_status"
+          if [ "$backend_status" -ne 0 ]; then exit "$backend_status"; fi
+          if [ "$ui_status" -ne 0 ]; then exit "$ui_status"; fi
+          exit "$log_status"
+          BASH
+      - name: Real password login, document API and studio interaction tests
         shell: bash
         run: |
           pnpm -F web start > /tmp/novart-integration-server.log 2>&1 &
@@ -80,7 +127,7 @@ jobs:
             sleep 1
           done
           test "$ready" = 1
-          pnpm -F web exec tsx scripts/verify-workbench-backend.ts
+          bash "$RUNNER_TEMP/novart-parallel-tests.sh"
       - name: Prepare and build immutable CDS images
         env:
           REPOSITORY: ${{ github.repository }}
@@ -116,7 +163,7 @@ jobs:
             sleep 1
           done
           if [ "$ready" != 1 ]; then docker logs novart-ci-web; exit 1; fi
-          WORKBENCH_TEST_URL=http://127.0.0.1:3100 pnpm -F web exec tsx scripts/verify-workbench-backend.ts
+          WORKBENCH_TEST_URL=http://127.0.0.1:3100 bash "$RUNNER_TEMP/novart-parallel-tests.sh"
           python - <<'PY'
           import json, time, urllib.request
           for attempt in range(30):

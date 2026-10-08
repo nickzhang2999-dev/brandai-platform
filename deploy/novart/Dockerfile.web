@@ -11,6 +11,9 @@ COPY apps/web ./apps/web
 COPY deploy/novart/start-web.sh ./deploy/novart/start-web.sh
 # This is the exact Next output already checked by the workflow, without its cache.
 COPY .novart-build/next ./apps/web/.next
+# Ship only the compiled, manifest-verified studio; Python and local preview data
+# remain build-time inputs and are excluded from the runtime image.
+COPY .novart-build/studio ./.novart-build/studio
 ARG COMMIT_SHA
 ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 CDS_COMMIT_SHA=${COMMIT_SHA}
 EXPOSE 3000 3001

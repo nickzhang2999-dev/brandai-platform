@@ -11,6 +11,15 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [providers, setProviders] = useState<string[]>([]);
+  function destination() {
+    const value = new URLSearchParams(window.location.search).get("callbackUrl");
+    if (!value) return "/";
+    try {
+      const url = new URL(value, window.location.origin);
+      if (url.origin !== window.location.origin || url.pathname === "/login") return "/";
+      return url.pathname + url.search + url.hash;
+    } catch { return "/"; }
+  }
 
   useEffect(() => {
     fetch("/api/auth/providers")
@@ -41,7 +50,7 @@ export default function LoginPage() {
         redirect: false,
       });
       if (r?.error) throw new Error("邮箱或密码不正确");
-      window.location.href = "/";
+      window.location.href = destination();
     } catch (err) {
       setError(err instanceof Error ? err.message : "登录失败");
       setLoading(false);
@@ -72,7 +81,7 @@ export default function LoginPage() {
               <Button
                 variant="outline"
                 className="w-full"
-                onClick={() => signIn("github", { callbackUrl: "/" })}
+                onClick={() => signIn("github", { callbackUrl: destination() })}
               >
                 用 GitHub 继续
               </Button>
@@ -81,7 +90,7 @@ export default function LoginPage() {
               <Button
                 variant="outline"
                 className="w-full"
-                onClick={() => signIn("google", { callbackUrl: "/" })}
+                onClick={() => signIn("google", { callbackUrl: destination() })}
               >
                 用 Google 继续
               </Button>
@@ -134,7 +143,7 @@ export default function LoginPage() {
             onClick={() =>
               signIn("credentials", {
                 email: email || "demo@brandai.dev",
-                callbackUrl: "/",
+                callbackUrl: destination(),
               })
             }
           >
