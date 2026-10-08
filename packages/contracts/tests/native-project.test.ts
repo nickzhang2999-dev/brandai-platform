@@ -85,6 +85,9 @@ describe("native project compatibility", () => {
     const conflict = nativeErrorResponse(new EditorDocumentError(409, "DOCUMENT_CONFLICT", "Reload"));
     expect(conflict.status).toBe(200); expect(await conflict.json()).toEqual({ code: 100400, msg: "Reload", data: null });
     expect(nativeErrorResponse(new EditorDocumentError(409, "PROJECT_ARCHIVED", "Archived")).status).toBe(409);
+    const unavailable = nativeErrorResponse(Object.assign(new Error("Service not connected"), { status: 503 }));
+    expect(unavailable.status).toBe(503);
+    expect(await unavailable.json()).toEqual({ code: 503, msg: "Service not connected", data: null });
     const internal = await nativeErrorResponse(new Error("private-database-url")).json();
     expect(internal.code).toBe(500); expect(JSON.stringify(internal)).not.toContain("private-database-url");
   });

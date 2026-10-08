@@ -15,7 +15,7 @@ export function nativeErrorResponse(error: unknown) {
     }
   } else if (error instanceof ZodError) {
     status = code = 422; message = "项目请求格式不受支持，请刷新后重试。";
-  } else if (error instanceof Error && "status" in error && typeof error.status === "number" && error.status >= 400 && error.status < 500) {
+  } else if (error instanceof Error && "status" in error && typeof error.status === "number" && error.status >= 400 && (error.status < 500 || error.status === 503)) {
     status = code = error.status; message = error.message;
   }
   return Response.json({ code, msg: message, data: null }, { status, headers: { "Cache-Control": "no-store" } });
