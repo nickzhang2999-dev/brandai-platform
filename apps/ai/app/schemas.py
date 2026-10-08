@@ -7,14 +7,30 @@ NativeProjectId = Annotated[str, StringConstraints(strict=True, min_length=1, ma
 NativeProjectName = Annotated[str, StringConstraints(strict=True, strip_whitespace=True, min_length=1, max_length=200, pattern=r"^[^\x00-\x1f\x7f]+$")]
 
 
-class NativeProjectQueryInput(BaseModel):
-    """Mirror of the native editor compatibility boundary; no AI endpoint."""
+class NativeProjectReference(BaseModel):
     model_config = {"extra": "forbid"}
     projectId: NativeProjectId
 
 
-class NativeProjectListInput(BaseModel):
+class NativeClientMetadata(BaseModel):
+    """Captured transport correlation only; not identity or save authority."""
     model_config = {"extra": "forbid"}
+    cid: str | None = Field(default=None, strict=True, min_length=1, max_length=128)
+
+    @model_validator(mode="before")
+    @classmethod
+    def correlation_is_not_nullable(cls, value):
+        if isinstance(value, dict) and "cid" in value and value["cid"] is None:
+            raise ValueError("Optional correlation must be omitted, not null")
+        return value
+
+
+class NativeProjectQueryInput(NativeClientMetadata):
+    """Mirror of the native editor compatibility boundary; no AI endpoint."""
+    projectId: NativeProjectId
+
+
+class NativeProjectListInput(NativeClientMetadata):
     page: int = Field(default=1, ge=1, le=1000000, strict=True)
     pageSize: int = Field(default=20, ge=1, le=100, strict=True)
 
@@ -92,13 +108,13 @@ class WorkbenchProjectCreateInput(BaseModel):
     requestId: str = Field(pattern=r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 
 
-class WorkbenchContextSaveInput(NativeProjectQueryInput):
+class WorkbenchContextSaveInput(NativeProjectReference):
     revision: WorkbenchRevision
     brief: str = Field(strict=True, max_length=6000)
     notes: str = Field(strict=True, max_length=4000)
 
 
-class WorkbenchArchiveInput(NativeProjectQueryInput):
+class WorkbenchArchiveInput(NativeProjectReference):
     revision: WorkbenchRevision
     archived: bool = Field(strict=True)
     projectVersion: str = Field(strict=True, pattern=r"^novart-(0|[1-9][0-9]{0,9})$")
@@ -111,7 +127,7 @@ class WorkbenchArchiveInput(NativeProjectQueryInput):
         return value
 
 
-class WorkbenchDraftSaveInput(NativeProjectQueryInput):
+class WorkbenchDraftSaveInput(NativeProjectReference):
     revision: WorkbenchRevision
     inputForm: dict[str, Any] | None
 

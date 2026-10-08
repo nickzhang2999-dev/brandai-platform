@@ -44,10 +44,6 @@ async function frameDiagnostics(page: Page | undefined) {
       return await Promise.race([
         frame.evaluate(() => {
           const win = window as any;
-          const resourceState = (source: string) => {
-            const entries = performance.getEntriesByName(source);
-            return entries.length ? "resource-observed" : "no-resource-entry";
-          };
           return {
             path: location.pathname, readyState: document.readyState,
             startup: [...document.querySelectorAll(".np-startup")].map(node => node.textContent?.slice(0, 600)),
@@ -56,7 +52,7 @@ async function frameDiagnostics(page: Page | undefined) {
             editorProbe: win.__novartAcceptanceProbe ?? null,
             scripts: [...document.scripts].map(script => ({
               path: script.src ? new URL(script.src).pathname : "inline", type: script.type || "javascript", deferred: script.defer,
-              state: script.type === "application/x-novart" ? "waiting-for-bootstrap" : script.src ? resourceState(script.src) : "inline",
+              state: script.type === "application/x-novart" ? "waiting-for-bootstrap" : script.src ? (performance.getEntriesByName(script.src).length ? "resource-observed" : "no-resource-entry") : "inline",
             })).slice(-50),
           };
         }),

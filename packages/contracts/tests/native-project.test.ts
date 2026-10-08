@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { NativeProjectListInput, NativeProjectSaveInput } from "../src/native-project";
+import { NativeProjectListInput, NativeProjectSaveInput, NativeProjectQueryInput, NativeProjectRenameInput } from "../src/native-project";
 import { EditorDocumentError } from "../../../apps/web/src/lib/editor-document-codec";
 import { nativeErrorResponse } from "../../../apps/web/src/lib/native-project-response";
 
@@ -24,6 +24,14 @@ beforeEach(() => {
 });
 
 describe("native project compatibility", () => {
+  it("accepts captured client correlation without changing save identity or relaxing unknown fields", () => {
+    for (const [schema, body] of [[NativeProjectQueryInput, { projectId: "p" }], [NativeProjectListInput, {}], [NativeProjectRenameInput, { projectId: "p", projectName: "Name" }], [NativeProjectSaveInput, payload]] as const) {
+      expect(schema.safeParse({ ...body, cid: "1791452226131qfvxtohg" }).success).toBe(true);
+      for (const cid of [null, "", 123, "x".repeat(129)]) expect(schema.safeParse({ ...body, cid }).success).toBe(false);
+      expect(schema.safeParse({ ...body, workspaceId: "other" }).success).toBe(false);
+    }
+    expect(nativeDocumentMutation("u", "w", { ...payload, cid: "another-client" })).toBe(nativeDocumentMutation("u", "w", payload));
+  });
   it("rejects missing, foreign-format and out-of-range versions rather than silently saving against latest", () => {
     for (const version of [undefined, null, "local-old", "novart-01", "novart--1", "novart-2147483647", "novart-1\n"]) {
       expect(NativeProjectSaveInput.safeParse({ ...payload, version }).success).toBe(false);

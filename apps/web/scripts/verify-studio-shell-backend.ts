@@ -224,7 +224,7 @@ export async function verifyStudioShellBackend({ call, check, base, ws, ownerId,
   ok(await post("/studio/project-archive", { projectId: legacyId, archived: false, revision: 1, projectVersion: "novart-0" }));
   const legacyContext = ok(await get("/compare/api/context", "owner", legacyId));
   check("first archive and restore preserves requirements from a project created by the original API", () => assert.equal(legacyContext.brief, legacyDescription));
-  const emptyThread = await post("/api/canva/agent/queryAgentLastThread", { projectId: pid });
+  const emptyThread = await post("/api/canva/agent/queryAgentLastThread", { projectId: pid, cid: "1791452226131qfvxtohg" });
   const foreignThread = await post("/api/canva/agent/queryAgentLastThread", { projectId: secondProject.projectId });
   const unsupportedAi = await post("/api/canva/agent/createThread", { projectId: pid });
   check("projects without generation history return an actual empty thread, and unconnected AI cannot run", () => {

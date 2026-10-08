@@ -114,7 +114,7 @@ try {
     call(actor, `/api/canva/project/${operation}?workspaceId=${workspace}`, "POST", body, origin);
   const nativeProject = await call("owner", `/api/workspaces/${ws}/projects`, "POST", { name: "Native adapter acceptance" });
   assert.equal(nativeProject.status, 201); const np = nativeProject.data.id;
-  const nativeInitial = await native("owner", "queryProject", { projectId: np });
+  const nativeInitial = await native("owner", "queryProject", { projectId: np, cid: "1791452226131qfvxtohg" });
   check("native query uses the actual project and initial version", () => {
     assert.equal(nativeInitial.status, 200); assert.equal(nativeInitial.data.code, 0);
     assert.equal(nativeInitial.data.data.version, "novart-0"); assert.equal(nativeInitial.data.data.canvas, "");
@@ -122,7 +122,7 @@ try {
   const nativePayload = { projectId: np, canvas: encode("native adapter"), version: "novart-0", projectName: "Echoed old title", projectCoverList: [], picCount: 0, canvasV2Gray: false, canvasEvidenceEnabled: false };
   const nativeSaved = await native("owner", "saveProject", nativePayload);
   check("native full-save persists through the product service", () => { assert.equal(nativeSaved.status, 200); assert.equal(nativeSaved.data.code, 0); assert.equal(nativeSaved.data.data.version, "novart-1"); });
-  const nativeReplay = await native("owner", "saveProject", { ...nativePayload, sessionId: "lost-response-retry" });
+  const nativeReplay = await native("owner", "saveProject", { ...nativePayload, sessionId: "lost-response-retry", cid: "retry-client" });
   check("native identical retry remains idempotent without a client mutation UUID", () => {
     assert.equal(nativeReplay.data.code, 0); assert.equal(nativeReplay.data.data.version, "novart-1");
   });
