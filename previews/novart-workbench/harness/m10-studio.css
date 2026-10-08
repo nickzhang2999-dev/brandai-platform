@@ -1,0 +1,7 @@
+@import url('/m9-studio.css');
+
+/* A failed create keeps its existing-project recovery separate from the new draft. */
+.ns-create-recovery{margin:6px 0 0;font-size:12px;line-height:1.7;color:#625b6d}
+.ns-create-recovery a{margin-left:8px;color:#56426e;text-decoration:underline;text-underline-offset:3px}
+.ns-create-recovery a:focus-visible{outline:2px solid #8b77b5;outline-offset:3px;border-radius:2px}
+@media(max-width:650px){.ns-create-recovery{font-size:11px}}

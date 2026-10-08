@@ -1,0 +1,84 @@
+/* M16 is opt-in. These rules style Novart chrome only, leaving native canvas,
+   tool menus, chat, transforms, hit areas, selection and document state intact. */
+html[data-nv-visual="m16"] {
+  --nv-ink:#303038;
+  --nv-secondary:#686874;
+  --nv-line:#e5e5eb;
+  --nv-accent:#7c5cff;
+  --nv-accent-soft:#f2efff;
+  --nv-surface-shadow:0 8px 32px #18181b12,0 2px 8px #18181b05;
+}
+html[data-nv-visual="m16"] #novart-bar { color:var(--nv-ink); gap:8px; }
+html[data-nv-visual="m16"] #novart-bar .nv-title { font-size:14px; font-weight:600; }
+html[data-nv-visual="m16"] #novart-bar :is(a,button) { border-radius:7px; }
+html[data-nv-visual="m16"] #novart-bar :is(a,button):hover { background:#eaeaec; }
+html[data-nv-visual="m16"] #novart-bar :is(.nv-save,.nv-brief-toggle) { color:var(--nv-secondary); }
+html[data-nv-visual="m16"] #novart-bar .nv-save[data-error=true] { color:#af3d4d; }
+html[data-nv-visual="m16"] #novart-bar button[aria-expanded=true],
+html[data-nv-visual="m16"] #nv-workflow-toggle[data-active=true] { background:var(--nv-accent-soft); color:#6545cf; }
+html[data-nv-visual="m16"] :is(#novart-context,#novart-workflow,#novart-switcher) {
+  color:var(--nv-ink); border-color:var(--nv-line); border-radius:12px;
+  box-shadow:var(--nv-surface-shadow); font-size:13px;
+}
+html[data-nv-visual="m16"] :is(#novart-context,#novart-workflow) h2 { font-size:15px; font-weight:600; }
+html[data-nv-visual="m16"] #novart-context { padding:20px; }
+html[data-nv-visual="m16"] #novart-context label { color:#555560; font-size:12px; }
+html[data-nv-visual="m16"] #novart-context textarea { border-color:#dedee6; border-radius:8px; background:#fff; color:#34343e; font-size:13px; }
+html[data-nv-visual="m16"] #novart-context textarea::placeholder { color:#84848f; }
+html[data-nv-visual="m16"] #novart-context textarea:focus { border-color:#9b83ed; box-shadow:0 0 0 2px #7c5cff0a; }
+html[data-nv-visual="m16"] #novart-context :is(.nv-context-note,.nv-context-status) { color:var(--nv-secondary); font-size:11px; line-height:1.8; }
+html[data-nv-visual="m16"] #novart-context .nv-context-save,
+html[data-nv-visual="m16"] #nv-workflow-save { background:#242426; border-radius:8px; padding:9px 13px; font-size:12px; }
+html[data-nv-visual="m16"] #novart-context .nv-context-latest,
+html[data-nv-visual="m16"] #nv-workflow-latest { color:#6545cf; background:var(--nv-accent-soft); }
+html[data-nv-visual="m16"] #novart-switcher { padding:7px; }
+html[data-nv-visual="m16"] #novart-switcher p { color:var(--nv-secondary); font-size:11px; }
+html[data-nv-visual="m16"] #novart-switcher a { padding:10px; border-radius:7px; }
+html[data-nv-visual="m16"] #novart-switcher a:hover { background:#f4f4f6; }
+html[data-nv-visual="m16"] #novart-switcher a[aria-current=true] { color:#6545cf; background:var(--nv-accent-soft); }
+html[data-nv-visual="m16"] #novart-switcher .nv-all { color:#60606c; border-color:var(--nv-line); }
+html[data-nv-visual="m16"] #novart-workflow .nw-mode { background:#f3f3f6; border-radius:8px; }
+html[data-nv-visual="m16"] #novart-workflow .nw-mode button { color:#73737e; border-radius:6px; }
+html[data-nv-visual="m16"] #novart-workflow .nw-mode button[aria-pressed=true] { color:#34343c; background:#fff; }
+html[data-nv-visual="m16"] #novart-workflow :is(.nw-mode-note,.nw-empty,.nw-purpose-hint,.nw-service-note,.nw-target p),
+html[data-nv-visual="m16"] #nv-workflow-status { color:var(--nv-secondary); font-size:11px; }
+html[data-nv-visual="m16"] #novart-workflow :is(.nw-section-title,.nw-participates) { color:#5f5f6a; }
+html[data-nv-visual="m16"] #novart-workflow .nw-section-title span:last-child { color:var(--nv-secondary); }
+html[data-nv-visual="m16"] #novart-workflow :is(.nw-target,.nw-reference) { border-color:var(--nv-line); border-radius:9px; background:#fff; }
+html[data-nv-visual="m16"] #novart-workflow :is(.nw-target.nw-invalid,.nw-reference.nw-invalid) { border-color:#e8c8cc; }
+html[data-nv-visual="m16"] #novart-workflow :is(.nw-reference select,.nw-actions button,.nw-gallery-toggle) { color:#5e5969; background:#fff; border-color:#dedde5; }
+html[data-nv-visual="m16"] #novart-workflow .nw-actions button[data-action=set-target] { color:#6545cf; background:var(--nv-accent-soft); }
+html[data-nv-visual="m16"] #novart-workflow .nw-gallery-toggle { border-style:solid; border-radius:8px; }
+html[data-nv-visual="m16"] #novart-workflow .nw-footer { border-color:var(--nv-line); }
+html[data-nv-visual="m16"] #nv-workflow-summary { border-color:#e9e8ee; background:#fafafa; color:#686874; border-radius:8px; font-size:11px; }
+html[data-nv-visual="m16"] #nv-workflow-summary strong { color:#55515f; font-size:11px; }
+html[data-nv-visual="m16"] #nv-workflow-summary small { color:#73737e; }
+html[data-nv-visual="m16"] #nv-workflow-summary[data-error=true] { border-color:#efd8dd; color:#b56b79; }
+html[data-nv-visual="m16"] #novart-availability { color:#72727c; font-size:11px; }
+html[data-nv-visual="m16"] :is(#novart-bar,#novart-context,#novart-workflow,#novart-switcher) :is(button,a,select):focus-visible,
+html[data-nv-visual="m16"] #nv-workflow-summary:focus-visible { outline-color:var(--nv-accent); }
+
+/* Product lavender is a canvas backdrop only. Shape fills, documents and
+   exported art remain native. Never apply a radius/clip to the editing surface. */
+html[data-nv-visual="m16"] { --nv-line:#e8e1f0; --nv-accent-soft:#f4f0ff; --nv-surface-shadow:0 12px 40px #58408013,0 2px 10px #38246505; }
+html[data-nv-visual="m16"] .bg-lo-bg-canvas { background-color:#f7f5fc; }
+/* The captured native theme marks this background important. Match that flag
+   only on this backdrop, with a stronger entry scope, never on shape styles. */
+html[data-nv-visual="m16"] .tl-background { background-color:#f7f5fc!important; }
+html[data-nv-visual="m16"] #novart-bar { background:#f7f5fcf5; }
+html[data-nv-visual="m16"] #novart-bar :is(a,button) { border-radius:999px; }
+html[data-nv-visual="m16"] #novart-bar :is(a,button):hover { background:#eee8f8; }
+html[data-nv-visual="m16"] :is(#novart-context,#novart-workflow,#novart-switcher) { border-radius:22px; }
+html[data-nv-visual="m16"] #novart-context textarea { border-radius:14px; border-color:#e2d9ed; }
+html[data-nv-visual="m16"] #novart-context :is(.nv-context-save,.nv-context-latest),
+html[data-nv-visual="m16"] :is(#nv-workflow-save,#nv-workflow-latest) { border-radius:999px; }
+html[data-nv-visual="m16"] #novart-context header button,
+html[data-nv-visual="m16"] #novart-workflow .nw-heading button { border-radius:50%; }
+html[data-nv-visual="m16"] #novart-switcher a { border-radius:14px; }
+html[data-nv-visual="m16"] #novart-workflow .nw-mode { border-radius:999px; background:#f5f1fc; }
+html[data-nv-visual="m16"] #novart-workflow .nw-mode button { border-radius:999px; }
+html[data-nv-visual="m16"] #novart-workflow .nw-mode button[aria-pressed=true] { color:#634395; }
+html[data-nv-visual="m16"] #novart-workflow :is(.nw-target,.nw-reference) { border-radius:16px; }
+html[data-nv-visual="m16"] #novart-workflow :is(.nw-reference select,.nw-actions button) { border-radius:10px; }
+html[data-nv-visual="m16"] #novart-workflow .nw-gallery-toggle { border-radius:999px; color:#756185; border-color:#e1d6ec; }
+html[data-nv-visual="m16"] #nv-workflow-summary { border-radius:14px; border-color:#ece4f6; background:#faf8fe; }

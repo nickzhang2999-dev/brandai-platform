@@ -1,0 +1,69 @@
+[
+  {
+    "path": "static/js/runtime.dc1a2d6c.js",
+    "status": 200,
+    "bytes": 7975,
+    "sha256": "6c9447ff69b7a9a413a95f5f2f0a966d563db159e4cf8006681535e093223e1e",
+    "url": "https://web-static3.lovart.ai/lovart_canvas_online/static/js/runtime.dc1a2d6c.js"
+  },
+  {
+    "path": "static/js/framework.76bc150f.js",
+    "status": 200,
+    "bytes": 219567,
+    "sha256": "a5dc46444055d72132a53e377381dead1b2d01362c22589ee85cdc2769c2d49b",
+    "url": "https://web-static3.lovart.ai/lovart_canvas_online/static/js/framework.76bc150f.js"
+  },
+  {
+    "path": "static/js/4507.5e46f1d1.js",
+    "status": 200,
+    "bytes": 843242,
+    "sha256": "3d3ef4c1fc8d0bc8c64934261272a692201db024ee33c39b4cde68e716e94125",
+    "url": "https://web-static3.lovart.ai/lovart_canvas_online/static/js/4507.5e46f1d1.js"
+  },
+  {
+    "path": "static/js/283.c3fbcbc3.js",
+    "status": 200,
+    "bytes": 284711,
+    "sha256": "c60663cb8fcb58ee821e1ababeea5ea296f3a780bf03c199ef0828bc5b66c410",
+    "url": "https://web-static3.lovart.ai/lovart_canvas_online/static/js/283.c3fbcbc3.js"
+  },
+  {
+    "path": "static/js/canvas.325741a0.js",
+    "status": 200,
+    "bytes": 14983,
+    "sha256": "d623b771d43b18b33b8e36c3b311c5c4e177aa60b8ab2a55bca008f62dc8d37b",
+    "url": "https://web-static3.lovart.ai/lovart_canvas_online/static/js/canvas.325741a0.js"
+  },
+  {
+    "path": "static/css/283.54a163c1.css",
+    "status": 200,
+    "bytes": 24824,
+    "sha256": "410f2230801958957a5b7137c660300ded7557483cbe137dbd931e3417d76c9d",
+    "url": "https://web-static3.lovart.ai/lovart_canvas_online/static/css/283.54a163c1.css"
+  },
+  {
+    "path": "static/css/canvas.b4bc3280.css",
+    "status": 200,
+    "bytes": 28895,
+    "sha256": "afc995693505669654cfc2f2e8d00fd87061c9bf8bb67d11f14f26da899e31db",
+    "url": "https://web-static3.lovart.ai/lovart_canvas_online/static/css/canvas.b4bc3280.css"
+  },
+  {
+    "path": "static/css/1773.10c7fe72.css",
+    "status": 200,
+    "bytes": 457990,
+    "sha256": "ec1f4f091fc180cd37e1abe2644fc6e2c39d76da1a98aeee96b64266ed30e9d6",
+    "url": "https://web-static3.lovart.ai/lovart_canvas_online/static/css/1773.10c7fe72.css"
+  },
+  {
+    "path": "static/css/async/lovart-canvas.f9a96e70.css",
+    "status": 200,
+    "bytes": 7337,
+    "sha256": "9e17d822b70b023fbbd08f77ecf61ee7800c10e60c05c1bfa89e5f764a551027",
+    "url": "https://web-static3.lovart.ai/lovart_canvas_online/static/css/async/lovart-canvas.f9a96e70.css"
+  },
+  {
+    "path": "anonymous-shell.html",
+    "error": "HTTP Error 404: Not Found"
+  }
+]

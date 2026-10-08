@@ -1,0 +1,76 @@
+.novart-home{margin:0;background:#faf9fc;color:#222225;font:14px/1.6 Inter,system-ui,-apple-system,"Microsoft YaHei",sans-serif}
+.novart-home #compare-app{min-height:100vh;background:radial-gradient(ellipse at 50% -10%,#eee9fb80,transparent 55%)}
+.novart-home *,#novart-bar *,#novart-context *,#novart-switcher *{box-sizing:border-box}
+.novart-home button,.novart-home textarea,.novart-home input,#novart-bar button,#novart-context button,#novart-context textarea,#novart-switcher button{font:inherit}
+.novart-home button,#novart-bar button,#novart-context button,#novart-switcher button{cursor:pointer}
+.novart-home button:disabled,#novart-context button:disabled{cursor:wait;opacity:.55}
+.novart-home a,#novart-bar a,#novart-switcher a{color:inherit;text-decoration:none}
+.novart-home button:focus-visible,.novart-home a:focus-visible,#novart-bar button:focus-visible,#novart-bar a:focus-visible,#novart-switcher a:focus-visible,#novart-context button:focus-visible{outline:2px solid #9480cf;outline-offset:3px}
+.novart-home svg,#novart-bar svg,#novart-context svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.nv-home-header{max-width:1200px;margin:auto;padding:24px 40px;display:flex;align-items:center;justify-content:space-between}
+.nv-wordmark{font-size:18px;letter-spacing:-.6px;font-weight:650;display:flex;gap:10px;align-items:center}
+.nv-wordmark i{font-size:12px;font-style:normal;font-weight:400;letter-spacing:0;color:#99949f;border-left:1px solid #ddd9e3;padding-left:10px}
+.nv-home-header .nv-local{font-size:12px;color:#949097}
+.nv-home-main{max-width:1120px;padding:0 40px 64px;margin:auto}
+.nv-hero{max-width:700px;text-align:center;margin:72px auto 60px}
+.nv-hero h1{font-size:34px;line-height:1.3;font-weight:550;letter-spacing:-1px;margin:0 0 12px}
+.nv-hero>p{color:#949099;margin:0 0 30px;font-size:14px}
+.nv-create-form{background:#fff;border:1px solid #e8e5ec;border-radius:20px;padding:20px 20px 15px;box-shadow:0 8px 28px #332b4c06;text-align:left}
+.nv-create-form textarea{display:block;width:100%;border:0;outline:0;resize:vertical;min-height:100px;max-height:260px;background:transparent;color:#303037;line-height:1.75;padding:0 2px}
+.nv-create-form textarea::placeholder{color:#b0aab6}
+.nv-create-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:12px}
+.nv-create-footer small{color:#aaa4af;font-size:11px}
+.nv-primary{border:0;border-radius:11px;background:#252427;color:white;padding:10px 15px;display:inline-flex;align-items:center;justify-content:center;gap:9px}
+.nv-blank{border:0;background:transparent;color:#8c8595;padding:13px 8px 0;font-size:12px!important}
+.nv-error{color:#ad354d;font-size:12px;min-height:18px;text-align:left;margin:8px 2px 0}
+.nv-project-head{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:20px;gap:16px}
+.nv-project-head h2{margin:0;font-size:17px;font-weight:550;letter-spacing:-.2px}
+.nv-project-head span{font-size:12px;color:#a49dab}
+.nv-project-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}
+.nv-project-card{min-width:0;display:flex;flex-direction:column;gap:24px;padding:23px;border:1px solid #e9e6ed;border-radius:16px;background:#fff;transition:border-color .16s,box-shadow .16s}
+.nv-project-card:hover{border-color:#cfc5e3;box-shadow:0 4px 16px #36244f06}
+.nv-project-card-top{display:flex;align-items:center;justify-content:space-between;color:#d6cde4}
+.nv-project-card-top svg{width:21px;height:21px}
+.nv-project-card-top small{color:#aaa4af;font-size:11px}
+.nv-project-card strong{font-size:16px;font-weight:550;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;display:block}
+.nv-project-card p{color:#aaa4af;font-size:12px;margin:4px 0 0;display:flex;justify-content:space-between;gap:8px}
+.nv-empty{grid-column:1/-1;padding:32px;border:1px dashed #e2dce8;border-radius:16px;color:#a49aaa;text-align:center;font-size:13px}
+.nv-home-foot{font-size:11px;color:#aaa4af;text-align:center;margin-top:38px}
+#novart-bar{position:fixed;top:0;left:0;height:48px;z-index:60;display:flex;align-items:center;gap:8px;padding:0 13px;background:#f5f5f5f5;color:#36353a;font:12px/1.5 Inter,system-ui,"Microsoft YaHei",sans-serif;border-bottom:1px solid transparent}
+#novart-bar a,#novart-bar button{border:0;background:transparent;color:inherit;display:flex;align-items:center;gap:7px;min-height:32px;border-radius:8px;padding:5px 7px;flex:none}
+#novart-bar a:hover,#novart-bar button:hover{background:#eae7ef}
+#novart-bar button[hidden]{display:none}
+#novart-bar .nv-back{padding:7px;flex:none}
+#novart-bar .nv-title{max-width:260px;font-size:13px;font-weight:550;min-width:0;flex:0 1 auto}
+#novart-bar .nv-title span{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+#novart-bar .nv-title svg{width:13px;height:13px;color:#96909c}
+#novart-bar .nv-spacer{flex:1}
+#novart-bar .nv-save{font-size:11px;color:#929097;white-space:nowrap}
+#novart-bar .nv-save::before{content:'';display:inline-block;background:#b2b7ac;width:5px;height:5px;border-radius:50%;vertical-align:middle;margin-right:6px}
+#novart-bar .nv-save[data-error=true]{color:#af3d4d}
+#novart-bar .nv-save[data-error=true]::before{background:#af3d4d}
+#novart-bar .nv-brief-toggle{margin-left:6px;color:#6c6476}
+[data-novart-native-header]{visibility:hidden!important;pointer-events:none!important}
+#novart-switcher{position:fixed;z-index:110;top:49px;left:49px;width:290px;max-width:calc(100vw - 30px);max-height:min(440px,calc(100vh - 120px));overflow:auto;border:1px solid #e7e3ec;border-radius:14px;background:white;padding:6px;box-shadow:0 12px 32px #29223214;color:#46404e;font:12px/1.5 system-ui,"Microsoft YaHei",sans-serif}
+#novart-switcher[hidden],#novart-context[hidden]{display:none}
+#novart-switcher p{font-size:11px;color:#aaa2b1;padding:4px 8px;margin:5px 0 4px}
+#novart-switcher a{display:block;padding:10px;border-radius:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#novart-switcher a:hover,#novart-switcher a[aria-current=true]{background:#f2eef8}
+#novart-switcher .nv-all{border-top:1px solid #eeeaf2;margin-top:5px;color:#746783}
+#novart-context{position:fixed;top:58px;z-index:105;width:340px;max-width:calc(100vw - 24px);max-height:calc(100vh - 138px);overflow:auto;background:white;border:1px solid #e7e3ec;border-radius:16px;padding:21px;box-shadow:0 12px 38px #2e253817;color:#39333f;font:12px/1.6 Inter,system-ui,"Microsoft YaHei",sans-serif}
+#novart-context header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}
+#novart-context h2{font-size:14px;font-weight:550;margin:0}
+#novart-context header button{border:0;background:transparent;border-radius:7px;padding:5px;color:#88808f;display:flex}
+#novart-context label{display:block;margin:14px 0 7px;color:#827a8b}
+#novart-context textarea{display:block;width:100%;min-height:110px;resize:vertical;border:1px solid #ece7f1;border-radius:10px;padding:10px 11px;outline:0;line-height:1.7;background:#fcfbfd;color:#3f3747}
+#novart-context textarea:focus{border-color:#bcb0cf;background:#fff}
+#novart-context #nv-notes{min-height:75px}
+#novart-context .nv-context-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:15px}
+#novart-context .nv-context-status{font-size:11px;color:#978b9f;max-width:175px}
+#novart-context .nv-context-save{border:0;background:#29252e;border-radius:8px;color:white;padding:8px 12px;white-space:nowrap}
+#novart-context .nv-context-note{font-size:11px;color:#aaa1b0;margin:15px 0 0}
+#novart-context .nv-context-latest{border:0;background:#f2eef7;color:#7c6c90;font-size:11px;border-radius:7px;padding:7px 10px;margin-top:10px}
+#novart-context .nv-context-latest[hidden]{display:none}
+#novart-availability{position:fixed;top:49px;z-index:55;font:11px/1.5 system-ui,"Microsoft YaHei",sans-serif;color:#a199a8;pointer-events:none;text-align:center}
+@media(max-width:1000px){.nv-home-header{padding:20px 24px}.nv-home-main{padding:0 24px 40px}.nv-hero{margin-top:48px}.nv-project-grid{grid-template-columns:repeat(2,minmax(0,1fr))}#novart-bar .nv-title{max-width:180px}#novart-bar .nv-save{display:none}}
+@media(max-width:600px){.nv-home-header{padding:18px 20px}.nv-home-main{padding:0 20px 32px}.nv-hero{margin:40px auto}.nv-hero h1{font-size:28px}.nv-project-grid{grid-template-columns:1fr}.nv-create-footer small{display:none}.nv-project-head span{display:none}.nv-home-header .nv-local{display:none}#novart-bar .nv-title{max-width:130px}}

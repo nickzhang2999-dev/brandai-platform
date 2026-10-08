@@ -1,0 +1,8 @@
+/* Scope new feedback to the independently enabled M20 local canvas. */
+html[data-nv-visual="m16"] #novart-bar .nv-save[data-save-state="error"],
+html[data-nv-visual="m16"] #novart-bar .nv-save[data-save-state="unconfirmed"] {
+  color:#b54736;
+}
+html[data-nv-visual="m16"] li[data-nv-online-notice="m20"] [data-icon] {
+  color:#7c5cff;
+}

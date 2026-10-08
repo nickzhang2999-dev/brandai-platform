@@ -1,0 +1,6 @@
+@import url('/m18-studio.css');
+
+/* Native canvas geometry follows the actual workbench, including the 64px rail. */
+#ns-frames .ns-frame-slot iframe { min-width:0; }
+/* The old phone notice no longer applies to the verified desktop range. */
+@media (min-width:820px) { #ns-mobile-editor-note { display:none; } }

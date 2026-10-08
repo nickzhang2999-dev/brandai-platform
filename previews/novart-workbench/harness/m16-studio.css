@@ -1,0 +1,106 @@
+@import url('/m15-studio.css');
+
+/* Match the product's existing light palette in packages/ui/src/styles.css.
+   Surface changes stay in this comparison entry; editor geometry is inherited. */
+:root {
+  --ns-text:#1f1f2a;
+  --ns-muted:#6b6b7a;
+  --ns-border:#ececf3;
+  --ns-purple:#7c5cff;
+  --ns-purple-soft:#f4f0ff;
+  --ns-surface:#fff;
+  --ns-panel-shadow:0 10px 36px #7c5cff0d,0 2px 8px #38246504;
+  --ns-radius-panel:24px;
+  --ns-radius-control:14px;
+}
+body { background:#fafafc; }
+#ns-main { background:linear-gradient(150deg,#fafafc 20%,#f8f6ff 100%); }
+.ns-sidebar { background:#fff; border-color:#efedf5; padding-top:22px; }
+.ns-wordmark { justify-content:center; padding:0 8px 28px; gap:0; line-height:1; }
+.ns-brand-full { display:block; width:148px; height:auto; object-fit:contain; }
+.ns-wordmark span.ns-brand-emblem { display:none; }
+.ns-brand-emblem { position:relative; width:36px; height:26px; overflow:hidden; flex-shrink:0; }
+.ns-brand-emblem img { position:absolute; top:0; left:50%; transform:translateX(-50%); width:82px; max-width:none; height:auto; }
+.ns-nav a { border-radius:999px; }
+.ns-nav a:hover { background:#f6f5fa; }
+.ns-nav a[aria-current=page] { color:#5b3fe0; background:#f0eaff; }
+.ns-nav-divider { background:#f0edf6; }
+.ns-profile-link { border-radius:18px; }
+.ns-profile-link:hover,.ns-profile-link[aria-current=page] { background:#f4f0ff; }
+.ns-avatar { background:#f0eaff; color:#68558b; }
+.ns-history button { border-radius:50%; }
+.ns-history button:hover { background:#f0eaff; }
+.ns-preview-label { background:#ffffffb3; border-color:#e9e4f4; border-radius:999px; padding:4px 10px; }
+.ns-home-hero h1 { color:var(--ns-text); font-weight:550; }
+.ns-composer { border-color:#e8e2f2; border-radius:28px; box-shadow:0 12px 40px #7c5cff08,0 2px 8px #38246503; padding:24px 24px 18px; }
+.ns-composer:focus-within { border-color:#ac98ec; box-shadow:0 0 0 3px #7c5cff0a,0 12px 40px #7c5cff09; }
+.ns-composer textarea { color:var(--ns-text); }
+.ns-composer textarea::placeholder { color:#878092; }
+.ns-primary,.ns-secondary { border-radius:999px; }
+.ns-primary { background:#24222a; border-color:#24222a; }
+.ns-primary:hover { background:#3d364b; border-color:#3d364b; }
+.ns-secondary { border-color:#e5deef; background:#ffffffc9; color:#62596e; }
+.ns-secondary:hover { background:#f4f0ff; }
+.ns-composer .ns-primary { min-width:114px; padding:11px 17px; }
+.ns-start-row .ns-text-button,.ns-prompt-chip { border-color:#e9e3f2; background:#ffffffd9; color:#74667f; }
+.ns-start-row .ns-text-button:hover,.ns-prompt-chip:hover { background:#eee8ff; border-color:#dcd0f7; color:#6245a8; }
+.ns-project-card { background:#fff; border:1px solid #eee9f5; border-radius:22px; padding:10px; box-shadow:0 5px 20px #6f47b506; }
+.ns-project-card:hover { border-color:#dbcfef; box-shadow:0 9px 28px #6f47b510; }
+.ns-project-preview { border:0; border-radius:16px; background:linear-gradient(145deg,#f7f5fb,#efebf8); }
+.ns-preview-placeholder { color:#8c7da1; }
+.ns-preview-placeholder svg { color:#b4a6c9; }
+.ns-project-info { padding:14px 5px 7px; }
+.ns-project-info strong { color:var(--ns-text); }
+.ns-favorite { right:11px; bottom:40px; border-radius:50%; color:#9a8bae; }
+.ns-favorite:hover { background:#f4f0ff; }
+.ns-favorite[aria-pressed=true] { color:#7659bc; }
+.ns-project-preview .ns-canvas-badge { border-radius:999px; padding:3px 8px; }
+.ns-empty { border-style:solid; border-color:#eae3f3; border-radius:22px; background:#ffffffb8; }
+.ns-empty svg { color:#b3a2c9; }
+.ns-empty p { color:var(--ns-muted); }
+.ns-search,.ns-filter-button,.ns-sort select,.ns-resource-actions>select { border-radius:999px; border-color:#e5dfed; background:#fff; }
+.ns-filter-button[aria-pressed=true] { background:#f4f0ff; border-color:#d9ccf2; }
+.ns-asset-card,.ns-starter-card { border-color:#e9e2f1; border-radius:22px; box-shadow:0 5px 20px #6f47b506; }
+.ns-asset-image { background:#f6f3fb; }
+.ns-form-card,.ns-brand-preview { border-color:#e9e2f1; border-radius:var(--ns-radius-panel); box-shadow:var(--ns-panel-shadow); }
+.ns-form-card input,.ns-form-card textarea,.ns-form-card select { border-radius:var(--ns-radius-control); border-color:#e4ddec; background:#fff; }
+.ns-dialog { border-radius:var(--ns-radius-panel); border-color:#e9e2f1; box-shadow:0 20px 80px #3f2b6326; }
+.ns-dialog-head button { border-radius:50%; }
+.ns-dialog select { border-radius:var(--ns-radius-control); }
+.ns-image-dialog img { border-radius:18px; }
+.ns-toast { border-radius:18px; border-color:#e6deee; box-shadow:var(--ns-panel-shadow); }
+.ns-feedback,#ns-meta-alert { border-radius:16px; }
+.ns-workspace-status { border-radius:20px; }
+
+/* Full wordmark on the wide rail, the same image's monogram through a CSS
+   viewport on the narrow rail. No edited or regenerated logo asset is used. */
+body[data-page=workspace] .ns-wordmark { padding:4px 0 28px; }
+body[data-page=workspace] .ns-wordmark .ns-brand-full { display:none; }
+body[data-page=workspace] .ns-wordmark span.ns-brand-emblem {
+  display:block; position:relative; width:36px; height:26px; padding:0;
+  overflow:hidden; clip:auto; white-space:normal;
+}
+body[data-page=workspace] .ns-nav a { border-radius:16px; }
+body[data-page=workspace] .ns-profile-link { border-radius:16px; }
+
+@media(max-width:1200px) and (min-width:961px) {
+  .ns-brand-full { width:132px; }
+}
+@media(max-width:960px) {
+  .ns-wordmark { padding:0 0 34px; }
+  .ns-wordmark .ns-brand-full { display:none; }
+  .ns-wordmark span.ns-brand-emblem { display:block; }
+  .ns-nav a { border-radius:18px; }
+}
+@media(max-width:650px) {
+  .ns-composer { border-radius:22px; padding:18px 16px 14px; }
+  .ns-composer .ns-primary { min-width:91px; padding:9px 11px; }
+  .ns-project-card { border-radius:18px; padding:7px; }
+  .ns-project-preview { border-radius:12px; }
+  .ns-project-info { padding:11px 3px 4px; }
+  .ns-project-info strong { padding-right:0; }
+  .ns-favorite { top:11px; right:11px; width:25px; height:25px; border-radius:50%; background:#ffffffdf; }
+  .ns-empty { border-radius:18px; }
+  .ns-form-card,.ns-dialog,.ns-brand-preview { border-radius:20px; }
+  .ns-workspace-page { background:#faf8ff; }
+}

@@ -1,0 +1,2 @@
+# Captured inputs and patch anchors have byte-level SHA checks. No EOL conversion.
+* -text

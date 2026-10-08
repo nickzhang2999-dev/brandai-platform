@@ -1,0 +1,52 @@
+@import url('/m13-motion.css');
+
+/* These selectors address only Novart comparison controls, never native shape,
+   canvas, chat or editor menu transforms. M7 still owns hidden/inert and focus. */
+html :is(#novart-context,#novart-workflow,#novart-switcher) {
+  transition-duration:var(--nv-motion-enter);
+  transition-timing-function:var(--nv-motion-ease);
+}
+html :is(#novart-context,#novart-workflow,#novart-switcher)[hidden] {
+  transform:translateY(var(--nv-motion-distance));
+  transition-duration:var(--nv-motion-exit);
+}
+@starting-style {
+  html :is(#novart-context,#novart-workflow,#novart-switcher):not([hidden]) {
+    opacity:0;
+    transform:translateY(var(--nv-motion-distance));
+  }
+}
+html :is(#novart-bar,#novart-context,#novart-workflow,#novart-switcher) :is(button,a),
+html #nv-workflow-summary {
+  transition:background-color var(--nv-motion-feedback) ease,
+    color var(--nv-motion-feedback) ease,border-color var(--nv-motion-feedback) ease,
+    transform var(--nv-motion-press) var(--nv-motion-ease);
+}
+html :is(#novart-bar,#novart-context,#novart-workflow,#novart-switcher) :is(button,a):not(:disabled):active,
+html #nv-workflow-summary:active { transform:scale(.98); }
+html #nv-project-switch>svg {
+  transition:transform var(--nv-motion-enter) var(--nv-motion-ease);
+}
+
+/* Include links and the material summary as well as buttons; turning reduction
+   on while a transition is running must also stop the remaining motion. */
+html[data-nv-studio-motion=reduce] :is(#novart-context,#novart-workflow,#novart-switcher,
+    #novart-bar button,#novart-bar a,#novart-context button,#novart-context a,
+    #novart-workflow button,#novart-workflow a,#novart-switcher button,
+    #novart-switcher a,#nv-workflow-summary) {
+  animation:none!important;
+  transition:none!important;
+  transform:none!important;
+}
+html[data-nv-studio-motion=reduce] #nv-project-switch>svg { transition:none!important; }
+@media (prefers-reduced-motion:reduce) {
+  html :is(#novart-context,#novart-workflow,#novart-switcher,
+      #novart-bar button,#novart-bar a,#novart-context button,#novart-context a,
+      #novart-workflow button,#novart-workflow a,#novart-switcher button,
+      #novart-switcher a,#nv-workflow-summary) {
+    animation:none!important;
+    transition:none!important;
+    transform:none!important;
+  }
+  html #nv-project-switch>svg { transition:none!important; }
+}

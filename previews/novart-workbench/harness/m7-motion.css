@@ -1,0 +1,46 @@
+/* Motion for the independent comparison UI only. Native canvas stays untouched. */
+#novart-context,#novart-workflow,#novart-switcher {
+  opacity:1;
+  transform:translateY(0);
+  transition-property:opacity,transform,display;
+  transition-duration:180ms;
+  transition-timing-function:cubic-bezier(.2,.8,.2,1);
+  transition-behavior:allow-discrete;
+}
+#novart-switcher {transform-origin:top left;transition-duration:140ms}
+#novart-context[hidden],#novart-workflow[hidden],#novart-switcher[hidden] {
+  opacity:0;
+  transform:translateY(6px);
+  transition-duration:120ms;
+  pointer-events:none!important;
+}
+#novart-context[hidden] *,#novart-workflow[hidden] *,#novart-switcher[hidden] * {pointer-events:none!important}
+@starting-style {
+  #novart-context:not([hidden]),#novart-workflow:not([hidden]),#novart-switcher:not([hidden]) {
+    opacity:0;
+    transform:translateY(6px);
+  }
+}
+.novart-home .nv-hero {animation:nv-m7-intro 220ms cubic-bezier(.2,.8,.2,1)}
+@keyframes nv-m7-intro {from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+.novart-home button,#novart-bar button,#novart-bar a,#novart-context button,#novart-workflow button,#novart-switcher a,#nv-workflow-summary {
+  transition:background-color 120ms ease,color 120ms ease,border-color 120ms ease,transform 90ms ease;
+}
+.novart-home button:not(:disabled):active,#novart-bar button:not(:disabled):active,#novart-bar a:active,#novart-context button:not(:disabled):active,#novart-workflow button:not(:disabled):active,#novart-switcher a:active,#nv-workflow-summary:active {transform:scale(.97)}
+#nv-project-switch>svg {transition:transform 140ms cubic-bezier(.2,.8,.2,1)}
+#nv-project-switch[aria-expanded=true]>svg {transform:rotate(180deg)}
+.novart-home .nv-project-card {transition:transform 160ms cubic-bezier(.2,.8,.2,1),border-color 120ms ease}
+@media(hover:hover) and (pointer:fine) {
+  .novart-home .nv-project-card:hover {transform:translateY(-2px)}
+  #novart-context header button:hover,#novart-workflow .nw-heading button:hover,#novart-workflow .nw-remove:hover {background:#f3eff7;color:#766486}
+}
+@media(prefers-reduced-motion:reduce) {
+  #novart-context,#novart-workflow,#novart-switcher,.novart-home .nv-hero,.novart-home .nv-project-card,
+  .novart-home button,#novart-bar button,#novart-bar a,#novart-context button,#novart-workflow button,
+  #novart-switcher a,#nv-workflow-summary {
+    animation:none!important;
+    transition:none!important;
+    transform:none!important;
+  }
+  #nv-project-switch>svg {transition:none!important}
+}

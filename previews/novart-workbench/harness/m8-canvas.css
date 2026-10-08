@@ -1,0 +1,29 @@
+/* Only the framed comparison entry receives this sheet. */
+html[data-nv-studio-canvas-ready="true"] #novart-bar .nv-back:focus-visible {
+  outline: 2px solid #8b77b5;
+  outline-offset: 2px;
+}
+
+html[data-nv-studio-motion="reduce"] #novart-context,
+html[data-nv-studio-motion="reduce"] #novart-workflow,
+html[data-nv-studio-motion="reduce"] #novart-switcher {
+  transition: none !important;
+  animation: none !important;
+  transform: none !important;
+}
+
+html[data-nv-studio-motion="reduce"] #novart-bar button,
+html[data-nv-studio-motion="reduce"] #novart-bar a,
+html[data-nv-studio-motion="reduce"] #nv-project-switch svg,
+html[data-nv-studio-motion="reduce"] #novart-context button,
+html[data-nv-studio-motion="reduce"] #novart-workflow button,
+html[data-nv-studio-motion="reduce"] #novart-switcher a {
+  transition: none !important;
+  animation: none !important;
+}
+
+html[data-nv-studio-motion="reduce"] #novart-bar button:active,
+html[data-nv-studio-motion="reduce"] #novart-context button:active,
+html[data-nv-studio-motion="reduce"] #novart-workflow button:active {
+  transform: none !important;
+}

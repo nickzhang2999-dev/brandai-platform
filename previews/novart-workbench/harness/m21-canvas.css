@@ -1,0 +1,25 @@
+/* Opt-in small desktop layout. Original nodes, hit areas and document stay intact. */
+html[data-nv-layout="m21"] #novart-bar .nv-save { display:inline; flex:none; }
+html[data-nv-layout="m21"] #novart-bar .nv-title { flex:0 1 auto; }
+
+html[data-nv-layout="m21"][data-m21-compact="true"] [data-m21-drawer] {
+  position:absolute!important; inset:0!important; width:auto!important;
+  background:var(--lo-bg-body,#fff); z-index:110!important;
+}
+html[data-nv-layout="m21"][data-m21-compact="true"][data-m21-chat-open="false"] [data-m21-drawer] { display:none; }
+html[data-nv-layout="m21"][data-m21-compact="true"][data-m21-chat-open="true"] [data-m21-drawer] :is([data-testid="agent-panel-container"],aside) {
+  width:100%!important; max-width:none!important;
+}
+html[data-nv-layout="m21"][data-m21-compact="true"][data-m21-chat-open="true"] [data-m21-background] {
+  opacity:0!important; pointer-events:none!important;
+}
+html[data-nv-layout="m21"] [data-m21-float-stack="true"] { bottom:64px!important; }
+
+#m21-drawer-receipt {
+  display:none; position:absolute; top:14px; left:50%; transform:translateX(-50%);
+  max-width:calc(100% - 300px); overflow:hidden; text-overflow:ellipsis;
+  white-space:nowrap; pointer-events:none; z-index:120;
+  color:#82788d; font:11px/20px Inter,system-ui,"Microsoft YaHei",sans-serif;
+}
+html[data-nv-layout="m21"][data-m21-compact="true"][data-m21-chat-open="true"] #m21-drawer-receipt { display:block; }
+#m21-drawer-receipt:is([data-save-state="error"],[data-save-state="unconfirmed"]) { color:#b54736; }

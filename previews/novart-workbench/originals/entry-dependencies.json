@@ -1,0 +1,108 @@
+[
+  {
+    "path": "static/js/async/1118.10d21f68.js",
+    "status": 200,
+    "bytes": 9716,
+    "sha256": "4f60d2ffdd94611a663d3594cc68ff7cdefcc1fc01e3feb07fba71c32e40b9d4",
+    "url": "https://web-static3.lovart.ai/lovart_canvas_online/static/js/async/1118.10d21f68.js"
+  },
+  {
+    "path": "static/js/1528.b3e6d520.js",
+    "status": 200,
+    "bytes": 2352910,
+    "sha256": "8bd70573e0beda72b79ec90c396f9d685e3c86023792d6b2de0466570b7ebe8f",
+    "url": "https://web-static3.lovart.ai/lovart_canvas_online/static/js/1528.b3e6d520.js"
+  },
+  {
+    "path": "static/js/1773.fe2335a6.js",
+    "status": 200,
+    "bytes": 6281132,
+    "sha256": "2dc5773410b0759fa63a05fc97fbf6c9f6e11d9423af40090eb8aa354ba25750",
+    "url": "https://web-static3.lovart.ai/lovart_canvas_online/static/js/1773.fe2335a6.js"
+  },
+  {
+    "path": "static/js/4564.3598be74.js",
+    "status": 200,
+    "bytes": 12160,
+    "sha256": "0bf6ee2b6ef497bdddec2672c08a9661cd62a6b76d871ec8a198ff2c31e7b30b",
+    "url": "https://web-static3.lovart.ai/lovart_canvas_online/static/js/4564.3598be74.js"
+  },
+  {
+    "path": "static/js/async/5365.97ba61e3.js",
+    "status": 200,
+    "bytes": 8813,
+    "sha256": "2f9ede87c0e9fc5438d34de8a0c0ceb19646c5b430a7eab656e98bc071eed1ec",
+    "url": "https://web-static3.lovart.ai/lovart_canvas_online/static/js/async/5365.97ba61e3.js"
+  },
+  {
+    "path": "static/js/async/5709.435d5788.js",
+    "status": 200,
+    "bytes": 12890,
+    "sha256": "121daf0d91652b9d9e1aba7d992ba8d042b2b86d3c0a3cf63515e4a4431e1c27",
+    "url": "https://web-static3.lovart.ai/lovart_canvas_online/static/js/async/5709.435d5788.js"
+  },
+  {
+    "path": "static/js/6374.5d7af4e1.js",
+    "status": 200,
+    "bytes": 25045,
+    "sha256": "d593ea3fa35741ba0932a28a6cfd7e08b3427ada6a89b921c7c88dd08332a614",
+    "url": "https://web-static3.lovart.ai/lovart_canvas_online/static/js/6374.5d7af4e1.js"
+  },
+  {
+    "path": "static/js/async/lovart-canvas.358a3a91.js",
+    "status": 200,
+    "bytes": 1008934,
+    "sha256": "506e64071151ecc42aa9e9852c17f1a3dba382b70546b2ad78bfc1d8cab0f3b4",
+    "url": "https://web-static3.lovart.ai/lovart_canvas_online/static/js/async/lovart-canvas.358a3a91.js"
+  },
+  {
+    "path": "static/js/async/7989.27da2bb0.js",
+    "status": 200,
+    "bytes": 12012,
+    "sha256": "b7914bf5ddb3b54b00eb0e2060c74350e77bb3e04bc4457847a3d3751d167d42",
+    "url": "https://web-static3.lovart.ai/lovart_canvas_online/static/js/async/7989.27da2bb0.js"
+  },
+  {
+    "path": "static/js/async/8092.d6bf062d.js",
+    "status": 200,
+    "bytes": 6211,
+    "sha256": "674bc30923636c6cf3d4bd78f5c7dfb3ef8eeb39df3187d4d809f57cb53392c9",
+    "url": "https://web-static3.lovart.ai/lovart_canvas_online/static/js/async/8092.d6bf062d.js"
+  },
+  {
+    "path": "static/js/async/9257.e93abbe8.js",
+    "status": 200,
+    "bytes": 157294,
+    "sha256": "76075107658ce42a46ece92ceafc4b2f0c4e21cc1cf1fa2edb81b5c238f92cd8",
+    "url": "https://web-static3.lovart.ai/lovart_canvas_online/static/js/async/9257.e93abbe8.js"
+  },
+  {
+    "path": "static/js/9591.c04363c4.js",
+    "status": 200,
+    "bytes": 55450,
+    "sha256": "2bc1808592b65422258ecedd66ad0536e33668f06f87fd1a11cd984aaafa3e1b",
+    "url": "https://web-static3.lovart.ai/lovart_canvas_online/static/js/9591.c04363c4.js"
+  },
+  {
+    "path": "static/js/lib-tldraw.e6518aa1.js",
+    "status": 200,
+    "bytes": 1156457,
+    "sha256": "99079b08341259acf30d9d0e834f1dca74d8ce3b52c3e8e905f8b1ec7c040101",
+    "url": "https://web-static3.lovart.ai/lovart_canvas_online/static/js/lib-tldraw.e6518aa1.js"
+  },
+  {
+    "path": "static/js/async/9827.5887631b.js",
+    "status": 200,
+    "bytes": 868223,
+    "sha256": "7eaccb76ed34b241acb8f871fcfeb6bdac0dc84691d268ab58dd5098466f93be",
+    "url": "https://web-static3.lovart.ai/lovart_canvas_online/static/js/async/9827.5887631b.js"
+  },
+  {
+    "path": "static/js/runtime.dc1a2d6c.js.map",
+    "error": "HTTP Error 404: Not Found"
+  },
+  {
+    "path": "static/js/canvas.325741a0.js.map",
+    "error": "HTTP Error 404: Not Found"
+  }
+]

@@ -1,0 +1,38 @@
+[
+  {
+    "url": "https://web-static3.lovart.ai/lovart_canvas_online/static/js/async/2233.0dd32499.js",
+    "path": "originals/static/js/async/2233.0dd32499.js",
+    "observedIn": "m2-01.json",
+    "capturedAt": "2026-10-01T06:36:04.393109+00:00",
+    "status": 200,
+    "contentType": "application/javascript",
+    "etag": null,
+    "lastModified": "Wed, 30 Sep 2026 11:54:27 GMT",
+    "bytes": 358965,
+    "sha256": "aae09c236a993c2ffee31a0240775d015865e3b721f7e328ce5fd49143c74c18"
+  },
+  {
+    "url": "https://fonts.gstatic.com/s/inter/v20/UcCo3FwrK3iLTfvlaQc78lA2.ttf",
+    "path": "originals/external/fonts.gstatic.com/s/inter/v20/UcCo3FwrK3iLTfvlaQc78lA2.ttf",
+    "observedIn": "m2-02.json",
+    "capturedAt": "2026-10-01T06:38:48.163120+00:00",
+    "status": 200,
+    "contentType": "font/ttf",
+    "etag": null,
+    "lastModified": "Tue, 09 Sep 2025 18:36:08 GMT",
+    "bytes": 874708,
+    "sha256": "0be2399ea925f1f83ff974764761da9860ec50742ed29a5d4c1ffd0c5c7ac3a8"
+  },
+  {
+    "url": "https://web-static3.lovart.ai/lovart_canvas_online/static/js/async/6526.700919e7.js",
+    "path": "originals/static/js/async/6526.700919e7.js",
+    "observedIn": "m2-03.json",
+    "capturedAt": "2026-10-01T06:43:24.807247+00:00",
+    "status": 200,
+    "contentType": "application/javascript",
+    "etag": null,
+    "lastModified": "Wed, 30 Sep 2026 11:54:40 GMT",
+    "bytes": 682559,
+    "sha256": "f768531387d7928fe9d65d50f21b73ce808ed190347072e1d8b0b12d106ccb2f"
+  }
+]

@@ -1,0 +1,61 @@
+#nv-workflow-toggle{white-space:nowrap}
+#nv-workflow-toggle[data-active=true]{background:#eee8f8;color:#71518e}
+#novart-workflow{position:fixed;top:58px;z-index:106;width:360px;max-width:calc(100vw - 24px);max-height:calc(100vh - 138px);display:flex;flex-direction:column;overflow:hidden;background:#fff;border:1px solid #e7e3ec;border-radius:16px;box-shadow:0 12px 38px #2e253817;padding:20px;color:#39333f;font:12px/1.6 Inter,system-ui,"Microsoft YaHei",sans-serif;box-sizing:border-box}
+#nv-workflow-body{min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;flex:1 1 auto;padding-right:2px}
+#novart-workflow *,#nv-workflow-summary *{box-sizing:border-box}
+#novart-workflow[hidden],#nv-workflow-summary[hidden]{display:none}
+#novart-workflow button,#novart-workflow select{font:inherit}
+#novart-workflow button{cursor:pointer}
+#novart-workflow button:disabled,#novart-workflow select:disabled{opacity:.5;cursor:default}
+#novart-workflow button:focus-visible,#novart-workflow select:focus-visible,#nv-workflow-summary:focus-visible{outline:2px solid #9e8cba;outline-offset:2px}
+#novart-workflow svg,#nv-workflow-toggle svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.nw-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px;flex:none}
+.nw-heading h2{font-size:14px;font-weight:550;margin:0}
+.nw-heading button{border:0;background:transparent;border-radius:7px;padding:5px;color:#88808f;display:flex}
+.nw-mode{display:flex;border-radius:10px;background:#f5f2f8;padding:3px;gap:3px}
+.nw-mode button{border:0;flex:1;border-radius:8px;background:transparent;padding:7px;color:#9b91a4}
+.nw-mode button[aria-pressed=true]{color:#6e4e88;background:#fff;box-shadow:0 2px 6px #3a254b08}
+.nw-mode-note{font-size:11px;color:#aaa1b0;margin:9px 0 16px}
+.nw-target{border:1px solid #e8dff1;border-radius:11px;padding:10px;margin:0 0 16px;background:#fbf9fd;display:flex;align-items:center;gap:10px}
+.nw-target img{width:48px;height:48px;object-fit:contain;border-radius:7px;background:#f0ebf6}
+.nw-target div{flex:1;min-width:0}
+.nw-target strong{font-size:12px;font-weight:500;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nw-target p{font-size:10px;color:#a491b2;margin:2px 0 0}
+.nw-target button{padding:4px;border:0;background:transparent;color:#9a8ca5;border-radius:6px;display:flex}
+.nw-target.nw-invalid{border-color:#e8c8cc;background:#fffafa}
+.nw-section-title{display:flex;align-items:center;justify-content:space-between;margin:15px 0 9px;color:#81718d;font-size:11px}
+.nw-section-title span:last-child{color:#b3aab9}
+.nw-empty{font-size:11px;color:#aaa0b0;line-height:1.8;padding:12px 0 16px}
+.nw-reference{border:1px solid #ece7f1;border-radius:12px;padding:11px;margin-bottom:9px}
+.nw-reference-head{display:flex;align-items:center;gap:10px;margin-bottom:9px}
+.nw-reference img{width:42px;height:42px;object-fit:contain;border-radius:7px;background:#f5f1f8}
+.nw-reference-name{flex:1;min-width:0;font-weight:500;font-size:12px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.nw-remove{border:0;background:transparent;color:#b3a6bb;padding:4px;border-radius:5px;display:flex}
+.nw-ref-controls{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.nw-reference select{border:1px solid #e7deef;border-radius:7px;padding:5px 6px;background:#fcfbfd;color:#7a608e;max-width:160px;outline:0}
+.nw-participates{display:flex;align-items:center;gap:5px;color:#93829f;font-size:11px;white-space:nowrap;cursor:pointer}
+.nw-participates input{accent-color:#8d6cab;margin:0}
+.nw-purpose-hint{font-size:10px;color:#aaa0b0;line-height:1.65;margin:8px 0 0}
+.nw-reference.nw-invalid{border-color:#e8c8cc}
+.nw-gallery-toggle{width:100%;display:flex;align-items:center;justify-content:center;gap:7px;border:1px dashed #ddd2e6;border-radius:10px;background:#fcfbfd;color:#9a87aa;padding:9px;margin-top:4px}
+.nw-gallery-toggle svg{width:14px;height:14px}
+.nw-gallery-item{display:flex;gap:10px;padding:12px 0;border-bottom:1px solid #f1edf5}
+.nw-gallery-item img{width:62px;height:62px;object-fit:contain;border:1px solid #eee8f3;border-radius:9px;background:#faf8fc}
+.nw-gallery-item>div{flex:1;min-width:0}
+.nw-gallery-item strong{display:block;font-size:11px;font-weight:500;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;margin:0 0 7px}
+.nw-gallery-item .nw-actions{display:flex;gap:7px}
+.nw-actions button{border:1px solid #e9e0f0;background:white;color:#9a7cab;border-radius:6px;padding:4px 7px;font-size:10px!important}
+.nw-actions button[data-action=set-target]{background:#f4eff8;border-color:transparent}
+.nw-issues{font-size:11px;color:#b56b79;line-height:1.7;margin:10px 0 0}
+.nw-footer{flex:none;margin:14px -20px -20px;padding:15px 20px 18px;background:#fff;border-top:1px solid #f0ecf4}
+.nw-save-row{display:flex;align-items:center;justify-content:space-between;gap:12px}
+#nv-workflow-status{font-size:11px;color:#a393ad;max-width:185px}
+#nv-workflow-save{border:0;background:#29252e;color:white;border-radius:8px;padding:8px 12px;white-space:nowrap}
+.nw-service-note{font-size:10px;color:#b4aabb;line-height:1.7;margin:9px 0 0}
+#nv-workflow-latest{border:0;background:#f2eef7;color:#8f779f;font-size:11px;border-radius:7px;padding:6px 9px;margin-top:9px}
+#nv-workflow-latest[hidden],#nv-workflow-gallery[hidden]{display:none}
+#nv-workflow-summary{position:fixed;top:78px;z-index:54;height:auto;min-height:34px;border:1px solid #f0ebf5;background:#fbf9fd;color:#a493af;border-radius:10px;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 11px;font:10px/1.5 system-ui,"Microsoft YaHei",sans-serif;cursor:pointer;text-align:left}
+#nv-workflow-summary strong{font-size:11px;font-weight:500;color:#8b739b}
+#nv-workflow-summary[data-error=true]{border-color:#efd8dd;color:#b56b79}
+#nv-workflow-summary small{white-space:nowrap;font:inherit;color:#c0b3c8}
+@media(max-width:1000px){#novart-workflow{width:330px;padding:16px}.nw-footer{margin:14px -16px -16px;padding:13px 16px 16px}}

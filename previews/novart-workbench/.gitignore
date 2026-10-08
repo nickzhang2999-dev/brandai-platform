@@ -1,0 +1,11 @@
+/sharing/
+/data/
+/*-data/
+__pycache__/
+*.py[cod]
+*.log
+.env
+.env.*
+.venv/
+access-key.txt
+runtime.json

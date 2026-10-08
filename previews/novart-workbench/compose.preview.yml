@@ -1,0 +1,14 @@
+services:
+  workbench-preview:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    labels:
+      cds.path-prefix: "/"
+    ports:
+      - "127.0.0.1:${NOVART_PREVIEW_PORT:-8769}:8769"
+    volumes:
+      - workbench-preview-data:/app/sharing
+volumes:
+  workbench-preview-data:

@@ -1,0 +1,12 @@
+sharing
+data
+*-data
+__pycache__
+**/__pycache__
+**/*.pyc
+.venv
+.env*
+*.log
+**/access-key.txt
+**/runtime.json
+.git

@@ -1,0 +1,55 @@
+@import url('/m13-studio.css');
+
+/* An error notice takes its own row rather than covering the return action.
+   Persistent canvas frames keep their original fixed geometry. */
+#ns-main { display:flex; flex-direction:column; }
+.ns-shell-top { flex:0 0 68px; }
+#ns-main>.ns-page { flex:1 1 0; min-height:0; height:auto; }
+#ns-meta-alert {
+  position:relative;
+  inset:auto;
+  flex:0 0 auto;
+  margin:12px var(--ns-space) 0;
+  flex-wrap:wrap;
+}
+#ns-meta-message { min-width:180px; overflow-wrap:anywhere; }
+body[data-page=workspace] #ns-meta-alert { display:none; }
+
+/* Status stays beside the action; existing content remains readable during reads. */
+.ns-feedback {
+  display:flex;
+  align-items:center;
+  flex-wrap:wrap;
+  gap:8px 14px;
+  padding:11px 14px;
+  margin-bottom:16px;
+  border:1px solid #e9e5ee;
+  border-radius:9px;
+  background:#faf9fc;
+  color:#625b6d;
+  font-size:12px;
+  line-height:1.7;
+}
+.ns-feedback>span { flex:1; min-width:180px; overflow-wrap:anywhere; }
+.ns-feedback[data-state=error] { background:#fff9f6; border-color:#eddfd5; color:#805947; }
+.ns-feedback button { flex-shrink:0; }
+.ns-form-footer [data-state=error],#ns-preview-status[data-state=error],
+#ns-resource-status[data-state=error],#ns-create-status[data-state=error] { color:#975437; }
+.ns-form-footer [data-state=dirty] { color:#786446; }
+.ns-form-footer [data-state=saving],.ns-form-footer [data-state=loading] { color:#625b6d; }
+.ns-form-footer [data-state=saved] { color:#426c58; }
+.ns-form-footer { align-items:flex-start; }
+.ns-form-footer>span { line-height:1.7; overflow-wrap:anywhere; }
+.ns-form-footer button { flex-shrink:0; }
+.ns-stale-label { display:block; margin-top:6px; font-size:11px; color:#8a644f; }
+#ns-resource-status { flex-wrap:wrap; gap:8px 14px; overflow-wrap:anywhere; }
+#ns-preview-status:not(:empty) { min-height:100px; display:grid; place-items:center; padding:18px; background:#faf9fc; border-radius:10px; }
+.ns-create-uncertain { margin:12px 0 0; text-align:left; }
+.ns-create-uncertain .ns-secondary { padding:7px 10px; font-size:11px; }
+@media(max-width:650px) {
+  .ns-shell-top { flex-basis:55px; }
+  #ns-meta-alert { margin:10px var(--ns-space) 0; }
+  .ns-feedback { padding:10px; font-size:11px; }
+  .ns-feedback>span { min-width:100%; }
+  .ns-form-footer { flex-wrap:wrap; }
+}

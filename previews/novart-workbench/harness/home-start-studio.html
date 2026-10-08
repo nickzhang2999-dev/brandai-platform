@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Novart — 创作工作台</title>
+  <link rel="stylesheet" href="/m24-studio.css">
+  <link rel="stylesheet" href="/project-library-studio.css">
+  <link rel="stylesheet" href="/home-start-studio.css">
+  <script defer src="/home-start-attachments.js"></script>
+  <script defer src="/home-start-studio.js"></script>
+</head>
+<body data-visual="m16">
+  <svg class="ns-symbols" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs>
+    <symbol id="ns-icon-home" viewBox="0 0 24 24"><path d="m3 10 9-7 9 7v10H3Z"/><path d="M9 20v-7h6v7"/></symbol>
+    <symbol id="ns-icon-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+    <symbol id="ns-icon-image" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8" cy="8" r="1.5"/><path d="m4 18 5-5 4 4 4-6 4 5"/></symbol>
+    <symbol id="ns-icon-canvas" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="1.5"/><path d="M5 2v3M19 2v3M5 19v3M19 19v3M2 5h3M19 5h3M2 19h3M19 19h3"/></symbol>
+    <symbol id="ns-icon-arrow" viewBox="0 0 24 24"><path d="M12 19V5m-6 6 6-6 6 6"/></symbol>
+    <symbol id="ns-icon-star" viewBox="0 0 24 24"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9Z"/></symbol>
+    <symbol id="ns-icon-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="ns-icon-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
+    <symbol id="ns-icon-back" viewBox="0 0 24 24"><path d="m14 5-7 7 7 7"/></symbol>
+    <symbol id="ns-icon-next" viewBox="0 0 24 24"><path d="m10 5 7 7-7 7"/></symbol>
+    <symbol id="ns-icon-upload" viewBox="0 0 24 24"><path d="M4 15v6h16v-6M12 16V3m-5 5 5-5 5 5"/></symbol>
+    <symbol id="ns-icon-settings" viewBox="0 0 24 24"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3"/><circle cx="15" cy="17" r="3"/></symbol>
+    <symbol id="ns-icon-spark" viewBox="0 0 24 24"><path d="m12 2 2.7 7.3L22 12l-7.3 2.7L12 22l-2.7-7.3L2 12l7.3-2.7Z"/></symbol>
+  </defs></svg>
+  <a class="ns-skip" href="#ns-main">跳到页面内容</a>
+  <aside class="ns-sidebar" aria-label="主导航">
+    <a class="ns-wordmark" href="#/home" aria-label="Nova Art Lab 首页" title="Nova Art Lab 首页"><img class="ns-brand-full" src="/m16-logo.png" width="682" height="303" alt="Nova Art Lab"><span class="ns-brand-emblem" aria-hidden="true"><img src="/m16-logo.png" width="682" height="303" alt=""></span></a>
+    <nav class="ns-nav">
+      <a href="#/home" data-route="home" aria-label="首页" title="首页" data-testid="studio-nav-home"><svg><use href="#ns-icon-home"/></svg><span>首页</span></a>
+      <a href="#/projects" data-route="projects" aria-label="项目库" title="项目库" data-testid="studio-nav-projects"><svg><use href="#ns-icon-grid"/></svg><span>项目库</span></a>
+      <a href="#/resources" data-route="resources" aria-label="素材库" title="素材库" data-testid="studio-nav-resources"><svg><use href="#ns-icon-image"/></svg><span>素材库</span></a>
+      <div class="ns-nav-divider"></div>
+      <a href="#/home" id="ns-current-workspace" data-route="workspace" aria-label="返回当前工作台" data-testid="studio-nav-workspace" hidden><svg><use href="#ns-icon-canvas"/></svg><span id="ns-workspace-label">当前工作台</span><i></i></a>
+    </nav>
+    <div class="ns-sidebar-bottom"><a href="#/settings" class="ns-profile-link" data-route="settings" aria-label="个人偏好" title="个人偏好" data-testid="studio-nav-settings"><span id="ns-avatar" class="ns-avatar">N</span><span class="ns-profile-text"><strong id="ns-profile-label">Nine</strong><small>个人偏好</small></span><svg><use href="#ns-icon-settings"/></svg></a></div>
+  </aside>
+  <main id="ns-main" tabindex="-1">
+    <div class="ns-shell-top"><div class="ns-history"><button id="ns-back" disabled aria-label="返回上一页" title="返回上一页"><svg><use href="#ns-icon-back"/></svg></button><button id="ns-forward" disabled aria-label="前往下一页" title="前往下一页"><svg><use href="#ns-icon-next"/></svg></button></div><span id="ns-page-label">首页</span><div class="ns-top-actions"><a href="#/brand" class="ns-brand-shortcut" data-testid="studio-nav-brand"><svg><use href="#ns-icon-spark"/></svg>品牌规范</a><span class="ns-preview-label" title="项目和素材保存在本机，AI 与在线协作尚未接入">本地预览</span></div></div>
+    <div id="ns-meta-alert" class="ns-meta-alert" role="status" hidden><span id="ns-meta-message"></span><button id="ns-meta-retry">重新读取，保留草稿</button><button id="ns-favorites-retry" hidden>保存收藏</button></div>
+    <section class="ns-page ns-home" data-page="home" aria-labelledby="ns-home-title">
+      <div class="ns-home-hero"><p class="ns-eyebrow" id="ns-greeting">你好，Nine</p><h1 id="ns-home-title">把想法，<br class="ns-mobile-break">变成作品。</h1><p class="ns-hero-caption">一张画布，展开你的下一个想法。</p>
+        <form id="ns-composer" class="ns-composer"><label class="ns-sr-only" for="ns-home-brief">写下创作需求</label><textarea id="ns-home-brief" maxlength="12000" placeholder="描述你的设计想法，也可以带上图片…" rows="3"></textarea><div id="hs-attachments" class="hs-attachments" aria-label="需求图片" hidden></div><div class="ns-composer-footer"><span><button type="button" id="hs-pick" class="hs-pick" title="最多 4 张，单张 10 MB 以内的 PNG、JPG、WebP"><svg><use href="#ns-icon-plus"/></svg>添加图片</button><input id="hs-file-input" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden><span class="ns-composer-mode" hidden><svg><use href="#ns-icon-canvas"/></svg>创作画布</span><span class="ns-keyboard-hint">Enter 创建 · Shift + Enter 换行</span></span><button id="ns-create" class="ns-primary" type="submit"><span>创建项目</span><svg><use href="#ns-icon-arrow"/></svg></button></div></form>
+        <div class="ns-start-row"><button id="ns-create-blank" class="ns-text-button"><svg><use href="#ns-icon-plus"/></svg>打开空白画布</button><button class="ns-prompt-chip" data-prompt="为新品发布设计一张海报。请突出产品主体，使用清晰的信息层级，预留品牌标识、标题和活动日期的位置。">新品海报</button><button class="ns-prompt-chip" data-prompt="设计一组社交媒体封面。保持系列感，突出每期主题，使用一致的字体和留白，方便后续替换标题。">社媒封面</button></div>
+        <p class="ns-local-disclosure">创建后进入画布，需求随项目保留。AI 生成暂未接入。</p>
+        <p id="hs-draft-note" class="hs-draft-note" role="status"></p><div id="hs-recovery" class="hs-recovery" role="status" hidden></div>
+        <p id="ns-create-status" class="ns-inline-status" role="status"></p>
+        <p id="ns-create-recovery" class="ns-create-recovery" role="status" data-testid="studio-create-recovery" hidden></p>
+      </div>
+      <div class="ns-section-heading"><div><h2>最近项目</h2></div><a href="#/projects" class="ns-text-link">查看全部 <svg><use href="#ns-icon-next"/></svg></a></div><div id="ns-recent-projects" class="ns-project-grid" aria-live="polite"></div>
+      
+    </section>
+    <section class="ns-page" data-page="projects" aria-labelledby="ns-projects-title" hidden>
+      <div class="ns-page-heading"><div><h1 id="ns-projects-title">项目库</h1><p>从上次的想法，继续创作。</p></div><button id="ns-project-new" class="ns-primary"><svg><use href="#ns-icon-plus"/></svg>新建项目</button></div>
+      <div class="pl-tabs" role="tablist" aria-label="项目状态"><button id="pl-active" role="tab" aria-selected="true" aria-controls="ns-project-library">使用中</button><button id="pl-archived" role="tab" aria-selected="false" aria-controls="ns-project-library" tabindex="-1">已归档</button></div>
+      <div class="ns-library-toolbar"><label class="ns-search"><svg><use href="#ns-icon-search"/></svg><input id="ns-project-search" type="search" placeholder="搜索项目" aria-label="搜索项目"></label><button id="ns-project-favorites" class="ns-filter-button" aria-pressed="false"><svg><use href="#ns-icon-star"/></svg>收藏</button><label class="ns-sort"><span class="ns-sr-only">项目排序</span><select id="ns-project-sort" aria-label="项目排序"><option value="recent">最近更新</option><option value="oldest">最早更新</option><option value="name">按名称</option></select></label><button id="ns-project-refresh" class="ns-text-button">刷新</button></div>
+      <div class="ns-result-line"><span id="ns-project-count">正在读取项目…</span><button id="ns-project-clear" class="ns-text-button" hidden>清除筛选</button></div><div id="ns-project-library" class="ns-project-grid" aria-live="polite"></div>
+    </section>
+    <section class="ns-page" data-page="resources" aria-labelledby="ns-resources-title" hidden>
+      <div class="ns-page-heading"><div><h1 id="ns-resources-title">素材库</h1><p>画布里的图片，都在这里。</p></div><button id="ns-resource-upload" class="ns-primary"><svg><use href="#ns-icon-upload"/></svg>上传到项目</button></div>
+      <div class="ns-resource-toolbar"><div class="ns-tabs" role="tablist" aria-label="素材类型"><button id="ns-tab-images" role="tab" aria-selected="true" aria-controls="ns-resource-images">画布图片</button><button id="ns-tab-starters" role="tab" aria-selected="false" aria-controls="ns-resource-starters" tabindex="-1">需求起点</button></div><div class="ns-resource-actions"><label id="ns-resource-scope" class="ns-resource-scope"><span>来源</span><select id="ns-resource-project" aria-label="素材来源项目"><option value="">全部项目</option></select></label></div></div>
+      <div id="ns-resource-images" role="tabpanel" aria-labelledby="ns-tab-images"><p id="ns-resource-status" class="ns-result-line" role="status"></p><div id="ns-assets" class="ns-asset-grid"></div></div>
+      <div id="ns-resource-starters" role="tabpanel" aria-labelledby="ns-tab-starters" hidden><p class="ns-panel-note">这些是可编辑的需求模板。选择后会带回首页，不会自动生成图片。</p><div id="ns-starters" class="ns-starter-grid"></div></div>
+    </section>
+    <section class="ns-page ns-form-page" data-page="brand" aria-labelledby="ns-brand-title" hidden>
+      <button class="ns-text-button ns-return" id="ns-brand-return">‹ 返回素材库</button>
+      <div class="ns-page-heading"><div><h1 id="ns-brand-title">品牌规范</h1><p>留下品牌的颜色、字体和使用习惯。</p></div></div>
+      <div class="ns-brand-layout">
+        <form id="ns-brand-form" class="ns-form-card">
+          <div class="ns-field-group"><label for="ns-brand-name">品牌名称 <span id="ns-brand-name-count" class="ns-field-count"></span></label><input id="ns-brand-name" maxlength="120" placeholder="例如：海风咖啡" aria-describedby="ns-brand-name-count"></div>
+          <fieldset class="ns-brand-colors"><legend>品牌色</legend><div class="ns-color-fields"><div class="ns-color-field">
+  <label class="ns-color-picker" for="ns-brand-picker-0"><i id="ns-brand-swatch-0" aria-hidden="true"></i><input type="color" id="ns-brand-picker-0" value="#8B77B5" aria-label="选择点缀色"><span>点缀色</span></label>
+  <label class="ns-sr-only" for="ns-brand-color-0">点缀色色值</label><input id="ns-brand-color-0" class="ns-color-hex" maxlength="7" pattern="#[0-9A-Fa-f]{6}" required spellcheck="false" autocomplete="off" aria-describedby="ns-brand-color-error" aria-label="点缀色色值" placeholder="#000000">
+</div>
+<div class="ns-color-field">
+  <label class="ns-color-picker" for="ns-brand-picker-1"><i id="ns-brand-swatch-1" aria-hidden="true"></i><input type="color" id="ns-brand-picker-1" value="#171717" aria-label="选择文字色"><span>文字色</span></label>
+  <label class="ns-sr-only" for="ns-brand-color-1">文字色色值</label><input id="ns-brand-color-1" class="ns-color-hex" maxlength="7" pattern="#[0-9A-Fa-f]{6}" required spellcheck="false" autocomplete="off" aria-describedby="ns-brand-color-error" aria-label="文字色色值" placeholder="#000000">
+</div>
+<div class="ns-color-field">
+  <label class="ns-color-picker" for="ns-brand-picker-2"><i id="ns-brand-swatch-2" aria-hidden="true"></i><input type="color" id="ns-brand-picker-2" value="#F5F3FA" aria-label="选择背景色"><span>背景色</span></label>
+  <label class="ns-sr-only" for="ns-brand-color-2">背景色色值</label><input id="ns-brand-color-2" class="ns-color-hex" maxlength="7" pattern="#[0-9A-Fa-f]{6}" required spellcheck="false" autocomplete="off" aria-describedby="ns-brand-color-error" aria-label="背景色色值" placeholder="#000000">
+</div></div><p class="ns-field-hint">点击色块选色，也可以填写 HEX 色值。</p><p id="ns-brand-color-error" class="ns-inline-error" role="status" hidden></p></fieldset>
+          <div class="ns-field-group"><label for="ns-brand-font">字体气质</label><select id="ns-brand-font"><option value="system">系统默认</option><option value="sans">简洁无衬线</option><option value="serif">经典衬线</option><option value="mono">等宽字体</option></select></div>
+          <div class="ns-field-group"><label for="ns-brand-notes">使用说明 <span id="ns-brand-notes-count" class="ns-field-count"></span></label><textarea id="ns-brand-notes" maxlength="4000" rows="4" placeholder="例如：标题简洁，保留留白，照片以自然光为主。" aria-describedby="ns-brand-notes-count"></textarea></div>
+          <div class="ns-form-footer"><span id="ns-brand-status" role="status">正在读取本机规范…</span><button id="ns-brand-save" class="ns-primary" type="submit">保存规范</button></div><button id="ns-brand-latest" class="ns-text-button" type="button" hidden>重新读取，保留草稿</button>
+        </form>
+        <div class="ns-brand-right"><div class="ns-preview-heading"><span>实时预览</span><span>随输入更新</span></div><div id="ns-brand-preview" class="ns-brand-preview"><span class="ns-preview-eyebrow">BRAND NOTES</span><strong id="ns-brand-preview-name">你的品牌</strong><p>让每一次设计，<br>都有熟悉的气质。</p><div class="ns-preview-line"></div><span id="ns-brand-preview-notes">一些颜色，一点留白，和你自己的表达。</span><div class="ns-preview-palette"><i></i><i></i><i></i></div></div><p class="ns-panel-note">仅作本机视觉参考，暂不应用到画布或 AI 生成。</p></div>
+      </div>
+    </section>
+    <section class="ns-page ns-form-page" data-page="settings" aria-labelledby="ns-settings-title" hidden>
+      <button class="ns-text-button ns-return" id="ns-settings-return"><svg><use href="#ns-icon-back"/></svg><span>返回来源页面</span></button>
+      <div class="ns-page-heading"><div><h1 id="ns-settings-title">个人偏好</h1><p>把工作台调成你习惯的样子。</p></div></div>
+      <form id="ns-settings-form" class="ns-form-card ns-settings-card">
+        <div class="ns-settings-section ns-profile-section">
+          <div class="ns-settings-section-title"><span id="ns-settings-avatar" aria-hidden="true">N</span><div><h2>个人资料</h2><p>用于首页问候与本机显示</p></div></div>
+          <div class="ns-field-group"><label for="ns-settings-nickname">怎么称呼你 <span id="ns-settings-nickname-count" class="ns-field-count"></span></label><input id="ns-settings-nickname" maxlength="80" placeholder="Nine" aria-describedby="ns-settings-nickname-count"></div>
+        </div>
+        <div class="ns-settings-section ns-display-section"><h2>显示习惯</h2>
+          <div class="ns-setting-row"><div><label for="ns-settings-density">列表间距</label><p>调整项目与素材卡片之间的留白</p></div><select id="ns-settings-density"><option value="comfortable">舒适</option><option value="compact">紧凑</option></select></div>
+          <div class="ns-setting-row"><div><label for="ns-settings-motion">动态效果</label><p>减少效果时，页面切换更直接</p></div><select id="ns-settings-motion"><option value="system">跟随系统偏好</option><option value="reduce">减少动态效果</option></select></div>
+        </div>
+        <div class="ns-form-footer"><span id="ns-settings-status" role="status">正在读取偏好…</span><button id="ns-settings-save" class="ns-primary" type="submit">保存偏好</button></div><button id="ns-settings-latest" class="ns-text-button" type="button" hidden>重新读取，保留草稿</button>
+      </form><p class="ns-panel-note ns-settings-note">修改会立即预览，点击保存后记住你的偏好。仅保存在本机。</p>
+    </section>
+    <section data-page="workspace" class="ns-workspace-page" hidden><div id="ns-workspace-status" class="ns-workspace-status" role="status"></div><div class="ns-mobile-editor-note" id="ns-mobile-editor-note"><p>手机端可浏览项目与资源。<br>原画布编辑请在桌面窗口继续。</p><a href="#/projects" class="ns-secondary">返回项目库</a></div></section>
+    <div id="hs-handoff" class="hs-handoff" role="status" hidden></div>
+    <div id="ns-frames" aria-label="原画布编辑器"></div>
+  </main>
+  <div id="ns-toast" class="ns-toast" role="status" hidden></div>
+  <dialog id="ns-upload-dialog" class="ns-dialog"><form id="ns-upload-form"><div class="ns-dialog-head"><h2>上传到哪张画布？</h2><button id="ns-upload-close" type="button" aria-label="关闭">×</button></div><p>上传会在原画布中继续，素材归属于选中的项目。</p><label for="ns-upload-target">目标项目</label><select id="ns-upload-target" required></select><div class="ns-dialog-actions"><button class="ns-secondary" id="ns-upload-new" type="button">新建空白项目</button><button id="ns-upload-confirm" class="ns-primary" type="submit">进入项目上传</button></div></form></dialog>
+  <dialog id="ns-preview-dialog" class="ns-dialog ns-image-dialog" aria-labelledby="ns-preview-title" aria-describedby="ns-preview-origin"><div class="ns-dialog-head"><div><h2 id="ns-preview-title">画布图片</h2><p id="ns-preview-origin"></p></div><button id="ns-preview-close" aria-label="关闭图片预览">×</button></div><div class="ns-preview-stage"><img id="ns-preview-image" alt="画布图片预览"></div><p id="ns-preview-status" role="status"></p><button id="ns-preview-retry" class="ns-secondary" type="button" hidden>重新读取原图</button><div class="ns-dialog-actions"><span id="ns-preview-meta"></span><button id="ns-preview-source" class="ns-primary">返回来源项目</button></div></dialog>
+  <dialog id="pl-confirm" class="ns-dialog" aria-labelledby="pl-confirm-title" aria-describedby="pl-confirm-description"><div class="ns-dialog-head"><h2 id="pl-confirm-title">归档项目</h2><button id="pl-confirm-close" aria-label="关闭归档确认">×</button></div><strong id="pl-confirm-name"></strong><p id="pl-confirm-description">归档后从日常列表收起，画布、需求和素材都会保留。恢复后可以继续编辑。</p><p id="pl-confirm-status" role="status"></p><div class="ns-dialog-actions"><button id="pl-confirm-back" class="ns-secondary">先不归档</button><button id="pl-confirm-submit" class="ns-primary">归档项目</button></div></dialog>
+</body>
+</html>
