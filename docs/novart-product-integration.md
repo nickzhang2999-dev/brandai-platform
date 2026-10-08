@@ -32,7 +32,7 @@
 | 完整画布 | 新增 `EditorDocument` 表及 GET/PUT `/api/workspaces/:wsId/projects/:projectId/editor-document` | 字段保留、权限、版本冲突、重试及压缩边界单测 |
 | 素材引用 | 只接受同品牌已存素材或当前项目生成版本；上传模块返回鉴权 raw 地址 | 引用隔离单测；真实上传与画布导入待接 |
 | 前端请求模块 | 有界请求、正式会话、读取完成后才允许保存、只读/冲突阻断、丢响应重试沿用相同 mutationId | 状态与请求行为单测；尚未接入评审 UI |
-| 原生请求兼容 | `queryProject` / `saveProject` / `lovartProjectList` / `updateProjectName` 对接真实身份、品牌和文档服务；保存冲突保留原编辑器识别的 `100400` 响应 | 新增单元/契约检查与真实 HTTP/DB 检查脚本；本次远程检查结果另记 |
+| 原生请求兼容 | `queryProject` / `saveProject` / `lovartProjectList` / `updateProjectName` 对接真实身份、品牌和文档服务；保存冲突保留原编辑器识别的 `100400` 响应 | 8474347：33 项真实 HTTP/DB 检查在构建及镜像内重复通过；13 项公网检查通过；真实 UI 接线仍待验收 |
 
 画布使用 `novart-native-v1` 格式，保留原 `SHAKKERDATA://` 压缩字符串；不把笔画、旋转、组合、原生扩展字段压成原来的简化 items。解码只做验证，保存原始字符串。编码上限 8 MiB，展开上限 32 MiB。临时 `blob:` / 内嵌 `data:` 图片不能直接作为持久素材，须先入库。
 
@@ -86,7 +86,7 @@
 
 ### 独立 CDS 公网写入验收通过
 
-项目 `98cfea6cdcbd`（Novart-Product-Integration）已获授权并创建；整合分支运行 `ec5ff74af693e43815cb8d40d1482df614c0c1ec` 精确镜像。部署记录 `dr_d2407a4cbe69a45a792903ad` 成功，Web、AI、Worker 均 running，公网 `/api/health` 的三服务健康均正常，Worker 报告本次提交和 9 个处理器。[CI 37745450841](https://github.com/nickzhang2999-dev/brandai-platform/actions/runs/37745450841) 成功，真实数据库检查在构建及镜像内重复通过。
+项目 `98cfea6cdcbd`（Novart-Product-Integration）已获授权并创建；整合分支当前运行 `847434758c7906565476a58e920000db39c78e8f` 精确镜像。部署记录 `dr_2e25c7535515b81bcbf4ec8f` 成功，公网三服务健康及 Worker 提交核对通过。[CI 37749234447](https://github.com/nickzhang2999-dev/brandai-platform/actions/runs/37749234447) 成功，33 项真实 HTTP/数据库检查在构建及镜像内重复通过。前一个 Origin 修复版本 ec5ff74 的部署 `dr_d2407a4cbe69a45a792903ad` 和 CI 37745450841 也已成功，保留其验收记录。
 
 官方 CLI 返回入口：https://novart-product-integration-claude-novart-product-integration.geole.me/login 。当前入口仍为原 Next 页面加新后端接口，尚未接入评审版原生 UI。
 
@@ -103,5 +103,7 @@
 `scripts/export-novart-studio.py` 仅在构建时运行既有 Python 适配器，导出首页/画布 HTML、派生 JS/CSS、捕获的动态资源及哈希清单；119 个文件、约 26.9 MB，35 个外部资源本地映射。临时编译项目和存储会清理，不复制评审账号、访问密钥或个人项目。尚未启用产品静态页面路由，避免把仍指向演示存储的页面作为成品入口。
 
 原生项目接口使用正式 Auth.js 会话，按当前品牌或显式 `workspaceId` 校验成员和项目归属。版本映射为 `novart-<revision>`；旧本地版本不会被当成新库版本。没有客户端 mutation UUID 的原生保存，根据用户/品牌/项目/版本/完整内容确定幂等标识；原文档服务继续负责锁、权限、素材引用和冲突。自动保存中的旧标题只作为客户端回显，不覆盖独立重命名操作。原生封面/图片计数属于派生提示，不作为权威业务数据入库；列表当前不宣称提供这些派生预览。克隆/备份、增量证据和访问票据服务尚未接入，明确拒绝，不返回伪成功。
+
+最新部署的 13 项公网检查通过：精确版本及健康、登录、切品牌、原生查询/保存/重试/改名/再次保存/原字节重开、冲突响应、项目列表、未接服务 503、退出后拒绝原生 API。首次 CI 曾抓到显式 503 被包装为 500，已修正并增加回归；失败版本未发布镜像。最新本地四项门禁：297 个 L1 测试、173 个 AI 测试、typecheck、production build。没有调用真实模型；目前仍不能把接口联调称为新版界面完整操作验收。
 
 2026-10-08 用户反馈公司项目右侧分支预览不能直接进入：实查该预览根网址返回说明页，缺少评审访问 cookie；服务并未停止。为对应域名生成本机私有启动页，HTTP 验证完整入口及 `/studio` 均成功。首次在同一浏览器访问后，再点 CDS 根网址会跳转工作台；访问能力不写入 Git/公开文档，也不因此去掉评审门禁。

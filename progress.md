@@ -1,5 +1,11 @@
 # Integration progress
 
+## 2026-10-08 — CDS frontend preview entry corrected
+- User reported that the local launcher did not fix CDS's preview prerequisite. Configured only company branch brandai-platform-claude-novart-workbench-preview through the dedicated web-entry-config API with scope=branch; the card now points to the existing authenticated review entry.
+- Verified the stored branch entry, subdomain primary entry and official preview URL agree. A fresh cookie jar follows the online bootstrap, reaches the reviewed studio, and subsequently enters studio from root; direct anonymous studio access remains 401. Company main remains running with its original entry. No service deployment or shared company profile change.
+- An initial unsupported webEntry attempt in profile-overrides was rolled back. A temporary independent-project entry adjustment was also restored after locating the correct branch-specific API. Final operational change is confined to the requested company preview card. Credentials remain outside Git and chat.
+- Closed the earlier c59b310/8474347 native-interface push release window and verified the company push policy returned to its recorded value (true). No additional code push or deployment was performed for this entry correction.
+
 ## 2026-10-07 — integration start
 - User authorized implementation on a new branch and final comparison against company source.
 - Read repository gates and planning-with-files skill.
@@ -59,3 +65,5 @@
 - Added 10 unit/contract checks and 16 Python cases; all four local gates pass: L1 291 contracts + 6 UI, AI173, typecheck and production build. Initial typecheck caught an unchecked hash character; fixed with charAt and reran affected checks. One default-parallel build failed from Windows memory exhaustion; rerun with Next's CIRCLE_NODE_TOTAL=2 succeeded without changing product configuration or starting Docker. Added 13 real HTTP/DB cases to CI (33 total); not yet run for this increment.
 - Investigated the user's right-hand CDS preview button: server returns the intended unauthenticated review introduction, not a crashed UI. Generated a private local launcher for that exact preview hostname; authenticated entry and /studio HTTP checks passed. Access keys not printed, published or committed; review access gate remains enabled.
 - First native-boundary CI (c59b310, run 37748645655) passed repository gates and the actual save/reopen/access/name checks, then caught unsupported-service 503 being masked as 500. No images published or deployed. Preserved explicit 503 mapping and added its response regression; full gates and remote run repeated before deployment. The company webhook release window remains guarded until this release completes.
+- Fix 847434758c7906565476a58e920000db39c78e8f passed all four local gates again (297 L1, 173 AI, typecheck, build). CI 37749234447 succeeded: 33 real HTTP/DB checks, repeated 33 against built images; three-service health passed and images published.
+- Dedicated CDS run dr_2e25c7535515b81bcbf4ec8f deployed exact 8474347. Public native-adapter smoke passed 13 checks, including byte-for-byte save/reopen, independent rename, stable retry, native conflict envelope, explicit unavailable service and logout access denial. No model/provider calls or browser interaction acceptance claimed. Remaining work is authenticated reviewed UI bootstrap and brand/material/homepage workflows.

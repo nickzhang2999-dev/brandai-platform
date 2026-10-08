@@ -16,3 +16,14 @@ No production credentials, model calls or runtime database migration performed a
 The captured editor sends native project query/save requests; the review runtime accepts `SHAKKERDATA://` gzip/base64 containing `tldrawSnapshot.document.store` and `.schema`. Preserve that full snapshot separately from the original simplified canvas contract. Writes already use a version token; carry that check into database compare-and-swap rather than downgrade to last-writer-wins.
 
 The preview shell also has independent context, input-form draft, state and homepage-upload endpoints. A production integration must migrate each of these, not just redirect native saves and call the whole frontend integrated.
+
+## Verified native client protocol and next shell boundary
+- Native autosave sends projectId, version, compressed canvas, echoed projectName, derived projectCoverList/picCount, optional sessionId and incremental feature flags. A separate updateProjectName request handles rename. Treating the echoed title as authoritative would revert another page's rename; the product adapter deliberately does not do that.
+- Native save distinguishes code 100400 inside an HTTP 200 envelope to open its version-conflict dialog. General 409 handling alone would lose that behavior. Other failures retain HTTP status, including explicit 503 for unimplemented vendor services.
+- Server compatibility routes resolve the brand via a validated explicit workspaceId or the existing active-brand cookie. Product startup must pin each open frame's workspace in its requests; no vendor token grants authorization.
+- The exported shell still starts with preview profile defaults and unscoped localStorage keys. Before serving it, bootstrap the actual user/workspace and namespace preferences, creation-recovery records and drafts. Do not restore another user's old browser state.
+- The old share worker intercepts all cross-origin requests; the preview server substitutes a demo identity and local upload storage. It must not become the product transport unchanged. Reuse the captured asset allowlist from the exporter and bind supported APIs to the authenticated product BFF; fail unsupported services explicitly.
+- The compiled canvas contains /m20-comparison.js, /m6-workflow.js, input/canvas/motion layers and patched native chunks. Copying only the toolbar or mounting raw vendor HTML would omit existing interaction safeguards.
+
+## CDS preview entry finding
+The company project's right-hand preview URL is a working alias for the review gateway. Its root returns the public introduction until the browser has the room capability cookie; it is not a failed deployment. An authenticated first visit to the same hostname reaches /studio. A private launcher was written outside the repo without publishing the access key. The real product integration remains in the separate Novart-Product-Integration project.

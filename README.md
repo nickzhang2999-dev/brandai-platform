@@ -4,7 +4,7 @@
 
 | 范围 | 状态 | 说明 |
 | --- | --- | --- |
-| `claude/novart-product-integration` | 独立 CDS 真实登录/切品牌/画布保存重开等 14 项公网检查通过；正在接原生编辑器接口与评审 UI；完整产品尚未接通 | [整合进度与验收边界](docs/novart-product-integration.md) |
+| `claude/novart-product-integration` | 原生编辑器读取/保存/列表/重命名接口已部署独立 CDS；33 项真实数据库检查重复通过，最新 13 项公网检查通过；评审 UI 接线中，完整产品尚未接通 | [整合进度与验收边界](docs/novart-product-integration.md) |
 
 本分支从已评审的前端分支继续开发，复用公司源码的账号、品牌权限和项目服务，新增完整原生画布保存接口。新版页面仍需逐项接入素材、首页流程及异步任务；API 模块存在不等于页面已经接通。数据库迁移只新增 `EditorDocument`，不替换原 `ProjectCanvas`。独立前端评审部署仍运行原评审提交，不能作为本分支后端验收环境。
 
@@ -16,7 +16,7 @@
 
 这份独立评审程序用于操作与交互评审，使用独立文件存储，不接真实 AI、账号或生产业务数据。评审分支本身保留原有 Next.js 源码、`main`、正式站及根 `cds-compose.yml`；上述产品整合分支的增量另行记录。镜像由 `Branch Image` 工作流构建并检查，专用配置位于 `previews/novart-workbench/cds-compose.preview.yml`，只导入独立 CDS 评审项目，避免覆盖原产品的共享服务。屏幕适配覆盖大屏、小笔记本、平板与窄屏浏览器；评审版不代表正式产品已集成或已发布。
 
-已部署代码版本为 `f720c4449c7a873cc352f429017709deace1572f`。[CDS 评审服务](https://novart-workbench-preview-claude-novart-workbench-preview.geole.me/)的根页面只提供进入说明，完整访问入口私下交付。线上已验证项目和图片在容器重建后保留；公网浏览器的实际拖拽、输入和导出仍需试用复核，HTTP 检查不代替交互验收。
+已部署代码版本为 `f720c4449c7a873cc352f429017709deace1572f`。[公司 CDS 分支页](https://cds.geole.me/branches/a8a098f7193a)中 `claude/novart-workbench-preview` 的“预览”已配置分支专属访问入口，刷新 CDS 后点击即可在线完成验证并进入工作台，无需本地启动文件。访问凭据仅保存在受保护的 CDS 配置，不进入仓库；裸根网址仍显示进入说明。线上已验证项目和图片在容器重建后保留；公网浏览器的实际拖拽、输入和导出仍需试用复核，HTTP 检查不代替交互验收。
 
 
 > **当前开发版本：V0.0.22**（2026-09-17）

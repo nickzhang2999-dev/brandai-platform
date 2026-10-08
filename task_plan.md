@@ -15,12 +15,12 @@ First-product journey: sign in -> create/select brand -> create/open project -> 
 
 ## Ordered product TODO
 1. [complete] Stable independent deployment and real login.
-   - Current: exact ec5ff74 images run; 14 public HTTPS checks pass, including actual password login, brand selection, native save/reopen, idempotent retry and stale-write rejection.
+   - Current: exact 8474347 images run; initial 14 public HTTPS checks and latest 13 native-adapter checks pass, including actual password login/logout, brand selection, native save/reopen, idempotent retry and stale-write rejection.
    - Release guard: user approved a temporary company push-webhook pause. Paused and verified before push; restored and verified afterward. Main remains running and the original integration card remains idle. Future pushes must use the same verified release guard until permanent branch exclusion is available.
    - Done: one usable public entry, login/logout and brand selection work, new pushes cannot start writes on company shared infrastructure.
 2. [in_progress] Serve the reviewed frontend as the product entry and connect its pages.
    - Reuse current home, brand, project library, material library and canvas UI. Bind real user/workspace/project state, navigation, refresh and deep links. Replace preview-only identity/file-state paths at this boundary.
-   - Current: reviewed UI build-time export produces 119 hashed assets without project data. Native query/save/list/rename compatibility endpoints implemented; authenticated shell/bootstrap and the remaining UI endpoints still pending. Exported files or API unit tests do not complete page integration.
+   - Current: reviewed UI build-time export produces 119 hashed assets without project data. Native query/save/list/rename compatibility endpoints deployed and verified through real HTTP/DB (33 checks repeated in built images; 13 public checks). Authenticated shell/bootstrap and the remaining UI endpoints still pending. Exported files or API tests do not complete page integration.
    - Done: home -> project -> canvas -> project library is coherent, refresh retains the current real project, account/brand changes do not leak state.
 3. [pending] Connect essential brand/project/material data.
    - Reuse workspace/project/brand-rule/upload APIs; configure isolated object storage; connect create/list/rename/archive, upload and material selection.
