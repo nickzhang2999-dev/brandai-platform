@@ -13,7 +13,7 @@
   const retryKey = 'novart-generation-pending:' + projectId;
   const frameKey = 'novart-generation-output-frame:' + projectId;
   let native, panel, list, notice, refreshButton, pendingButton, pendingPrompt, settings, ratioSelect, resolutionSelect, settingsSummary, frameControl, frameSelect, frameNote;
-  let framePreference=null, frameOptionsKey='', editorUnsubscribe, mountQueued=false;
+  let framePreference=null, frameOptionsKey='', editorUnsubscribe, mountQueued=false, lastWorkflowIntent=null;
   let timer, observer, unsubscribe, stopped = false, submitting = false, refreshing = false, failures = 0, paused = false;
   let pending = null, userRevision = 0, composing = false;
   const clone = value => JSON.parse(JSON.stringify(value));
@@ -48,6 +48,16 @@
     const value = form.novartGenerationSize || {ratioKey:'1:1',resolutionTier:['1K','2K'].includes(nativeResolution)?nativeResolution:'1K'};
     if (!value || Object.keys(value).some(key => !['ratioKey','resolutionTier'].includes(key)) || !ratios.includes(value.ratioKey) || !['1K','2K'].includes(value.resolutionTier)) throw Error('当前尺寸尚未支持，请在发送旁选择比例与 1K / 2K');
     return {...value};
+  }
+  function workflowIntent(workflow) { return workflow?.loaded===false||!workflow?null:JSON.stringify(ordered({mode:workflow.mode,target:workflow.target,references:workflow.references})); }
+  function mountWorkflowMode() {
+    const workflow=window.NovartProductWorkflowSnapshot?.();if(!workflow?.loaded||workflow.projectId!==projectId)return;
+    const intent=workflowIntent(workflow);if(lastWorkflowIntent!==null&&lastWorkflowIntent!==intent)userRevision++;lastWorkflowIntent=intent;
+    if(workflow.mode==='modify'&&framePreference){framePreference=null;try{sessionStorage.removeItem(frameKey);}catch{}}
+    const note=document.querySelector('#novart-workflow .nw-mode-note'),copy=workflow.mode==='modify'
+      ? '请选择并保存改图目标；结果另存为新图，完成后手动加入，原图保留。'
+      : '选择画布对象不会改变这里的创作方式。';
+    if(note&&note.textContent!==copy)note.textContent=copy;
   }
   const needsOutputFrame = workflow => workflow?.mode==='generate' && workflow.references?.some(ref=>ref.participates&&ref.purpose==='EXACT');
   function outputFrame(workflow) {
@@ -131,7 +141,8 @@
       || !Number.isFinite(Date.parse(value.expiresAt)) || value.progress !== null && !Number.isFinite(value.progress)
       || [value.archiveExpiresAt,value.archiveProcessingExpiresAt].some(date => date != null && !Number.isFinite(Date.parse(date)))
       || !Array.isArray(value.results) || typeof value.canRetryArchive !== 'boolean') throw Error('生成任务回执不完整，请刷新确认');
-    const task = {...value,results:value.results.map(result)};
+    const mode=value.mode??'generate';if(!['generate','modify'].includes(mode))throw Error('图片任务类型无法确认，请刷新任务');
+    const task = {...value,mode,results:value.results.map(result)};
     if (task.resultState === 'READY' && (task.status !== 'SUCCEEDED' || !task.results.length)) throw Error('生成成果尚未确认，请刷新任务');
     if (task.status === 'SUCCEEDED' && !archiveWatchStarted.has(task.requestId)) archiveWatchStarted.set(task.requestId,Date.now());
     if (!watchStarted.has(task.requestId)) watchStarted.set(task.requestId,Date.now());
@@ -151,15 +162,16 @@
     if (stopped || composing || current().threadId !== operation.threadId) return;
     const form = current().form;
     const unchanged = operation.instance === instance ? userRevision === operation.userRevision : userRevision === 0;
-    if (signature(form) === operation.signature && unchanged) native.actions.bS(operation.threadId,{novartGenerationSize:operation.payload.sizeSelection});
+    if (signature(form) === operation.signature && unchanged && (!operation.workflowIntent || operation.workflowIntent===workflowIntent(window.NovartProductWorkflowSnapshot?.()))) native.actions.bS(operation.threadId,{novartGenerationSize:operation.payload.sizeSelection});
   }
   function onAccepted(task, operation) {
     if (operation && operation.payload.mutationId === task.mutationId) {
+      if(task.mode!==(operation.mode||'generate'))throw Error('任务类型与本次需求不一致，原稿已保留，请刷新任务确认');
       clearSubmitted(operation);
-      if (!stopped && operation.instance === instance && operation.pageId === bridge().editor.getCurrentPageId()) autoInsert.set(task.requestId,operation.pageId);
+      if (task.mode==='generate' && !stopped && operation.instance === instance && operation.pageId === bridge().editor.getCurrentPageId()) autoInsert.set(task.requestId,operation.pageId);
       savePending(null);
     }
-    message('生成任务已受理，关闭页面后仍会继续处理');
+    message(task.mode==='modify'?'修改任务已受理，完成后请手动加入画布，原图保留':'生成任务已受理，关闭页面后仍会继续处理');
     render(); finishReady(task); schedule(); refreshChecks();
   }
   async function savedContext() {
@@ -167,9 +179,9 @@
     if (!local?.loaded || local.busy || local.dirty || local.stale) throw Error('请先保存“素材”中的用途设置，再提交生成');
     const [workflow,doc] = await Promise.all([request('/workflow?projectId=' + encodeURIComponent(projectId)),request(documentEndpoint)]);
     if (workflow.projectId !== projectId || !Number.isInteger(workflow.revision) || workflow.revision !== local.revision) throw Error('素材设置已变化，请读取最新设置并检查后再提交');
-    if (workflow.mode !== 'generate' || workflow.target) throw Error('修改图片尚未接入，请先切回“生成新图”并保存设置');
+    if (!['generate','modify'].includes(workflow.mode) || (workflow.mode==='generate' ? workflow.target!==null : !workflow.target?.shapeId || !/^[a-f0-9]{64}$/.test(workflow.target.assetSha256||''))) throw Error('请在“素材”中明确创作方式与改图目标，并保存设置；原稿已保留');
     if (!Array.isArray(workflow.references) || workflow.references.some(ref => ref.participates && !['EXACT','ADAPTIVE','REFERENCE'].includes(ref.purpose))) throw Error('参与生成的素材用途尚未确认，请选择用途并保存；需求已保留');
-    if (workflow.issues?.some(issue => issue.blocking)) throw Error('参与生成的素材有失效引用，请检查“素材”面板');
+    const blocking=workflow.issues?.find(issue=>issue.blocking);if(blocking)throw Error(blocking.message||'素材或改图目标已失效，请检查“素材”面板；原稿已保留');
     if (doc.projectId !== projectId || doc.workspaceId !== context.workspaceId || doc.readOnly || !Number.isInteger(doc.revision)) throw Error('无法确认当前画布的保存状态或编辑权限');
     const live = bridge().editor.getSnapshot().document;
     if (doc.canvas) {
@@ -181,7 +193,7 @@
     const latest = window.NovartProductWorkflowSnapshot?.();
     if (!latest || latest.dirty || latest.busy || latest.revision !== workflow.revision) throw Error('素材设置已变化，请保存后再提交');
     const outputFrameId=outputFrame(workflow);
-    return {workflowRevision:workflow.revision,documentRevision:doc.revision,...(outputFrameId?{outputFrameId}:{})};
+    return {mode:workflow.mode,intent:workflowIntent(workflow),revisions:{workflowRevision:workflow.revision,documentRevision:doc.revision,...(outputFrameId?{outputFrameId}:{})}};
   }
   async function submit(threadId, inputForm) {
     if (submitting || stopped) return false;
@@ -193,16 +205,16 @@
       if (!draft?.loaded || draft.restoring || draft.composing || draft.conflict || draft.pendingChoice) throw Error('请先完成草稿恢复或冲突处理，原稿仍保留');
       const selected = supported(inputForm), submittedSignature = signature(inputForm), editSequence = userRevision, pageId = editor.getCurrentPageId();
       let operation = pending;
-      if (operation && operation.signature !== submittedSignature) throw Error('上一份需求的受理回执尚未确认。请先刷新生成任务，当前新输入仍保留');
+      if (operation && (operation.signature !== submittedSignature || operation.workflowIntent && operation.workflowIntent!==workflowIntent(window.NovartProductWorkflowSnapshot?.()))) throw Error('上一份需求的受理回执尚未确认。请先刷新生成任务，当前新输入仍保留');
       if (!operation) {
         message('正在确认画布与素材设置…');
-        const revisions = await savedContext();
+        const saved = await savedContext();
         if (stopped || editor.getCurrentPageId() !== pageId) throw Error('画布页面已切换，尚未提交生成');
-        operation = {threadId,pageId,instance,signature:submittedSignature,userRevision:editSequence,
-          payload:{projectId,mutationId:crypto.randomUUID(),prompt:inputForm.text.trim(),sizeSelection:selected,...revisions}};
+        operation = {threadId,pageId,instance,mode:saved.mode,workflowIntent:saved.intent,signature:submittedSignature,userRevision:editSequence,
+          payload:{projectId,mutationId:crypto.randomUUID(),prompt:inputForm.text.trim(),sizeSelection:selected,...saved.revisions}};
         savePending(operation);
       }
-      message('正在提交图片生成…');
+      message(operation.mode==='modify'?'正在提交图片修改…':'正在提交图片生成…');
       let received;
       try { received = await post(endpoint,operation.payload); }
       catch (error) { if (!error.retryable || stopped) throw error; message('正在确认生成回执…'); received = await post(endpoint,operation.payload); }
@@ -245,10 +257,11 @@
       const shape=native.image(id,{x:bounds.x+(bounds.w-w)/2,y:bounds.y+(bounds.h-h)/2,w,h},material.url,task.displayText.slice(0,40)||'生成图片');
       shape.meta={...shape.meta,novartAssetId:material.assetId,novartAssetSha256:material.assetSha256,novartGenerationId:task.generationId,novartVersionId:material.versionId};
       editor.markHistoryStoppingPoint('insert-generated-image');editor.createShapes([native.userShape(shape,'user')]);editor.select(id);
-      message('生成图片已加入画布，保存状态见顶部');return id;
+      message(task.mode==='modify'?'修改结果已加入画布，原图保留；保存状态见顶部':'生成图片已加入画布，保存状态见顶部');return id;
     } finally { inserting.delete(material.versionId);render(); }
   }
   function finishReady(task) {
+    if(task.mode==='modify'){autoInsert.delete(task.requestId);return;}
     const pageId=autoInsert.get(task.requestId);
     if (pageId && task.status === 'SUCCEEDED' && task.resultState === 'READY') {
       autoInsert.delete(task.requestId);
@@ -322,25 +335,26 @@
     }
   }
   function label(task) {
-    if (task.status==='FAILED') return task.error||'生成失败，需求已保留在任务记录中';
+    const modifying=task.mode==='modify';
+    if (task.status==='FAILED') return task.error||(modifying?'修改失败，原图与需求仍保留':'生成失败，需求已保留在任务记录中');
     if (task.status==='SUCCEEDED') {
-      if (task.resultState==='READY') return '图片已生成并保存';
-      if (task.resultState==='FAILED') return task.archiveError||'图片已生成，归档失败；可重试归档';
-      if (Date.now()>deadline(task)) return '图片已生成，归档状态待确认，请刷新任务';
-      return '图片已生成，正在归档';
+      if (task.resultState==='READY') return modifying?'修改结果已保存，手动加入画布后继续编辑；原图保留':'图片已生成并保存';
+      if (task.resultState==='FAILED') return task.archiveError||(modifying?'图片已修改，归档失败；可重试归档':'图片已生成，归档失败；可重试归档');
+      if (Date.now()>deadline(task)) return '图片已处理，归档状态待确认，请刷新任务';
+      return modifying?'图片已修改，正在归档':'图片已生成，正在归档';
     }
     if (Date.now()>deadline(task)) return '任务处理超时，请刷新确认最终状态';
     if (paused) return '状态读取暂停，请刷新任务确认';
-    return task.status==='PENDING'?'等待生成':'正在生成图片';
+    return modifying?(task.status==='PENDING'?'等待修改':'正在修改图片'):(task.status==='PENDING'?'等待生成':'正在生成图片');
   }
   function render() {
     if (!panel) return;
     const focused=document.activeElement,focusId=list.contains(focused)?focused.closest('[data-request-id]')?.dataset.requestId:null;
     const focusAction=focused?.dataset.action,focusVersion=focused?.dataset.versionId;
     list.replaceChildren();panel.hidden=!tasks.size&&!notice.textContent&&!pending;
-    pendingButton.hidden=!pending;pendingButton.disabled=submitting||context.readOnly;pendingPrompt.hidden=!pending;pendingPrompt.textContent=pending?'待确认需求：'+pending.payload.prompt:'';
+    pendingButton.hidden=!pending;pendingButton.disabled=submitting||context.readOnly;pendingPrompt.hidden=!pending;pendingPrompt.textContent=pending?(pending.mode==='modify'?'待确认改图需求：':'待确认需求：')+pending.payload.prompt:'';
     for (const task of [...tasks.values()].reverse().slice(0,20)) {
-      const row=node('div','','np-generation-row');row.dataset.requestId=task.requestId;row.dataset.status=task.status;row.dataset.resultState=task.resultState;
+      const row=node('div','','np-generation-row');row.dataset.requestId=task.requestId;row.dataset.status=task.status;row.dataset.resultState=task.resultState;row.dataset.mode=task.mode;
       row.append(node('p',task.displayText,'np-generation-prompt'),node('span',label(task),'np-generation-status'));
       if (task.status==='SUCCEEDED' && task.resultState==='READY') for(const material of task.results) {
         renderCheck(row,material);
@@ -379,20 +393,22 @@
       frameSelect=node('select','');frameSelect.setAttribute('aria-label','完整保留素材的输出画框');frameSelect.dataset.testid='product-output-frame';frameSelect.onchange=()=>{try{rememberFrame(frameSelect.value);}catch(error){message(error.message);}};
       frameNote=node('span','','np-generation-frame-note');frameControl.append(frameSelect,frameNote);
       body.append(ratioSelect,resolutionSelect,frameControl);settings.append(body);settings.addEventListener('pointerdown',event=>event.stopPropagation());
-      const changed=()=>{try{const value=current();native.qualityActions.Mg('image',resolutionSelect.value);native.actions.rE(value.threadId,{novartGenerationSize:{ratioKey:ratioSelect.value,resolutionTier:resolutionSelect.value}});userRevision++;settingsSummary.textContent='图片 · '+ratioSelect.value+' · '+resolutionSelect.value;}catch(error){message(error.message);}};
+      const changed=()=>{try{const value=current();native.qualityActions.Mg('image',resolutionSelect.value);native.actions.rE(value.threadId,{novartGenerationSize:{ratioKey:ratioSelect.value,resolutionTier:resolutionSelect.value}});userRevision++;settingsSummary.textContent=(window.NovartProductWorkflowSnapshot?.()?.mode==='modify'?'改图 · ':'图片 · ')+ratioSelect.value+' · '+resolutionSelect.value;}catch(error){message(error.message);}};
       ratioSelect.onchange=changed;resolutionSelect.onchange=changed;
     }
     if(settings.parentElement!==button.parentElement)button.before(settings);
-    try{const value=size(current().form);ratioSelect.value=value.ratioKey;resolutionSelect.value=value.resolutionTier;const title='图片 · '+value.ratioKey+' · '+value.resolutionTier;if(settingsSummary.textContent!==title)settingsSummary.textContent=title;}catch{}
+    mountWorkflowMode();
+    const modifying=window.NovartProductWorkflowSnapshot?.()?.mode==='modify';
+    try{const value=size(current().form);ratioSelect.value=value.ratioKey;resolutionSelect.value=value.resolutionTier;const title=(modifying?'改图 · ':'图片 · ')+value.ratioKey+' · '+value.resolutionTier;if(settingsSummary.textContent!==title)settingsSummary.textContent=title;}catch{}
     const disabled=context.readOnly||submitting;if(button.disabled!==disabled)button.disabled=disabled;
     if(ratioSelect.disabled!==disabled)ratioSelect.disabled=disabled;if(resolutionSelect.disabled!==disabled)resolutionSelect.disabled=disabled;
     try{if(!editorUnsubscribe)editorUnsubscribe=bridge().editor.store.listen(scheduleMount);mountOutputFrames();}catch{}
-    if(button.title!=='生成图片')button.title='生成图片';
+    const title=modifying?'修改图片':'生成图片';if(button.title!==title)button.title=title;
   }
   function start() {
     if(panel)return;
     const style=node('style','');style.textContent='.np-generations{position:fixed;z-index:690;right:18px;top:72px;width:min(330px,calc(100vw - 36px));max-height:52vh;overflow:auto;background:var(--color-lo-bg-neutral-l0,#fff);color:var(--color-lo-text-neutral-l1,#39333f);border:1px solid var(--color-lo-border-neutral-l1,#e8e5ee);border-radius:18px;box-shadow:0 6px 24px #2820390d;font:12px/1.5 system-ui}.np-generations[hidden]{display:none}.np-generations summary{padding:12px 14px;font-weight:600;cursor:pointer}.np-generation-body{padding:0 14px 12px}.np-generation-row{display:grid;gap:6px;padding:10px 0;border-top:1px solid var(--color-lo-border-neutral-l1,#e8e5ee)}.np-generation-prompt{margin:0;overflow-wrap:anywhere;max-height:5em;overflow:auto}.np-generation-note,.np-generation-status{color:var(--color-lo-text-neutral-l2,#756d7f)}.np-generations button,.np-generation-settings select{border:1px solid var(--color-lo-border-neutral-l1,#e8e5ee);border-radius:10px;padding:5px 10px;background:var(--color-lo-bg-neutral-l0,#fff);color:inherit;cursor:pointer}.np-generations button{justify-self:start}.np-generations button:disabled{opacity:.5;cursor:default}.np-generation-settings{position:relative;font:12px/1.5 system-ui;white-space:nowrap}.np-generation-settings summary{cursor:pointer;list-style:none;border-radius:12px;padding:6px 8px;background:var(--color-lo-bg-overlay,#f6f4f9)}.np-generation-frame{flex-basis:100%;display:grid;gap:5px;min-width:220px;max-width:min(290px,70vw)}.np-generation-frame[hidden]{display:none}.np-generation-frame select{min-width:0;max-width:100%}.np-generation-frame-note{font-size:11px;white-space:normal;color:var(--color-lo-text-neutral-l2,#756d7f)}.np-generation-options{flex-wrap:wrap;position:absolute;bottom:calc(100% + 8px);right:0;display:flex;gap:6px;padding:10px;border:1px solid var(--color-lo-border-neutral-l1,#e8e5ee);border-radius:14px;background:var(--color-lo-bg-neutral-l0,#fff);z-index:710}';document.head.append(style);
-    panel=node('details','','np-generations');panel.dataset.testid='product-generation-tasks';panel.open=true;panel.hidden=true;panel.append(node('summary','图片生成'));
+    panel=node('details','','np-generations');panel.dataset.testid='product-generation-tasks';panel.open=true;panel.hidden=true;panel.append(node('summary','图片任务'));
     const body=node('div','','np-generation-body');notice=node('p','','np-generation-note');notice.setAttribute('role','status');list=node('div','');refreshButton=node('button','刷新生成任务');refreshButton.type='button';refreshButton.onclick=()=>refresh();pendingPrompt=node('p','','np-generation-prompt');pendingButton=node('button','确认上一份受理');pendingButton.type='button';pendingButton.dataset.action='confirm-pending';pendingButton.onclick=confirmPending;pendingButton.hidden=true;pendingPrompt.hidden=true;body.append(notice,refreshButton,pendingPrompt,pendingButton,list);panel.append(body);document.body.append(panel);panel.addEventListener('pointerdown',event=>event.stopPropagation());
     try{const value=JSON.parse(sessionStorage.getItem(frameKey)||'null');if(value?.userId===context.user.id&&value.workspaceId===context.workspaceId&&value.projectId===projectId&&typeof value.pageId==='string'&&typeof value.frameId==='string'&&value.frameId.startsWith('shape:'))framePreference=value;}catch{}
     try{const value=JSON.parse(sessionStorage.getItem(retryKey)||'null');if(value?.payload?.projectId===projectId&&typeof value.payload.mutationId==='string'&&typeof value.signature==='string')pending=value;}catch{}

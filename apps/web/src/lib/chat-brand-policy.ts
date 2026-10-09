@@ -8,6 +8,8 @@ export interface ChatBrandPolicyInput {
   chatOrigin: boolean;
   brandRules: BrandRule[];
   aiConstraints: AIConstraints;
+  /** Product jobs preserve active project prohibitions even without a Brand Kit. */
+  preserveCompiledConstraints?: boolean;
 }
 
 export interface ChatBrandPolicyResult {
@@ -29,6 +31,7 @@ export function resolveChatBrandPolicy({
   chatOrigin,
   brandRules,
   aiConstraints,
+  preserveCompiledConstraints = false,
 }: ChatBrandPolicyInput): ChatBrandPolicyResult {
   if (!chatOrigin) {
     return { brandRules, aiConstraints, mode: "FORM" };
@@ -41,6 +44,13 @@ export function resolveChatBrandPolicy({
       promptMode: "branded_direct",
       mode: "BRANDED",
     };
+  }
+
+  if (preserveCompiledConstraints) {
+    return { brandRules: [], aiConstraints, mode: "FREE",
+      // The direct AI prompt intentionally omits additions for legacy callers.
+      // Product additions (e.g. prohibitions or locked placement) must be used.
+      promptMode: aiConstraints.promptAdditions.length ? "branded_direct" : "direct" };
   }
 
   return {

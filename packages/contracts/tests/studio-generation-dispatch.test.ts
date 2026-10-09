@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const f = vi.hoisted(() => ({ request: vi.fn(), claim: vi.fn(), ready: vi.fn(), finish: vi.fn(), stage: vi.fn(), archive: vi.fn(), exact: vi.fn(), refs: vi.fn(), rules: vi.fn(), precheck: vi.fn(), generate: vi.fn(), generation: vi.fn(), update: vi.fn(), assets: vi.fn(), roots: vi.fn(), usage: vi.fn(), settings: vi.fn() }));
+const f = vi.hoisted(() => ({ request: vi.fn(), claim: vi.fn(), ready: vi.fn(), finish: vi.fn(), stage: vi.fn(), archive: vi.fn(), exact: vi.fn(), refs: vi.fn(), rules: vi.fn(), precheck: vi.fn(), generate: vi.fn(), generation: vi.fn(), update: vi.fn(), assets: vi.fn(), roots: vi.fn(), usage: vi.fn(), settings: vi.fn(), editSource: vi.fn(), edit: vi.fn(), editGuard: vi.fn(), brandPolicy: vi.fn() }));
 vi.mock("../../db/src/index", () => ({ Prisma: {}, prisma: {
   studioGenerationRequest: { findUnique: f.request }, generation: { findUnique: f.generation, update: f.update },
   brandWorkspace: { findUnique: async () => ({ ownerId: "u" }) }, prohibitionRule: { findMany: async () => [] },
@@ -10,7 +10,9 @@ vi.mock("@/lib/studio-generation-lifecycle", () => ({ claimStudioGeneration: f.c
 vi.mock("@/lib/studio-generation-artifacts", () => ({ ensureStudioGenerationArtifacts: f.archive }));
 vi.mock("@/lib/studio-generation-exact", () => ({ studioExactIntent: () => ({ layout: null, modelExpected: {} }), preflightStudioExactSources: f.exact, assertStudioExactNotModelInput: vi.fn() }));
 vi.mock("@/lib/studio-generation-references", () => ({ inlineStudioGenerationReferences: f.refs, studioProviderParams: () => ({}) }));
-vi.mock("@/lib/ai", () => ({ ai: { generate: f.generate } }));
+vi.mock("@/lib/ai", () => ({ ai: { generate: f.generate, studioEdit: f.edit } }));
+vi.mock("@/lib/studio-generation-edit", () => ({ loadStudioEditSource: f.editSource, assertStudioEditNotModelReference: f.editGuard }));
+vi.mock("@/lib/studio-generation-base", () => ({ requireStudioBaseEncryption: vi.fn() }));
 vi.mock("@/lib/s3", () => ({ uploadDataUrlImage: vi.fn() }));
 vi.mock("@/lib/asset-mirror", () => ({ mirrorGenerationVersionToAsset: vi.fn() }));
 vi.mock("@/lib/watermark", () => ({ applyWatermarksToImage: vi.fn() }));
@@ -22,7 +24,7 @@ vi.mock("@/lib/generations", () => ({ setVersionComplianceReport: vi.fn() }));
 vi.mock("@/lib/ai-constraints", () => ({ constraintsEnabled: () => true, compileAIConstraints: () => ({ blockers: [], aiConstraints: { promptAdditions: [], negativePrompt: [], hardBlocks: [], referenceImages: [] } }) }));
 vi.mock("@/lib/usage", () => ({ recordUsage: f.usage, fromGenerateUsage: () => ({}) }));
 vi.mock("@/lib/settings", () => ({ getEffectiveAiSettings: f.settings }));
-vi.mock("@/lib/chat-brand-policy", () => ({ resolveChatBrandPolicy: ({ brandRules, aiConstraints }: any) => ({ brandRules, aiConstraints }) }));
+vi.mock("@/lib/chat-brand-policy", () => ({ resolveChatBrandPolicy: f.brandPolicy }));
 vi.mock("@/lib/exact-assets", () => ({ applyExactAssetLayers: vi.fn() }));
 import { runGenerateJob } from "../../../apps/web/src/lib/workers/generate.worker";
 
@@ -45,9 +47,38 @@ beforeEach(() => {
   f.finish.mockImplementation(async (_row, status) => { events.push(`finish:${status}`); return true; });
   f.archive.mockImplementation(async () => { events.push("archive"); });
   f.assets.mockResolvedValue([]); f.roots.mockResolvedValue([]); f.settings.mockResolvedValue({});
+  f.brandPolicy.mockImplementation(({ brandRules, aiConstraints }: any) => ({ brandRules, aiConstraints }));
 });
 
 describe("real generation worker pre-provider ordering (isolated dependencies)", () => {
+  it("dispatches a saved edit through the image-edit service once, preserves its source recipe privately and never calls text generation", async () => {
+    row.jobData.studioEdit = { assetId: "source", sha256: "a".repeat(64), shapeId: "shape:source", width: 48, height: 32, recipeHash: "b".repeat(64) };
+    f.editSource.mockResolvedValue({ imageUrl: "data:image/png;base64,YQ==" });
+    f.edit.mockResolvedValue({ versions: [{ imageUrl: "data:image/png;base64,Yg==", width: 1024, height: 1024, params: {} }] });
+    await runGenerateJob(job());
+    expect(f.editSource).toHaveBeenCalledWith("w", "p", row.jobData.studioEdit, expect.any(AbortSignal));
+    expect(f.edit).toHaveBeenCalledOnce(); expect(f.generate).not.toHaveBeenCalled();
+    expect(f.editGuard).toHaveBeenCalledWith(row.jobData.studioEdit, null, []);
+    expect(f.brandPolicy).toHaveBeenCalledWith(expect.objectContaining({ preserveCompiledConstraints: true }));
+    expect(f.edit.mock.calls[0][0]).toMatchObject({ imageUrl: "data:image/png;base64,YQ==", generation: { providerRetryPolicy: "never", targets: row.jobData.targets, versionCount: 1 } });
+    expect(f.stage.mock.calls[0][1].params).toMatchObject({ imageKind: "EDITED", studioPostprocess: { editSource: row.jobData.studioEdit } });
+  });
+  it("blocks a flattened protected target in the final reference audit before any provider request", async () => {
+    row.jobData.studioEdit = { assetId: "source" };
+    f.editSource.mockResolvedValue({ imageUrl: "data:image/png;base64,YQ==" });
+    f.editGuard.mockImplementation(() => { throw Object.assign(new Error("Protected target supplied as model reference"), { status: 422 }); });
+    await expect(runGenerateJob(job())).rejects.toThrow("Protected target supplied as model reference");
+    expect(f.precheck).not.toHaveBeenCalled(); expect(f.edit).not.toHaveBeenCalled(); expect(f.generate).not.toHaveBeenCalled();
+  });
+  it("never dispatches an unavailable source, and does not fall back after an edit-provider error", async () => {
+    row.jobData.studioEdit = { assetId: "source" };
+    f.editSource.mockRejectedValue(new Error("Source SHA mismatch"));
+    await expect(runGenerateJob(job())).rejects.toThrow("Source SHA mismatch");
+    expect(f.precheck).not.toHaveBeenCalled(); expect(f.edit).not.toHaveBeenCalled(); expect(f.generate).not.toHaveBeenCalled();
+    f.editSource.mockResolvedValue({ imageUrl: "data:image/png;base64,YQ==" }); f.edit.mockRejectedValue(new Error("upstream timeout"));
+    await expect(runGenerateJob(job())).rejects.toThrow();
+    expect(f.edit).toHaveBeenCalledOnce(); expect(f.generate).not.toHaveBeenCalled(); expect(f.stage).not.toHaveBeenCalled();
+  });
   it.each([true, false])("fences after source validation and again directly before AI, targets=%s", async withTargets => {
     if (!withTargets) delete row.jobData.targets;
     await runGenerateJob(job());

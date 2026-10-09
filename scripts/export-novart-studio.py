@@ -91,6 +91,14 @@ def main():
             assert text.count(before) == 1, 'Fingerprint provider boundary changed'
             text = text.replace(before, 'return (window.__NOVART_PRODUCT__||d.Q7)?t:(0,a.jsxs)(u.we,')
         if url_path.endswith('/1773.fe2335a6.js'):
+            # The product has explicit, persisted target/reference choices. The
+            # vendor selection subscriber otherwise adds transient URL mentions
+            # on selection/undo and makes the strict server draft unsaveable.
+            original = PREVIEW / 'originals/static/js/1773.fe2335a6.js'
+            assert hashlib.sha256(original.read_bytes()).hexdigest() == '2dc5773410b0759fa63a05fc97fbf6c9f6e11d9423af40090eb8aa354ba25750', 'Native selection source changed'
+            before = 'let f=(0,r.memo)(function(){let e=(0,l.y5)("selection"),t=(0,d.X_T)()'
+            assert text.count(before) == 1, 'Native selection mention boundary changed'
+            text = text.replace(before, 'let f=(0,r.memo)(function(){if(window.__NOVART_PRODUCT__)return null;let e=(0,l.y5)("selection"),t=(0,d.X_T)()')
             before = 'createSocket(){if(this.socket)return;let e=(0,X.Ri)(G.v6);'
             assert text.count(before) == 1, 'Native agent socket boundary changed'
             text = text.replace(before, 'createSocket(){if(window.__NOVART_PRODUCT__)return;if(this.socket)return;let e=(0,X.Ri)(G.v6);')
@@ -112,7 +120,7 @@ def main():
             text = text.replace(before, before + "\n  window.NovartProductWorkflowSnapshot=()=>({loaded,busy,dirty,stale,...(state?JSON.parse(JSON.stringify(payload())):{})});")
             before = '仅保存素材设置，AI 尚未接入。'
             assert text.count(before) == 1, 'Workflow help copy changed'
-            text = text.replace(before, '先保存用途，再从输入框生成；锁定素材需指定输出画框。')
+            text = text.replace(before, '先保存用途与创作方式，再从输入框提交；改图结果另存，原图保留。')
         if url_path == '/home-start-studio.js':
             before = 'const payload = clone(savedState);'
             assert text.count(before) == 1

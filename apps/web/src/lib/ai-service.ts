@@ -4,6 +4,7 @@ export const REQUIRED_AI_PARSER_REVISION = "grounded-six-slot-r6";
 export const REQUIRED_AI_GENERATION_REVISION = "gpt-image-2-size-quality-r1";
 export const REQUIRED_AI_VISUAL_CHECK_REVISION = "studio-visual-check-evidence-r1";
 export const REQUIRED_AI_PROVIDER_RETRY_REVISION = "single-provider-attempt-r1";
+export const REQUIRED_AI_STUDIO_EDIT_REVISION = "studio-whole-image-edit-r1";
 
 const CONFIGURED_BASE =
   process.env.BRANDAI_AI_SERVICE_URL ??
@@ -19,9 +20,10 @@ export type AiServiceResolution = {
   generationRevision?: string;
   visualCheckRevision?: string;
   providerRetryRevision?: string;
+  studioEditRevision?: string;
 };
 
-export type AiServiceRequirements = { requireVisualCheck?: boolean; requireSingleAttempt?: boolean };
+export type AiServiceRequirements = { requireVisualCheck?: boolean; requireSingleAttempt?: boolean; requireStudioEdit?: boolean };
 
 let cachedResolution: { value: AiServiceResolution; expiresAt: number } | null =
   null;
@@ -44,6 +46,7 @@ async function probe(base: string): Promise<AiServiceResolution | null> {
       generationRevision?: unknown;
       visualCheckRevision?: unknown;
       providerRetryRevision?: unknown;
+      studioEditRevision?: unknown;
     };
     return {
       base,
@@ -61,6 +64,7 @@ async function probe(base: string): Promise<AiServiceResolution | null> {
           ? body.visualCheckRevision
           : undefined,
       providerRetryRevision: typeof body.providerRetryRevision === "string" ? body.providerRetryRevision : undefined,
+      studioEditRevision: typeof body.studioEditRevision === "string" ? body.studioEditRevision : undefined,
     };
   } catch {
     return null;
@@ -81,8 +85,10 @@ async function probe(base: string): Promise<AiServiceResolution | null> {
 export async function resolveAiService(requirements: AiServiceRequirements = {}): Promise<AiServiceResolution> {
   const now = Date.now();
   const requireVisualCheck = requirements.requireVisualCheck === true;
-  const requireSingleAttempt = requirements.requireSingleAttempt === true;
+  const requireStudioEdit = requirements.requireStudioEdit === true;
+  const requireSingleAttempt = requirements.requireSingleAttempt === true || requireStudioEdit;
   if (cachedResolution && cachedResolution.expiresAt > now &&
+      (!requireStudioEdit || cachedResolution.value.studioEditRevision === REQUIRED_AI_STUDIO_EDIT_REVISION) &&
       (!requireSingleAttempt || cachedResolution.value.providerRetryRevision === REQUIRED_AI_PROVIDER_RETRY_REVISION) &&
       (!requireVisualCheck || cachedResolution.value.visualCheckRevision === REQUIRED_AI_VISUAL_CHECK_REVISION)) {
     return cachedResolution.value;
@@ -102,6 +108,9 @@ export async function resolveAiService(requirements: AiServiceRequirements = {})
       if (requireSingleAttempt && health?.providerRetryRevision !== REQUIRED_AI_PROVIDER_RETRY_REVISION) {
         throw new Error("Configured AI service does not support the required single-provider-attempt revision");
       }
+      if (requireStudioEdit && health?.studioEditRevision !== REQUIRED_AI_STUDIO_EDIT_REVISION) {
+        throw new Error("Configured AI service does not support the required whole-image-edit revision");
+      }
       Object.assign(value, health, { source: "configured" });
     }
     cachedResolution = { value, expiresAt: now + CACHE_MS };
@@ -118,6 +127,7 @@ export async function resolveAiService(requirements: AiServiceRequirements = {})
       (result) =>
         result?.parserRevision === REQUIRED_AI_PARSER_REVISION &&
         result.generationRevision === REQUIRED_AI_GENERATION_REVISION &&
+        (!requireStudioEdit || result.studioEditRevision === REQUIRED_AI_STUDIO_EDIT_REVISION) &&
         (!requireSingleAttempt || result.providerRetryRevision === REQUIRED_AI_PROVIDER_RETRY_REVISION) &&
         (!requireVisualCheck || result.visualCheckRevision === REQUIRED_AI_VISUAL_CHECK_REVISION),
     );

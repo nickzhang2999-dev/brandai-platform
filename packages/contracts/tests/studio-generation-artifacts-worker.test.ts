@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const f = vi.hoisted(() => ({ transaction: vi.fn(), query: vi.fn(), gate: vi.fn(), read: vi.fn(), update: vi.fn(), updateMany: vi.fn(), output: vi.fn(), clearOutputs: vi.fn(), pending: vi.fn(), missing: vi.fn(), ensure: vi.fn(), enqueue: vi.fn(), settings: vi.fn(), bytes: vi.fn(), inspect: vi.fn(), process: vi.fn(), upload: vi.fn(), priorAsset: vi.fn(), logo: vi.fn(), asset: vi.fn(), version: vi.fn(), existingVersion: vi.fn(), link: vi.fn(), check: vi.fn(), enqueueCheck: vi.fn(), exact: vi.fn(), base: vi.fn() }));
+const f = vi.hoisted(() => ({ transaction: vi.fn(), query: vi.fn(), gate: vi.fn(), read: vi.fn(), update: vi.fn(), updateMany: vi.fn(), output: vi.fn(), clearOutputs: vi.fn(), pending: vi.fn(), missing: vi.fn(), ensure: vi.fn(), enqueue: vi.fn(), settings: vi.fn(), bytes: vi.fn(), inspect: vi.fn(), process: vi.fn(), upload: vi.fn(), priorAsset: vi.fn(), logo: vi.fn(), asset: vi.fn(), version: vi.fn(), existingVersion: vi.fn(), link: vi.fn(), check: vi.fn(), enqueueCheck: vi.fn(), exact: vi.fn(), base: vi.fn(), editLock: vi.fn() }));
 vi.mock("../../db/src/index", () => ({ Prisma: {}, prisma: { $transaction: f.transaction,
   studioGeneratedMaterial: { updateMany: f.updateMany, findMany: f.pending }, studioGenerationOutput: { updateMany: f.clearOutputs }, studioGenerationRequest: { findMany: f.missing }, asset: { findUnique: f.priorAsset, findFirst: f.logo } } }));
 vi.mock("@/lib/queue", () => ({ connection: {}, queuePrefix: "test" }));
@@ -15,6 +15,7 @@ vi.mock("@/lib/studio-generation-compliance-queue", () => ({ enqueueStudioCompli
 vi.mock("@/lib/studio-exact-image", () => ({ compositeStudioExactImage: f.exact }));
 vi.mock("@/lib/studio-generation-base", () => ({ storeStudioCleanBase: f.base, requireStudioBaseEncryption: vi.fn() }));
 vi.mock("@/lib/studio-generation-exact", async () => ({ ...await vi.importActual("../../../apps/web/src/lib/studio-generation-exact"), loadStudioExactAsset: vi.fn() }));
+vi.mock("@/lib/studio-generation-edit", async () => ({ ...await vi.importActual("../../../apps/web/src/lib/studio-generation-edit"), lockStudioEditPublicationSource: f.editLock }));
 vi.mock("../../../apps/web/src/lib/api", async () => await vi.importMock("@/lib/api"));
 vi.mock("../../../apps/web/src/lib/studio-generation-base", () => ({ requireStudioBaseEncryption: vi.fn() }));
 vi.mock("@/lib/studio-generation-artifacts", () => ({ ensureStudioGenerationArtifacts: f.ensure, requireArtifactWrite: f.gate,
@@ -61,6 +62,31 @@ function enableExact() {
 }
 
 describe("generation archive worker (unit fixtures; no provider or remote storage)", () => {
+  it("archives edits as new roots with authorized source provenance, never an invalid cross-generation parent", async () => {
+    const source = { assetId: "source", sha256: sha, width: 48, height: 32, shapeId: "shape:source", recipeHash: "b".repeat(64), versionId: "old-version", outputId: "old-output", sourceGenerationId: "old-generation" };
+    row.output.params.imageKind = "EDITED"; row.output.params.studioPostprocess.editSource = source;
+    row.request.jobData = { targets: [{ width: 48, height: 32 }] };
+    await runStudioGenerationArtifactJob(job());
+    expect(row.status).toBe("SUCCEEDED"); expect(f.editLock).toHaveBeenCalledWith(tx, "w", "p", source);
+    const created = f.version.mock.calls[0][0].create;
+    expect(created.generationId).toBe("generation"); expect(created).not.toHaveProperty("parentVersionId");
+    expect(created.params.source).toEqual({ assetId: "source", sha256: sha, versionId: "old-version", generationId: "old-generation", operation: "whole-image-edit" });
+    expect(JSON.stringify(created.params)).not.toMatch(/recipeHash|old-output|studioPostprocess/);
+  });
+  it("retains the paid edit but prevents publication when actual size or source identity changes", async () => {
+    row.output.params.imageKind = "EDITED";
+    row.output.params.studioPostprocess.editSource = { assetId: "source", sha256: sha, width: 48, height: 32, shapeId: "shape:source", recipeHash: "b".repeat(64) };
+    row.request.jobData = { targets: [{ width: 96, height: 64 }] };
+    await runStudioGenerationArtifactJob(job()); expect(row.status).toBe("FAILED"); expect(f.version).not.toHaveBeenCalled(); expect(row.output.imageUrl).not.toBeNull();
+    row.status = "PENDING"; row.request.jobData.targets = [{ width: 48, height: 32 }]; f.editLock.mockRejectedValue(new ApiException(422, "Source unlinked"));
+    await runStudioGenerationArtifactJob(job()); expect(row.status).toBe("FAILED"); expect(f.version).not.toHaveBeenCalled(); expect(row.output.imageUrl).not.toBeNull();
+  });
+  it("preserves an encrypted base for ordinary branded outputs so later edits do not redraw and duplicate the watermark", async () => {
+    row.output.params.studioPostprocess.watermarkOverlays = [{ enabled: true, text: "Brand" }];
+    await runStudioGenerationArtifactJob(job());
+    expect(row.status).toBe("SUCCEEDED"); expect(f.base).toHaveBeenCalledWith(bytes, { workspaceId: "w", projectId: "p", outputId: "output" }, expect.any(AbortSignal));
+    expect(row.output.params.studioPostprocess.cleanBase).toBeTruthy(); expect(f.version.mock.calls[0][0].create.params).not.toHaveProperty("studioPostprocess");
+  });
   it("composites locked pixels before brand overlays, keeps encrypted clean base private and publishes both atomically", async () => {
     enableExact(); await runStudioGenerationArtifactJob(job());
     expect(row.status).toBe("SUCCEEDED");

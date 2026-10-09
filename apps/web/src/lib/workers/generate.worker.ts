@@ -2,6 +2,9 @@ import { inlineStudioGenerationReferences, studioProviderParams } from "@/lib/st
 import { claimStudioGeneration, assertStudioGenerationReady, finishStudioGeneration, stageStudioGenerationOutput } from "@/lib/studio-generation-lifecycle";
 import { ensureStudioGenerationArtifacts } from "@/lib/studio-generation-artifacts";
 import { studioExactIntent, preflightStudioExactSources, assertStudioExactNotModelInput, type StudioExactSnapshot } from "@/lib/studio-generation-exact";
+import { loadStudioEditSource, assertStudioEditNotModelReference, type StudioEditSourceSnapshot } from "@/lib/studio-generation-edit";
+import { requireStudioBaseEncryption } from "@/lib/studio-generation-base";
+import { StudioEditRequest, StudioEditResponse } from "@brandai/contracts";
 import { Worker, type Job } from "bullmq";
 import { prisma, Prisma } from "@brandai/db";
 import {
@@ -158,6 +161,7 @@ export interface GenerateJobData {
    * durable request jobData, never accepted from an HTTP caller. */
   studioExpectedAssetSha256?: Record<string, string>;
   studioExactLayout?: StudioExactSnapshot;
+  studioEdit?: StudioEditSourceSnapshot;
   /**
    * M3 — text rendering strategy threaded into the AI GenerateRequest.
    * "direct" (default) keeps the model rendering any text; "layered" steers it
@@ -435,6 +439,8 @@ export async function runGenerateJob(
   async function runGenerationInner(): Promise<GenerateJobResult> {
     const studioExact = studio ? studioExactIntent(job.data) : null;
     if (studioExact) await preflightStudioExactSources(workspaceId, generation.projectId, studioExact.layout, controller!.signal);
+    const studioEdit = studio && job.data.studioEdit ? await loadStudioEditSource(workspaceId, generation.projectId, job.data.studioEdit, controller!.signal) : null;
+    if (studioEdit && targets?.length !== 1) throw new Error("Product edits require exactly one output size");
     // §V0.02 #6 — latest-first ONLY for the generation prompt: newly created /
     // just re-enabled rules take precedence in the constraint. Snapshots and the
     // hard-block gates keep the deterministic default order (docs/10 #4).
@@ -1008,15 +1014,18 @@ export async function runGenerateJob(
       chatOrigin,
       brandRules,
       aiConstraints,
+      preserveCompiledConstraints: !!studio,
     });
     aiConstraints = chatBrandPolicy.aiConstraints;
 
     const studioReferences = studio ? await inlineStudioGenerationReferences(workspaceId, aiConstraints.referenceImages, controller!.signal, studioExact!.modelExpected) : null;
     if (studioReferences) assertStudioExactNotModelInput(studioExact!.layout, studioReferences.audit);
+    if (studioEdit && job.data.studioEdit && studioReferences) assertStudioEditNotModelReference(job.data.studioEdit, studioExact?.layout, studioReferences.audit);
     if (studioReferences) aiConstraints = { ...aiConstraints, referenceImages: studioReferences.references };
     // All product source/geometry checks precede even the optional paid text
     // precheck; the company legacy sequence remains unchanged.
     if (studio) {
+      if (studioExact?.layout || resolvedOutputOverlays.length) requireStudioBaseEncryption();
       await assertStudioGenerationReady(studio, controller!.signal);
       // This adapter reads the current copy term library, sends brandRules:[]
       // and no image; it does not reload the accepted image-generation rules.
@@ -1063,7 +1072,7 @@ export async function runGenerateJob(
         return stageStudioGenerationOutput(studio, { imageUrl: v.imageUrl, width: v.width, height: v.height,
           params: { ...studioProviderParams(v.params), appliedRuleIds, appliedBrandRuleCount: appliedRuleIds.length,
             brandConstraintMode: brandRules.length ? "BRANDED" : "FREE", sceneType, ...constraintEcho,
-            textMode: job.data.textMode ?? "direct", imageKind: "GENERATED",
+            textMode: job.data.textMode ?? "direct", imageKind: studioEdit ? "EDITED" : "GENERATED",
             ...(styleKeywords.length ? { styleKeywords } : {}),
             ...(templateReferenceAssetIds.length ? { templateReferenceAssetIds } : {}),
             ...(imageInputs.length ? { imageInputs } : {}), ...(assetUsages.length ? { assetUsages } : {}),
@@ -1072,6 +1081,7 @@ export async function runGenerateJob(
             studioPostprocess: { watermarkOverlays: resolvedOutputOverlays,
               automaticBrandLogoAssetId: automaticBrandLogoAsset?.id ?? null, brandRules,
               ...(studioExact?.layout ? { exactLayout: studioExact.layout } : {}),
+              ...(studioEdit ? { editSource: job.data.studioEdit } : {}),
               assetSha256: Object.fromEntries((studioReferences?.audit ?? []).map(item => [String(item.assetId), String(item.sha256)])) },
           } }, index);
       }
@@ -1228,7 +1238,9 @@ export async function runGenerateJob(
             versionCount: 1,
             targets: [t],
           });
-          const result = GenerateResponse.parse(await ai.generate(request, transport));
+          const result = studioEdit
+            ? StudioEditResponse.parse(await ai.studioEdit(StudioEditRequest.parse({ imageUrl: studioEdit.imageUrl, generation: request }), transport))
+            : GenerateResponse.parse(await ai.generate(request, transport));
           if (settled) {
             console.warn(
               `[generate] ${generationId} settled (timeout) after size ${t.key} AI call; discarding`,

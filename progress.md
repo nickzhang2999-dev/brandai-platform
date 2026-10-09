@@ -1,5 +1,12 @@
 # Integration progress
 
+## 2026-10-09 — whole-image edit integrated; production build pending
+- Authorized source snapshots, clean-base reads, inherited EXACT, real multipart edit with complete references, capability/no-retry gates, source locks and new-root provenance are integrated. FREE product jobs preserve compiled prohibitions; flattened EXACT targets cannot re-enter through another reference.
+- Native modify preserves target/intent across lost 202 and later drafts; results require explicit insertion. Product exporter disables only the native selection/undo auto-mention that broke strict draft persistence, validating original SHA and unique anchor.
+- L1 **780+6=786**, AI/Python **365**, Web typecheck PASS. Isolated native modify/save/reopen PASS, zero page errors/external requests. Export **124 files/76 mappings/27,052,707 bytes**. Production build remains UNVERIFIED: Windows commit pressure caused native allocation OOM/exit134; jitless supports typecheck only, not the WebAssembly-dependent build. Stop heavy retries pending resources or isolated CI.
+- Test setup repaired without lowering product gates: module isolation, independent mismatched-transform objects, explicit supported model for failure injection plus empty-model rejection. Evidence: D:/coding/.novart-tmp/modify-{l1,ai,typecheck,build}.log and studio-modify-acceptance.log.
+- Goal mode remains paused at user request; ordinary single-agent work. No push/deploy/main merge/CDS writes/new migration/paid provider/Docker. Source comparison added; current runtime/configuration and real-service acceptance are not claimed verified.
+
 ## 2026-10-09 — explicit EXACT frames and provider retry protection
 - Three existing agents completed geometry, compositor/clean-base boundaries, UI/native export comparison and provider retry policy; root integrated authoritative materials, request snapshots, paid-call preflight, private archive publication and old-route guards. Accepted-context checks now run after source preparation and after text precheck, before image dispatch; identity/TTL and rule/source changes reject while ordinary canvas autosave does not invalidate the accepted job.
 - User deferred deployment: local integration only, no push/main merge/CDS mutations. Historical CDS audit confirms shared migrations and seed; clarified that a CDS deployment project can start a Git branch without merging main. No new live CDS verification in this increment.

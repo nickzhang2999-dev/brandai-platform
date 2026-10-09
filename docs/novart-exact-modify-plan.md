@@ -1,8 +1,8 @@
 # EXACT 与原生改图的接入状态 · 2026-10-09
 
-第一批静态 EXACT 已在本地实现，并完成原生交互与两项原生 PNG 像素对照。**真实数据库、S3、provider 串联的 EXACT 成品验收仍待完成**；本地 fixture 与单元回归不替代这项验收。整图修改、蒙版局部修改尚未开放，原捕获副本保持不变。
+第一批静态 EXACT 已在本地实现，并完成原生交互与两项原生 PNG 像素对照。**真实数据库、S3、provider 串联的 EXACT 成品验收仍待完成**；本地 fixture 与单元回归不替代这项验收。整图修改已本地接通，蒙版局部修改尚未开放；原捕获副本保持不变。
 
-当前按用户最新要求，先完成本地开发、合并与验收；**暂停 Git push、CDS 和外部部署**。本文记录功能状态与验收边界，不更新其他日志中的总门禁数量，也不表示本地修改已经上线。
+按用户要求普通任务执行，不启用目标模式；发布隔离和完整构建未通过，**当前未推送或部署**。本文记录功能状态与验收边界，不更新其他日志中的总门禁数量，也不表示本地修改已经上线。
 
 ## 当前实现与待验收项
 
@@ -11,8 +11,8 @@
 | 显式输出画框 | `deploy/novart/studio/novart-product-generation.js`：仅活跃 EXACT 显示紧凑选框；默认空选，使用当前原生页面的 frame；提交只增加 `outputFrameId`，保存 revision 一并冻结 | 已通过隔离原生 UI 交互；真实 DB/S3/provider 下完整提交待验收 |
 | 权威素材与几何快照 | `studio-generation-policy.ts`、`studio-exact-geometry.ts`：从已保存文档、workflow revision 和入库素材解析原生层级、坐标、旋转、翻转、排序、SHA；同 mutation 不接受不同 payload | 权限变更、来源失效与发布前检查已有本地覆盖；真实持久化和并发任务环境仍需验收 |
 | 确定性素材合成 | `studio-exact-image.ts`、`studio-generation-exact.ts`：预检授权素材字节与尺寸；EXACT 不进入模型参考图；模型生成底图后按冻结布局复贴，固定输出画框范围 | 两项原生 PNG 对照已通过；真实模型底图、对象存储归档、结果发布全过程待验收 |
-| 干净底图与复贴记录 | `studio-generation-base.ts`、`workers/studio-generation-artifacts.worker.ts`：保留 AES-256-GCM 加密 clean base、底图 SHA、尺寸、keyRevision，以及 EXACT 配方；发布前复核来源和权限 | 真实对象存储读回验收待做；历史密钥轮换需受控迁移，当前没有 keyring；后续改图服务尚未消费这份底图 |
-| 整图修改 | 公司 `/v1/edit`、`HttpImageProvider.edit` 可继续复用；新产品 generation 仍拒绝 `workflow.mode=modify` 或 target；旧 edit 对新工作台 generation 返回 409 | 产品改图的幂等、来源关系、源图保护、尺寸验证、单次调用声明和私有归档尚未接通 |
+| 干净底图与复贴记录 | `studio-generation-base.ts`、`workers/studio-generation-artifacts.worker.ts`：保留 AES-256-GCM 加密 clean base、底图 SHA、尺寸、keyRevision，以及 EXACT 配方；发布前复核来源和权限 | 真实对象存储读回验收待做；历史密钥轮换需受控迁移，当前没有 keyring；整图修改已消费底图，真实模型与 S3 链路尚未验收 |
+| 整图修改 | `studio-generation-edit.ts` 与 `/v1/studio/edit` 接授权原图/底图，复用公司 multipart 图片 provider 和任务、额度、归档；原图保留，结果另存 | 单测及原生交互通过；真实模型/S3/DB 未验收；实际裁切、滤镜等效果未接 |
 | 蒙版与分层修改 | 已定位捕获模块 `89719`（remover）、`37733`（contours/store）；旧 decompose 对新工作台 generation 返回 409 | 产品蒙版合同、坐标映射与提交边界尚未接通；保留原生画笔不等于已支持模型局部改图 |
 
 `assetUsages.EXACT` 与旧 `referenceAssets.STRICT` 含义不同：后者兼容成默认水印，不能代替主体布局。EXACT 源图从模型参考中排除，模型先生成底图，再由服务端复贴原素材；同一源图若又通过品牌示例或其他参考途径进入模型，也须明确拒绝，不能悄悄重绘或省略品牌设置。
@@ -53,15 +53,17 @@
 
 对象路径包含内容 SHA 与 `keyRevision`，旧密钥 worker 的迟到对象写入与新密钥路径隔离；任务 attempt/权限屏障继续约束结果发布。密钥版本标识不是解密 keyring：当前仅使用当前配置派生的密钥，轮换后旧底图不能自动解密，会明确要求恢复对应配置或完成受控迁移。**当前没有历史 keyring，也没有自动重加密迁移流程**，部署前必须把历史底图迁移纳入轮换安排。
 
-clean base 已有受保护存取与归档接线，不代表整图修改已经可用。未来修改应读取授权的干净底图、生成新背景，再按保留配方复贴素材，避免将旧主体交给模型修改后又叠一遍形成重影。
+整图修改已读取授权 clean base，再按继承配方复贴 EXACT、应用当前品牌规则。水印合成前也保存底图；历史已合成图缺底图则拒绝。目标扁平图的 ID 或相同 SHA 副本不能再作为模型参考，防止锁定主体通过第二条输入路径进入模型。真实存储和模型验收仍待完成。
 
-## 第二批：整图修改，尚未开放
+## 第二批：整图修改，已本地接通
 
 以单个已授权 target 开始，接受源素材 ID/shape ID/SHA 和保存版本，结果生成新图，用户决定后续放置，不自动覆盖原图。普通改图不承诺主体像素不变，主体保护由 EXACT 路径承担。
 
 公司旧 edit 在同一 `Generation` 下创建 `parentVersionId` 子版本，`getVersionLineage` 也按该 Generation 查询；产品请求则一请求对应唯一 Generation。需先确定合法来源关系，不能跨 Generation 随填 parentVersionId；上传素材没有源 version，同样必须记录实际来源。
 
-旧 edit provider 的尺寸行为、实际解码尺寸与产品允许范围仍须在接入时逐项核对。把幂等、额度、单次调用声明、超时迟到屏障、clean base 读取、来源关系和私有结果归档接到修改链后再开放入口。目前新产品仍拒绝 modify/target；旧 `edit/route.ts` 和 `decompose/route.ts` 检测到 `studioGenerationRequest` 关联后返回 409，不能绕过新产品保护流程。
+产品已接专用内部整图编辑，要求真实 gpt-image-2 编辑能力、单次调用和完整参考语义。归档验证真实解码尺寸；幂等、额度、迟到屏障、底图读取和私有归档已接通。新结果是独立 Generation 根版本，source provenance 关联原 asset/version/generation，不填跨 Generation 的 parentVersionId。旧 edit/decompose 对产品任务保留 409，不能绕过新流程。
+
+隔离原生 UI 已验证目标选择/保存、422 留稿、丢失 202 同 mutation 确认、新目标/新稿保护、手动入图、撤销/重做/全新 context 重开。产品构建层关闭原生 selection/undo 自动 mention，修复草稿保存失败，服务端媒体规则不放宽。真实 DB/S3/provider、连续改图与底图读回仍待验收。
 
 ## 第三批：蒙版局部修改，尚未开放
 

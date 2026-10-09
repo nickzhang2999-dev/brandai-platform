@@ -3,6 +3,7 @@ const f = vi.hoisted(() => ({ dns: vi.fn(), fetch: vi.fn() }));
 vi.mock("node:dns/promises", () => ({ resolve4: f.dns }));
 const current = { parserRevision: "grounded-six-slot-r6", generationRevision: "gpt-image-2-size-quality-r1", visualCheckRevision: "studio-visual-check-evidence-r1", providerRetryRevision: "single-provider-attempt-r1" };
 const older = { parserRevision: current.parserRevision, generationRevision: current.generationRevision };
+const editable = { ...current, studioEditRevision: "studio-whole-image-edit-r1" };
 const load = () => import("../../../apps/web/src/lib/ai-service");
 beforeEach(() => {
   vi.resetModules(); vi.resetAllMocks(); vi.stubGlobal("fetch", f.fetch);
@@ -13,6 +14,29 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 describe("product visual-check service capability gate", () => {
+  it("rechecks a valid generation cache before allowing edits and requires the edit revision", async () => {
+    f.fetch.mockImplementation(async () => Response.json(current));
+    const { resolveAiService } = await load();
+    await resolveAiService({ requireSingleAttempt: true });
+    await expect(resolveAiService({ requireStudioEdit: true })).rejects.toThrow("whole-image-edit revision");
+    f.fetch.mockImplementation(async () => Response.json(editable));
+    expect(await resolveAiService({ requireStudioEdit: true })).toMatchObject(editable);
+    await resolveAiService({ requireStudioEdit: true });
+    expect(f.fetch).toHaveBeenCalledTimes(3);
+  });
+  it("edit capability alone cannot bypass single-provider-attempt support", async () => {
+    f.fetch.mockImplementation(async () => Response.json({ ...editable, providerRetryRevision: undefined }));
+    const { resolveAiService } = await load();
+    await expect(resolveAiService({ requireStudioEdit: true })).rejects.toThrow("single-provider-attempt revision");
+  });
+  it("selects the edit-capable shared service instead of a cached generation-only container", async () => {
+    vi.stubEnv("BRANDAI_AI_SERVICE_URL", "http://ai:8000");
+    f.fetch.mockImplementation(async (url: string) => Response.json(url.includes("10.0.0.1") ? current : editable));
+    const { resolveAiService } = await load();
+    expect((await resolveAiService({ requireSingleAttempt: true })).base).toBe("http://10.0.0.1:8000");
+    expect((await resolveAiService({ requireStudioEdit: true })).base).toBe("http://10.0.0.2:8000");
+    expect(f.dns).toHaveBeenCalledTimes(2);
+  });
   it("rejects an old explicit image service and a legacy cache lacking single-attempt support", async () => {
     f.fetch.mockResolvedValue(Response.json(older)); const { resolveAiService } = await load();
     await resolveAiService();

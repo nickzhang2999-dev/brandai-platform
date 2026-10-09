@@ -10,6 +10,8 @@ import type {
   EditResponse,
   GenerateRequest,
   GenerateResponse,
+  StudioEditRequest,
+  StudioEditResponse,
   IngestWebsiteRequest,
   IngestWebsiteResponse,
   ParseManualRequest,
@@ -66,11 +68,13 @@ async function call<TReq, TRes>(path: string, body: TReq, options?: AiCallOption
   const signal = options ? options.signal ?? AbortSignal.timeout(5 * 60_000) : undefined;
   signal?.throwIfAborted();
   const requireVisualCheck = path === "/v1/compliance/check" && options?.requireRealVlmProvider === true;
-  const requireSingleAttempt = ["/v1/generate", "/v1/compliance/check"].includes(path) && (options?.requireRealImageProvider === true || options?.requireRealVlmProvider === true);
+  const requireStudioEdit = path === "/v1/studio/edit";
+  const requireSingleAttempt = requireStudioEdit || (["/v1/generate", "/v1/compliance/check"].includes(path) && (options?.requireRealImageProvider === true || options?.requireRealVlmProvider === true));
   const setup = Promise.all([resolveAiService(requireVisualCheck || requireSingleAttempt ? {
     ...(requireVisualCheck ? { requireVisualCheck: true } : {}), ...(requireSingleAttempt ? { requireSingleAttempt: true } : {}),
+    ...(requireStudioEdit ? { requireStudioEdit: true } : {}),
   } : undefined), providerHeaders(
-    path === "/v1/generate" && options?.requireRealImageProvider === true,
+    requireStudioEdit || (path === "/v1/generate" && options?.requireRealImageProvider === true),
     requireVisualCheck,
   )]);
   const [service, headers] = await (signal ? withinAiDeadline(setup, signal) : setup);
@@ -80,7 +84,7 @@ async function call<TReq, TRes>(path: string, body: TReq, options?: AiCallOption
     headers: { "content-type": "application/json", ...headers },
     // The product's task claim is insufficient if a lower client layer retries
     // the paid POST. Enforce this also for its optional text precheck.
-    body: JSON.stringify(requireSingleAttempt ? { ...body, providerRetryPolicy: "never" } : body),
+    body: JSON.stringify(requireSingleAttempt && !requireStudioEdit ? { ...body, providerRetryPolicy: "never" } : body),
     cache: "no-store",
     ...(signal ? { signal } : {}),
   });
@@ -112,6 +116,8 @@ export const ai = {
     call<SummarizeRequest, SummarizeResponse>("/v1/summarize", b),
   generate: (b: GenerateRequest, options?: AiCallOptions) =>
     call<GenerateRequest, GenerateResponse>("/v1/generate", b, options),
+  studioEdit: (b: StudioEditRequest, options?: AiCallOptions) =>
+    call<StudioEditRequest, StudioEditResponse>("/v1/studio/edit", b, { ...options, requireRealImageProvider: true }),
   edit: (b: EditRequest) => call<EditRequest, EditResponse>("/v1/edit", b),
   /**
    * 图层分解。只有 worker 该调它——实测真上游 12–42 秒，第一次调用就打穿

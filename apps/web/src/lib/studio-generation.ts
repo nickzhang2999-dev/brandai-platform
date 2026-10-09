@@ -13,7 +13,7 @@ type Receipt = Prisma.StudioGenerationRequestGetPayload<Record<string, never>>;
 
 async function receipt(row: Receipt, canWrite = true) {
   const results = await readStudioGenerationResults(row);
-  return StudioGenerationView.parse({ requestId: row.id, mutationId: row.mutationId, projectId: row.projectId, generationId: row.generationId,
+  return StudioGenerationView.parse({ mode: (row.jobData as {studioEdit?: unknown})?.studioEdit ? "modify" : "generate", requestId: row.id, mutationId: row.mutationId, projectId: row.projectId, generationId: row.generationId,
     status: row.status, progress: null, expiresAt: row.expiresAt.toISOString(), displayText: row.prompt, error: row.error,
     ...results, canRetryArchive: canWrite && results.canRetryArchive });
 }

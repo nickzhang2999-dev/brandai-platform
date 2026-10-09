@@ -8,6 +8,7 @@ def test_health(client):
         "generationRevision": "gpt-image-2-size-quality-r1",
         "visualCheckRevision": "studio-visual-check-evidence-r1",
         "providerRetryRevision": "single-provider-attempt-r1",
+        "studioEditRevision": "studio-whole-image-edit-r1",
     }
 
 

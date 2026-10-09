@@ -20,6 +20,8 @@ from .providers import (
 )
 from .providers.base import ImageProvider, LayerProvider, VLMProvider
 from .providers.retry_policy import call_with_retry_policy
+from .studio_edit_schemas import StudioEditRequest, STUDIO_EDIT_REVISION
+from .studio_edit import prepare_studio_edit, studio_edit_instructions, studio_edit_params
 from .providers.http_providers import (
     _DEFAULT_IMAGE_QUALITY,
     _estimate_cost_usd,
@@ -173,6 +175,7 @@ async def health():
         "generationRevision": GENERATION_REVISION,
         "visualCheckRevision": VISUAL_CHECK_REVISION,
         "providerRetryRevision": PROVIDER_RETRY_REVISION,
+        "studioEditRevision": STUDIO_EDIT_REVISION,
     }
 
 
@@ -365,6 +368,19 @@ async def generate(
     req: GenerateRequest,
     provider: ImageProvider = Depends(resolve_image_provider),
 ):
+    return await _generate(req, provider)
+
+
+@app.post("/v1/studio/edit", response_model=GenerateResponse, response_model_exclude_none=True)
+async def studio_edit(
+    req: StudioEditRequest,
+    provider: ImageProvider = Depends(resolve_image_provider),
+):
+    prepare_studio_edit(req, provider)
+    return await _generate(req.generation, provider, studio_source=req.imageUrl)
+
+
+async def _generate(req: GenerateRequest, provider: ImageProvider, *, studio_source: str | None = None):
     base_w, base_h = _SCENE_SIZES.get(req.sceneType, (1024, 1024))
     rule_summary = "; ".join(
         r.summary for r in req.brandRules if r.status == "CONFIRMED"
@@ -376,8 +392,8 @@ async def generate(
     #   branded_direct: chat with an active Brand Kit → compact mandatory brand
     #     boundary first, user brief second, without the legacy scene dump;
     #   branded: legacy form/campaign path (unchanged).
-    direct_mode = (req.promptMode or "branded") == "direct"
-    branded_direct_mode = req.promptMode == "branded_direct"
+    branded_direct_mode = req.promptMode == "branded_direct" or bool(studio_source and req.promptMode == "direct" and req.brandRules)
+    direct_mode = (req.promptMode or "branded") == "direct" and not branded_direct_mode
     if direct_mode:
         prompt_parts = [req.sellingPoint]
     elif branded_direct_mode:
@@ -406,7 +422,7 @@ async def generate(
         negative = list(req.aiConstraints.negativePrompt or [])
         prompt_additions = list(req.aiConstraints.promptAdditions or [])
         machine_rules = dict(req.aiConstraints.machineRules or {})
-        if prompt_additions and not direct_mode:
+        if prompt_additions and (not direct_mode or studio_source is not None):
             compiled = "[COMPILED BRAND CONSTRAINTS] " + " | ".join(prompt_additions)
             if branded_direct_mode:
                 # Keep both brand blocks ahead of the user brief: model/provider
@@ -528,6 +544,8 @@ async def generate(
             ]
 
     def _echo_params(extra: dict[str, Any] | None = None) -> dict[str, Any]:
+        if studio_source is not None:
+            return studio_edit_params(extra)
         params: dict[str, Any] = {
             "prompt": prompt,
             "sceneType": req.sceneType,
@@ -558,6 +576,11 @@ async def generate(
             params.update(extra)
         return params
 
+    if studio_source is not None:
+        # The product edit is always a real multipart image edit. ALL original
+        # positive/negative/inspiration references retain their ordered roles;
+        # ordinary generation still uses its existing STRICT-only routing.
+        strict_refs = [{"url": studio_source, "polarity": "positive", "source": "studio:edit-target", "mode": "STRICT"}, *reference_images]
     strict_ref = strict_refs[0] if strict_refs else None
     # V0.0.21 — model inputs carry explicit semantics. IMAGE_INPUT remains the
     # free chat-compose path; project assets are either ADAPTIVE (recognizable
@@ -647,6 +670,8 @@ async def generate(
                 "Do not replace, redraw, reinterpret, omit, crop away, or "
                 "invent a substitute for any input asset."
             )
+        if studio_source is not None:
+            instruction_parts = studio_edit_instructions(reference_images)
         strict_prompt = "\n\n".join(instruction_parts)
         strict_prompt += f"\n\nGeneration brief: {prompt}"
         if negative:
@@ -667,7 +692,7 @@ async def generate(
             # 解析器（刻意规避 prd_agent「多图走独立 Vision 分支 + 独立解析」
             # 导致的 "Vision API 响应格式不支持" bug）。
             urls = await call_with_retry_policy(
-                req.providerRetryPolicy, provider.generate_with_references,
+                "never" if studio_source is not None else req.providerRetryPolicy, provider.generate_with_references,
                 strict_prompt,
                 strict_refs,
                 width=width,
@@ -676,13 +701,15 @@ async def generate(
                 quality=effective_quality,
                 model=(provider_extra or {}).get("model"),
             )
-            if not urls:
+            if not urls or (studio_source is not None and len(urls) != 1):
                 raise HTTPException(
                     status_code=502,
                     detail="AI provider returned no image for STRICT reference",
                 )
             image_url = urls[0]
         else:
+            if studio_source is not None:
+                raise HTTPException(422, "The configured provider cannot perform the required whole-image edit; no text-only fallback is supported")
             # Fallback (mock / non-openai gateways): single image-input edit.
             # Remaining refs are forwarded in the payload so an img2img-capable
             # gateway can still read them — never silently dropped.

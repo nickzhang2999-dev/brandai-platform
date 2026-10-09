@@ -17,6 +17,23 @@ afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 // This isolated fixture checks transport only. No provider or DB is contacted.
 const body = {} as Parameters<typeof ai.generate>[0];
 
+it("requires real image configuration and edit capability without inserting a forbidden top-level retry field", async () => {
+  const request = { imageUrl: "data:image/png;base64,YQ==", generation: { providerRetryPolicy: "never" } } as Parameters<typeof ai.studioEdit>[0];
+  f.settings.mockResolvedValue({ image: { provider: "openai", apiKey: "fixture" }, layer: {}, vlm: {} });
+  await ai.studioEdit(request);
+  expect(f.service).toHaveBeenCalledWith({ requireStudioEdit: true, requireSingleAttempt: true });
+  expect(f.fetch).toHaveBeenCalledOnce();
+  expect(f.fetch.mock.calls[0][0]).toBe("http://internal-ai.invalid/v1/studio/edit");
+  expect(JSON.parse(f.fetch.mock.calls[0][1].body)).toEqual(request);
+  expect(f.fetch.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
+});
+it("refuses image-edit transport when service revision or actual provider setup is unavailable", async () => {
+  await expect(ai.studioEdit({} as never)).rejects.toThrow("未调用演示模型"); expect(f.fetch).not.toHaveBeenCalled();
+  f.settings.mockResolvedValue({ image: { provider: "openai", apiKey: "fixture" }, layer: {}, vlm: {} });
+  f.service.mockRejectedValue(new Error("Unsupported edit revision"));
+  await expect(ai.studioEdit({} as never)).rejects.toThrow("Unsupported edit revision"); expect(f.fetch).not.toHaveBeenCalled();
+});
+
 describe("product AI transport opt-in", () => {
   it("never resolves services or dispatches after the deadline already elapsed", async () => {
     const controller = new AbortController();

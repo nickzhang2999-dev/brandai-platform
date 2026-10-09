@@ -78,6 +78,7 @@ class StudioGenerationResult(StrictModel):
     url: str = Field(pattern=r"^/api/workspaces/[a-zA-Z0-9_-]+/assets/[a-zA-Z0-9_-]+/raw\z")
 
 class StudioGenerationView(StrictModel):
+    mode: Literal["generate", "modify"] = "generate"
     requestId: ProjectId
     mutationId: MutationId
     projectId: ProjectId

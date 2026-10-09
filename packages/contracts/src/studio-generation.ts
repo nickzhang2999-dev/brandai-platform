@@ -23,6 +23,7 @@ export const StudioGenerationQuery = NativeProjectQueryInput.pick({ projectId: t
 export const StudioGenerationRetryInput = StudioGenerationQuery.required();
 export const StudioGenerationArchiveRetryInput = StudioGenerationRetryInput;
 export const StudioGenerationView = z.object({
+  mode: z.enum(["generate", "modify"]).default("generate"),
   requestId: NativeProjectQueryInput.shape.projectId, mutationId: z.string().uuid(),
   projectId: NativeProjectQueryInput.shape.projectId, generationId: NativeProjectQueryInput.shape.projectId,
   status: z.enum(["PENDING", "RUNNING", "SUCCEEDED", "FAILED"]), progress: z.null(),

@@ -1,5 +1,12 @@
 # Integration findings
 
+## 2026-10-09 — whole-image edit integration findings
+- A clean-base first input does not protect EXACT if its final flattened target also enters as a secondary reference. Product intake and final reference audit now reject its ID or SHA alias; inherited EXACT originals retain the existing separate guard.
+- Legacy FREE chat policy drops compiled prohibition examples and alternative additions. Product-only opt-in preserves the compiler output; default legacy callers retain their prior policy.
+- Native module 40291 selection memo subscribes to selection changes, renders an image and adds a pending selection mention to the composer. Undo restoring selection reproduces this and makes strict drafts fail. Product-only early return disables this auto-mention, not actual selection/undo or explicit M6 target. SHA/anchor checks protect the build patch.
+- Edit provenance is a new product Generation root plus source asset/version/generation metadata, not a cross-generation parentVersionId unsupported by company lineage queries. Archive tests retain source locks and actual decoded dimensions.
+- No new runtime CDS evidence this batch. Windows physical free RAM hid commit exhaustion; typecheck passed using jitless, but production build requires WebAssembly and still hits native memory allocation. Keep the gate visibly pending rather than retry indefinitely or close user apps.
+
 ## 2026-10-09 — EXACT geometry and paid-attempt boundaries
 - Captured native image transforms compose translation then rotation with ancestor transforms; use F^-1 * I, not axis-aligned selection bounds. Saved sibling indexes provide order. Ordinary native frames do not clip child overflow; product output explicitly clips to the selected frame.
 - Two actual native PNG fixtures verify server composition at supported integer/right-angle transforms. A 128px frame with left/bottom overflow exports as 140px natively; product's 128px composition equals its x=12,y=0 frame region. Whole exports are intentionally not claimed equal.

@@ -7,6 +7,7 @@ vi.mock("../../../apps/web/src/lib/generation-prepare", () => ({ prepareGenerati
 vi.mock("../../../apps/web/src/lib/rules", () => ({ getConfirmedRules: vi.fn() }));
 vi.mock("../../../apps/web/src/lib/studio-generation-artifacts", () => ({ requireArtifactWrite: vi.fn() }));
 vi.mock("../../../apps/web/src/lib/studio-project-materials", () => ({ listStudioProjectMaterials: vi.fn() }));
+vi.mock("../../../apps/web/src/lib/studio-generation-edit", () => ({ resolveStudioEditSource: vi.fn(), inspectStudioEditSource: vi.fn(), assertStudioEditNotModelReference: vi.fn() }));
 import { hashStudioPayload, assertStudioGenerationCapacity, validateStudioOutputSource, requireStudioGenerationServices } from "../../../apps/web/src/lib/studio-generation-policy";
 const body = { projectId: "p", mutationId: "831a0280-2cf1-41ba-ac94-621053c4a4c6", prompt: " Draw a tree ", sizeSelection: { ratioKey: "1:1", resolutionTier: "1K" }, workflowRevision: 0, documentRevision: 0 };
 beforeEach(() => { vi.resetAllMocks(); f.config.mockResolvedValue({ image: { provider: "openai", apiKey: "fixture" } }); f.storage.mockResolvedValue({ configured: true }); });
