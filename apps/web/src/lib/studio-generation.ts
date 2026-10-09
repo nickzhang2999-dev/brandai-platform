@@ -9,6 +9,7 @@ import { reserveGenerationQuotaInTransaction } from "./quota";
 import { enqueueStudioGeneration } from "./studio-generation-queue";
 import { readStudioGenerationResults } from "./studio-generation-artifacts";
 import type { GenerateJobData } from "./workers/generate.worker";
+import { lockStudioIntake } from "./studio-intake-lock";
 type Receipt = Prisma.StudioGenerationRequestGetPayload<Record<string, never>>;
 
 async function receipt(row: Receipt, canWrite = true) {
@@ -49,7 +50,7 @@ export async function submitStudioGeneration(workspaceId: string, userId: string
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       row = await prisma.$transaction(async tx => {
-        await tx.$queryRaw`SELECT pg_advisory_xact_lock(20261009, 2)`;
+        await lockStudioIntake(tx, 2);
         const duplicate = await tx.studioGenerationRequest.findUnique({ where: { workspaceId_userId_projectId_mutationId: identity } });
         if (duplicate) {
           if (duplicate.payloadHash !== payloadHash) throw new ApiException(409, "生成请求标识已用于其他内容。");

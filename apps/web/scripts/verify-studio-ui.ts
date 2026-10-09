@@ -231,7 +231,12 @@ async function nativeUpload(page: Page, frame: Frame, name: string) {
   const receipt = page.waitForResponse(response => new URL(response.url()).pathname === "/studio/material-upload" && response.request().method() === "POST");
   await (await picker).setFiles({ name, mimeType: "image/png", buffer: uploadFixture });
   const accepted = await receipt;
-  assert.equal(accepted.status(), 202, "Upload must be accepted as a durable worker task");
+  if (accepted.status() !== 202) {
+    // Keep diagnostics useful without emitting server text, upload bodies or URLs.
+    const error = await accepted.json().catch(() => null);
+    const code = [error?.errorCode, error?.code].find(value => typeof value === "string" && /^[A-Z][A-Z0-9_]{1,47}$/.test(value));
+    assert.fail(`Upload must be accepted as a durable worker task; HTTP ${accepted.status()}, error code: ${code ?? "not supplied"}`);
+  }
   const task = await accepted.json();
   assert.equal(typeof task.taskId, "string");
   assert.ok(["PENDING", "RUNNING", "SUCCEEDED"].includes(task.status));

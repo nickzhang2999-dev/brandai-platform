@@ -4,7 +4,7 @@
 
 | 范围 | 状态 | 说明 |
 | --- | --- | --- |
-| `claude/novart-product-integration` | 原生生成、归档、EXACT 与整图修改已本地接通；本轮 786 项 L1、365 项 AI/Python、完整类型检查及低内存生产构建通过。真实生成验收增加重开前后原生 PNG 像素比对；正在准备隔离云端联调，真实 provider 与独立存储未配置、尚未验收 | [整合进度](docs/novart-product-integration.md) · [源码差异](docs/novart-source-comparison-2026-10-09.md) · [开发日志](docs/development-log-2026-10-09.md) · [配置复核](docs/readiness-ai-config-audit-2026-10-09-1604.md) |
+| `claude/novart-product-integration` | 已推送隔离 CI；首轮真实登录、原生图形/中文/笔画入库通过，图片上传阶段失败。已修复 multipart 截断与锁查询返回类型，本地 789 项 L1、365 项 AI/Python、类型及生产构建通过，准备重跑云端。真实 provider 和独立存储未配置，AI 未验收，尚未部署新版 | [整合进度](docs/novart-product-integration.md) · [源码差异](docs/novart-source-comparison-2026-10-09.md) · [开发日志](docs/development-log-2026-10-09.md) · [配置复核](docs/readiness-ai-config-audit-2026-10-09-1604.md) |
 
 本分支从已评审的前端分支继续开发，复用公司源码的账号、品牌权限、项目和生成服务，保留原生画布文档，接入持久上传及生成任务。当前代码与隔离交互测试不等于真实模型或完整业务验收。候选新增图片上传、工作流引用及生成请求/私有输出/归档记录，不替换原 `ProjectCanvas`；具体已执行迁移以部署日志为准。独立产品环境仍运行 `8474347`，本轮新增迁移未执行；独立前端评审部署也不能作为新后端验收环境。
 

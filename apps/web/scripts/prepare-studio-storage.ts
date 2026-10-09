@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { CreateBucketCommand, HeadBucketCommand, S3Client } from "@aws-sdk/client-s3";
 import { prisma } from "@brandai/db";
 import { encryptSecret } from "../src/lib/crypto";
+import { lockStudioIntake } from "../src/lib/studio-intake-lock";
 
 const database = new URL(process.env.DATABASE_URL ?? "http://invalid");
 const endpoint = new URL(process.env.NOVART_CI_STORAGE_ENDPOINT ?? "http://invalid");
@@ -21,6 +22,25 @@ const client = new S3Client({
   credentials: { accessKeyId: accessKey, secretAccessKey: secretKey }, maxAttempts: 2,
 });
 try {
+  // Exercise the production SQL through the real Prisma/PG driver, not a mock
+  // that cannot detect PostgreSQL void-result deserialization failures.
+  const lockPid = await prisma.$transaction(async tx => {
+    await lockStudioIntake(tx, 1);
+    await lockStudioIntake(tx, 2);
+    const locks = await tx.$queryRaw<Array<{ pid: number; lane: number }>>`
+      SELECT pid, objid::integer AS lane FROM pg_locks
+      WHERE locktype = 'advisory' AND pid = pg_backend_pid() AND classid = 20261009
+        AND objid IN (1, 2) AND objsubid = 2 AND granted
+      ORDER BY objid`;
+    assert.deepEqual(locks.map(lock => lock.lane), [1, 2], "Both intake transaction locks must use their original namespaces");
+    return locks[0]!.pid;
+  });
+  const held = await prisma.$queryRaw<Array<{ count: number }>>`
+    SELECT count(*)::integer AS count FROM pg_locks
+    WHERE locktype = 'advisory' AND pid = ${lockPid} AND classid = 20261009
+      AND objid IN (1, 2) AND objsubid = 2 AND granted`;
+  assert.equal(held[0]?.count, 0, "Intake locks must release at transaction commit");
+  console.log("PASS real Prisma/PostgreSQL intake locks decode, retain their namespaces and release on commit");
   // Never overwrite a pre-existing environment's admin settings, even if misrouted.
   assert.equal(await prisma.appSetting.count(), 0, "Expected an empty disposable AppSetting table.");
   await client.send(new CreateBucketCommand({ Bucket: bucket }), { abortSignal: AbortSignal.timeout(10_000) });

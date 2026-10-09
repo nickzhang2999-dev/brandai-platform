@@ -33,6 +33,10 @@ const nextConfig = {
   },
   experimental: {
     serverActions: { bodySizeLimit: "10mb" },
+    // Next clones bodies before route handlers. Its 10 MiB default truncates a
+    // valid 10 MiB file once multipart headers are included. Match the bounded
+    // envelope in readStudioMaterialForm; the file limit itself stays 10 MiB.
+    middlewareClientMaxBodySize: 10 * 1024 * 1024 + 64 * 1024,
     ...(lowMemoryBuild ? {
       cpus: 1,
       webpackMemoryOptimizations: true,

@@ -1,6 +1,29 @@
 # Novart 开发日志 · 2026-10-09
 
-最新进展见下方 16:15 记录。独立前端评审 Origin 403 已以 2db9229 修复部署；此前公网 76 项 HTTP 检查不代表原生画布启动或真实 AI 已验收。历史记录见 [15:45 联调补充日志](novart-integration-2026-10-09-origin-and-edit-review.md)。
+最新进展见下方 16:31 记录。独立前端评审 Origin 403 已以 2db9229 修复部署；此前公网 76 项 HTTP 检查不代表原生画布启动或真实 AI 已验收。历史记录见 [15:45 联调补充日志](novart-integration-2026-10-09-origin-and-edit-review.md)。
+
+## 16:31：修复云端发现的上传阻断
+
+两名子智能体分别修复上传大小边界与事务锁类型，主任务审查并串行重跑四门禁。
+
+1. Next 15.5.24 的实际 `getCloneableBody` 默认将 middleware body 限制为 10 MiB，合法 10 MiB 文件连同 multipart 头被截断，业务 `formData()` 因此报 400。`next.config.mjs` 现把缓冲精确设为 10 MiB + 64 KiB；产品文件上限及总请求预算不放宽。新增实际 loopback HTTP + Next 克隆 + 现有 parser 回归，旧配置复现两条 400；修复后最大文件完整 SHA 匹配，超 1 字节和总包络超限均 413。云端断言保留 413 并检查没有暂存行。
+2. PostgreSQL `pg_advisory_xact_lock` 返回 void，Prisma raw query 不支持直接解码该类型。新 `studio-intake-lock.ts` 只把返回值转 text，保持上传/生成锁键 `20261009,1/2`。这与通用 503 高度匹配；因首轮未打印服务端异常，仍以第二轮真实上传结果确认。准备脚本在一次性 CI guard 内调用生产 helper，查询实际锁键并按原连接 PID 确认事务提交后释放。未改加密 key 或存储默认值。
+3. 上传失败诊断只输出 HTTP 状态与受限的结构化错误代码，不打印原始服务器正文或上传内容。
+
+本地最终 L1 **789**（783 契约/服务 + 6 UI；UI 部分使用已有缓存）、AI/Python **365**、完整 Web typecheck 及低内存生产构建均通过。Windows 的 `pnpm test:ai` Unix shell 入口无法直接执行，改用同一仓库 venv 的 `Scripts/python.exe -m pytest -q` 跑完整套件；不是跳过检查。日志位于 `.novart-tmp/real-ai-intake-fix-*.log`。本轮未进行真实 provider 调用或 CDS 部署，下一步重新推送带 `[skip cds]` 的精确候选跑 CI。
+
+## 16:21：首轮真实 DB / Worker / 原生 UI 云端联调
+
+集成候选 **`5f72ffa2bcd111808f7916dbcf67a71eefbda6cf` 已推送**，不是部署完成。[Branch Image 37903979077](https://github.com/nickzhang2999-dev/brandai-platform/actions/runs/37903979077) 在一次性 Linux 环境运行，数据库迁移、私有 MinIO 配置及四项仓库门禁通过。随后真实 API 与 UI 联调失败，未进入镜像发布/部署。
+
+- 后端 API 已通过 **66 项**，随后超大 multipart 文件检查期望 HTTP 413、实际 400；位置 `verify-studio-materials-backend.ts:51`。
+- 原生 UI 已通过真实密码登录、新品牌创建、新项目打开原生编辑器，以及图形、中文、指针笔画通过实际 HTTP 保存入库。图片上传阶段两次 POST 返回 503，未达到异步任务 202；位置 `verify-studio-ui.ts:234`。此时诊断里原生 Editor/store 已存在，画布可见，浏览器异常与网络传输失败为空。
+- 两处失败分别交由子智能体排查。**不放宽错误码或跳过上传检查来标绿，也不部署这个未通过的候选。** 这条产品链路的局部成功不能证明独立评审环境截图中的启动故障已修复。
+- 真实 provider 未配置、未调用。测试图片仅是用户上传路径的确定性字节样本，不是 AI 生成结果。
+
+发布隔离证据：对完整候选 SHA 的 live dry-run，push=`ignored-skip-marker`，workflow=`workflow-acknowledged`，三个模拟副作用均 false。实际签名投递 event `0ec478f2-43dd-4455-8592-e12f1b88c0bf`、delivery `c398f966-c3b9-11f1-83d4-45b7de93a0d2` 按仓库及完整 integration ref 查询得到 `skipped`，reason 明确 `[skip cds]`；CDS 该条日志 SHA 只保留 `5f72ffa` 前缀。按 branchId 查询会漏掉该条，因为跳过发生在分支解析前。
+
+推送后和 CI 失败后再次回读，公司三个分支的 status/commitSha/githubCommitSha/ciTargetSha/ciImageStatus 均与推送前基线相同：main `e99919a/running`、公司 preview `52e95a5/running`、公司 integration `f968f1a/idle`。未动公司共享配置或业务数据；此轮没有新增 CDS 部署。
 
 ## 16:15：原生错误排查与真实 AI 验收准备
 

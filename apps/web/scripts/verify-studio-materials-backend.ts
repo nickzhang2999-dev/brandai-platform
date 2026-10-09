@@ -5,7 +5,7 @@ import { randomUUID, createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";
 import sharp from "sharp";
 import { prisma } from "@brandai/db";
-import { StudioMaterialUploadView } from "@brandai/contracts";
+import { STUDIO_MATERIAL_MAX_BYTES, StudioMaterialUploadView } from "@brandai/contracts";
 import { verifyStudioWorkflowInitial, verifyStudioWorkflowBackend } from "./verify-studio-workflow-backend";
 
 type Result = { status: number; data: any; bytes?: Uint8Array };
@@ -47,8 +47,13 @@ export async function verifyStudioMaterialsBackend({ call, check, base, ws }: Op
   check("image upload enforces EDITOR, workspace membership, login and same origin", () => {
     assert.equal(viewer.status, 403); assert.equal(outsider.status, 404); assert.equal(anonymous.status, 401); assert.equal(crossOrigin.status, 403);
   });
-  const oversized = await upload("owner", multipart(randomUUID(), Buffer.alloc(10 * 1024 * 1024 + 1)));
-  check("actual multipart file size is bounded before staging", () => assert.equal(oversized.status, 413));
+  const oversizedMutationId = randomUUID();
+  const oversized = await upload("owner", multipart(oversizedMutationId, Buffer.alloc(STUDIO_MATERIAL_MAX_BYTES + 1)));
+  const oversizedRows = await prisma.studioMaterialUpload.count({ where: { workspaceId: ws, projectId: pid, mutationId: oversizedMutationId } });
+  check("actual multipart file size is bounded before staging", () => {
+    assert.equal(oversized.status, 413, JSON.stringify(oversized.data));
+    assert.equal(oversizedRows, 0, "An oversized upload must not create a staging record");
+  });
 
   const mutationId = randomUUID();
   const submitted = await Promise.all([upload("owner", multipart(mutationId)), upload("owner", multipart(mutationId))]);

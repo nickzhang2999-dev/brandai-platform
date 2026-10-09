@@ -6,6 +6,7 @@ import { requireWorkspaceRole } from "./workspace";
 import { getEffectiveStorage } from "./settings";
 import { readStudioMaterialForm, assertStudioUploadCapacity } from "./studio-materials-policy";
 import { enqueueStudioMaterial } from "./studio-materials-queue";
+import { lockStudioIntake } from "./studio-intake-lock";
 
 export const studioMaterialSelect = {
   taskId: true, workspaceId: true, projectId: true, userId: true, mutationId: true,
@@ -65,7 +66,7 @@ export async function submitStudioMaterial(workspaceId: string, userId: string, 
   const row = await prisma.$transaction(async tx => {
     // Serialize quota checks + insert across all BFF instances. A small bounded
     // DB outbox is preferable to unbounded Redis/base64 or local-only files.
-    await tx.$queryRaw`SELECT pg_advisory_xact_lock(20261009, 1)`;
+    await lockStudioIntake(tx, 1);
     const duplicate = await tx.studioMaterialUpload.findUnique({ where: { workspaceId_userId_projectId_mutationId: identity }, select: studioMaterialSelect });
     if (duplicate) {
       if (duplicate.sha256 !== input.sha256 || duplicate.mimeType !== input.mimeType || duplicate.fileName !== input.fileName) throw new ApiException(409, "上传请求标识已用于其他图片。");
