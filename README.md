@@ -4,11 +4,11 @@
 
 | 范围 | 状态 | 入口 |
 | --- | --- | --- |
-| Novart 工作台前端评审版（首页带图、项目归档、原画布编辑） | 2026-10-09 线上 70a07dd 已解除实际入口的 403，首次图片交接/保存成功；用户再反馈刷新与新建均无原生工具栏，恢复路径未通过。已修复外层误报 ready、补失败出口和精简加载诊断；本地三流程可挂载，但线上执行故障仍待取证 | [`previews/novart-workbench`](previews/novart-workbench/) · [运行与部署说明](docs/novart-workbench-preview.md) · [403 证据与修复状态](docs/novart-preview-origin-2026-10-09.md) |
+| Novart 工作台前端评审版（首页带图、项目归档、原画布编辑） | 2026-10-09 已部署 a1c35a4：此前 403 已解除，就绪检查、失败出口和精简诊断已更新。本地三流程通过；用户仍报告画布及底栏出现后消失，线上恢复未通过，继续定位 | [`previews/novart-workbench`](previews/novart-workbench/) · [运行与部署说明](docs/novart-workbench-preview.md) · [403 证据与修复状态](docs/novart-preview-origin-2026-10-09.md) |
 
 这份独立评审程序用于操作与交互评审，使用独立文件存储，不接真实 AI、账号或生产业务数据。原有 Next.js 源码、`main`、正式站及根 `cds-compose.yml` 保持原样。镜像由 `Branch Image` 工作流构建并检查，专用配置位于 `previews/novart-workbench/cds-compose.preview.yml`，只导入独立 CDS 评审项目，避免覆盖原产品的共享服务。屏幕适配覆盖大屏、小笔记本、平板与窄屏浏览器；本分支不代表正式产品已集成或已发布。
 
-已部署代码版本为 `70a07dd273749413a70cf3bcec22b9ddd9dcb9dc`。[CDS 评审服务](https://novart-workbench-preview-claude-novart-workbench-preview.geole.me/)的根页面只提供进入说明，完整访问入口私下交付。线上已验证项目和图片在容器重建后保留；公网浏览器的实际拖拽、输入和导出仍需试用复核，HTTP 检查不代替交互验收。
+已部署代码版本为 `a1c35a418e3335c79b754ce1adee0d4c088446bd`。[CDS 评审服务](https://novart-workbench-preview-claude-novart-workbench-preview.geole.me/)的根页面只提供进入说明，完整访问入口私下交付。线上已验证项目和图片在容器重建后保留；公网浏览器的实际拖拽、输入和导出仍需试用复核，HTTP 检查不代替交互验收。
 
 
 > **当前开发版本：V0.0.22**（2026-09-17）
