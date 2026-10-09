@@ -4,7 +4,7 @@
 
 | 范围 | 状态 | 入口 |
 | --- | --- | --- |
-| Novart 工作台前端评审版（首页带图、项目归档、原画布编辑） | 独立 CDS 已部署；Linux 容器及公网资源、保存与重建检查通过；业务后端待接入 | [`previews/novart-workbench`](previews/novart-workbench/) · [运行与部署说明](docs/novart-workbench-preview.md) |
+| Novart 工作台前端评审版（首页带图、项目归档、原画布编辑） | 独立 CDS 仍运行 f720c44；2026-10-09 已复现同源写入 403，热修复及可信公开 Origin 配置待部署；12 项 HTTP、172 项包校验和及四项仓库门禁通过；CI 与用户路径待验收 | [`previews/novart-workbench`](previews/novart-workbench/) · [运行与部署说明](docs/novart-workbench-preview.md) · [403 证据与修复状态](docs/novart-preview-origin-2026-10-09.md) |
 
 这份独立评审程序用于操作与交互评审，使用独立文件存储，不接真实 AI、账号或生产业务数据。原有 Next.js 源码、`main`、正式站及根 `cds-compose.yml` 保持原样。镜像由 `Branch Image` 工作流构建并检查，专用配置位于 `previews/novart-workbench/cds-compose.preview.yml`，只导入独立 CDS 评审项目，避免覆盖原产品的共享服务。屏幕适配覆盖大屏、小笔记本、平板与窄屏浏览器；本分支不代表正式产品已集成或已发布。
 

@@ -5,7 +5,7 @@ is replaced by a service worker and a finite local resource resolver; no remote
 requests are forwarded. The share cookie is a capability for one review room.
 """
 from __future__ import annotations
-import argparse, gzip, hashlib, http.client, json, mimetypes, secrets, threading, time
+import argparse, gzip, hashlib, http.client, json, mimetypes, os, secrets, threading, time
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -15,8 +15,56 @@ from local_store import StoreError
 from home_start_runtime import HomeStartRuntime
 
 
+def _parse_origin(value):
+    """Parse one HTTP origin, without accepting URLs, opaque origins or lists."""
+    if not isinstance(value, str) or not value or any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in value):
+        return None
+    if any(c in value for c in ('\\', ',', '?', '#')):
+        return None
+    try:
+        parsed = urlsplit(value)
+        if (parsed.scheme not in ('http', 'https') or not parsed.hostname
+            or parsed.username is not None or parsed.password is not None or parsed.path
+            or parsed.netloc.endswith(':') or '*' in parsed.netloc):
+            return None
+        port = parsed.port if parsed.port is not None else (443 if parsed.scheme == 'https' else 80)
+        if not 1 <= port <= 65535:
+            return None
+        authority = '[' + parsed.hostname + ']' if ':' in parsed.hostname else parsed.hostname
+        if parsed.port is not None:
+            authority += ':' + str(parsed.port)
+        if parsed.netloc.lower() != authority.lower():
+            return None
+        return parsed.scheme, parsed.hostname.lower(), port
+    except ValueError:
+        return None
+
+
+def _write_origin_allowed(headers, public_origin):
+    origins = headers.get_all('Origin', [])
+    # Retain the capability-authenticated non-browser clients used by the CLI/CI.
+    if not origins:
+        return True
+    if len(origins) != 1:
+        return False
+    origin = _parse_origin(origins[0])
+    hosts = headers.get_all('Host', [])
+    if origin is None or len(hosts) != 1:
+        return False
+    host_origin = _parse_origin(origin[0] + '://' + hosts[0])
+    if host_origin is None:
+        return False
+    # A proxy may rewrite Host. Only server configuration can grant the public
+    # origin; never use client-controlled Forwarded or X-Forwarded-* headers.
+    # Without configuration preserve direct-connection Host matching.
+    return origin == (public_origin if public_origin is not None else host_origin)
+
+
 class ShareRuntime:
-    def __init__(self, data_dir, port=0, host='127.0.0.1'):
+    def __init__(self, data_dir, port=0, host='127.0.0.1', *, public_origin=None):
+        self.public_origin = _parse_origin(public_origin) if public_origin is not None else None
+        if public_origin is not None and self.public_origin is None:
+            raise ValueError('Public origin must be a single http(s) origin without a path')
         data_dir = Path(data_dir).resolve()
         if not data_dir.is_relative_to((ROOT / 'sharing').resolve()):
             raise ValueError('Share data must be isolated under sharing/')
@@ -91,8 +139,7 @@ class ShareRuntime:
                     return self.send('''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>NovartLab · 体验评审</title><style>html{color-scheme:light}body{margin:0;min-height:100vh;min-height:100dvh;display:grid;place-items:center;background:#fafafc;color:#26232c;font:16px/1.8 system-ui}main{box-sizing:border-box;width:min(100%,520px);padding:clamp(24px,6vw,48px)}h1{font-size:28px;margin:0 0 16px}p{color:#706c7b;margin:8px 0}</style></head><body><main><h1>NovartLab</h1><p>工作台已准备就绪。</p><p>请使用管理员提供的完整评审链接进入。</p></main></body></html>''',mime='text/html; charset=utf-8')
                 if not self.allowed(): return self.send({'error':'请使用完整的专属评审链接打开'},401)
                 if self.command not in ('GET','HEAD'):
-                    origin = self.headers.get('Origin')
-                    if origin and urlsplit(origin).netloc != self.headers.get('Host'):
+                    if not _write_origin_allowed(self.headers, owner.public_origin):
                         return self.send({'error':'Cross-origin write rejected'},403)
                 if parsed.path == '/share-start':
                     return self.send('''<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>NovartLab · 体验评审</title><style>body{margin:0;background:#f7f5fb;color:#26232c;font:16px/1.8 system-ui;display:grid;place-content:center;min-height:100vh}main{max-width:480px;padding:40px}h1{font-size:26px}p{color:#787180}</style><main><h1>NovartLab</h1><p id="status">正在准备设计工作台…</p></main><script>
@@ -176,9 +223,11 @@ document.cookie='__locale=zh; Path=/; SameSite=Strict';
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser();parser.add_argument('--port',type=int,default=8769);parser.add_argument('--room',default='boss-review');parser.add_argument('--host',choices=['127.0.0.1','0.0.0.0'],default='127.0.0.1')
+    parser.add_argument('--public-origin', default=os.environ.get('NOVART_REVIEW_PUBLIC_ORIGIN'),
+        help='Exact external http(s) origin when a reverse proxy rewrites Host; no path or wildcard')
     args=parser.parse_args()
     if not args.room.replace('-','').isalnum(): raise ValueError('Invalid room')
-    runtime=ShareRuntime(ROOT/'sharing'/args.room,args.port,args.host).start()
+    runtime=ShareRuntime(ROOT/'sharing'/args.room,args.port,args.host,public_origin=args.public_origin).start()
     (runtime.data_dir/'runtime.json').write_text(json.dumps({'port':runtime.server.server_port,'entryPath':'/share/'+runtime.key},indent=2),'utf-8')
     print('Review gateway ready on port '+str(runtime.server.server_port),flush=True)
     try:

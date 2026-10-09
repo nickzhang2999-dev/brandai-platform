@@ -7,6 +7,7 @@ on:
     paths:
       - 'previews/novart-workbench/**'
       - 'scripts/check-novart-container.py'
+      - 'scripts/test-novart-share-origin.py'
       - '.github/workflows/branch-image.yml'
   workflow_dispatch:
 
@@ -27,6 +28,11 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
+
+      - name: Check trusted public origin and rejected cross-site writes
+        run: |
+          python3 -m pip install -r previews/novart-workbench/requirements.txt
+          python3 -B scripts/test-novart-share-origin.py
 
       - name: Verify package and build the image
         env:
