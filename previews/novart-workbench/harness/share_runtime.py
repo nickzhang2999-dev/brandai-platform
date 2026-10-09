@@ -5,7 +5,8 @@ is replaced by a service worker and a finite local resource resolver; no remote
 requests are forwarded. The share cookie is a capability for one review room.
 """
 from __future__ import annotations
-import argparse, gzip, hashlib, http.client, json, mimetypes, os, secrets, threading, time
+import argparse, gzip, hashlib, http.client, json, math, mimetypes, os, re, secrets, threading, time
+from collections import deque
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -85,6 +86,49 @@ def _write_origin_allowed(headers, public_origin, additional_origins=frozenset()
     return origin == host_origin
 
 
+def _startup_diagnostic(payload):
+    """Accept only bounded structural state, never user content or full errors."""
+    required = {'kind', 'role', 'controlled', 'canvas', 'toolbar', 'boundary', 'width', 'height'}
+    optional = {'errorName', 'frames', 'resource', 'stage', 'embedded', 'framePath'}
+    if not isinstance(payload, dict) or not required <= payload.keys() or payload.keys() - required - optional:
+        raise ValueError('Invalid diagnostic fields')
+    enums = {'kind': {'state', 'error'}, 'role': {'shell', 'canvas'},
+        'errorName': {'Error', 'TypeError', 'ReferenceError', 'RangeError', 'SyntaxError', 'ChunkLoadError', 'Other'},
+        'stage': {'opened', 'timeout', 'ready', 'error'},
+        'framePath': {'/canvas', '/studio', '/share-start', 'about:blank', 'unavailable', 'none'}}
+    for key, values in enums.items():
+        if key in payload and (not isinstance(payload[key], str) or payload[key] not in values):
+            raise ValueError('Invalid diagnostic enum')
+    for key in ('controlled', 'canvas', 'toolbar', 'boundary', 'embedded'):
+        if key in payload and type(payload[key]) is not bool:
+            raise ValueError('Invalid diagnostic flag')
+    for key in ('width', 'height'):
+        value = payload[key]
+        if type(value) not in (int, float) or not 0 <= value <= 10000 or not math.isfinite(value):
+            raise ValueError('Invalid diagnostic dimension')
+    if 'frames' in payload:
+        frames = payload['frames']
+        if (not isinstance(frames, list) or len(frames) > 4 or any(
+            not isinstance(frame, str) or len(frame) > 120
+            or re.fullmatch(r'[A-Za-z0-9_.-]+\.js:[0-9]+:[0-9]+', frame) is None for frame in frames)):
+            raise ValueError('Invalid diagnostic frames')
+    if 'resource' in payload:
+        resource = payload['resource']
+        if (not isinstance(resource, str) or len(resource) > 120
+            or re.fullmatch(r'[A-Za-z0-9_.-]+\.(?:js|css)', resource) is None):
+            raise ValueError('Invalid diagnostic resource')
+    return payload
+
+
+def _diagnostic_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError('Duplicate diagnostic field')
+        result[key] = value
+    return result
+
+
 class ShareRuntime:
     def __init__(self, data_dir, port=0, host='127.0.0.1', *, public_origin=None, additional_origins=None):
         self.public_origin = _parse_origin(public_origin) if public_origin is not None else None
@@ -104,6 +148,8 @@ class ShareRuntime:
         manifest_path = ROOT / 'PACKAGE_MANIFEST.json'
         self.package_sha256 = hashlib.sha256(manifest_path.read_bytes()).hexdigest() if manifest_path.is_file() else None
         self.resource_events = []
+        self.startup_diagnostics = deque(maxlen=32)
+        self.startup_diagnostics_lock = threading.Lock()
         owner = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -167,6 +213,8 @@ class ShareRuntime:
                 if self.command not in ('GET','HEAD'):
                     if not _write_origin_allowed(self.headers, owner.public_origin, owner.additional_origins):
                         return self.send({'error':'Cross-origin write rejected'},403)
+                if parsed.path == '/review/startup-diagnostics':
+                    return self.startup_diagnostic(parsed.query)
                 if parsed.path == '/share-start':
                     return self.send('''<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>NovartLab · 体验评审</title><style>body{margin:0;background:#f7f5fb;color:#26232c;font:16px/1.8 system-ui;display:grid;place-content:center;min-height:100vh}main{max-width:480px;padding:40px}h1{font-size:26px}p{color:#787180}</style><main><h1>NovartLab</h1><p id="status">正在准备设计工作台…</p></main><script>
 document.cookie='usertoken=local-demo-not-a-real-token; Path=/; SameSite=Strict';
@@ -208,6 +256,38 @@ document.cookie='__locale=zh; Path=/; SameSite=Strict';
                 except Exception as error:
                     owner.resource_events.append({'error':type(error).__name__,'path':parsed.path})
                     return self.send({'error':'演示服务暂不可用，请重试'},503)
+
+            def startup_diagnostic(self, query):
+                if query:
+                    self.close_connection = True
+                    return self.send({'error': 'Invalid diagnostic request'}, 400)
+                if self.command == 'GET':
+                    with owner.startup_diagnostics_lock:
+                        events = list(owner.startup_diagnostics)
+                    return self.send({'events': events})
+                if self.command != 'POST':
+                    self.close_connection = True
+                    return self.send({'error': 'Method not allowed'}, 405, extra={'Allow': 'GET, POST'})
+                try:
+                    lengths = self.headers.get_all('Content-Length', [])
+                    if (len(lengths) != 1 or not re.fullmatch(r'[0-9]+', lengths[0])
+                        or self.headers.get('Transfer-Encoding')
+                        or self.headers.get_content_type() != 'application/json'):
+                        raise ValueError('Invalid diagnostic request')
+                    length = int(lengths[0])
+                    if length > 4096:
+                        self.close_connection = True
+                        return self.send({'error': 'Diagnostic request too large'}, 413)
+                    if not length:
+                        raise ValueError('Empty diagnostic request')
+                    payload = json.loads(self.rfile.read(length).decode('utf-8'), object_pairs_hook=_diagnostic_object)
+                    event = _startup_diagnostic(payload)
+                except (ValueError, UnicodeError, RecursionError):
+                    self.close_connection = True
+                    return self.send({'error': 'Invalid diagnostic request'}, 400)
+                with owner.startup_diagnostics_lock:
+                    owner.startup_diagnostics.append({**event, 'timestamp': time.time()})
+                return self.send({'ok': True}, 202)
 
             def resource(self, url, body):
                 parsed=urlsplit(url);clean=parsed.scheme+'://'+parsed.netloc+parsed.path
