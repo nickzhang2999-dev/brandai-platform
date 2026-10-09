@@ -1,6 +1,6 @@
 # Novart 独立评审同源写入 403 · 2026-10-09
 
-本记录针对独立 CDS 前端评审项目，不代表产品集成分支、公司 `main` 或正式站已修改。当前线上仍运行 `f720c4449c7a873cc352f429017709deace1572f`。热修复及运行时配置尚未部署；浏览器连接失败，未完成用户实际创建画布路径验收。
+本记录针对独立 CDS 前端评审项目，不代表产品集成分支、公司 `main` 或正式站已修改。2026-10-09 15:45（Asia/Shanghai）确认线上已运行 `2db9229f03e0262e66ac7ff8c7465111d9cb166d`，可信公开 Origin 配置生效，公网 HTTP 验收通过。浏览器连接失败，真实鼠标/键盘操作仍未验收。
 
 ## 线上证据与归因
 
@@ -46,17 +46,20 @@ if origin and urlsplit(origin).netloc != self.headers.get('Host'):
 | AI pytest | 155 项通过 |
 | Web typecheck | 退出码 0 |
 | Web production build | 退出码 0 |
-| Branch Image 回归接入 | requirements 安装后执行 12 项 Origin 回归的步骤已加入工作流；该版 CI 尚未实际运行 |
-| CDS webhook self-test dry-run | `[skip cds]` 返回 `ignored-skip-marker`，全部部署副作用字段为 `false` |
-| 实际 push 与 CI | 待验证；dry-run 不能证明真实推送已被跳过或镜像已发布 |
-| 修复镜像及公开 Origin 配置部署 | 未完成，线上仍为 f720c44 |
+| Branch Image 回归接入 | CI 37899305284 成功；12 项 Origin 回归、172 项校验和、Linux 启动/鉴权/反代写入/持久卷重建通过后发布镜像 |
+| CDS webhook self-test dry-run | 精确 SHA 的 push 为 ignored-skip-marker，workflow_run 为 workflow-acknowledged，全部部署副作用字段为 false |
+| 实际 push 与 CI | GitHub push 成功；CDS 真实签名有效投递 b3ed84bf-02dc-4832-a17c-d9a35e3c7691 为 skipped，原因明确为 [skip cds]；公司三个分支回读未变 |
+| 修复镜像及公开 Origin 配置部署 | dr_3483c099da752e5cf5fc1451 完成，运行提交 2db9229、prebuilt=true，1/1 服务健康且无 drift；容器内提交、包指纹及 Origin 回读一致 |
+| 公网 HTTP 验收 | 76 项通过；实际 Origin 创建/上传/保存/重开、恶意 Origin 拒绝、57 个资源响应（含 CSS import 链）均已检查 |
 | 公网浏览器用户路径 | 浏览器连接失败，未验收 |
 
-历史 Linux 容器、持久卷重建及公网资源检查见 [独立评审说明](novart-workbench-preview.md)。这些历史结果不作为本次热修复的镜像、配置或浏览器验收结果。
+镜像 digest 为 `sha256:76b263f16626016ac4bb0e9110bd9443262816a0536b4cfcb6d711f3b9590de3`；运行包 SHA-256 为 `35170856540ae75f374245271876e28c472e23f3096074a496a0ab0ac83bbadc`，公网 `/healthz` 与 [CI 37899305284](https://github.com/nickzhang2999-dev/brandai-platform/actions/runs/37899305284) 一致。只更新独立项目环境变量并按精确 SHA 部署，没有更改公司自动部署开关或导入根 compose。
+
+公网脚本 `check_origin_online.py` 的正常 POST 均带真实 Origin，以稳定 requestId 幂等创建自己的 `HTTP origin check` 项目及 PNG，保存明确标注的原生格式存储样本；重跑读取同一项目，不重复创建或覆盖用户编辑。本轮样本保留，未删用户数据。10 月 8 日旧样本部署前已不存在（与历史清理记录一致），已明确 skipped，不能声称本轮验证了旧样本跨重建保留；新镜像的重建持久化由本轮 Linux CI 验证。
+
+验收脚本首次误把合法的 32 字节 CSS `@import` 入口判为失败，已改为验证非空内容并递归检查导入样式，完整重跑通过；不是页面缺失。项目环境变量 PUT 后首次回读出现 WinError 10054，重新 GET 确认已生效，再部署，没有重复盲写。单次连接中断不归因为平台服务缺陷；浏览器插件连接失败也单独保留为验收限制。
 
 ## 后续验收判据
 
-1. 四项仓库门禁已通过；实际 push/CI 后核对跳过标记的真实处理结果，避免联动公司项目部署，并确认独立评审精确 SHA 镜像与容器检查结果。
-2. 仅更新独立评审服务，保留原持久卷；确认运行提交、包指纹与 `NOVART_REVIEW_PUBLIC_ORIGIN` 均为本次目标值。
-3. 公网同一无效路径探针带真实公开 Origin 时不再被 Origin 守卫拒绝；无关 Origin、伪造转发头及不合法 Origin 仍拒绝。
-4. 通过真实浏览器完成创建画布、上传、保存、刷新重开和归档恢复；确认既有评审数据继续可用后，才能更新用户路径验收状态。浏览器连通性未恢复前保持“未验收”。
+1. 从 CDS 右侧分支“预览”重新进入，复核创建画布、中文输入、拖拽、编辑、刷新重开及归档恢复。浏览器连通性未恢复前，不能把 HTTP 结果升级成鼠标/键盘验收。
+2. 产品集成分支继续独立联调真实账号、DB、存储和 worker/provider；本评审版不是该后端的验收环境。

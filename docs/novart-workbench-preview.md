@@ -4,11 +4,11 @@
 
 ## 当前问题与热修复状态 · 2026-10-09
 
-线上仍运行下述 `f720c44` 镜像。创建画布的 `403 Cross-origin write rejected` 已通过不产生业务写入的无效 POST 路径复现：公开评审入口与官方 `previewUrl` 同域，但反向代理传给应用的 `Host` 为 `127.0.0.1:15526`，与浏览器的公网 `Origin` 不一致。应用原先假设二者始终相等；之前的正向 HTTP 检查未带 `Origin`，因此遗漏了浏览器真实请求条件。该问题同时属于应用校验假设和验收覆盖缺口，现有证据不足以认定 CDS 平台缺陷。
+线上现运行 `2db9229f03e0262e66ac7ff8c7465111d9cb166d`。旧版 f720c44 创建画布时，反向代理传给应用的 `Host` 为 `127.0.0.1:15526`，与浏览器的公网 `Origin` 不一致，被应用误拒为 `403 Cross-origin write rejected`。此前正向 HTTP 检查未带 Origin，遗漏了浏览器条件。问题属于应用校验假设和验收覆盖缺口，现有证据不足以认定 CDS 平台缺陷。
 
-热修复在独立评审分支准备，与产品集成分支分开。运行时新增可信公开 origin 配置 `NOVART_REVIEW_PUBLIC_ORIGIN`（或启动参数 `--public-origin`），以明确配置的协议、主机和端口校验请求，不信任客户端可伪造的 `Forwarded` / `X-Forwarded-*`。**代码和配置必须一起实际部署；仅合入代码或设置变量都不能声称线上问题已修复。** 未配置时保留直连 `Host` 校验，部署到当前反向代理后仍会复现问题。公开 origin 只填官方 CLI 返回的实际入口，不带路径、尾部斜杠、访问凭证或通配符。
+热修复镜像与 `NOVART_REVIEW_PUBLIC_ORIGIN` 已部署到独立评审项目，和产品集成分支分开。运行时按服务端明确配置的协议、主机和端口校验请求，不信任客户端可伪造的转发头。容器回读确认配置为官方 CLI 返回的公开 origin；未配置时仍保留直连 Host 校验。部署记录为 `dr_3483c099da752e5cf5fc1451`，实际运行 `prebuilt=true`、1/1 服务健康，无 drift。
 
-截至本次记录，12 项本地 HTTP 回归、172 项包校验和、L1 254 项、AI 155 项、Web typecheck 与 production build 均通过。HTTP 回归在热修复 worktree 重跑退出码 0，耗时 8.79 秒；12 项 Origin 回归已接入 `Branch Image` CI，在安装 Python requirements 后执行，但该版 CI 尚待实际 push 验证。CDS webhook self-test 的 dry-run 对 `[skip cds]` 返回 `ignored-skip-marker`，全部部署副作用字段为 `false`；这只证明该次预检判定，实际 push、CI 构建及更新部署尚待验证。浏览器连接失败，尚未完成公网用户路径验收。详细复现、配置要求和后续验收见 [403 问题记录](novart-preview-origin-2026-10-09.md)。
+12 项本地 HTTP 回归、172 项包校验和、L1 254 项、AI 155 项、Web typecheck/build 通过。[CI 37899305284](https://github.com/nickzhang2999-dev/brandai-platform/actions/runs/37899305284) 已验证 Linux 容器鉴权、反代写入和重建持久化并发布镜像。CDS 真实 push 投递按 `[skip cds]` 跳过公司部署，公司三个分支版本与状态回读未变。公网验收 76 项通过，覆盖正常 Origin 创建/上传/保存/重开、跨站拒绝及 57 个资源响应；运行包 SHA 与 CI 一致。浏览器连接仍失败，真实拖拽、中文输入等用户操作未验收；旧测试样本已清理，本轮未将其算作跨重建验证。详见 [403 问题记录](novart-preview-origin-2026-10-09.md)。
 
 本轮不修改公司 `main`、根产品 compose、共享数据库或共享服务；独立评审持久卷和既有项目数据继续保留。下文 10 月 7–8 日的通过项是历史结果，不能替代本次热修复的部署与验收。
 
