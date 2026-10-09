@@ -476,6 +476,7 @@ try {
   let generatedImage: Awaited<ReturnType<typeof currentShapes>>[number] | undefined;
   let generatedResult: { versionId: string; assetId: string; assetSha256: string; url: string; width: number; height: number } | undefined;
   let generationRequestId: string | undefined;
+  let generatedPixels: Buffer | undefined;
   let modifiedImage: typeof generatedImage;
   let modifiedResult: typeof generatedResult;
   let modifyRequestId: string | undefined;
@@ -635,11 +636,17 @@ try {
       const row = await prisma.editorDocument.findUnique({ where: { projectId } });
       return row?.canvas && decodeCanvas(row.canvas)[generatedImage!.id]?.props.url === rawUrl.pathname ? row : null;
     }, 60_000);
+    assert.deepEqual([generatedImage.props.w, generatedImage.props.h], [generatedResult.width, generatedResult.height], "This 1:1 / 1K PNG check requires native-size geometry, without canvas downscaling");
+    const expectedPixels = await browserImagePixels(frame, rawUrl.pathname);
+    const exported = await nativePngDownload(page, frame, generatedImage.id, "generated-image", true);
+    assert.deepEqual([exported.info.width, exported.info.height, exported.info.channels], [generatedResult.width, generatedResult.height, 4]);
+    assert.ok(exported.data.equals(expectedPixels.data), "Native PNG export must preserve the browser-decoded archived generated pixels");
+    generatedPixels = exported.data;
     await eventually("202 clears only the submitted native draft on the server", async () => {
       const row = await prisma.workbenchChatDraft.findUnique({ where: { userId_projectId: { userId: user.id, projectId } } });
       return row && !(row.inputForm as { text?: string } | null)?.text ? row : null;
     });
-    check("real provider generation is idempotent across lost 202, archived as linked authenticated bytes, and inserted with native undo/save");
+    check("real provider generation is idempotent across lost 202, archived as linked authenticated bytes, and inserted with native undo/save and PNG export");
     const beforeInbox = (await currentShapes(frame)).map(shape => shape.id).sort();
     frame = await openTaskFromInbox(page, projectId, "STUDIO_GENERATION", accepted.requestId);
     assert.deepEqual((await currentShapes(frame)).map(shape => shape.id).sort(), beforeInbox, "Opening generation notification must not automatically insert its result again");
@@ -693,7 +700,9 @@ try {
     } finally { await page.unroute("**/studio/generation?**", loseEditReceipt); }
     assert.equal(accepted.projectId, projectId); assert.equal(accepted.mode, "modify");
     assert.equal(submitted.length, 2); assert.ok(isDeepStrictEqual(submitted[0], submitted[1]), "Lost edit receipts must retry the identical mutation and source revisions");
-    assert.equal(accepted.mutationId, submitted[0].mutationId);
+    const firstEditSubmission = submitted[0];
+    assert.ok(firstEditSubmission, "The native edit form must submit an actual request");
+    assert.equal(accepted.mutationId, firstEditSubmission.mutationId);
     modifyRequestId = accepted.requestId;
     const completed = await eventually("real image edit and durable archive complete", async () => {
       const response = await page.context().request.get(new URL(`/studio/generation?workspaceId=${workspace.id}&projectId=${projectId}&requestId=${accepted.requestId}`, base).href);
@@ -881,9 +890,13 @@ try {
     assert.deepEqual(await readableImage(frame, String(restored.props.url)), [generatedResult.width, generatedResult.height]);
     const receipt = frame.getByTestId("product-generation-tasks").locator(`[data-request-id="${generationRequestId}"]`);
     await expect(receipt).toHaveAttribute("data-result-state", "READY");
-    await receipt.locator(`[data-version-id="${generatedResult.versionId}"]`).click();
+    await receipt.locator(`[data-action="insert"][data-version-id="${generatedResult.versionId}"]`).click();
     assert.equal((await currentShapes(frame)).filter(shape => shape.id === generatedImage.id).length, 1);
-    check("fresh browser restores the real generation, its authenticated image and task without duplicating it");
+    assert.ok(generatedPixels);
+    const exported = await nativePngDownload(fresh, frame, generatedImage.id, "fresh-generated-image", true);
+    assert.deepEqual([exported.info.width, exported.info.height, exported.info.channels], [generatedResult.width, generatedResult.height, 4]);
+    assert.ok(exported.data.equals(generatedPixels), "Fresh browser export must reproduce generated pixels without the first browser's image cache");
+    check("fresh browser restores the real generation, its authenticated image, task and identical PNG export without duplicating it");
   }
   if (modifiedImage && modifiedResult && modifyRequestId && modifiedPixels) {
     const restored = reopened.find(shape => shape.id === modifiedImage.id);
