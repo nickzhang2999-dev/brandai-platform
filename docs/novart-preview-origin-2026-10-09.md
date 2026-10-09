@@ -83,3 +83,22 @@ if origin and urlsplit(origin).netloc != self.headers.get('Host'):
 本地 Origin 真实 HTTP/配置回归 18 项和首页交接边界 5 项通过。CI 容器检查新增第二入口读取及重建后重开同一文档；四项仓库门禁、精确提交 CI、独立 CDS 发布和两个公网入口复查按结果继续追加。用户要求不使用 Computer Use，后续不再操作其浏览器；接口证据与人工页面验收分开记录。
 
 本轮四项门禁通过：L1 254（Turbo 使用未变源码的有效缓存）、AI pytest 155、Web typecheck、Web production build。Windows 的 AI 命令使用已有 Python 虚拟环境对本 worktree 的 `apps/ai` 运行 `-m pytest -q`，没有启动 Docker/数据库。包校验和 172 项通过。CI 及线上状态尚不能由这些本地结果代替。
+
+## 17:05 · 别名修复镜像发布
+
+- 修复提交：`70a07dd273749413a70cf3bcec22b9ddd9dcb9dc`，提交含 `[skip cds]`。精确 SHA 的 push/workflow webhook dry-run 均无部署副作用；推送后、CI 后、独立部署后，公司三个分支的运行状态及提交均与发布前一致。本轮没有单独取得真实 webhook 投递日志，不把 dry-run 称为真实投递证据。
+- [Branch Image 37908433383](https://github.com/nickzhang2999-dev/brandai-platform/actions/runs/37908433383) 成功：18 项 HTTP/配置、5 项交接边界、172 项包哈希及 Linux 容器双入口/保存/重建检查通过后才发布镜像。
+- 镜像 digest：`sha256:8b4ac111128ebcdbfd7e105ed32b757b65d7d6bb11d96eb67e5ca03b4fb03bed`；包 SHA-256：`fbf5d92b6905737e6be70e4c64dd0548552bf4f0d9c3918c64d0ab7312d8d009`。
+- 仅修改独立项目 `cd9d15b4c592` 的 `NOVART_REVIEW_ADDITIONAL_ORIGINS`，主 Origin 保持原值；未导入新 compose。官方 CLI 按精确提交部署，运行 `dr_36df0dee2745b8fc16d76247` 完成，服务 1/1 健康、无 drift。容器内提交、包指纹及两个 Origin 均回读匹配。
+- CDS 元数据的 `deployRuntime.prebuilt=true`，但 `kind/label/title` 同时显示“源码/待生效”。这是本轮观察到的平台状态展示不一致；实际镜像与运行包已核对，不能因此断言 CDS 运行了未验证源码。尚未修改平台配置或服务。
+- 公网双入口只读验收通过：每个入口 34 项检查、22 个资源响应（含 CSS import 链）；`queryProject` 都返回成功，用户实际入口由 403 恢复为 200。既有样本的项目内容、名称、版本均未改动，附件字节哈希一致；两个入口的新版交接脚本与已测试源码逐字节相同。未认证请求仍为 401，陌生 Origin 仍为 403。
+- 首页交接任务仍为 pending，只有 1 张附件；本轮只读验证不会模拟浏览器将其放入画布或确认交接。已请用户刷新后从项目库重开原项目，反馈图片能否显示、选中。未使用 Computer Use 操作页面，尚不能声称上传到画布、编辑、重开整条用户路径通过。
+- 脱敏 HTTP 报告保存在独立部署目录 `alias-readonly-acceptance.json`；不包含访问能力、Cookie、图片内容或画布文档内容。该部署控制目录不作为产品源码入库。
+
+## 17:10 · 用户确认图片入画布，服务端保存回读通过
+
+用户按提示刷新、从项目库打开原项目后明确反馈：“图片已经进入画布，可以选中”。本轮没有使用 Computer Use 执行页面操作。
+
+随后从用户实际入口只读核验原项目：交接状态由 pending 变成 **complete**；附件 1、已完成 1、已确认 1、待处理 0。原生画布的持久化文档包含导入回执对应的 shapeId，版本相对旧样本已推进，原图片字节仍可读取且哈希一致。没有通过脚本写入图形、强制确认或覆盖用户编辑。脱敏结果保存在 `alias-user-handoff-verified.json`。
+
+据此可确认本次“首页图片交接卡住”的阻断已解除，图片入画布/可选中有用户实测，保存有服务端证据。再次刷新后的显示、后续变换和导出仍需分别验收；本结论不扩展为真实 AI 或完整产品已经上线。
