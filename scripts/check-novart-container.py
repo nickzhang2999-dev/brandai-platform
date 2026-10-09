@@ -21,6 +21,7 @@ import zlib
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / 'previews' / 'novart-workbench'
 PUBLIC_ORIGIN = 'https://novart-review.invalid'
+ADDITIONAL_ORIGIN = 'https://novart-review-alias.invalid'
 
 
 def require(condition, message):
@@ -83,6 +84,7 @@ def check_container(image, expected_sha):
         nonlocal port
         docker('run', '-d', '--name', name, '-p', '127.0.0.1::8769',
                '-e', 'NOVART_REVIEW_PUBLIC_ORIGIN=' + PUBLIC_ORIGIN,
+               '-e', 'NOVART_REVIEW_ADDITIONAL_ORIGINS=' + json.dumps([ADDITIONAL_ORIGIN]),
                '--mount', f'type=volume,source={volume},target=/app/sharing', image)
         binding = json.loads(docker('inspect', '--format', '{{json .NetworkSettings.Ports}}', name))
         port = int(binding['8769/tcp'][0]['HostPort'])
@@ -142,6 +144,14 @@ def check_container(image, expected_sha):
         canvas = 'SHAKKERDATA://' + base64.b64encode(gzip.compress(json.dumps(snapshot).encode())).decode()
         saved = api('saveProject', {**project, 'projectName': 'Saved before container recreation', 'canvas': canvas}, cookie)
         require(saved['version'] != project['version'], 'Version did not advance')
+        status, _, body = request('/api/canva/project/queryProject',
+                                  {'projectId': project['projectId']}, cookie=cookie,
+                                  headers={'Origin': ADDITIONAL_ORIGIN})
+        alias_project = json.loads(body)
+        require(status == 200 and alias_project.get('code') == 0
+                and alias_project['data']['canvas'] == canvas,
+                'Configured alias could not load the saved canvas')
+        checks.append('Configured second browser origin loads the same native document')
         require(request('/api/canva/project/saveProject', {}, cookie=cookie,
                         headers={'Origin': 'https://unrelated.invalid'})[0] == 403, 'Cross-origin write accepted')
         require(request('/api/canva/project/saveProject', {}, cookie=cookie,
@@ -160,6 +170,11 @@ def check_container(image, expected_sha):
         reopened = api('queryProject', {'projectId': project['projectId']}, cookie)
         require(reopened['canvas'] == canvas and reopened['version'] == saved['version'] and
                 reopened['projectName'] == 'Saved before container recreation', 'Project lost on recreation')
+        status, _, body = request('/api/canva/project/queryProject',
+                                  {'projectId': project['projectId']}, cookie=cookie,
+                                  headers={'Origin': ADDITIONAL_ORIGIN})
+        require(status == 200 and json.loads(body).get('data') == reopened,
+                'Configured alias or document changed on recreation')
         status, headers, restored_png = request('/studio/start/image/' + upload['sha256'], cookie=cookie)
         require(status == 200 and restored_png == png and 'image/png' in headers.get('Content-Type', ''),
                 'Uploaded image lost or changed on recreation')

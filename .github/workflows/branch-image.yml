@@ -8,6 +8,7 @@ on:
       - 'previews/novart-workbench/**'
       - 'scripts/check-novart-container.py'
       - 'scripts/test-novart-share-origin.py'
+      - 'scripts/test-novart-home-start.cjs'
       - '.github/workflows/branch-image.yml'
   workflow_dispatch:
 
@@ -33,6 +34,7 @@ jobs:
         run: |
           python3 -m pip install -r previews/novart-workbench/requirements.txt
           python3 -B scripts/test-novart-share-origin.py
+          node scripts/test-novart-home-start.cjs
 
       - name: Verify package and build the image
         env:

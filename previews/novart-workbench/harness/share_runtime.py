@@ -40,7 +40,30 @@ def _parse_origin(value):
         return None
 
 
-def _write_origin_allowed(headers, public_origin):
+def _parse_additional_origins(value, public_origin):
+    """Parse a bounded, explicit JSON allowlist before creating any runtime data."""
+    if value is None:
+        return frozenset()
+    if not isinstance(value, str) or len(value) > 4096:
+        raise ValueError('Additional origins must be a JSON array of at most 8 http(s) origins')
+    try:
+        values = json.loads(value)
+    except (ValueError, RecursionError) as error:
+        raise ValueError('Additional origins must be a JSON array of at most 8 http(s) origins') from error
+    if not isinstance(values, list) or len(values) > 8:
+        raise ValueError('Additional origins must be a JSON array of at most 8 http(s) origins')
+    if values and public_origin is None:
+        raise ValueError('Additional origins require a configured public origin')
+    result = set()
+    for value in values:
+        origin = _parse_origin(value)
+        if origin is None or origin == public_origin or origin in result:
+            raise ValueError('Additional origins must be distinct http(s) origins without paths')
+        result.add(origin)
+    return frozenset(result)
+
+
+def _write_origin_allowed(headers, public_origin, additional_origins=frozenset()):
     origins = headers.get_all('Origin', [])
     # Retain the capability-authenticated non-browser clients used by the CLI/CI.
     if not origins:
@@ -57,14 +80,17 @@ def _write_origin_allowed(headers, public_origin):
     # A proxy may rewrite Host. Only server configuration can grant the public
     # origin; never use client-controlled Forwarded or X-Forwarded-* headers.
     # Without configuration preserve direct-connection Host matching.
-    return origin == (public_origin if public_origin is not None else host_origin)
+    if public_origin is not None:
+        return origin == public_origin or origin in additional_origins
+    return origin == host_origin
 
 
 class ShareRuntime:
-    def __init__(self, data_dir, port=0, host='127.0.0.1', *, public_origin=None):
+    def __init__(self, data_dir, port=0, host='127.0.0.1', *, public_origin=None, additional_origins=None):
         self.public_origin = _parse_origin(public_origin) if public_origin is not None else None
         if public_origin is not None and self.public_origin is None:
             raise ValueError('Public origin must be a single http(s) origin without a path')
+        self.additional_origins = _parse_additional_origins(additional_origins, self.public_origin)
         data_dir = Path(data_dir).resolve()
         if not data_dir.is_relative_to((ROOT / 'sharing').resolve()):
             raise ValueError('Share data must be isolated under sharing/')
@@ -139,7 +165,7 @@ class ShareRuntime:
                     return self.send('''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>NovartLab · 体验评审</title><style>html{color-scheme:light}body{margin:0;min-height:100vh;min-height:100dvh;display:grid;place-items:center;background:#fafafc;color:#26232c;font:16px/1.8 system-ui}main{box-sizing:border-box;width:min(100%,520px);padding:clamp(24px,6vw,48px)}h1{font-size:28px;margin:0 0 16px}p{color:#706c7b;margin:8px 0}</style></head><body><main><h1>NovartLab</h1><p>工作台已准备就绪。</p><p>请使用管理员提供的完整评审链接进入。</p></main></body></html>''',mime='text/html; charset=utf-8')
                 if not self.allowed(): return self.send({'error':'请使用完整的专属评审链接打开'},401)
                 if self.command not in ('GET','HEAD'):
-                    if not _write_origin_allowed(self.headers, owner.public_origin):
+                    if not _write_origin_allowed(self.headers, owner.public_origin, owner.additional_origins):
                         return self.send({'error':'Cross-origin write rejected'},403)
                 if parsed.path == '/share-start':
                     return self.send('''<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>NovartLab · 体验评审</title><style>body{margin:0;background:#f7f5fb;color:#26232c;font:16px/1.8 system-ui;display:grid;place-content:center;min-height:100vh}main{max-width:480px;padding:40px}h1{font-size:26px}p{color:#787180}</style><main><h1>NovartLab</h1><p id="status">正在准备设计工作台…</p></main><script>
@@ -225,9 +251,12 @@ if __name__=='__main__':
     parser=argparse.ArgumentParser();parser.add_argument('--port',type=int,default=8769);parser.add_argument('--room',default='boss-review');parser.add_argument('--host',choices=['127.0.0.1','0.0.0.0'],default='127.0.0.1')
     parser.add_argument('--public-origin', default=os.environ.get('NOVART_REVIEW_PUBLIC_ORIGIN'),
         help='Exact external http(s) origin when a reverse proxy rewrites Host; no path or wildcard')
+    parser.add_argument('--additional-origins', default=os.environ.get('NOVART_REVIEW_ADDITIONAL_ORIGINS'),
+        help='JSON array of at most 8 additional exact http(s) origins; requires --public-origin')
     args=parser.parse_args()
     if not args.room.replace('-','').isalnum(): raise ValueError('Invalid room')
-    runtime=ShareRuntime(ROOT/'sharing'/args.room,args.port,args.host,public_origin=args.public_origin).start()
+    runtime=ShareRuntime(ROOT/'sharing'/args.room,args.port,args.host,public_origin=args.public_origin,
+        additional_origins=args.additional_origins).start()
     (runtime.data_dir/'runtime.json').write_text(json.dumps({'port':runtime.server.server_port,'entryPath':'/share/'+runtime.key},indent=2),'utf-8')
     print('Review gateway ready on port '+str(runtime.server.server_port),flush=True)
     try:

@@ -107,6 +107,11 @@ window.createHomeStart = function createHomeStart(host) {
   }
   function readNative(entry) {
     const {win,doc} = host.frameDocument(entry) || {}; if (!win) return null;
+    if (doc.querySelector('.tl-error-boundary')) {
+      const error = new Error('画布打开失败，图片尚未导入。原始需求和图片仍保留，请重新打开或返回项目库。');
+      error.nativeStartup = true;
+      throw error;
+    }
     // Shell readiness precedes lazy native chunks in ordinary browsers. Never
     // require an unregistered module: webpack would cache its failed creation.
     if (!doc.querySelector('[data-testid="canvas"]') || !doc.querySelector('[data-testid="upload-menu-trigger"]')) return null;
@@ -218,7 +223,7 @@ window.createHomeStart = function createHomeStart(host) {
       }
       throw new Error('部分图片的保存尚未确认。已保存的图片会保留。');
     } catch (error) {
-      paint(entry,{kind:'error',title:confirmationOnly ? '图片已保存，正在确认交接' : '图片还没全部加入画布',detail:error.message,checkOnly:confirmationOnly});
+      paint(entry,{kind:'error',title:error.nativeStartup ? '画布暂时无法打开' : confirmationOnly ? '图片已保存，正在确认交接' : '图片还没全部加入画布',detail:error.message,checkOnly:confirmationOnly});
       // A native upload can keep retrying after our UI timeout. Keep the shared
       // import lock until the owning page is unloaded; retry replaces that page.
       if (nativeStarted && !confirmationOnly) await new Promise(resolve => window.addEventListener('pagehide',resolve,{once:true}));

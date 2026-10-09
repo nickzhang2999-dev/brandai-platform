@@ -1,6 +1,6 @@
 # Novart 独立评审同源写入 403 · 2026-10-09
 
-本记录针对独立 CDS 前端评审项目，不代表产品集成分支、公司 `main` 或正式站已修改。2026-10-09 15:45（Asia/Shanghai）确认线上已运行 `2db9229f03e0262e66ac7ff8c7465111d9cb166d`，可信公开 Origin 配置生效，公网 HTTP 验收通过。浏览器连接失败，真实鼠标/键盘操作仍未验收。
+本记录针对独立 CDS 前端评审项目，不代表产品集成分支、公司 `main` 或正式站已修改。2026-10-09 15:45（Asia/Shanghai）确认线上运行 `2db9229f03e0262e66ac7ff8c7465111d9cb166d`，当时只验收了独立项目的标准域名。16:55 补查发现用户从公司 CDS 卡片进入的是另一别名，仍被 Origin 守卫拒绝；下文保留第一次发布记录，并在末尾记录本轮修复。真实鼠标/键盘操作仍未验收。
 
 ## 线上证据与归因
 
@@ -63,3 +63,23 @@ if origin and urlsplit(origin).netloc != self.headers.get('Host'):
 
 1. 从 CDS 右侧分支“预览”重新进入，复核创建画布、中文输入、拖拽、编辑、刷新重开及归档恢复。浏览器连通性未恢复前，不能把 HTTP 结果升级成鼠标/键盘验收。
 2. 产品集成分支继续独立联调真实账号、DB、存储和 worker/provider；本评审版不是该后端的验收环境。
+
+## 16:55 · 用户实际入口的别名遗漏
+
+用户从公司 CDS 预览卡片进入 `https://novart-workbench-preview-claude-brandai-platform.geole.me`，而先前配置和验收的是 `https://novart-workbench-preview-claude-novart-workbench-preview.geole.me`。官方分支元数据及两个入口的 `/healthz` 确认它们服务同一评审包，指纹均为 `35170856540ae75f374245271876e28c472e23f3096074a496a0ab0ac83bbadc`。
+
+使用既有评审能力建立会话后，在用户实际域名下携带该 Origin 调用原生 `/api/canva/project/queryProject`，返回 **403 / Cross-origin write rejected**；标准域名可正常读取。读取对象是脚本自己的既有 `HTTP origin check` 样本，未修改项目或图片。图片交接记录仍为 pending、0/1 确认；这证明画布初始化被阻断，但不是图片导入、编辑及重开已经通过的证据。
+
+归因为 **I（应用配置只支持一个公开入口）+ O（验收遗漏用户实际入口）**。CDS 提供两个入口不能直接等同为 CDS 平台 bug；需要把平台入口与应用信任配置对齐。
+
+修复增加 `NOVART_REVIEW_ADDITIONAL_ORIGINS`：严格 JSON 数组，默认空，最多 8 个精确 origin、4096 字符。非空数组必须有主 Origin；拒绝非法、重复、与主域名等价的项，启动前失败。不信任客户端的 Host/Forwarded 头来扩大放行范围，不更改既有评审鉴权。仅给独立项目配置已核实别名：
+
+```json
+["https://novart-workbench-preview-claude-brandai-platform.geole.me"]
+```
+
+`home-start-attachments.js` 增加原编辑器错误边界识别：画布启动失败时明确显示“画布暂时无法打开”，保留原始需求、图片和重新打开入口。此逻辑有纯 Node 回归，未以真实页面操作验收。
+
+本地 Origin 真实 HTTP/配置回归 18 项和首页交接边界 5 项通过。CI 容器检查新增第二入口读取及重建后重开同一文档；四项仓库门禁、精确提交 CI、独立 CDS 发布和两个公网入口复查按结果继续追加。用户要求不使用 Computer Use，后续不再操作其浏览器；接口证据与人工页面验收分开记录。
+
+本轮四项门禁通过：L1 254（Turbo 使用未变源码的有效缓存）、AI pytest 155、Web typecheck、Web production build。Windows 的 AI 命令使用已有 Python 虚拟环境对本 worktree 的 `apps/ai` 运行 `-m pytest -q`，没有启动 Docker/数据库。包校验和 172 项通过。CI 及线上状态尚不能由这些本地结果代替。

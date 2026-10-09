@@ -9,7 +9,9 @@ from __future__ import annotations
 from email.message import Message
 import http.client
 import json
+import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -18,10 +20,11 @@ import uuid
 PACKAGE = Path(__file__).resolve().parents[1] / 'previews' / 'novart-workbench'
 sys.path.insert(0, str(PACKAGE / 'harness'))
 
-from share_runtime import ShareRuntime, _parse_origin, _write_origin_allowed
+from share_runtime import ShareRuntime, _parse_additional_origins, _parse_origin, _write_origin_allowed
 
 
 PUBLIC_ORIGIN = 'https://review.example.test'
+ADDITIONAL_ORIGIN = 'https://review-alias.example.test'
 
 
 class OriginParsingTests(unittest.TestCase):
@@ -51,6 +54,13 @@ class OriginParsingTests(unittest.TestCase):
         headers['Origin'] = 'http://localhost'
         self.assertTrue(_write_origin_allowed(headers, None))
 
+    def test_additional_origins_default_empty_and_allow_bounded_explicit_list(self):
+        self.assertEqual(_parse_additional_origins(None, None), frozenset())
+        self.assertEqual(_parse_additional_origins('[]', None), frozenset())
+        values = [f'https://alias-{n}.example.test' for n in range(8)]
+        self.assertEqual(_parse_additional_origins(json.dumps(values), _parse_origin(PUBLIC_ORIGIN)),
+            frozenset(_parse_origin(value) for value in values))
+
 
 class ShareOriginHttpTests(unittest.TestCase):
     @classmethod
@@ -63,8 +73,11 @@ class ShareOriginHttpTests(unittest.TestCase):
         if cls.data.parent != sharing or not cls.data.name.startswith('origin-check-'):
             raise AssertionError('Test directory escaped isolated sharing root')
         cls.addClassCleanup(temporary.cleanup)
-        cls.proxy = ShareRuntime(cls.data / 'proxy', public_origin=PUBLIC_ORIGIN).start()
+        cls.proxy = ShareRuntime(cls.data / 'proxy', public_origin=PUBLIC_ORIGIN,
+            additional_origins=json.dumps([ADDITIONAL_ORIGIN])).start()
         cls.addClassCleanup(cls.proxy.close)
+        cls.primary_only = ShareRuntime(cls.data / 'primary-only', public_origin=PUBLIC_ORIGIN).start()
+        cls.addClassCleanup(cls.primary_only.close)
         cls.direct = ShareRuntime(cls.data / 'direct').start()
         cls.addClassCleanup(cls.direct.close)
 
@@ -112,12 +125,37 @@ class ShareOriginHttpTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(retried['projectId'], result['projectId'])
 
+    def test_configured_alias_can_create_and_native_query_from_both_origins(self):
+        status, result = self.request('/studio/start/create',
+            {'requestId': str(uuid.uuid4()), 'brief': 'Alias origin regression', 'assets': []},
+            origin=ADDITIONAL_ORIGIN)
+        self.assertEqual(status, 200)
+        self.assertEqual(result['creationStatus'], 'ready')
+        project_id = result['projectId']
+        for origin in [PUBLIC_ORIGIN, ADDITIONAL_ORIGIN, 'https://REVIEW-ALIAS.example.test:443']:
+            with self.subTest(origin=origin):
+                status, reopened = self.request('/api/canva/project/queryProject',
+                    {'projectId': project_id}, origin=origin)
+                self.assertEqual(status, 200)
+                self.assertEqual(reopened['data']['projectId'], project_id)
+
+    def test_alias_is_rejected_without_explicit_configuration(self):
+        status, result = self.request('/api/canva/project/queryProject', None,
+            runtime=self.primary_only, origin=ADDITIONAL_ORIGIN,
+            host='review-alias.example.test', extra=[('X-Forwarded-Host', 'review-alias.example.test')])
+        self.assertEqual(status, 403)
+        self.assertEqual(result['error'], 'Cross-origin write rejected')
+
     def test_cross_origin_and_spoofed_proxy_headers_do_not_write(self):
         before = set(self.proxy.inner.store.projects_dir.iterdir())
         for origin in ['https://evil.test', 'http://review.example.test',
                        'https://review.example.test:444', 'https://review.example.test.evil.test',
                        'https://frontend-review:8769', 'null', '', PUBLIC_ORIGIN + '/path',
-                       PUBLIC_ORIGIN + ',https://evil.test']:
+                       PUBLIC_ORIGIN + ',https://evil.test', 'http://review-alias.example.test',
+                       ADDITIONAL_ORIGIN + ':444', ADDITIONAL_ORIGIN + '.evil.test',
+                       ADDITIONAL_ORIGIN + '/studio', ADDITIONAL_ORIGIN + ',https://evil.test',
+                       ADDITIONAL_ORIGIN + '?', ADDITIONAL_ORIGIN + '#',
+                       'https://user@review-alias.example.test', 'https://*.example.test']:
             with self.subTest(origin=origin):
                 status, result = self.request('/compare/api/create', None,
                     origin=origin, extra=[('X-Forwarded-Host', 'evil.test'), ('X-Forwarded-Proto', 'https'),
@@ -131,14 +169,17 @@ class ShareOriginHttpTests(unittest.TestCase):
         self.assertEqual(status, 403)
 
     def test_duplicate_origins_and_hosts_are_rejected(self):
-        for extra in [[('Origin', PUBLIC_ORIGIN)], [('Origin', 'https://evil.test')], [('Host', 'evil.test')]]:
+        for extra in [[('Origin', PUBLIC_ORIGIN)], [('Origin', ADDITIONAL_ORIGIN)],
+                      [('Origin', 'https://evil.test')], [('Host', 'evil.test')]]:
             with self.subTest(extra=extra):
                 status, _ = self.request('/compare/api/create', None, origin=PUBLIC_ORIGIN, extra=extra)
                 self.assertEqual(status, 403)
 
     def test_origin_does_not_bypass_the_review_capability(self):
-        status, _ = self.request('/compare/api/create', None, origin=PUBLIC_ORIGIN, authenticated=False)
-        self.assertEqual(status, 401)
+        for origin in [PUBLIC_ORIGIN, ADDITIONAL_ORIGIN]:
+            with self.subTest(origin=origin):
+                status, _ = self.request('/compare/api/create', None, origin=origin, authenticated=False)
+                self.assertEqual(status, 401)
 
     def test_no_origin_client_is_preserved(self):
         status, result = self.request('/compare/api/create', {'projectName': 'CLI compatibility', 'brief': ''})
@@ -159,6 +200,41 @@ class ShareOriginHttpTests(unittest.TestCase):
         for origin in ['', 'null', '*', PUBLIC_ORIGIN + '/studio']:
             with self.subTest(origin=origin), self.assertRaises(ValueError):
                 ShareRuntime(path, public_origin=origin)
+        self.assertFalse(path.exists())
+
+    def test_invalid_additional_origins_fail_before_creating_data(self):
+        path = self.data / 'invalid-additional-config'
+        values = ['', 'null', '{}', '"https://review-alias.example.test"', '[',
+                  ' ' * 4097, '[' * 1000, json.dumps([f'https://alias-{n}.example.test' for n in range(9)])]
+        values += [json.dumps([value]) for value in [None, False, 1, {}, [], '', 'null', '*',
+            ADDITIONAL_ORIGIN + '/studio', ADDITIONAL_ORIGIN + '?', ADDITIONAL_ORIGIN + '#',
+            ADDITIONAL_ORIGIN + ',https://evil.test', ADDITIONAL_ORIGIN + ' https://evil.test',
+            'https://user@review-alias.example.test', 'https://*.example.test',
+            'https://review-alias.example.test:65536', PUBLIC_ORIGIN, 'https://REVIEW.example.test:443']]
+        values += [json.dumps([ADDITIONAL_ORIGIN, ADDITIONAL_ORIGIN]),
+                   json.dumps([ADDITIONAL_ORIGIN, 'https://REVIEW-ALIAS.example.test:443']),
+                   json.dumps([ADDITIONAL_ORIGIN, 'null'])]
+        for value in values:
+            with self.subTest(configuration=value), self.assertRaises(ValueError):
+                ShareRuntime(path, public_origin=PUBLIC_ORIGIN, additional_origins=value)
+        self.assertFalse(path.exists())
+
+    def test_additional_origins_require_a_primary(self):
+        path = self.data / 'missing-primary-config'
+        with self.assertRaises(ValueError):
+            ShareRuntime(path, additional_origins=json.dumps([ADDITIONAL_ORIGIN]))
+        self.assertFalse(path.exists())
+
+    def test_invalid_environment_configuration_prevents_cli_startup(self):
+        room = 'origin-invalid-env-' + uuid.uuid4().hex
+        path = PACKAGE / 'sharing' / room
+        environment = dict(os.environ, NOVART_REVIEW_PUBLIC_ORIGIN=PUBLIC_ORIGIN,
+            NOVART_REVIEW_ADDITIONAL_ORIGINS='["https://review-alias.example.test/path"]')
+        result = subprocess.run([sys.executable, str(PACKAGE / 'harness' / 'share_runtime.py'),
+            '--room', room, '--port', '0'], env=environment, capture_output=True, timeout=10)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(b'Additional origins must be distinct', result.stderr)
+        self.assertNotIn(b'Review gateway ready', result.stdout)
         self.assertFalse(path.exists())
 
 
