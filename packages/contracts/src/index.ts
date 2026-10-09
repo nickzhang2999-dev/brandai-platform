@@ -26,3 +26,4 @@ export * from "./studio-materials";
 export * from "./studio-workflow";
 
 export * from "./studio-generation";
+export * from "./studio-compliance";

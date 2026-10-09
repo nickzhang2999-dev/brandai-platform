@@ -21,7 +21,9 @@ export async function GET(
     if (expectedUser && expectedUser !== user.id) throw new ApiException(409, "登录账号已切换，请刷新页面后查看通知。");
     const { wsId } = await params;
     await requireOwnedWorkspace(wsId, user.id);
-    const items = await listWorkspaceNotifications(wsId, 30, user.id);
+    const scope = new URL(req.url).searchParams.get("scope") ?? "all";
+    if (scope !== "all" && scope !== "studio") throw new ApiException(422, "通知范围无效。");
+    const items = await listWorkspaceNotifications(wsId, 30, user.id, scope);
     return ok(NotificationsResponse.parse({ items }));
   } catch (err) {
     return handleError(err);

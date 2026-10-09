@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ZodError } from "zod";
-const f = vi.hoisted(() => ({ session: vi.fn(), read: vi.fn(), assets: vi.fn(), save: vi.fn(), image: vi.fn(), upload: vi.fn(), task: vi.fn(), materials: vi.fn(), generate: vi.fn(), generation: vi.fn(), retryArchive: vi.fn() }));
+const f = vi.hoisted(() => ({ session: vi.fn(), read: vi.fn(), assets: vi.fn(), save: vi.fn(), image: vi.fn(), upload: vi.fn(), task: vi.fn(), materials: vi.fn(), generate: vi.fn(), generation: vi.fn(), retryArchive: vi.fn(), compliance: vi.fn(), retryCompliance: vi.fn() }));
 vi.mock("../../../apps/web/src/lib/api", () => ({ ApiException: class extends Error { constructor(public status: number, message: string) { super(message); } } }));
 vi.mock("../../../apps/web/src/lib/studio-session", () => ({ studioSession: f.session }));
 vi.mock("../../../apps/web/src/lib/studio-assets", () => ({ studioAsset: vi.fn(), studioHtml: vi.fn() }));
@@ -10,6 +10,7 @@ vi.mock("../../../apps/web/src/lib/studio-workflow", () => ({ readStudioWorkflow
 vi.mock("../../../apps/web/src/lib/studio-materials", () => ({ submitStudioMaterial: f.upload, readStudioMaterialUpload: f.task, listStudioMaterials: f.materials }));
 vi.mock("../../../apps/web/src/lib/studio-generation", () => ({ submitStudioGeneration: f.generate, readStudioGeneration: f.generation }));
 vi.mock("../../../apps/web/src/lib/studio-generation-artifacts", () => ({ retryStudioGenerationArtifacts: f.retryArchive }));
+vi.mock("../../../apps/web/src/lib/studio-generation-compliance", () => ({ readStudioGenerationCompliance: f.compliance, retryStudioGenerationCompliance: f.retryCompliance }));
 import { studioRoute } from "../../../apps/web/src/lib/studio-route";
 
 const base = "http://127.0.0.1:3000";
@@ -22,12 +23,26 @@ beforeEach(() => {
   f.upload.mockResolvedValue({ taskId: "task", status: "PENDING" }); f.task.mockResolvedValue({ tasks: [] }); f.materials.mockResolvedValue([]);
   f.generate.mockResolvedValue({ requestId: "gen", status: "PENDING" });
   f.generation.mockResolvedValue({ requestId: "gen", status: "SUCCEEDED", resultState: "PENDING", results: [] });
+  f.compliance.mockResolvedValue({ versionId: "v", status: "FAILED", report: null });
+  f.retryCompliance.mockResolvedValue({ versionId: "v", status: "PENDING", report: null });
 });
 const request = (path: string, body?: unknown) => new Request(base + path, body === undefined ? {} : {
   method: "POST", headers: { origin: base, "content-type": "application/json" }, body: JSON.stringify(body),
 });
 
 describe("authenticated workflow and material routes", () => {
+  it("checks a published version by server identity and retries only the check", async () => {
+    const read = await studioRoute(request("/studio/generation/compliance?projectId=p&versionId=v&userId=other"));
+    expect(read.status).toBe(200); expect(f.compliance).toHaveBeenCalledWith("server-workspace", "server-user", { projectId: "p", versionId: "v" });
+    const response = await studioRoute(request("/studio/generation/compliance/retry", { projectId: "p", versionId: "v" }));
+    expect(response.status).toBe(202); expect(await response.json()).toEqual({ versionId: "v", status: "PENDING", report: null });
+    expect(f.retryCompliance).toHaveBeenCalledWith("server-workspace", "server-user", { projectId: "p", versionId: "v" });
+    expect(f.generate).not.toHaveBeenCalled(); expect(f.retryArchive).not.toHaveBeenCalled();
+  });
+  it("rejects cross-origin check retry before any paid check is accepted", async () => {
+    const req = new Request(base + "/studio/generation/compliance/retry", { method: "POST", headers: { origin: "https://other.invalid", "content-type": "application/json" }, body: JSON.stringify({ projectId: "p", versionId: "v" }) });
+    expect((await studioRoute(req)).status).toBe(403); expect(f.retryCompliance).not.toHaveBeenCalled();
+  });
   it.each([["/workflow", "read"], ["/workflow/assets", "assets"], ["/studio/materials", "materials"]] as const)(
     "routes %s with server-resolved user/workspace and project query", async (path, method) => {
       const response = await studioRoute(request(path + "?projectId=p"));

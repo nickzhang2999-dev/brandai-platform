@@ -573,6 +573,15 @@ class ComplianceReport(BaseModel):
 class ComplianceCheckResponse(BaseModel):
     results: list[ComplianceResult]
     report: ComplianceReport
+    # Additive evidence; omit rather than null on old/text-only responses.
+    visualCheckPerformed: Optional[bool] = Field(default=None, strict=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def no_explicit_visual_check_null(cls, value):
+        if isinstance(value, dict) and "visualCheckPerformed" in value and value["visualCheckPerformed"] is None:
+            raise ValueError("visualCheckPerformed must be omitted, not null")
+        return value
 
 
 # Workbench uploads are a BFF contract; these mirrors do not add public AI APIs.
@@ -670,6 +679,8 @@ class StudioMaterialUploadView(StudioMaterialUploadInput):
 from .studio_workflow_schemas import StudioWorkflowSaveInput, StudioWorkflowView, StudioWorkflowAssets
 
 # Mirrored BFF notification kind; upload events remain scoped to the initiator.
-NotificationKind = Literal["GENERATE", "EDIT", "RECOGNIZE", "PARSE_MANUAL", "DESCRIBE", "INGEST", "SUMMARIZE", "DECOMPOSE", "STUDIO_UPLOAD"]
+NotificationKind = Literal["GENERATE", "EDIT", "RECOGNIZE", "PARSE_MANUAL", "DESCRIBE", "INGEST", "SUMMARIZE", "DECOMPOSE", "STUDIO_UPLOAD", "STUDIO_GENERATION"]
+AsyncTaskKind = Literal["RECOGNIZE", "PARSE_MANUAL", "EDIT", "DESCRIBE", "INGEST", "SUMMARIZE", "DECOMPOSE", "STUDIO_UPLOAD", "STUDIO_COMPLIANCE"]
 
 from .studio_generation_schemas import StudioGenerationInput, StudioGenerationQuery, StudioGenerationRetryInput, StudioGenerationArchiveRetryInput, StudioGenerationView
+from .studio_compliance_schemas import StudioGenerationComplianceInput, StudioGenerationComplianceQuery, StudioGenerationComplianceView

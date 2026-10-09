@@ -27,6 +27,7 @@ export const AsyncTaskKind = z.enum([
   // refCount = 实际落库的图层数。
   "DECOMPOSE",
   "STUDIO_UPLOAD",
+  "STUDIO_COMPLIANCE",
 ]);
 export type AsyncTaskKind = z.infer<typeof AsyncTaskKind>;
 

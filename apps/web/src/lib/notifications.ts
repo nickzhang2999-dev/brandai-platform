@@ -4,6 +4,7 @@ import type {
   NotificationKind,
 } from "@brandai/contracts";
 import { BRAND_PREVIEW_PROJECT_NAME } from "./brand-preview";
+import { listStudioGenerationNotifications } from "./studio-notifications";
 
 /**
  * A3 / L3 — derive the in-app notification inbox from REAL server state. There
@@ -58,12 +59,16 @@ export async function listWorkspaceNotifications(
   workspaceId: string,
   limit = 30,
   userId?: string,
+  scope: "all" | "studio" = "all",
 ): Promise<NotificationItem[]> {
-  const [gens, tasks, uploads] = await Promise.all([
-    prisma.generation.findMany({
+  const [gens, tasks, uploads, studioGenerations] = await Promise.all([
+    scope === "studio" ? Promise.resolve([]) : prisma.generation.findMany({
       where: {
         workspaceId,
         status: { in: ["SUCCEEDED", "FAILED"] },
+        // Product generation has a separate private archive stage. Its model
+        // response must never appear here as a ready image, or for other users.
+        studioRequest: { is: null },
         // Exclude hidden D10 brand-preview runs — they use the same generate
         // pipeline but are internal, not user "出图完成" events.
         project: { name: { not: BRAND_PREVIEW_PROJECT_NAME } },
@@ -81,7 +86,7 @@ export async function listWorkspaceNotifications(
         _count: { select: { versions: true } },
       },
     }),
-    prisma.asyncTask.findMany({
+    scope === "studio" ? Promise.resolve([]) : prisma.asyncTask.findMany({
       where: {
         workspaceId,
         status: { in: ["SUCCEEDED", "FAILED"] },
@@ -107,9 +112,10 @@ export async function listWorkspaceNotifications(
       orderBy: { task: { updatedAt: "desc" } }, take: limit,
       select: { taskId: true, projectId: true, fileName: true, task: { select: { status: true, error: true, updatedAt: true } } },
     }) : Promise.resolve([]),
+    userId ? listStudioGenerationNotifications(workspaceId, userId, limit) : Promise.resolve([]),
   ]);
 
-  const items: NotificationItem[] = [];
+  const items: NotificationItem[] = [...studioGenerations];
 
   for (const g of gens) {
     const succeeded = g.status === "SUCCEEDED";
@@ -167,7 +173,7 @@ export async function listWorkspaceNotifications(
       id: `task:${upload.taskId}`, kind: "STUDIO_UPLOAD", status: succeeded ? "SUCCEEDED" : "FAILED",
       title: succeeded ? "图片上传完成" : "图片上传失败",
       detail: succeeded ? `${upload.fileName} 已保存，可返回画布查看或加入图片。` : (upload.task.error ?? "请返回画布重新选择图片上传。"),
-      href: `/canvas?workspaceId=${encodeURIComponent(workspaceId)}&projectId=${encodeURIComponent(upload.projectId)}`,
+      href: `/canvas?workspaceId=${encodeURIComponent(workspaceId)}&projectId=${encodeURIComponent(upload.projectId)}&taskId=${encodeURIComponent(upload.taskId)}`,
       createdAt: upload.task.updatedAt.toISOString(),
     });
   }

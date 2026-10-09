@@ -10,7 +10,7 @@ beforeEach(() => { vi.resetAllMocks(); f.user.mockResolvedValue({ id: "u" }); f.
 describe("upload notification session isolation", () => {
   it("forwards only server identity after membership validation", async () => {
     expect((await GET(new Request("http://127.0.0.1/notifications"), params)).status).toBe(200);
-    expect(f.member).toHaveBeenCalledWith("w", "u"); expect(f.list).toHaveBeenCalledWith("w", 30, "u");
+    expect(f.member).toHaveBeenCalledWith("w", "u"); expect(f.list).toHaveBeenCalledWith("w", 30, "u", "all");
   });
   it("rejects an old account's notification component after session switching", async () => {
     const request = new Request("http://127.0.0.1/notifications", { headers: { "X-Novart-User": "old-account" } });
@@ -18,5 +18,12 @@ describe("upload notification session isolation", () => {
   });
   it("does not query notifications outside the user's workspace", async () => {
     f.member.mockRejectedValue({ status: 404 }); expect((await GET(new Request("http://127.0.0.1/notifications"), params)).status).toBe(404); expect(f.list).not.toHaveBeenCalled();
+  });
+  it("allows only the explicit product scope and rejects unknown scopes", async () => {
+    expect((await GET(new Request("http://127.0.0.1/notifications?scope=studio"), params)).status).toBe(200);
+    expect(f.list).toHaveBeenCalledWith("w", 30, "u", "studio");
+    f.list.mockClear();
+    expect((await GET(new Request("http://127.0.0.1/notifications?scope=everyone"), params)).status).toBe(422);
+    expect(f.list).not.toHaveBeenCalled();
   });
 });

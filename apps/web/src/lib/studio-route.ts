@@ -11,6 +11,7 @@ import { readStudioWorkflow, readStudioWorkflowAssets, saveStudioWorkflow, studi
 import { submitStudioMaterial, readStudioMaterialUpload, listStudioMaterials } from "./studio-materials";
 import { submitStudioGeneration, readStudioGeneration } from "./studio-generation";
 import { retryStudioGenerationArtifacts } from "./studio-generation-artifacts";
+import { readStudioGenerationCompliance, retryStudioGenerationCompliance } from "./studio-generation-compliance";
 const headers = { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "Referrer-Policy": "same-origin" };
 const json = (data: unknown, status = 200) => Response.json(data, { status, headers });
 
@@ -59,11 +60,13 @@ export async function studioRoute(req: Request) {
           { ...project, ...(url.searchParams.has("taskId") ? { taskId: url.searchParams.get("taskId") } : {}) }));
         case "/studio/generation": return json(await readStudioGeneration(workspaceId, user.id,
           { ...project, ...(url.searchParams.has("requestId") ? { requestId: url.searchParams.get("requestId") } : {}) }));
+        case "/studio/generation/compliance": return json(await readStudioGenerationCompliance(workspaceId, user.id,
+          { ...project, versionId: url.searchParams.get("versionId") ?? "" }));
       }
     }
     if (req.method === "POST") {
       if (pathname === "/studio/material-upload") return json(await submitStudioMaterial(workspaceId, user.id, req), 202);
-      if (!['/studio/state', '/compare/api/create', '/compare/api/context', '/studio/project-archive', '/studio/draft', '/workflow', '/studio/generation', '/studio/generation/retry-archive'].includes(pathname)) throw new ApiException(503, "此功能正在接入，内容仍保留在当前页面。");
+      if (!['/studio/state', '/compare/api/create', '/compare/api/context', '/studio/project-archive', '/studio/draft', '/workflow', '/studio/generation', '/studio/generation/retry-archive', '/studio/generation/compliance/retry'].includes(pathname)) throw new ApiException(503, "此功能正在接入，内容仍保留在当前页面。");
       const body = await readWorkbenchJson(req, 270 * 1024);
       switch (pathname) {
         case "/studio/state": return json(await state.saveStudioState(workspaceId, user.id, body));
@@ -73,6 +76,7 @@ export async function studioRoute(req: Request) {
         case "/studio/draft": return json(await state.saveStudioDraft(workspaceId, user.id, body));
         case "/workflow": return json(await saveStudioWorkflow(workspaceId, user.id, body));
         case "/studio/generation": return json(await submitStudioGeneration(workspaceId, user.id, body), 202);
+        case "/studio/generation/compliance/retry": return json(await retryStudioGenerationCompliance(workspaceId, user.id, body), 202);
         case "/studio/generation/retry-archive": {
           await retryStudioGenerationArtifacts(workspaceId, user.id, body);
           return json(await readStudioGeneration(workspaceId, user.id, body), 202);

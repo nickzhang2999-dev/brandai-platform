@@ -63,4 +63,18 @@ describe("product AI transport opt-in", () => {
     expect(f.settings).toHaveBeenCalledOnce();
     expect(f.fetch).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ headers: expect.objectContaining({ "X-OV-Image-Provider": "openai", "X-OV-Image-Key": "fixture-private" }) }));
   });
+  it.each([{ provider: "mock", apiKey: "fixture" }, { provider: " MOCK ", apiKey: "fixture" }, { provider: "", apiKey: "fixture" }, { provider: "openai", apiKey: "  " }])(
+    "does not accept a missing or mock VLM as a real product check: %j", async vlm => {
+      f.settings.mockResolvedValue({ image: {}, layer: {}, vlm });
+      await expect(ai.complianceCheck({}, { requireRealVlmProvider: true })).rejects.toThrow("未执行品牌检查");
+      expect(f.fetch).not.toHaveBeenCalled();
+    },
+  );
+  it("uses the checked VLM headers without requiring an image-generation provider", async () => {
+    f.settings.mockResolvedValue({ image: {}, layer: {}, vlm: { provider: "openai", apiKey: "fixture-vlm", model: "fixture-model" } });
+    await ai.complianceCheck({}, { requireRealVlmProvider: true });
+    expect(f.settings).toHaveBeenCalledOnce();
+    expect(f.service).toHaveBeenCalledWith({ requireVisualCheck: true });
+    expect(f.fetch).toHaveBeenCalledWith("http://internal-ai.invalid/v1/compliance/check", expect.objectContaining({ headers: expect.objectContaining({ "X-OV-Vlm-Provider": "openai", "X-OV-Vlm-Key": "fixture-vlm" }) }));
+  });
 });

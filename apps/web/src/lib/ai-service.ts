@@ -2,6 +2,7 @@ import { resolve4 } from "node:dns/promises";
 
 export const REQUIRED_AI_PARSER_REVISION = "grounded-six-slot-r6";
 export const REQUIRED_AI_GENERATION_REVISION = "gpt-image-2-size-quality-r1";
+export const REQUIRED_AI_VISUAL_CHECK_REVISION = "studio-visual-check-evidence-r1";
 
 const CONFIGURED_BASE =
   process.env.BRANDAI_AI_SERVICE_URL ??
@@ -15,7 +16,10 @@ export type AiServiceResolution = {
   source: "configured" | "revision-match";
   parserRevision?: string;
   generationRevision?: string;
+  visualCheckRevision?: string;
 };
+
+export type AiServiceRequirements = { requireVisualCheck?: boolean };
 
 let cachedResolution: { value: AiServiceResolution; expiresAt: number } | null =
   null;
@@ -36,6 +40,7 @@ async function probe(base: string): Promise<AiServiceResolution | null> {
     const body = (await response.json()) as {
       parserRevision?: unknown;
       generationRevision?: unknown;
+      visualCheckRevision?: unknown;
     };
     return {
       base,
@@ -47,6 +52,10 @@ async function probe(base: string): Promise<AiServiceResolution | null> {
       generationRevision:
         typeof body.generationRevision === "string"
           ? body.generationRevision
+          : undefined,
+      visualCheckRevision:
+        typeof body.visualCheckRevision === "string"
+          ? body.visualCheckRevision
           : undefined,
     };
   } catch {
@@ -62,11 +71,14 @@ async function probe(base: string): Promise<AiServiceResolution | null> {
  * web/worker revision.
  *
  * Explicit non-`ai` URLs remain authoritative for local, production, and
- * operator-managed deployments.
+ * operator-managed deployments. Product visual checks additionally require
+ * execution-evidence capability, including on an explicit operator URL.
  */
-export async function resolveAiService(): Promise<AiServiceResolution> {
+export async function resolveAiService(requirements: AiServiceRequirements = {}): Promise<AiServiceResolution> {
   const now = Date.now();
-  if (cachedResolution && cachedResolution.expiresAt > now) {
+  const requireVisualCheck = requirements.requireVisualCheck === true;
+  if (cachedResolution && cachedResolution.expiresAt > now &&
+      (!requireVisualCheck || cachedResolution.value.visualCheckRevision === REQUIRED_AI_VISUAL_CHECK_REVISION)) {
     return cachedResolution.value;
   }
 
@@ -76,6 +88,13 @@ export async function resolveAiService(): Promise<AiServiceResolution> {
       base: CONFIGURED_BASE.replace(/\/$/, ""),
       source: "configured",
     };
+    if (requireVisualCheck) {
+      const health = await probe(value.base);
+      if (health?.visualCheckRevision !== REQUIRED_AI_VISUAL_CHECK_REVISION) {
+        throw new Error("Configured AI service does not support the required visual-check evidence revision");
+      }
+      Object.assign(value, health, { source: "configured" });
+    }
     cachedResolution = { value, expiresAt: now + CACHE_MS };
     return value;
   }
@@ -89,7 +108,8 @@ export async function resolveAiService(): Promise<AiServiceResolution> {
     const match = results.find(
       (result) =>
         result?.parserRevision === REQUIRED_AI_PARSER_REVISION &&
-        result.generationRevision === REQUIRED_AI_GENERATION_REVISION,
+        result.generationRevision === REQUIRED_AI_GENERATION_REVISION &&
+        (!requireVisualCheck || result.visualCheckRevision === REQUIRED_AI_VISUAL_CHECK_REVISION),
     );
     if (match) {
       cachedResolution = { value: match, expiresAt: now + CACHE_MS };
@@ -107,6 +127,8 @@ export async function resolveAiService(): Promise<AiServiceResolution> {
   // older branch and silently return the wrong dimensions/quality. A visible
   // retryable generation failure is safer than persisting a false 3:1 result.
   throw new Error(
-    "No compatible AI service found for the required parser and generation revisions",
+    requireVisualCheck
+      ? "No compatible AI service found for the required parser, generation and visual-check evidence revisions"
+      : "No compatible AI service found for the required parser and generation revisions",
   );
 }

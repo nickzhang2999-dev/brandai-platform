@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const f = vi.hoisted(() => ({ transaction: vi.fn(), query: vi.fn(), gate: vi.fn(), read: vi.fn(), update: vi.fn(), updateMany: vi.fn(), output: vi.fn(), clearOutputs: vi.fn(), pending: vi.fn(), missing: vi.fn(), ensure: vi.fn(), enqueue: vi.fn(), settings: vi.fn(), bytes: vi.fn(), inspect: vi.fn(), process: vi.fn(), upload: vi.fn(), priorAsset: vi.fn(), logo: vi.fn(), asset: vi.fn(), version: vi.fn(), existingVersion: vi.fn(), link: vi.fn() }));
+const f = vi.hoisted(() => ({ transaction: vi.fn(), query: vi.fn(), gate: vi.fn(), read: vi.fn(), update: vi.fn(), updateMany: vi.fn(), output: vi.fn(), clearOutputs: vi.fn(), pending: vi.fn(), missing: vi.fn(), ensure: vi.fn(), enqueue: vi.fn(), settings: vi.fn(), bytes: vi.fn(), inspect: vi.fn(), process: vi.fn(), upload: vi.fn(), priorAsset: vi.fn(), logo: vi.fn(), asset: vi.fn(), version: vi.fn(), existingVersion: vi.fn(), link: vi.fn(), check: vi.fn(), enqueueCheck: vi.fn() }));
 vi.mock("../../db/src/index", () => ({ Prisma: {}, prisma: { $transaction: f.transaction,
   studioGeneratedMaterial: { updateMany: f.updateMany, findMany: f.pending }, studioGenerationOutput: { updateMany: f.clearOutputs }, studioGenerationRequest: { findMany: f.missing }, asset: { findUnique: f.priorAsset, findFirst: f.logo } } }));
 vi.mock("@/lib/queue", () => ({ connection: {}, queuePrefix: "test" }));
@@ -10,6 +10,8 @@ vi.mock("@/lib/asset-mirror", () => ({ assetCategoryForScene: () => "SOCIAL" }))
 vi.mock("@/lib/studio-generation-artifacts-image", () => ({ artifactDeadline: async (work: Promise<any>) => work,
   artifactOwnObjectKey: () => null, readArtifactImageBytes: f.bytes, inspectArtifactImage: f.inspect, postprocessArtifactImage: f.process }));
 vi.mock("@/lib/studio-generation-artifacts-queue", () => ({ enqueueStudioArtifact: f.enqueue }));
+vi.mock("@/lib/studio-generation-compliance", () => ({ registerStudioGenerationCompliance: f.check }));
+vi.mock("@/lib/studio-generation-compliance-queue", () => ({ enqueueStudioCompliance: f.enqueueCheck }));
 vi.mock("@/lib/studio-generation-artifacts", () => ({ ensureStudioGenerationArtifacts: f.ensure, requireArtifactWrite: f.gate,
   STUDIO_ARTIFACT_ERROR: "Archive failed; retry archive only", STUDIO_ARTIFACT_EXPIRED: "Raw recovery expired", STUDIO_ARTIFACT_RUN_MS: 60_000 }));
 import { runStudioGenerationArtifactJob, sweepStudioGenerationArtifacts } from "../../../apps/web/src/lib/workers/studio-generation-artifacts.worker";
@@ -38,6 +40,7 @@ beforeEach(() => {
   f.upload.mockImplementation(async (_b, _m, _p, _s, key) => ({ key, url: `http://private.invalid/bucket/${key}` }));
   f.asset.mockResolvedValue({ id: "asset" }); f.priorAsset.mockResolvedValue(null); f.existingVersion.mockResolvedValue(null);
   f.pending.mockResolvedValue([]); f.missing.mockResolvedValue([]);
+  f.check.mockResolvedValue({ id: "check", status: "PENDING", jobId: "check-attempt" }); f.enqueueCheck.mockResolvedValue(true);
 });
 
 describe("generation archive worker (unit fixtures; no provider or remote storage)", () => {
@@ -50,7 +53,13 @@ describe("generation archive worker (unit fixtures; no provider or remote storag
     expect(f.version.mock.calls[0][0].create.params).not.toHaveProperty("studioPostprocess");
     expect(f.link.mock.calls[0][0].create).toMatchObject({ projectId: "p", assetId: "asset", kind: "MEMBER" });
     expect(f.gate).toHaveBeenCalledTimes(2);
+    expect(f.check).toHaveBeenCalledWith(tx, "w", row.versionId); expect(f.enqueueCheck).toHaveBeenCalledWith("check", "check-attempt");
     await runStudioGenerationArtifactJob(job()); expect(f.upload).toHaveBeenCalledTimes(1); expect(f.asset).toHaveBeenCalledTimes(1);
+  });
+  it("keeps a published image and durable check when the compliance queue is unavailable", async () => {
+    f.enqueueCheck.mockRejectedValue(new Error("Redis unavailable"));
+    await runStudioGenerationArtifactJob(job());
+    expect(row.status).toBe("SUCCEEDED"); expect(row.output.imageUrl).toBeNull(); expect(f.check).toHaveBeenCalledTimes(1);
   });
   it("completes existing mirror metadata without duplicating the version asset or project link", async () => {
     row.versionId = "existing-version"; row.output.imageUrl = "http://private.invalid/mirrored";

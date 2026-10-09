@@ -9,8 +9,8 @@ import { ensureStudioGenerationArtifacts, readStudioGenerationResults, requireAr
 
 let request: any, outputs: any[], recoverable: any[], artifacts: any[], tx: any;
 const future = () => new Date(Date.now() + 86_400_000);
-const ready = () => ({ outputId: "output", versionId: "version", assetId: "asset", status: "SUCCEEDED", expiresAt: future(), sha256: "a".repeat(64), width: 48, height: 32, mimeType: "image/png",
-  asset: { id: "asset", workspaceId: "w", deprecatedAt: null, availableForGeneration: true, generationVersionId: "version", projectLinks: [{ id: "link" }] }, version: { generationId: "generation" } });
+const ready = () => ({ outputId: "output", workspaceId: "w", projectId: "p", versionId: "version", assetId: "asset", status: "SUCCEEDED", expiresAt: future(), sha256: "a".repeat(64), width: 48, height: 32, mimeType: "image/png",
+  asset: { id: "asset", workspaceId: "w", deprecatedAt: null, availableForGeneration: true, generationVersionId: "version", projectLinks: [{ id: "link", projectId: "p" }] }, version: { generationId: "generation" } });
 beforeEach(() => {
   vi.resetAllMocks();
   request = { id: "request", workspaceId: "w", projectId: "p", userId: "u", generationId: "generation", status: "SUCCEEDED", generation: { workspaceId: "w", projectId: "p" }, outputs: [] };
@@ -46,6 +46,10 @@ describe("durable archive receipt and retry boundaries (unit DB fixtures)", () =
       (r: any) => { r.asset.generationVersionId = "different"; },
       (r: any) => { r.version.generationId = "different"; },
       (r: any) => { r.sha256 = "guess"; },
+      (r: any) => { r.width = -1; },
+      (r: any) => { r.height = Infinity; },
+      (r: any) => { r.outputId = "another-request-output"; },
+      (r: any) => { r.projectId = "another-project"; },
     ]) { artifacts = [ready()]; mutation(artifacts[0]); expect(await readStudioGenerationResults(request)).toMatchObject({ resultState: "FAILED", results: [], canRetryArchive: false }); }
   });
   it("reports independent attempt and private-output expiry, and cannot retry discarded raw bytes", async () => {

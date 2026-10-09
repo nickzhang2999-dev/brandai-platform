@@ -98,7 +98,8 @@
     await navigator.serviceWorker.register('/novart-product-worker.js',{scope:'/'});
     await navigator.serviceWorker.ready;
     if (!navigator.serviceWorker.controller) await new Promise((resolve,reject) => { const timeout=setTimeout(()=>reject(Error('资源初始化超时，请重新打开')),12000); navigator.serviceWorker.addEventListener('controllerchange',()=>{clearTimeout(timeout);resolve();},{once:true}); });
-    if (location.pathname === '/canvas') for (const source of ['/novart-product-materials.js','/novart-product-generation.js']) await new Promise((resolve,reject) => {
+    const adapters = location.pathname === '/canvas' ? ['/novart-product-materials.js','/novart-product-generation.js','/novart-product-task-inbox.js'] : ['/novart-product-task-inbox.js'];
+    for (const source of adapters) await new Promise((resolve,reject) => {
       const script=document.createElement('script');script.src=source;script.onload=resolve;script.onerror=()=>reject(Error('创作组件加载失败，请重新打开'));document.head.append(script);
     });
     // Blocking native scripts run before defer overlays, matching HTML semantics.
@@ -146,6 +147,7 @@
       };
       availability(); new MutationObserver(availability).observe(document.body,{childList:true,subtree:true,attributes:true,attributeFilter:['disabled']});
     }
+    window.NovartProductTaskInbox?.start();
     startup.remove();
     window.dispatchEvent(new Event('novart-product-ready'));
   }

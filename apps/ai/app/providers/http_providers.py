@@ -1187,6 +1187,7 @@ class HttpVLMProvider(VLMProvider):
                     }
                 ],
                 "score": None,
+                "visualCheckPerformed": False,
             }
         parts: list[dict[str, Any]] = [
             {"type": "text", "text": _COMPLIANCE_PROMPT.format(rules=rules or "(none)")},
@@ -1196,9 +1197,11 @@ class HttpVLMProvider(VLMProvider):
         # D5 — attach the brand's positive/negative example assets so the model
         # can judge resemblance. A generated image that looks like a `negative`
         # example (or strays from a `positive` one) should be flagged.
+        references_complete = len(references or []) <= _MAX_VISION_IMAGES
         for ref in (references or [])[:_MAX_VISION_IMAGES]:
             url = ref.get("url")
             if not url:
+                references_complete = False
                 continue
             polarity = str(ref.get("polarity", "")).lower()
             note = str(ref.get("note") or "")
@@ -1210,6 +1213,7 @@ class HttpVLMProvider(VLMProvider):
             # K7 — a reference asset may be WEBSITE-sourced; honor its hint.
             ref_img = await self._inline_image(url, source=ref.get("sourceHint"))
             if ref_img is None:
+                references_complete = False
                 continue  # SSRF-blocked reference → drop
             parts.append(
                 {"type": "text", "text": f"{label}{(': ' + note) if note else ''}"}
@@ -1218,6 +1222,24 @@ class HttpVLMProvider(VLMProvider):
                 {"type": "image_url", "image_url": {"url": ref_img}}
             )
         data = await self._chat_json(parts, system=_COMPLIANCE_SYSTEM)
+        # This additive evidence is set only after an actual model call and an
+        # explicit valid judgement. Legacy fallback scores/results remain the
+        # same; product clients must not mistake those fallbacks for a check.
+        raw_results = data.get("results")
+        valid_findings = isinstance(raw_results, list) and bool(raw_results) and all(
+            isinstance(item, dict)
+            and isinstance(item.get("level"), str)
+            and item["level"].upper() in {"PASS", "RISK", "FORBIDDEN"}
+            and isinstance(item.get("reason"), str)
+            and bool(item["reason"].strip())
+            for item in raw_results
+        )
+        raw_score = data.get("score")
+        explicit_clean_judgement = (
+            isinstance(raw_results, list) and not raw_results
+            and isinstance(raw_score, (int, float)) and not isinstance(raw_score, bool)
+            and math.isfinite(raw_score) and 0 <= raw_score <= 100
+        )
         results: list[dict[str, Any]] = []
         for r in data.get("results", []) or []:
             if not isinstance(r, dict):
@@ -1229,7 +1251,10 @@ class HttpVLMProvider(VLMProvider):
                     "category": r.get("category") or "BRAND_VISUAL",
                 }
             )
-        return {"results": results, "score": _coerce_score(data.get("score"))}
+        return {
+            "results": results, "score": _coerce_score(data.get("score")),
+            "visualCheckPerformed": references_complete and (valid_findings or explicit_clean_judgement),
+        }
 
     async def scrape_website(self, url: str) -> dict[str, Any]:
         html = ""

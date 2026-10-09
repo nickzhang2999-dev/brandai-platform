@@ -307,6 +307,54 @@ async function assertFramePngDownload(page: Page, frame: Frame, shapeId: string,
   assert.equal(actual.data[(70 * actual.info.width + 80) * 4 + 3], 0, "Empty frame area remains transparent instead of becoming an opaque placeholder");
   return actual;
 }
+async function assertGenerationComplianceState(page: Page, frame: Frame, projectId: string, material: { versionId: string; assetSha256: string }) {
+  const received = page.waitForResponse(response => {
+    const url = new URL(response.url());
+    return url.pathname === "/studio/generation/compliance" && url.searchParams.get("projectId") === projectId
+      && url.searchParams.get("versionId") === material.versionId && response.request().method() === "GET";
+  });
+  await frame.getByTestId("product-generation-tasks").getByRole("button", { name: "刷新生成任务", exact: true }).click();
+  const response = await received;
+  assert.equal(response.status(), 200);
+  const value = await response.json();
+  const line = frame.locator(`[data-check-version-id="${material.versionId}"]`);
+  await expect(line).toHaveAttribute("data-check-status", value.status);
+  const labels: Record<string, string> = { NOT_REQUESTED: "尚未开始", PENDING: "等待检查", RUNNING: "检查中", FAILED: "未完成" };
+  if (value.status === "SUCCEEDED") {
+    assert.equal(value.checkedImageSha256, material.assetSha256, "A completed check must cover the currently archived image bytes");
+    assert.ok(["PASS", "RISK", "FORBIDDEN"].includes(value.report?.overall));
+    const label = ({ PASS: "通过", RISK: "有风险", FORBIDDEN: "不符合品牌规范" } as Record<string, string>)[value.report.overall];
+    assert.ok(label, "Completed checks must have a known verdict label");
+    await expect(line).toContainText(label);
+  } else {
+    const label = labels[value.status];
+    assert.ok(label, "Incomplete checks must have a known status label"); assert.equal(value.report, null); assert.equal(value.checkedImageSha256, null);
+    await expect(line).toContainText(label); await expect(line).not.toContainText("通过");
+    if (value.error) await expect(line).toContainText(value.error);
+  }
+  const retry = frame.locator(`[data-action="retry-check"][data-version-id="${material.versionId}"]`);
+  await expect(retry).toHaveCount(value.canRetry ? 1 : 0);
+  // This assertion only reads real check receipts. It does not initiate another provider call.
+}
+async function openTaskFromInbox(page: Page, projectId: string, kind: "STUDIO_UPLOAD" | "STUDIO_GENERATION", taskId: string) {
+  await page.getByTestId("studio-nav-home").click();
+  await page.waitForFunction(() => (window as any).NovartStudio?.snapshot().route === "/home");
+  await page.getByTestId("product-task-inbox-trigger").click();
+  const inbox = page.getByTestId("product-task-inbox");
+  await expect(inbox).toBeVisible();
+  const item = inbox.locator(`[data-kind="${kind}"][data-task-id="${taskId}"][data-project-id="${projectId}"]`);
+  await expect(item).toBeVisible({ timeout: 30_000 });
+  await expect(item).toHaveAttribute("data-status", "SUCCEEDED");
+  await item.locator('[data-action="open-task"]').click();
+  await expect(page).toHaveURL(new RegExp(`#/workspace/${projectId}$`));
+  const frame = await editorFrame(page, projectId);
+  await expect(inbox).toBeHidden({ timeout: 30_000 });
+  const panel = frame.getByTestId(kind === "STUDIO_UPLOAD" ? "product-upload-tasks" : "product-generation-tasks");
+  await expect(panel).toHaveAttribute("open", "");
+  const receipt = panel.locator(kind === "STUDIO_UPLOAD" ? `[data-task-id="${taskId}"]` : `[data-request-id="${taskId}"]`);
+  await expect(receipt).toBeFocused();
+  return frame;
+}
 
 try {
   const run = randomUUID().slice(0, 8), password = randomUUID();
@@ -445,6 +493,10 @@ try {
         && store[exportFrame!.geo]?.parentId === exportFrame!.frame ? row : null;
     });
     check("native image download and frame right-click PNG export preserve uploaded pixels and composite the saved geometry");
+    const beforeInbox = (await currentShapes(frame)).map(shape => shape.id).sort();
+    frame = await openTaskFromInbox(page, projectId, "STUDIO_UPLOAD", task.taskId);
+    assert.deepEqual((await currentShapes(frame)).map(shape => shape.id).sort(), beforeInbox, "Opening upload notification must not duplicate or recreate any canvas image");
+    check("homepage inbox returns to the authenticated upload receipt without replacing the live canvas or inserting another image");
 
     step("accepted upload survives leaving the page");
     const detached = await nativeUpload(page, frame, `studio-ui-detached-${run}.png`);
@@ -551,6 +603,13 @@ try {
       return row && !(row.inputForm as { text?: string } | null)?.text ? row : null;
     });
     check("real provider generation is idempotent across lost 202, archived as linked authenticated bytes, and inserted with native undo/save");
+    const beforeInbox = (await currentShapes(frame)).map(shape => shape.id).sort();
+    frame = await openTaskFromInbox(page, projectId, "STUDIO_GENERATION", accepted.requestId);
+    assert.deepEqual((await currentShapes(frame)).map(shape => shape.id).sort(), beforeInbox, "Opening generation notification must not automatically insert its result again");
+    check("homepage inbox links the real archived generation back to its native task receipt without generating or inserting again");
+    await assertGenerationComplianceState(page, frame, projectId, generatedResult);
+    assert.equal(await prisma.generation.count({ where: { projectId } }), 1);
+    check("brand check reflects the real version receipt and image digest; an incomplete or unavailable check is never shown as passed");
   } else console.log("SKIP generation journey: WORKBENCH_TEST_GENERATION=1 plus a real configured provider/storage/worker is required; no AI generation is verified by this run.");
 
   step("native chat draft autosave and checked receipt");
@@ -656,6 +715,10 @@ try {
     const freshFrame = await assertFramePngDownload(fresh, frame, exportFrame.frame, "fresh-composite-frame");
     assert.deepEqual(freshFrame.data, exportedFramePixels, "Fresh-context frame export must reproduce saved composition without previous Blob/cache state");
     check("a fresh browser downloads the restored image and composite frame again with identical decoded pixels");
+    const beforeInbox = (await currentShapes(frame)).map(shape => shape.id).sort();
+    frame = await openTaskFromInbox(fresh, projectId, "STUDIO_UPLOAD", uploadTaskId);
+    assert.deepEqual((await currentShapes(frame)).map(shape => shape.id).sort(), beforeInbox);
+    check("a fresh browser restores the server upload notification and opens its existing receipt without relying on local task data");
   }
   if (recoveredImage) {
     const restored = reopened.find(shape => shape.id === recoveredImage.id);

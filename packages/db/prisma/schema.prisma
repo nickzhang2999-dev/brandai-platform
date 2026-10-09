@@ -608,6 +608,9 @@ model AsyncTask {
   refId       String?
   refCount    Int       @default(0)
   error       String?
+  // Product compliance attempts have a server-issued deadline. Legacy tasks
+  // leave this null and retain their existing lifecycle.
+  expiresAt   DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 

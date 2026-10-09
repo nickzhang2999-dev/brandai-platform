@@ -28,13 +28,17 @@ import { readBoundedAiJson, withinAiDeadline, type AiCallOptions } from "@/lib/a
  * per-request headers (X-OV-{Image,Vlm}-*). Only sent when a key is configured;
  * absent → the AI service uses its own env/mock fallback.
  */
-async function providerHeaders(requireRealImageProvider = false): Promise<Record<string, string>> {
+async function providerHeaders(requireRealImageProvider = false, requireRealVlmProvider = false): Promise<Record<string, string>> {
   const s = await getEffectiveAiSettings();
   // Validate the same snapshot that produces the outgoing headers. A separate
   // intake/claim check cannot prevent configuration changing while queued.
   const imageProvider = s.image.provider?.trim().toLowerCase();
   if (requireRealImageProvider && (!imageProvider || imageProvider === "mock" || !s.image.apiKey?.trim())) {
     throw new Error("真实图片生成服务配置已不可用，任务未调用演示模型。请联系管理员检查配置。");
+  }
+  const vlmProvider = s.vlm.provider?.trim().toLowerCase();
+  if (requireRealVlmProvider && (!vlmProvider || vlmProvider === "mock" || !s.vlm.apiKey?.trim())) {
+    throw new Error("真实图片检查服务尚未配置，未执行品牌检查。请联系管理员检查配置。");
   }
   const h: Record<string, string> = {};
   if (s.image.apiKey) {
@@ -61,7 +65,11 @@ async function providerHeaders(requireRealImageProvider = false): Promise<Record
 async function call<TReq, TRes>(path: string, body: TReq, options?: AiCallOptions): Promise<TRes> {
   const signal = options ? options.signal ?? AbortSignal.timeout(5 * 60_000) : undefined;
   signal?.throwIfAborted();
-  const setup = Promise.all([resolveAiService(), providerHeaders(path === "/v1/generate" && options?.requireRealImageProvider === true)]);
+  const requireVisualCheck = path === "/v1/compliance/check" && options?.requireRealVlmProvider === true;
+  const setup = Promise.all([resolveAiService(requireVisualCheck ? { requireVisualCheck: true } : undefined), providerHeaders(
+    path === "/v1/generate" && options?.requireRealImageProvider === true,
+    requireVisualCheck,
+  )]);
   const [service, headers] = await (signal ? withinAiDeadline(setup, signal) : setup);
   signal?.throwIfAborted();
   const res = await fetch(`${service.base}${path}`, {

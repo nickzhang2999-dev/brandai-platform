@@ -41,6 +41,7 @@ const KIND_ICON: Record<string, string> = {
   INGEST: "⤓",
   DECOMPOSE: "▤",
   STUDIO_UPLOAD: "⤒",
+  STUDIO_GENERATION: "✸",
 };
 
 export function NotificationCenter({ wsId, userId }: { wsId: string; userId: string }) {

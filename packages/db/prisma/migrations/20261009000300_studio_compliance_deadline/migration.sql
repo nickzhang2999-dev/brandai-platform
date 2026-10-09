@@ -1,0 +1,1 @@
+ALTER TABLE "AsyncTask" ADD COLUMN "expiresAt" TIMESTAMP(3);

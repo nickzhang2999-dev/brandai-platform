@@ -232,6 +232,19 @@
     const input = document.createElement('input'); input.type = 'file'; input.accept = 'image/png,image/jpeg,image/webp';
     input.onchange = () => { if (input.files?.length) uploadAndInsert([...input.files]); }; input.click();
   }
+  async function focusTask(taskId) {
+    if (stopped || !/^[a-zA-Z0-9_-]{1,128}$/.test(taskId)) throw Error('上传任务地址无效，请刷新任务');
+    const value = await request(endpoint + '&taskId=' + encodeURIComponent(taskId));
+    if (stopped) throw Error('画布已关闭，请重新打开任务');
+    if (value.taskId !== taskId) throw Error('上传任务回执不匹配，请刷新任务');
+    const task = accept(value); tasks.delete(taskId); tasks.set(taskId, task);
+    render(); panel.hidden = false; panel.open = true;
+    const row = list.querySelector('[data-task-id="' + taskId + '"]');
+    if (!row) throw Error('任务未能展开，请刷新任务');
+    row.tabIndex = -1; row.focus({preventScroll:true}); row.scrollIntoView({block:'nearest'});
+    // Opening a notification never calls insert or submits the upload again.
+    return true;
+  }
   function start() {
     if (panel) return;
     const style = document.createElement('style');
@@ -248,5 +261,5 @@
   }
   window.addEventListener('pagehide', () => { stopped = true; clearTimeout(timer); });
   window.addEventListener('pageshow', event => { if (event.persisted) { stopped = false; refresh(); } });
-  window.NovartProductMaterials = Object.freeze({start, uploadAndInsert, refresh});
+  window.NovartProductMaterials = Object.freeze({start, uploadAndInsert, refresh, focusTask});
 })();

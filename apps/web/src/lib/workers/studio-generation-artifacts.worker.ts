@@ -9,6 +9,8 @@ import { assetCategoryForScene } from "@/lib/asset-mirror";
 import { artifactDeadline, artifactOwnObjectKey, inspectArtifactImage, postprocessArtifactImage, readArtifactImageBytes } from "@/lib/studio-generation-artifacts-image";
 import { enqueueStudioArtifact } from "@/lib/studio-generation-artifacts-queue";
 import { ensureStudioGenerationArtifacts, requireArtifactWrite, STUDIO_ARTIFACT_ERROR, STUDIO_ARTIFACT_EXPIRED, STUDIO_ARTIFACT_RUN_MS } from "@/lib/studio-generation-artifacts";
+import { registerStudioGenerationCompliance } from "@/lib/studio-generation-compliance";
+import { enqueueStudioCompliance } from "@/lib/studio-generation-compliance-queue";
 
 function object(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -75,7 +77,7 @@ export async function runStudioGenerationArtifactJob(job: Job<{ outputId: string
     const objectKey = `${prefix}/${outputId}/${final.sha256}`;
     const stored = await artifactDeadline(uploadBuffer(final.body, final.mimeType, prefix, signal, objectKey), signal);
     signal.throwIfAborted();
-    await prisma.$transaction(async tx => {
+    const check = await prisma.$transaction(async tx => {
       await requireArtifactWrite(tx, row.workspaceId, row.projectId, row.userId);
       await tx.$queryRaw`SELECT "outputId" FROM "StudioGeneratedMaterial" WHERE "outputId" = ${outputId} FOR UPDATE`;
       const current = await tx.studioGeneratedMaterial.findUnique({ where: { outputId }, include: { output: { select: { expiresAt: true } } } });
@@ -104,8 +106,13 @@ export async function runStudioGenerationArtifactJob(job: Job<{ outputId: string
         sha256: final.sha256, mimeType: final.mimeType, sizeBytes: final.sizeBytes, width: final.width, height: final.height, attemptToken: null, error: null } });
       // Only now can generic GenerationVersion APIs see the finished image.
       await tx.studioGenerationOutput.update({ where: { id: outputId }, data: { imageUrl: null } });
+      const check = await registerStudioGenerationCompliance(tx, row.workspaceId, versionId);
       signal.throwIfAborted();
+      return check;
     }, { timeout: 10_000 });
+    // The committed task is the outbox. A queue outage cannot roll back a
+    // published picture or cause the image provider to be called again.
+    if (check.status === "PENDING" && check.jobId) await enqueueStudioCompliance(check.id, check.jobId).catch(() => false);
   } catch (error) {
     const terminal = error instanceof ApiException || row.expiresAt.getTime() <= Date.now() || job.attemptsMade + 1 >= (job.opts.attempts ?? 1);
     const updated = await prisma.studioGeneratedMaterial.updateMany({ where: { outputId, status: "RUNNING", attemptToken: token },

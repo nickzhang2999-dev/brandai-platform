@@ -33,6 +33,7 @@ PRODUCT_STORAGE_COPY = {
     '/studio.html': [
         ('项目和素材保存在本机，AI 与在线协作尚未接入', '项目与画布随品牌保存，进入项目即可编辑或提交图片生成', 1),
         ('>本地预览</span>', '>创作工作台</span>', 1),
+        ('创建后进入画布，需求随项目保留。AI 生成暂未接入。', '创建项目后进入画布，上传素材或描述图片需求。', 1),
     ],
     '/home-start-studio.js': [
         ('偏好已保存在本机', '偏好已随账号与品牌保存', 1),
@@ -204,6 +205,8 @@ def main():
     write('/novart-product-materials.js', materials, 'application/javascript; charset=utf-8')
     generation = (REPO / 'deploy/novart/studio/novart-product-generation.js').read_bytes()
     write('/novart-product-generation.js', generation, 'application/javascript; charset=utf-8')
+    task_inbox = (REPO / 'deploy/novart/studio/novart-product-task-inbox.js').read_bytes()
+    write('/novart-product-task-inbox.js', task_inbox, 'application/javascript; charset=utf-8')
     worker = '''const assets=MAP;
 self.addEventListener('install', event=>event.waitUntil(self.skipWaiting()));
 self.addEventListener('activate', event=>event.waitUntil(self.clients.claim()));

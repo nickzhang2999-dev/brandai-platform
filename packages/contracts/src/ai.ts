@@ -542,6 +542,9 @@ export type ComplianceCheckRequest = z.infer<typeof ComplianceCheckRequest>;
 export const ComplianceCheckResponse = z.object({
   results: z.array(ComplianceResult),
   report: ComplianceReport,
+  // Product workers require explicit evidence that a real model evaluated the
+  // image. Legacy/text-only callers may omit this additive field.
+  visualCheckPerformed: z.boolean().optional(),
 });
 export type ComplianceCheckResponse = z.infer<typeof ComplianceCheckResponse>;
 

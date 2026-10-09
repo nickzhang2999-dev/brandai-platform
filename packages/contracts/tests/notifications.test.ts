@@ -23,6 +23,7 @@ describe("L3 · NotificationKind / NotificationStatus", () => {
       "DESCRIBE",
       "INGEST",
       "STUDIO_UPLOAD",
+      "STUDIO_GENERATION",
     ]) {
       expect(NotificationKind.safeParse(k).success).toBe(true);
     }

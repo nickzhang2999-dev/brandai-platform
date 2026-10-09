@@ -153,6 +153,7 @@ _RISK_LEXICON = {
 
 PARSER_REVISION = "grounded-six-slot-r6"
 GENERATION_REVISION = "gpt-image-2-size-quality-r1"
+VISUAL_CHECK_REVISION = "studio-visual-check-evidence-r1"
 
 
 @app.get("/health")
@@ -162,10 +163,13 @@ async def health():
     # manual parsing, while generationRevision prevents a new worker from
     # silently selecting an older branch's AI container that still snaps
     # arbitrary gpt-image-2 sizes back to the legacy three fixed dimensions.
+    # Product visual checks also require real-execution evidence support before
+    # invoking a paid VLM, instead of rejecting an older response afterwards.
     return {
         "status": "ok",
         "parserRevision": PARSER_REVISION,
         "generationRevision": GENERATION_REVISION,
+        "visualCheckRevision": VISUAL_CHECK_REVISION,
     }
 
 
@@ -1025,6 +1029,7 @@ async def compliance_check(
     text_results = _scan_text(req.text or "", req.termLib)
     visual_results: list[ComplianceResult] = []
     score: int | None = None
+    visual_check_performed = False
     if req.imageUrl:
         # D5 — only pass `references` when present so providers/fakes with the
         # pre-D5 signature still work (the kwarg is additive).
@@ -1038,6 +1043,9 @@ async def compliance_check(
         )
         visual_results = [ComplianceResult(**r) for r in visual.get("results", [])]
         score = visual.get("score")
+        # Mock providers and pre-evidence implementations intentionally default
+        # to false. A plausible report alone is not proof of a real check.
+        visual_check_performed = visual.get("visualCheckPerformed") is True
 
     levels = [r.level for r in text_results + visual_results]
     overall = (
@@ -1064,5 +1072,6 @@ async def compliance_check(
         score=score,
     )
     return ComplianceCheckResponse(
-        results=text_results + visual_results, report=report
+        results=text_results + visual_results, report=report,
+        visualCheckPerformed=visual_check_performed,
     )

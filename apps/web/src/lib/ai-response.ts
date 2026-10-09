@@ -4,6 +4,7 @@ export interface AiCallOptions {
   maxResponseBytes?: number;
   /** Server-only product boundary; never accepted from browser job payloads. */
   requireRealImageProvider?: boolean;
+  requireRealVlmProvider?: boolean;
 }
 
 /** Does not cancel non-cancellable DB work, but forbids subsequent network I/O. */

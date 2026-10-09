@@ -47,6 +47,10 @@ export async function POST(
     if (!version || version.generationId !== genId) {
       throw new ApiException(404, "Version not found in this generation");
     }
+    // Product versions use a durable, single-claim check and private-S3 byte
+    // transport. The synchronous legacy route must not bypass that boundary.
+    const studio = await prisma.studioGenerationRequest.findUnique({ where: { generationId: genId }, select: { id: true } });
+    if (studio) throw new ApiException(409, "请在工作台使用“重试检查”，产品图片的视觉检查需要异步执行。");
 
     const text = [generation.sellingPoint, generation.scene]
       .filter(Boolean)
