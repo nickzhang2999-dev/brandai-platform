@@ -222,6 +222,7 @@ model BrandWorkspace {
 }
 
 model Asset {
+  studioGeneratedMaterial StudioGeneratedMaterial?
   studioUploads          StudioMaterialUpload[]
   id                     String            @id @default(cuid())
   workspaceId            String
@@ -536,6 +537,7 @@ model WorkbenchChatDraft {
 }
 
 model Generation {
+  studioRequest StudioGenerationRequest?
   id           String              @id @default(cuid())
   projectId    String
   project      Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
@@ -566,6 +568,7 @@ model Generation {
 }
 
 model GenerationVersion {
+  studioGeneratedMaterial StudioGeneratedMaterial?
   id               String     @id @default(cuid())
   generationId     String
   generation       Generation @relation(fields: [generationId], references: [id], onDelete: Cascade)
@@ -709,6 +712,85 @@ model UsageLog {
 // set the platform AI provider/key/model from a settings page instead of
 // redeploying with env. apiKey columns hold AES-256-GCM ciphertext (lib/crypto);
 // empty fields fall back to the corresponding env var (lib/settings).
+model StudioGenerationRequest {
+  id String @id @default(cuid())
+  workspaceId String
+  userId String
+  projectId String
+  mutationId String
+  payloadHash String
+  prompt String @db.Text
+  sizeSelection Json
+  workflowRevision Int
+  documentRevision Int
+  generationId String @unique
+  generation Generation @relation(fields: [generationId], references: [id], onDelete: Cascade)
+  jobData Json
+  contextHash String
+  status JobStatus @default(PENDING)
+  providerStartedAt DateTime?
+  expiresAt DateTime
+  error String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  outputs StudioGenerationOutput[]
+  artifacts StudioGeneratedMaterial[]
+  @@unique([workspaceId, userId, projectId, mutationId], map: "StudioGenerationRequest_identity_key")
+  @@index([workspaceId, userId, projectId, createdAt], map: "StudioGenerationRequest_history_idx")
+  @@index([status, expiresAt])
+}
+
+// Private paid-provider output. Never served by a generation/version route.
+// Final public versions are created only after deterministic postprocessing.
+model StudioGenerationOutput {
+  id String @id
+  requestId String
+  request StudioGenerationRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  workspaceId String
+  projectId String
+  imageUrl String? @db.Text
+  widthHint Int
+  heightHint Int
+  params Json
+  index Int
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  artifact StudioGeneratedMaterial?
+  @@unique([requestId, index])
+  @@index([expiresAt])
+}
+
+model StudioGeneratedMaterial {
+  outputId String @id
+  output StudioGenerationOutput @relation(fields: [outputId], references: [id], onDelete: Cascade)
+  versionId String? @unique
+  version GenerationVersion? @relation(fields: [versionId], references: [id], onDelete: SetNull)
+  requestId String
+  request StudioGenerationRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  workspaceId String
+  projectId String
+  userId String
+  status JobStatus @default(PENDING)
+  objectKey String
+  attemptToken String?
+  attempts Int @default(0)
+  expiresAt DateTime
+  startedAt DateTime?
+  sha256 String?
+  mimeType String?
+  sizeBytes Int?
+  width Int?
+  height Int?
+  assetId String? @unique
+  asset Asset? @relation(fields: [assetId], references: [id], onDelete: SetNull)
+  error String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([status, expiresAt])
+  @@index([workspaceId, projectId, status])
+  @@index([requestId])
+}
+
 model AppSetting {
   id            String   @id @default("singleton")
   imageProvider String?

@@ -1,11 +1,12 @@
 /** Real UI acceptance against a disposable database. No vendor API or save mocks. */
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { gunzipSync } from "node:zlib";
-import { chromium, expect, type Browser, type BrowserContext, type Frame, type Page } from "playwright/test";
+import { chromium, expect, type Browser, type BrowserContext, type Frame, type Page, type Route } from "playwright/test";
 import { prisma } from "@brandai/db";
+import sharp from "sharp";
 import { hashPassword } from "../src/lib/password";
 
 const base = new URL(process.env.WORKBENCH_TEST_URL ?? "http://127.0.0.1:3000");
@@ -241,6 +242,72 @@ async function readableImage(frame: Frame, url: string) {
   }), url);
 }
 
+async function nativePngDownload(page: Page, frame: Frame, shapeId: string, label: string) {
+  const type = await frame.evaluate(id => {
+    const editor = (window as any).__novartAcceptanceEditor;
+    editor.setCurrentTool("select"); editor.select(id);
+    editor.zoomToSelection({ animation: { duration: 0 } });
+    return editor.getShape(id)?.type;
+  }, shapeId);
+  // c-image has its own native toolbar; plain frames expose right-click Export
+  // PNG. Do not call ExportService or intercept native image rendering methods.
+  let button = frame.getByTestId("image-toolbar-download");
+  if (type !== "c-image") {
+    const bounds = await frame.locator(`.tl-shape[data-shape-id="${shapeId}"]`).boundingBox();
+    assert.ok(bounds && bounds.width > 0 && bounds.height > 0);
+    // The canvas hit-tests on its background overlay. Send actual pointer input.
+    await page.mouse.click(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2, { button: "right" });
+    await frame.getByTestId("context-menu-item-export").hover();
+    button = frame.getByTestId("context-menu-item-export_png");
+  }
+  await expect(button).toBeVisible();
+  const pending = page.waitForEvent("download", { timeout: 45_000 });
+  await button.click();
+  const download = await pending;
+  assert.equal(await download.failure(), null);
+  assert.match(download.suggestedFilename(), /\.png$/i, "This selection must download one PNG, not a ZIP or HTML error");
+  await mkdir(artifacts, { recursive: true });
+  const filename = path.join(artifacts, `${label}.png`);
+  await download.saveAs(filename);
+  const bytes = await readFile(filename);
+  assert.deepEqual(bytes.subarray(0, 8), Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+  assert.equal((await sharp(bytes, { failOn: "error" }).metadata()).format, "png");
+  // Full decoding, not metadata alone, detects truncated/invalid pixel data.
+  return sharp(bytes, { failOn: "error" }).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+}
+async function assertUploadedPngDownload(page: Page, frame: Frame, shapeId: string, label: string) {
+  const actual = await nativePngDownload(page, frame, shapeId, label);
+  const expected = await sharp(uploadFixture, { failOn: "error" }).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  assert.deepEqual([actual.info.width, actual.info.height, actual.info.channels], [48, 32, 4]);
+  assert.deepEqual(actual.data, expected.data, "Native PNG export must preserve all uploaded pixels; compression bytes may differ");
+  return actual;
+}
+async function createExportFrame(frame: Frame, uploadedId: string, suffix: string) {
+  const ids = { frame: `shape:ui-export-frame-${suffix}`, image: `shape:ui-export-image-${suffix}`, geo: `shape:ui-export-geo-${suffix}` };
+  await frame.evaluate(({ uploadedId, ids }) => {
+    const editor = (window as any).__novartAcceptanceEditor, source = editor.getShape(uploadedId);
+    if (!source || source.type !== "c-image") throw Error("Export frame requires a real uploaded native image");
+    editor.createShapes([
+      { id: ids.frame, type: "frame", x: 640, y: 500, props: { w: 160, h: 120, name: "PNG export acceptance", isAutoLayout: false } },
+      { id: ids.image, type: "c-image", parentId: ids.frame, x: 16, y: 16, props: { ...source.props, w: 48, h: 32 } },
+      { id: ids.geo, type: "geo", parentId: ids.frame, x: 88, y: 16, props: { w: 48, h: 48, color: "black", fill: "solid", dash: "solid" } },
+    ]);
+  }, { uploadedId, ids });
+  return ids;
+}
+async function assertFramePngDownload(page: Page, frame: Frame, shapeId: string, label: string) {
+  const actual = await nativePngDownload(page, frame, shapeId, label);
+  assert.deepEqual([actual.info.width, actual.info.height, actual.info.channels], [160, 120, 4], "Frame PNG must use the frame bounds, not the image or infinite canvas bounds");
+  const imageRegion = await sharp(actual.data, { raw: actual.info }).extract({ left: 16, top: 16, width: 48, height: 32 }).raw().toBuffer();
+  const expected = await sharp(uploadFixture).ensureAlpha().raw().toBuffer();
+  assert.deepEqual(imageRegion, expected, "The frame must contain every source-image pixel at its saved position");
+  const center = (40 * actual.info.width + 112) * 4;
+  // This capture renders the legacy geo solid fill as its light neutral palette.
+  assert.deepEqual([...actual.data.subarray(center, center + 4)], [232, 232, 232, 255], "The separate filled geometry must render in the same PNG");
+  assert.equal(actual.data[(70 * actual.info.width + 80) * 4 + 3], 0, "Empty frame area remains transparent instead of becoming an opaque placeholder");
+  return actual;
+}
+
 try {
   const run = randomUUID().slice(0, 8), password = randomUUID();
   const email = `studio-ui-${run}@example.invalid`, nickname = `UI account ${run}`, brandName = `UI brand ${run}`;
@@ -323,6 +390,11 @@ try {
   let uploadedImage: Awaited<ReturnType<typeof currentShapes>>[number] | undefined;
   let recoveredImage: Awaited<ReturnType<typeof currentShapes>>[number] | undefined;
   let uploadTaskId: string | undefined;
+  let exportFrame: Awaited<ReturnType<typeof createExportFrame>> | undefined;
+  let exportedFramePixels: Buffer | undefined;
+  let generatedImage: Awaited<ReturnType<typeof currentShapes>>[number] | undefined;
+  let generatedResult: { versionId: string; assetId: string; assetSha256: string; url: string; width: number; height: number } | undefined;
+  let generationRequestId: string | undefined;
   if (process.env.WORKBENCH_TEST_MATERIAL_UPLOAD === "1") {
     step("native image upload, worker persistence and document save");
     const task = await nativeUpload(page, frame, `studio-ui-${run}.png`);
@@ -361,6 +433,19 @@ try {
     await expect(frame.locator("#novart-bar .nv-save")).toHaveAttribute("data-save-state", "saved");
     check("native upload menu uses a durable worker, real stored bytes and linked asset, then saves an undoable image shape");
 
+    step("native image and composite frame PNG downloads");
+    await assertUploadedPngDownload(page, frame, uploadedImage.id, "uploaded-image");
+    exportFrame = await createExportFrame(frame, uploadedImage.id, run);
+    exportedFramePixels = (await assertFramePngDownload(page, frame, exportFrame.frame, "composite-frame")).data;
+    await eventually("export frame and both children persist to the real document", async () => {
+      const row = await prisma.editorDocument.findUnique({ where: { projectId } });
+      if (!row?.canvas) return null;
+      const store = decodeCanvas(row.canvas);
+      return store[exportFrame!.frame]?.props.w === 160 && store[exportFrame!.image]?.parentId === exportFrame!.frame
+        && store[exportFrame!.geo]?.parentId === exportFrame!.frame ? row : null;
+    });
+    check("native image download and frame right-click PNG export preserve uploaded pixels and composite the saved geometry");
+
     step("accepted upload survives leaving the page");
     const detached = await nativeUpload(page, frame, `studio-ui-detached-${run}.png`);
     // No task-completion wait: immediately unload the native frame after 202.
@@ -387,6 +472,86 @@ try {
     assert.deepEqual(await readableImage(frame, String(recoveredImage.props.url)), [48, 32]);
     check("accepted upload completes after page unload and its server receipt restores insertion without uploading the file again");
   } else console.log("SKIP material upload journey: WORKBENCH_TEST_MATERIAL_UPLOAD=1 and disposable storage/worker are required; upload is not verified by this run.");
+
+  if (process.env.WORKBENCH_TEST_GENERATION === "1") {
+    step("native image generation with a real provider and durable response-loss retry");
+    await draftReady(frame);
+    await frame.waitForFunction(() => (window as any).NovartProductWorkflowSnapshot?.().loaded === true);
+    await frame.getByTestId("product-generation-settings").locator("summary").click();
+    await frame.getByRole("combobox", { name: "生成图片比例", exact: true }).selectOption("1:1");
+    await frame.getByRole("combobox", { name: "生成图片分辨率", exact: true }).selectOption("1K");
+    await frame.getByTestId("product-generation-settings").locator("summary").click();
+    const submittedMutations: string[] = [];
+    let responseLost = false;
+    const fault = async (route: Route) => {
+      if (route.request().method() !== "POST") return route.continue();
+      submittedMutations.push(String(route.request().postDataJSON().mutationId));
+      if (!responseLost) {
+        // Forward the real request to the app, then lose only its response.
+        // This does not synthesize a Generation, provider output or Asset.
+        const response = await route.fetch();
+        assert.equal(response.status(), 202, "Real provider/storage must be configured; unconfigured generation cannot pass this opt-in run");
+        responseLost = true;
+        return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Acceptance test: generation receipt lost" }) });
+      }
+      return route.continue();
+    };
+    await page.route("**/studio/generation?**", fault);
+    let accepted: { requestId: string; generationId: string; mutationId: string; projectId: string };
+    try {
+      await frame.getByTestId("agent-message-input").fill(`Create one simple violet geometric poster on a white background, with no text. Acceptance ${run}`);
+      const receipt = page.waitForResponse(response => new URL(response.url()).pathname === "/studio/generation" && response.request().method() === "POST" && response.status() === 202);
+      await frame.getByTestId("agent-send-button").click();
+      accepted = await (await receipt).json();
+    } finally { await page.unroute("**/studio/generation?**", fault); }
+    assert.equal(accepted.projectId, projectId);
+    assert.equal(submittedMutations.length, 2, "Exactly one bounded lost-response retry is expected");
+    assert.equal(submittedMutations[0], submittedMutations[1], "A lost 202 must reuse its mutation, never pay for another request");
+    assert.equal(accepted.mutationId, submittedMutations[0]);
+    generationRequestId = accepted.requestId;
+    await expect(frame.getByTestId("agent-message-input")).toHaveText("");
+    const completed = await eventually("real generation and result archive complete", async () => {
+      const response = await page.context().request.get(new URL(`/studio/generation?workspaceId=${workspace.id}&projectId=${projectId}&requestId=${accepted.requestId}`, base).href);
+      assert.equal(response.status(), 200);
+      const value = await response.json();
+      assert.notEqual(value.status, "FAILED", `Generation failed: ${value.error || "unknown"}`);
+      assert.notEqual(value.resultState, "FAILED", `Result archive failed: ${value.archiveError || "unknown"}`);
+      return value.status === "SUCCEEDED" && value.resultState === "READY" ? value : null;
+    }, 720_000);
+    assert.equal(completed.results.length, 1);
+    generatedResult = completed.results[0];
+    assert.ok(generatedResult);
+    const generation = await prisma.generation.findUniqueOrThrow({ where: { id: accepted.generationId } });
+    assert.equal(generation.workspaceId, workspace.id); assert.equal(generation.projectId, projectId); assert.equal(generation.status, "SUCCEEDED");
+    assert.equal(await prisma.generation.count({ where: { projectId } }), 1, "The lost response created only one paid generation row");
+    const version = await prisma.generationVersion.findUniqueOrThrow({ where: { id: generatedResult.versionId } });
+    assert.equal(version.generationId, accepted.generationId);
+    const asset = await prisma.asset.findUniqueOrThrow({ where: { id: generatedResult.assetId } });
+    assert.equal(asset.workspaceId, workspace.id); assert.equal(asset.generationVersionId, version.id);
+    assert.ok(asset.storageKey && !asset.url.startsWith("data:") && !asset.url.startsWith("blob:"));
+    assert.equal(await prisma.projectAsset.count({ where: { projectId, assetId: asset.id } }), 1);
+    const rawUrl = new URL(generatedResult.url, base);
+    assert.equal(rawUrl.origin, base.origin);
+    assert.equal(rawUrl.pathname, `/api/workspaces/${workspace.id}/assets/${asset.id}/raw`);
+    const bytes = await page.context().request.get(rawUrl.href);
+    assert.equal(bytes.status(), 200);
+    assert.equal(createHash("sha256").update(await bytes.body()).digest("hex"), generatedResult.assetSha256);
+    assert.deepEqual(await readableImage(frame, rawUrl.pathname), [generatedResult.width, generatedResult.height]);
+    generatedImage = await eventually("real generated result enters original native c-image", async () => (await currentShapes(frame)).find(shape => shape.id === `shape:novart-generation-${version.id}`));
+    assert.equal(generatedImage.type, "c-image"); assert.equal(generatedImage.props.url, rawUrl.pathname);
+    await frame.evaluate(() => { (window as any).__novartAcceptanceEditor.undo(); });
+    assert.ok(!(await currentShapes(frame)).some(shape => shape.id === generatedImage!.id));
+    await frame.evaluate(() => { (window as any).__novartAcceptanceEditor.redo(); });
+    await eventually("native document persists the real generated material", async () => {
+      const row = await prisma.editorDocument.findUnique({ where: { projectId } });
+      return row?.canvas && decodeCanvas(row.canvas)[generatedImage!.id]?.props.url === rawUrl.pathname ? row : null;
+    }, 60_000);
+    await eventually("202 clears only the submitted native draft on the server", async () => {
+      const row = await prisma.workbenchChatDraft.findUnique({ where: { userId_projectId: { userId: user.id, projectId } } });
+      return row && !(row.inputForm as { text?: string } | null)?.text ? row : null;
+    });
+    check("real provider generation is idempotent across lost 202, archived as linked authenticated bytes, and inserted with native undo/save");
+  } else console.log("SKIP generation journey: WORKBENCH_TEST_GENERATION=1 plus a real configured provider/storage/worker is required; no AI generation is verified by this run.");
 
   step("native chat draft autosave and checked receipt");
   await draftReady(frame);
@@ -486,12 +651,28 @@ try {
     await restoredTask.locator('[data-action="insert"]').click();
     assert.equal((await currentShapes(frame)).filter(shape => shape.id === uploadedImage.id).length, 1, "Restored upload receipt never duplicates an existing image");
     check("fresh browser restores image bytes, image geometry and server task without relying on browser blobs or cache");
+    await assertUploadedPngDownload(fresh, frame, uploadedImage.id, "fresh-uploaded-image");
+    assert.ok(exportFrame && exportedFramePixels);
+    const freshFrame = await assertFramePngDownload(fresh, frame, exportFrame.frame, "fresh-composite-frame");
+    assert.deepEqual(freshFrame.data, exportedFramePixels, "Fresh-context frame export must reproduce saved composition without previous Blob/cache state");
+    check("a fresh browser downloads the restored image and composite frame again with identical decoded pixels");
   }
   if (recoveredImage) {
     const restored = reopened.find(shape => shape.id === recoveredImage.id);
     assert.ok(restored, "Fresh browser restores the image recovered after page unload");
     assert.deepEqual(restored.props, JSON.parse(JSON.stringify(recoveredImage.props)));
     assert.deepEqual(await readableImage(frame, String(restored.props.url)), [48, 32]);
+  }
+  if (generatedImage && generatedResult && generationRequestId) {
+    const restored = reopened.find(shape => shape.id === generatedImage.id);
+    assert.ok(restored, "Fresh browser restores the real generated image from the server document");
+    assert.deepEqual(restored.props, JSON.parse(JSON.stringify(generatedImage.props)));
+    assert.deepEqual(await readableImage(frame, String(restored.props.url)), [generatedResult.width, generatedResult.height]);
+    const receipt = frame.getByTestId("product-generation-tasks").locator(`[data-request-id="${generationRequestId}"]`);
+    await expect(receipt).toHaveAttribute("data-result-state", "READY");
+    await receipt.locator(`[data-version-id="${generatedResult.versionId}"]`).click();
+    assert.equal((await currentShapes(frame)).filter(shape => shape.id === generatedImage.id).length, 1);
+    check("fresh browser restores the real generation, its authenticated image and task without duplicating it");
   }
   await draftReady(frame);
   await expect(frame.getByTestId("agent-message-input")).toHaveText(finalDraftText);
@@ -502,8 +683,8 @@ try {
   check("a fresh browser restores canvas, Chinese text, pen, chat draft, favorite and profile from server data");
 
   assert.deepEqual(networkProblems, [], "Studio must not access original vendor/business services");
-  assert.equal(await prisma.generation.count({ where: { projectId } }), 0);
-  check("core editing performs no remote business request or AI generation");
+  assert.equal(await prisma.generation.count({ where: { projectId } }), generatedImage ? 1 : 0);
+  check(generatedImage ? "core editing adds no generation beyond the single explicitly enabled provider journey" : "core editing performs no remote business request or AI generation");
   console.log(`Studio UI acceptance: ${passed} checks passed against the real app and disposable database.`);
 } catch (error) {
   await mkdir(artifacts, { recursive: true });

@@ -671,3 +671,5 @@ from .studio_workflow_schemas import StudioWorkflowSaveInput, StudioWorkflowView
 
 # Mirrored BFF notification kind; upload events remain scoped to the initiator.
 NotificationKind = Literal["GENERATE", "EDIT", "RECOGNIZE", "PARSE_MANUAL", "DESCRIBE", "INGEST", "SUMMARIZE", "DECOMPOSE", "STUDIO_UPLOAD"]
+
+from .studio_generation_schemas import StudioGenerationInput, StudioGenerationQuery, StudioGenerationRetryInput, StudioGenerationArchiveRetryInput, StudioGenerationView

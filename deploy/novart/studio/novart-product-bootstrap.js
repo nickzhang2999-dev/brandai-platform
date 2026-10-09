@@ -98,8 +98,8 @@
     await navigator.serviceWorker.register('/novart-product-worker.js',{scope:'/'});
     await navigator.serviceWorker.ready;
     if (!navigator.serviceWorker.controller) await new Promise((resolve,reject) => { const timeout=setTimeout(()=>reject(Error('资源初始化超时，请重新打开')),12000); navigator.serviceWorker.addEventListener('controllerchange',()=>{clearTimeout(timeout);resolve();},{once:true}); });
-    if (location.pathname === '/canvas') await new Promise((resolve,reject) => {
-      const script=document.createElement('script');script.src='/novart-product-materials.js';script.onload=resolve;script.onerror=()=>reject(Error('图片上传组件加载失败，请重新打开'));document.head.append(script);
+    if (location.pathname === '/canvas') for (const source of ['/novart-product-materials.js','/novart-product-generation.js']) await new Promise((resolve,reject) => {
+      const script=document.createElement('script');script.src=source;script.onload=resolve;script.onerror=()=>reject(Error('创作组件加载失败，请重新打开'));document.head.append(script);
     });
     // Blocking native scripts run before defer overlays, matching HTML semantics.
     const scripts=[...document.querySelectorAll('script[type="application/x-novart"]')];
@@ -137,17 +137,14 @@
     }
     if (location.pathname === '/canvas') {
       window.NovartProductMaterials?.start();
+      window.NovartProductGeneration?.start();
       const availability = () => {
-        for (const button of document.querySelectorAll('[data-testid="agent-send-button"], [data-testid="generate-menu-image"], [data-testid="generate-menu-video"], [data-testid="nav-font-gen-button"]')) {
+        for (const button of document.querySelectorAll('[data-testid="generate-menu-image"], [data-testid="generate-menu-video"], [data-testid="nav-font-gen-button"]')) {
           if (!button.disabled) button.disabled = true;
-          if (button.title !== 'AI 生成正在接入，当前输入会保留为草稿') button.title = 'AI 生成正在接入，当前输入会保留为草稿';
-          if (button.dataset.testid === 'agent-send-button' && !button.parentElement.querySelector('.np-ai-status')) {
-            const note=document.createElement('span');note.className='np-note np-ai-status';note.textContent='AI 生成接入中';button.before(note);
-          }
+          if (button.title !== '此工具尚未接入，请使用输入框提交图片生成') button.title = '此工具尚未接入，请使用输入框提交图片生成';
         }
       };
       availability(); new MutationObserver(availability).observe(document.body,{childList:true,subtree:true,attributes:true,attributeFilter:['disabled']});
-      window.addEventListener('keydown',event=>{if(event.key==='Enter' && !event.shiftKey && !event.isComposing && event.target.closest?.('[data-testid="agent-message-input"]')){event.preventDefault();event.stopImmediatePropagation();}},true);
     }
     startup.remove();
     window.dispatchEvent(new Event('novart-product-ready'));

@@ -110,6 +110,10 @@ export async function POST(
     // G6 — 重新生成属于内容写操作:编辑+(EDITOR/OWNER)。
     await requireWorkspaceRole(wsId, user.id, "EDITOR");
 
+    if (await prisma.studioGenerationRequest.findUnique({ where: { generationId: genId }, select: { id: true } })) {
+      throw new ApiException(409, "Product generation requires a new studio request; archive retry never regenerates.");
+    }
+
     // K1 — gate 重新生成 through the same quota door (metered by workspace
     // owner). A re-run of a released (FAILED) attempt consumes a fresh slot; a
     // re-run of a SUCCEEDED row keeps its existing slot. Checked before the

@@ -1,3 +1,6 @@
+import { inlineStudioGenerationReferences, studioProviderParams } from "@/lib/studio-generation-references";
+import { claimStudioGeneration, finishStudioGeneration, stageStudioGenerationOutput } from "@/lib/studio-generation-lifecycle";
+import { ensureStudioGenerationArtifacts } from "@/lib/studio-generation-artifacts";
 import { Worker, type Job } from "bullmq";
 import { prisma, Prisma } from "@brandai/db";
 import {
@@ -150,6 +153,9 @@ export interface GenerateJobData {
   workspaceId: string;
   generationId: string;
   versionCount: number;
+  /** Product-only, server-resolved accepted byte identities. Read from the
+   * durable request jobData, never accepted from an HTTP caller. */
+  studioExpectedAssetSha256?: Record<string, string>;
   /**
    * M3 — text rendering strategy threaded into the AI GenerateRequest.
    * "direct" (default) keeps the model rendering any text; "layered" steers it
@@ -325,9 +331,20 @@ async function runAutoCompliance(
 export async function runGenerateJob(
   job: Job<GenerateJobData>,
 ): Promise<GenerateJobResult> {
+  // Resolve product ownership by DB generation ID, never a Redis-only marker.
+  const studioRow = await prisma.studioGenerationRequest.findUnique({ where: { generationId: job.data.generationId } });
+  const studio = studioRow ? await claimStudioGeneration(studioRow) : null;
+  if (studioRow && !studio) return { generationId: studioRow.generationId, versionIds: [] };
+  if (studio) {
+    job.data = studio.jobData as unknown as GenerateJobData;
+    const updateProgress = job.updateProgress.bind(job);
+    job.updateProgress = async value => { try { await updateProgress(value); } catch { /* receipt is authoritative */ } };
+  }
+  const controller = studio ? new AbortController() : null;
+  const transport = controller ? { signal: controller.signal, maxResponseBytes: 48 * 1024 * 1024, requireRealImageProvider: true } : undefined;
   const { workspaceId, generationId, versionCount } = job.data;
   const targets =
-    multiSizeEnabled() && job.data.targets && job.data.targets.length > 0
+    (studio || multiSizeEnabled()) && job.data.targets && job.data.targets.length > 0
       ? job.data.targets
       : undefined;
   await job.updateProgress(5);
@@ -361,6 +378,7 @@ export async function runGenerateJob(
   ): Promise<boolean> => {
     if (settled) return false;
     settled = true;
+    if (studio) return finishStudioGeneration(studio, extra.status === "SUCCEEDED" ? "SUCCEEDED" : "FAILED", extra.error);
     await prisma.generation.update({
       where: { id: generationId },
       data: {
@@ -372,7 +390,7 @@ export async function runGenerateJob(
     return true;
   };
 
-  await prisma.generation.update({
+  if (!studio) await prisma.generation.update({
     where: { id: generationId },
     data: { status: "RUNNING", error: null, startedAt },
   });
@@ -393,8 +411,8 @@ export async function runGenerateJob(
   let watchdog: NodeJS.Timeout | null = null;
   const timeout = new Promise<never>((_, reject) => {
     watchdog = setTimeout(
-      () => reject(new GenerationTimeoutError()),
-      TIMEOUT_MS,
+      () => { controller?.abort(); reject(new GenerationTimeoutError()); },
+      studio ? Math.max(1, Math.min(TIMEOUT_MS, studio.expiresAt.getTime() - Date.now())) : TIMEOUT_MS,
     );
   });
 
@@ -403,6 +421,7 @@ export async function runGenerateJob(
     if (watchdog) clearTimeout(watchdog);
     return result;
   } catch (err) {
+    controller?.abort();
     if (watchdog) clearTimeout(watchdog);
     // writeTerminal no-ops if the inner already settled SUCCEEDED (can't
     // normally happen — a success clears the watchdog — but keeps the
@@ -430,7 +449,7 @@ export async function runGenerateJob(
       const pc = await runPrecheck({
         workspaceId,
         text: generation.sellingPoint,
-      });
+      }, transport);
       await recordUsage({
         workspaceId,
         userId: ownerId,
@@ -446,6 +465,7 @@ export async function runGenerateJob(
       // error; visual compliance still runs post-gen.
       console.warn("[generate] precheck call failed, continuing:", err);
     }
+    controller?.signal.throwIfAborted();
     await job.updateProgress(25);
 
     // P1.2 — aggregate ProhibitionRule + structured rule deltas into a
@@ -984,6 +1004,9 @@ export async function runGenerateJob(
     });
     aiConstraints = chatBrandPolicy.aiConstraints;
 
+    const studioReferences = studio ? await inlineStudioGenerationReferences(workspaceId, aiConstraints.referenceImages, controller!.signal, job.data.studioExpectedAssetSha256) : null;
+    if (studioReferences) aiConstraints = { ...aiConstraints, referenceImages: studioReferences.references };
+
     const baseFields = {
       sceneType: generation.sceneType,
       sellingPoint: generation.sellingPoint,
@@ -998,7 +1021,7 @@ export async function runGenerateJob(
       ...(constraintsEnabled() || hasExplicitPicks ? { aiConstraints } : {}),
       ...(imageSystemPrompt ? { systemPrompt: imageSystemPrompt } : {}),
     };
-    const constraintEcho = constraintsEnabled()
+    const constraintEcho = (studio || constraintsEnabled())
       ? {
           // Persist the FINAL policy-adjusted payload, not the pre-chat draft,
           // so version params prove exactly which constraints/references reached
@@ -1006,7 +1029,7 @@ export async function runGenerateJob(
           appliedNegativePrompt: aiConstraints.negativePrompt,
           appliedPromptAdditions: aiConstraints.promptAdditions,
           machineRulesApplied: aiConstraints.machineRules ?? {},
-          appliedReferenceImages: aiConstraints.referenceImages,
+          appliedReferenceImages: studioReferences ? studioReferences.audit : aiConstraints.referenceImages,
         }
       : {};
 
@@ -1019,6 +1042,21 @@ export async function runGenerateJob(
       v: GenerateResponse["versions"][number],
       index: number,
     ): Promise<string> {
+      if (studio) {
+        return stageStudioGenerationOutput(studio, { imageUrl: v.imageUrl, width: v.width, height: v.height,
+          params: { ...studioProviderParams(v.params), appliedRuleIds, appliedBrandRuleCount: appliedRuleIds.length,
+            brandConstraintMode: brandRules.length ? "BRANDED" : "FREE", sceneType, ...constraintEcho,
+            textMode: job.data.textMode ?? "direct", imageKind: "GENERATED",
+            ...(styleKeywords.length ? { styleKeywords } : {}),
+            ...(templateReferenceAssetIds.length ? { templateReferenceAssetIds } : {}),
+            ...(imageInputs.length ? { imageInputs } : {}), ...(assetUsages.length ? { assetUsages } : {}),
+            ...(watermarkOverlays.length ? { watermarkOverlays } : {}),
+            ...(legacyReferenceItems.length ? { referenceAssets: legacyReferenceItems } : {}),
+            studioPostprocess: { watermarkOverlays: resolvedOutputOverlays,
+              automaticBrandLogoAssetId: automaticBrandLogoAsset?.id ?? null, brandRules,
+              assetSha256: Object.fromEntries((studioReferences?.audit ?? []).map(item => [String(item.assetId), String(item.sha256)])) },
+          } }, index);
+      }
       // gpt-image-* returns a giant base64 data: URL. Upload it to
       // object storage and persist the resulting public URL instead of bloating
       // Postgres. Non-data URLs (e.g. mock provider hosted URLs) pass through.
@@ -1169,13 +1207,14 @@ export async function runGenerateJob(
             versionCount: 1,
             targets: [t],
           });
-          const result = GenerateResponse.parse(await ai.generate(request));
+          const result = GenerateResponse.parse(await ai.generate(request, transport));
           if (settled) {
             console.warn(
               `[generate] ${generationId} settled (timeout) after size ${t.key} AI call; discarding`,
             );
             break;
           }
+          if (studio && result.versions.length !== 1) throw new Error("Product generation must return exactly one image");
           for (const v of result.versions) {
             versionIds.push(await persist(v, index));
             index += 1;
@@ -1223,6 +1262,7 @@ export async function runGenerateJob(
         return { generationId, versionIds };
       }
       // Replacement is persisted and this run won → now safe to remove old roots.
+      if (studio) { await ensureStudioGenerationArtifacts(studio.id).catch(() => undefined); return { generationId, versionIds: [] }; }
       await dropStaleRoots();
       // Best-effort auto visual compliance AFTER SUCCEEDED is written: it's
       // optional + can be slow (VLM calls); if the watchdog fires during it, the
@@ -1240,7 +1280,7 @@ export async function runGenerateJob(
     });
     let raw: unknown;
     try {
-      raw = await ai.generate(request);
+      raw = await ai.generate(request, transport);
     } catch (genErr) {
       await recordUsage({
         workspaceId,
@@ -1287,6 +1327,7 @@ export async function runGenerateJob(
       return { generationId, versionIds };
     }
     // Replacement is persisted and this run won → now safe to remove old roots.
+    if (studio) { await ensureStudioGenerationArtifacts(studio.id).catch(() => undefined); return { generationId, versionIds: [] }; }
     await dropStaleRoots();
     // Best-effort auto visual compliance AFTER SUCCEEDED is written (see
     // multi-size path): optional + slow, must not let the watchdog flip a job

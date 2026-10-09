@@ -31,7 +31,7 @@ ASSET = re.compile(r'''["'(](\/(?:[A-Za-z0-9_.-]+\/)*[A-Za-z0-9_.-]+\.(?:js|css|
 # An exact occurrence count makes an upstream copy change fail the compiler.
 PRODUCT_STORAGE_COPY = {
     '/studio.html': [
-        ('项目和素材保存在本机，AI 与在线协作尚未接入', '项目与画布随当前品牌保存，AI 与在线协作尚未接入', 1),
+        ('项目和素材保存在本机，AI 与在线协作尚未接入', '项目与画布随品牌保存，进入项目即可编辑或提交图片生成', 1),
         ('>本地预览</span>', '>创作工作台</span>', 1),
     ],
     '/home-start-studio.js': [
@@ -48,7 +48,7 @@ PRODUCT_STORAGE_COPY = {
         ('已存到本机 ', '已保存到服务器 ', 1),
     ],
     '/m20-canvas.js': [
-        ('本地编辑 · AI 与协作未接入', '云端保存 · AI 与协作未接入', 1),
+        ('本地编辑 · AI 与协作未接入', '云端保存 · 图片生成状态见任务列表', 1),
         ('画布保存到这台电脑。', '画布随当前品牌保存到服务器。', 1),
         ('上次确认写入本机：', '上次确认写入服务器：', 1),
         ('暂时无法读取本机保存状态', '暂时无法读取服务器保存状态', 1),
@@ -58,7 +58,7 @@ PRODUCT_STORAGE_COPY = {
         ('可继续本地编辑，画布保存状态请看顶部。', '可继续编辑，画布保存状态请看顶部。', 2),
     ],
     '/m14-canvas.js': [
-        ('AI 与协作未接入 · 支持本地编辑', 'AI 与协作未接入 · 支持编辑与云端保存', 1),
+        ('AI 与协作未接入 · 支持本地编辑', '支持编辑、云端保存与图片生成 · 实时协作暂未接入', 1),
         ('线上服务提示不代表本地保存失败。', 'AI 服务提示不代表画布保存失败。', 1),
         ('确认本地预览服务仍在运行。', '请检查网络和工作台服务后重试。', 1),
         ('最近一次确认写入本机的时间', '最近一次确认写入服务器的时间', 1),
@@ -96,6 +96,22 @@ def main():
             before = 'async uploadAndInsertImages(e,t){let a='
             assert text.count(before) == 1, 'Native resource upload boundary changed'
             text = text.replace(before, 'async uploadAndInsertImages(e,t){if(window.__NOVART_PRODUCT__)return window.NovartProductMaterials.uploadAndInsert(e,t);let a=')
+            before = 'async function p(e,t,a){try{let{noBotDetector:r,onSubmitBefore:c,onSubmitAfter:d,...p}=a||{};'
+            assert text.count(before) == 1, 'Native composer submit boundary changed'
+            text = text.replace(before, 'async function p(e,t,a){if(window.__NOVART_PRODUCT__)return window.NovartProductGeneration.submit(e,t);try{let{noBotDetector:r,onSubmitBefore:c,onSubmitAfter:d,...p}=a||{};')
+            before = 'async sendChatMessage(e,t,a){let{insufficientQuotaCheck:r=!0,'
+            assert text.count(before) == 1, 'Native chat manager boundary changed'
+            text = text.replace(before, 'async sendChatMessage(e,t,a){if(window.__NOVART_PRODUCT__)return window.NovartProductGeneration.submit(e,t);let{insufficientQuotaCheck:r=!0,')
+            before = 'sendGeneratorMessage(e,t,a){let{onBeforeRequest:i,onAfterRequest:r,'
+            assert text.count(before) == 1, 'Native generator boundary changed'
+            text = text.replace(before, 'sendGeneratorMessage(e,t,a){if(window.__NOVART_PRODUCT__)return window.NovartProductGeneration.unsupported();let{onBeforeRequest:i,onAfterRequest:r,')
+        if url_path == '/m6-workflow.js':
+            before = "const payload=()=>({projectId,revision:state.revision,mode:state.mode,target:state.target,references:state.references});"
+            assert text.count(before) == 1, 'Workflow read-only snapshot boundary changed'
+            text = text.replace(before, before + "\n  window.NovartProductWorkflowSnapshot=()=>({loaded,busy,dirty,stale,...(state?JSON.parse(JSON.stringify(payload())):{})});")
+            before = '仅保存素材设置，AI 尚未接入。'
+            assert text.count(before) == 1, 'Workflow help copy changed'
+            text = text.replace(before, '先保存用途，再从输入框生成；适配与仅参考可参与生成。')
         if url_path == '/home-start-studio.js':
             before = 'const payload = clone(savedState);'
             assert text.count(before) == 1
@@ -186,6 +202,8 @@ def main():
     write('/novart-product-bootstrap.js', ('window.__NOVART_ASSET_MAP__=' + mapping + ';\n' + bootstrap).encode(), 'application/javascript; charset=utf-8')
     materials = (REPO / 'deploy/novart/studio/novart-product-materials.js').read_bytes()
     write('/novart-product-materials.js', materials, 'application/javascript; charset=utf-8')
+    generation = (REPO / 'deploy/novart/studio/novart-product-generation.js').read_bytes()
+    write('/novart-product-generation.js', generation, 'application/javascript; charset=utf-8')
     worker = '''const assets=MAP;
 self.addEventListener('install', event=>event.waitUntil(self.skipWaiting()));
 self.addEventListener('activate', event=>event.waitUntil(self.clients.claim()));

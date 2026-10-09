@@ -4,14 +4,11 @@ import { ApiException } from "./api";
 import { requireWorkspaceRole } from "./workspace";
 import { workflowAssets, workflowIssues, assertWorkflowSelection } from "./studio-workflow-codec";
 import { inspectEditorDocument } from "./editor-document-codec";
+import { listStudioProjectMaterials } from "./studio-project-materials";
 
 type Db = Prisma.TransactionClient;
 const projectQuery = NativeProjectQueryInput.pick({ projectId: true });
 const conflict = () => new ApiException(409, "素材设置已被其他页面更新。当前选择仍保留，请读取最新设置后检查。");
-const materialWhere = (workspaceId: string, projectId: string) => ({
-  workspaceId, projectId, task: { status: "SUCCEEDED" as const },
-  asset: { workspaceId, deprecatedAt: null, projectLinks: { some: { projectId, project: { workspaceId } } } },
-});
 const stateSelect = { workspaceId: true, workflowRevision: true, workflowMode: true,
   workflowTarget: true, workflowReferences: true, workflowUpdatedAt: true } satisfies Prisma.WorkbenchProjectStateSelect;
 type WorkflowRow = Prisma.WorkbenchProjectStateGetPayload<{ select: typeof stateSelect }>;
@@ -37,24 +34,9 @@ async function assets(db: Db, workspaceId: string, projectId: string) {
   }
   if (!doc?.canvas) return workflowAssets(projectId, "", []);
   const { urls } = inspectEditorDocument(doc.canvas);
-  const prefix = `/api/workspaces/${workspaceId}/assets/`;
-  const ids = urls.filter(url => url.startsWith(prefix) && url.endsWith("/raw"))
-    .map(url => url.slice(prefix.length, -4)).filter(id => /^[a-zA-Z0-9_-]{1,128}$/.test(id));
-  const scope = materialWhere(workspaceId, projectId);
   // The document codec bounds distinct resource URLs. Filter by those exact
   // IDs/URLs rather than truncating a user's larger material library.
-  const rows = urls.length ? await db.studioMaterialUpload.findMany({
-    where: { ...scope, asset: { ...scope.asset, OR: [{ id: { in: ids } }, { url: { in: urls } }] } },
-    select: { sha256: true, mimeType: true, asset: { select: { id: true, url: true } } },
-    orderBy: [{ createdAt: "asc" }, { taskId: "asc" }],
-  }) : [];
-  const materials = rows.flatMap(row => {
-    if (!row.asset || !/^[a-f0-9]{64}$/.test(row.sha256) || !["image/png", "image/jpeg", "image/webp"].includes(row.mimeType)) return [];
-    const raw = `/api/workspaces/${workspaceId}/assets/${row.asset.id}/raw`;
-    // Both entries come from the same authenticated Asset row. No basename,
-    // URL hash or client-supplied digest can establish ownership.
-    return [...new Set([raw, row.asset.url].filter(Boolean))].map(url => ({ sha256: row.sha256, mimeType: row.mimeType, url }));
-  });
+  const materials = await listStudioProjectMaterials(db, workspaceId, projectId, urls);
   return workflowAssets(projectId, doc?.canvas ?? "", materials);
 }
 
@@ -114,8 +96,7 @@ export async function studioWorkflowImage(workspaceId: string, userId: string, r
   StudioWorkflowTarget.shape.assetSha256.parse(sha256);
   await requireWorkspaceRole(workspaceId, userId, "VIEWER");
   await projectExists(prisma, workspaceId, projectId);
-  const row = await prisma.studioMaterialUpload.findFirst({ where: { ...materialWhere(workspaceId, projectId), sha256 },
-    select: { asset: { select: { id: true } } }, orderBy: [{ createdAt: "asc" }, { taskId: "asc" }] });
-  if (!row?.asset) throw new ApiException(404, "项目素材不存在或已不可用。");
-  return `/api/workspaces/${encodeURIComponent(workspaceId)}/assets/${encodeURIComponent(row.asset.id)}/raw`;
+  const material = (await listStudioProjectMaterials(prisma, workspaceId, projectId, undefined, sha256)).find(row => row.sha256 === sha256);
+  if (!material) throw new ApiException(404, "项目素材不存在或已不可用。");
+  return `/api/workspaces/${encodeURIComponent(workspaceId)}/assets/${encodeURIComponent(material.assetId)}/raw`;
 }

@@ -23,7 +23,9 @@ import { createSummarizeWorker } from "./summarize.worker";
 import { createDecomposeWorker } from "./decompose.worker";
 import { createImagePreviewWorker } from "./image-preview.worker";
 import { createStudioMaterialWorker } from "./studio-materials.worker";
+import { createStudioGenerationArtifactWorker } from "./studio-generation-artifacts.worker";
 import { sweepStaleGenerations } from "@/lib/generations";
+import { dispatchStudioGenerations } from "@/lib/studio-generation";
 import { queuePrefix } from "@/lib/queue";
 import {
   REQUIRED_AI_GENERATION_REVISION,
@@ -82,6 +84,7 @@ try {
     createDecomposeWorker(),
     createImagePreviewWorker(),
     createStudioMaterialWorker(),
+    createStudioGenerationArtifactWorker(),
   );
   workersReady = true;
   console.log(`[workers] started: ${workers.length} worker(s)`);
@@ -110,6 +113,20 @@ try {
       .catch((e) => console.error("[sweep] failed:", e));
   void sweep();
   setInterval(sweep, 5 * 60_000).unref();
+
+  // Product requests are durable before Redis enqueue. Recover lost queue
+  // delivery after a web crash/Redis outage without issuing a second paid call.
+  // The actual DB provider claim lives in the generation processor.
+  let dispatchingStudio = false;
+  const dispatchStudio = async () => {
+    if (dispatchingStudio) return;
+    dispatchingStudio = true;
+    try { await dispatchStudioGenerations(); }
+    catch { console.error("[studio-generation] outbox recovery unavailable"); }
+    finally { dispatchingStudio = false; }
+  };
+  void dispatchStudio();
+  setInterval(() => { void dispatchStudio(); }, 15_000).unref();
 
   // CDS bind-mounts the branch worktree into this long-lived process. A pull
   // can therefore replace source files without recreating the container.

@@ -1,4 +1,4 @@
-import { prisma } from "@brandai/db";
+import { prisma, type Prisma } from "@brandai/db";
 import type { ReferenceImage, VI } from "@brandai/contracts";
 import { ApiException } from "@/lib/api";
 
@@ -10,10 +10,11 @@ import { ApiException } from "@/lib/api";
 export async function assertExampleAssetsInWorkspace(
   wsId: string,
   ids: Array<string | null | undefined>,
+  client: Prisma.TransactionClient | typeof prisma = prisma,
 ): Promise<void> {
   const present = [...new Set(ids.filter((x): x is string => !!x))];
   if (present.length === 0) return;
-  const rows = await prisma.asset.findMany({
+  const rows = await client.asset.findMany({
     where: { id: { in: present } },
     select: { id: true, workspaceId: true },
   });

@@ -1,4 +1,4 @@
-import { prisma } from "@brandai/db";
+import { prisma, type Prisma } from "@brandai/db";
 import type { BrandRule } from "@brandai/contracts";
 
 /**
@@ -32,16 +32,18 @@ export async function getConfirmedRules(
      * Library maintenance (snapshots/restore) intentionally keeps the default
      * false so disabling application never hides or destroys stored rules. */
     respectKitAvailability?: boolean;
+    client?: Prisma.TransactionClient;
   } = {},
 ): Promise<BrandRule[]> {
+  const db = options.client ?? prisma;
   if (options.respectKitAvailability) {
-    const workspace = await prisma.brandWorkspace.findUnique({
+    const workspace = await db.brandWorkspace.findUnique({
       where: { id: workspaceId },
       select: { tags: true },
     });
     if (!workspace || workspace.tags.includes("__kb_disabled")) return [];
   }
-  const rows = await prisma.brandRule.findMany({
+  const rows = await db.brandRule.findMany({
     where: { workspaceId, status: "CONFIRMED" },
     orderBy:
       options.order === "recency"

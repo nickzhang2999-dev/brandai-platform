@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ZodError } from "zod";
-const f = vi.hoisted(() => ({ session: vi.fn(), read: vi.fn(), assets: vi.fn(), save: vi.fn(), image: vi.fn(), upload: vi.fn(), task: vi.fn(), materials: vi.fn() }));
+const f = vi.hoisted(() => ({ session: vi.fn(), read: vi.fn(), assets: vi.fn(), save: vi.fn(), image: vi.fn(), upload: vi.fn(), task: vi.fn(), materials: vi.fn(), generate: vi.fn(), generation: vi.fn(), retryArchive: vi.fn() }));
 vi.mock("../../../apps/web/src/lib/api", () => ({ ApiException: class extends Error { constructor(public status: number, message: string) { super(message); } } }));
 vi.mock("../../../apps/web/src/lib/studio-session", () => ({ studioSession: f.session }));
 vi.mock("../../../apps/web/src/lib/studio-assets", () => ({ studioAsset: vi.fn(), studioHtml: vi.fn() }));
@@ -8,6 +8,8 @@ vi.mock("../../../apps/web/src/lib/editor-documents", () => ({ readEditorDocumen
 vi.mock("../../../apps/web/src/lib/studio-state", () => ({}));
 vi.mock("../../../apps/web/src/lib/studio-workflow", () => ({ readStudioWorkflow: f.read, readStudioWorkflowAssets: f.assets, saveStudioWorkflow: f.save, studioWorkflowImage: f.image }));
 vi.mock("../../../apps/web/src/lib/studio-materials", () => ({ submitStudioMaterial: f.upload, readStudioMaterialUpload: f.task, listStudioMaterials: f.materials }));
+vi.mock("../../../apps/web/src/lib/studio-generation", () => ({ submitStudioGeneration: f.generate, readStudioGeneration: f.generation }));
+vi.mock("../../../apps/web/src/lib/studio-generation-artifacts", () => ({ retryStudioGenerationArtifacts: f.retryArchive }));
 import { studioRoute } from "../../../apps/web/src/lib/studio-route";
 
 const base = "http://127.0.0.1:3000";
@@ -18,6 +20,8 @@ beforeEach(() => {
   f.read.mockResolvedValue({ revision: 1 }); f.assets.mockResolvedValue({ assets: [] }); f.save.mockResolvedValue({ revision: 2 });
   f.image.mockResolvedValue("/api/workspaces/server-workspace/assets/a/raw");
   f.upload.mockResolvedValue({ taskId: "task", status: "PENDING" }); f.task.mockResolvedValue({ tasks: [] }); f.materials.mockResolvedValue([]);
+  f.generate.mockResolvedValue({ requestId: "gen", status: "PENDING" });
+  f.generation.mockResolvedValue({ requestId: "gen", status: "SUCCEEDED", resultState: "PENDING", results: [] });
 });
 const request = (path: string, body?: unknown) => new Request(base + path, body === undefined ? {} : {
   method: "POST", headers: { origin: base, "content-type": "application/json" }, body: JSON.stringify(body),
@@ -51,6 +55,35 @@ describe("authenticated workflow and material routes", () => {
     expect(f.task).toHaveBeenLastCalledWith("server-workspace", "server-user", { projectId: "p", taskId: "task" });
     await studioRoute(request("/studio/material-upload?projectId=p"));
     expect(f.task).toHaveBeenLastCalledWith("server-workspace", "server-user", { projectId: "p" });
+  });
+  it("accepts generation with server identity and rejects a cross-origin paid action", async () => {
+    const body = { projectId: "p", mutationId: "mutation", prompt: "A new image" };
+    const response = await studioRoute(request("/studio/generation", body));
+    expect(response.status).toBe(202); expect(await response.json()).toEqual({ requestId: "gen", status: "PENDING" });
+    expect(f.generate).toHaveBeenCalledWith("server-workspace", "server-user", body);
+    f.generate.mockClear();
+    const crossOrigin = new Request(base + "/studio/generation", { method: "POST", headers: { origin: "https://other.invalid", "content-type": "application/json" }, body: JSON.stringify(body) });
+    expect((await studioRoute(crossOrigin)).status).toBe(403); expect(f.generate).not.toHaveBeenCalled();
+  });
+  it("looks up generation by server scope and does not forward query-supplied identity", async () => {
+    await studioRoute(request("/studio/generation?projectId=p&requestId=gen&userId=victim&workspaceId=other"));
+    expect(f.generation).toHaveBeenLastCalledWith("server-workspace", "server-user", { projectId: "p", requestId: "gen" });
+    await studioRoute(request("/studio/generation?projectId=p"));
+    expect(f.generation).toHaveBeenLastCalledWith("server-workspace", "server-user", { projectId: "p" });
+  });
+  it("archive retry returns a complete refreshed receipt and never invokes generation", async () => {
+    const body = { projectId: "p", requestId: "gen" };
+    const response = await studioRoute(request("/studio/generation/retry-archive", body));
+    expect(response.status).toBe(202); expect(await response.json()).toMatchObject({ requestId: "gen", status: "SUCCEEDED", resultState: "PENDING" });
+    expect(f.retryArchive).toHaveBeenCalledWith("server-workspace", "server-user", body);
+    expect(f.generation).toHaveBeenCalledWith("server-workspace", "server-user", body);
+    expect(f.generate).not.toHaveBeenCalled();
+  });
+  it("does not return a successful retry receipt when archive authorization fails", async () => {
+    f.retryArchive.mockRejectedValueOnce(new Error("private detail"));
+    const response = await studioRoute(request("/studio/generation/retry-archive", { projectId: "p", requestId: "gen" }));
+    expect(response.status).toBe(503); expect(await response.text()).not.toContain("private detail");
+    expect(f.generation).not.toHaveBeenCalled(); expect(f.generate).not.toHaveBeenCalled();
   });
   it("returns only the authorized same-origin image proxy with no-store headers", async () => {
     const response = await studioRoute(request(`/workflow/image/${sha}?projectId=p`));

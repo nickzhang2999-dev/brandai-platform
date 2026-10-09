@@ -9,6 +9,8 @@ import { readEditorDocument } from "./editor-documents";
 import * as state from "./studio-state";
 import { readStudioWorkflow, readStudioWorkflowAssets, saveStudioWorkflow, studioWorkflowImage } from "./studio-workflow";
 import { submitStudioMaterial, readStudioMaterialUpload, listStudioMaterials } from "./studio-materials";
+import { submitStudioGeneration, readStudioGeneration } from "./studio-generation";
+import { retryStudioGenerationArtifacts } from "./studio-generation-artifacts";
 const headers = { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "Referrer-Policy": "same-origin" };
 const json = (data: unknown, status = 200) => Response.json(data, { status, headers });
 
@@ -55,11 +57,13 @@ export async function studioRoute(req: Request) {
         case "/studio/materials": return json(await listStudioMaterials(workspaceId, user.id, project));
         case "/studio/material-upload": return json(await readStudioMaterialUpload(workspaceId, user.id,
           { ...project, ...(url.searchParams.has("taskId") ? { taskId: url.searchParams.get("taskId") } : {}) }));
+        case "/studio/generation": return json(await readStudioGeneration(workspaceId, user.id,
+          { ...project, ...(url.searchParams.has("requestId") ? { requestId: url.searchParams.get("requestId") } : {}) }));
       }
     }
     if (req.method === "POST") {
       if (pathname === "/studio/material-upload") return json(await submitStudioMaterial(workspaceId, user.id, req), 202);
-      if (!['/studio/state', '/compare/api/create', '/compare/api/context', '/studio/project-archive', '/studio/draft', '/workflow'].includes(pathname)) throw new ApiException(503, "此功能正在接入，内容仍保留在当前页面。");
+      if (!['/studio/state', '/compare/api/create', '/compare/api/context', '/studio/project-archive', '/studio/draft', '/workflow', '/studio/generation', '/studio/generation/retry-archive'].includes(pathname)) throw new ApiException(503, "此功能正在接入，内容仍保留在当前页面。");
       const body = await readWorkbenchJson(req, 270 * 1024);
       switch (pathname) {
         case "/studio/state": return json(await state.saveStudioState(workspaceId, user.id, body));
@@ -68,6 +72,11 @@ export async function studioRoute(req: Request) {
         case "/studio/project-archive": return json(await state.archiveStudioProject(workspaceId, user.id, body));
         case "/studio/draft": return json(await state.saveStudioDraft(workspaceId, user.id, body));
         case "/workflow": return json(await saveStudioWorkflow(workspaceId, user.id, body));
+        case "/studio/generation": return json(await submitStudioGeneration(workspaceId, user.id, body), 202);
+        case "/studio/generation/retry-archive": {
+          await retryStudioGenerationArtifacts(workspaceId, user.id, body);
+          return json(await readStudioGeneration(workspaceId, user.id, body), 202);
+        }
       }
     }
     if (/^\/(studio|workflow|compare)(?:\/|$)/.test(pathname)) throw new ApiException(503, "此功能正在接入，尚未提交操作。请保留当前内容。");

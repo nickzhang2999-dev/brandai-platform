@@ -20,7 +20,7 @@ First-product journey: sign in -> create/select brand -> create/open project -> 
    - Done: one usable public entry, login/logout and brand selection work, new pushes cannot start writes on company shared infrastructure.
 2. [in_progress] Serve the reviewed frontend as the product entry and connect its pages.
    - Reuse current home, brand, project library, material library and canvas UI. Bind real user/workspace/project state, navigation, refresh and deep links. Replace preview-only identity/file-state paths at this boundary.
-   - Current: reviewed UI build-time export produces 122 hashed assets without project data. Authenticated shell/bootstrap, projects, state, drafts, materials and workflow are implemented locally. Deployed native query/save/list/rename endpoints retain the earlier 33 HTTP/DB and 13 public checks; the latest complete UI/database journey is still pending CI. Exported files or API tests do not complete page integration.
+   - Current: reviewed UI build-time export produces 123 hashed assets without project data. Authenticated shell/bootstrap, projects, state, drafts, materials, workflow and generation are implemented locally. Deployed native query/save/list/rename endpoints retain the earlier 33 HTTP/DB and 13 public checks; the latest complete UI/database journey is still pending CI. Exported files or API tests do not complete page integration.
    - Done: home -> project -> canvas -> project library is coherent, refresh retains the current real project, account/brand changes do not leak state.
 3. [in_progress] Connect essential brand/project/material data.
    - Reuse workspace/project/brand-rule/upload APIs; configure isolated object storage; connect create/list/rename/archive, upload and material selection.
@@ -29,8 +29,9 @@ First-product journey: sign in -> create/select brand -> create/open project -> 
 4. [in_progress] Connect complete canvas persistence.
    - Bind the implemented native document session to the actual editor. Retain existing text, shapes, pen, image and layer interactions; do not add editor tools during this step.
    - Done: mixed-content edit -> save -> close -> reopen preserves the document and material references; failed restore/save, read-only state and conflicts produce actionable UI and never silently overwrite content.
-5. [pending] Complete the real generation loop.
+5. [in_progress] Complete the real generation loop.
    - Connect prompt + references + brand rules -> existing backend job/worker -> status -> generated asset -> canvas. Configure actual providers and storage; distinguish unavailable services from successful generation.
+   - Current: local intake/outbox/single-provider-claim/private-output/archive/native-insertion flow is implemented. L1 529, AI/Python 262, typecheck and build pass. Isolated task recovery and PNG single/frame export pass. Real DB/S3/provider acceptance, post-generation visual compliance and unresolved release prerequisites remain pending.
    - Done: at least one real generation flows end to end, its result remains after reopen and can be exported; errors finish with clear retry/recovery rather than an endless spinner. Existing edit/layer capabilities are mapped explicitly; unconnected capabilities are not presented as working.
 6. [pending] First-product acceptance and handoff.
    - Run the complete journey above with real login/storage/provider, plus essential desktop/laptop viewport and failure-recovery checks. Complete required repository gates and deploy the exact tested commit.
@@ -43,9 +44,9 @@ First-product journey: sign in -> create/select brand -> create/open project -> 
 - Keep known missing capabilities in the backlog; do not silently delete them to make the completion rate look better.
 
 ## Next execution checkpoint
-Independent login/persistence passed on ec5ff74 and 8474347; TODO 1 is reopened for release isolation. Continue TODO 2 and its native persistence boundary: bind the reviewed frontend entry to actual account/workspace/project state. No additional visual refinement before the integrated main journey works. Check items only against the explicit done criteria; API existence or a running container alone does not complete a product feature.
+Independent login/persistence passed on ec5ff74 and 8474347; TODO 1 remains reopened for release isolation. Current local candidate binds the reviewed shell/canvas, durable upload, workflow references and the supported generation slice. Continue post-generation compliance and recovery work while safe publishing and actual provider/storage configuration are pending. Then run the full real DB/S3/UI/provider journey against the exact commit and images. No additional visual refinement before that main journey works. Check items only against explicit done criteria; API existence or a running container alone does not complete a feature.
 
-Current candidate binds `/studio` and `/canvas` to real identity, brand, projects, context, favorites, preferences and drafts. Isolated native startup diagnosis passes; actual database/UI acceptance and deployment remain the active checkpoint. Upload/material persistence and AI are still pending and are visibly unavailable in this increment. User explicitly requested three parallel agents; split tests, UI acceptance and build wiring while running memory-intensive local checks sequentially.
+Three parallel agents completed generation intake/worker, private result archive/review and native composer/export. Root integrated routes, shared deadlines and the gated real-HTTP test harness, and ran heavy local checks sequentially after memory-pressure failures. All four local gates pass; real-service CI and deployment are still pending. Current production UI must explicitly reject unsupported EXACT/modify/custom-ratio/SVG-logo paths rather than silently change their meaning.
 
 ### End-of-day handoff · 2026-10-08
 - User explicitly asked to stop for the day and continue tomorrow. Do not start further implementation or deployments until resumed.
@@ -71,8 +72,8 @@ Current candidate binds `/studio` and `/canvas` to real identity, brand, project
 ### Launch execution batches · user authorized 2026-10-09
 1. [in_progress] Persistent image slice: implementation, source tests and isolated native UI diagnosis complete; real DB/S3/worker/UI CI pending. Includes bounded durable upload, same-origin image reads, workflow references, original canvas insertion and native save/restore. Latest local gates: L1 431, AI/Python 253, typecheck and build pass.
 2. [in_progress] Deployment prerequisites: inspect independent storage/provider metadata; prepare necessary isolated configuration; document CDS-specific issues separately from application/configuration errors. No copying company keys or data.
-3. [pending] Real generation slice: original composer/task adapter to existing queue/worker, references + confirmed brand rules, observable terminal states, real result insertion and persistence. Configure actual provider before acceptance; no fake successes.
-4. [pending] Product completion: materials/library/project context, image draft references, original-canvas export, failure recovery, account/role/tenant isolation, essential responsive checks and frontend/backend comparison.
+3. [in_progress] Real generation slice: intake, shared preparation, provider-once worker, private-output archive, native composer/tasks and result insertion implemented. Local gates: L1 529, AI/Python 262, typecheck/build; isolated native interaction passes. Next: post-generation compliance, configured real provider/storage and real database/worker/UI acceptance. No paid model was called for these local checks.
+4. [in_progress] Product completion: single-image and frame PNG export pass full-pixel isolated checks, including fresh-context reopen. Real DB/S3 export, additional supported formats/transforms, materials/library/project context, cross-page task recovery, account/role/tenant isolation, essential responsive checks and frontend/backend comparison remain.
 5. [pending] Release: resolve company webhook routing safely, required gates + actual DB/S3/UI + immutable image verification, independent exact-SHA deployment, public interaction/health checks and rollback-ready handoff.
 - Work continues on independent code while deployment/provider blockers remain. Update logs after every batch and record concrete blocked dependencies rather than marking incomplete work complete.
 

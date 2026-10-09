@@ -24,3 +24,5 @@ export * from "./native-project";
 export * from "./workbench-shell";
 export * from "./studio-materials";
 export * from "./studio-workflow";
+
+export * from "./studio-generation";

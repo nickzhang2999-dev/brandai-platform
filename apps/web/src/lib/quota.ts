@@ -74,8 +74,8 @@ export function effectiveAdmin(
  * needing to seed a Subscription per admin. ENTERPRISE Plan row defaults to
  * -1 / -1 (unlimited) — see seed.ts.
  */
-export async function resolvePlan(userId: string): Promise<ResolvedPlan> {
-  const sub = await prisma.subscription.findUnique({
+export async function resolvePlan(userId: string, client: Prisma.TransactionClient = prisma): Promise<ResolvedPlan> {
+  const sub = await client.subscription.findUnique({
     where: { userId },
     include: { plan: true },
   });
@@ -90,13 +90,13 @@ export async function resolvePlan(userId: string): Promise<ResolvedPlan> {
     };
   }
 
-  const user = await prisma.user.findUnique({
+  const user = await client.user.findUnique({
     where: { id: userId },
     select: { email: true, isAdmin: true },
   });
 
   if (user && effectiveAdmin(user.email, user.isAdmin)) {
-    const enterprise = await prisma.plan.findUnique({
+    const enterprise = await client.plan.findUnique({
       where: { tier: "ENTERPRISE" },
     });
     return {
@@ -109,7 +109,7 @@ export async function resolvePlan(userId: string): Promise<ResolvedPlan> {
     };
   }
 
-  const starter = await prisma.plan.findUnique({
+  const starter = await client.plan.findUnique({
     where: { tier: "STARTER" },
   });
   return {
@@ -122,8 +122,8 @@ export async function resolvePlan(userId: string): Promise<ResolvedPlan> {
   };
 }
 
-async function ownedWorkspaceIds(userId: string): Promise<string[]> {
-  const rows = await prisma.brandWorkspace.findMany({
+async function ownedWorkspaceIds(userId: string, client: Prisma.TransactionClient = prisma): Promise<string[]> {
+  const rows = await client.brandWorkspace.findMany({
     where: { ownerId: userId },
     select: { id: true },
   });
@@ -139,8 +139,9 @@ async function ownedWorkspaceIds(userId: string): Promise<string[]> {
  */
 export async function getWorkspaceOwnerId(
   workspaceId: string,
+  client: Prisma.TransactionClient = prisma,
 ): Promise<string> {
-  const ws = await prisma.brandWorkspace.findUnique({
+  const ws = await client.brandWorkspace.findUnique({
     where: { id: workspaceId },
     select: { ownerId: true },
   });
@@ -383,6 +384,23 @@ export async function reserveGenerationQuota(args: {
     },
     { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
   );
+}
+
+/** Product receipt + generation + owner quota share the caller's serializable
+ * transaction, including unlimited plans. Never commit a quota reservation on
+ * its own when the durable receipt fails. */
+export async function reserveGenerationQuotaInTransaction(tx: Prisma.TransactionClient, args: {
+  workspaceId: string; make: () => Prisma.GenerationCreateManyInput;
+}): Promise<{ id: string }> {
+  const ownerId = await getWorkspaceOwnerId(args.workspaceId, tx);
+  const plan = await resolvePlan(ownerId, tx);
+  if (quotaEnabled()) {
+    const wsIds = await ownedWorkspaceIds(ownerId, tx);
+    const usage = await countOwnerUsage(tx, wsIds, plan.periodStart);
+    const decision = evaluateGenerationQuota(plan, usage, 1);
+    if (!decision.ok) throw denyToException(plan.tier, decision);
+  }
+  return tx.generation.create({ data: args.make(), select: { id: true } });
 }
 
 /**
