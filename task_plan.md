@@ -1,7 +1,7 @@
 # Novart product integration
 
 ## Goal and scope
-Integrate the reviewed Novart frontend with reusable company backend code in `claude/novart-product-integration`, then assess frontend/backend differences against the original. Keep the deployed review branch and main unchanged. No production release or merge is authorized by this task.
+Deliver a launch-ready Novart product on `claude/novart-product-integration`: integrate the reviewed UI with reusable company backend services, verify real persistent materials/generation/save/reopen/export, deploy the exact tested version to the independent environment, and assess differences against company source. User explicitly requested this goal, autonomous routine approvals, multiple agents and logs on 2026-10-09. Preserve company main and shared business data; switching the existing production domain or merging main needs a concrete target and explicit release decision. Platform-enforced human approval cannot be bypassed.
 
 ## Baselines
 - Company local and remote main, verified at integration start: `e99919a64cd212d5d1b083fd7210842a1962d935`.
@@ -20,12 +20,13 @@ First-product journey: sign in -> create/select brand -> create/open project -> 
    - Done: one usable public entry, login/logout and brand selection work, new pushes cannot start writes on company shared infrastructure.
 2. [in_progress] Serve the reviewed frontend as the product entry and connect its pages.
    - Reuse current home, brand, project library, material library and canvas UI. Bind real user/workspace/project state, navigation, refresh and deep links. Replace preview-only identity/file-state paths at this boundary.
-   - Current: reviewed UI build-time export produces 119 hashed assets without project data. Native query/save/list/rename compatibility endpoints deployed and verified through real HTTP/DB (33 checks repeated in built images; 13 public checks). Authenticated shell/bootstrap and the remaining UI endpoints still pending. Exported files or API tests do not complete page integration.
+   - Current: reviewed UI build-time export produces 122 hashed assets without project data. Authenticated shell/bootstrap, projects, state, drafts, materials and workflow are implemented locally. Deployed native query/save/list/rename endpoints retain the earlier 33 HTTP/DB and 13 public checks; the latest complete UI/database journey is still pending CI. Exported files or API tests do not complete page integration.
    - Done: home -> project -> canvas -> project library is coherent, refresh retains the current real project, account/brand changes do not leak state.
-3. [pending] Connect essential brand/project/material data.
+3. [in_progress] Connect essential brand/project/material data.
    - Reuse workspace/project/brand-rule/upload APIs; configure isolated object storage; connect create/list/rename/archive, upload and material selection.
+   - 2026-10-09: durable native image upload and persisted workflow references implemented/in integration. Source tests and isolated UI diagnostics are distinct from the pending real storage/database CI. Independent runtime still lacks actual storage/provider configuration.
    - Done: uploaded material survives refresh/relogin, works as a canvas/reference image, and remains scoped to the correct brand/project. Brand rules used by generation are real persisted values.
-4. [pending] Connect complete canvas persistence.
+4. [in_progress] Connect complete canvas persistence.
    - Bind the implemented native document session to the actual editor. Retain existing text, shapes, pen, image and layer interactions; do not add editor tools during this step.
    - Done: mixed-content edit -> save -> close -> reopen preserves the document and material references; failed restore/save, read-only state and conflicts produce actionable UI and never silently overwrite content.
 5. [pending] Complete the real generation loop.
@@ -67,6 +68,14 @@ Current candidate binds `/studio` and `/canvas` to real identity, brand, project
 - Release remains held: CDS delivery records show the same f968f1a skipped at 09:50:08.293Z then dispatched at 09:50:08.791Z. A skipped receipt or hasMore=false does not prove that future/repeated delivery cannot happen. No push, new images or deployment in this iteration.
 - Next implementation: single-image upload -> persisted company Asset -> authenticated same-origin raw -> native document save -> fresh-session restore. Reuse existing upload/storage/ProjectAsset APIs; audit storage configured semantics before relying on environment fallback. Provider generation follows this material chain.
 
+### Launch execution batches · user authorized 2026-10-09
+1. [in_progress] Persistent image slice: implementation, source tests and isolated native UI diagnosis complete; real DB/S3/worker/UI CI pending. Includes bounded durable upload, same-origin image reads, workflow references, original canvas insertion and native save/restore. Latest local gates: L1 431, AI/Python 253, typecheck and build pass.
+2. [in_progress] Deployment prerequisites: inspect independent storage/provider metadata; prepare necessary isolated configuration; document CDS-specific issues separately from application/configuration errors. No copying company keys or data.
+3. [pending] Real generation slice: original composer/task adapter to existing queue/worker, references + confirmed brand rules, observable terminal states, real result insertion and persistence. Configure actual provider before acceptance; no fake successes.
+4. [pending] Product completion: materials/library/project context, image draft references, original-canvas export, failure recovery, account/role/tenant isolation, essential responsive checks and frontend/backend comparison.
+5. [pending] Release: resolve company webhook routing safely, required gates + actual DB/S3/UI + immutable image verification, independent exact-SHA deployment, public interaction/health checks and rollback-ready handoff.
+- Work continues on independent code while deployment/provider blockers remain. Update logs after every batch and record concrete blocked dependencies rather than marking incomplete work complete.
+
 ## Validation
 Required before push: `pnpm test`, `pnpm test:ai`, `pnpm -F web typecheck`, `pnpm -F web build`. API/database tests must cover workspace authorization, stale revisions, complete document round-trips and asset ownership. Source existence and mock interaction tests do not count as real AI provider acceptance. User forbids Computer Use; do not use it. Record any unavailable runtime validation honestly.
 
@@ -82,4 +91,4 @@ Required before push: `pnpm test`, `pnpm test:ai`, `pnpm -F web typecheck`, `pnp
 - Windows AI test runner requires Git Bash as npm script_shell; resolved without changing the project script. Service mock alias initially reached real Prisma; corrected test target and reran.
 - Deployment steering: user requested current integration branch on CDS. Prebuilt images and real DB tests passed for b124ef1. Dedicated project creation requires approval (403 with original scoped key).
 - IMPORTANT: original project auto-deploy picked up both pushes and used shared infra. Additive document migration and seed ran. The integration branch is now stopped; main code/services unchanged. Do not push again until automated branch routing is resolved. Preserve audit in docs/novart-product-integration.md and avoid blind data rollback.
-- Independent CDS project 98cfea6cdcbd now runs ec5ff74 with separate infrastructure; proxy-origin repair and public document save/reopen passed. Deployment guard is a verified temporary webhook pause, not a permanent branch exclusion. Frontend binding remains unaccepted.
+- Historical deployment: independent CDS project 98cfea6cdcbd first ran ec5ff74 and later 8474347 with separate infrastructure. The temporary company webhook pause was subsequently proven unsafe on 2026-10-08 when delayed deployment followed restoration; it is not an accepted guard. Full frontend binding remains unaccepted.

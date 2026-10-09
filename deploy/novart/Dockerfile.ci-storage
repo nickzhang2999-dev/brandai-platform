@@ -1,0 +1,18 @@
+# Disposable, loopback-only CI storage. Never publish or deploy this as product infrastructure.
+# Official security release: https://github.com/minio/minio/releases/tag/RELEASE.2025-10-15T17-29-55Z
+# The upstream repository is archived; production storage needs a maintained provider.
+FROM golang:1.24.8-bookworm AS build
+WORKDIR /src
+RUN git init . \
+ && git remote add origin https://github.com/minio/minio.git \
+ && git fetch --depth 1 origin 9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a \
+ && git checkout --detach FETCH_HEAD \
+ && test "$(git rev-parse HEAD)" = 9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a
+RUN CGO_ENABLED=0 go build -trimpath -o /minio . \
+ && mkdir -p /runtime/tmp /runtime/data
+FROM scratch
+COPY --from=build /minio /minio
+COPY --from=build /runtime/ /
+COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+ENV MINIO_BROWSER=off HOME=/data
+ENTRYPOINT ["/minio"]

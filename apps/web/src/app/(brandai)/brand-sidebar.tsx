@@ -353,7 +353,7 @@ export function BrandSidebar({
           full-height workspace, without shifting page layout. */}
       {!isBrandKitPage ? (
         <div className="fixed right-4 top-4 z-40">
-          <NotificationCenter wsId={wsId} />
+          <NotificationCenter wsId={wsId} userId={brandUser.id} />
         </div>
       ) : null}
 

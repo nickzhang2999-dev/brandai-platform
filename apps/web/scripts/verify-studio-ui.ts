@@ -1,6 +1,6 @@
 /** Real UI acceptance against a disposable database. No vendor API or save mocks. */
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { gunzipSync } from "node:zlib";
@@ -217,6 +217,29 @@ async function draftReady(frame: Frame) {
 async function currentShapes(frame: Frame) {
   return frame.evaluate(() => (window as any).__novartAcceptanceEditor.getCurrentPageShapes() as Array<{ id: string; type: string; x: number; y: number; props: Record<string, unknown> }>);
 }
+// A generated 48 x 32 PNG tests user-uploaded bytes. It is never an AI result.
+const uploadFixture = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAADAAAAAgCAIAAADbtmxLAAAAN0lEQVR4nO3OQQ0AMAgEMHSiBNmTMBccjyYV0Jp+p1R8ICQkJJQeCAkJCaUHQkJCQumBkJDQsg+b+YyX6uuGDAAAAABJRU5ErkJggg==", "base64");
+async function nativeUpload(page: Page, frame: Frame, name: string) {
+  await frame.getByTestId("nav-upload-menu-button").hover();
+  const picker = page.waitForEvent("filechooser");
+  await frame.getByTestId("upload-menu-uploadImage").click();
+  const receipt = page.waitForResponse(response => new URL(response.url()).pathname === "/studio/material-upload" && response.request().method() === "POST");
+  await (await picker).setFiles({ name, mimeType: "image/png", buffer: uploadFixture });
+  const accepted = await receipt;
+  assert.equal(accepted.status(), 202, "Upload must be accepted as a durable worker task");
+  const task = await accepted.json();
+  assert.equal(typeof task.taskId, "string");
+  assert.ok(["PENDING", "RUNNING", "SUCCEEDED"].includes(task.status));
+  return task as { taskId: string; projectId: string; status: string };
+}
+async function readableImage(frame: Frame, url: string) {
+  return frame.evaluate(source => new Promise<number[]>((resolve, reject) => {
+    const image = new Image(), timer = setTimeout(() => { image.src = ""; reject(Error("Image decoding timed out")); }, 20_000);
+    image.onload = () => { clearTimeout(timer); resolve([image.naturalWidth, image.naturalHeight]); };
+    image.onerror = () => { clearTimeout(timer); reject(Error("Authenticated image could not be decoded")); };
+    image.src = source;
+  }), url);
+}
 
 try {
   const run = randomUUID().slice(0, 8), password = randomUUID();
@@ -296,6 +319,74 @@ try {
   await expect(frame.locator("#novart-bar .nv-save")).toHaveAttribute("data-save-state", "saved", { timeout: 30_000 });
   await expect(frame.locator("#novart-bar .nv-save")).toContainText("已保存到服务器");
   check("native shape, Chinese text and pointer-drawn stroke autosave through real HTTP into the database");
+
+  let uploadedImage: Awaited<ReturnType<typeof currentShapes>>[number] | undefined;
+  let recoveredImage: Awaited<ReturnType<typeof currentShapes>>[number] | undefined;
+  let uploadTaskId: string | undefined;
+  if (process.env.WORKBENCH_TEST_MATERIAL_UPLOAD === "1") {
+    step("native image upload, worker persistence and document save");
+    const task = await nativeUpload(page, frame, `studio-ui-${run}.png`);
+    uploadTaskId = task.taskId;
+    assert.equal(task.projectId, projectId);
+    const taskRow = frame.getByTestId("product-upload-list").locator(`[data-task-id="${task.taskId}"]`);
+    await expect(taskRow).toHaveAttribute("data-status", "SUCCEEDED", { timeout: 120_000 });
+    uploadedImage = await eventually("uploaded material enters a real native image shape", async () => {
+      return (await currentShapes(frame)).find(shape => shape.id === `shape:novart-upload-${task.taskId}`);
+    });
+    assert.equal(uploadedImage.type, "c-image");
+    const imageUrl = new URL(String(uploadedImage.props.url), base);
+    assert.equal(imageUrl.origin, base.origin);
+    assert.match(imageUrl.pathname, new RegExp(`^/api/workspaces/${workspace.id}/assets/[^/]+/raw$`));
+    assert.equal(imageUrl.search, "");
+    const assetId = imageUrl.pathname.split("/").at(-2)!;
+    const asset = await prisma.asset.findUniqueOrThrow({ where: { id: assetId } });
+    assert.equal(asset.workspaceId, workspace.id);
+    assert.equal(asset.source, "UPLOAD");
+    assert.equal(asset.mimeType, "image/png");
+    assert.equal(asset.sizeBytes, uploadFixture.length);
+    assert.ok(asset.storageKey && !asset.url.startsWith("data:") && !asset.url.startsWith("blob:"));
+    assert.equal(await prisma.projectAsset.count({ where: { projectId, assetId } }), 1);
+    const raw = await page.context().request.get(imageUrl.href);
+    assert.equal(raw.status(), 200);
+    assert.equal(createHash("sha256").update(await raw.body()).digest("hex"), createHash("sha256").update(uploadFixture).digest("hex"));
+    assert.deepEqual(await readableImage(frame, imageUrl.pathname), [48, 32]);
+    await frame.evaluate(() => { (window as any).__novartAcceptanceEditor.undo(); });
+    assert.ok(!(await currentShapes(frame)).some(shape => shape.id === uploadedImage!.id), "Image insertion is undoable");
+    await frame.evaluate(() => { (window as any).__novartAcceptanceEditor.redo(); });
+    assert.ok((await currentShapes(frame)).some(shape => shape.id === uploadedImage!.id), "Redo restores the uploaded image");
+    await eventually("native autosave persists uploaded image reference", async () => {
+      const row = await prisma.editorDocument.findUnique({ where: { projectId } });
+      return row?.canvas && decodeCanvas(row.canvas)[uploadedImage!.id]?.props.url === imageUrl.pathname ? row : null;
+    }, 60_000);
+    await expect(frame.locator("#novart-bar .nv-save")).toHaveAttribute("data-save-state", "saved");
+    check("native upload menu uses a durable worker, real stored bytes and linked asset, then saves an undoable image shape");
+
+    step("accepted upload survives leaving the page");
+    const detached = await nativeUpload(page, frame, `studio-ui-detached-${run}.png`);
+    // No task-completion wait: immediately unload the native frame after 202.
+    await page.goto("about:blank", { waitUntil: "domcontentloaded" });
+    await eventually("worker completes accepted upload without a live editor", async () => {
+      const response = await page.context().request.get(new URL(`/studio/material-upload?workspaceId=${workspace.id}&projectId=${projectId}&taskId=${detached.taskId}`, base).href);
+      assert.equal(response.status(), 200);
+      const value = await response.json();
+      assert.notEqual(value.status, "FAILED", `Detached upload failed: ${value.error || "unknown"}`);
+      return value.status === "SUCCEEDED" ? value : null;
+    }, 120_000);
+    await page.goto(new URL(`/studio?workspaceId=${workspace.id}#/workspace/${projectId}`, base).href, { waitUntil: "domcontentloaded" });
+    await studioReady(page); frame = await editorFrame(page, projectId);
+    const detachedRow = frame.getByTestId("product-upload-list").locator(`[data-task-id="${detached.taskId}"]`);
+    await expect(detachedRow).toHaveAttribute("data-status", "SUCCEEDED");
+    await detachedRow.locator('[data-action="insert"]').click();
+    recoveredImage = await eventually("recovered task can be inserted from the visible receipt", async () => {
+      return (await currentShapes(frame)).find(shape => shape.id === `shape:novart-upload-${detached.taskId}`);
+    });
+    await eventually("recovered upload is saved in the native document", async () => {
+      const row = await prisma.editorDocument.findUnique({ where: { projectId } });
+      return row?.canvas && decodeCanvas(row.canvas)[recoveredImage!.id] ? row : null;
+    });
+    assert.deepEqual(await readableImage(frame, String(recoveredImage.props.url)), [48, 32]);
+    check("accepted upload completes after page unload and its server receipt restores insertion without uploading the file again");
+  } else console.log("SKIP material upload journey: WORKBENCH_TEST_MATERIAL_UPLOAD=1 and disposable storage/worker are required; upload is not verified by this run.");
 
   step("native chat draft autosave and checked receipt");
   await draftReady(frame);
@@ -384,6 +475,24 @@ try {
   assert.equal(reopened.find(shape => shape.id === ids.shape)?.y, 100);
   assert.deepEqual(reopened.find(shape => shape.id === draw.id)?.props, draw.props, "Fresh editor restores the actual pointer stroke geometry");
   assert.ok(JSON.stringify(reopened.find(shape => shape.id === ids.text)).includes(text));
+  if (uploadedImage && uploadTaskId) {
+    const restored = reopened.find(shape => shape.id === uploadedImage.id);
+    assert.ok(restored, "Fresh browser restores uploaded native image from server document");
+    // Undefined optional native properties are intentionally absent after JSON.
+    assert.deepEqual(restored.props, JSON.parse(JSON.stringify(uploadedImage.props)));
+    assert.deepEqual(await readableImage(frame, String(restored.props.url)), [48, 32]);
+    const restoredTask = frame.getByTestId("product-upload-list").locator(`[data-task-id="${uploadTaskId}"]`);
+    await expect(restoredTask).toHaveAttribute("data-status", "SUCCEEDED");
+    await restoredTask.locator('[data-action="insert"]').click();
+    assert.equal((await currentShapes(frame)).filter(shape => shape.id === uploadedImage.id).length, 1, "Restored upload receipt never duplicates an existing image");
+    check("fresh browser restores image bytes, image geometry and server task without relying on browser blobs or cache");
+  }
+  if (recoveredImage) {
+    const restored = reopened.find(shape => shape.id === recoveredImage.id);
+    assert.ok(restored, "Fresh browser restores the image recovered after page unload");
+    assert.deepEqual(restored.props, JSON.parse(JSON.stringify(recoveredImage.props)));
+    assert.deepEqual(await readableImage(frame, String(restored.props.url)), [48, 32]);
+  }
   await draftReady(frame);
   await expect(frame.getByTestId("agent-message-input")).toHaveText(finalDraftText);
   await fresh.getByTestId("studio-nav-settings").click();

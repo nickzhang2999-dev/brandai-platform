@@ -98,6 +98,9 @@
     await navigator.serviceWorker.register('/novart-product-worker.js',{scope:'/'});
     await navigator.serviceWorker.ready;
     if (!navigator.serviceWorker.controller) await new Promise((resolve,reject) => { const timeout=setTimeout(()=>reject(Error('资源初始化超时，请重新打开')),12000); navigator.serviceWorker.addEventListener('controllerchange',()=>{clearTimeout(timeout);resolve();},{once:true}); });
+    if (location.pathname === '/canvas') await new Promise((resolve,reject) => {
+      const script=document.createElement('script');script.src='/novart-product-materials.js';script.onload=resolve;script.onerror=()=>reject(Error('图片上传组件加载失败，请重新打开'));document.head.append(script);
+    });
     // Blocking native scripts run before defer overlays, matching HTML semantics.
     const scripts=[...document.querySelectorAll('script[type="application/x-novart"]')];
     scripts.sort((a,b)=>Number(a.hasAttribute('defer'))-Number(b.hasAttribute('defer')));
@@ -133,6 +136,7 @@
       });
     }
     if (location.pathname === '/canvas') {
+      window.NovartProductMaterials?.start();
       const availability = () => {
         for (const button of document.querySelectorAll('[data-testid="agent-send-button"], [data-testid="generate-menu-image"], [data-testid="generate-menu-video"], [data-testid="nav-font-gen-button"]')) {
           if (!button.disabled) button.disabled = true;

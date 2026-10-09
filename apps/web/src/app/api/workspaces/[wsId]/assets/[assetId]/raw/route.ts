@@ -99,8 +99,11 @@ export async function GET(
       // existing authenticated raw path instead of polling an impossible job.
     }
 
-    if (isAbsoluteUrl(asset.storageKey) || isAbsoluteUrl(asset.url)) {
-      const src = isAbsoluteUrl(asset.url) ? asset.url : asset.storageKey;
+    // An uploaded asset's object key is authoritative. Its presentation URL may
+    // point to private storage or an old public host, and must not redirect this
+    // authenticated object read into the remote-URL/SSRF path.
+    if (isAbsoluteUrl(asset.storageKey) || (!asset.storageKey && isAbsoluteUrl(asset.url))) {
+      const src = isAbsoluteUrl(asset.storageKey) ? asset.storageKey : asset.url;
       // SSRF 纵深防御:手动跟随重定向并逐跳校验(含历史数据里的内网地址 +
       // 公网 URL 302 跳内网的重定向型 SSRF)。
       const upstream = await safeFetch(src);
@@ -125,8 +128,9 @@ export async function GET(
       return new Response(upstream.body, { headers });
     }
 
+    if (!asset.storageKey) throw new ApiException(404, "Asset source not found");
     const { body, contentType, contentLength } = await getObjectStream(
-      asset.storageKey,
+      asset.storageKey, AbortSignal.any([req.signal, AbortSignal.timeout(15_000)]),
     );
     // 上传端接受任意 File 并原样存 mimeType:上传 text/html 经此 /raw 会在 app 源
     // 内联执行(存储型 XSS)。与 WEBSITE 分支同策:非图片降级 octet-stream + 附件。

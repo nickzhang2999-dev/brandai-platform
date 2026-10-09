@@ -93,6 +93,9 @@ def main():
             before = 'createSocket(){if(this.socket)return;let e=(0,X.Ri)(G.v6);'
             assert text.count(before) == 1, 'Native agent socket boundary changed'
             text = text.replace(before, 'createSocket(){if(window.__NOVART_PRODUCT__)return;if(this.socket)return;let e=(0,X.Ri)(G.v6);')
+            before = 'async uploadAndInsertImages(e,t){let a='
+            assert text.count(before) == 1, 'Native resource upload boundary changed'
+            text = text.replace(before, 'async uploadAndInsertImages(e,t){if(window.__NOVART_PRODUCT__)return window.NovartProductMaterials.uploadAndInsert(e,t);let a=')
         if url_path == '/home-start-studio.js':
             before = 'const payload = clone(savedState);'
             assert text.count(before) == 1
@@ -181,6 +184,8 @@ def main():
     mapping = json.dumps(external, ensure_ascii=False)
     bootstrap = (REPO / 'deploy/novart/studio/novart-product-bootstrap.js').read_text(encoding='utf-8')
     write('/novart-product-bootstrap.js', ('window.__NOVART_ASSET_MAP__=' + mapping + ';\n' + bootstrap).encode(), 'application/javascript; charset=utf-8')
+    materials = (REPO / 'deploy/novart/studio/novart-product-materials.js').read_bytes()
+    write('/novart-product-materials.js', materials, 'application/javascript; charset=utf-8')
     worker = '''const assets=MAP;
 self.addEventListener('install', event=>event.waitUntil(self.skipWaiting()));
 self.addEventListener('activate', event=>event.waitUntil(self.clients.claim()));

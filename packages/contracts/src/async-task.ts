@@ -26,6 +26,7 @@ export const AsyncTaskKind = z.enum([
   // 网关上限 —— 同步这条路拿不到结果，必须走 worker。refId = 图层组 id，
   // refCount = 实际落库的图层数。
   "DECOMPOSE",
+  "STUDIO_UPLOAD",
 ]);
 export type AsyncTaskKind = z.infer<typeof AsyncTaskKind>;
 

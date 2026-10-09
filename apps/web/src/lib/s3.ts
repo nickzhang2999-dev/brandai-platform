@@ -109,6 +109,7 @@ export async function uploadBuffer(
   contentType: string,
   keyPrefix: string,
   signal?: AbortSignal,
+  objectKey?: string,
 ): Promise<{ key: string; url: string }> {
   const cfg = await getEffectiveStorage();
   if (!cfg.configured) {
@@ -116,6 +117,10 @@ export async function uploadBuffer(
   }
 
   const ext = EXT_BY_TYPE[contentType.toLowerCase()] ?? "bin";
+
+  if (objectKey && (!objectKey.startsWith(keyPrefix + "/") || /[\\?#]/.test(objectKey) || objectKey.split("/").some(part => !part || part === "." || part === ".."))) {
+    throw new Error("Invalid server upload object key");
+  }
 
   const client = new S3Client({
     region: cfg.region,
@@ -127,7 +132,9 @@ export async function uploadBuffer(
     },
   });
 
-  const key = `${keyPrefix}/${randomUUID()}.${ext}`;
+  // A server-owned stable key makes durable upload retries idempotent. Never
+  // forward an arbitrary client filename/path as objectKey.
+  const key = objectKey ?? `${keyPrefix}/${randomUUID()}.${ext}`;
   await client.send(
     new PutObjectCommand({
       Bucket: cfg.bucket,

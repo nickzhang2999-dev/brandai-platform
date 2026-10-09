@@ -573,3 +573,101 @@ class ComplianceReport(BaseModel):
 class ComplianceCheckResponse(BaseModel):
     results: list[ComplianceResult]
     report: ComplianceReport
+
+
+# Workbench uploads are a BFF contract; these mirrors do not add public AI APIs.
+class StudioMaterialUploadInput(NativeProjectReference):
+    mutationId: str = Field(strict=True, pattern=r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", min_length=36, max_length=36)
+
+    @field_validator("projectId")
+    @classmethod
+    def no_project_newline(cls, value):
+        if "\n" in value:
+            raise ValueError("Invalid project identity")
+        return value
+
+
+class StudioMaterialUploadQuery(NativeProjectReference):
+    taskId: NativeProjectId | None = None
+
+    @field_validator("projectId", "taskId")
+    @classmethod
+    def no_id_newline(cls, value):
+        if value is not None and "\n" in value:
+            raise ValueError("Invalid resource identity")
+        return value
+
+    @model_validator(mode="before")
+    @classmethod
+    def no_null_task_id(cls, value):
+        if isinstance(value, dict) and "taskId" in value and value["taskId"] is None:
+            raise ValueError("taskId may be omitted but cannot be null")
+        return value
+
+
+class StudioMaterial(BaseModel):
+    model_config = {"extra": "forbid", "strict": True}
+    id: NativeProjectId
+    assetId: NativeProjectId
+    assetSha256: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
+    fileName: str = Field(min_length=1, max_length=255)
+    mimeType: Literal["image/png", "image/jpeg", "image/webp"]
+    sizeBytes: int = Field(gt=0, le=10 * 1024 * 1024)
+    width: int = Field(gt=0, le=16384)
+    height: int = Field(gt=0, le=16384)
+    url: str = Field(pattern=r"^/api/workspaces/[a-zA-Z0-9_-]+/assets/[a-zA-Z0-9_-]+/raw$")
+    kind: Literal["image"]
+
+    @field_validator("url", "id", "assetId")
+    @classmethod
+    def no_newlines(cls, value):
+        if "\n" in value:
+            raise ValueError("Invalid resource identity")
+        return value
+
+
+class StudioMaterialUploadView(StudioMaterialUploadInput):
+    model_config = {"extra": "forbid", "strict": True}
+    taskId: NativeProjectId
+    status: Literal["PENDING", "RUNNING", "SUCCEEDED", "FAILED"]
+    progress: int = Field(ge=0, le=100)
+    expiresAt: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$")
+    material: StudioMaterial | None = None
+    error: str | None = Field(default=None, max_length=500)
+
+    @field_validator("expiresAt")
+    @classmethod
+    def valid_utc_datetime(cls, value):
+        from datetime import datetime
+        if "\n" in value:
+            raise ValueError("Invalid expiry timestamp")
+        datetime.fromisoformat(value[:-1] + "+00:00")
+        return value
+
+    @field_validator("taskId")
+    @classmethod
+    def no_task_newline(cls, value):
+        if "\n" in value:
+            raise ValueError("Invalid task identity")
+        return value
+
+    @model_validator(mode="before")
+    @classmethod
+    def no_explicit_nulls(cls, value):
+        if isinstance(value, dict) and any(key in value and value[key] is None for key in ("material", "error")):
+            raise ValueError("Optional upload fields must be omitted, not null")
+        return value
+
+    @model_validator(mode="after")
+    def valid_terminal_result(self):
+        if (self.status == "SUCCEEDED") != (self.material is not None):
+            raise ValueError("Only completed uploads carry a material")
+        if self.status == "FAILED" and not self.error:
+            raise ValueError("Failed uploads require a readable error")
+        return self
+
+
+from .studio_workflow_schemas import StudioWorkflowSaveInput, StudioWorkflowView, StudioWorkflowAssets
+
+# Mirrored BFF notification kind; upload events remain scoped to the initiator.
+NotificationKind = Literal["GENERATE", "EDIT", "RECOGNIZE", "PARSE_MANUAL", "DESCRIBE", "INGEST", "SUMMARIZE", "DECOMPOSE", "STUDIO_UPLOAD"]

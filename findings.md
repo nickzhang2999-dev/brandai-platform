@@ -1,5 +1,13 @@
 # Integration findings
 
+## 2026-10-09 launch increment
+- Uploaded Assets carry both an object key and a presentation URL. The raw route previously preferred the absolute URL, causing private S3 hosts to enter the public-URL fetch path. Prefer the actual key; legacy URL-backed rows retain the safe fetch policy.
+- New upload intake stores at most 10 MiB per image, 40 MiB per workspace and 256 MiB globally as a bounded temporary Postgres outbox. Worker writes an immutable server-owned key, real Asset and ProjectAsset; terminal tasks release bytes. These are source-level facts, not deployed acceptance.
+- Native ResourceService.uploadAndInsertImages is the shared menu/drop/paste boundary. The product overlay retains native shape creation and undo; it never saves a temporary blob/data URL.
+- The independent environment has no AppSetting singleton or real image/storage keys configured. Internal AI health is reachable; external provider and storage reachability cannot be claimed without configuration.
+- Storage diagnostics used to report success when unconfigured and described read/write after PUT+DELETE only. Updated diagnostics use bounded PUT/GET/byte-compare/DELETE and report cleanup failures.
+- CI storage is disposable and loopback-only, built from the fixed upstream security commit. This test dependency is not a production storage recommendation. Production storage must be separately configured and tested; see docs/cds-launch-readiness-2026-10-09.md.
+
 ## 2026-10-09 verified draft and release boundaries
 - The captured native draft receiver calls acceptIssues before setting loaded=true; GET and POST both require referenceIssues. Missing it prevents POST autosave entirely. Native composer initial/reset state has text:""; prompt-only test fixtures were not valid restored forms.
 - Draft inputForm must preserve native extension fields while requiring text:string. The resourceFields set also includes audioUrl; all eight nonempty media fields need real persistent asset validation before this feature is enabled. Clean receipts are issued only after validating read/write data, including legacy rows.

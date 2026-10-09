@@ -5,6 +5,7 @@ import { gzipSync } from "node:zlib";
 import { prisma } from "@brandai/db";
 import { hashPassword } from "../src/lib/password";
 import { verifyStudioShellBackend } from "./verify-studio-shell-backend";
+import { verifyStudioMaterialsBackend } from "./verify-studio-materials-backend";
 import { ACTIVE_BRAND_COOKIE } from "../src/lib/brand-cookie";
 
 const base = process.env.WORKBENCH_TEST_URL ?? "http://127.0.0.1:3000";
@@ -19,16 +20,17 @@ async function call(actor: string, path: string, method = "GET", body?: unknown,
   const jar = sessions.get(actor) ?? new Map<string, string>(); sessions.set(actor, jar);
   const headers: Record<string, string> = { ...extraHeaders, Cookie: [...jar].map(([k, v]) => `${k}=${v}`).join("; ") };
   if (method !== "GET") headers.Origin = origin;
-  if (body !== undefined) headers["Content-Type"] = body instanceof URLSearchParams ? "application/x-www-form-urlencoded" : "application/json";
+  if (body !== undefined && !(body instanceof FormData)) headers["Content-Type"] = body instanceof URLSearchParams ? "application/x-www-form-urlencoded" : "application/json";
   const response = await fetch(base + path, { method, headers, redirect: "manual",
-    body: body === undefined ? undefined : body instanceof URLSearchParams ? body.toString() : JSON.stringify(body), signal: AbortSignal.timeout(20000) });
+    body: body === undefined ? undefined : body instanceof FormData ? body : body instanceof URLSearchParams ? body.toString() : JSON.stringify(body), signal: AbortSignal.timeout(20000) });
   for (const cookie of response.headers.getSetCookie()) {
     const pair = cookie.split(";", 1)[0] ?? "", index = pair.indexOf("=");
     if (index > 0) jar.set(pair.slice(0, index), pair.slice(index + 1));
   }
-  const text = await response.text();
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  const text = new TextDecoder().decode(bytes);
   let data: any; try { data = JSON.parse(text); } catch { data = null; }
-  return { status: response.status, data };
+  return { status: response.status, data, bytes };
 }
 async function login(actor: string, email: string, password: string) {
   const csrf = await call(actor, "/api/auth/csrf"); assert.equal(csrf.status, 200);
@@ -161,5 +163,6 @@ try {
   const nativeArchived = await native("owner", "saveProject", { ...nativePayload, version: "novart-2" });
   check("native adapter does not accept an archived project's save", () => assert.equal(nativeArchived.status, 409));
   await verifyStudioShellBackend({ call, check, base, ws, ownerId: owner.user.id, editorId: editor.user.id, encode });
+  await verifyStudioMaterialsBackend({ call, check, base, ws });
   console.log(`Workbench backend: ${passed} checks passed. No AI provider calls performed.`);
 } finally { await prisma.$disconnect(); }

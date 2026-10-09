@@ -16,7 +16,7 @@ jobs:
   backend:
     if: github.ref == 'refs/heads/claude/novart-product-integration'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     services:
       postgres:
         image: postgres:16-alpine
@@ -39,6 +39,7 @@ jobs:
       AUTH_ALLOW_DEMO: '0'
       QUOTA_V1: '0'
       NEXT_TELEMETRY_DISABLED: '1'
+      WORKBENCH_TEST_MATERIAL_UPLOAD: '1'
     steps:
       - uses: actions/checkout@v6
         with:
@@ -66,6 +67,27 @@ jobs:
         run: |
           pnpm db:generate
           pnpm -F @brandai/db exec prisma migrate deploy
+      - name: Start private disposable object storage
+        shell: bash
+        run: |
+          docker build -t novart-ci-storage - < deploy/novart/Dockerfile.ci-storage
+          storage_access=novart-ci-only
+          storage_secret=$(openssl rand -hex 32)
+          echo "::add-mask::$storage_secret"
+          echo "NOVART_CI_STORAGE_ENDPOINT=http://127.0.0.1:9000" >> "$GITHUB_ENV"
+          echo "NOVART_CI_STORAGE_ACCESS_KEY=$storage_access" >> "$GITHUB_ENV"
+          echo "NOVART_CI_STORAGE_SECRET_KEY=$storage_secret" >> "$GITHUB_ENV"
+          docker run -d --name novart-ci-storage --network host \
+            -e MINIO_ROOT_USER="$storage_access" -e MINIO_ROOT_PASSWORD="$storage_secret" \
+            novart-ci-storage server /data --address 127.0.0.1:9000 --console-address 127.0.0.1:9001
+          ready=0
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null; then ready=1; break; fi
+            sleep 1
+          done
+          test "$ready" = 1
+      - name: Configure storage only in the disposable database
+        run: pnpm -F web exec tsx scripts/prepare-studio-storage.ts
       - name: Repository gates
         run: |
           pnpm test
@@ -100,7 +122,7 @@ jobs:
                   return '[redacted URL]'
           for name in ('backend', 'ui'):
               text = (Path(sys.argv[1]) / (name + '.log')).read_text(errors='replace')
-              for key in ('AUTH_SECRET', 'DATABASE_URL', 'REDIS_URL', 'GH_TOKEN', 'GITHUB_TOKEN'):
+              for key in ('AUTH_SECRET', 'DATABASE_URL', 'REDIS_URL', 'GH_TOKEN', 'GITHUB_TOKEN', 'NOVART_CI_STORAGE_SECRET_KEY'):
                   if os.environ.get(key): text = text.replace(os.environ[key], '[redacted environment value]')
               text = re.sub(r'https?://[^\s\"\'<>]+', redact_url, text)
               text = re.sub(r'[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}', '[redacted email]', text)
@@ -118,12 +140,20 @@ jobs:
       - name: Real password login, document API and studio interaction tests
         shell: bash
         run: |
-          pnpm -F web start > /tmp/novart-integration-server.log 2>&1 &
+          setsid pnpm -F web start > /tmp/novart-integration-server.log 2>&1 &
           SERVER_PID=$!
-          trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
+          setsid pnpm -F web worker > /tmp/novart-integration-worker.log 2>&1 &
+          WORKER_PID=$!
+          trap 'kill -- -"$SERVER_PID" -"$WORKER_PID" 2>/dev/null || true; wait "$SERVER_PID" "$WORKER_PID" 2>/dev/null || true' EXIT
           ready=0
           for attempt in $(seq 1 60); do
             if curl -fsS http://127.0.0.1:3000/api/auth/csrf >/dev/null; then ready=1; break; fi
+            sleep 1
+          done
+          test "$ready" = 1
+          ready=0
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:3001/health | python -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("worker") == "ok" else 1)'; then ready=1; break; fi
             sleep 1
           done
           test "$ready" = 1
@@ -188,3 +218,6 @@ jobs:
           docker push "$WEB_IMAGE"
           docker push "$AI_IMAGE"
           docker logout ghcr.io
+      - name: Dispose of integration storage and objects
+        if: always()
+        run: docker rm -f novart-ci-storage >/dev/null 2>&1 || true

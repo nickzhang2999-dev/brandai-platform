@@ -222,6 +222,7 @@ model BrandWorkspace {
 }
 
 model Asset {
+  studioUploads          StudioMaterialUpload[]
   id                     String            @id @default(cuid())
   workspaceId            String
   workspace              BrandWorkspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -511,6 +512,11 @@ model WorkbenchProjectState {
   brief String @default("") @db.Text
   notes String @default("") @db.Text
   archiveRevision Int @default(0)
+  workflowRevision Int @default(0)
+  workflowMode String @default("generate")
+  workflowTarget Json?
+  workflowReferences Json @default("[]")
+  workflowUpdatedAt DateTime?
   creationKey String? @unique
   creationChecksum String?
   updatedAt DateTime @updatedAt
@@ -589,6 +595,7 @@ model GenerationVersion {
 // progress %. `refId` holds the produced resource id (e.g. an edited version);
 // recognize/parse-manual record a rule count in `refCount`.
 model AsyncTask {
+  studioUpload StudioMaterialUpload?
   id          String    @id @default(cuid())
   workspaceId String
   kind        String // "RECOGNIZE" | "PARSE_MANUAL" | "EDIT"
@@ -602,6 +609,37 @@ model AsyncTask {
   updatedAt   DateTime  @updatedAt
 
   @@index([workspaceId, kind, createdAt])
+}
+
+// Upload bytes are a bounded durable outbox, never the final asset storage.
+// The worker clears body on every terminal state and expires abandoned jobs.
+model StudioMaterialUpload {
+  taskId       String    @id
+  task         AsyncTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  workspaceId  String
+  userId       String
+  projectId    String
+  // Soft project reference retains cleanup keys if a project is deleted while
+  // an upload is in flight. Every public read/write checks the real Project.
+  mutationId   String
+  sha256       String
+  fileName     String
+  mimeType     String
+  sizeBytes    Int
+  body         Bytes?
+  width        Int?
+  height       Int?
+  objectKey    String
+  attemptToken String?
+  assetId      String?   @unique
+  asset        Asset?    @relation(fields: [assetId], references: [id], onDelete: SetNull)
+  expiresAt    DateTime
+  createdAt    DateTime  @default(now())
+  objectCleanedAt DateTime?
+
+  @@unique([workspaceId, userId, projectId, mutationId])
+  @@index([workspaceId, projectId, createdAt])
+  @@index([expiresAt])
 }
 
 // M-D — subscription plan definitions (D5). Quotas use -1 to mean unlimited.

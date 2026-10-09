@@ -22,3 +22,5 @@ export * from "./editor-document";
 export * from "./workbench-session";
 export * from "./native-project";
 export * from "./workbench-shell";
+export * from "./studio-materials";
+export * from "./studio-workflow";

@@ -1,5 +1,5 @@
 import { NotificationsResponse } from "@brandai/contracts";
-import { handleError, ok, requireUser } from "@/lib/api";
+import { ApiException, handleError, ok, requireUser } from "@/lib/api";
 import { requireOwnedWorkspace } from "@/lib/workspace";
 import { listWorkspaceNotifications } from "@/lib/notifications";
 
@@ -12,14 +12,16 @@ import { listWorkspaceNotifications } from "@/lib/notifications";
  * `lastSeenAt` vs each item's `createdAt`). Member-gated like the queue widget.
  */
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ wsId: string }> },
 ) {
   try {
     const user = await requireUser();
+    const expectedUser = req.headers.get("X-Novart-User");
+    if (expectedUser && expectedUser !== user.id) throw new ApiException(409, "登录账号已切换，请刷新页面后查看通知。");
     const { wsId } = await params;
     await requireOwnedWorkspace(wsId, user.id);
-    const items = await listWorkspaceNotifications(wsId);
+    const items = await listWorkspaceNotifications(wsId, 30, user.id);
     return ok(NotificationsResponse.parse({ items }));
   } catch (err) {
     return handleError(err);

@@ -1,5 +1,15 @@
 # Integration progress
 
+## 2026-10-09 — launch-ready goal authorized
+- First launch increment implemented: durable material intake/worker/outbox, native upload/restore, persisted workflow selection, source-priority raw image fix and truthful storage diagnostics. Existing Next notifications now isolate upload tasks by current user; product shell global notifications remain pending.
+- Final local gates: L1 425 contracts/service + 6 UI, AI/Python 253, Web typecheck and production build pass. Build still reports unavailable local infra. Latest export contains 122 assets. Isolated native upload interaction passes, but real DB/S3/UI/container acceptance is not yet executed.
+- Final headless diagnostic uses the latest exported upload overlay: native menu, one injected task-list 503 recovered automatically, pagehide task recovery, actual stored-document decoding before leaving, fresh context and duplicate prevention pass. Page errors/outbound leaks are zero; helper stopped. Fixture-only evidence remains separate from real DB/S3/provider acceptance.
+- CI now requires actual upload acceptance with disposable loopback S3 and worker. Storage built from an exact upstream fixed commit is a CI-only dependency, not a production recommendation. The initializer refuses any non-disposable database and stores the test storage secret encrypted.
+- Independent environment lacks real storage/provider configuration; source mapping for generation documented separately. Public CDS branch command override exists, but its runtime priority and pre-command initialization cannot be verified from read-only evidence; not adopted and no remote settings changed.
+- User set a complete-launch goal, requested autonomous routine execution, parallel agents, development logs and explicit CDS issue records. Active goal created; no token budget requested.
+- Spawned material_backend, material_frontend and deployment_readiness. Backend owns new durable upload services/contracts/worker; frontend owns product overlays and interaction acceptance; readiness inspects only independent configuration metadata and prepares reviewable deployment needs. Root owns routes, image-read correctness, review, gates, release and logs.
+- Keep current branch 434d1fa baseline and unrelated dirty files. No local Docker, user browser control, automatic main merge or guessed production-domain cutover.
+
 ## 2026-10-09 — resumed with three parallel agents
 - User requested continuation according to the development log, with multiple sub-agents. Started separate draft/contract repair, actual UI journey acceptance and read-only CDS shared database audit tasks.
 - Root owns review, integration, required gates and release control. Heavy local tests/build remain sequential to avoid the known Windows memory limit. No local Docker or user-browser control.

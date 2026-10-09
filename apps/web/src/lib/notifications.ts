@@ -46,6 +46,7 @@ const TASK_KIND_META: Record<
   // 终态会被下面那句 `kind: { in: Object.keys(TASK_KIND_META) }` 直接滤掉——任务
   // 在服务端跑完了，收件箱里却什么都没有（§2.3 要求终态必须有通知）。
   DECOMPOSE: { kind: "DECOMPOSE", label: "图层分解", href: "/workspace" },
+  STUDIO_UPLOAD: { kind: "STUDIO_UPLOAD", label: "图片上传", href: "/studio" },
 };
 
 /**
@@ -56,8 +57,9 @@ const TASK_KIND_META: Record<
 export async function listWorkspaceNotifications(
   workspaceId: string,
   limit = 30,
+  userId?: string,
 ): Promise<NotificationItem[]> {
-  const [gens, tasks] = await Promise.all([
+  const [gens, tasks, uploads] = await Promise.all([
     prisma.generation.findMany({
       where: {
         workspaceId,
@@ -85,7 +87,9 @@ export async function listWorkspaceNotifications(
         status: { in: ["SUCCEEDED", "FAILED"] },
         // EDIT is the only generate-adjacent task surfaced; the others are KB /
         // asset events. All five map in TASK_KIND_META.
-        kind: { in: Object.keys(TASK_KIND_META) },
+        // Upload tasks are private to their initiator. They are queried below
+        // through the durable ownership record, never this shared task list.
+        kind: { in: Object.keys(TASK_KIND_META).filter(kind => kind !== "STUDIO_UPLOAD") },
       },
       orderBy: { updatedAt: "desc" },
       take: limit,
@@ -98,6 +102,11 @@ export async function listWorkspaceNotifications(
         updatedAt: true,
       },
     }),
+    userId ? prisma.studioMaterialUpload.findMany({
+      where: { workspaceId, userId, task: { workspaceId, kind: "STUDIO_UPLOAD", status: { in: ["SUCCEEDED", "FAILED"] } } },
+      orderBy: { task: { updatedAt: "desc" } }, take: limit,
+      select: { taskId: true, projectId: true, fileName: true, task: { select: { status: true, error: true, updatedAt: true } } },
+    }) : Promise.resolve([]),
   ]);
 
   const items: NotificationItem[] = [];
@@ -142,6 +151,24 @@ export async function listWorkspaceNotifications(
       detail: succeeded ? countNote : (t.error ?? `${meta.label}失败`),
       href: meta.href,
       createdAt: t.updatedAt.toISOString(),
+    });
+  }
+
+  // The staging record keeps a soft Project id for eventual object cleanup.
+  // Deleted/foreign projects must not produce a misleading or unscoped link.
+  const projects = uploads.length ? await prisma.project.findMany({
+    where: { workspaceId, id: { in: uploads.map(upload => upload.projectId) } }, select: { id: true },
+  }) : [];
+  const visibleProjects = new Set(projects.map(project => project.id));
+  for (const upload of uploads) {
+    if (!visibleProjects.has(upload.projectId)) continue;
+    const succeeded = upload.task.status === "SUCCEEDED";
+    items.push({
+      id: `task:${upload.taskId}`, kind: "STUDIO_UPLOAD", status: succeeded ? "SUCCEEDED" : "FAILED",
+      title: succeeded ? "图片上传完成" : "图片上传失败",
+      detail: succeeded ? `${upload.fileName} 已保存，可返回画布查看或加入图片。` : (upload.task.error ?? "请返回画布重新选择图片上传。"),
+      href: `/canvas?workspaceId=${encodeURIComponent(workspaceId)}&projectId=${encodeURIComponent(upload.projectId)}`,
+      createdAt: upload.task.updatedAt.toISOString(),
     });
   }
 

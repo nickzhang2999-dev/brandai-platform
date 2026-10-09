@@ -22,12 +22,12 @@ import { apiFetch } from "@/lib/client";
 
 const POLL_MS = 20_000;
 
-function seenKey(wsId: string) {
-  return `brandai:notif-seen:${wsId}`;
+function seenKey(wsId: string, userId: string) {
+  return `brandai:notif-seen:${userId}:${wsId}`;
 }
-function readLastSeen(wsId: string): number {
+function readLastSeen(wsId: string, userId: string): number {
   if (typeof window === "undefined") return 0;
-  const v = window.localStorage.getItem(seenKey(wsId));
+  const v = window.localStorage.getItem(seenKey(wsId, userId));
   const n = v ? Date.parse(v) : 0;
   return Number.isNaN(n) ? 0 : n;
 }
@@ -40,25 +40,27 @@ const KIND_ICON: Record<string, string> = {
   DESCRIBE: "❝",
   INGEST: "⤓",
   DECOMPOSE: "▤",
+  STUDIO_UPLOAD: "⤒",
 };
 
-export function NotificationCenter({ wsId }: { wsId: string }) {
+export function NotificationCenter({ wsId, userId }: { wsId: string; userId: string }) {
   const [open, setOpen] = useState(false);
   const [lastSeen, setLastSeen] = useState<number>(0);
   const panelRef = useRef<HTMLDivElement | null>(null);
 
   // Hydrate the persisted marker on mount (avoids SSR/client mismatch).
   useEffect(() => {
-    setLastSeen(readLastSeen(wsId));
-  }, [wsId]);
+    setLastSeen(readLastSeen(wsId, userId));
+  }, [wsId, userId]);
 
   const { data } = useQuery<NotificationsResponse>({
-    queryKey: ["brandai-notifications", wsId],
-    enabled: !!wsId,
+    queryKey: ["brandai-notifications", wsId, userId],
+    enabled: !!wsId && !!userId,
     refetchInterval: POLL_MS,
     queryFn: () =>
       apiFetch<NotificationsResponse>(
         `/api/workspaces/${wsId}/notifications`,
+        { headers: { "X-Novart-User": userId } },
       ),
   });
 
@@ -73,7 +75,7 @@ export function NotificationCenter({ wsId }: { wsId: string }) {
     const newest = items[0]?.createdAt;
     const stamp = newest ?? new Date().toISOString();
     if (typeof window !== "undefined") {
-      window.localStorage.setItem(seenKey(wsId), stamp);
+      window.localStorage.setItem(seenKey(wsId, userId), stamp);
     }
     setLastSeen(Date.parse(stamp));
   }

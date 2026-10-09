@@ -22,6 +22,7 @@ import { createIngestWorker } from "./ingest.worker";
 import { createSummarizeWorker } from "./summarize.worker";
 import { createDecomposeWorker } from "./decompose.worker";
 import { createImagePreviewWorker } from "./image-preview.worker";
+import { createStudioMaterialWorker } from "./studio-materials.worker";
 import { sweepStaleGenerations } from "@/lib/generations";
 import { queuePrefix } from "@/lib/queue";
 import {
@@ -80,6 +81,7 @@ try {
     createSummarizeWorker(),
     createDecomposeWorker(),
     createImagePreviewWorker(),
+    createStudioMaterialWorker(),
   );
   workersReady = true;
   console.log(`[workers] started: ${workers.length} worker(s)`);
