@@ -3,9 +3,10 @@ import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { gunzipSync } from "node:zlib";
 import { chromium, expect, type Browser, type BrowserContext, type Frame, type Page, type Route } from "playwright/test";
-import { prisma } from "@brandai/db";
+import { prisma, type GenerationVersion } from "@brandai/db";
 import sharp from "sharp";
 import { hashPassword } from "../src/lib/password";
 
@@ -14,6 +15,9 @@ const database = new URL(process.env.DATABASE_URL ?? "http://invalid");
 if (database.pathname !== "/novart_integration_test" || !["localhost", "127.0.0.1"].includes(database.hostname)
   || !["localhost", "127.0.0.1"].includes(base.hostname)) {
   throw new Error("UI acceptance requires a loopback app and the disposable novart_integration_test database.");
+}
+if (process.env.WORKBENCH_TEST_IMAGE_EDIT === "1" && process.env.WORKBENCH_TEST_GENERATION !== "1") {
+  throw new Error("WORKBENCH_TEST_IMAGE_EDIT=1 requires WORKBENCH_TEST_GENERATION=1; editing must use a real generated source.");
 }
 const artifacts = path.resolve(process.env.WORKBENCH_UI_ARTIFACTS ?? ".novart-ui-artifacts", `port-${base.port || "80"}`);
 const networkProblems: string[] = [], browserErrors: string[] = [], serverFailures: string[] = [];
@@ -242,17 +246,46 @@ async function readableImage(frame: Frame, url: string) {
   }), url);
 }
 
-async function nativePngDownload(page: Page, frame: Frame, shapeId: string, label: string) {
+function sourceVersionContent(version: GenerationVersion) {
+  // A pending real compliance job may finish during image editing. Its report
+  // and provenance are derived data; every other source field must stay intact.
+  const { complianceReport: _report, params, ...source } = version;
+  assert.ok(params && typeof params === "object" && !Array.isArray(params));
+  const { studioCompliance: _compliance, ...recipe } = params;
+  return { ...source, params: recipe };
+}
+
+async function browserImagePixels(frame: Frame, url: string) {
+  // Compare the PNG with an independent browser decode of the authenticated
+  // original. JPEG/WebP and color profiles can decode differently in libvips.
+  const png = await frame.evaluate(source => new Promise<string>((resolve, reject) => {
+    const image = new Image(), timer = setTimeout(() => { image.src = ""; reject(Error("Image decoding timed out")); }, 20_000);
+    image.onload = () => {
+      clearTimeout(timer);
+      try {
+        const canvas = document.createElement("canvas"); canvas.width = image.naturalWidth; canvas.height = image.naturalHeight;
+        const context = canvas.getContext("2d"); if (!context) throw Error("Image decoding canvas unavailable");
+        context.drawImage(image, 0, 0); resolve(canvas.toDataURL("image/png"));
+      } catch (error) { reject(error); }
+    };
+    image.onerror = () => { clearTimeout(timer); reject(Error("Authenticated image could not be decoded")); };
+    image.src = source;
+  }), url);
+  return sharp(Buffer.from(png.slice("data:image/png;base64,".length), "base64"), { failOn: "error" }).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+}
+
+async function nativePngDownload(page: Page, frame: Frame, shapeId: string, label: string, explicitPng = false) {
   const type = await frame.evaluate(id => {
     const editor = (window as any).__novartAcceptanceEditor;
     editor.setCurrentTool("select"); editor.select(id);
     editor.zoomToSelection({ animation: { duration: 0 } });
     return editor.getShape(id)?.type;
   }, shapeId);
-  // c-image has its own native toolbar; plain frames expose right-click Export
-  // PNG. Do not call ExportService or intercept native image rendering methods.
+  // The c-image toolbar downloads the source format. Use its explicit PNG menu
+  // for generated JPEG/WebP; plain frames also expose right-click Export PNG.
+  // Do not call ExportService or intercept native image rendering methods.
   let button = frame.getByTestId("image-toolbar-download");
-  if (type !== "c-image") {
+  if (type !== "c-image" || explicitPng) {
     const bounds = await frame.locator(`.tl-shape[data-shape-id="${shapeId}"]`).boundingBox();
     assert.ok(bounds && bounds.width > 0 && bounds.height > 0);
     // The canvas hit-tests on its background overlay. Send actual pointer input.
@@ -443,6 +476,10 @@ try {
   let generatedImage: Awaited<ReturnType<typeof currentShapes>>[number] | undefined;
   let generatedResult: { versionId: string; assetId: string; assetSha256: string; url: string; width: number; height: number } | undefined;
   let generationRequestId: string | undefined;
+  let modifiedImage: typeof generatedImage;
+  let modifiedResult: typeof generatedResult;
+  let modifyRequestId: string | undefined;
+  let modifiedPixels: Buffer | undefined;
   if (process.env.WORKBENCH_TEST_MATERIAL_UPLOAD === "1") {
     step("native image upload, worker persistence and document save");
     const task = await nativeUpload(page, frame, `studio-ui-${run}.png`);
@@ -612,6 +649,117 @@ try {
     check("brand check reflects the real version receipt and image digest; an incomplete or unavailable check is never shown as passed");
   } else console.log("SKIP generation journey: WORKBENCH_TEST_GENERATION=1 plus a real configured provider/storage/worker is required; no AI generation is verified by this run.");
 
+  if (process.env.WORKBENCH_TEST_IMAGE_EDIT === "1") {
+    step("real whole-image edit preserves its source and requires manual insertion");
+    assert.ok(generatedImage && generatedResult, "The edit source must come from the real provider journey above");
+    const sourceImage = JSON.parse(JSON.stringify(generatedImage));
+    const sourceResult = generatedResult;
+    const sourceVersion = sourceVersionContent(await prisma.generationVersion.findUniqueOrThrow({ where: { id: sourceResult.versionId } }));
+    await draftReady(frame);
+    await frame.waitForFunction(() => (window as any).NovartProductWorkflowSnapshot?.().loaded === true);
+    await frame.locator("#nv-workflow-toggle").click();
+    const gallery = frame.locator("#nv-workflow-gallery");
+    const sourceCard = gallery.locator(`[data-shape-id="${sourceImage.id}"]`);
+    if (!await gallery.isVisible()) await frame.locator("#nv-workflow-gallery-toggle").click();
+    await sourceCard.locator('[data-action="set-target"]').click();
+    await frame.locator("#nv-workflow-save").click();
+    await frame.waitForFunction(({ id, sha256 }) => {
+      const state = (window as any).NovartProductWorkflowSnapshot?.();
+      return state?.mode === "modify" && state.target?.shapeId === id && state.target.assetSha256 === sha256 && !state.dirty && !state.busy && !state.stale;
+    }, { id: sourceImage.id, sha256: sourceResult.assetSha256 });
+    await frame.locator("#nv-workflow-close").click();
+    await expect(frame.getByTestId("agent-send-button")).toHaveAttribute("title", "修改图片");
+
+    const submitted: Record<string, unknown>[] = [];
+    let lostEditReceipt = false;
+    const loseEditReceipt = async (route: Route) => {
+      if (route.request().method() !== "POST") return route.continue();
+      submitted.push(route.request().postDataJSON());
+      if (!lostEditReceipt) {
+        const response = await route.fetch();
+        assert.equal(response.status(), 202, "Real image editing, storage and source authorization must accept this request");
+        lostEditReceipt = true;
+        return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Acceptance test: edit receipt lost" }) });
+      }
+      return route.continue();
+    };
+    await page.route("**/studio/generation?**", loseEditReceipt);
+    let accepted: { requestId: string; generationId: string; projectId: string; mutationId: string; mode: string };
+    try {
+      await frame.getByTestId("agent-message-input").fill(`Edit this image: change the background to pale blue, retain the central geometric subject, no text. Acceptance ${run}`);
+      const receipt = page.waitForResponse(response => new URL(response.url()).pathname === "/studio/generation" && response.request().method() === "POST" && response.status() === 202);
+      await frame.getByTestId("agent-send-button").click();
+      accepted = await (await receipt).json();
+    } finally { await page.unroute("**/studio/generation?**", loseEditReceipt); }
+    assert.equal(accepted.projectId, projectId); assert.equal(accepted.mode, "modify");
+    assert.equal(submitted.length, 2); assert.ok(isDeepStrictEqual(submitted[0], submitted[1]), "Lost edit receipts must retry the identical mutation and source revisions");
+    assert.equal(accepted.mutationId, submitted[0].mutationId);
+    modifyRequestId = accepted.requestId;
+    const completed = await eventually("real image edit and durable archive complete", async () => {
+      const response = await page.context().request.get(new URL(`/studio/generation?workspaceId=${workspace.id}&projectId=${projectId}&requestId=${accepted.requestId}`, base).href);
+      assert.equal(response.status(), 200);
+      const value = await response.json();
+      assert.equal(value.mode, "modify");
+      assert.notEqual(value.status, "FAILED", `Image edit failed: ${value.error || "unknown"}`);
+      assert.notEqual(value.resultState, "FAILED", `Edited result archive failed: ${value.archiveError || "unknown"}`);
+      return value.status === "SUCCEEDED" && value.resultState === "READY" ? value : null;
+    }, 720_000);
+    assert.equal(completed.results.length, 1);
+    modifiedResult = completed.results[0]; assert.ok(modifiedResult);
+    const result = modifiedResult;
+    assert.notEqual(result.assetId, sourceResult.assetId); assert.notEqual(result.versionId, sourceResult.versionId);
+    const version = await prisma.generationVersion.findUniqueOrThrow({ where: { id: result.versionId } });
+    assert.equal(version.generationId, accepted.generationId); assert.notEqual(version.generationId, sourceVersion.generationId);
+    assert.equal(version.parentVersionId, null, "The new generation must not use an invalid cross-generation parent");
+    assert.deepEqual((version.params as Record<string, unknown>).source, {
+      assetId: sourceResult.assetId, sha256: sourceResult.assetSha256, versionId: sourceResult.versionId,
+      generationId: sourceVersion.generationId, operation: "whole-image-edit",
+    });
+    const asset = await prisma.asset.findUniqueOrThrow({ where: { id: result.assetId } });
+    assert.equal(asset.workspaceId, workspace.id); assert.equal(asset.generationVersionId, version.id);
+    assert.ok(asset.storageKey && !asset.url.startsWith("data:") && !asset.url.startsWith("blob:"));
+    assert.equal(await prisma.projectAsset.count({ where: { projectId, assetId: asset.id } }), 1);
+    assert.equal(await prisma.generation.count({ where: { projectId } }), 2, "The entire opted-in journey must create only one generation plus one edit");
+    const rawUrl = new URL(result.url, base);
+    assert.equal(rawUrl.origin, base.origin); assert.equal(rawUrl.pathname, `/api/workspaces/${workspace.id}/assets/${asset.id}/raw`);
+    const raw = await page.context().request.get(rawUrl.href); assert.equal(raw.status(), 200);
+    const body = await raw.body(); assert.equal(createHash("sha256").update(body).digest("hex"), result.assetSha256);
+    const expectedPixels = await browserImagePixels(frame, rawUrl.pathname);
+    assert.deepEqual([expectedPixels.info.width, expectedPixels.info.height], [result.width, result.height]);
+
+    const receipt = frame.getByTestId("product-generation-tasks").locator(`[data-request-id="${accepted.requestId}"]`);
+    await expect(receipt).toHaveAttribute("data-mode", "modify");
+    await expect(receipt).toHaveAttribute("data-result-state", "READY", { timeout: 30_000 });
+    const resultShapeId = `shape:novart-generation-${result.versionId}`;
+    assert.ok(!(await currentShapes(frame)).some(shape => shape.id === resultShapeId), "Completed edits must never replace the source or insert automatically");
+    assert.deepEqual((await currentShapes(frame)).find(shape => shape.id === sourceImage.id), sourceImage);
+    await receipt.locator('[data-action="insert"]').click();
+    modifiedImage = await eventually("edited result is inserted through its visible receipt", async () => (await currentShapes(frame)).find(shape => shape.id === resultShapeId));
+    assert.equal(modifiedImage.type, "c-image"); assert.equal(modifiedImage.props.url, rawUrl.pathname);
+    assert.deepEqual([modifiedImage.props.w, modifiedImage.props.h], [result.width, result.height], "This 1:1 / 1K PNG check requires native-size geometry, without canvas downscaling");
+    assert.deepEqual((await currentShapes(frame)).find(shape => shape.id === sourceImage.id), sourceImage, "Manual insertion must preserve the entire source shape");
+    await frame.evaluate(() => { (window as any).__novartAcceptanceEditor.undo(); });
+    assert.ok(!(await currentShapes(frame)).some(shape => shape.id === resultShapeId));
+    assert.deepEqual((await currentShapes(frame)).find(shape => shape.id === sourceImage.id), sourceImage);
+    await frame.evaluate(() => { (window as any).__novartAcceptanceEditor.redo(); });
+    await eventually("source and edited result are both persisted without replacement", async () => {
+      const row = await prisma.editorDocument.findUnique({ where: { projectId } });
+      if (!row?.canvas) return null;
+      const store = decodeCanvas(row.canvas);
+      return store[resultShapeId]?.props.url === rawUrl.pathname && store[sourceImage.id]?.props.url === sourceImage.props.url ? row : null;
+    });
+    assert.deepEqual((await currentShapes(frame)).find(shape => shape.id === sourceImage.id), sourceImage, "Redo must preserve the entire source shape");
+    assert.ok(isDeepStrictEqual(sourceVersionContent(await prisma.generationVersion.findUniqueOrThrow({ where: { id: sourceResult.versionId } })), sourceVersion), "Editing must not rewrite the original image version or recipe");
+    const originalBytes = await page.context().request.get(new URL(sourceResult.url, base).href);
+    assert.equal(originalBytes.status(), 200);
+    assert.equal(createHash("sha256").update(await originalBytes.body()).digest("hex"), sourceResult.assetSha256, "Editing must not overwrite original stored bytes");
+    const exported = await nativePngDownload(page, frame, resultShapeId, "edited-image", true);
+    assert.deepEqual([exported.info.width, exported.info.height, exported.info.channels], [result.width, result.height, 4]);
+    assert.ok(exported.data.equals(expectedPixels.data), "Native PNG export must preserve the browser-decoded archived edited pixels");
+    modifiedPixels = exported.data;
+    check("real whole-image edit uses one durable request, preserves its original version/bytes, and supports manual insertion, undo/redo, save and native PNG export");
+  } else console.log("SKIP whole-image edit journey: WORKBENCH_TEST_IMAGE_EDIT=1 plus real generation/provider/storage/worker is required; editing is not verified by this run.");
+
   step("native chat draft autosave and checked receipt");
   await draftReady(frame);
   const draftText = `暂存的创作需求 ${run}`;
@@ -737,6 +885,23 @@ try {
     assert.equal((await currentShapes(frame)).filter(shape => shape.id === generatedImage.id).length, 1);
     check("fresh browser restores the real generation, its authenticated image and task without duplicating it");
   }
+  if (modifiedImage && modifiedResult && modifyRequestId && modifiedPixels) {
+    const restored = reopened.find(shape => shape.id === modifiedImage.id);
+    assert.ok(restored, "Fresh browser restores the edited result from the saved native document");
+    assert.deepEqual(restored.props, JSON.parse(JSON.stringify(modifiedImage.props)));
+    assert.deepEqual(await readableImage(frame, String(restored.props.url)), [modifiedResult.width, modifiedResult.height]);
+    const beforeInbox = (await currentShapes(frame)).map(shape => shape.id).sort();
+    frame = await openTaskFromInbox(fresh, projectId, "STUDIO_GENERATION", modifyRequestId);
+    const receipt = frame.getByTestId("product-generation-tasks").locator(`[data-request-id="${modifyRequestId}"]`);
+    await expect(receipt).toHaveAttribute("data-mode", "modify"); await expect(receipt).toHaveAttribute("data-result-state", "READY");
+    assert.deepEqual((await currentShapes(frame)).map(shape => shape.id).sort(), beforeInbox);
+    await receipt.locator('[data-action="insert"]').click();
+    assert.equal((await currentShapes(frame)).filter(shape => shape.id === modifiedImage!.id).length, 1);
+    const exported = await nativePngDownload(fresh, frame, modifiedImage.id, "fresh-edited-image", true);
+    assert.deepEqual([exported.info.width, exported.info.height, exported.info.channels], [modifiedResult.width, modifiedResult.height, 4]);
+    assert.ok(exported.data.equals(modifiedPixels), "Fresh browser export must reproduce edited pixels without the first browser's image cache");
+    check("fresh browser restores the original and edited images, authoritative modify receipt and identical PNG export without duplicate insertion");
+  }
   await draftReady(frame);
   await expect(frame.getByTestId("agent-message-input")).toHaveText(finalDraftText);
   await fresh.getByTestId("studio-nav-settings").click();
@@ -746,8 +911,8 @@ try {
   check("a fresh browser restores canvas, Chinese text, pen, chat draft, favorite and profile from server data");
 
   assert.deepEqual(networkProblems, [], "Studio must not access original vendor/business services");
-  assert.equal(await prisma.generation.count({ where: { projectId } }), generatedImage ? 1 : 0);
-  check(generatedImage ? "core editing adds no generation beyond the single explicitly enabled provider journey" : "core editing performs no remote business request or AI generation");
+  assert.equal(await prisma.generation.count({ where: { projectId } }), (generatedImage ? 1 : 0) + (modifiedImage ? 1 : 0));
+  check(generatedImage ? "core editing adds no generation beyond the explicitly enabled provider journeys" : "core editing performs no remote business request or AI generation");
   console.log(`Studio UI acceptance: ${passed} checks passed against the real app and disposable database.`);
 } catch (error) {
   await mkdir(artifacts, { recursive: true });

@@ -20,6 +20,7 @@ import zlib
 
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / 'previews' / 'novart-workbench'
+PUBLIC_ORIGIN = 'https://novart-review.invalid'
 
 
 def require(condition, message):
@@ -57,6 +58,8 @@ def check_container(image, expected_sha):
 
     def request(path, payload=None, *, cookie=None, headers=None):
         outgoing = dict(headers or {})
+        if payload is not None:
+            outgoing.setdefault('Origin', PUBLIC_ORIGIN)
         if cookie:
             outgoing['Cookie'] = cookie
         if payload is not None and not isinstance(payload, bytes):
@@ -79,6 +82,7 @@ def check_container(image, expected_sha):
     def start():
         nonlocal port
         docker('run', '-d', '--name', name, '-p', '127.0.0.1::8769',
+               '-e', 'NOVART_REVIEW_PUBLIC_ORIGIN=' + PUBLIC_ORIGIN,
                '--mount', f'type=volume,source={volume},target=/app/sharing', image)
         binding = json.loads(docker('inspect', '--format', '{{json .NetworkSettings.Ports}}', name))
         port = int(binding['8769/tcp'][0]['HostPort'])
@@ -140,8 +144,14 @@ def check_container(image, expected_sha):
         require(saved['version'] != project['version'], 'Version did not advance')
         require(request('/api/canva/project/saveProject', {}, cookie=cookie,
                         headers={'Origin': 'https://unrelated.invalid'})[0] == 403, 'Cross-origin write accepted')
+        require(request('/api/canva/project/saveProject', {}, cookie=cookie,
+                        headers={'Origin': 'https://unrelated.invalid',
+                                 'X-Forwarded-Host': 'unrelated.invalid',
+                                 'X-Forwarded-Proto': 'https'})[0] == 403, 'Forged proxy origin accepted')
+        require(request('/api/canva/project/saveProject', {}, cookie=cookie,
+                        headers={'Origin': 'null'})[0] == 403, 'Opaque origin accepted')
         require(request('/api/ci/unavailable-provider', {}, cookie=cookie)[0] == 503, 'Unavailable API did not fail closed')
-        checks.append('Project save, revision change and write guards')
+        checks.append('Public-origin writes behind rewritten Host, revision change and write guards')
 
         docker('rm', '-f', name)
         start()
