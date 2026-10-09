@@ -78,6 +78,9 @@ export async function POST(
     await loadOwnedVersion(wsId, genId, versionId, user.id);
     // G6 — 二次编辑属于内容写操作:编辑+(EDITOR/OWNER)。
     await requireWorkspaceRole(wsId, user.id, "EDITOR");
+    if (await prisma.studioGenerationRequest.findUnique({ where: { generationId: genId }, select: { id: true } })) {
+      throw new ApiException(409, "此图片属于新工作台，请从新工作台使用受保护的改图流程；当前改图尚未接通。");
+    }
 
     const input = parse(EditVersionInput, await req.json());
     const watermarkOverlays = (input.watermarkOverlays ?? []).map((overlay) =>

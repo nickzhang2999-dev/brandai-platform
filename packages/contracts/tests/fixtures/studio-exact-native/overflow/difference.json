@@ -1,0 +1,14 @@
+{
+  "fixtureOnly": true,
+  "nativeFrameSize": [
+    128,
+    128
+  ],
+  "nativeExportSize": [
+    140,
+    140
+  ],
+  "scene": "Rotated image B extends 12px left and below the frame; native selected-frame PNG expands to include children rather than clipping to its nominal size.",
+  "freshContextVerified": false,
+  "serverComparison": "Pending; do not claim fixed-frame crop equals this native export"
+}

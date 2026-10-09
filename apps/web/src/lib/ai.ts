@@ -66,7 +66,10 @@ async function call<TReq, TRes>(path: string, body: TReq, options?: AiCallOption
   const signal = options ? options.signal ?? AbortSignal.timeout(5 * 60_000) : undefined;
   signal?.throwIfAborted();
   const requireVisualCheck = path === "/v1/compliance/check" && options?.requireRealVlmProvider === true;
-  const setup = Promise.all([resolveAiService(requireVisualCheck ? { requireVisualCheck: true } : undefined), providerHeaders(
+  const requireSingleAttempt = ["/v1/generate", "/v1/compliance/check"].includes(path) && (options?.requireRealImageProvider === true || options?.requireRealVlmProvider === true);
+  const setup = Promise.all([resolveAiService(requireVisualCheck || requireSingleAttempt ? {
+    ...(requireVisualCheck ? { requireVisualCheck: true } : {}), ...(requireSingleAttempt ? { requireSingleAttempt: true } : {}),
+  } : undefined), providerHeaders(
     path === "/v1/generate" && options?.requireRealImageProvider === true,
     requireVisualCheck,
   )]);
@@ -75,7 +78,9 @@ async function call<TReq, TRes>(path: string, body: TReq, options?: AiCallOption
   const res = await fetch(`${service.base}${path}`, {
     method: "POST",
     headers: { "content-type": "application/json", ...headers },
-    body: JSON.stringify(body),
+    // The product's task claim is insufficient if a lower client layer retries
+    // the paid POST. Enforce this also for its optional text precheck.
+    body: JSON.stringify(requireSingleAttempt ? { ...body, providerRetryPolicy: "never" } : body),
     cache: "no-store",
     ...(signal ? { signal } : {}),
   });

@@ -19,6 +19,7 @@ from .providers import (
     resolve_vlm_provider,
 )
 from .providers.base import ImageProvider, LayerProvider, VLMProvider
+from .providers.retry_policy import call_with_retry_policy
 from .providers.http_providers import (
     _DEFAULT_IMAGE_QUALITY,
     _estimate_cost_usd,
@@ -154,6 +155,7 @@ _RISK_LEXICON = {
 PARSER_REVISION = "grounded-six-slot-r6"
 GENERATION_REVISION = "gpt-image-2-size-quality-r1"
 VISUAL_CHECK_REVISION = "studio-visual-check-evidence-r1"
+PROVIDER_RETRY_REVISION = "single-provider-attempt-r1"
 
 
 @app.get("/health")
@@ -170,6 +172,7 @@ async def health():
         "parserRevision": PARSER_REVISION,
         "generationRevision": GENERATION_REVISION,
         "visualCheckRevision": VISUAL_CHECK_REVISION,
+        "providerRetryRevision": PROVIDER_RETRY_REVISION,
     }
 
 
@@ -663,7 +666,8 @@ async def generate(
             # 单图与多图共用同一条 /images/edits multipart 路径与同一个响应
             # 解析器（刻意规避 prd_agent「多图走独立 Vision 分支 + 独立解析」
             # 导致的 "Vision API 响应格式不支持" bug）。
-            urls = await provider.generate_with_references(
+            urls = await call_with_retry_policy(
+                req.providerRetryPolicy, provider.generate_with_references,
                 strict_prompt,
                 strict_refs,
                 width=width,
@@ -682,7 +686,8 @@ async def generate(
             # Fallback (mock / non-openai gateways): single image-input edit.
             # Remaining refs are forwarded in the payload so an img2img-capable
             # gateway can still read them — never silently dropped.
-            image_url = await provider.edit(
+            image_url = await call_with_retry_policy(
+                req.providerRetryPolicy, provider.edit,
                 strict_refs[0]["url"],
                 "STRICT_REFERENCE_GENERATE",
                 {
@@ -741,7 +746,8 @@ async def generate(
         call_extra = dict(provider_extra)
         if quality:
             call_extra["quality"] = quality
-        return await provider.generate(
+        return await call_with_retry_policy(
+            req.providerRetryPolicy, provider.generate,
             prompt,
             width=gw,
             height=gh,
@@ -1038,7 +1044,8 @@ async def compliance_check(
             ref_kwargs["references"] = [
                 r.model_dump(exclude_none=True) for r in req.referenceImages
             ]
-        visual = await vlm.check_visual_compliance(
+        visual = await call_with_retry_policy(
+            req.providerRetryPolicy, vlm.check_visual_compliance,
             req.imageUrl, [r.model_dump() for r in req.brandRules], **ref_kwargs
         )
         visual_results = [ComplianceResult(**r) for r in visual.get("results", [])]

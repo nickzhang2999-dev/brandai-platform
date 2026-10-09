@@ -1,6 +1,7 @@
 import { inlineStudioGenerationReferences, studioProviderParams } from "@/lib/studio-generation-references";
-import { claimStudioGeneration, finishStudioGeneration, stageStudioGenerationOutput } from "@/lib/studio-generation-lifecycle";
+import { claimStudioGeneration, assertStudioGenerationReady, finishStudioGeneration, stageStudioGenerationOutput } from "@/lib/studio-generation-lifecycle";
 import { ensureStudioGenerationArtifacts } from "@/lib/studio-generation-artifacts";
+import { studioExactIntent, preflightStudioExactSources, assertStudioExactNotModelInput, type StudioExactSnapshot } from "@/lib/studio-generation-exact";
 import { Worker, type Job } from "bullmq";
 import { prisma, Prisma } from "@brandai/db";
 import {
@@ -156,6 +157,7 @@ export interface GenerateJobData {
   /** Product-only, server-resolved accepted byte identities. Read from the
    * durable request jobData, never accepted from an HTTP caller. */
   studioExpectedAssetSha256?: Record<string, string>;
+  studioExactLayout?: StudioExactSnapshot;
   /**
    * M3 — text rendering strategy threaded into the AI GenerateRequest.
    * "direct" (default) keeps the model rendering any text; "layered" steers it
@@ -426,11 +428,13 @@ export async function runGenerateJob(
     // writeTerminal no-ops if the inner already settled SUCCEEDED (can't
     // normally happen — a success clears the watchdog — but keeps the
     // invariant "first terminal write wins" airtight).
-    await writeTerminal({ status: "FAILED", error: String(err) });
+    await writeTerminal({ status: "FAILED", error: studio ? err : String(err) });
     throw err;
   }
 
   async function runGenerationInner(): Promise<GenerateJobResult> {
+    const studioExact = studio ? studioExactIntent(job.data) : null;
+    if (studioExact) await preflightStudioExactSources(workspaceId, generation.projectId, studioExact.layout, controller!.signal);
     // §V0.02 #6 — latest-first ONLY for the generation prompt: newly created /
     // just re-enabled rules take precedence in the constraint. Snapshots and the
     // hard-block gates keep the deterministic default order (docs/10 #4).
@@ -444,29 +448,32 @@ export async function runGenerateJob(
     // the 529 cause). Blocking findings become a readable Generation.error
     // via PrecheckBlockError; latency is logged so the activity view shows
     // how long each precheck actually took.
-    const pcStart = Date.now();
-    try {
-      const pc = await runPrecheck({
-        workspaceId,
-        text: generation.sellingPoint,
-      }, transport);
-      await recordUsage({
-        workspaceId,
-        userId: ownerId,
-        kind: "COMPLIANCE",
-        status: pc.blocking ? "FAILED" : "SUCCEEDED",
-        latencyMs: pc.latencyMs ?? Date.now() - pcStart,
-      });
-      if (pc.blocking) throw new PrecheckBlockError(pc);
-    } catch (err) {
-      if (err instanceof PrecheckBlockError) throw err;
-      // Infra failure of the precheck itself shouldn't sink the job — log
-      // and continue. The downstream generate will surface any real model
-      // error; visual compliance still runs post-gen.
-      console.warn("[generate] precheck call failed, continuing:", err);
+    async function textPrecheck() {
+      const pcStart = Date.now();
+      try {
+        const pc = await runPrecheck({
+          workspaceId,
+          text: generation.sellingPoint,
+        }, transport);
+        await recordUsage({
+          workspaceId,
+          userId: ownerId,
+          kind: "COMPLIANCE",
+          status: pc.blocking ? "FAILED" : "SUCCEEDED",
+          latencyMs: pc.latencyMs ?? Date.now() - pcStart,
+        });
+        if (pc.blocking) throw new PrecheckBlockError(pc);
+      } catch (err) {
+        if (err instanceof PrecheckBlockError) throw err;
+        // Infra failure of the precheck itself shouldn't sink the job — log
+        // and continue. The downstream generate will surface any real model
+        // error; visual compliance still runs post-gen.
+        console.warn("[generate] precheck call failed, continuing:", err);
+      }
+      controller?.signal.throwIfAborted();
+      await job.updateProgress(25);
     }
-    controller?.signal.throwIfAborted();
-    await job.updateProgress(25);
+    if (!studio) await textPrecheck();
 
     // P1.2 — aggregate ProhibitionRule + structured rule deltas into a
     // compiled `AIConstraints` payload. Feature-flagged so the legacy
@@ -1004,10 +1011,20 @@ export async function runGenerateJob(
     });
     aiConstraints = chatBrandPolicy.aiConstraints;
 
-    const studioReferences = studio ? await inlineStudioGenerationReferences(workspaceId, aiConstraints.referenceImages, controller!.signal, job.data.studioExpectedAssetSha256) : null;
+    const studioReferences = studio ? await inlineStudioGenerationReferences(workspaceId, aiConstraints.referenceImages, controller!.signal, studioExact!.modelExpected) : null;
+    if (studioReferences) assertStudioExactNotModelInput(studioExact!.layout, studioReferences.audit);
     if (studioReferences) aiConstraints = { ...aiConstraints, referenceImages: studioReferences.references };
+    // All product source/geometry checks precede even the optional paid text
+    // precheck; the company legacy sequence remains unchanged.
+    if (studio) {
+      await assertStudioGenerationReady(studio, controller!.signal);
+      // This adapter reads the current copy term library, sends brandRules:[]
+      // and no image; it does not reload the accepted image-generation rules.
+      await textPrecheck();
+    }
 
     const baseFields = {
+      ...(studio ? { providerRetryPolicy: "never" as const } : {}),
       sceneType: generation.sceneType,
       sellingPoint: generation.sellingPoint,
       scene: chatOrigin ? "" : generation.scene,
@@ -1054,6 +1071,7 @@ export async function runGenerateJob(
             ...(legacyReferenceItems.length ? { referenceAssets: legacyReferenceItems } : {}),
             studioPostprocess: { watermarkOverlays: resolvedOutputOverlays,
               automaticBrandLogoAssetId: automaticBrandLogoAsset?.id ?? null, brandRules,
+              ...(studioExact?.layout ? { exactLayout: studioExact.layout } : {}),
               assetSha256: Object.fromEntries((studioReferences?.audit ?? []).map(item => [String(item.assetId), String(item.sha256)])) },
           } }, index);
       }
@@ -1201,6 +1219,9 @@ export async function runGenerateJob(
           );
           break;
         }
+        // Keep this outside the per-size catch so an authoritative 409 remains
+        // readable instead of becoming an opaque "all target sizes failed".
+        if (studio) await assertStudioGenerationReady(studio, controller!.signal);
         try {
           const request = GenerateRequest.parse({
             ...baseFields,
@@ -1278,6 +1299,7 @@ export async function runGenerateJob(
       ...baseFields,
       versionCount,
     });
+    if (studio) await assertStudioGenerationReady(studio, controller!.signal);
     let raw: unknown;
     try {
       raw = await ai.generate(request, transport);

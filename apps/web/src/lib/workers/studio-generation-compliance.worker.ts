@@ -50,7 +50,7 @@ export async function runStudioGenerationComplianceJob(job: CheckJob) {
     const meta = await inspectArtifactImage(bytes, signal);
     if (meta.sha256 !== row.sha256 || meta.width !== row.width || meta.height !== row.height) throw new ApiException(422, "归档图片内容已发生变化，未执行视觉检查，请联系管理员检查素材。");
     const [termLib, references] = await artifactDeadline(Promise.all([loadTermLib(row.workspaceId), loadStudioComplianceReferences(row.workspaceId, signal, bytes.length)]), signal);
-    const request = ComplianceCheckRequest.parse({ imageUrl: `data:${meta.mimeType};base64,${bytes.toString("base64")}`, brandRules: source.brandRules, termLib, referenceImages: references.referenceImages });
+    const request = ComplianceCheckRequest.parse({ imageUrl: `data:${meta.mimeType};base64,${bytes.toString("base64")}`, brandRules: source.brandRules, termLib, referenceImages: references.referenceImages, providerRetryPolicy: "never" });
     await artifactDeadline(prisma.$transaction(async tx => {
       await requireArtifactWrite(tx, row.workspaceId, row.projectId, row.userId);
       const active = await tx.asyncTask.findUnique({ where: { id: taskId } });

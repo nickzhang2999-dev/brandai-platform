@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const f = vi.hoisted(() => ({ transaction: vi.fn(), query: vi.fn(), gate: vi.fn(), read: vi.fn(), update: vi.fn(), updateMany: vi.fn(), output: vi.fn(), clearOutputs: vi.fn(), pending: vi.fn(), missing: vi.fn(), ensure: vi.fn(), enqueue: vi.fn(), settings: vi.fn(), bytes: vi.fn(), inspect: vi.fn(), process: vi.fn(), upload: vi.fn(), priorAsset: vi.fn(), logo: vi.fn(), asset: vi.fn(), version: vi.fn(), existingVersion: vi.fn(), link: vi.fn(), check: vi.fn(), enqueueCheck: vi.fn() }));
+const f = vi.hoisted(() => ({ transaction: vi.fn(), query: vi.fn(), gate: vi.fn(), read: vi.fn(), update: vi.fn(), updateMany: vi.fn(), output: vi.fn(), clearOutputs: vi.fn(), pending: vi.fn(), missing: vi.fn(), ensure: vi.fn(), enqueue: vi.fn(), settings: vi.fn(), bytes: vi.fn(), inspect: vi.fn(), process: vi.fn(), upload: vi.fn(), priorAsset: vi.fn(), logo: vi.fn(), asset: vi.fn(), version: vi.fn(), existingVersion: vi.fn(), link: vi.fn(), check: vi.fn(), enqueueCheck: vi.fn(), exact: vi.fn(), base: vi.fn() }));
 vi.mock("../../db/src/index", () => ({ Prisma: {}, prisma: { $transaction: f.transaction,
   studioGeneratedMaterial: { updateMany: f.updateMany, findMany: f.pending }, studioGenerationOutput: { updateMany: f.clearOutputs }, studioGenerationRequest: { findMany: f.missing }, asset: { findUnique: f.priorAsset, findFirst: f.logo } } }));
 vi.mock("@/lib/queue", () => ({ connection: {}, queuePrefix: "test" }));
@@ -12,10 +12,16 @@ vi.mock("@/lib/studio-generation-artifacts-image", () => ({ artifactDeadline: as
 vi.mock("@/lib/studio-generation-artifacts-queue", () => ({ enqueueStudioArtifact: f.enqueue }));
 vi.mock("@/lib/studio-generation-compliance", () => ({ registerStudioGenerationCompliance: f.check }));
 vi.mock("@/lib/studio-generation-compliance-queue", () => ({ enqueueStudioCompliance: f.enqueueCheck }));
+vi.mock("@/lib/studio-exact-image", () => ({ compositeStudioExactImage: f.exact }));
+vi.mock("@/lib/studio-generation-base", () => ({ storeStudioCleanBase: f.base, requireStudioBaseEncryption: vi.fn() }));
+vi.mock("@/lib/studio-generation-exact", async () => ({ ...await vi.importActual("../../../apps/web/src/lib/studio-generation-exact"), loadStudioExactAsset: vi.fn() }));
+vi.mock("../../../apps/web/src/lib/api", async () => await vi.importMock("@/lib/api"));
+vi.mock("../../../apps/web/src/lib/studio-generation-base", () => ({ requireStudioBaseEncryption: vi.fn() }));
 vi.mock("@/lib/studio-generation-artifacts", () => ({ ensureStudioGenerationArtifacts: f.ensure, requireArtifactWrite: f.gate,
   STUDIO_ARTIFACT_ERROR: "Archive failed; retry archive only", STUDIO_ARTIFACT_EXPIRED: "Raw recovery expired", STUDIO_ARTIFACT_RUN_MS: 60_000 }));
 import { runStudioGenerationArtifactJob, sweepStudioGenerationArtifacts } from "../../../apps/web/src/lib/workers/studio-generation-artifacts.worker";
 import { ApiException } from "@/lib/api";
+import { ExactAssetTransform } from "../src/resource-usage";
 
 let row: any, tx: any;
 const bytes = Buffer.from("unit image fixture; decoder mocked here"), sha = "a".repeat(64);
@@ -28,6 +34,7 @@ beforeEach(() => {
   tx = { $queryRaw: f.query, studioGeneratedMaterial: { findUnique: f.read, update: f.update }, studioGenerationOutput: { update: f.output },
     generationVersion: { findUnique: f.existingVersion, upsert: f.version }, asset: { findUnique: f.priorAsset, upsert: f.asset }, projectAsset: { upsert: f.link } };
   f.transaction.mockImplementation(fn => fn(tx)); f.read.mockImplementation(async () => structuredClone(row));
+  f.query.mockResolvedValue([{ id: "locked" }]);
   f.update.mockImplementation(async ({ data }) => { Object.assign(row, data); return row; });
   f.updateMany.mockImplementation(async ({ where, data }) => {
     if (where.attemptToken && (where.attemptToken !== row.attemptToken || row.status !== where.status)) return { count: 0 };
@@ -41,9 +48,49 @@ beforeEach(() => {
   f.asset.mockResolvedValue({ id: "asset" }); f.priorAsset.mockResolvedValue(null); f.existingVersion.mockResolvedValue(null);
   f.pending.mockResolvedValue([]); f.missing.mockResolvedValue([]);
   f.check.mockResolvedValue({ id: "check", status: "PENDING", jobId: "check-attempt" }); f.enqueueCheck.mockResolvedValue(true);
+  f.exact.mockResolvedValue({ body: Buffer.from("composed-exact"), appliedAssetIds: ["locked"] });
+  f.base.mockResolvedValue({ schemaVersion: 1, encoding: "aes-256-gcm-v1", keyRevision: "c".repeat(24), objectKey: "w/studio-generation-bases/p/output/private", sha256: sha, width: 48, height: 32, mimeType: "image/png", sizeBytes: bytes.length });
 });
+function enableExact() {
+  const transform = ExactAssetTransform.parse({});
+  const assetUsages = [{ assetId: "locked", mode: "EXACT", order: 0, exactTransform: transform }];
+  row.output.params.assetUsages = assetUsages;
+  row.output.params.studioPostprocess.exactLayout = { target: { width: 48, height: 32 },
+    frame: { shapeId: "shape:frame", width: 48, height: 32, pageId: "page:one", pageTransform: [1,0,0,1,0,0] },
+    layers: [{ assetId: "locked", shapeId: "shape:locked", sha256: sha, width: 16, height: 16, displayWidth: 16, displayHeight: 16, relativeTransform: [1,0,0,1,10,10], transform }], assetUsages };
+}
 
 describe("generation archive worker (unit fixtures; no provider or remote storage)", () => {
+  it("composites locked pixels before brand overlays, keeps encrypted clean base private and publishes both atomically", async () => {
+    enableExact(); await runStudioGenerationArtifactJob(job());
+    expect(row.status).toBe("SUCCEEDED");
+    expect(f.exact).toHaveBeenCalledWith(bytes, expect.arrayContaining([expect.objectContaining({ assetId: "locked" })]), expect.any(Function), expect.any(AbortSignal));
+    expect(f.process.mock.calls[0][0]).toEqual(Buffer.from("composed-exact"));
+    expect(f.base).toHaveBeenCalledWith(bytes, { workspaceId: "w", projectId: "p", outputId: "output" }, expect.any(AbortSignal));
+    expect(row.output.params.studioPostprocess.cleanBase.objectKey).toContain("studio-generation-bases");
+    const visible = f.version.mock.calls[0][0].create.params;
+    expect(visible.appliedExactAssetIds).toEqual(["locked"]); expect(JSON.stringify(visible)).not.toMatch(/studio-generation-bases|keyRevision|cleanBase/);
+    expect(row.output.imageUrl).toBeNull();
+  });
+  it("preserves paid output if encrypted clean-base storage fails and refuses to publish an uneditable composite", async () => {
+    enableExact(); f.base.mockRejectedValue(new Error("storage unavailable"));
+    await expect(runStudioGenerationArtifactJob(job())).rejects.toThrow("temporarily unavailable");
+    expect(row.output.imageUrl).not.toBeNull(); expect(f.version).not.toHaveBeenCalled(); expect(row.status).toBe("PENDING");
+    f.base.mockResolvedValue({ objectKey: "w/private-base" });
+    await runStudioGenerationArtifactJob(job()); expect(row.status).toBe("SUCCEEDED");
+  });
+  it("refuses a provider size mismatch or missing EXACT recipe rather than publishing displaced or absent originals", async () => {
+    enableExact(); row.output.params.studioPostprocess.exactLayout.target.width = 96;
+    await runStudioGenerationArtifactJob(job()); expect(row.status).toBe("FAILED"); expect(f.exact).not.toHaveBeenCalled(); expect(f.version).not.toHaveBeenCalled();
+    row.status = "PENDING"; delete row.output.params.studioPostprocess.exactLayout;
+    await runStudioGenerationArtifactJob(job()); expect(row.status).toBe("FAILED"); expect(f.version).not.toHaveBeenCalled();
+  });
+  it("locks and rechecks current source membership before publishing after storage I/O", async () => {
+    enableExact();
+    f.query.mockImplementation(async (sql: TemplateStringsArray) => sql.join("").includes("FOR SHARE OF") ? [] : [{ id: "locked" }]);
+    await runStudioGenerationArtifactJob(job());
+    expect(f.upload).toHaveBeenCalled(); expect(row.status).toBe("FAILED"); expect(row.output.imageUrl).not.toBeNull(); expect(f.version).not.toHaveBeenCalled();
+  });
   it("publishes a real version/asset/project link only after complete archive and clears private bytes", async () => {
     await runStudioGenerationArtifactJob(job());
     expect(row.status).toBe("SUCCEEDED"); expect(row.sha256).toBe(sha); expect(row.output.imageUrl).toBeNull();

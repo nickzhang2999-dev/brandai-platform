@@ -2,7 +2,7 @@
 from datetime import datetime
 from typing import Annotated, Literal
 from pydantic import Field, field_validator, model_validator
-from .studio_workflow_schemas import StrictModel, ProjectId, Sha256
+from .studio_workflow_schemas import StrictModel, ProjectId, Sha256, ShapeId
 
 MutationId = Annotated[str, Field(pattern=r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\z")]
 
@@ -37,6 +37,14 @@ class StudioGenerationInput(StrictModel):
     sizeSelection: StudioGenerationSizeSelection
     workflowRevision: int = Field(ge=0, le=2147483646)
     documentRevision: int = Field(ge=0, le=2147483646)
+    outputFrameId: ShapeId | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def no_null_frame(cls, value):
+        if isinstance(value, dict) and "outputFrameId" in value and value["outputFrameId"] is None:
+            raise ValueError("outputFrameId must be omitted, not null")
+        return value
 
     @field_validator("prompt", mode="before")
     @classmethod

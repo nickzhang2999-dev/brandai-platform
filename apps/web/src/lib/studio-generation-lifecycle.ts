@@ -35,6 +35,41 @@ export async function claimStudioGeneration(request: StudioRequest): Promise<Stu
   }
 }
 
+/** Source I/O and text precheck can outlive the initial claim check. Revalidate
+ * immediately before external work without consulting later canvas revisions.
+ * This is a fence, never a new claim and never permission to replay a provider. */
+export async function assertStudioGenerationReady(request: StudioRequest, signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted();
+  await prisma.$transaction(async tx => {
+    await requireArtifactWrite(tx, request.workspaceId, request.projectId, request.userId);
+    await tx.$queryRaw`SELECT "id" FROM "StudioGenerationRequest" WHERE "id" = ${request.id} FOR UPDATE`;
+    const current = await tx.studioGenerationRequest.findUnique({ where: { id: request.id } });
+    if (!current || current.status !== "RUNNING" || !request.providerStartedAt ||
+      current.providerStartedAt?.getTime() !== request.providerStartedAt.getTime() ||
+      current.workspaceId !== request.workspaceId || current.projectId !== request.projectId ||
+      current.userId !== request.userId || current.generationId !== request.generationId ||
+      current.contextHash !== request.contextHash || current.expiresAt.getTime() <= Date.now()) {
+      throw new ApiException(409, "生成任务已结束、过期或执行身份已变更，未调用生成服务。请确认后重新提交。");
+    }
+    let contextHash: string;
+    try {
+      contextHash = await studioGenerationContextHash(tx, current.workspaceId, current.projectId,
+        current.jobData as { assetUsages?: {assetId: string}[]; generationId?: string });
+    } catch (error) {
+      if (error instanceof ApiException && error.status === 422) {
+        throw new ApiException(409, "参与素材在准备期间已删除、停用或移出项目，未调用生成服务。请确认后重新提交。");
+      }
+      throw error;
+    }
+    if (contextHash !== request.contextHash) {
+      throw new ApiException(409, "品牌规则或参与素材在准备期间发生变更，未调用生成服务。请确认后重新提交。");
+    }
+    if (current.expiresAt.getTime() <= Date.now()) throw new ApiException(409, "生成任务已过期，未调用生成服务。请重新提交。");
+    signal?.throwIfAborted();
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 15_000 });
+  signal?.throwIfAborted();
+}
+
 export async function finishStudioGeneration(request: StudioRequest, status: "FAILED" | "SUCCEEDED", error?: unknown): Promise<boolean> {
   return prisma.$transaction(async tx => {
     const now = new Date();

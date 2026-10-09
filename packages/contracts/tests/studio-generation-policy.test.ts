@@ -49,4 +49,29 @@ describe("saved workflow selection to company generation", () => {
     f.assets.mockResolvedValue([{ id: "a", url: "http://new/w/a", storageKey: "w/new" }]); expect(await studioGenerationContextHash(db, "w", "p", job)).not.toBe(accepted);
     f.assets.mockResolvedValue([]); await expect(studioGenerationContextHash(db, "w", "p", job)).rejects.toMatchObject({ status: 422 });
   });
+  it("derives EXACT from the saved frame and authenticated source size, never a default placement", async () => {
+    state.workflowReferences = [{ ...reference, purpose: "EXACT" }];
+    f.materials.mockResolvedValue([{ assetId: "a", sha256: sha, mimeType: "image/png", url, width: 20, height: 10 }]);
+    const store = {
+      "page:one": { id: "page:one", typeName: "page", name: "Page" },
+      "shape:frame": { id: "shape:frame", typeName: "shape", type: "frame", parentId: "page:one", index: "a1", x: 200, y: 300, rotation: 0, props: { w: 100, h: 100 } },
+      "shape:image": { id: "shape:image", typeName: "shape", type: "c-image", parentId: "shape:frame", index: "a1", x: 10, y: 20, rotation: 0, props: { url, w: 20, h: 10 } },
+    };
+    const saved = "SHAKKERDATA://" + gzipSync(JSON.stringify({ tldrawSnapshot: { document: { schema: {}, store } } })).toString("base64");
+    f.doc.mockResolvedValue({ workspaceId: "w", revision: 2, canvas: saved });
+    const result = await prepareStudioGeneration(db, "w", "u", { ...input, outputFrameId: "shape:frame" });
+    expect(result.jobData.assetUsages).toEqual([expect.objectContaining({ assetId: "a", mode: "EXACT", exactTransform: expect.objectContaining({ xRatio: .2, yRatio: .25, widthRatio: .2 }) })]);
+    expect(result.jobData.studioExactLayout?.frame).toMatchObject({ shapeId: "shape:frame", width: 100, height: 100, pageId: "page:one" });
+    expect(result.jobData.studioExactLayout?.layers[0]).toMatchObject({ sha256: sha, width: 20, height: 10 });
+    f.prepare.mockClear();
+    f.materials.mockResolvedValue([{ assetId: "a", sha256: sha, mimeType: "image/png", url, width: 20, height: null }]);
+    await expect(prepareStudioGeneration(db, "w", "u", { ...input, outputFrameId: "shape:frame" })).rejects.toMatchObject({ status: 422 });
+    expect(f.prepare).not.toHaveBeenCalled();
+  });
+  it("rejects extraneous output selection and unnamed EXACT instances instead of silently selecting another shape", async () => {
+    await expect(prepareStudioGeneration(db, "w", "u", { ...input, outputFrameId: "shape:frame" })).rejects.toMatchObject({ status: 422 });
+    state.workflowReferences = [{ ...reference, shapeId: null, purpose: "EXACT" }];
+    await expect(prepareStudioGeneration(db, "w", "u", { ...input, outputFrameId: "shape:frame" })).rejects.toMatchObject({ status: 422 });
+    expect(f.prepare).not.toHaveBeenCalled();
+  });
 });

@@ -1,0 +1,175 @@
+{
+  "store": {
+    "shape:exact-native-image-a": {
+      "x": 0,
+      "y": 0,
+      "rotation": 0,
+      "isLocked": false,
+      "opacity": 1,
+      "meta": {
+        "novartAssetId": "f7474b5b-a60a-41a7-a807-c09e90bc7be6",
+        "novartAssetSha256": "1d79f8d7bec4689da0f03117379ce1b510c1529cac64acb15eae149317bb1873",
+        "source": "user"
+      },
+      "id": "shape:exact-native-image-a",
+      "type": "c-image",
+      "parentId": "shape:exact-native-rotated-group",
+      "props": {
+        "w": 48,
+        "h": 32,
+        "url": "/api/workspaces/diagnostic-local-workspace/assets/f7474b5b-a60a-41a7-a807-c09e90bc7be6/raw",
+        "originalUrl": "/api/workspaces/diagnostic-local-workspace/assets/f7474b5b-a60a-41a7-a807-c09e90bc7be6/raw",
+        "radius": 0,
+        "name": "source-a"
+      },
+      "index": "a18Bj",
+      "typeName": "shape"
+    },
+    "shape:exact-native-image-b": {
+      "x": 20,
+      "y": 92,
+      "rotation": 1.5707963267948966,
+      "isLocked": false,
+      "opacity": 1,
+      "meta": {
+        "novartAssetId": "94b1f3e8-dbf8-4bd7-ba98-0fec8cd1a7fe",
+        "novartAssetSha256": "d0b06957971175f0b3511fe8a62f9058f04f38ea80a6c38e1370de3935aba4de",
+        "source": "user"
+      },
+      "id": "shape:exact-native-image-b",
+      "type": "c-image",
+      "parentId": "shape:exact-native-frame",
+      "props": {
+        "w": 48,
+        "h": 32,
+        "url": "/api/workspaces/diagnostic-local-workspace/assets/94b1f3e8-dbf8-4bd7-ba98-0fec8cd1a7fe/raw",
+        "originalUrl": "/api/workspaces/diagnostic-local-workspace/assets/94b1f3e8-dbf8-4bd7-ba98-0fec8cd1a7fe/raw",
+        "radius": 0,
+        "name": "source-b",
+        "flipX": true,
+        "flipY": true
+      },
+      "index": "a2n4E",
+      "typeName": "shape"
+    },
+    "shape:exact-native-rotated-group": {
+      "x": 32,
+      "y": 72,
+      "rotation": 1.5707963267948966,
+      "isLocked": false,
+      "opacity": 1,
+      "meta": {},
+      "id": "shape:exact-native-rotated-group",
+      "type": "group",
+      "parentId": "shape:exact-native-frame",
+      "props": {},
+      "index": "a1ICf",
+      "typeName": "shape"
+    },
+    "shape:novart-upload-cf6ce929-a9a6-49cb-804e-e78e0f57fdba": {
+      "x": 464,
+      "y": 484,
+      "rotation": 0,
+      "isLocked": false,
+      "opacity": 1,
+      "meta": {
+        "novartAssetId": "94b1f3e8-dbf8-4bd7-ba98-0fec8cd1a7fe",
+        "novartAssetSha256": "d0b06957971175f0b3511fe8a62f9058f04f38ea80a6c38e1370de3935aba4de",
+        "source": "user"
+      },
+      "id": "shape:novart-upload-cf6ce929-a9a6-49cb-804e-e78e0f57fdba",
+      "type": "c-image",
+      "props": {
+        "w": 48,
+        "h": 32,
+        "url": "/api/workspaces/diagnostic-local-workspace/assets/94b1f3e8-dbf8-4bd7-ba98-0fec8cd1a7fe/raw",
+        "originalUrl": "/api/workspaces/diagnostic-local-workspace/assets/94b1f3e8-dbf8-4bd7-ba98-0fec8cd1a7fe/raw",
+        "radius": 0,
+        "name": "source-b"
+      },
+      "parentId": "page:page",
+      "index": "a239I",
+      "typeName": "shape"
+    },
+    "page:page": {
+      "meta": {},
+      "id": "page:page",
+      "name": "页面 1",
+      "index": "a1",
+      "typeName": "page"
+    },
+    "document:document": {
+      "gridSize": 10,
+      "name": "",
+      "meta": {
+        "htmlInsertedModules": {}
+      },
+      "id": "document:document",
+      "typeName": "document"
+    },
+    "shape:exact-native-frame": {
+      "x": 640,
+      "y": 500,
+      "rotation": 0,
+      "isLocked": false,
+      "opacity": 1,
+      "meta": {},
+      "id": "shape:exact-native-frame",
+      "type": "frame",
+      "props": {
+        "w": 128,
+        "h": 128,
+        "name": "EXACT native pixel comparison",
+        "color": "white",
+        "isAutoLayout": false
+      },
+      "parentId": "page:page",
+      "index": "a3igj",
+      "typeName": "shape"
+    },
+    "shape:novart-upload-66c2bdac-68ed-4626-9165-21f09eb55ecc": {
+      "x": 464,
+      "y": 484,
+      "rotation": 0,
+      "isLocked": false,
+      "opacity": 1,
+      "meta": {
+        "novartAssetId": "f7474b5b-a60a-41a7-a807-c09e90bc7be6",
+        "novartAssetSha256": "1d79f8d7bec4689da0f03117379ce1b510c1529cac64acb15eae149317bb1873",
+        "source": "user"
+      },
+      "id": "shape:novart-upload-66c2bdac-68ed-4626-9165-21f09eb55ecc",
+      "type": "c-image",
+      "props": {
+        "w": 48,
+        "h": 32,
+        "url": "/api/workspaces/diagnostic-local-workspace/assets/f7474b5b-a60a-41a7-a807-c09e90bc7be6/raw",
+        "originalUrl": "/api/workspaces/diagnostic-local-workspace/assets/f7474b5b-a60a-41a7-a807-c09e90bc7be6/raw",
+        "radius": 0,
+        "name": "source-a"
+      },
+      "parentId": "page:page",
+      "index": "a18wv",
+      "typeName": "shape"
+    }
+  },
+  "outputFrameId": "shape:exact-native-frame",
+  "outputWidth": 128,
+  "outputHeight": 128,
+  "references": [
+    {
+      "shapeId": "shape:exact-native-image-a",
+      "assetId": "f7474b5b-a60a-41a7-a807-c09e90bc7be6",
+      "sha256": "1d79f8d7bec4689da0f03117379ce1b510c1529cac64acb15eae149317bb1873",
+      "width": 48,
+      "height": 32
+    },
+    {
+      "shapeId": "shape:exact-native-image-b",
+      "assetId": "94b1f3e8-dbf8-4bd7-ba98-0fec8cd1a7fe",
+      "sha256": "d0b06957971175f0b3511fe8a62f9058f04f38ea80a6c38e1370de3935aba4de",
+      "width": 48,
+      "height": 32
+    }
+  ]
+}

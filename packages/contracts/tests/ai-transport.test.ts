@@ -49,6 +49,7 @@ describe("product AI transport opt-in", () => {
   it("keeps legacy callers' behavior opt-out", async () => {
     expect(await ai.generate(body)).toEqual({ versions: [] });
     expect(f.fetch.mock.calls[0]?.[1]).not.toHaveProperty("signal");
+    expect(JSON.parse(f.fetch.mock.calls[0]?.[1].body)).not.toHaveProperty("providerRetryPolicy");
   });
   it.each([{ provider: "mock", apiKey: "fixture" }, { provider: " MOCK ", apiKey: "fixture" }, { provider: "", apiKey: "fixture" }, { provider: "openai", apiKey: "" }, { provider: "openai", apiKey: "  " }])(
     "refuses a product call when the actual outgoing settings snapshot is unavailable: %j", async image => {
@@ -61,6 +62,8 @@ describe("product AI transport opt-in", () => {
     f.settings.mockResolvedValue({ image: { provider: "openai", apiKey: "fixture-private", model: "fixture-model" }, layer: {}, vlm: {} });
     expect(await ai.generate(body, { requireRealImageProvider: true })).toEqual({ versions: [] });
     expect(f.settings).toHaveBeenCalledOnce();
+    expect(f.service).toHaveBeenCalledWith({ requireSingleAttempt: true });
+    expect(JSON.parse(f.fetch.mock.calls[0]?.[1].body).providerRetryPolicy).toBe("never");
     expect(f.fetch).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ headers: expect.objectContaining({ "X-OV-Image-Provider": "openai", "X-OV-Image-Key": "fixture-private" }) }));
   });
   it.each([{ provider: "mock", apiKey: "fixture" }, { provider: " MOCK ", apiKey: "fixture" }, { provider: "", apiKey: "fixture" }, { provider: "openai", apiKey: "  " }])(
@@ -74,7 +77,14 @@ describe("product AI transport opt-in", () => {
     f.settings.mockResolvedValue({ image: {}, layer: {}, vlm: { provider: "openai", apiKey: "fixture-vlm", model: "fixture-model" } });
     await ai.complianceCheck({}, { requireRealVlmProvider: true });
     expect(f.settings).toHaveBeenCalledOnce();
-    expect(f.service).toHaveBeenCalledWith({ requireVisualCheck: true });
+    expect(f.service).toHaveBeenCalledWith({ requireVisualCheck: true, requireSingleAttempt: true });
+    expect(JSON.parse(f.fetch.mock.calls[0]?.[1].body).providerRetryPolicy).toBe("never");
     expect(f.fetch).toHaveBeenCalledWith("http://internal-ai.invalid/v1/compliance/check", expect.objectContaining({ headers: expect.objectContaining({ "X-OV-Vlm-Provider": "openai", "X-OV-Vlm-Key": "fixture-vlm" }) }));
+  });
+  it("also prevents lower-layer retries in the product's text precheck", async () => {
+    await ai.complianceCheck({ text: "fixture text" }, { requireRealImageProvider: true });
+    expect(f.service).toHaveBeenCalledWith({ requireSingleAttempt: true });
+    expect(JSON.parse(f.fetch.mock.calls[0]?.[1].body)).toEqual({ text: "fixture text", providerRetryPolicy: "never" });
+    expect(f.fetch).toHaveBeenCalledTimes(1);
   });
 });

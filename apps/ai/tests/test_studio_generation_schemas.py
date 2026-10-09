@@ -7,6 +7,11 @@ def body():
 
 def test_intent_and_trim():
     assert StudioGenerationInput.model_validate(body()).prompt == "tree"
+    assert StudioGenerationInput.model_validate(body() | dict(outputFrameId="shape:frame")).outputFrameId == "shape:frame"
+
+@pytest.mark.parametrize("value", [None, "frame", "shape:f\n", {"x": 2}])
+def test_frame_is_optional_identity_not_geometry(value):
+    with pytest.raises(ValidationError): StudioGenerationInput.model_validate(body() | dict(outputFrameId=value))
 
 @pytest.mark.parametrize("change", [dict(userId="foreign"), dict(mutationId="same"), dict(documentRevision="0"), dict(prompt="   "), dict(sizeSelection=dict(ratioKey="1:1",resolutionTier="1K",model="x")), dict(sizeSelection=dict(ratioKey="custom",resolutionTier="1K"))])
 def test_bad_intents(change):

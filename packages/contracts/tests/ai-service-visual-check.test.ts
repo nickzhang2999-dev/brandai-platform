@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const f = vi.hoisted(() => ({ dns: vi.fn(), fetch: vi.fn() }));
 vi.mock("node:dns/promises", () => ({ resolve4: f.dns }));
-const current = { parserRevision: "grounded-six-slot-r6", generationRevision: "gpt-image-2-size-quality-r1", visualCheckRevision: "studio-visual-check-evidence-r1" };
+const current = { parserRevision: "grounded-six-slot-r6", generationRevision: "gpt-image-2-size-quality-r1", visualCheckRevision: "studio-visual-check-evidence-r1", providerRetryRevision: "single-provider-attempt-r1" };
 const older = { parserRevision: current.parserRevision, generationRevision: current.generationRevision };
 const load = () => import("../../../apps/web/src/lib/ai-service");
 beforeEach(() => {
@@ -13,6 +13,24 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 describe("product visual-check service capability gate", () => {
+  it("rejects an old explicit image service and a legacy cache lacking single-attempt support", async () => {
+    f.fetch.mockResolvedValue(Response.json(older)); const { resolveAiService } = await load();
+    await resolveAiService();
+    await expect(resolveAiService({ requireSingleAttempt: true })).rejects.toThrow("single-provider-attempt revision");
+    expect(f.fetch).toHaveBeenCalledTimes(1);
+  });
+  it("requires both retry and visual evidence capabilities for product checks", async () => {
+    f.fetch.mockImplementation(async () => Response.json({ ...current, providerRetryRevision: undefined })); const { resolveAiService } = await load();
+    await resolveAiService({ requireVisualCheck: true });
+    await expect(resolveAiService({ requireVisualCheck: true, requireSingleAttempt: true })).rejects.toThrow("single-provider-attempt revision");
+    f.fetch.mockResolvedValue(Response.json(current));
+    expect(await resolveAiService({ requireVisualCheck: true, requireSingleAttempt: true })).toMatchObject(current);
+  });
+  it("selects only a shared container with compatible single-attempt behavior", async () => {
+    vi.stubEnv("BRANDAI_AI_SERVICE_URL", "http://ai:8000");
+    f.fetch.mockImplementation(async (url: string) => Response.json(url.includes("10.0.0.1") ? older : current));
+    const { resolveAiService } = await load(); expect((await resolveAiService({ requireSingleAttempt: true })).base).toBe("http://10.0.0.2:8000");
+  });
   it("keeps explicit legacy resolution authoritative without probing health", async () => {
     const { resolveAiService } = await load();
     expect(await resolveAiService()).toEqual({ base: "http://configured.invalid:8000", source: "configured" });

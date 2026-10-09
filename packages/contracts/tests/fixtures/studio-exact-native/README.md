@@ -1,0 +1,9 @@
+# Original native export fixture
+
+Captured locally on 2026-10-09 from the repository's original editor and product upload adapter, using synthetic HTTP responses and two generated non-symmetric 48×32 PNGs. No provider, real database, object storage, company account or user document was involved.
+
+`derive-input.json` contains the actual saved native document store (default props retained), selected 128×128 frame and server-shaped synthetic source identities. A child image belongs to a rotated group; a second overlapping image is rotated and flipped on both axes. `native-frame.png` came from an actual frame context-menu PNG download. `native-frame-fresh.png` came from a new browser context after restoring the saved native document. Their decoded 65,536 RGBA bytes match.
+
+The regression independently derives server geometry and composites these source PNGs over a transparent base, then compares all output pixels with both native downloads. `overflow/` retains a second actual native export: children extend 12px left/bottom, so native PNG bounds become 140×140. Its selected-frame region is the 128×128 rectangle at left=12, top=0, separately compared with the fixed product output. These cover unscaled, right-angle contained/overflow cases; they do not prove arbitrary-angle antialiasing, user image cropping, AI output quality or real-service acceptance.
+
+Reproduction diagnostic is retained locally at `D:/coding/.novart-tmp/studio-exact-native-comparison.cjs`. Full local manifests and the separate overflow evidence are in the corresponding directory. The original editor expands frame PNG exports to include overflowing children, while product EXACT uses the explicitly selected frame as fixed output bounds. The UI states that material outside those bounds is excluded; the two behaviors must not be described as identical.

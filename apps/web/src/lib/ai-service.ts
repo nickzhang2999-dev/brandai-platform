@@ -3,6 +3,7 @@ import { resolve4 } from "node:dns/promises";
 export const REQUIRED_AI_PARSER_REVISION = "grounded-six-slot-r6";
 export const REQUIRED_AI_GENERATION_REVISION = "gpt-image-2-size-quality-r1";
 export const REQUIRED_AI_VISUAL_CHECK_REVISION = "studio-visual-check-evidence-r1";
+export const REQUIRED_AI_PROVIDER_RETRY_REVISION = "single-provider-attempt-r1";
 
 const CONFIGURED_BASE =
   process.env.BRANDAI_AI_SERVICE_URL ??
@@ -17,9 +18,10 @@ export type AiServiceResolution = {
   parserRevision?: string;
   generationRevision?: string;
   visualCheckRevision?: string;
+  providerRetryRevision?: string;
 };
 
-export type AiServiceRequirements = { requireVisualCheck?: boolean };
+export type AiServiceRequirements = { requireVisualCheck?: boolean; requireSingleAttempt?: boolean };
 
 let cachedResolution: { value: AiServiceResolution; expiresAt: number } | null =
   null;
@@ -41,6 +43,7 @@ async function probe(base: string): Promise<AiServiceResolution | null> {
       parserRevision?: unknown;
       generationRevision?: unknown;
       visualCheckRevision?: unknown;
+      providerRetryRevision?: unknown;
     };
     return {
       base,
@@ -57,6 +60,7 @@ async function probe(base: string): Promise<AiServiceResolution | null> {
         typeof body.visualCheckRevision === "string"
           ? body.visualCheckRevision
           : undefined,
+      providerRetryRevision: typeof body.providerRetryRevision === "string" ? body.providerRetryRevision : undefined,
     };
   } catch {
     return null;
@@ -77,7 +81,9 @@ async function probe(base: string): Promise<AiServiceResolution | null> {
 export async function resolveAiService(requirements: AiServiceRequirements = {}): Promise<AiServiceResolution> {
   const now = Date.now();
   const requireVisualCheck = requirements.requireVisualCheck === true;
+  const requireSingleAttempt = requirements.requireSingleAttempt === true;
   if (cachedResolution && cachedResolution.expiresAt > now &&
+      (!requireSingleAttempt || cachedResolution.value.providerRetryRevision === REQUIRED_AI_PROVIDER_RETRY_REVISION) &&
       (!requireVisualCheck || cachedResolution.value.visualCheckRevision === REQUIRED_AI_VISUAL_CHECK_REVISION)) {
     return cachedResolution.value;
   }
@@ -88,10 +94,13 @@ export async function resolveAiService(requirements: AiServiceRequirements = {})
       base: CONFIGURED_BASE.replace(/\/$/, ""),
       source: "configured",
     };
-    if (requireVisualCheck) {
+    if (requireVisualCheck || requireSingleAttempt) {
       const health = await probe(value.base);
-      if (health?.visualCheckRevision !== REQUIRED_AI_VISUAL_CHECK_REVISION) {
+      if (requireVisualCheck && health?.visualCheckRevision !== REQUIRED_AI_VISUAL_CHECK_REVISION) {
         throw new Error("Configured AI service does not support the required visual-check evidence revision");
+      }
+      if (requireSingleAttempt && health?.providerRetryRevision !== REQUIRED_AI_PROVIDER_RETRY_REVISION) {
+        throw new Error("Configured AI service does not support the required single-provider-attempt revision");
       }
       Object.assign(value, health, { source: "configured" });
     }
@@ -109,6 +118,7 @@ export async function resolveAiService(requirements: AiServiceRequirements = {})
       (result) =>
         result?.parserRevision === REQUIRED_AI_PARSER_REVISION &&
         result.generationRevision === REQUIRED_AI_GENERATION_REVISION &&
+        (!requireSingleAttempt || result.providerRetryRevision === REQUIRED_AI_PROVIDER_RETRY_REVISION) &&
         (!requireVisualCheck || result.visualCheckRevision === REQUIRED_AI_VISUAL_CHECK_REVISION),
     );
     if (match) {
@@ -127,7 +137,9 @@ export async function resolveAiService(requirements: AiServiceRequirements = {})
   // older branch and silently return the wrong dimensions/quality. A visible
   // retryable generation failure is safer than persisting a false 3:1 result.
   throw new Error(
-    requireVisualCheck
+    requireSingleAttempt
+      ? "No compatible AI service found for the required single-provider-attempt revision and requested capabilities"
+      : requireVisualCheck
       ? "No compatible AI service found for the required parser, generation and visual-check evidence revisions"
       : "No compatible AI service found for the required parser and generation revisions",
   );

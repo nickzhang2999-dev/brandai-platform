@@ -3,6 +3,11 @@
 ## Goal and scope
 Deliver a launch-ready Novart product on `claude/novart-product-integration`: integrate the reviewed UI with reusable company backend services, verify real persistent materials/generation/save/reopen/export, deploy the exact tested version to the independent environment, and assess differences against company source. User explicitly requested this goal, autonomous routine approvals, multiple agents and logs on 2026-10-09. Preserve company main and shared business data; switching the existing production domain or merging main needs a concrete target and explicit release decision. Platform-enforced human approval cannot be bypassed.
 
+## Latest steering — local development and integration first
+- User deferred deployment on 2026-10-09. Continue source integration and local verification on the integration branch. No Git push, CDS deployment, shared-data writes or main merge in this batch; deployment prerequisites are deferred rather than a reason to stop local work.
+- Current increment adds explicit output frames and server-derived EXACT geometry, bounded source-preserving composition, encrypted clean-base storage, native frame selection and lower-provider no-retry enforcement. All final local gates pass: L1 715, AI/Python 339, Web typecheck and production build. Real DB/S3/provider acceptance remains pending.
+- Next local capability: durable whole-image edit with authorized source lineage, followed by a separately verified native-mask path. Preserve first-product scope; do not expand unrelated editor tools or visual polish.
+
 ## Baselines
 - Company local and remote main, verified at integration start: `e99919a64cd212d5d1b083fd7210842a1962d935`.
 - Frontend review branch start: `52e95a54148400a801e487e0216d76cc33139eb0`.
@@ -31,7 +36,7 @@ First-product journey: sign in -> create/select brand -> create/open project -> 
    - Done: mixed-content edit -> save -> close -> reopen preserves the document and material references; failed restore/save, read-only state and conflicts produce actionable UI and never silently overwrite content.
 5. [in_progress] Complete the real generation loop.
    - Connect prompt + references + brand rules -> existing backend job/worker -> status -> generated asset -> canvas. Configure actual providers and storage; distinguish unavailable services from successful generation.
-   - Current: local intake/outbox/single-provider-claim/private-output/archive/native-insertion and post-generation visual check flows are implemented. L1 601, AI/Python 293, typecheck and build pass. Isolated task recovery, check retries and PNG single/frame export pass. Real DB/S3/provider acceptance and unresolved release prerequisites remain pending. EXACT/modify have an explicit source-grounded implementation plan, not a completed capability.
+   - Current: local intake/outbox/single-provider-claim/private-output/archive/native-insertion, post-generation visual checks and bounded static EXACT are implemented. L1 715, AI/Python 339, typecheck and build pass. Lower-provider no-retry and accepted-context fences are included. Isolated task recovery, check retries, frame selection and actual native PNG/server composition tests pass. Real DB/S3/provider acceptance remains pending; deployment deferred by user. Whole-image edit and masks remain next local development work.
    - Done: at least one real generation flows end to end, its result remains after reopen and can be exported; errors finish with clear retry/recovery rather than an endless spinner. Existing edit/layer capabilities are mapped explicitly; unconnected capabilities are not presented as working.
 6. [pending] First-product acceptance and handoff.
    - Run the complete journey above with real login/storage/provider, plus essential desktop/laptop viewport and failure-recovery checks. Complete required repository gates and deploy the exact tested commit.

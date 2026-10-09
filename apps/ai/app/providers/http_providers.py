@@ -27,10 +27,11 @@ from urllib.parse import urljoin
 
 import httpx
 from bs4 import BeautifulSoup
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from ..config import settings
 from ..ssrf import SSRFError, safe_get
+from .retry_policy import should_retry_provider
 from .base import (
     ImageProvider,
     LayerProvider,
@@ -112,6 +113,7 @@ def _model_in_list(model: str, ids: list[str]) -> bool:
     )
 
 _retry = retry(
+    retry=retry_if_exception(should_retry_provider),
     stop=stop_after_attempt(settings.max_retries),
     wait=wait_exponential(multiplier=1, min=1, max=10),
     reraise=True,

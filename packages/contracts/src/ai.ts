@@ -363,6 +363,8 @@ export type AIConstraints = z.infer<typeof AIConstraints>;
 
 // POST /v1/generate
 export const GenerateRequest = z.object({
+  /** Server-only opt-in: a product task never repeats an upstream paid POST. */
+  providerRetryPolicy: z.literal("never").optional(),
   sceneType: SceneType,
   sellingPoint: z.string(),
   scene: z.string(),
@@ -518,6 +520,8 @@ export type DecomposeResponse = z.infer<typeof DecomposeResponse>;
 
 // POST /v1/compliance/check
 export const ComplianceCheckRequest = z.object({
+  /** Server-only retry policy, never part of model instructions. */
+  providerRetryPolicy: z.literal("never").optional(),
   text: z.string().optional(),
   imageUrl: z.string().optional(),
   brandRules: z.array(BrandRule).default([]),

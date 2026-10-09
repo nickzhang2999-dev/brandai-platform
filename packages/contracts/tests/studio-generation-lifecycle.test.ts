@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const f = vi.hoisted(() => ({ tx: vi.fn(), read: vi.fn(), update: vi.fn(), generation: vi.fn(), output: vi.fn(), clear: vi.fn(), gate: vi.fn(), config: vi.fn(), context: vi.fn() }));
+const f = vi.hoisted(() => ({ tx: vi.fn(), query: vi.fn(), read: vi.fn(), update: vi.fn(), generation: vi.fn(), output: vi.fn(), clear: vi.fn(), gate: vi.fn(), config: vi.fn(), context: vi.fn() }));
 vi.mock("../../db/src/index", () => ({ prisma: { $transaction: f.tx }, Prisma: { TransactionIsolationLevel: { Serializable: "Serializable" }, PrismaClientKnownRequestError: class extends Error {} } }));
 vi.mock("../../../apps/web/src/lib/api", () => ({ ApiException: class extends Error { constructor(public status: number, message: string) { super(message); } } }));
 vi.mock("../../../apps/web/src/lib/studio-generation-policy", () => ({ requireStudioGenerationServices: f.config, studioGenerationContextHash: f.context, validateStudioOutputSource: () => "bytes" }));
 vi.mock("../../../apps/web/src/lib/studio-generation-artifacts", () => ({ requireArtifactWrite: f.gate }));
-import { claimStudioGeneration, stageStudioGenerationOutput, finishStudioGeneration } from "../../../apps/web/src/lib/studio-generation-lifecycle";
+import { claimStudioGeneration, assertStudioGenerationReady, stageStudioGenerationOutput, finishStudioGeneration } from "../../../apps/web/src/lib/studio-generation-lifecycle";
+import { ApiException } from "../../../apps/web/src/lib/api";
 let row: any, tx: any;
 beforeEach(() => {
   vi.resetAllMocks(); row = { id: "sgr_1", workspaceId: "w", projectId: "p", userId: "u", generationId: "g", contextHash: "same", status: "PENDING", providerStartedAt: null, expiresAt: new Date(Date.now() + 60000), jobData: { generationId: "g", assetUsages: [] } };
@@ -13,10 +14,58 @@ beforeEach(() => {
     if (row.status !== where.status || ("providerStartedAt" in where && row.providerStartedAt?.getTime() !== where.providerStartedAt?.getTime()) || (where.expiresAt?.gt && row.expiresAt <= where.expiresAt.gt)) return { count: 0 };
     Object.assign(row, data); return { count: 1 };
   });
-  tx = { studioGenerationRequest: { findUnique: f.read, updateMany: f.update }, generation: { update: f.generation, updateMany: f.generation }, studioGenerationOutput: { create: f.output, updateMany: f.clear } };
+  tx = { $queryRaw: f.query, studioGenerationRequest: { findUnique: f.read, updateMany: f.update }, generation: { update: f.generation, updateMany: f.generation }, studioGenerationOutput: { create: f.output, updateMany: f.clear } };
   f.tx.mockImplementation(async fn => { const prior = { ...row }; try { return await fn(tx); } catch (error) { row = prior; throw error; } });
 });
 describe("product single execution and private output atomicity", () => {
+  it("revalidates accepted context and the same live claim after source I/O without re-claiming", async () => {
+    const claim = await claimStudioGeneration(row); f.update.mockClear(); f.context.mockClear(); f.gate.mockClear();
+    await assertStudioGenerationReady(claim!);
+    expect(f.query).toHaveBeenCalled();
+    expect(f.gate).toHaveBeenCalledWith(tx, "w", "p", "u");
+    expect(f.context).toHaveBeenCalledWith(tx, "w", "p", row.jobData);
+    expect(f.update).not.toHaveBeenCalled(); expect(row.status).toBe("RUNNING");
+    // EditorDocument/WorkbenchProjectState are deliberately absent from this
+    // DB fixture: ordinary later document autosaves are not a cancellation.
+    expect(await assertStudioGenerationReady(claim!)).toBeUndefined();
+  });
+  it("rejects rules changed during source preparation with a readable 409 before dispatch", async () => {
+    const claim = await claimStudioGeneration(row); f.context.mockResolvedValue("new-brand-policy");
+    await expect(assertStudioGenerationReady(claim!)).rejects.toMatchObject({ status: 409 });
+    expect(f.output).not.toHaveBeenCalled();
+  });
+  it("turns a removed accepted source into a readable context conflict without masking DB failures", async () => {
+    const claim = await claimStudioGeneration(row);
+    f.context.mockRejectedValueOnce(new ApiException(422, "Accepted image sources are no longer available."));
+    await expect(assertStudioGenerationReady(claim!)).rejects.toMatchObject({ status: 409 });
+    f.context.mockRejectedValueOnce(new Error("database unavailable"));
+    await expect(assertStudioGenerationReady(claim!)).rejects.toThrow("database unavailable");
+  });
+  it.each(["FAILED", "SUCCEEDED", "PENDING"])("rejects a claim that became %s during preflight", async status => {
+    const claim = await claimStudioGeneration(row); row.status = status; f.context.mockClear();
+    await expect(assertStudioGenerationReady(claim!)).rejects.toMatchObject({ status: 409 });
+    expect(f.context).not.toHaveBeenCalled();
+  });
+  it("rejects replaced provider identity, expired requests, revoked membership and late DB work", async () => {
+    const claim = await claimStudioGeneration(row);
+    row.providerStartedAt = new Date(claim!.providerStartedAt!.getTime() + 1);
+    await expect(assertStudioGenerationReady(claim!)).rejects.toMatchObject({ status: 409 });
+    row.providerStartedAt = claim!.providerStartedAt; row.expiresAt = new Date(Date.now() - 1);
+    await expect(assertStudioGenerationReady(claim!)).rejects.toMatchObject({ status: 409 });
+    row.expiresAt = new Date(Date.now() + 60000); f.gate.mockRejectedValueOnce(Object.assign(new Error("membership revoked"), { status: 403 }));
+    await expect(assertStudioGenerationReady(claim!)).rejects.toMatchObject({ status: 403 });
+    const c = new AbortController(); f.context.mockImplementationOnce(async () => { c.abort(new Error("deadline")); return "same"; });
+    await expect(assertStudioGenerationReady(claim!, c.signal)).rejects.toThrow("deadline");
+  });
+  it("checks expiry again after a slow hash query and honors abort before DB work", async () => {
+    const claim = await claimStudioGeneration(row);
+    f.read.mockImplementation(async () => row);
+    f.context.mockImplementationOnce(async () => { row.expiresAt = new Date(Date.now() - 1); return "same"; });
+    await expect(assertStudioGenerationReady(claim!)).rejects.toMatchObject({ status: 409 });
+    const c = new AbortController(); c.abort(new Error("already expired")); f.tx.mockClear();
+    await expect(assertStudioGenerationReady(claim!, c.signal)).rejects.toThrow("already expired");
+    expect(f.tx).not.toHaveBeenCalled();
+  });
   it("claims once, restores stored input and makes a duplicate/restarted provider invocation a no-op", async () => {
     const first = await claimStudioGeneration(row); expect(first?.status).toBe("RUNNING");
     expect(await claimStudioGeneration(row)).toBeNull(); expect(f.generation).toHaveBeenCalledTimes(1);

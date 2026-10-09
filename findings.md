@@ -1,5 +1,12 @@
 # Integration findings
 
+## 2026-10-09 — EXACT geometry and paid-attempt boundaries
+- Captured native image transforms compose translation then rotation with ancestor transforms; use F^-1 * I, not axis-aligned selection bounds. Saved sibling indexes provide order. Ordinary native frames do not clip child overflow; product output explicitly clips to the selected frame.
+- Two actual native PNG fixtures verify server composition at supported integer/right-angle transforms. A 128px frame with left/bottom overflow exports as 140px natively; product's 128px composition equals its x=12,y=0 frame region. Whole exports are intentionally not claimed equal.
+- A one-time DB/BullMQ claim alone did not prevent the HTTP provider's Tenacity retries. Product requests now opt into request-local never-retry policy and require the single-provider-attempt-r1 service capability before calls; legacy retries remain unchanged. Python HTTP POST-count tests pass, including failures, concurrent scopes and cancellation reset.
+- Hidden object paths are insufficient for clean-base privacy if legacy bucket policy is public. Store ciphertext and keep metadata private; bind GCM AAD to workspace/project/output and include a key revision in immutable paths to prevent old-key late workers overwriting new-key objects. Key rotation requires controlled migration; orphan cleanup remains pending.
+- Source existence checked before S3 upload can change before DB publication. Final archive transaction locks and validates both Asset and ProjectAsset rows. Product old edit/decompose entry points are rejected before task/provider work, since they do not implement the new clean-base/request lifecycle.
+
 ## 2026-10-09 launch increment
 - Uploaded Assets carry both an object key and a presentation URL. The raw route previously preferred the absolute URL, causing private S3 hosts to enter the public-URL fetch path. Prefer the actual key; legacy URL-backed rows retain the safe fetch policy.
 - New upload intake stores at most 10 MiB per image, 40 MiB per workspace and 256 MiB globally as a bounded temporary Postgres outbox. Worker writes an immutable server-owned key, real Asset and ProjectAsset; terminal tasks release bytes. These are source-level facts, not deployed acceptance.

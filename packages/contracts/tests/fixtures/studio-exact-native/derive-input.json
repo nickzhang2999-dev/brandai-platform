@@ -1,0 +1,175 @@
+{
+  "store": {
+    "shape:exact-native-image-a": {
+      "x": 0,
+      "y": 0,
+      "rotation": 0,
+      "isLocked": false,
+      "opacity": 1,
+      "meta": {
+        "novartAssetId": "94f457c2-20fa-4e79-8d02-75ee4ea02c19",
+        "novartAssetSha256": "1d79f8d7bec4689da0f03117379ce1b510c1529cac64acb15eae149317bb1873",
+        "source": "user"
+      },
+      "id": "shape:exact-native-image-a",
+      "type": "c-image",
+      "parentId": "shape:exact-native-rotated-group",
+      "props": {
+        "w": 48,
+        "h": 32,
+        "url": "/api/workspaces/diagnostic-local-workspace/assets/94f457c2-20fa-4e79-8d02-75ee4ea02c19/raw",
+        "originalUrl": "/api/workspaces/diagnostic-local-workspace/assets/94f457c2-20fa-4e79-8d02-75ee4ea02c19/raw",
+        "radius": 0,
+        "name": "source-a"
+      },
+      "index": "a1Jsb",
+      "typeName": "shape"
+    },
+    "shape:exact-native-image-b": {
+      "x": 50,
+      "y": 40,
+      "rotation": 1.5707963267948966,
+      "isLocked": false,
+      "opacity": 1,
+      "meta": {
+        "novartAssetId": "22458bab-2fc8-4843-aba7-6335fd899048",
+        "novartAssetSha256": "d0b06957971175f0b3511fe8a62f9058f04f38ea80a6c38e1370de3935aba4de",
+        "source": "user"
+      },
+      "id": "shape:exact-native-image-b",
+      "type": "c-image",
+      "parentId": "shape:exact-native-frame",
+      "props": {
+        "w": 48,
+        "h": 32,
+        "url": "/api/workspaces/diagnostic-local-workspace/assets/22458bab-2fc8-4843-aba7-6335fd899048/raw",
+        "originalUrl": "/api/workspaces/diagnostic-local-workspace/assets/22458bab-2fc8-4843-aba7-6335fd899048/raw",
+        "radius": 0,
+        "name": "source-b",
+        "flipX": true,
+        "flipY": true
+      },
+      "index": "a2mYX",
+      "typeName": "shape"
+    },
+    "shape:novart-upload-f4a37ca5-97d9-482c-bf4e-108f59b68dff": {
+      "x": 464,
+      "y": 484,
+      "rotation": 0,
+      "isLocked": false,
+      "opacity": 1,
+      "meta": {
+        "novartAssetId": "94f457c2-20fa-4e79-8d02-75ee4ea02c19",
+        "novartAssetSha256": "1d79f8d7bec4689da0f03117379ce1b510c1529cac64acb15eae149317bb1873",
+        "source": "user"
+      },
+      "id": "shape:novart-upload-f4a37ca5-97d9-482c-bf4e-108f59b68dff",
+      "type": "c-image",
+      "props": {
+        "w": 48,
+        "h": 32,
+        "url": "/api/workspaces/diagnostic-local-workspace/assets/94f457c2-20fa-4e79-8d02-75ee4ea02c19/raw",
+        "originalUrl": "/api/workspaces/diagnostic-local-workspace/assets/94f457c2-20fa-4e79-8d02-75ee4ea02c19/raw",
+        "radius": 0,
+        "name": "source-a"
+      },
+      "parentId": "page:page",
+      "index": "a1aFz",
+      "typeName": "shape"
+    },
+    "shape:novart-upload-02ffcfe4-23be-46e2-86ea-cac04d0b52d8": {
+      "x": 464,
+      "y": 484,
+      "rotation": 0,
+      "isLocked": false,
+      "opacity": 1,
+      "meta": {
+        "novartAssetId": "22458bab-2fc8-4843-aba7-6335fd899048",
+        "novartAssetSha256": "d0b06957971175f0b3511fe8a62f9058f04f38ea80a6c38e1370de3935aba4de",
+        "source": "user"
+      },
+      "id": "shape:novart-upload-02ffcfe4-23be-46e2-86ea-cac04d0b52d8",
+      "type": "c-image",
+      "props": {
+        "w": 48,
+        "h": 32,
+        "url": "/api/workspaces/diagnostic-local-workspace/assets/22458bab-2fc8-4843-aba7-6335fd899048/raw",
+        "originalUrl": "/api/workspaces/diagnostic-local-workspace/assets/22458bab-2fc8-4843-aba7-6335fd899048/raw",
+        "radius": 0,
+        "name": "source-b"
+      },
+      "parentId": "page:page",
+      "index": "a2Onz",
+      "typeName": "shape"
+    },
+    "shape:exact-native-rotated-group": {
+      "x": 64,
+      "y": 16,
+      "rotation": 1.5707963267948966,
+      "isLocked": false,
+      "opacity": 1,
+      "meta": {},
+      "id": "shape:exact-native-rotated-group",
+      "type": "group",
+      "parentId": "shape:exact-native-frame",
+      "props": {},
+      "index": "a1zVD",
+      "typeName": "shape"
+    },
+    "page:page": {
+      "meta": {},
+      "id": "page:page",
+      "name": "页面 1",
+      "index": "a1",
+      "typeName": "page"
+    },
+    "document:document": {
+      "gridSize": 10,
+      "name": "",
+      "meta": {
+        "htmlInsertedModules": {}
+      },
+      "id": "document:document",
+      "typeName": "document"
+    },
+    "shape:exact-native-frame": {
+      "x": 640,
+      "y": 500,
+      "rotation": 0,
+      "isLocked": false,
+      "opacity": 1,
+      "meta": {},
+      "id": "shape:exact-native-frame",
+      "type": "frame",
+      "props": {
+        "w": 128,
+        "h": 128,
+        "name": "EXACT native pixel comparison",
+        "color": "white",
+        "isAutoLayout": false
+      },
+      "parentId": "page:page",
+      "index": "a3vKX",
+      "typeName": "shape"
+    }
+  },
+  "outputFrameId": "shape:exact-native-frame",
+  "outputWidth": 128,
+  "outputHeight": 128,
+  "references": [
+    {
+      "shapeId": "shape:exact-native-image-a",
+      "assetId": "94f457c2-20fa-4e79-8d02-75ee4ea02c19",
+      "sha256": "1d79f8d7bec4689da0f03117379ce1b510c1529cac64acb15eae149317bb1873",
+      "width": 48,
+      "height": 32
+    },
+    {
+      "shapeId": "shape:exact-native-image-b",
+      "assetId": "22458bab-2fc8-4843-aba7-6335fd899048",
+      "sha256": "d0b06957971175f0b3511fe8a62f9058f04f38ea80a6c38e1370de3935aba4de",
+      "width": 48,
+      "height": 32
+    }
+  ]
+}

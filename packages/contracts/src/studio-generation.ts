@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { NativeProjectQueryInput } from "./native-project";
 import { GenerationSizeSelection, GenerationAspectRatioKey, GenerationResolutionTier, CustomAspectRatio } from "./ai";
+import { StudioWorkflowTarget } from "./studio-workflow";
 
 export const STUDIO_GENERATION_TTL_MS = 6 * 60_000;
 export const STUDIO_GENERATION_OUTPUT_TTL_MS = 24 * 60 * 60_000;
@@ -14,6 +15,7 @@ export const StudioGenerationInput = NativeProjectQueryInput.pick({ projectId: t
   sizeSelection: StudioGenerationSizeSelection,
   workflowRevision: z.number().int().min(0).max(2147483646),
   documentRevision: z.number().int().min(0).max(2147483646),
+  outputFrameId: StudioWorkflowTarget.shape.shapeId.optional(),
 }).strict();
 export const StudioGenerationQuery = NativeProjectQueryInput.pick({ projectId: true }).extend({
   requestId: NativeProjectQueryInput.shape.projectId.optional(),

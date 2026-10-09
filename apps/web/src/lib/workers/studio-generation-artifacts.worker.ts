@@ -11,6 +11,9 @@ import { enqueueStudioArtifact } from "@/lib/studio-generation-artifacts-queue";
 import { ensureStudioGenerationArtifacts, requireArtifactWrite, STUDIO_ARTIFACT_ERROR, STUDIO_ARTIFACT_EXPIRED, STUDIO_ARTIFACT_RUN_MS } from "@/lib/studio-generation-artifacts";
 import { registerStudioGenerationCompliance } from "@/lib/studio-generation-compliance";
 import { enqueueStudioCompliance } from "@/lib/studio-generation-compliance-queue";
+import { StudioExactSnapshot, loadStudioExactAsset, lockStudioExactPublicationSources } from "@/lib/studio-generation-exact";
+import { compositeStudioExactImage } from "@/lib/studio-exact-image";
+import { storeStudioCleanBase } from "@/lib/studio-generation-base";
 
 function object(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -42,6 +45,9 @@ export async function runStudioGenerationArtifactJob(job: Job<{ outputId: string
     const params = object(row.output.params);
     const processing = object(params.studioPostprocess);
     if (!Array.isArray(processing.watermarkOverlays)) throw new ApiException(422, "生成结果缺少品牌后处理快照，未发布未完成的图片。");
+    const exact = processing.exactLayout === undefined ? null : StudioExactSnapshot.parse(processing.exactLayout);
+    // A retained EXACT marker without its private recipe must fail closed.
+    if (Array.isArray(params.assetUsages) && params.assetUsages.some(value => object(value).mode === "EXACT") && !exact) throw new ApiException(422, "严格保留素材缺少生成时的布局记录，未发布图片。");
     const prior = row.versionId ? await prisma.asset.findUnique({ where: { generationVersionId: row.versionId }, select: { workspaceId: true, storageKey: true, url: true } }) : null;
     const raw = await readArtifactImageBytes({ imageUrl: row.output.imageUrl!,
       objectKey: prior?.workspaceId === row.workspaceId && prior.url === row.output.imageUrl ? prior.storageKey : artifactOwnObjectKey(row.output.imageUrl!, storage.publicUrl, row.workspaceId) }, signal);
@@ -62,7 +68,15 @@ export async function runStudioGenerationArtifactJob(job: Job<{ outputId: string
       }, { timeout: 10_000 });
     }
     if (!storage.configured) throw new ApiException(503, "对象存储未配置，生成结果已保留，可配置后重试归档。");
-    const final = await postprocessArtifactImage(raw, processing.watermarkOverlays, async assetId => {
+    let composed = raw;
+    let appliedExactAssetIds: string[] = [];
+    if (exact) {
+      const actual = await inspectArtifactImage(raw, signal);
+      if (actual.width !== exact.target.width || actual.height !== exact.target.height) throw new ApiException(422, "生成服务返回的实际尺寸与输出画框不一致，未错位合成素材。");
+      const result = await compositeStudioExactImage(raw, exact.layers, assetId => loadStudioExactAsset(row.workspaceId, row.projectId, assetId), signal);
+      composed = result.body; appliedExactAssetIds = result.appliedAssetIds;
+    }
+    const final = await postprocessArtifactImage(composed, processing.watermarkOverlays, async assetId => {
       const asset = await prisma.asset.findFirst({ where: { id: assetId, workspaceId: row.workspaceId, deprecatedAt: null, availableForGeneration: true, mimeType: { in: ["image/png", "image/jpeg", "image/webp"] } },
         select: { storageKey: true, url: true } });
       if (!asset) throw new ApiException(422, "品牌图片素材已不可用，原始生成结果仍保留，尚未发布。");
@@ -76,15 +90,18 @@ export async function runStudioGenerationArtifactJob(job: Job<{ outputId: string
     const prefix = `${row.workspaceId}/studio-generated/${row.projectId}`;
     const objectKey = `${prefix}/${outputId}/${final.sha256}`;
     const stored = await artifactDeadline(uploadBuffer(final.body, final.mimeType, prefix, signal, objectKey), signal);
+    const cleanBase = exact ? await storeStudioCleanBase(raw, { workspaceId: row.workspaceId, projectId: row.projectId, outputId }, signal) : null;
     signal.throwIfAborted();
     const check = await prisma.$transaction(async tx => {
       await requireArtifactWrite(tx, row.workspaceId, row.projectId, row.userId);
+      if (exact) await lockStudioExactPublicationSources(tx, row.workspaceId, row.projectId, exact);
       await tx.$queryRaw`SELECT "outputId" FROM "StudioGeneratedMaterial" WHERE "outputId" = ${outputId} FOR UPDATE`;
       const current = await tx.studioGeneratedMaterial.findUnique({ where: { outputId }, include: { output: { select: { expiresAt: true } } } });
       if (!current || current.status !== "RUNNING" || current.attemptToken !== token || current.expiresAt.getTime() <= Date.now() || current.output.expiresAt.getTime() <= Date.now()) throw new ApiException(409, "归档任务已结束或超时，迟到结果未发布。");
       signal.throwIfAborted();
       const { studioPostprocess: _privateSnapshot, studioSourceRetention: _privateRetention, ...publicParams } = params;
       const finalParams = { ...publicParams, actualSize: { actualWidth: final.width, actualHeight: final.height },
+        ...(exact ? { appliedExactAssetIds, exactComposition: "deterministic-source-overlay" } : {}),
         appliedWatermarkAssetIds: final.appliedAssetIds,
         ...(logoId ? { appliedBrandLogoAssetId: logoId, brandLogoComposition: "deterministic-source-overlay" } : {}) } as Prisma.InputJsonValue;
       const versionId = row.versionId ?? `sgv_${createHash("sha256").update(outputId).digest("hex").slice(0, 40)}`;
@@ -105,7 +122,8 @@ export async function runStudioGenerationArtifactJob(job: Job<{ outputId: string
       await tx.studioGeneratedMaterial.update({ where: { outputId }, data: { status: "SUCCEEDED", versionId, assetId: asset.id, objectKey: stored.key,
         sha256: final.sha256, mimeType: final.mimeType, sizeBytes: final.sizeBytes, width: final.width, height: final.height, attemptToken: null, error: null } });
       // Only now can generic GenerationVersion APIs see the finished image.
-      await tx.studioGenerationOutput.update({ where: { id: outputId }, data: { imageUrl: null } });
+      await tx.studioGenerationOutput.update({ where: { id: outputId }, data: { imageUrl: null,
+        ...(cleanBase ? { params: { ...params, studioPostprocess: { ...processing, cleanBase } } as Prisma.InputJsonValue } : {}) } });
       const check = await registerStudioGenerationCompliance(tx, row.workspaceId, versionId);
       signal.throwIfAborted();
       return check;

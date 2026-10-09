@@ -427,6 +427,16 @@ class SizeSpec(BaseModel):
 
 
 class GenerateRequest(BaseModel):
+    # Internal transport policy. Explicit null is rejected like Zod optional().
+    providerRetryPolicy: Optional[Literal["never"]] = None
+
+    @field_validator("providerRetryPolicy", mode="before")
+    @classmethod
+    def reject_null_retry_policy(cls, value):
+        if value is None:
+            raise ValueError("providerRetryPolicy must be omitted or 'never'")
+        return value
+
     sceneType: str
     sellingPoint: str
     scene: str
@@ -542,6 +552,15 @@ class TermIn(BaseModel):
 
 
 class ComplianceCheckRequest(BaseModel):
+    providerRetryPolicy: Optional[Literal["never"]] = None
+
+    @field_validator("providerRetryPolicy", mode="before")
+    @classmethod
+    def reject_null_retry_policy(cls, value):
+        if value is None:
+            raise ValueError("providerRetryPolicy must be omitted or 'never'")
+        return value
+
     text: Optional[str] = None
     imageUrl: Optional[str] = None
     brandRules: list[BrandRuleIn] = []

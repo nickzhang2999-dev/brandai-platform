@@ -46,6 +46,9 @@ export async function POST(
     if (!version || version.generationId !== genId) {
       throw new ApiException(404, "Version not found in this generation");
     }
+    if (await prisma.studioGenerationRequest.findUnique({ where: { generationId: genId }, select: { id: true } })) {
+      throw new ApiException(409, "此图片属于新工作台；原图保护与分层保存流程接通前，暂不能通过旧入口分层。");
+    }
     // 拆一张图层本身没有意义:它已经是分解产物,再拆一次只会得到它自己。
     if (isLayerVersion(version.params)) {
       throw new ApiException(400, "该版本已经是图层，不能再次分解");

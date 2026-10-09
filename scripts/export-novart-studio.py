@@ -112,7 +112,7 @@ def main():
             text = text.replace(before, before + "\n  window.NovartProductWorkflowSnapshot=()=>({loaded,busy,dirty,stale,...(state?JSON.parse(JSON.stringify(payload())):{})});")
             before = '仅保存素材设置，AI 尚未接入。'
             assert text.count(before) == 1, 'Workflow help copy changed'
-            text = text.replace(before, '先保存用途，再从输入框生成；适配与仅参考可参与生成。')
+            text = text.replace(before, '先保存用途，再从输入框生成；锁定素材需指定输出画框。')
         if url_path == '/home-start-studio.js':
             before = 'const payload = clone(savedState);'
             assert text.count(before) == 1

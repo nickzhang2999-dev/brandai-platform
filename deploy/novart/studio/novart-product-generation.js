@@ -11,7 +11,9 @@
   const checks = new Map(); let checkEpoch = 0;
   const instance = crypto.randomUUID();
   const retryKey = 'novart-generation-pending:' + projectId;
-  let native, panel, list, notice, refreshButton, pendingButton, pendingPrompt, settings, ratioSelect, resolutionSelect, settingsSummary;
+  const frameKey = 'novart-generation-output-frame:' + projectId;
+  let native, panel, list, notice, refreshButton, pendingButton, pendingPrompt, settings, ratioSelect, resolutionSelect, settingsSummary, frameControl, frameSelect, frameNote;
+  let framePreference=null, frameOptionsKey='', editorUnsubscribe, mountQueued=false;
   let timer, observer, unsubscribe, stopped = false, submitting = false, refreshing = false, failures = 0, paused = false;
   let pending = null, userRevision = 0, composing = false;
   const clone = value => JSON.parse(JSON.stringify(value));
@@ -46,6 +48,38 @@
     const value = form.novartGenerationSize || {ratioKey:'1:1',resolutionTier:['1K','2K'].includes(nativeResolution)?nativeResolution:'1K'};
     if (!value || Object.keys(value).some(key => !['ratioKey','resolutionTier'].includes(key)) || !ratios.includes(value.ratioKey) || !['1K','2K'].includes(value.resolutionTier)) throw Error('当前尺寸尚未支持，请在发送旁选择比例与 1K / 2K');
     return {...value};
+  }
+  const needsOutputFrame = workflow => workflow?.mode==='generate' && workflow.references?.some(ref=>ref.participates&&ref.purpose==='EXACT');
+  function outputFrame(workflow) {
+    if(!needsOutputFrame(workflow))return undefined;
+    if(!framePreference)throw Error('完整保留素材需要明确的输出画框。请在发送旁的图片设置中选择画框；需求与用途已保留');
+    const editor=bridge().editor;
+    if(framePreference.pageId!==editor.getCurrentPageId() || !editor.getCurrentPageShapes().some(shape=>shape.type==='frame'&&shape.id===framePreference.frameId))throw Error('所选输出画框已删除或不在当前页面，请重新选择；需求与用途已保留');
+    return framePreference.frameId;
+  }
+  function rememberFrame(frameId) {
+    const editor=bridge().editor;
+    framePreference=frameId?{userId:context.user.id,workspaceId:context.workspaceId,projectId,pageId:editor.getCurrentPageId(),frameId}:null;
+    try{if(framePreference)sessionStorage.setItem(frameKey,JSON.stringify(framePreference));else sessionStorage.removeItem(frameKey);}catch{message('输出画框已在本页选定，浏览器暂不能记住它；刷新后请重新选择');}
+    userRevision++;mount();
+  }
+  function scheduleMount() { if(!mountQueued&&!stopped){mountQueued=true;queueMicrotask(()=>{mountQueued=false;if(!stopped)mount();});} }
+  function mountOutputFrames() {
+    if(!frameControl)return;
+    const workflow=window.NovartProductWorkflowSnapshot?.(),needed=Boolean(needsOutputFrame(workflow));
+    if(frameControl.hidden===needed)frameControl.hidden=!needed;
+    if(!needed)return;
+    const editor=bridge().editor,frames=editor.getCurrentPageShapes().filter(shape=>shape.type==='frame');
+    const chosen=framePreference?.frameId||'',valid=chosen&&framePreference.pageId===editor.getCurrentPageId()&&frames.some(shape=>shape.id===chosen);
+    const options=[{id:'',text:frames.length?'请选择输出画框':'请先在画布创建画框'}];
+    if(chosen&&!valid)options.push({id:chosen,text:'原画框不可用，请重新选择',disabled:true});
+    frames.forEach((shape,index)=>options.push({id:shape.id,text:(shape.props.name||'画框')+' · '+Math.round(shape.props.w)+' × '+Math.round(shape.props.h)+' · '+(index+1)}));
+    const key=JSON.stringify(options);
+    if(key!==frameOptionsKey){frameOptionsKey=key;frameSelect.replaceChildren(...options.map(value=>{const option=new Option(value.text,value.id);option.disabled=Boolean(value.disabled);return option;}));}
+    if(frameSelect.value!==chosen)frameSelect.value=chosen;
+    const disabled=context.readOnly||submitting||Boolean(pending);if(frameSelect.disabled!==disabled)frameSelect.disabled=disabled;
+    const hint=pending?'先确认上一份受理，再更换输出画框':chosen&&!valid?'原画框已删除或不在当前页面，请重新选择':'按此画框中的位置保留原素材，框外部分不出图';
+    if(frameNote.textContent!==hint)frameNote.textContent=hint;
   }
   function supported(form) {
     const allowed = new Set(['text','paramList','mentionPreviewList','lexicalJSONState','toolNameList','agentConfig','threadIdType','useWebSearch','novartGenerationSize','preferToolParams','preferToolCategories']);
@@ -134,7 +168,7 @@
     const [workflow,doc] = await Promise.all([request('/workflow?projectId=' + encodeURIComponent(projectId)),request(documentEndpoint)]);
     if (workflow.projectId !== projectId || !Number.isInteger(workflow.revision) || workflow.revision !== local.revision) throw Error('素材设置已变化，请读取最新设置并检查后再提交');
     if (workflow.mode !== 'generate' || workflow.target) throw Error('修改图片尚未接入，请先切回“生成新图”并保存设置');
-    if (!Array.isArray(workflow.references) || workflow.references.some(ref => ref.participates && !['ADAPTIVE','REFERENCE'].includes(ref.purpose))) throw Error('完整保留 EXACT 需要明确的输出布局，当前尚未接入。请选择适配或仅参考并保存');
+    if (!Array.isArray(workflow.references) || workflow.references.some(ref => ref.participates && !['EXACT','ADAPTIVE','REFERENCE'].includes(ref.purpose))) throw Error('参与生成的素材用途尚未确认，请选择用途并保存；需求已保留');
     if (workflow.issues?.some(issue => issue.blocking)) throw Error('参与生成的素材有失效引用，请检查“素材”面板');
     if (doc.projectId !== projectId || doc.workspaceId !== context.workspaceId || doc.readOnly || !Number.isInteger(doc.revision)) throw Error('无法确认当前画布的保存状态或编辑权限');
     const live = bridge().editor.getSnapshot().document;
@@ -146,7 +180,8 @@
     } else if (Object.values(live.store || {}).some(value => value.typeName === 'shape')) throw Error('画布正在首次保存，请稍后再提交');
     const latest = window.NovartProductWorkflowSnapshot?.();
     if (!latest || latest.dirty || latest.busy || latest.revision !== workflow.revision) throw Error('素材设置已变化，请保存后再提交');
-    return {workflowRevision:workflow.revision,documentRevision:doc.revision};
+    const outputFrameId=outputFrame(workflow);
+    return {workflowRevision:workflow.revision,documentRevision:doc.revision,...(outputFrameId?{outputFrameId}:{})};
   }
   async function submit(threadId, inputForm) {
     if (submitting || stopped) return false;
@@ -340,7 +375,10 @@
       settings=node('details','','np-generation-settings');settings.dataset.testid='product-generation-settings';settingsSummary=node('summary','图片 · 1:1 · 1K');settings.append(settingsSummary);
       const body=node('div','','np-generation-options');ratioSelect=node('select','');ratioSelect.setAttribute('aria-label','生成图片比例');for(const ratio of ratios)ratioSelect.add(new Option(ratio,ratio));
       resolutionSelect=node('select','');resolutionSelect.setAttribute('aria-label','生成图片分辨率');for(const tier of ['1K','2K'])resolutionSelect.add(new Option(tier,tier));
-      body.append(ratioSelect,resolutionSelect);settings.append(body);settings.addEventListener('pointerdown',event=>event.stopPropagation());
+      frameControl=node('label','','np-generation-frame');frameControl.hidden=true;frameControl.dataset.testid='product-output-frame-control';frameControl.append(node('span','输出画框'));
+      frameSelect=node('select','');frameSelect.setAttribute('aria-label','完整保留素材的输出画框');frameSelect.dataset.testid='product-output-frame';frameSelect.onchange=()=>{try{rememberFrame(frameSelect.value);}catch(error){message(error.message);}};
+      frameNote=node('span','','np-generation-frame-note');frameControl.append(frameSelect,frameNote);
+      body.append(ratioSelect,resolutionSelect,frameControl);settings.append(body);settings.addEventListener('pointerdown',event=>event.stopPropagation());
       const changed=()=>{try{const value=current();native.qualityActions.Mg('image',resolutionSelect.value);native.actions.rE(value.threadId,{novartGenerationSize:{ratioKey:ratioSelect.value,resolutionTier:resolutionSelect.value}});userRevision++;settingsSummary.textContent='图片 · '+ratioSelect.value+' · '+resolutionSelect.value;}catch(error){message(error.message);}};
       ratioSelect.onchange=changed;resolutionSelect.onchange=changed;
     }
@@ -348,13 +386,15 @@
     try{const value=size(current().form);ratioSelect.value=value.ratioKey;resolutionSelect.value=value.resolutionTier;const title='图片 · '+value.ratioKey+' · '+value.resolutionTier;if(settingsSummary.textContent!==title)settingsSummary.textContent=title;}catch{}
     const disabled=context.readOnly||submitting;if(button.disabled!==disabled)button.disabled=disabled;
     if(ratioSelect.disabled!==disabled)ratioSelect.disabled=disabled;if(resolutionSelect.disabled!==disabled)resolutionSelect.disabled=disabled;
+    try{if(!editorUnsubscribe)editorUnsubscribe=bridge().editor.store.listen(scheduleMount);mountOutputFrames();}catch{}
     if(button.title!=='生成图片')button.title='生成图片';
   }
   function start() {
     if(panel)return;
-    const style=node('style','');style.textContent='.np-generations{position:fixed;z-index:690;right:18px;top:72px;width:min(330px,calc(100vw - 36px));max-height:52vh;overflow:auto;background:var(--color-lo-bg-neutral-l0,#fff);color:var(--color-lo-text-neutral-l1,#39333f);border:1px solid var(--color-lo-border-neutral-l1,#e8e5ee);border-radius:18px;box-shadow:0 6px 24px #2820390d;font:12px/1.5 system-ui}.np-generations[hidden]{display:none}.np-generations summary{padding:12px 14px;font-weight:600;cursor:pointer}.np-generation-body{padding:0 14px 12px}.np-generation-row{display:grid;gap:6px;padding:10px 0;border-top:1px solid var(--color-lo-border-neutral-l1,#e8e5ee)}.np-generation-prompt{margin:0;overflow-wrap:anywhere;max-height:5em;overflow:auto}.np-generation-note,.np-generation-status{color:var(--color-lo-text-neutral-l2,#756d7f)}.np-generations button,.np-generation-settings select{border:1px solid var(--color-lo-border-neutral-l1,#e8e5ee);border-radius:10px;padding:5px 10px;background:var(--color-lo-bg-neutral-l0,#fff);color:inherit;cursor:pointer}.np-generations button{justify-self:start}.np-generations button:disabled{opacity:.5;cursor:default}.np-generation-settings{position:relative;font:12px/1.5 system-ui;white-space:nowrap}.np-generation-settings summary{cursor:pointer;list-style:none;border-radius:12px;padding:6px 8px;background:var(--color-lo-bg-overlay,#f6f4f9)}.np-generation-options{position:absolute;bottom:calc(100% + 8px);right:0;display:flex;gap:6px;padding:10px;border:1px solid var(--color-lo-border-neutral-l1,#e8e5ee);border-radius:14px;background:var(--color-lo-bg-neutral-l0,#fff);z-index:710}';document.head.append(style);
+    const style=node('style','');style.textContent='.np-generations{position:fixed;z-index:690;right:18px;top:72px;width:min(330px,calc(100vw - 36px));max-height:52vh;overflow:auto;background:var(--color-lo-bg-neutral-l0,#fff);color:var(--color-lo-text-neutral-l1,#39333f);border:1px solid var(--color-lo-border-neutral-l1,#e8e5ee);border-radius:18px;box-shadow:0 6px 24px #2820390d;font:12px/1.5 system-ui}.np-generations[hidden]{display:none}.np-generations summary{padding:12px 14px;font-weight:600;cursor:pointer}.np-generation-body{padding:0 14px 12px}.np-generation-row{display:grid;gap:6px;padding:10px 0;border-top:1px solid var(--color-lo-border-neutral-l1,#e8e5ee)}.np-generation-prompt{margin:0;overflow-wrap:anywhere;max-height:5em;overflow:auto}.np-generation-note,.np-generation-status{color:var(--color-lo-text-neutral-l2,#756d7f)}.np-generations button,.np-generation-settings select{border:1px solid var(--color-lo-border-neutral-l1,#e8e5ee);border-radius:10px;padding:5px 10px;background:var(--color-lo-bg-neutral-l0,#fff);color:inherit;cursor:pointer}.np-generations button{justify-self:start}.np-generations button:disabled{opacity:.5;cursor:default}.np-generation-settings{position:relative;font:12px/1.5 system-ui;white-space:nowrap}.np-generation-settings summary{cursor:pointer;list-style:none;border-radius:12px;padding:6px 8px;background:var(--color-lo-bg-overlay,#f6f4f9)}.np-generation-frame{flex-basis:100%;display:grid;gap:5px;min-width:220px;max-width:min(290px,70vw)}.np-generation-frame[hidden]{display:none}.np-generation-frame select{min-width:0;max-width:100%}.np-generation-frame-note{font-size:11px;white-space:normal;color:var(--color-lo-text-neutral-l2,#756d7f)}.np-generation-options{flex-wrap:wrap;position:absolute;bottom:calc(100% + 8px);right:0;display:flex;gap:6px;padding:10px;border:1px solid var(--color-lo-border-neutral-l1,#e8e5ee);border-radius:14px;background:var(--color-lo-bg-neutral-l0,#fff);z-index:710}';document.head.append(style);
     panel=node('details','','np-generations');panel.dataset.testid='product-generation-tasks';panel.open=true;panel.hidden=true;panel.append(node('summary','图片生成'));
     const body=node('div','','np-generation-body');notice=node('p','','np-generation-note');notice.setAttribute('role','status');list=node('div','');refreshButton=node('button','刷新生成任务');refreshButton.type='button';refreshButton.onclick=()=>refresh();pendingPrompt=node('p','','np-generation-prompt');pendingButton=node('button','确认上一份受理');pendingButton.type='button';pendingButton.dataset.action='confirm-pending';pendingButton.onclick=confirmPending;pendingButton.hidden=true;pendingPrompt.hidden=true;body.append(notice,refreshButton,pendingPrompt,pendingButton,list);panel.append(body);document.body.append(panel);panel.addEventListener('pointerdown',event=>event.stopPropagation());
+    try{const value=JSON.parse(sessionStorage.getItem(frameKey)||'null');if(value?.userId===context.user.id&&value.workspaceId===context.workspaceId&&value.projectId===projectId&&typeof value.pageId==='string'&&typeof value.frameId==='string'&&value.frameId.startsWith('shape:'))framePreference=value;}catch{}
     try{const value=JSON.parse(sessionStorage.getItem(retryKey)||'null');if(value?.payload?.projectId===projectId&&typeof value.payload.mutationId==='string'&&typeof value.signature==='string')pending=value;}catch{}
     try{bridge();unsubscribe=native.source.ow.subscribe(()=>queueMicrotask(mount));}catch{}
     mount();render();observer=new MutationObserver(mount);observer.observe(document.body,{subtree:true,childList:true,attributes:true,attributeFilter:['disabled']});
@@ -381,7 +421,7 @@
   window.addEventListener('beforeinput',event=>{if(event.target.closest?.('[data-testid="agent-message-input"]'))userRevision++;},true);
   window.addEventListener('compositionstart',event=>{if(event.target.closest?.('[data-testid="agent-message-input"]')){composing=true;userRevision++;}},true);
   window.addEventListener('compositionend',()=>{composing=false;},true);
-  window.addEventListener('pagehide',()=>{stopped=true;checkEpoch++;for(const state of checks.values()){clearTimeout(state.timer);state.value=null;state.busy=false;}clearTimeout(timer);autoInsert.clear();observer?.disconnect();unsubscribe?.();});
+  window.addEventListener('pagehide',()=>{stopped=true;checkEpoch++;for(const state of checks.values()){clearTimeout(state.timer);state.value=null;state.busy=false;}clearTimeout(timer);autoInsert.clear();observer?.disconnect();unsubscribe?.();editorUnsubscribe?.();editorUnsubscribe=undefined;});
   window.addEventListener('pageshow',event=>{if(event.persisted){stopped=false;mount();observer?.observe(document.body,{subtree:true,childList:true,attributes:true,attributeFilter:['disabled']});if(native)unsubscribe=native.source.ow.subscribe(()=>queueMicrotask(mount));refresh();}});
   window.NovartProductGeneration=Object.freeze({start,submit,submitCurrent,focusTask,refresh:()=>refresh(),unsupported:()=>{message('此原生工具尚未接入，输入与画布仍保留；请从输入框提交图片生成');return false;}});
 })();
