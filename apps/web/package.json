@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "next dev -p 3000",
     "build": "next build",
+    "build:low-memory": "node scripts/build-low-memory.mjs",
     "start": "next start -p 3000",
     "worker": "tsx src/lib/workers/index.ts",
     "lint": "next lint",

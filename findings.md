@@ -1,5 +1,10 @@
 # Integration findings
 
+## 2026-10-09 — constrained build verification
+- Opt-in Next memory optimizations plus cpus=1/serial server compilation and tracing completed a real production build on this Windows host. Launcher caps each Node old-generation heap at 768 MiB; this is not a total-memory cap. Temporary files use the ignored repository directory, not C: user temp.
+- System committed-memory headroom also improved and the old preview process group disappeared before the run; do not attribute all improvement to configuration or invent a reduction percentage. No process shutdown or pagefile modification was performed.
+- Build still reports absent local infrastructure; successful compilation does not verify real backend/storage/provider health. User-facing runtime memory is a separate unmeasured concern.
+
 ## 2026-10-09 — whole-image edit integration findings
 - A clean-base first input does not protect EXACT if its final flattened target also enters as a secondary reference. Product intake and final reference audit now reject its ID or SHA alias; inherited EXACT originals retain the existing separate guard.
 - Legacy FREE chat policy drops compiled prohibition examples and alternative additions. Product-only opt-in preserves the compiler output; default legacy callers retain their prior policy.

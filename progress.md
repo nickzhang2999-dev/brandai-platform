@@ -1,5 +1,11 @@
 # Integration progress
 
+## 2026-10-09 — low-memory production build passes
+- Added opt-in `build:low-memory`: one Next build CPU, serial server compilation/tracing, Webpack memory optimization and worker, bounded per-process heap/native thread pools, ignored repository-local temporary directory on D: here. Default build and runtime settings remain unchanged.
+- Launcher syntax and both config modes verified; actual production build exited 0. Log: D:/coding/.novart-tmp/low-memory-build.log (UTF-16LE). Earlier L1 786, AI365, typecheck and isolated native interaction results remain the source gates; no unrelated reruns.
+- Old preview process group was absent on recheck; no user process was stopped. Background system pressure also decreased, so no isolated memory saving percentage or peak claim. No Docker, DB startup, pagefile edit, goal mode, push or deploy.
+- Independent CDS read-only branch status still reports 8474347 and three running application services. Config/provider/storage/real journey not reverified; actual deployRuntime source/prebuilt metadata requires further reconciliation. Shared release isolation remains open.
+
 ## 2026-10-09 — whole-image edit integrated; production build pending
 - Authorized source snapshots, clean-base reads, inherited EXACT, real multipart edit with complete references, capability/no-retry gates, source locks and new-root provenance are integrated. FREE product jobs preserve compiled prohibitions; flattened EXACT targets cannot re-enter through another reference.
 - Native modify preserves target/intent across lost 202 and later drafts; results require explicit insertion. Product exporter disables only the native selection/undo auto-mention that broke strict draft persistence, validating original SHA and unique anchor.

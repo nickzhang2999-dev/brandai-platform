@@ -1,5 +1,7 @@
 import { execFileSync } from "node:child_process";
 
+const lowMemoryBuild = process.env.NOVART_LOW_MEMORY_BUILD === "1";
+
 function resolveDeploymentId() {
   if (process.env.NEXT_DEPLOYMENT_ID) return process.env.NEXT_DEPLOYMENT_ID;
   // CDS injects the checked-out revision into every service. Prefer it over
@@ -29,7 +31,16 @@ const nextConfig = {
       { protocol: "http", hostname: "**" },
     ],
   },
-  experimental: { serverActions: { bodySizeLimit: "10mb" } },
+  experimental: {
+    serverActions: { bodySizeLimit: "10mb" },
+    ...(lowMemoryBuild ? {
+      cpus: 1,
+      webpackMemoryOptimizations: true,
+      webpackBuildWorker: true,
+      parallelServerCompiles: false,
+      parallelServerBuildTraces: false,
+    } : {}),
+  },
   // The container build OOMs during next build's in-process type-check phase.
   // We already gate every deploy on `tsc --noEmit` (and ESLint isn't configured),
   // so skip the redundant in-build checks to keep the build within memory.

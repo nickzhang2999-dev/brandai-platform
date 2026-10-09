@@ -5,8 +5,8 @@ Deliver a launch-ready Novart product on `claude/novart-product-integration`: in
 
 ## Latest steering — ordinary execution, no goal mode
 - User reaffirmed full product scope but explicitly disabled goal mode. Do not create/resume a goal; current integration is ordinary single-agent execution. Safe isolated release remains required; no push while same-repository CDS routing can restart shared services.
-- Whole-image edit is integrated with authorized lineage, inherited EXACT/clean base, image-edit transport, single-attempt enforcement, archive publication and explicit native insertion. L1 786, AI/Python 365 and Web typecheck pass; isolated native UI passes. Production build is BLOCKED by Windows native allocation/commit-limit pressure (exit134), not passed.
-- Next: restore a verified build path, obtain isolated provider/storage configuration, establish safe release routing and run the real DB/S3/UI/provider journey. Masks and orphan cleanup remain separately tracked; no unrelated tools/visual polish before the first-product journey passes.
+- Whole-image edit is integrated with authorized lineage, inherited EXACT/clean base, image-edit transport, single-attempt enforcement, archive publication and explicit native insertion. L1 786, AI/Python 365 and Web typecheck pass; isolated native UI passes. Production build now passes (exit 0) using the opt-in low-memory launcher after earlier Windows allocation failures; no runtime-memory reduction is claimed.
+- Next: obtain isolated provider/storage configuration, establish safe release routing and run the real DB/S3/UI/provider journey. Masks and orphan cleanup remain separately tracked; no unrelated tools/visual polish before the first-product journey passes.
 
 ## Baselines
 - Company local and remote main, verified at integration start: `e99919a64cd212d5d1b083fd7210842a1962d935`.
@@ -36,7 +36,7 @@ First-product journey: sign in -> create/select brand -> create/open project -> 
    - Done: mixed-content edit -> save -> close -> reopen preserves the document and material references; failed restore/save, read-only state and conflicts produce actionable UI and never silently overwrite content.
 5. [in_progress] Complete the real generation loop.
    - Connect prompt + references + brand rules -> existing backend job/worker -> status -> generated asset -> canvas. Configure actual providers and storage; distinguish unavailable services from successful generation.
-   - Current: local intake/outbox/provider-claim/private-output/archive/native-insertion, visual checks, bounded EXACT and whole-image edit are implemented. L1 786, AI/Python 365 and typecheck pass; current production build is memory-blocked. Isolated edit/task/frame/native PNG checks pass; real DB/S3/provider acceptance remains pending. Masks are not connected.
+   - Current: local intake/outbox/provider-claim/private-output/archive/native-insertion, visual checks, bounded EXACT and whole-image edit are implemented. L1 786, AI/Python 365 and typecheck pass; opt-in low-memory production build now passes. Isolated edit/task/frame/native PNG checks pass; real DB/S3/provider acceptance remains pending. Masks are not connected.
    - Done: at least one real generation flows end to end, its result remains after reopen and can be exported; errors finish with clear retry/recovery rather than an endless spinner. Existing edit/layer capabilities are mapped explicitly; unconnected capabilities are not presented as working.
 6. [pending] First-product acceptance and handoff.
    - Run the complete journey above with real login/storage/provider, plus essential desktop/laptop viewport and failure-recovery checks. Complete required repository gates and deploy the exact tested commit.
