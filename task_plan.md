@@ -14,9 +14,9 @@ Ship the first usable integrated product before broad optimization. Preserve the
 First-product journey: sign in -> create/select brand -> create/open project -> upload/reference material -> edit canvas -> request real image generation -> insert result -> save -> close/reopen -> export.
 
 ## Ordered product TODO
-1. [complete] Stable independent deployment and real login.
+1. [in_progress] Stable independent deployment and real login; repair release isolation.
    - Current: exact 8474347 images run; initial 14 public HTTPS checks and latest 13 native-adapter checks pass, including actual password login/logout, brand selection, native save/reopen, idempotent retry and stale-write rejection.
-   - Release guard: user approved a temporary company push-webhook pause. Paused and verified before push; restored and verified afterward. Main remains running and the original integration card remains idle. Future pushes must use the same verified release guard until permanent branch exclusion is available.
+   - Release guard failed on 2026-10-08: restoring push policy after git push allowed a delayed company deployment. Do not reuse that guard. Before another push, verify a branch exclusion or another explicit delivery boundary that cannot restart this branch on shared infrastructure.
    - Done: one usable public entry, login/logout and brand selection work, new pushes cannot start writes on company shared infrastructure.
 2. [in_progress] Serve the reviewed frontend as the product entry and connect its pages.
    - Reuse current home, brand, project library, material library and canvas UI. Bind real user/workspace/project state, navigation, refresh and deep links. Replace preview-only identity/file-state paths at this boundary.
@@ -42,9 +42,30 @@ First-product journey: sign in -> create/select brand -> create/open project -> 
 - Keep known missing capabilities in the backlog; do not silently delete them to make the completion rate look better.
 
 ## Next execution checkpoint
-TODO 1 passed on ec5ff74. Continue TODO 2 and its native persistence boundary: bind the reviewed frontend entry to actual account/workspace/project state. No additional visual refinement before the integrated main journey works. Check items only against the explicit done criteria; API existence or a running container alone does not complete a product feature.
+Independent login/persistence passed on ec5ff74 and 8474347; TODO 1 is reopened for release isolation. Continue TODO 2 and its native persistence boundary: bind the reviewed frontend entry to actual account/workspace/project state. No additional visual refinement before the integrated main journey works. Check items only against the explicit done criteria; API existence or a running container alone does not complete a product feature.
 
 Current candidate binds `/studio` and `/canvas` to real identity, brand, projects, context, favorites, preferences and drafts. Isolated native startup diagnosis passes; actual database/UI acceptance and deployment remain the active checkpoint. Upload/material persistence and AI are still pending and are visibly unavailable in this increment. User explicitly requested three parallel agents; split tests, UI acceptance and build wiring while running memory-intensive local checks sequentially.
+
+### End-of-day handoff · 2026-10-08
+- User explicitly asked to stop for the day and continue tomorrow. Do not start further implementation or deployments until resumed.
+- Last pushed code: `f968f1a0e26722af4c57ba54271f4d6acf16ca00`. CI 37759389651 completed with failure; no candidate images published. Dedicated CDS remains on tested `847434758c7906565476a58e920000db39c78e8f`.
+- Confirmed: all 61 actual API/database checks; real password login, first brand creation, blank-project/native editor opening, and native shape + Chinese text + pointer-drawn stroke autosaved into the real database. Local gates: 329 L1, 207 AI, typecheck and build pass.
+- Next concrete fix: `/studio/draft` GET/POST in `apps/web/src/lib/studio-state.ts` omit `referenceIssues`, while captured `m24-canvas.js` calls `acceptIssues(data)` before setting `loaded=true`. The missing field prevents draft initialization and POST autosave. Add an explicit mirrored response contract and truthful reference validation; then assert both empty and saved draft receipts in HTTP tests. Do not simply relax the client validation or bypass the UI test.
+- Also align shell contracts after adding native `cid`: `packages/contracts/src/workbench-shell.ts` currently extends `NativeProjectQueryInput`, now inadvertently allowing `cid`, while Pydantic shell models use `NativeProjectReference` and forbid it. Give the shell contracts their own project-only base and add parity coverage.
+- Rerun actual UI save/leave/fresh-browser restore, repeat against built images, and only then deploy the exact tested SHA. Configure the independent branch's web entry as `/studio` after deployment and public verification.
+- Final recheck caught a delayed company auto-deploy of f968f1a after the push policy was restored too early. Stopped only that integration branch via POST /api/branches/:id/stop; response confirms all services stopped and subsequent live read is idle f968f1a. Main remains running e99919a. Shared DB migration/seed impact is NOT yet verified. Before any further push, resolve branch exclusion or delayed-dispatch drainage; returning from git push is not proof it is safe to restore the webhook policy. See docs/development-log-2026-10-08.md.
+
+### Resumed execution · 2026-10-09
+- User explicitly resumed work and requested multiple sub-agents using the development log.
+- Draft/contract agent: truthful draft response receipts, persisted-media validation and mirrored project-only shell contracts, with regression and real-HTTP assertions.
+- Journey agent: full UI acceptance after canvas autosave, readiness/diagnostics and accurate product save messages; no relaxed success assertions.
+- Read-only CDS audit agent: shared migration/seed effects and branch/main runtime evidence; report only, no data cleanup.
+- Root: integration review, release isolation repair, sequential repository gates, then CI and independent exact-image deployment only when eligible.
+- Resume TODO 2 and 4 without calling upload, provider generation or whole-product acceptance complete.
+- Completed this iteration: mirrored checked draft receipts and native text forms; media/legacy/cid regressions; bounded UI readiness and exact save/reopen assertions; product-only storage copy; shared database audit.
+- Validation: 352 L1 tests (346 contracts/service + 6 UI), 210 AI/Python tests, Web typecheck and production build pass. Exported 121 assets. Isolated headless fixture journey passes; the expanded 64-check real HTTP suite and full DB/UI CI have not run on this candidate.
+- Release remains held: CDS delivery records show the same f968f1a skipped at 09:50:08.293Z then dispatched at 09:50:08.791Z. A skipped receipt or hasMore=false does not prove that future/repeated delivery cannot happen. No push, new images or deployment in this iteration.
+- Next implementation: single-image upload -> persisted company Asset -> authenticated same-origin raw -> native document save -> fresh-session restore. Reuse existing upload/storage/ProjectAsset APIs; audit storage configured semantics before relying on environment fallback. Provider generation follows this material chain.
 
 ## Validation
 Required before push: `pnpm test`, `pnpm test:ai`, `pnpm -F web typecheck`, `pnpm -F web build`. API/database tests must cover workspace authorization, stale revisions, complete document round-trips and asset ownership. Source existence and mock interaction tests do not count as real AI provider acceptance. User forbids Computer Use; do not use it. Record any unavailable runtime validation honestly.

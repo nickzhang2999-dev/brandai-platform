@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { prisma, Prisma } from "@brandai/db";
 import { WorkbenchProfile, WorkbenchShellSaveInput, WorkbenchShellState, WorkbenchProjectCreateInput,
-  WorkbenchContextSaveInput, WorkbenchArchiveInput, WorkbenchDraftSaveInput, NativeProjectQueryInput } from "@brandai/contracts";
+  WorkbenchContextSaveInput, WorkbenchArchiveInput, WorkbenchDraftSaveInput, WorkbenchDraftView, NativeProjectQueryInput } from "@brandai/contracts";
 import { ApiException } from "./api";
 import { requireWorkspaceRole } from "./workspace";
 import { readEditorDocument } from "./editor-documents";
@@ -127,28 +127,38 @@ export async function studioStatus(workspaceId: string, userId: string, raw: unk
   return { projectId, projectName: p.name, version: version(doc.revision), savedAt: doc.updatedAt ? Date.parse(doc.updatedAt) : null, saveError: null };
 }
 
+// Mirrors the captured composer's resourceFields, including nested mentions.
+const draftResourceFields = new Set(["url", "src", "imageUrl", "originalUrl", "thumbnail", "videoUrl", "audioUrl", "fileUrl"]);
 export function validateStudioDraft(form: Record<string, unknown> | null) {
   if (!form) return;
-  const encoded = JSON.stringify(form);
-  if (Buffer.byteLength(encoded) > 256 * 1024) throw new ApiException(413, "草稿过大，请缩短内容。");
   // Text/model/ratio preferences can already persist. Image references are a
   // separate integration step; reject them instead of retaining transient URLs.
   const stack: Array<{ value: unknown; depth: number }> = [{ value: form, depth: 0 }];
   while (stack.length) {
     const { value, depth } = stack.pop()!;
     if (depth > 60) throw new ApiException(422, "草稿层级过深。");
+    if (typeof value === "number" && !Number.isFinite(value)) throw new ApiException(422, "草稿包含无效数值。");
     if (!value || typeof value !== "object") continue;
     for (const [key, item] of Object.entries(value)) {
-      if (["url", "src", "imageUrl", "originalUrl", "thumbnail", "videoUrl", "fileUrl"].includes(key) && typeof item === "string" && item) throw new ApiException(422, "图片引用保存正在接入，请保留本页；文字草稿可以正常保存。");
+      if (draftResourceFields.has(key) && item !== null && item !== "") throw new ApiException(422, "媒体引用保存正在接入，请保留本页；文字草稿可以正常保存。");
       stack.push({ value: item, depth: depth + 1 });
     }
   }
+  if (Buffer.byteLength(JSON.stringify(form)) > 256 * 1024) throw new ApiException(413, "草稿过大，请缩短内容。");
+}
+function draftView(projectId: string, row: { revision: number; inputForm: unknown; updatedAt: Date } | null): WorkbenchDraftView {
+  const inputForm = WorkbenchDraftSaveInput.shape.inputForm.parse(row?.inputForm ?? null);
+  // Persisted data is inspected too: an older/unsupported media draft must not
+  // receive a clean-reference receipt or be silently stripped on restoration.
+  validateStudioDraft(inputForm);
+  return WorkbenchDraftView.parse({ projectId, revision: row?.revision ?? 0, inputForm,
+    updatedAt: now(row?.updatedAt), referenceIssues: [] });
 }
 export async function studioDraft(workspaceId: string, userId: string, raw: unknown) {
   const { projectId } = NativeProjectQueryInput.parse(raw);
   await readEditorDocument(workspaceId, projectId, userId);
   const row = await prisma.workbenchChatDraft.findUnique({ where: { userId_projectId: { userId, projectId } } });
-  return { projectId, revision: row?.revision ?? 0, inputForm: row?.inputForm ?? null, updatedAt: now(row?.updatedAt) };
+  return draftView(projectId, row);
 }
 export async function saveStudioDraft(workspaceId: string, userId: string, raw: unknown) {
   await requireWorkspaceRole(workspaceId, userId, "EDITOR");
@@ -160,6 +170,6 @@ export async function saveStudioDraft(workspaceId: string, userId: string, raw: 
     if ((old?.revision ?? 0) !== input.revision) throw conflict();
     const data = { revision: input.revision + 1, inputForm: input.inputForm as Prisma.InputJsonValue ?? Prisma.DbNull };
     const row = await tx.workbenchChatDraft.upsert({ where, create: { userId, projectId: input.projectId, ...data }, update: data });
-    return { projectId: input.projectId, revision: row.revision, inputForm: row.inputForm, updatedAt: now(row.updatedAt) };
+    return draftView(input.projectId, row);
   });
 }

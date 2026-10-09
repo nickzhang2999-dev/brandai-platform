@@ -2,8 +2,8 @@ import pytest
 from pydantic import ValidationError
 from app.schemas import (
     WorkbenchArchiveInput, WorkbenchBrandDraft, WorkbenchContextSaveInput,
-    WorkbenchDraftSaveInput, WorkbenchProfile, WorkbenchProjectCreateInput,
-    WorkbenchShellSaveInput, WorkbenchShellState,
+    WorkbenchDraftSaveInput, WorkbenchDraftView, WorkbenchProfile, WorkbenchProjectCreateInput,
+    WorkbenchShellSaveInput, WorkbenchShellState, NativeProjectQueryInput,
 )
 
 
@@ -83,10 +83,58 @@ def test_shell_requires_boolean_archive_and_explicit_draft_object_or_null():
     for value in ["true", 1, None]:
         with pytest.raises(ValidationError):
             WorkbenchArchiveInput(projectId="p", revision=0, archived=value, projectVersion="novart-0")
-    for value in [[], "draft", 1]:
+    for value in [[], "draft", 1, {}, {"prompt": "unrestorable"}, {"text": None}, {"text": 1}]:
         with pytest.raises(ValidationError):
             WorkbenchDraftSaveInput(projectId="p", revision=0, inputForm=value)
     with pytest.raises(ValidationError):
         WorkbenchDraftSaveInput(projectId="p", revision=0)
-    draft = WorkbenchDraftSaveInput(projectId="p", revision=0, inputForm={"prompt": "中文", "resolution": "2K", "ratio": "1:1"})
-    assert draft.inputForm["prompt"] == "中文"
+    form = {"text": "中文", "resolution": "2K", "ratio": "1:1", "lexicalJSONState": {"root": {"children": []}}}
+    draft = WorkbenchDraftSaveInput(projectId="p", revision=0, inputForm=form)
+    assert draft.model_dump()["inputForm"] == form
+    assert WorkbenchDraftSaveInput(projectId="p", revision=0, inputForm={"text": ""}).inputForm.text == ""
+
+
+def test_shell_rejects_native_transport_metadata_on_all_saves():
+    assert NativeProjectQueryInput(projectId="p", cid="native-request").cid == "native-request"
+    for schema, value in [
+        (WorkbenchContextSaveInput, {"projectId": "p", "revision": 0, "brief": "", "notes": ""}),
+        (WorkbenchArchiveInput, {"projectId": "p", "revision": 0, "archived": True, "projectVersion": "novart-0"}),
+        (WorkbenchDraftSaveInput, {"projectId": "p", "revision": 0, "inputForm": None}),
+    ]:
+        for cid in ["native-request", None]:
+            with pytest.raises(ValidationError):
+                schema(**value, cid=cid)
+
+
+def test_draft_receipt_requires_every_field_for_empty_saved_and_cleared_drafts():
+    empty = {"projectId": "p", "revision": 0, "inputForm": None, "updatedAt": None, "referenceIssues": []}
+    assert WorkbenchDraftView(**empty).model_dump() == empty
+    saved = {**empty, "revision": 1, "inputForm": {"text": "中文\n草稿", "model": "preferred"}, "updatedAt": 1791417600000}
+    assert WorkbenchDraftView(**saved).model_dump() == saved
+    assert WorkbenchDraftView(**{**saved, "revision": 2147483647, "inputForm": None}).revision == 2147483647
+    for field in empty:
+        with pytest.raises(ValidationError):
+            WorkbenchDraftView(**{key: value for key, value in empty.items() if key != field})
+    for patch in [
+        {"referenceIssues": None}, {"referenceIssues": {}}, {"referenceIssues": [None]}, {"referenceIssues": [{}]},
+        {"revision": True}, {"revision": 2147483648}, {"updatedAt": -1}, {"updatedAt": "1791417600000"},
+        {"updatedAt": 9007199254740992}, {"inputForm": {"prompt": "wrong field"}}, {"cid": "unexpected"},
+    ]:
+        with pytest.raises(ValidationError):
+            WorkbenchDraftView(**{**saved, **patch})
+
+
+def test_draft_reference_issue_hashes_and_identities_are_checked():
+    issue = {"code": "UNAVAILABLE_REFERENCE", "message": "引用无法读取", "label": "图片引用", "assetSha256": "a" * 64, "identity": None}
+    view = {"projectId": "p", "revision": 1, "inputForm": {"text": "引用"}, "updatedAt": 1, "referenceIssues": [issue]}
+    assert WorkbenchDraftView(**view).model_dump()["referenceIssues"] == [issue]
+    for identity in [{"kind": "key", "value": "mention-1"}, {"kind": "elementId", "value": "shape-1"}]:
+        assert WorkbenchDraftView(**{**view, "referenceIssues": [{**issue, "identity": identity}]}).model_dump()["referenceIssues"][0]["identity"] == identity
+    for patch in [
+        {"identity": {"kind": "assetId", "value": "a"}}, {"identity": {"kind": "key", "value": 1}},
+        {"assetSha256": "a" * 63}, {"assetSha256": "a" * 64 + "\n"}, {"message": 1}, {"extra": True},
+    ]:
+        with pytest.raises(ValidationError):
+            WorkbenchDraftView(**{**view, "referenceIssues": [{**issue, **patch}]})
+    with pytest.raises(ValidationError):
+        WorkbenchDraftView(**{**view, "referenceIssues": [{key: value for key, value in issue.items() if key != "identity"}]})

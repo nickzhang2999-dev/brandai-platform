@@ -18,9 +18,11 @@ const artifacts = path.resolve(process.env.WORKBENCH_UI_ARTIFACTS ?? ".novart-ui
 const networkProblems: string[] = [], browserErrors: string[] = [], serverFailures: string[] = [];
 const navigations: Array<{ path: string; main: boolean; at: number }> = [];
 const recentRequests: Array<{ phase: string; path: string; method: string; status?: number; failure?: string; count: number }> = [];
+const stateReceipts: Array<Record<string, unknown>> = [];
 const privateFixtureValues: string[] = [];
 const contexts: BrowserContext[] = [];
-let browser: Browser | undefined, currentPage: Page | undefined, fixtureUserId: string | undefined, passed = 0;
+let browser: Browser | undefined, currentPage: Page | undefined, fixtureUserId: string | undefined, passed = 0, activeStep = "initialize";
+const step = (label: string) => { activeStep = label; console.log(`STEP ${label}`); };
 const check = (label: string) => { passed++; console.log(`PASS ${label}`); };
 function diagnosticMessage(value: string) {
   let text = value;
@@ -45,12 +47,28 @@ async function frameDiagnostics(page: Page | undefined) {
       return await Promise.race([
         frame.evaluate(() => {
           const win = window as any;
+          const draft = win.NovartM24Draft?.snapshot(), studio = win.NovartStudio?.snapshot();
           return {
             path: location.pathname, readyState: document.readyState,
             startup: [...document.querySelectorAll(".np-startup")].map(node => node.textContent?.slice(0, 600)),
             canvas: [...document.querySelectorAll(".tl-container, .tl-canvas")].map(node => ({ className: node.className, width: node.getBoundingClientRect().width, height: node.getBoundingClientRect().height })),
             webpack: { present: Boolean(win.webpackChunk_lovartai_lovart_shell), chunkCount: win.webpackChunk_lovartai_lovart_shell?.length ?? 0 },
             editorProbe: win.__novartAcceptanceProbe ?? null,
+            // Omit native forms, account data, image URLs and browser caches.
+            draft: draft ? {
+              state: draft.state, revision: draft.revision, loaded: draft.loaded, busy: draft.busy,
+              restoring: draft.restoring, composing: draft.composing, conflict: draft.conflict,
+              pendingChoice: draft.pendingChoice, cacheFailed: draft.cacheFailed,
+              awaitingCanvas: draft.awaitingCanvas, materializing: draft.materializing,
+              checkingReferences: draft.checkingReferences, referenceIssueCount: draft.referenceIssues?.length,
+            } : null,
+            studio: studio ? {
+              route: studio.route, stateLoaded: studio.stateLoaded, stateRevision: studio.stateRevision,
+              metadataConflict: studio.metadataConflict, profileDirty: studio.profileDirty,
+              favoritesDirty: studio.favoritesDirty, projectCount: studio.projectCount,
+            } : null,
+            receipts: [...document.querySelectorAll("#m24-draft-receipt, #novart-bar .nv-save, #ns-settings-status, #ns-meta-message")]
+              .map(node => ({ id: node.id || "canvas-save", text: node.textContent?.slice(0, 400), state: (node as HTMLElement).dataset.draftState ?? (node as HTMLElement).dataset.saveState ?? (node as HTMLElement).dataset.state })),
             scripts: [...document.scripts].map(script => ({
               path: script.src ? new URL(script.src).pathname : "inline", type: script.type || "javascript", deferred: script.defer,
               state: script.type === "application/x-novart" ? "waiting-for-bootstrap" : script.src ? (performance.getEntriesByName(script.src).length ? "resource-observed" : "no-resource-entry") : "inline",
@@ -99,11 +117,25 @@ async function newPage(): Promise<Page> {
       networkProblems.push(`worker outbound request: ${url.origin}${url.pathname}`);
     }
   });
-  context.on("response", response => {
+  context.on("response", async response => {
     recordRequest("response", response.url(), response.request().method(), response.status());
     const url = new URL(response.url());
     if (url.origin === base.origin && response.status() >= 400 && !["/studio/unavailable"].includes(url.pathname)) {
       serverFailures.push(`${response.status()} ${url.pathname}`);
+    }
+    if (url.origin === base.origin && ["/studio/draft", "/studio/state"].includes(url.pathname)) {
+      const receipt: Record<string, unknown> = { step: activeStep, path: url.pathname, method: response.request().method(), status: response.status() };
+      stateReceipts.push(receipt);
+      if (stateReceipts.length > 30) stateReceipts.shift();
+      try {
+        const value = await response.json();
+        receipt.keys = value && typeof value === "object" ? Object.keys(value).sort() : [];
+        receipt.revision = value?.revision;
+        receipt.hasInputForm = value?.inputForm !== null && typeof value?.inputForm === "object";
+        receipt.inputTextLength = typeof value?.inputForm?.text === "string" ? value.inputForm.text.length : null;
+        receipt.referenceIssues = Array.isArray(value?.referenceIssues) ? value.referenceIssues.length : "missing-or-invalid";
+        if (!response.ok()) receipt.error = diagnosticMessage(String(value?.error ?? value?.msg ?? "No readable error"));
+      } catch { receipt.error = "Response JSON unavailable"; }
     }
   });
   context.on("requestfailed", request => recordRequest("failed", request.url(), request.method(), undefined, request.failure()?.errorText));
@@ -161,8 +193,29 @@ async function editorFrame(page: Page, projectId: string) {
   await expect(frame.locator(".np-startup")).toHaveCount(0, { timeout: 45_000 });
   return frame;
 }
+async function studioReady(page: Page) {
+  await expect(page.locator(".np-startup")).toHaveCount(0, { timeout: 45_000 });
+  await page.waitForFunction(() => (window as any).NovartStudio?.snapshot().stateLoaded === true, undefined, { timeout: 30_000 });
+  await expect(page.locator("#ns-settings-save")).toBeEnabled();
+  await expect(page.locator("#ns-meta-alert")).toBeHidden();
+}
+async function draftReady(frame: Frame) {
+  // The editor can mount before the draft GET is validated and restored. Never
+  // type through that race or mistake a pending save for a pagehide baseline.
+  const state = await frame.waitForFunction(() => {
+    const draft = (window as any).NovartM24Draft?.snapshot();
+    if (draft?.state === "error") return "error";
+    if (draft?.conflict || draft?.pendingChoice) return "conflict";
+    return draft?.loaded && !draft.busy && !draft.restoring && !draft.composing
+      && !draft.materializing && !draft.awaitingCanvas && ["saved", "empty"].includes(draft.state) ? draft.state : false;
+  }, undefined, { timeout: 45_000 });
+  const value = await state.jsonValue();
+  await state.dispose();
+  assert.ok(["saved", "empty"].includes(value as string), `Native draft must acknowledge its server state, received ${value}`);
+  await expect(frame.getByTestId("agent-message-input")).toBeEditable();
+}
 async function currentShapes(frame: Frame) {
-  return frame.evaluate(() => (window as any).__novartAcceptanceEditor.getCurrentPageShapes() as Array<{ id: string; type: string; props: Record<string, unknown> }>);
+  return frame.evaluate(() => (window as any).__novartAcceptanceEditor.getCurrentPageShapes() as Array<{ id: string; type: string; x: number; y: number; props: Record<string, unknown> }>);
 }
 
 try {
@@ -173,6 +226,7 @@ try {
   fixtureUserId = user.id;
   browser = await chromium.launch({ headless: true });
   const page = await newPage();
+  step("password login and first brand");
   await login(page, email, password);
   await expect(page.getByRole("heading", { name: "创建你的第一个品牌" })).toBeVisible();
   assert.equal(await prisma.brandWorkspace.count({ where: { ownerId: user.id } }), 0);
@@ -180,12 +234,13 @@ try {
 
   await page.getByRole("textbox", { name: "品牌名称", exact: true }).fill(brandName);
   await page.getByRole("button", { name: "进入工作台", exact: true }).click();
-  await expect(page.locator(".np-startup")).toHaveCount(0, { timeout: 45_000 });
+  await studioReady(page);
   await expect(page.locator("#ns-greeting")).toContainText(nickname);
   const workspace = await prisma.brandWorkspace.findFirstOrThrow({ where: { ownerId: user.id, name: brandName } });
   assert.equal(new URL(page.url()).searchParams.get("workspaceId"), workspace.id);
   check("brand creation UI creates a real workspace and displays the authenticated profile");
 
+  step("blank project and native canvas save");
   const creation = page.waitForResponse(response => new URL(response.url()).pathname === "/compare/api/create" && response.request().method() === "POST");
   await page.locator("#ns-create-blank").click();
   const created = await creation;
@@ -238,17 +293,27 @@ try {
     return store[ids.shape]?.x === 110 && JSON.stringify(store[ids.text]).includes(text) && store[draw.id] ? row : null;
   }, 60_000);
   assert.ok(document.revision >= 1);
+  await expect(frame.locator("#novart-bar .nv-save")).toHaveAttribute("data-save-state", "saved", { timeout: 30_000 });
+  await expect(frame.locator("#novart-bar .nv-save")).toContainText("已保存到服务器");
   check("native shape, Chinese text and pointer-drawn stroke autosave through real HTTP into the database");
 
+  step("native chat draft autosave and checked receipt");
+  await draftReady(frame);
   const draftText = `暂存的创作需求 ${run}`;
   await frame.getByTestId("agent-message-input").fill(draftText);
   await eventually("native chat draft saves to the account/project row", async () => {
     const row = await prisma.workbenchChatDraft.findUnique({ where: { userId_projectId: { userId: user.id, projectId } } });
-    return row && JSON.stringify(row.inputForm).includes(draftText) ? row : null;
+    return row && (row.inputForm as { text?: string } | null)?.text === draftText ? row : null;
   });
+  await expect(frame.locator("#m24-draft-receipt")).toHaveAttribute("data-draft-state", "saved", { timeout: 30_000 });
+  await expect(frame.locator("#m24-draft-receipt [role=status]")).toHaveText("草稿已随账号保存");
+  await draftReady(frame);
   check("unsent native chat input is stored as a real per-user project draft");
 
+  step("profile settings save and receipt");
   await page.getByTestId("studio-nav-settings").click();
+  await expect(page).toHaveURL(/#\/settings$/);
+  await expect(page.locator("#ns-settings-save")).toBeEnabled();
   const newNickname = `Saved profile ${run}`;
   await page.locator("#ns-settings-nickname").fill(newNickname);
   await page.locator("#ns-settings-density").selectOption("compact");
@@ -259,51 +324,68 @@ try {
     const profile = row?.profile as { nickname?: string; density?: string; motion?: string } | undefined;
     return profile?.nickname === newNickname && profile.density === "compact" && profile.motion === "reduce" ? row : null;
   });
+  await expect(page.locator("#ns-settings-status")).toHaveAttribute("data-state", "saved");
+  await expect(page.locator("#ns-settings-status")).toHaveText("偏好已随账号与品牌保存");
+  await expect(page.locator("#ns-meta-alert")).toBeHidden();
   check("personal preferences persist through the reviewed settings form");
 
+  step("project library favorite save and receipt");
   await page.getByTestId("studio-nav-projects").click();
+  await expect(page).toHaveURL(/#\/projects$/);
   await page.locator("#ns-project-refresh").click();
   const card = page.locator(`#ns-project-library [data-project-id="${projectId}"]`);
   await expect(card).toContainText("已保存画布");
+  await expect(card.locator('[data-action="favorite"]')).toHaveAttribute("aria-disabled", "false");
   await card.locator('[data-action="favorite"]').click();
   await eventually("favorite stored on server", async () => {
     const row = await prisma.workbenchUserState.findUnique({ where: { userId_workspaceId: { userId: user.id, workspaceId: workspace.id } } });
     return row?.favorites.includes(projectId) ? row : null;
   });
+  await expect(card.locator('[data-action="favorite"]')).toHaveAttribute("aria-pressed", "true");
+  await expect(card.locator('[data-action="favorite"]')).toHaveAttribute("aria-disabled", "false");
+  await expect(page.locator("#ns-meta-alert")).toBeHidden();
+  await expect(page.locator("#ns-toast")).toHaveText("收藏已随账号与品牌保存");
   check("project library shows the saved canvas and persists its favorite");
 
+  step("last draft edit followed by immediate pagehide");
   await card.locator('[data-action="open-project"]').click();
   frame = await editorFrame(page, projectId);
   // Establish an idle, acknowledged draft before the final edit. After filling,
   // navigate immediately: no save wait or sleep may mask the pagehide flush.
-  await frame.waitForFunction(() => {
-    const draft = (window as any).NovartM24Draft?.snapshot();
-    return draft?.loaded && !draft.busy && !draft.restoring && !draft.composing && !draft.conflict && !draft.pendingChoice;
-  });
+  await draftReady(frame);
   const finalDraftText = `离开页面前的末次需求 ${run}`;
   await frame.getByTestId("agent-message-input").fill(finalDraftText);
   await page.goto("about:blank", { waitUntil: "domcontentloaded" });
   await eventually("real pagehide flush stores the final unsent edit", async () => {
     const row = await prisma.workbenchChatDraft.findUnique({ where: { userId_projectId: { userId: user.id, projectId } } });
-    return row && JSON.stringify(row.inputForm).includes(finalDraftText) ? row : null;
+    return row && (row.inputForm as { text?: string } | null)?.text === finalDraftText ? row : null;
   });
   check("immediate navigation flushes the last draft edit to the server without waiting for autosave");
 
   // A second browser context has no editor IndexedDB/localStorage/cookies.
   // Reopening here cannot pass by reading a cached native document or draft.
+  step("fresh browser restores server data");
   const fresh = await newPage();
   await login(fresh, email, password, `/studio?workspaceId=${workspace.id}#/workspace/${projectId}`);
   // URL fragments are not part of server redirects; use the visible project card.
-  await expect(fresh.locator(".np-startup")).toHaveCount(0, { timeout: 45_000 });
+  await studioReady(fresh);
   await fresh.getByTestId("studio-nav-projects").click();
   const freshCard = fresh.locator(`#ns-project-library [data-project-id="${projectId}"]`);
   await expect(freshCard.locator('[data-action="favorite"]')).toHaveAttribute("aria-pressed", "true");
   await freshCard.locator('[data-action="open-project"]').click();
   frame = await editorFrame(fresh, projectId);
+  await frame.waitForFunction(ids => {
+    const shapes = (window as any).__novartAcceptanceEditor.getCurrentPageShapes();
+    return ids.every(id => shapes.some((shape: { id: string }) => shape.id === id));
+  }, [ids.shape, ids.text, draw.id], { timeout: 30_000 });
   const reopened = await currentShapes(frame);
   for (const id of [ids.shape, ids.text, draw.id]) assert.ok(reopened.some(shape => shape.id === id), `Fresh native editor restores ${id}`);
+  assert.equal(reopened.find(shape => shape.id === ids.shape)?.x, 110);
+  assert.equal(reopened.find(shape => shape.id === ids.shape)?.y, 100);
+  assert.deepEqual(reopened.find(shape => shape.id === draw.id)?.props, draw.props, "Fresh editor restores the actual pointer stroke geometry");
   assert.ok(JSON.stringify(reopened.find(shape => shape.id === ids.text)).includes(text));
-  await expect(frame.getByTestId("agent-message-input")).toContainText(finalDraftText, { timeout: 45_000 });
+  await draftReady(frame);
+  await expect(frame.getByTestId("agent-message-input")).toHaveText(finalDraftText);
   await fresh.getByTestId("studio-nav-settings").click();
   await expect(fresh.locator("#ns-settings-nickname")).toHaveValue(newNickname);
   await expect(fresh.locator("#ns-settings-density")).toHaveValue("compact");
@@ -319,11 +401,13 @@ try {
   await currentPage?.screenshot({ path: path.join(artifacts, "failure.png"), fullPage: true }).catch(() => undefined);
   // Never write cookies, request bodies, storage state, credentials or tokenized URLs.
   const diagnostics = {
+    step: activeStep,
     error: diagnosticMessage(error instanceof Error ? error.message : String(error)),
     networkProblems: networkProblems.slice(-30).map(diagnosticMessage),
     browserErrors: browserErrors.slice(-30).map(diagnosticMessage),
     serverFailures: serverFailures.slice(-30).map(diagnosticMessage),
     recentRequests,
+    stateReceipts,
     navigations: navigations.slice(-20),
     frames: JSON.parse(JSON.stringify(await frameDiagnostics(currentPage), (_key, value: unknown) => typeof value === "string" ? diagnosticMessage(value) : value)),
     page: currentPage ? new URL(currentPage.url()).pathname : null,

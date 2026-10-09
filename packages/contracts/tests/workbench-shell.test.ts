@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { WorkbenchArchiveInput, WorkbenchBrandDraft, WorkbenchContextSaveInput, WorkbenchDraftSaveInput,
+import { WorkbenchArchiveInput, WorkbenchBrandDraft, WorkbenchContextSaveInput, WorkbenchDraftSaveInput, WorkbenchDraftView,
   WorkbenchProfile, WorkbenchProjectCreateInput, WorkbenchShellSaveInput, WorkbenchShellState } from "../src/workbench-shell";
+import { NativeProjectQueryInput } from "../src/native-project";
 
 const profile = { nickname: "真实用户", density: "comfortable", motion: "system" };
 const brand = { name: "品牌", colors: ["#7C5CFF", "#171717", "#F4F0FF"], font: "system", notes: "尚未确认的品牌草稿" };
@@ -60,7 +61,48 @@ describe("workbench shell wire contracts", () => {
 
   it("requires a strict archive boolean and an explicit draft object or null", () => {
     for (const archived of ["true", 1, null]) expect(WorkbenchArchiveInput.safeParse({ projectId: "p", revision: 0, archived, projectVersion: "novart-0" }).success).toBe(false);
-    for (const inputForm of [undefined, [], "draft", 1]) expect(WorkbenchDraftSaveInput.safeParse({ projectId: "p", revision: 0, inputForm }).success).toBe(false);
-    expect(WorkbenchDraftSaveInput.parse({ projectId: "p", revision: 0, inputForm: { prompt: "中文", resolution: "2K", ratio: "1:1" } }).inputForm?.prompt).toBe("中文");
+    for (const inputForm of [undefined, [], "draft", 1, {}, { prompt: "unrestorable" }, { text: null }, { text: 1 }]) expect(WorkbenchDraftSaveInput.safeParse({ projectId: "p", revision: 0, inputForm }).success).toBe(false);
+    const inputForm = { text: "中文", resolution: "2K", ratio: "1:1", lexicalJSONState: { root: { children: [] } } };
+    expect(WorkbenchDraftSaveInput.parse({ projectId: "p", revision: 0, inputForm }).inputForm).toEqual(inputForm);
+    expect(WorkbenchDraftSaveInput.parse({ projectId: "p", revision: 0, inputForm: { text: "" } }).inputForm?.text).toBe("");
+  });
+
+  it("keeps cid at the native boundary and rejects it on each shell save", () => {
+    expect(NativeProjectQueryInput.parse({ projectId: "p", cid: "native-request" }).cid).toBe("native-request");
+    for (const [schema, value] of [
+      [WorkbenchContextSaveInput, { projectId: "p", revision: 0, brief: "", notes: "" }],
+      [WorkbenchArchiveInput, { projectId: "p", revision: 0, archived: true, projectVersion: "novart-0" }],
+      [WorkbenchDraftSaveInput, { projectId: "p", revision: 0, inputForm: null }],
+    ] as const) for (const cid of ["native-request", null]) expect(schema.safeParse({ ...value, cid }).success).toBe(false);
+  });
+
+  it("requires the same complete receipt for empty, saved and cleared drafts", () => {
+    const empty = { projectId: "p", revision: 0, inputForm: null, updatedAt: null, referenceIssues: [] };
+    expect(WorkbenchDraftView.parse(empty)).toEqual(empty);
+    const saved = { ...empty, revision: 1, inputForm: { text: "中文\n草稿", model: "preferred" }, updatedAt: 1791417600000 };
+    expect(WorkbenchDraftView.parse(saved)).toEqual(saved);
+    expect(WorkbenchDraftView.parse({ ...saved, revision: 2147483647, inputForm: null }).revision).toBe(2147483647);
+    for (const field of Object.keys(empty)) {
+      const missing: Record<string, unknown> = { ...empty }; delete missing[field];
+      expect(WorkbenchDraftView.safeParse(missing).success).toBe(false);
+    }
+    for (const patch of [
+      { referenceIssues: null }, { referenceIssues: {} }, { referenceIssues: [null] }, { referenceIssues: [{}] },
+      { revision: true }, { revision: 2147483648 }, { updatedAt: -1 }, { updatedAt: "1791417600000" },
+      { updatedAt: Number.MAX_SAFE_INTEGER + 1 }, { inputForm: { prompt: "wrong field" } }, { cid: "unexpected" },
+    ]) expect(WorkbenchDraftView.safeParse({ ...saved, ...patch }).success).toBe(false);
+  });
+
+  it("validates reference issue identities and hashes without silently defaulting missing fields", () => {
+    const issue = { code: "UNAVAILABLE_REFERENCE", message: "引用无法读取", label: "图片引用", assetSha256: "a".repeat(64), identity: null };
+    const view = { projectId: "p", revision: 1, inputForm: { text: "引用" }, updatedAt: 1, referenceIssues: [issue] };
+    expect(WorkbenchDraftView.parse(view).referenceIssues).toEqual([issue]);
+    for (const identity of [{ kind: "key", value: "mention-1" }, { kind: "elementId", value: "shape-1" }]) {
+      expect(WorkbenchDraftView.parse({ ...view, referenceIssues: [{ ...issue, identity }] }).referenceIssues[0].identity).toEqual(identity);
+    }
+    for (const patch of [
+      { identity: undefined }, { identity: { kind: "assetId", value: "a" } }, { identity: { kind: "key", value: 1 } },
+      { assetSha256: "a".repeat(63) }, { assetSha256: "a".repeat(64) + "\n" }, { message: 1 }, { extra: true },
+    ]) expect(WorkbenchDraftView.safeParse({ ...view, referenceIssues: [{ ...issue, ...patch }] }).success).toBe(false);
   });
 });

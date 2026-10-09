@@ -127,9 +127,38 @@ class WorkbenchArchiveInput(NativeProjectReference):
         return value
 
 
+class WorkbenchDraftForm(BaseModel):
+    model_config = {"extra": "allow", "strict": True}
+    text: str
+
+
 class WorkbenchDraftSaveInput(NativeProjectReference):
     revision: WorkbenchRevision
-    inputForm: dict[str, Any] | None
+    inputForm: WorkbenchDraftForm | None
+
+
+class WorkbenchDraftReferenceIdentity(BaseModel):
+    model_config = {"extra": "forbid", "strict": True}
+    kind: Literal["key", "elementId"]
+    value: str
+
+
+class WorkbenchDraftReferenceIssue(BaseModel):
+    model_config = {"extra": "forbid", "strict": True}
+    code: str
+    message: str
+    label: str
+    assetSha256: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
+    identity: WorkbenchDraftReferenceIdentity | None
+
+
+class WorkbenchDraftView(NativeProjectReference):
+    """Mirrored GET/POST /studio/draft receipt, including reference inspection."""
+    model_config = {"extra": "forbid", "strict": True}
+    revision: int = Field(ge=0, le=2147483647)
+    inputForm: WorkbenchDraftForm | None
+    updatedAt: int | None = Field(ge=0, le=9007199254740991)
+    referenceIssues: list[WorkbenchDraftReferenceIssue]
 
 
 class EditorDocumentSaveInput(BaseModel):

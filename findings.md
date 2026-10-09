@@ -1,5 +1,13 @@
 # Integration findings
 
+## 2026-10-09 verified draft and release boundaries
+- The captured native draft receiver calls acceptIssues before setting loaded=true; GET and POST both require referenceIssues. Missing it prevents POST autosave entirely. Native composer initial/reset state has text:""; prompt-only test fixtures were not valid restored forms.
+- Draft inputForm must preserve native extension fields while requiring text:string. The resourceFields set also includes audioUrl; all eight nonempty media fields need real persistent asset validation before this feature is enabled. Clean receipts are issued only after validating read/write data, including legacy rows.
+- Workbench save contracts must use project-only identity, not inherit native transport cid. TypeScript and Pydantic are now aligned at that boundary.
+- CDS webhook history shows f968f1a skipped at 2026-10-08T09:50:08.293Z, then deployDispatched=true at 09:50:08.791Z for the company integration branch. Neither a skipped log nor hasMore=false is a delivery-drained proof. Current observed UI/API expose project push policy, not a verified branch-only exclusion. Do not repeat temporary pause/push/immediate-restore.
+- Shared database effects are now evidenced in docs/cds-shared-audit-2026-10-09.md; no rollback or cleanup performed.
+- Next material chain can reuse workspace asset upload, authenticated /raw and ProjectAsset. Reviewed frontend uses raw File/X-File-Name plus SHA receipts, requiring an explicit adapter. Keep blob/data document rejection. Investigate getEffectiveStorage().configured checking only AppSetting before claiming S3 environment fallback works.
+
 ## Verified source baseline
 Remote main matches local company baseline e99919a. Existing backend includes Next/Auth.js, Prisma/Postgres, workspace membership, assets/object storage, BullMQ jobs, FastAPI providers, generation versions, review/export, configuration and quotas.
 

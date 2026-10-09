@@ -1,10 +1,10 @@
 # BrandAI — 品牌项目视觉 AI 生成平台
 
-## 产品整合分支 · 2026-10-08
+## 产品整合分支 · 2026-10-09
 
 | 范围 | 状态 | 说明 |
 | --- | --- | --- |
-| `claude/novart-product-integration` | 已部署原生文档接口；新版工作台候选通过 61 项真实 HTTP/数据库检查，正在修复浏览器启动验收；候选尚未部署，完整产品尚未接通 | [整合进度与验收边界](docs/novart-product-integration.md) |
+| `claude/novart-product-integration` | 草稿回包与原生格式已修复；352 项 L1、210 项 AI 测试及类型/构建通过；完整交互隔离诊断通过，真实 DB/UI 重验待 CI；自动部署隔离未解决，本轮未推送 | [整合进度](docs/novart-product-integration.md) · [今日开发日志](docs/development-log-2026-10-09.md) · [共享库审计](docs/cds-shared-audit-2026-10-09.md) |
 
 本分支从已评审的前端分支继续开发，复用公司源码的账号、品牌权限和项目服务，新增完整原生画布保存接口。新版页面仍需逐项接入素材及异步任务；API 模块存在不等于页面已经接通。已部署迁移新增 `EditorDocument`，候选再新增四张工作台状态表，均不替换原 `ProjectCanvas`。独立前端评审部署仍运行原评审提交，不能作为本分支后端验收环境。
 

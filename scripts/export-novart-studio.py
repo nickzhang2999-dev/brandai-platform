@@ -26,6 +26,45 @@ from rc3_runtime import RC3_PARAMETERS  # noqa: E402
 
 ASSET = re.compile(r'''["'(](\/(?:[A-Za-z0-9_.-]+\/)*[A-Za-z0-9_.-]+\.(?:js|css|png|svg|woff2?|ttf|jpg|webp))(?:["')?])''')
 
+# These reviewed overlays also run in the local archive. Change their storage
+# claims only in the product export; browser recovery-cache wording stays local.
+# An exact occurrence count makes an upstream copy change fail the compiler.
+PRODUCT_STORAGE_COPY = {
+    '/studio.html': [
+        ('项目和素材保存在本机，AI 与在线协作尚未接入', '项目与画布随当前品牌保存，AI 与在线协作尚未接入', 1),
+        ('>本地预览</span>', '>创作工作台</span>', 1),
+    ],
+    '/home-start-studio.js': [
+        ('偏好已保存在本机', '偏好已随账号与品牌保存', 1),
+        ('品牌规范已保存在本机', '品牌草稿已随品牌保存', 1),
+        ('收藏已保存在本机', '收藏已随账号与品牌保存', 1),
+    ],
+    '/m24-canvas.js': [
+        ('草稿已在本机暂存', '草稿已随账号保存', 1),
+        ('草稿会在本机暂存', '草稿会随账号保存', 2),
+        ('本机还没有已暂存稿', '服务器还没有已暂存稿', 1),
+    ],
+    '/m20-comparison.js': [
+        ('已存到本机 ', '已保存到服务器 ', 1),
+    ],
+    '/m20-canvas.js': [
+        ('本地编辑 · AI 与协作未接入', '云端保存 · AI 与协作未接入', 1),
+        ('画布保存到这台电脑。', '画布随当前品牌保存到服务器。', 1),
+        ('上次确认写入本机：', '上次确认写入服务器：', 1),
+        ('暂时无法读取本机保存状态', '暂时无法读取服务器保存状态', 1),
+        ('最近一次确认写入本机的时间', '最近一次确认写入服务器的时间', 1),
+        ('画布还没有确认写入本机的内容', '画布还没有确认写入服务器的内容', 1),
+        ('正在读取本机保存状态。', '正在读取服务器保存状态。', 1),
+        ('可继续本地编辑，画布保存状态请看顶部。', '可继续编辑，画布保存状态请看顶部。', 2),
+    ],
+    '/m14-canvas.js': [
+        ('AI 与协作未接入 · 支持本地编辑', 'AI 与协作未接入 · 支持编辑与云端保存', 1),
+        ('线上服务提示不代表本地保存失败。', 'AI 服务提示不代表画布保存失败。', 1),
+        ('确认本地预览服务仍在运行。', '请检查网络和工作台服务后重试。', 1),
+        ('最近一次确认写入本机的时间', '最近一次确认写入服务器的时间', 1),
+    ],
+}
+
 
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
@@ -40,6 +79,9 @@ def main():
         if not any(kind in mime for kind in ['html', 'javascript', 'css']):
             return body
         text = body.decode('utf-8')
+        for before, after, count in PRODUCT_STORAGE_COPY.get(url_path, []):
+            assert text.count(before) == count, f'Product storage copy changed: {url_path}: {before!r}'
+            text = text.replace(before, after)
         # Overlay opt-in remains explicit; product identity is not a demo flag.
         text = text.replace("location.hostname !== '127.0.0.1'", "(!window.__NOVART_PRODUCT__ && location.hostname !== '127.0.0.1')")
         text = text.replace('https://web-static3.lovart.ai/lovart_canvas_online/', '/originals/')
@@ -65,7 +107,7 @@ def main():
             text = text.replace('本机设置', '账号设置').replace('本机项目', '项目').replace('本地项目', '项目').replace('本机规范', '品牌草稿')
             text = text.replace('本地服务', '工作台服务').replace('请确认预览窗口仍在运行后重试', '请检查网络后重试')
             text = text.replace('仅保存在本机。', '偏好随当前账号与品牌保存。').replace('用于首页问候与本机显示', '用于当前品牌的工作台显示')
-            text = text.replace('仅作本机视觉参考，暂不应用到画布或 AI 生成。', '品牌草稿已随品牌保存；确认品牌规则后才能用于 AI 生成。')
+            text = text.replace('仅作本机视觉参考，暂不应用到画布或 AI 生成。', '品牌草稿按品牌保存；确认品牌规则后才能用于 AI 生成。')
         return text.encode('utf-8')
 
     def write(url_path: str, body: bytes, mime: str):
