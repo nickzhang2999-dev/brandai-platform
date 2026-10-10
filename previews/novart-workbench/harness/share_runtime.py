@@ -89,7 +89,7 @@ def _write_origin_allowed(headers, public_origin, additional_origins=frozenset()
 def _startup_diagnostic(payload):
     """Accept only bounded structural state, never user content or full errors."""
     required = {'kind', 'role', 'controlled', 'canvas', 'toolbar', 'boundary', 'width', 'height'}
-    optional = {'errorName', 'frames', 'resource', 'stage', 'embedded', 'framePath'}
+    optional = {'errorName', 'frames', 'resource', 'stage', 'embedded', 'framePath', 'licenseRejected'}
     if not isinstance(payload, dict) or not required <= payload.keys() or payload.keys() - required - optional:
         raise ValueError('Invalid diagnostic fields')
     enums = {'kind': {'state', 'error'}, 'role': {'shell', 'canvas'},
@@ -99,7 +99,7 @@ def _startup_diagnostic(payload):
     for key, values in enums.items():
         if key in payload and (not isinstance(payload[key], str) or payload[key] not in values):
             raise ValueError('Invalid diagnostic enum')
-    for key in ('controlled', 'canvas', 'toolbar', 'boundary', 'embedded'):
+    for key in ('controlled', 'canvas', 'toolbar', 'boundary', 'embedded', 'licenseRejected'):
         if key in payload and type(payload[key]) is not bool:
             raise ValueError('Invalid diagnostic flag')
     for key in ('width', 'height'):

@@ -100,8 +100,17 @@ class StartupDiagnosticHttpTests(unittest.TestCase):
         body = json.dumps(state()).encode().ljust(4096, b' ')
         self.assertEqual(self.request('POST', body=body), (202, {'ok': True}))
 
+    def test_license_withdrawal_is_a_content_free_structural_flag(self):
+        for rejected in (False, True):
+            snapshot = state(stage='error' if rejected else 'opened', licenseRejected=rejected)
+            snapshot['boundary'] = rejected
+            self.assertEqual(self.request('POST', snapshot), (202, {'ok': True}))
+        events = self.request()[1]['events']
+        self.assertEqual([event['licenseRejected'] for event in events], [False, True])
+        self.assertEqual([event['boundary'] for event in events], [False, True])
+
     def test_unknown_fields_and_sensitive_fields_rejected(self):
-        for field in ('message', 'stack', 'projectId', 'document', 'image', 'userText', 'timestamp', 'unknown'):
+        for field in ('message', 'stack', 'projectId', 'document', 'image', 'userText', 'timestamp', 'unknown', 'licenseKey'):
             with self.subTest(field=field):
                 self.assertEqual(self.request('POST', {**state(), field: 'must-not-be-stored'})[0], 400)
         self.assertEqual(self.request()[1], {'events': []})
@@ -109,7 +118,8 @@ class StartupDiagnosticHttpTests(unittest.TestCase):
     def test_invalid_enums_flags_and_dimensions_rejected(self):
         bad = [('kind', 'other'), ('role', 'worker'), ('stage', 'loading'), ('errorName', 'SecretError'),
             ('errorName', []), ('controlled', 1), ('canvas', 'true'), ('toolbar', None), ('boundary', {}),
-            ('embedded', 0), ('framePath', '/canvas?projectId=private'), ('framePath', 'https://review.test/canvas'),
+            ('embedded', 0), ('licenseRejected', 'true'), ('licenseRejected', 1),
+            ('framePath', '/canvas?projectId=private'), ('framePath', 'https://review.test/canvas'),
             ('width', -1), ('width', True), ('width', 10001), ('height', float('nan')),
             ('height', float('inf')), ('height', '720')]
         for key, value in bad:

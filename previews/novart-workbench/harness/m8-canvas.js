@@ -13,14 +13,15 @@
     if (failed) return;
     // The comparison header mounts before the native application. A shell-only
     // ready signal used to dismiss loading even when the editor never started.
-    if (document.querySelector('.tl-error-boundary')
+    const licenseRequired = Boolean(document.querySelector('[data-testid="tl-license-expired"]'));
+    if (licenseRequired || document.querySelector('.tl-error-boundary')
       || ['bootstrap', 'canvas-crash'].includes(document.documentElement.dataset.novartNativeFailure)) {
       failed = true;
       ready = false;
       document.documentElement.dataset.nvStudioCanvasReady = 'false';
       observer?.disconnect();
       observer = null;
-      send('startup-error', {code: 'NATIVE_CANVAS_FAILED'});
+      send('startup-error', {code: licenseRequired ? 'NATIVE_CANVAS_LICENSE_REQUIRED' : 'NATIVE_CANVAS_FAILED'});
       return;
     }
     if (ready) return;

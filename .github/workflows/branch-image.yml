@@ -12,6 +12,8 @@ on:
       - 'scripts/test-novart-canvas-ready.cjs'
       - 'scripts/test-novart-startup-diagnostics.py'
       - 'scripts/test-novart-startup-diagnostics.cjs'
+      - 'scripts/test-novart-license-browser.py'
+      - 'scripts/test-novart-license-browser.cjs'
       - '.github/workflows/branch-image.yml'
   workflow_dispatch:
 
@@ -41,6 +43,15 @@ jobs:
           node scripts/test-novart-home-start.cjs
           node scripts/test-novart-canvas-ready.cjs
           node scripts/test-novart-startup-diagnostics.cjs
+
+      # localhost alone skips the SDK's production-domain license check. This
+      # verifies a real rejection is visible, not that this image is licensed.
+      - name: Check local editor and visible HTTPS license rejection
+        run: |
+          python3 -m pip install cryptography==43.0.3
+          npm install --prefix "$RUNNER_TEMP/novart-browser-test" --no-save playwright-core@1.62.1
+          node "$RUNNER_TEMP/novart-browser-test/node_modules/playwright-core/cli.js" install --with-deps chromium
+          NODE_PATH="$RUNNER_TEMP/novart-browser-test/node_modules" python3 -B scripts/test-novart-license-browser.py
 
       - name: Verify package and build the image
         env:

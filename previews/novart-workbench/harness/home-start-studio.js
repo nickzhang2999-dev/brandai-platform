@@ -385,13 +385,23 @@
   }
   function updateWorkspaceNav(id) { if (!id) return; lastWorkspaceId = id; const link = $('ns-current-workspace'); link.hidden = false; link.href = '#/workspace/' + encodeURIComponent(id); $('ns-workspace-label').textContent = project(id)?.projectName || '当前工作台'; link.title = '返回 ' + (project(id)?.projectName || '当前工作台') + '，保留编辑会话'; }
   function workspaceStartupFailed(entry, reason = 'timeout') {
-    if (frames.get(entry.id) !== entry || (entry.ready && reason !== 'native-error')) return;
+    if (frames.get(entry.id) !== entry || (entry.ready && !['native-error', 'license-required'].includes(reason))) return;
+    // A late generic timeout must not downgrade a confirmed license refusal.
+    if (entry.startupError === 'license-required') reason = 'license-required';
     if (entry.ready) entry.failedAfterReady = true;
     entry.ready = false; entry.frame.dataset.ready = 'false';
-    entry.startupError = reason === 'native-error' ? 'native-error' : 'timeout';
+    entry.startupError = ['native-error', 'license-required'].includes(reason) ? reason : 'timeout';
     clearTimeout(entry.timer);
+    if (reason === 'license-required') homeStart.canvasUnavailable(entry);
     if (activeId !== entry.id || route.page !== 'workspace') return;
     window.dispatchEvent(new Event('novart-startup-check'));
+    if (entry.startupError === 'license-required') {
+      const detail = '当前画布引擎未获得此域名授权。已保存的项目和原始图片仍保留，授权配置完成后再刷新页面。'
+        + (entry.failedAfterReady ? '最近的改动可能尚未保存。' : '');
+      $('ns-workspace-status').replaceChildren(node('div', '', detail),
+        button('返回项目库', 'ns-secondary', () => go('/projects')));
+      return;
+    }
     const detail = entry.failedAfterReady
       ? '画布运行出错。已保存的内容仍保留，最近的改动可能尚未保存。'
       : entry.startupError === 'native-error'
@@ -482,8 +492,8 @@
   window.addEventListener('message', event => {
     if (event.origin !== location.origin) return; const data = event.data; if (!data || data.type !== 'nv-studio' || typeof data.projectId !== 'string') return;
     const entry = frames.get(data.projectId); if (!entry || event.source !== entry.frame.contentWindow) return;
-    if (data.action === 'startup-error') workspaceStartupFailed(entry, 'native-error');
-    else if (data.action === 'ready') { entry.ready = true; delete entry.startupError; delete entry.failedAfterReady; entry.frame.dataset.ready = 'true'; clearTimeout(entry.timer); trackWorkspaceInput(entry); prefsToFrame(entry); if (activeId === entry.id && route.page === 'workspace') $('ns-workspace-status').textContent = ''; panelCommand(entry); restoreWorkspaceInput(entry); updateWorkspaceReturn(entry); completeBlankRecovery(entry); homeStart.resume(entry); }
+    if (data.action === 'startup-error') workspaceStartupFailed(entry, data.code === 'NATIVE_CANVAS_LICENSE_REQUIRED' ? 'license-required' : 'native-error');
+    else if (data.action === 'ready') { if (entry.startupError === 'license-required') return; entry.ready = true; delete entry.startupError; delete entry.failedAfterReady; entry.frame.dataset.ready = 'true'; clearTimeout(entry.timer); trackWorkspaceInput(entry); prefsToFrame(entry); if (activeId === entry.id && route.page === 'workspace') $('ns-workspace-status').textContent = ''; panelCommand(entry); restoreWorkspaceInput(entry); updateWorkspaceReturn(entry); completeBlankRecovery(entry); homeStart.resume(entry); }
     else if (entry.ready && activeId === entry.id && data.action === 'navigate' && ['home', 'projects', 'resources', 'brand', 'settings'].includes(data.route)) {
       const origin = data.route === 'projects' ? workspaceOrigins.get(entry.id) : null;
       libraryReturnFocus = origin?.focus || null; go(origin?.path || '/' + data.route);

@@ -122,6 +122,21 @@ for (const property of ['stack', 'name']) {
 
 {
   const f = fixture();
+  assert.equal(f.reports[0].licenseRejected, false);
+  f.nodes.set('[data-testid="tl-license-expired"]', {
+    style: {display: 'none'}, textContent: 'PRIVATE_LICENSE_DATA_NOT_FOR_TELEMETRY'
+  });
+  f.listeners.get('novart-startup-check')();
+  const event = f.reports.at(-1);
+  assert.equal(event.licenseRejected, true, 'Hidden SDK license sentinel has a distinct structural flag');
+  assert.equal(event.boundary, true, 'Silent SDK withdrawal cannot be reported as a healthy canvas');
+  assert.equal(event.canvas, false);
+  assert.equal(event.toolbar, false);
+  assertPrivate(f.reports);
+}
+
+{
+  const f = fixture();
   f.document.documentElement.getBoundingClientRect = () => { throw new Error('PRIVATE_SAMPLE_FAILURE'); };
   assert.equal(f.consoleDouble.error('[canvas-crash]', privateError), f.consoleResult);
   assert.equal(f.dispatched.length, 1, 'DOM diagnostic failures do not prevent the crash signal');

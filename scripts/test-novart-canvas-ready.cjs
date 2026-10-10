@@ -8,15 +8,16 @@ const source = fs.readFileSync(path.join(__dirname, '../previews/novart-workbenc
 const selectors = {
   back: '#novart-bar .nv-back', workflow: '#nv-workflow-toggle',
   canvas: '[data-testid="canvas"]', toolbar: '[data-testid="bottom-toolbar"]',
-  upload: '[data-testid="upload-menu-trigger"]', error: '.tl-error-boundary'
+  upload: '[data-testid="upload-menu-trigger"]', error: '.tl-error-boundary', license: '[data-testid="tl-license-expired"]'
 };
 
-function fixture({shell = true, native = false, failed = false, motion = true, failure = ''} = {}) {
+function fixture({shell = true, native = false, failed = false, motion = true, failure = '', license = false} = {}) {
   const nodes = new Map(), messages = [], listeners = new Map();
   const back = {removeAttribute() {}, setAttribute() {}};
   if (shell) { nodes.set(selectors.back, back); nodes.set(selectors.workflow, {}); }
   if (native) for (const key of ['canvas', 'toolbar', 'upload']) nodes.set(selectors[key], {});
   if (failed) nodes.set(selectors.error, {textContent: 'private error content must not be sent'});
+  if (license) nodes.set(selectors.license, {});
   const document = {documentElement: {dataset: {nvMotionReady: String(motion), novartNativeFailure: failure}},
     querySelector: selector => nodes.get(selector) || null};
   let observer;
@@ -118,6 +119,16 @@ for (const failure of ['bootstrap', 'canvas-crash']) {
   assert.equal(f.messages[0]?.data.action, 'ready', 'Only fixed native failure markers affect readiness');
   checks += 1;
 }
+for (const mountedFirst of [false, true]) {
+  const f = fixture({native: mountedFirst, license: !mountedFirst});
+  if (mountedFirst) { f.nodes.set(selectors.license, {}); f.mutate(); }
+  assert.equal(f.messages.at(-1).data.code, 'NATIVE_CANVAS_LICENSE_REQUIRED');
+  assert.equal(f.messages.at(-1).data.action, 'startup-error');
+  assert.equal(f.document.documentElement.dataset.nvStudioCanvasReady, 'false');
+  assert.equal(f.connected(), false);
+  assert.equal(f.messages.length, mountedFirst ? 2 : 1, 'License rejection is detected before or after ready');
+  checks++;
+}
 // Parent-side readiness must not hide a failed frame or discard a different
 // cached editing session when the user retries this frame.
 const studioSource = fs.readFileSync(path.join(__dirname, '../previews/novart-workbench/harness/home-start-studio.js'), 'utf8');
@@ -126,16 +137,23 @@ const parentEnd = studioSource.indexOf('  async function ensureWorkspace(', pare
 assert.ok(parentStart >= 0 && parentEnd > parentStart);
 function parentFixture({ready = false, active = true} = {}) {
   let removed = 0;
-  const entry = {id: 'target', ready, timer: 1, frame: {dataset: {}}, slot: {remove() { removed++; }}};
+  const entry = {id: 'target', ready, timer: 1, frame: {dataset: {}, contentWindow: {}}, slot: {remove() { removed++; }}};
   const other = {id: 'other', ready: true};
-  const frames = new Map([[entry.id, entry], [other.id, other]]), messages = [], reopened = [];
+  const frames = new Map([[entry.id, entry], [other.id, other]]), messages = [], reopened = [], listeners = new Map(), unavailable = [];
   const context = {frames, activeId: active ? entry.id : other.id, route: {page: 'workspace'}, clearTimeout() {},
-    window: {dispatchEvent() {}}, Event: class {},
+    location: {origin: 'https://review.invalid'},
+    window: {dispatchEvent() {}, addEventListener(type, callback) { listeners.set(type, callback); }}, Event: class {},
+    homeStart: {canvasUnavailable(entry) { unavailable.push(entry.id); }},
     $: () => ({replaceChildren(...children) { messages.push(children); }}),
     node: (_tag, _class, text) => ({text}), button: (label, _class, click) => ({label, click}),
     go() {}, ensureWorkspace(id) { reopened.push(id); }};
   const fail = vm.runInNewContext('(' + studioSource.slice(parentStart, parentEnd).trim() + ')', context);
-  return {entry, other, frames, messages, reopened, fail: reason => fail(entry, reason), removed: () => removed};
+  context.workspaceStartupFailed = fail;
+  const messageStart = studioSource.indexOf("  window.addEventListener('message', event => {");
+  const messageEnd = studioSource.indexOf('\n  function validState(', messageStart);
+  assert.ok(messageStart >= 0 && messageEnd > messageStart);
+  vm.runInNewContext(studioSource.slice(messageStart, messageEnd), context);
+  return {entry, other, frames, messages, reopened, unavailable, listeners, fail: reason => fail(entry, reason), removed: () => removed};
 }
 {
   const f = parentFixture(); f.fail();
@@ -165,5 +183,31 @@ function parentFixture({ready = false, active = true} = {}) {
   f.entry.ready = true; retry.click();
   assert.equal(f.removed(), 0, 'A stale retry button must not discard a now-ready editor');
   checks += 1;
+}
+for (const ready of [false, true]) {
+  const f = parentFixture({ready}); f.fail('license-required');
+  assert.equal(f.entry.startupError, 'license-required');
+  assert.equal(f.entry.ready, false);
+  assert.deepEqual(f.messages[0].filter(x => x.label).map(x => x.label), ['返回项目库'], 'License refusal has no misleading retry action');
+  assert.ok(f.messages[0][0].text.includes('当前画布引擎未获得此域名授权'));
+  assert.ok(f.messages[0][0].text.includes('已保存的项目和原始图片仍保留'));
+  assert.deepEqual(f.unavailable, ['target'], 'Active handoff receives the refusal');
+  f.fail();
+  assert.equal(f.entry.startupError, 'license-required', 'A timeout cannot replace the licensing explanation');
+  assert.equal(f.removed(), 0); assert.equal(f.frames.get('other'), f.other);
+  checks++;
+}
+{
+  const f = parentFixture({ready: true});
+  const data = {type:'nv-studio',action:'startup-error',projectId:'target',code:'NATIVE_CANVAS_LICENSE_REQUIRED'};
+  const message = f.listeners.get('message');
+  message({origin:'https://other.invalid',source:f.entry.frame.contentWindow,data});
+  message({origin:'https://review.invalid',source:{},data});
+  assert.equal(f.entry.ready, true); assert.equal(f.messages.length, 0, 'Foreign origins and unrelated frame sources cannot fail the editor');
+  message({origin:'https://review.invalid',source:f.entry.frame.contentWindow,data});
+  assert.equal(f.entry.startupError, 'license-required');
+  message({origin:'https://review.invalid',source:f.entry.frame.contentWindow,data:{...data,action:'ready'}});
+  assert.equal(f.entry.ready, false, 'A stale ready cannot revive a refused frame');
+  checks += 2;
 }
 console.log(`Native canvas readiness: ${checks} checks passed (no browser or network).`);

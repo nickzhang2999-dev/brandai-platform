@@ -39,12 +39,16 @@
       }
     }
     const canvas = doc.querySelector('[data-testid="canvas"]');
+    // The captured SDK replaces the editor with this hidden sentinel when its
+    // production-domain license is rejected. It does not throw or log a crash.
+    const licenseRejected = Boolean(doc.querySelector('[data-testid="tl-license-expired"]'));
     const rect = (frame || canvas || doc.documentElement).getBoundingClientRect();
     const dimension = value => Number.isFinite(value) ? Math.min(10000, Math.max(0, Math.round(value))) : 0;
     return {kind: 'state', role, stage, embedded: parent !== window, framePath,
       controlled: Boolean(win.navigator.serviceWorker?.controller), canvas: Boolean(canvas),
       toolbar: Boolean(doc.querySelector('[data-testid="bottom-toolbar"]')),
-      boundary: Boolean(doc.querySelector('.tl-error-boundary') ||
+      licenseRejected,
+      boundary: Boolean(licenseRejected || doc.querySelector('.tl-error-boundary') ||
         ['bootstrap', 'canvas-crash'].includes(doc.documentElement.dataset.novartNativeFailure)),
       width: dimension(rect.width), height: dimension(rect.height)};
   }
