@@ -145,6 +145,14 @@ python D:/coding/.novart-tmp/product-ai-release-check.py after
 
 ## 7. “源码里是否已有真实 AI 配置”的只读补充
 
+### 15:14 公司运行后端补充核查与验收授权
+
+进一步读取公司 main 当前 Web 容器，以 Prisma 只读事务 `transaction_read_only=on` 限定 SELECT。公司 `AppSetting(singleton)` 实际有一行：图片 provider `openai`、model `gpt-image-2`，图片 key 和 baseUrl 已保存；VLM 为 `openai` / `gpt-5.6-sol` 且 key/baseUrl 存在；layer 为 `fal`、key 存在；对象存储的 endpoint/region/bucket/accessKey/secretKey/publicUrl 均存在。`SETTINGS_ENC_KEY` 与 `AUTH_SECRET` 存在，图片/VLM/layer 的 env key 均为空，因此实际来源是数据库密文。
+
+只读输出是在 DB 侧派生的存在性和非秘密模型名，不返回、解密或复制密钥/端点。公司 main 核查前后仍为 `e99919a`，三个服务在运行。**这证明公司配置存在，尚不证明可解密、余额、模型权限或调用成功；独立产品仍未继承这些配置。** 不再以本地 `.env.example` 为空推断公司实际后端没有模型。
+
+用户随后明确授权“可以复用，仅做小规模验收”。计划只转接图片四项 provider/model/baseUrl/apiKey，并以独立环境的原有稳定材料重新加密；源配置只读、不复制公司 AUTH_SECRET/VLM/layer/存储凭据、不输出明文。验收限一张 1K、普通生图，无付费自动重试。配置转接、真实调用与结果保存均需实际执行后另记，授权本身不算验收通过。独立对象存储另行配置独立 bucket/凭据，不写公司原素材或共享业务数据。
+
 本轮确认的是三件不同的事：**仓库有完整接入实现；公司部署元数据有配置键；独立产品尚无实际配置。** 前两项不能代替第三项，也不能证明模型账户余额、端点或模型权限可用。
 
 | 代码位置 | 本轮核实的行为 |

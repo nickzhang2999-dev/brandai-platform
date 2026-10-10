@@ -89,7 +89,7 @@ export async function verifyStudioMaterialsBackend({ call, check, base, ws }: Op
   check("upload completion notifications stay private and link to the correct branded project", () => {
     assert.equal(ownNotifications.status, 200); assert.equal(teammateNotifications.status, 200);
     const note = ownNotifications.data.items.find((item: any) => item.id === `task:${taskId}`);
-    assert.equal(note.kind, "STUDIO_UPLOAD"); assert.equal(note.href, `/canvas?workspaceId=${ws}&projectId=${pid}`);
+    assert.equal(note.kind, "STUDIO_UPLOAD"); assert.equal(note.href, `/canvas?workspaceId=${ws}&projectId=${pid}&taskId=${taskId}`);
     assert.ok(!teammateNotifications.data.items.some((item: any) => item.id === `task:${taskId}`));
   });
   const replay = await upload("owner", multipart(mutationId));

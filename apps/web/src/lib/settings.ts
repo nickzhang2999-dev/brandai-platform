@@ -1,5 +1,5 @@
 import { prisma } from "@brandai/db";
-import { decryptSecret, encryptSecret, maskSecret } from "@/lib/crypto";
+import { decryptSecret, encryptSecret, maskSecret } from "./crypto";
 
 /**
  * Platform AI provider config. Source of truth is the AppSetting singleton row
@@ -292,13 +292,6 @@ function applyStorage(
   }
 }
 
-const SECRET_FIELDS = new Set([
-  "imageApiKey",
-  "vlmApiKey",
-  "layerApiKey",
-  "storageSecretKey",
-]);
-
 export async function updateAiSettings(
   input: AiSettingsInput,
   actor: { id: string; email?: string | null },
@@ -312,18 +305,14 @@ export async function updateAiSettings(
     data.imageSystemPrompt = input.imageSystemPrompt.trim() || null;
   }
 
-  // Audit trail: log who changed what (secrets redacted to set/cleared), so a
-  // "my model got reverted" report can be traced to an actual write vs. not.
+  // Keep the account ID and changed fields auditable without copying provider
+  // URLs, credentials, account emails or free-text instructions into logs.
   const before = await prisma.appSetting.findUnique({ where: { id: SINGLETON } });
   const changes: string[] = [];
   for (const [k, v] of Object.entries(data)) {
     const prev = (before as Record<string, unknown> | null)?.[k] ?? null;
     if (prev === v) continue;
-    changes.push(
-      SECRET_FIELDS.has(k)
-        ? `${k}=${v ? "set" : "cleared"}`
-        : `${k}: ${prev ?? "∅"} → ${v ?? "∅"}`,
-    );
+    changes.push(`${k}=${v === null ? "cleared" : "set"}`);
   }
 
   await prisma.appSetting.upsert({
@@ -332,7 +321,7 @@ export async function updateAiSettings(
     update: { updatedById: actor.id, ...data },
   });
   console.info(
-    `[ai-settings] updated by ${actor.email ?? actor.id}` +
+    `[ai-settings] updated by account ${actor.id}` +
       (changes.length ? `: ${changes.join("; ")}` : " (no field changes)"),
   );
 }
@@ -361,7 +350,7 @@ export async function setRegistrationOpen(
     update: { updatedById: actor.id, registrationOpen: open },
   });
   console.info(
-    `[registration] ${open ? "OPENED" : "CLOSED"} by ${actor.email ?? actor.id}`,
+    `[registration] ${open ? "OPENED" : "CLOSED"} by account ${actor.id}`,
   );
 }
 

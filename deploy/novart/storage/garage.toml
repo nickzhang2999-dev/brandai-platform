@@ -1,0 +1,28 @@
+# Proposed destination: deploy/novart/storage/garage.toml.
+# Independent single-node staging. No company storage configuration or keys.
+metadata_dir = "/var/lib/garage/meta"
+data_dir = "/var/lib/garage/data"
+db_engine = "sqlite"
+replication_factor = 1
+consistency_mode = "consistent"
+metadata_fsync = true
+data_fsync = true
+metadata_auto_snapshot_interval = "6h"
+block_size = "1M"
+block_ram_buffer_max = "64MiB"
+block_max_concurrent_reads = 4
+block_max_concurrent_writes_per_request = 2
+compression_level = 1
+
+# RPC is needed by /garage CLI inside this container, never by the app.
+# Its separate random secret is provided by GARAGE_RPC_SECRET, not this file.
+rpc_bind_addr = "127.0.0.1:3901"
+rpc_public_addr = "127.0.0.1:3901"
+
+[s3_api]
+s3_region = "garage"
+api_bind_addr = "0.0.0.0:3900"
+advertise_endpoint = "http://novart-storage:3900"
+advertise_path_style = true
+
+# Deliberately no [s3_web] and no [admin] listener. No public bucket or console.

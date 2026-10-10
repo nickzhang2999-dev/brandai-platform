@@ -5,6 +5,8 @@ x-cds-project:
   repo: "https://github.com/nickzhang2999-dev/brandai-platform.git"
 
 x-cds-env:
+  # Supply a new independent RPC secret through CDS private settings before startup.
+  NOVART_GARAGE_RPC_SECRET: ""
   CDS_POSTGRES_USER: "${CDS_POSTGRES_USER:-}"
   CDS_POSTGRES_PASSWORD: "${CDS_POSTGRES_PASSWORD:-}"
   CDS_POSTGRES_DB: "${CDS_POSTGRES_DB:-}"
@@ -21,6 +23,28 @@ x-cds-env-meta:
   CDS_JWT_SECRET: { kind: auto, hint: "Dedicated project session signing secret" }
 
 services:
+  novart-storage:
+    # Official 2.4.1 multi-architecture manifest verified 2026-10-10.
+    image: "dxflrs/garage:v2.4.1@sha256:9c96caa2612d3411acc5b0e6701fb238dbfba33e533a6d7d3d811a4b12d0d020"
+    command: ["/garage", "server", "--single-node"]
+    restart: unless-stopped
+    mem_limit: 512m
+    environment:
+      GARAGE_RPC_SECRET: ${NOVART_GARAGE_RPC_SECRET}
+      RUST_LOG: "garage=warn"
+      RUST_BACKTRACE: "0"
+    volumes:
+      - "./deploy/novart/storage/garage.toml:/etc/garage.toml:ro"
+      - "novart_integration_garage_meta:/var/lib/garage/meta"
+      - "novart_integration_garage_data:/var/lib/garage/data"
+    # Container-network access only. No host ports, CDS HTTP entry or admin UI.
+    expose: ["3900"]
+    healthcheck:
+      test: ["CMD", "/garage", "health", "--quiet"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
   postgres:
     image: postgres:16-alpine
     ports: ["5432"]
@@ -51,8 +75,10 @@ services:
     working_dir: /app
     command: "sh /app/deploy/novart/start-web.sh"
     ports: ["3000"]
-    depends_on: [postgres, redis, ai]
+    depends_on: [postgres, redis, ai, novart-storage]
     environment:
+      # This acceptance run authorizes image generation only.
+      AUTO_COMPLIANCE_V1: "0"
       DATABASE_URL: "${CDS_DATABASE_URL}"
       REDIS_URL: "${CDS_REDIS_URL}"
       AUTH_SECRET: "${CDS_JWT_SECRET}"
@@ -78,8 +104,10 @@ services:
     volumes: [".:/cds-source:ro"]
     command: "pnpm -F web worker"
     ports: ["3001"]
-    depends_on: [postgres, redis, ai]
+    depends_on: [postgres, redis, ai, novart-storage]
     environment:
+      # This acceptance run authorizes image generation only.
+      AUTO_COMPLIANCE_V1: "0"
       DATABASE_URL: "${CDS_DATABASE_URL}"
       REDIS_URL: "${CDS_REDIS_URL}"
       AUTH_SECRET: "${CDS_JWT_SECRET}"
@@ -94,5 +122,7 @@ services:
       cds.readiness-timeout: "90"
 
 volumes:
+  novart_integration_garage_meta:
+  novart_integration_garage_data:
   novart_integration_pgdata:
   novart_integration_redis:

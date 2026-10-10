@@ -29,7 +29,7 @@ Ship the first usable integrated product before broad optimization. Preserve the
 First-product journey: sign in -> create/select brand -> create/open project -> upload/reference material -> edit canvas -> request real image generation -> insert result -> save -> close/reopen -> export.
 
 ## Ordered product TODO
-Current release checkpoint (2026-10-10): 6f271da is pushed but CI 38031824770 failed real upload completion; no image publication/deployment. Restore bounded Redis producer startup and failure evidence, repeat all repository gates, then exact-SHA isolated CI/deployment. Local fixture success does not resolve this blocker. Actual provider and independent production storage settings remain external prerequisites.
+Current release checkpoint (2026-10-10): 42a0e90 restored real uploads; CI 38033531204 actual UI/DB/S3/Worker 15 checks passed but an API notification test still expected a link without the new taskId. Update that strict expectation, redact administrator configuration audit contents, and prepare independently approved Garage storage with extra automatic paid checks disabled. Latest local L1 936, AI365, typecheck/build pass; await new exact-SHA full CI and immutable image publication. User authorized one 1K real image with company model configuration; safe image-only transfer and independent storage still pending execution. No model result or production storage recovery is claimed.
 
 1. [in_progress] Stable independent deployment and real login; repair release isolation.
    - Current: exact 8474347 images run; initial 14 public HTTPS checks and latest 13 native-adapter checks pass, including actual password login/logout, brand selection, native save/reopen, idempotent retry and stale-write rejection.
