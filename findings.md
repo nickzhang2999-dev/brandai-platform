@@ -98,3 +98,8 @@ The company project's right-hand preview URL is a working alias for the review g
 
 ## Owned canvas decision, 2026-10-10
 Company OpenCanvas has image/shape/text, selection/transforms and persistence but lacks general brush/history/frame/rotation/export. Preserve existing rich document records through a SDK-free compatibility adapter; do not force them through the 200-item last-writer-wins CanvasState API.
+## 2026-10-10 producer startup evidence
+- Actual installed BullMQ 5.76.10 RedisConnection caches its initialization Promise. skipWaitingForReady=true with enableOfflineQueue=false can send INFO while the Redis client is connecting and permanently poison a Queue despite a subsequent ready event. Normal readiness handshake passes the tiny isolated reproduction.
+- CI 38031824770 real API/UI uploads timed out, but worker/server logs and queue snapshots were not collected. The startup mechanism is demonstrated; exclusive incident attribution awaits real CI evidence.
+- upload-artifact v4 excludes hidden files by default; .novart-ui-artifacts reports need include-hidden-files plus a precise safe allowlist. Avoid uploading raw service logs or environment/config data.
+- Material worker initial DB claim can fail outside its catch; a failed Bull job and PENDING task are a distinct diagnostic case. Do not erase intent or rerun a paid provider as a generic queue repair.

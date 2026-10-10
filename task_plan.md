@@ -29,6 +29,8 @@ Ship the first usable integrated product before broad optimization. Preserve the
 First-product journey: sign in -> create/select brand -> create/open project -> upload/reference material -> edit canvas -> request real image generation -> insert result -> save -> close/reopen -> export.
 
 ## Ordered product TODO
+Current release checkpoint (2026-10-10): 6f271da is pushed but CI 38031824770 failed real upload completion; no image publication/deployment. Restore bounded Redis producer startup and failure evidence, repeat all repository gates, then exact-SHA isolated CI/deployment. Local fixture success does not resolve this blocker. Actual provider and independent production storage settings remain external prerequisites.
+
 1. [in_progress] Stable independent deployment and real login; repair release isolation.
    - Current: exact 8474347 images run; initial 14 public HTTPS checks and latest 13 native-adapter checks pass, including actual password login/logout, brand selection, native save/reopen, idempotent retry and stale-write rejection.
    - Release guard failed on 2026-10-08: restoring push policy after git push allowed a delayed company deployment. Do not reuse that guard. Before another push, verify a branch exclusion or another explicit delivery boundary that cannot restart this branch on shared infrastructure.

@@ -1,5 +1,27 @@
 # Novart 开发日志｜2026-10-10
 
+## 精确推送与真实上传阻断（当前收口）
+
+### 队列恢复候选本地验证
+
+四个 producer 与有界 helper 已完成并通过独立代码审查。真实安装 BullMQ 的初始化反例和恢复／超时／并发测试共 **20 项**通过；最终 contracts **907 项**、UI **24 项**，L1 **931 项**；AI pytest **365 项**、完整 Web typecheck、低内存生产构建均通过。原 React fixture **36 项**、归档协议 **6 项**、首页交接 **11 项**保持通过，产品导出仍为 124 资源／76 映射／27,063,376 字节。构建没有启动本机 Redis，连接提示不当运行健康证据。
+
+失败诊断脱敏自测、YAML 与三段 shell 语法、报告白名单和原退出码保留小验证通过。独立审查发现诊断 Queue 构造会更新 meta，已加 `skipMetasUpdate=true`，使诊断保持只读；最终完整 Web 类型检查与脱敏自测复核通过。新增诊断最多 30 秒、外层 40 秒限时，不修改实际上传 120 秒验收期限。
+
+准确性边界：超时不保证此前发往 Redis 的命令没有执行。修复保留原 jobId 和数据库唯一领取保护，返回 false 表示投递尚未确认，不重造任务或重跑已认领的付费生成。源码比较新增这项 producer 恢复差异，真实 CI／镜像发布／公网编辑仍须分别确认。
+
+整合候选 `6f271dab72b41e743df6b103143467ea848cec00` 已经正常推送到 `claude/novart-product-integration`，提交带 `[skip cds]`。推送前后官方 exact-SHA webhook dry-run 均未产生副作用；真实投递记录为 `dispatchAction=skipped`，明确未创建公司预览部署。公司 main、integration、preview 三分支的版本和 CI 元数据均与基线一致。这里真实记录的 skipped 与 dry-run 的 skipped reason 分开保存，不以模拟自检代替实际投递。
+
+GitHub Branch Image CI **38031824770** 完成但失败。全量门禁、36 项实际 React fixture、临时数据库迁移和独立临时对象存储准备通过。真实登录、新建品牌和 API 权限／文档／草稿／工作流／上传受理等检查部分通过；**API 上传与首页带图 UI 上传两条任务均在既有 120 秒期限内没有结束**。没有修改期限、跳过断言或伪造任务。镜像构建／发布步骤未执行，独立产品仍运行已测旧版 `8474347`。
+
+已用本机实际安装的 BullMQ 5.76.10 `RedisConnection` 复现一个明确启动问题：在 `enableOfflineQueue=false` 且 `skipWaitingForReady=true` 时，第一次 `INFO` 在 Redis 仍 connecting 时失败；ready 事件到来后，内部初始化 Promise 仍保留失败。业务 enqueue 捕获 false，数据库 PENDING 意图虽保留，但 outbox 重用同一坏实例不能恢复。正常 ready 握手可以恢复。本次 CI 没保留 worker/queue 运行证据，故该机制是可复现修复目标，**尚未把它写成本次超时的唯一已证实原因**。
+
+并行修复范围：四个自研业务 producer 共享有界、等待 ready 的惰性初始化；失败／超时后退役其独立连接和队列，下一次 outbox 扫描重新握手。保持 jobId、任务认领和付费 provider-once 边界不变。第二路只在验收失败时采集脱敏 worker/server 类别计数及一次性数据库／Redis 队列状态，并修复隐藏目录验收报告未被上传的问题；不上传原日志、环境变量、认证数据或用户正文。
+
+另一条潜在风险是 material worker 的首次 claim 事务在主 try/catch 之外，连续失败时 Redis job 可失败而业务任务留在 PENDING。当前没有证明本次触发，因此先采集状态区分未投递、未消费、claim 失败及存储失败，不凭猜测大改业务状态。`worker=ok` 只证明对象构造，不能代替队列消费验收。
+
+CDS 归因：本次是应用队列／CI 诊断问题，未观察到新的 CDS 服务端故障。右侧旧评审 SDK 约 5 秒卸载仍是另一个已核实问题；新自研编辑器尚未发布到该入口。真实模型和独立生产对象存储配置仍缺，本轮未调用付费 AI、启动本机 Docker、修改 main 或共享业务数据。
+
 ## 下午续作：首版业务接线与线上版本核对（进行中）
 
 帅帅确认“工具出现约 5 秒后消失”发生在 CDS 右侧前端评审分支。只读核对证明该入口仍指向独立旧评审包 `9e5e2af`：在线包哈希和 Git manifest 一致，旧 SDK 文件存在，`/studio-editor` 未提供。自研画布尚未部署到该入口；不能把这次旧版现象说成新版上线后又出故障，也不再让用户重复刷新旧地址。

@@ -2,11 +2,11 @@
 
 ## 产品整合分支 · 2026-10-10
 
-最新：用户决定改用公司自研画布。产品 `/canvas` 经原权限校验后进入 `/studio-editor`，保留已评审外层工作台，核心编辑不加载模板 SDK。图片、中文文字、图形、画笔、变换、历史、保存恢复及 PNG/SVG 导出已通过本机实际 Chromium 交互；首页带图交接在保存确认后才清理恢复记录。本地 L1 835、AI pytest 365、类型检查与低内存生产构建通过，云端真实 DB/S3/provider 验收未完成；尚未发布这批代码。详见 [自研接入计划](docs/novart-owned-canvas-plan.md)与[当日开发日志](docs/development-log-2026-10-10.md)。
+最新：公司自研画布及用途、草稿、通知、任务恢复已在整合分支 `6f271da` 推送，产品 `/canvas` 经原权限校验后进入 `/studio-editor`，保留已评审外层工作台，核心编辑不加载模板 SDK。本机真实 Chromium fixture 36 项、L1 911 项、AI pytest 365 项、完整类型与低内存生产构建通过；云端真实登录和新建品牌通过，但两条上传验收在 120 秒内未完成，CI 38031824770 失败，没有发布镜像或部署。队列启动恢复与失败诊断正在修复，真实模型与独立存储配置仍待落实。详见 [自研接入计划](docs/novart-owned-canvas-plan.md)与[当日开发日志](docs/development-log-2026-10-10.md)。
 
 | 范围 | 状态 | 说明 |
 | --- | --- | --- |
-| `claude/novart-product-integration` | 自研画布本地集成，23 项实际页面交互回归通过；真实后端接口与校验继续复用。新客户端的云端完整业务验收未执行，EXACT、改图与草稿恢复仍待接通；未部署本批 | [整合进度](docs/novart-product-integration.md) · [源码差异](docs/novart-source-comparison-2026-10-09.md) · [开发日志](docs/development-log-2026-10-10.md) · [配置复核](docs/readiness-ai-config-audit-2026-10-09-1604.md) |
+| `claude/novart-product-integration` | 自研编辑和首版业务接线已推送；实际页面 fixture 36 项通过。真实 DB/S3/UI 首轮失败于上传处理超时，队列恢复正在修复；未发布或部署。真实改图/EXACT provider 与独立配置另行验收 | [整合进度](docs/novart-product-integration.md) · [源码差异](docs/novart-source-comparison-2026-10-09.md) · [开发日志](docs/development-log-2026-10-10.md) · [运行配置](docs/novart-runtime-audit-2026-10-10.md) |
 
 本分支复用公司源码的账号、品牌权限、项目和生成服务。新画布以纯数据适配维持 `novart-native-v1` 文档接口，不运行旧 SDK；可靠读取不了的旧内容保留原稿并只读。新增上传任务、工作流引用及生成请求/私有输出/归档记录，不替换原 `ProjectCanvas`，不自动迁移公司历史画布。代码和隔离交互测试不等于真实模型或完整业务验收；线上运行版本与已执行迁移以部署日志为准，本批没有重新部署或复查线上配置。
 

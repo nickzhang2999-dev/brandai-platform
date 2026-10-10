@@ -70,6 +70,7 @@ jobs:
         run: |
           node scripts/test-novart-owned-shell.cjs
           node scripts/test-novart-owned-home-start.cjs
+          pnpm -F web exec tsx scripts/diagnose-studio-upload.ts --self-test
       - name: Owned React editor interaction regression with isolated fixtures
         shell: bash
         run: |
@@ -156,11 +157,26 @@ jobs:
       - name: Real login, owned canvas, database and durable upload acceptance
         shell: bash
         run: |
+          finish_acceptance() {
+            result=$?
+            trap - EXIT
+            set +e
+            if [ "$result" -ne 0 ]; then
+              # Keep raw service logs outside artifacts. The diagnostic script
+              # emits only fixed categories, task states and readiness flags.
+              timeout 40s pnpm -F web exec tsx scripts/diagnose-studio-upload.ts \
+                --server-log /tmp/novart-integration-server.log \
+                --worker-log /tmp/novart-integration-worker.log
+            fi
+            kill -- -"$SERVER_PID" -"$WORKER_PID" 2>/dev/null || true
+            wait "$SERVER_PID" "$WORKER_PID" 2>/dev/null || true
+            exit "$result"
+          }
           setsid pnpm -F web start > /tmp/novart-integration-server.log 2>&1 &
           SERVER_PID=$!
           setsid pnpm -F web worker > /tmp/novart-integration-worker.log 2>&1 &
           WORKER_PID=$!
-          trap 'kill -- -"$SERVER_PID" -"$WORKER_PID" 2>/dev/null || true; wait "$SERVER_PID" "$WORKER_PID" 2>/dev/null || true' EXIT
+          trap finish_acceptance EXIT
           ready=0
           for attempt in $(seq 1 60); do
             if curl -fsS http://127.0.0.1:3000/api/auth/csrf >/dev/null; then ready=1; break; fi
@@ -195,7 +211,22 @@ jobs:
             --label "org.opencontainers.image.revision=$COMMIT_SHA" -t "$AI_IMAGE" .
       - name: Check the built containers against the disposable database
         run: |
-          trap 'docker rm -f novart-ci-web novart-ci-ai novart-ci-worker >/dev/null 2>&1 || true' EXIT
+          finish_containers() {
+            result=$?
+            trap - EXIT
+            set +e
+            if [ "$result" -ne 0 ]; then
+              umask 077
+              docker logs novart-ci-web > "$RUNNER_TEMP/novart-container-server.log" 2>&1
+              docker logs novart-ci-worker > "$RUNNER_TEMP/novart-container-worker.log" 2>&1
+              WORKBENCH_TEST_URL=http://127.0.0.1:3100 timeout 40s pnpm -F web exec tsx scripts/diagnose-studio-upload.ts \
+                --server-log "$RUNNER_TEMP/novart-container-server.log" \
+                --worker-log "$RUNNER_TEMP/novart-container-worker.log"
+            fi
+            docker rm -f novart-ci-web novart-ci-ai novart-ci-worker >/dev/null 2>&1 || true
+            exit "$result"
+          }
+          trap finish_containers EXIT
           docker run -d --name novart-ci-ai --network host "$AI_IMAGE"
           docker run -d --name novart-ci-web --network host \
             -e DATABASE_URL -e REDIS_URL -e AUTH_SECRET -e QUOTA_V1 -e AUTH_ALLOW_DEMO \
@@ -210,7 +241,7 @@ jobs:
             if curl -fsS http://127.0.0.1:3100/api/auth/csrf >/dev/null; then ready=1; break; fi
             sleep 1
           done
-          if [ "$ready" != 1 ]; then docker logs novart-ci-web; exit 1; fi
+          test "$ready" = 1
           WORKBENCH_TEST_URL=http://127.0.0.1:3100 bash "$RUNNER_TEMP/novart-parallel-tests.sh"
           python - <<'PY'
           import json, time, urllib.request
@@ -244,6 +275,22 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: novart-owned-ui-${{ github.run_id }}
-          path: apps/web/.novart-ui-artifacts/
+          # v4 excludes dot-directories unless explicitly enabled. Whitelist
+          # only known test outputs; never upload raw logs or diagnostics.json.
+          path: |
+            apps/web/.novart-ui-artifacts/owned-react-fixture.json
+            apps/web/.novart-ui-artifacts/port-3000/acceptance.json
+            apps/web/.novart-ui-artifacts/port-3000/failure-runtime.json
+            apps/web/.novart-ui-artifacts/port-3000/failure.png
+            apps/web/.novart-ui-artifacts/port-3000/owned-scene.png
+            apps/web/.novart-ui-artifacts/port-3000/owned-scene.svg
+            apps/web/.novart-ui-artifacts/port-3000/fresh-owned-scene.png
+            apps/web/.novart-ui-artifacts/port-3100/acceptance.json
+            apps/web/.novart-ui-artifacts/port-3100/failure-runtime.json
+            apps/web/.novart-ui-artifacts/port-3100/failure.png
+            apps/web/.novart-ui-artifacts/port-3100/owned-scene.png
+            apps/web/.novart-ui-artifacts/port-3100/owned-scene.svg
+            apps/web/.novart-ui-artifacts/port-3100/fresh-owned-scene.png
+          include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 7
