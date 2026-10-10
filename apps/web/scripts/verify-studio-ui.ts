@@ -1,960 +1,264 @@
-/** Real UI acceptance against a disposable database. No vendor API or save mocks. */
+/** Real authenticated owned-editor acceptance against a disposable database.
+ * Actual pointer gestures drive the shipped UI; Prisma only verifies its data.
+ * Uploads use the real worker/storage. Provider calls require an explicit flag.
+ */
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { isDeepStrictEqual } from "node:util";
 import { gunzipSync } from "node:zlib";
 import { chromium, expect, type Browser, type BrowserContext, type Frame, type Page, type Route } from "playwright/test";
-import { prisma, type GenerationVersion } from "@brandai/db";
+import { prisma } from "@brandai/db";
 import sharp from "sharp";
 import { hashPassword } from "../src/lib/password";
 
 const base = new URL(process.env.WORKBENCH_TEST_URL ?? "http://127.0.0.1:3000");
 const database = new URL(process.env.DATABASE_URL ?? "http://invalid");
 if (database.pathname !== "/novart_integration_test" || !["localhost", "127.0.0.1"].includes(database.hostname)
-  || !["localhost", "127.0.0.1"].includes(base.hostname)) {
-  throw new Error("UI acceptance requires a loopback app and the disposable novart_integration_test database.");
-}
-if (process.env.WORKBENCH_TEST_IMAGE_EDIT === "1" && process.env.WORKBENCH_TEST_GENERATION !== "1") {
-  throw new Error("WORKBENCH_TEST_IMAGE_EDIT=1 requires WORKBENCH_TEST_GENERATION=1; editing must use a real generated source.");
-}
+  || !["localhost", "127.0.0.1"].includes(base.hostname)) throw new Error("Owned UI acceptance requires a loopback app and disposable novart_integration_test database.");
+if (process.env.WORKBENCH_TEST_IMAGE_EDIT === "1") throw new Error("Owned editor does not expose image modification yet. Requested acceptance cannot pass; original targets/references must remain preserved.");
 const artifacts = path.resolve(process.env.WORKBENCH_UI_ARTIFACTS ?? ".novart-ui-artifacts", `port-${base.port || "80"}`);
-const networkProblems: string[] = [], browserErrors: string[] = [], serverFailures: string[] = [];
-const navigations: Array<{ path: string; main: boolean; at: number }> = [];
-const recentRequests: Array<{ phase: string; path: string; method: string; status?: number; failure?: string; count: number }> = [];
-const stateReceipts: Array<Record<string, unknown>> = [];
-const privateFixtureValues: string[] = [];
-const contexts: BrowserContext[] = [];
-let browser: Browser | undefined, currentPage: Page | undefined, fixtureUserId: string | undefined, passed = 0, activeStep = "initialize";
-const step = (label: string) => { activeStep = label; console.log(`STEP ${label}`); };
+const networkProblems: string[] = [], browserErrors: string[] = [], requests: Array<{ path: string; method: string; status: number }> = [];
+const privateValues: string[] = [], contexts: BrowserContext[] = [], fixtureUsers: string[] = [];
+const deferred = ["Homepage attachments handoff", "Unsent creation draft autosave/pagehide recovery", "Exact-preservation output frames", "Image modification UI", "Per-object/nested-frame export", "Compliance UI and notification deep links"];
+let browser: Browser | undefined, currentPage: Page | undefined, step = "initialize", passed = 0, realHomepageHandoff = false;
 const check = (label: string) => { passed++; console.log(`PASS ${label}`); };
-function diagnosticMessage(value: string) {
-  let text = value;
-  for (const secret of privateFixtureValues) text = text.replaceAll(secret, "[redacted fixture value]");
-  return text.replace(/https?:\/\/[^\s"'<>]+/g, value => {
-    try { const url = new URL(value); return url.origin + url.pathname; } catch { return "[URL]"; }
-  }).slice(0, 1600);
+const enter = (label: string) => { step = label; console.log(`STEP ${label}`); };
+const digest = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
+function safe(value: string) {
+  let result = value; privateValues.forEach(secret => { result = result.replaceAll(secret, "[private fixture]"); });
+  return result.replace(/https?:\/\/[^\s"'<>]+/g, value => { try { const url = new URL(value); return url.origin + url.pathname; } catch { return "[URL]"; } }).slice(0, 1200);
 }
-function recordRequest(phase: string, url: string, method: string, status?: number, failure?: string) {
-  const pathname = new URL(url).pathname;
-  if (/\/(?:log\/acceptor|telemetry)(?:\/|$)/.test(pathname)) return;
-  const previous = recentRequests.find(item => item.phase === phase && item.path === pathname && item.method === method && item.status === status && item.failure === failure);
-  if (previous) { previous.count++; return; }
-  recentRequests.push({ phase, path: pathname, method, status, failure: failure ? diagnosticMessage(failure) : undefined, count: 1 });
-  if (recentRequests.length > 50) recentRequests.shift();
-}
-async function frameDiagnostics(page: Page | undefined) {
-  if (!page) return [];
-  return Promise.all(page.frames().map(async frame => {
-    let timeout: ReturnType<typeof setTimeout> | undefined;
-    try {
-      return await Promise.race([
-        frame.evaluate(() => {
-          const win = window as any;
-          const draft = win.NovartM24Draft?.snapshot(), studio = win.NovartStudio?.snapshot();
-          return {
-            path: location.pathname, readyState: document.readyState,
-            startup: [...document.querySelectorAll(".np-startup")].map(node => node.textContent?.slice(0, 600)),
-            canvas: [...document.querySelectorAll(".tl-container, .tl-canvas")].map(node => ({ className: node.className, width: node.getBoundingClientRect().width, height: node.getBoundingClientRect().height })),
-            webpack: { present: Boolean(win.webpackChunk_lovartai_lovart_shell), chunkCount: win.webpackChunk_lovartai_lovart_shell?.length ?? 0 },
-            editorProbe: win.__novartAcceptanceProbe ?? null,
-            // Omit native forms, account data, image URLs and browser caches.
-            draft: draft ? {
-              state: draft.state, revision: draft.revision, loaded: draft.loaded, busy: draft.busy,
-              restoring: draft.restoring, composing: draft.composing, conflict: draft.conflict,
-              pendingChoice: draft.pendingChoice, cacheFailed: draft.cacheFailed,
-              awaitingCanvas: draft.awaitingCanvas, materializing: draft.materializing,
-              checkingReferences: draft.checkingReferences, referenceIssueCount: draft.referenceIssues?.length,
-            } : null,
-            studio: studio ? {
-              route: studio.route, stateLoaded: studio.stateLoaded, stateRevision: studio.stateRevision,
-              metadataConflict: studio.metadataConflict, profileDirty: studio.profileDirty,
-              favoritesDirty: studio.favoritesDirty, projectCount: studio.projectCount,
-            } : null,
-            receipts: [...document.querySelectorAll("#m24-draft-receipt, #novart-bar .nv-save, #ns-settings-status, #ns-meta-message")]
-              .map(node => ({ id: node.id || "canvas-save", text: node.textContent?.slice(0, 400), state: (node as HTMLElement).dataset.draftState ?? (node as HTMLElement).dataset.saveState ?? (node as HTMLElement).dataset.state })),
-            scripts: [...document.scripts].map(script => ({
-              path: script.src ? new URL(script.src).pathname : "inline", type: script.type || "javascript", deferred: script.defer,
-              state: script.type === "application/x-novart" ? "waiting-for-bootstrap" : script.src ? (performance.getEntriesByName(script.src).length ? "resource-observed" : "no-resource-entry") : "inline",
-            })).slice(-50),
-          };
-        }),
-        new Promise(resolve => { timeout = setTimeout(() => resolve({ path: new URL(frame.url()).pathname, error: "frame diagnostic timed out" }), 3500); }),
-      ]);
-    } catch (error) {
-      return { path: new URL(frame.url()).pathname, error: diagnosticMessage(error instanceof Error ? error.message : String(error)) };
-    } finally { clearTimeout(timeout); }
-  }));
-}
-async function eventually<T>(label: string, read: () => Promise<T | null | false | undefined>, timeout = 45_000): Promise<T> {
+async function eventually<T>(label: string, read: () => Promise<T | null | false | undefined>, timeout = 45000): Promise<T> {
   const deadline = Date.now() + timeout;
-  while (Date.now() < deadline) {
-    const result = await read();
-    if (result !== null && result !== false && result !== undefined) return result as T;
-    await new Promise(resolve => setTimeout(resolve, 250));
-  }
+  while (Date.now() < deadline) { const result = await read(); if (result !== null && result !== false && result !== undefined) return result as T; await new Promise(resolve => setTimeout(resolve, 250)); }
   throw new Error(`Timed out: ${label}`);
 }
-function decodeCanvas(canvas: string): Record<string, any> {
+type Shape = { id: string; typeName: string; type: string; x: number; y: number; rotation: number; props: Record<string, any>; meta?: Record<string, any> };
+function store(canvas: string): Record<string, Shape> {
   assert.ok(canvas.startsWith("SHAKKERDATA://"));
   const value = JSON.parse(gunzipSync(Buffer.from(canvas.slice("SHAKKERDATA://".length), "base64")).toString("utf8"));
-  const store = value?.tldrawSnapshot?.document?.store;
-  assert.ok(store && typeof store === "object", "Native document must contain its real editor store");
-  return store;
+  assert.equal(value.novartOwnedCanvas?.version, 1, "Document must be saved by the owned model");
+  assert.ok(value.tldrawSnapshot?.document?.store, "Compatible envelope must retain a document store"); return value.tldrawSnapshot.document.store;
 }
-async function newPage(): Promise<Page> {
-  const context = await browser!.newContext({ viewport: { width: 1440, height: 1000 }, locale: "zh-CN", serviceWorkers: "allow" });
-  contexts.push(context);
-  // A network leak fails this test. It is never replaced with a success response.
-  // Worker-remapped captured resources are permitted; direct remote traffic is not.
-  await context.route("**/*", async route => {
-    const url = new URL(route.request().url());
-    if (["http:", "https:"].includes(url.protocol) && url.origin !== base.origin) {
-      networkProblems.push(`blocked direct request: ${url.origin}${url.pathname}`);
-      await route.abort("blockedbyclient");
-    } else await route.continue();
-  });
-  context.on("request", request => {
-    recordRequest("request", request.url(), request.method());
-    const url = new URL(request.url());
-    if (request.serviceWorker() && ["http:", "https:"].includes(url.protocol) && url.origin !== base.origin) {
-      networkProblems.push(`worker outbound request: ${url.origin}${url.pathname}`);
-    }
-  });
-  context.on("response", async response => {
-    recordRequest("response", response.url(), response.request().method(), response.status());
-    const url = new URL(response.url());
-    if (url.origin === base.origin && response.status() >= 400 && !["/studio/unavailable"].includes(url.pathname)) {
-      serverFailures.push(`${response.status()} ${url.pathname}`);
-    }
-    if (url.origin === base.origin && ["/studio/draft", "/studio/state"].includes(url.pathname)) {
-      const receipt: Record<string, unknown> = { step: activeStep, path: url.pathname, method: response.request().method(), status: response.status() };
-      stateReceipts.push(receipt);
-      if (stateReceipts.length > 30) stateReceipts.shift();
-      try {
-        const value = await response.json();
-        receipt.keys = value && typeof value === "object" ? Object.keys(value).sort() : [];
-        receipt.revision = value?.revision;
-        receipt.hasInputForm = value?.inputForm !== null && typeof value?.inputForm === "object";
-        receipt.inputTextLength = typeof value?.inputForm?.text === "string" ? value.inputForm.text.length : null;
-        receipt.referenceIssues = Array.isArray(value?.referenceIssues) ? value.referenceIssues.length : "missing-or-invalid";
-        if (!response.ok()) receipt.error = diagnosticMessage(String(value?.error ?? value?.msg ?? "No readable error"));
-      } catch { receipt.error = "Response JSON unavailable"; }
-    }
-  });
-  context.on("requestfailed", request => recordRequest("failed", request.url(), request.method(), undefined, request.failure()?.errorText));
-  const page = await context.newPage();
-  page.on("framenavigated", frame => navigations.push({ path: new URL(frame.url()).pathname, main: frame === page.mainFrame(), at: Date.now() }));
-  page.setDefaultTimeout(30_000);
-  page.on("pageerror", error => browserErrors.push(error.message.slice(0, 500)));
-  currentPage = page;
-  return page;
+async function saved(frame: Frame, projectId: string, predicate: (items: Shape[]) => boolean = () => true) {
+  await expect(frame.getByTestId("owned-editor")).toHaveAttribute("data-save-state", "saved", { timeout: 45000 });
+  return eventually("real saved document", async () => { const row = await prisma.editorDocument.findUnique({ where: { projectId } }); if (!row?.canvas) return null;
+    const items = Object.values(store(row.canvas)).filter(item => item.typeName === "shape"); return predicate(items) ? { row, items } : null; });
+}
+async function newPage() {
+  const context = await browser!.newContext({ viewport: { width: 1440, height: 1000 }, locale: "zh-CN", serviceWorkers: "allow" }); contexts.push(context);
+  await context.route("**/*", async route => { const url = new URL(route.request().url());
+    if (["http:", "https:"].includes(url.protocol) && url.origin !== base.origin) { networkProblems.push(`${url.origin}${url.pathname}`); await route.abort("blockedbyclient"); } else await route.continue(); });
+  context.on("request", request => { const url = new URL(request.url());
+    if (request.serviceWorker() && ["http:", "https:"].includes(url.protocol) && url.origin !== base.origin) networkProblems.push(`worker ${url.origin}${url.pathname}`);
+    if (!request.serviceWorker()) { try { if (new URL(request.frame().url()).pathname === "/studio-editor" && /\/(?:originals|m12-native)\//.test(url.pathname)) networkProblems.push(`owned editor loaded captured SDK: ${url.pathname}`); } catch { /* Navigation has no frame yet. */ } } });
+  context.on("response", response => { requests.push({ path: new URL(response.url()).pathname, method: response.request().method(), status: response.status() }); if (requests.length > 50) requests.shift(); });
+  const page = await context.newPage(); currentPage = page; page.setDefaultTimeout(30000);
+  page.on("pageerror", error => browserErrors.push(safe(error.message))); page.on("dialog", dialog => { void dialog.accept(); }); return page;
 }
 async function login(page: Page, email: string, password: string, destination = "/studio") {
-  await page.goto(new URL(destination, base).href, { waitUntil: "domcontentloaded" });
-  await expect(page).toHaveURL(/\/login\?/);
-  await page.locator('input[type="email"]').fill(email);
-  await page.locator('input[type="password"]').fill(password);
-  await page.locator('form button[type="submit"]').click();
-  await expect(page).toHaveURL(/\/studio(?:[?#]|$)/, { timeout: 30_000 });
-}
-async function editorFrame(page: Page, projectId: string) {
-  const element = page.locator(`iframe[data-testid="studio-canvas-frame"][data-project-id="${projectId}"]`);
-  await expect(element).toBeVisible({ timeout: 45_000 });
-  const frame = await (await element.elementHandle())!.contentFrame();
-  assert.ok(frame, "Project must mount the real editor frame");
-  await frame.waitForFunction(() => {
-    const win = window as any;
-    const nativeCanvas = document.querySelector(".tl-container, .tl-canvas");
-    const bounds = nativeCanvas?.getBoundingClientRect();
-    const probe: Record<string, unknown> = {
-      nativeDOM: Boolean(nativeCanvas), nativeVisible: Boolean(bounds && bounds.width > 0 && bounds.height > 0),
-      webpackPresent: Boolean(win.webpackChunk_lovartai_lovart_shell), callbackRan: false,
-    };
-    win.__novartAcceptanceProbe = probe;
-    // Never execute a captured module while native scripts are still loading.
-    // Early require() can cache incomplete exports and itself prevent startup.
-    if (!probe.nativeVisible || !probe.webpackPresent) return false;
-    try {
-      let app: any;
-      win.webpackChunk_lovartai_lovart_shell.push([[`novart-ui-test-${Date.now()}`], {}, (require: any) => {
-        probe.callbackRan = true;
-        probe.moduleFactoryPresent = typeof require.m?.[37750] === "function";
-        if (!probe.moduleFactoryPresent) return;
-        app = require(37750).pW;
-        probe.appType = typeof app;
-        probe.getEditorType = typeof app?.getEditor;
-      }]);
-      const editor = app?.getEditor();
-      probe.editorReturned = Boolean(editor);
-      probe.storePresent = Boolean(editor?.store);
-      probe.getCurrentPageShapesType = typeof editor?.getCurrentPageShapes;
-      if (!editor?.getCurrentPageShapes || !editor?.store) return false;
-      win.__novartAcceptanceEditor = editor;
-      return true;
-    } catch (error) { probe.error = error instanceof Error ? error.message : String(error); return false; }
-  }, undefined, { timeout: 60_000 });
-  await expect(frame.locator(".np-startup")).toHaveCount(0, { timeout: 45_000 });
-  return frame;
+  await page.goto(new URL(destination, base).href, { waitUntil: "domcontentloaded" }); await expect(page).toHaveURL(/\/login\?/);
+  await page.locator('input[type="email"]').fill(email); await page.locator('input[type="password"]').fill(password); await page.locator('form button[type="submit"]').click();
+  await expect(page).toHaveURL(/\/studio(?:-editor)?(?:[?#]|$)/, { timeout: 30000 });
 }
 async function studioReady(page: Page) {
-  await expect(page.locator(".np-startup")).toHaveCount(0, { timeout: 45_000 });
-  await page.waitForFunction(() => (window as any).NovartStudio?.snapshot().stateLoaded === true, undefined, { timeout: 30_000 });
-  await expect(page.locator("#ns-settings-save")).toBeEnabled();
-  await expect(page.locator("#ns-meta-alert")).toBeHidden();
+  await expect(page.locator(".np-startup")).toHaveCount(0, { timeout: 45000 });
+  await page.waitForFunction(() => (window as any).NovartStudio?.snapshot().stateLoaded === true, undefined, { timeout: 30000 }); await expect(page.locator("#ns-meta-alert")).toBeHidden();
 }
-async function draftReady(frame: Frame) {
-  // The editor can mount before the draft GET is validated and restored. Never
-  // type through that race or mistake a pending save for a pagehide baseline.
-  const state = await frame.waitForFunction(() => {
-    const draft = (window as any).NovartM24Draft?.snapshot();
-    if (draft?.state === "error") return "error";
-    if (draft?.conflict || draft?.pendingChoice) return "conflict";
-    return draft?.loaded && !draft.busy && !draft.restoring && !draft.composing
-      && !draft.materializing && !draft.awaitingCanvas && ["saved", "empty"].includes(draft.state) ? draft.state : false;
-  }, undefined, { timeout: 45_000 });
-  const value = await state.jsonValue();
-  await state.dispose();
-  assert.ok(["saved", "empty"].includes(value as string), `Native draft must acknowledge its server state, received ${value}`);
-  await expect(frame.getByTestId("agent-message-input")).toBeEditable();
+async function editorFrame(page: Page, projectId: string) {
+  const element = page.locator(`iframe[data-testid="studio-canvas-frame"][data-project-id="${projectId}"]`); await expect(element).toBeVisible({ timeout: 45000 });
+  const frame = await (await element.elementHandle())!.contentFrame(); assert.ok(frame); await frame.waitForURL(url => url.pathname === "/studio-editor", { timeout: 45000 });
+  await expect(frame.getByTestId("owned-canvas")).toBeVisible(); await expect(frame.getByRole("button", { name: "画笔", exact: true })).toBeVisible();
+  await frame.waitForFunction(() => document.documentElement.dataset.nvStudioCanvasReady === "true");
+  assert.equal(await frame.evaluate(() => Boolean((window as any).webpackChunk_lovartai_lovart_shell)), false, "Owned frame must not mount vendor webpack"); await expect(frame.locator(".tl-container, .tl-canvas")).toHaveCount(0); return frame;
 }
-async function currentShapes(frame: Frame) {
-  return frame.evaluate(() => (window as any).__novartAcceptanceEditor.getCurrentPageShapes() as Array<{ id: string; type: string; x: number; y: number; props: Record<string, unknown> }>);
+async function gesture(page: Page, frame: Frame, points: Array<[number, number]>) {
+  const box = await frame.getByTestId("owned-canvas").boundingBox(); assert.ok(box); await page.mouse.move(box.x + points[0]![0], box.y + points[0]![1]); await page.mouse.down();
+  for (const [x, y] of points.slice(1)) await page.mouse.move(box.x + x, box.y + y, { steps: 5 }); await page.mouse.up();
 }
-// A generated 48 x 32 PNG tests user-uploaded bytes. It is never an AI result.
+async function exportScene(page: Page, frame: Frame, format: "png" | "svg", label: string) {
+  await frame.getByRole("button", { name: "导出", exact: true }).click(); const pending = page.waitForEvent("download"); await frame.getByRole("button", { name: format === "png" ? "导出PNG" : "导出SVG", exact: true }).click();
+  const download = await pending; assert.equal(await download.failure(), null); await mkdir(artifacts, { recursive: true }); const filename = path.join(artifacts, `${label}.${format}`); await download.saveAs(filename);
+  const bytes = await readFile(filename); assert.ok(bytes.length > 50);
+  if (format === "png") { const image = await sharp(bytes, { failOn: "error" }).ensureAlpha().raw().toBuffer({ resolveWithObject: true }); assert.ok(image.info.width > 0 && image.info.height > 0); return { bytes, pixels: image.data }; }
+  assert.ok(bytes.toString("utf8").includes("<svg")); return { bytes, pixels: null };
+}
 const uploadFixture = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAADAAAAAgCAIAAADbtmxLAAAAN0lEQVR4nO3OQQ0AMAgEMHSiBNmTMBccjyYV0Jp+p1R8ICQkJJQeCAkJCaUHQkJCQumBkJDQsg+b+YyX6uuGDAAAAABJRU5ErkJggg==", "base64");
-async function nativeUpload(page: Page, frame: Frame, name: string) {
-  await frame.getByTestId("nav-upload-menu-button").hover();
-  const picker = page.waitForEvent("filechooser");
-  await frame.getByTestId("upload-menu-uploadImage").click();
-  const receipt = page.waitForResponse(response => new URL(response.url()).pathname === "/studio/material-upload" && response.request().method() === "POST");
-  await (await picker).setFiles({ name, mimeType: "image/png", buffer: uploadFixture });
-  const accepted = await receipt;
-  if (accepted.status() !== 202) {
-    // Keep diagnostics useful without emitting server text, upload bodies or URLs.
-    const error = await accepted.json().catch(() => null);
-    const code = [error?.errorCode, error?.code].find(value => typeof value === "string" && /^[A-Z][A-Z0-9_]{1,47}$/.test(value));
-    assert.fail(`Upload must be accepted as a durable worker task; HTTP ${accepted.status()}, error code: ${code ?? "not supplied"}`);
-  }
-  const task = await accepted.json();
-  assert.equal(typeof task.taskId, "string");
-  assert.ok(["PENDING", "RUNNING", "SUCCEEDED"].includes(task.status));
-  return task as { taskId: string; projectId: string; status: string };
+async function upload(page: Page, frame: Frame, name: string) {
+  const chooser = page.waitForEvent("filechooser"); await frame.getByRole("button", { name: "上传图片", exact: true }).first().click();
+  const accepted = page.waitForResponse(response => new URL(response.url()).pathname === "/studio/material-upload" && response.request().method() === "POST"); await (await chooser).setFiles({ name, mimeType: "image/png", buffer: uploadFixture });
+  const response = await accepted; assert.equal(response.status(), 202, "Upload requires the real worker and configured storage"); return await response.json() as { taskId: string; projectId: string };
 }
-async function readableImage(frame: Frame, url: string) {
-  return frame.evaluate(source => new Promise<number[]>((resolve, reject) => {
-    const image = new Image(), timer = setTimeout(() => { image.src = ""; reject(Error("Image decoding timed out")); }, 20_000);
-    image.onload = () => { clearTimeout(timer); resolve([image.naturalWidth, image.naturalHeight]); };
-    image.onerror = () => { clearTimeout(timer); reject(Error("Authenticated image could not be decoded")); };
-    image.src = source;
-  }), url);
+async function materialReceipt(page: Page, workspaceId: string, projectId: string, taskId: string) {
+  return eventually("real material worker", async () => { const response = await page.context().request.get(new URL(`/studio/material-upload?workspaceId=${workspaceId}&projectId=${projectId}&taskId=${taskId}`, base).href);
+    assert.equal(response.status(), 200); const value = await response.json(); assert.notEqual(value.status, "FAILED", "Real material task failed"); return value.status === "SUCCEEDED" ? value : null; }, 120000);
 }
-
-function sourceVersionContent(version: GenerationVersion) {
-  // A pending real compliance job may finish during image editing. Its report
-  // and provenance are derived data; every other source field must stay intact.
-  const { complianceReport: _report, params, ...source } = version;
-  assert.ok(params && typeof params === "object" && !Array.isArray(params));
-  const { studioCompliance: _compliance, ...recipe } = params;
-  return { ...source, params: recipe };
+async function assertMaterial(page: Page, workspaceId: string, projectId: string, material: { assetId: string; url: string; assetSha256: string }, expected?: Buffer) {
+  assert.equal(material.url, `/api/workspaces/${workspaceId}/assets/${material.assetId}/raw`); const asset = await prisma.asset.findUniqueOrThrow({ where: { id: material.assetId } });
+  assert.equal(asset.workspaceId, workspaceId); assert.ok(asset.storageKey); assert.ok(!/^(?:blob|data):/.test(asset.url)); assert.equal(await prisma.projectAsset.count({ where: { projectId, assetId: asset.id } }), 1);
+  const raw = await page.context().request.get(new URL(material.url, base).href); assert.equal(raw.status(), 200); const bytes = await raw.body(); assert.equal(digest(bytes), material.assetSha256);
+  if (expected) { assert.equal(asset.source, "UPLOAD"); assert.equal(asset.sizeBytes, expected.length); assert.deepEqual(bytes, expected); } return bytes;
 }
-
-async function browserImagePixels(frame: Frame, url: string) {
-  // Compare the PNG with an independent browser decode of the authenticated
-  // original. JPEG/WebP and color profiles can decode differently in libvips.
-  const png = await frame.evaluate(source => new Promise<string>((resolve, reject) => {
-    const image = new Image(), timer = setTimeout(() => { image.src = ""; reject(Error("Image decoding timed out")); }, 20_000);
-    image.onload = () => {
-      clearTimeout(timer);
-      try {
-        const canvas = document.createElement("canvas"); canvas.width = image.naturalWidth; canvas.height = image.naturalHeight;
-        const context = canvas.getContext("2d"); if (!context) throw Error("Image decoding canvas unavailable");
-        context.drawImage(image, 0, 0); resolve(canvas.toDataURL("image/png"));
-      } catch (error) { reject(error); }
+async function homepageDraft(page: Page) {
+  // Inspect recoverable inputs only. Do not inject a receipt or manufacture a
+  // successful handoff: only the shipped UI can clear this real IndexedDB row.
+  return page.evaluate(() => new Promise<{ version: number; items: Array<{ id: string; name: string; size: number; taskId: string | null }>; submitted: unknown } | null>((resolve, reject) => {
+    const request = indexedDB.open("novart-owned-home-start", 1);
+    const timer = setTimeout(() => reject(new Error("Homepage draft inspection timed out")), 8000);
+    request.onupgradeneeded = () => { request.transaction?.abort(); };
+    request.onerror = request.onblocked = () => { clearTimeout(timer); reject(new Error("Homepage draft store is unavailable")); };
+    request.onsuccess = () => {
+      const db = request.result, transaction = db.transaction("draft", "readonly"), read = transaction.objectStore("draft").get("owned-home-start-v1");
+      transaction.oncomplete = () => { clearTimeout(timer); db.close(); const value = read.result;
+        resolve(value ? { version: value.version, items: value.items.map((item: { id: string; name: string; file: Blob; taskId?: string }) => ({ id: item.id, name: item.name, size: item.file?.size, taskId: item.taskId ?? null })), submitted: value.submitted } : null); };
+      transaction.onerror = transaction.onabort = () => { clearTimeout(timer); db.close(); reject(new Error("Homepage draft could not be inspected")); };
     };
-    image.onerror = () => { clearTimeout(timer); reject(Error("Authenticated image could not be decoded")); };
-    image.src = source;
-  }), url);
-  return sharp(Buffer.from(png.slice("data:image/png;base64,".length), "base64"), { failOn: "error" }).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
-}
-
-async function nativePngDownload(page: Page, frame: Frame, shapeId: string, label: string, explicitPng = false) {
-  const type = await frame.evaluate(id => {
-    const editor = (window as any).__novartAcceptanceEditor;
-    editor.setCurrentTool("select"); editor.select(id);
-    editor.zoomToSelection({ animation: { duration: 0 } });
-    return editor.getShape(id)?.type;
-  }, shapeId);
-  // The c-image toolbar downloads the source format. Use its explicit PNG menu
-  // for generated JPEG/WebP; plain frames also expose right-click Export PNG.
-  // Do not call ExportService or intercept native image rendering methods.
-  let button = frame.getByTestId("image-toolbar-download");
-  if (type !== "c-image" || explicitPng) {
-    const bounds = await frame.locator(`.tl-shape[data-shape-id="${shapeId}"]`).boundingBox();
-    assert.ok(bounds && bounds.width > 0 && bounds.height > 0);
-    // The canvas hit-tests on its background overlay. Send actual pointer input.
-    await page.mouse.click(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2, { button: "right" });
-    await frame.getByTestId("context-menu-item-export").hover();
-    button = frame.getByTestId("context-menu-item-export_png");
-  }
-  await expect(button).toBeVisible();
-  const pending = page.waitForEvent("download", { timeout: 45_000 });
-  await button.click();
-  const download = await pending;
-  assert.equal(await download.failure(), null);
-  assert.match(download.suggestedFilename(), /\.png$/i, "This selection must download one PNG, not a ZIP or HTML error");
-  await mkdir(artifacts, { recursive: true });
-  const filename = path.join(artifacts, `${label}.png`);
-  await download.saveAs(filename);
-  const bytes = await readFile(filename);
-  assert.deepEqual(bytes.subarray(0, 8), Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
-  assert.equal((await sharp(bytes, { failOn: "error" }).metadata()).format, "png");
-  // Full decoding, not metadata alone, detects truncated/invalid pixel data.
-  return sharp(bytes, { failOn: "error" }).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
-}
-async function assertUploadedPngDownload(page: Page, frame: Frame, shapeId: string, label: string) {
-  const actual = await nativePngDownload(page, frame, shapeId, label);
-  const expected = await sharp(uploadFixture, { failOn: "error" }).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
-  assert.deepEqual([actual.info.width, actual.info.height, actual.info.channels], [48, 32, 4]);
-  assert.deepEqual(actual.data, expected.data, "Native PNG export must preserve all uploaded pixels; compression bytes may differ");
-  return actual;
-}
-async function createExportFrame(frame: Frame, uploadedId: string, suffix: string) {
-  const ids = { frame: `shape:ui-export-frame-${suffix}`, image: `shape:ui-export-image-${suffix}`, geo: `shape:ui-export-geo-${suffix}` };
-  await frame.evaluate(({ uploadedId, ids }) => {
-    const editor = (window as any).__novartAcceptanceEditor, source = editor.getShape(uploadedId);
-    if (!source || source.type !== "c-image") throw Error("Export frame requires a real uploaded native image");
-    editor.createShapes([
-      { id: ids.frame, type: "frame", x: 640, y: 500, props: { w: 160, h: 120, name: "PNG export acceptance", isAutoLayout: false } },
-      { id: ids.image, type: "c-image", parentId: ids.frame, x: 16, y: 16, props: { ...source.props, w: 48, h: 32 } },
-      { id: ids.geo, type: "geo", parentId: ids.frame, x: 88, y: 16, props: { w: 48, h: 48, color: "black", fill: "solid", dash: "solid" } },
-    ]);
-  }, { uploadedId, ids });
-  return ids;
-}
-async function assertFramePngDownload(page: Page, frame: Frame, shapeId: string, label: string) {
-  const actual = await nativePngDownload(page, frame, shapeId, label);
-  assert.deepEqual([actual.info.width, actual.info.height, actual.info.channels], [160, 120, 4], "Frame PNG must use the frame bounds, not the image or infinite canvas bounds");
-  const imageRegion = await sharp(actual.data, { raw: actual.info }).extract({ left: 16, top: 16, width: 48, height: 32 }).raw().toBuffer();
-  const expected = await sharp(uploadFixture).ensureAlpha().raw().toBuffer();
-  assert.deepEqual(imageRegion, expected, "The frame must contain every source-image pixel at its saved position");
-  const center = (40 * actual.info.width + 112) * 4;
-  // This capture renders the legacy geo solid fill as its light neutral palette.
-  assert.deepEqual([...actual.data.subarray(center, center + 4)], [232, 232, 232, 255], "The separate filled geometry must render in the same PNG");
-  assert.equal(actual.data[(70 * actual.info.width + 80) * 4 + 3], 0, "Empty frame area remains transparent instead of becoming an opaque placeholder");
-  return actual;
-}
-async function assertGenerationComplianceState(page: Page, frame: Frame, projectId: string, material: { versionId: string; assetSha256: string }) {
-  const received = page.waitForResponse(response => {
-    const url = new URL(response.url());
-    return url.pathname === "/studio/generation/compliance" && url.searchParams.get("projectId") === projectId
-      && url.searchParams.get("versionId") === material.versionId && response.request().method() === "GET";
-  });
-  await frame.getByTestId("product-generation-tasks").getByRole("button", { name: "刷新生成任务", exact: true }).click();
-  const response = await received;
-  assert.equal(response.status(), 200);
-  const value = await response.json();
-  const line = frame.locator(`[data-check-version-id="${material.versionId}"]`);
-  await expect(line).toHaveAttribute("data-check-status", value.status);
-  const labels: Record<string, string> = { NOT_REQUESTED: "尚未开始", PENDING: "等待检查", RUNNING: "检查中", FAILED: "未完成" };
-  if (value.status === "SUCCEEDED") {
-    assert.equal(value.checkedImageSha256, material.assetSha256, "A completed check must cover the currently archived image bytes");
-    assert.ok(["PASS", "RISK", "FORBIDDEN"].includes(value.report?.overall));
-    const label = ({ PASS: "通过", RISK: "有风险", FORBIDDEN: "不符合品牌规范" } as Record<string, string>)[value.report.overall];
-    assert.ok(label, "Completed checks must have a known verdict label");
-    await expect(line).toContainText(label);
-  } else {
-    const label = labels[value.status];
-    assert.ok(label, "Incomplete checks must have a known status label"); assert.equal(value.report, null); assert.equal(value.checkedImageSha256, null);
-    await expect(line).toContainText(label); await expect(line).not.toContainText("通过");
-    if (value.error) await expect(line).toContainText(value.error);
-  }
-  const retry = frame.locator(`[data-action="retry-check"][data-version-id="${material.versionId}"]`);
-  await expect(retry).toHaveCount(value.canRetry ? 1 : 0);
-  // This assertion only reads real check receipts. It does not initiate another provider call.
-}
-async function openTaskFromInbox(page: Page, projectId: string, kind: "STUDIO_UPLOAD" | "STUDIO_GENERATION", taskId: string) {
-  await page.getByTestId("studio-nav-home").click();
-  await page.waitForFunction(() => (window as any).NovartStudio?.snapshot().route === "/home");
-  await page.getByTestId("product-task-inbox-trigger").click();
-  const inbox = page.getByTestId("product-task-inbox");
-  await expect(inbox).toBeVisible();
-  const item = inbox.locator(`[data-kind="${kind}"][data-task-id="${taskId}"][data-project-id="${projectId}"]`);
-  await expect(item).toBeVisible({ timeout: 30_000 });
-  await expect(item).toHaveAttribute("data-status", "SUCCEEDED");
-  await item.locator('[data-action="open-task"]').click();
-  await expect(page).toHaveURL(new RegExp(`#/workspace/${projectId}$`));
-  const frame = await editorFrame(page, projectId);
-  await expect(inbox).toBeHidden({ timeout: 30_000 });
-  const panel = frame.getByTestId(kind === "STUDIO_UPLOAD" ? "product-upload-tasks" : "product-generation-tasks");
-  await expect(panel).toHaveAttribute("open", "");
-  const receipt = panel.locator(kind === "STUDIO_UPLOAD" ? `[data-task-id="${taskId}"]` : `[data-request-id="${taskId}"]`);
-  await expect(receipt).toBeFocused();
-  return frame;
+  }));
 }
 
 try {
-  const run = randomUUID().slice(0, 8), password = randomUUID();
-  const email = `studio-ui-${run}@example.invalid`, nickname = `UI account ${run}`, brandName = `UI brand ${run}`;
-  privateFixtureValues.push(email, password);
-  const user = await prisma.user.create({ data: { email, name: nickname, passwordHash: await hashPassword(password) } });
-  fixtureUserId = user.id;
-  browser = await chromium.launch({ headless: true });
-  const page = await newPage();
-  step("password login and first brand");
-  await login(page, email, password);
-  await expect(page.getByRole("heading", { name: "创建你的第一个品牌" })).toBeVisible();
-  assert.equal(await prisma.brandWorkspace.count({ where: { ownerId: user.id } }), 0);
-  check("real password login returns to studio without inventing a default brand");
+  const run = randomUUID().slice(0, 8), password = randomUUID(), email = `owned-ui-${run}@example.invalid`, nickname = `UI account ${run}`; privateValues.push(email, password);
+  const user = await prisma.user.create({ data: { email, name: nickname, passwordHash: await hashPassword(password) } }); fixtureUsers.push(user.id);
+  browser = await chromium.launch({ headless: true }); const page = await newPage(); enter("password login and first brand"); await login(page, email, password);
+  await expect(page.getByRole("heading", { name: "创建你的第一个品牌" })).toBeVisible(); assert.equal(await prisma.brandWorkspace.count({ where: { ownerId: user.id } }), 0);
+  const brandName = `Owned UI ${run}`; await page.getByRole("textbox", { name: "品牌名称", exact: true }).fill(brandName); await page.getByRole("button", { name: "进入工作台", exact: true }).click();
+  await studioReady(page); const workspace = await prisma.brandWorkspace.findFirstOrThrow({ where: { ownerId: user.id, name: brandName } }); assert.equal(new URL(page.url()).searchParams.get("workspaceId"), workspace.id); await expect(page.locator("#ns-greeting")).toContainText(nickname);
+  check("real login and first brand remain server-authoritative");
 
-  await page.getByRole("textbox", { name: "品牌名称", exact: true }).fill(brandName);
-  await page.getByRole("button", { name: "进入工作台", exact: true }).click();
-  await studioReady(page);
-  await expect(page.locator("#ns-greeting")).toContainText(nickname);
-  const workspace = await prisma.brandWorkspace.findFirstOrThrow({ where: { ownerId: user.id, name: brandName } });
-  assert.equal(new URL(page.url()).searchParams.get("workspaceId"), workspace.id);
-  check("brand creation UI creates a real workspace and displays the authenticated profile");
-
-  step("blank project and native canvas save");
-  const creation = page.waitForResponse(response => new URL(response.url()).pathname === "/compare/api/create" && response.request().method() === "POST");
-  await page.locator("#ns-create-blank").click();
-  const created = await creation;
-  assert.ok(created.ok(), `Project creation returned HTTP ${created.status()}`);
-  const { projectId } = await created.json();
-  assert.equal(typeof projectId, "string");
-  const project = await prisma.project.findUniqueOrThrow({ where: { id: projectId } });
-  assert.equal(project.workspaceId, workspace.id);
-  await expect(page).toHaveURL(new RegExp(`#/workspace/${projectId}$`));
-  let frame = await editorFrame(page, projectId);
-  assert.equal(new URL(frame.url()).searchParams.get("workspaceId"), workspace.id);
-  check("blank-project button creates a scoped project and opens the captured native editor");
-
-  const ids = { shape: `shape:ui-geo-${run}`, text: `shape:ui-text-${run}` }, text = `中文保存重开 ${run}`;
-  await frame.evaluate(({ ids, text }) => {
-    const editor = (window as any).__novartAcceptanceEditor;
-    editor.createShapes([
-      { id: ids.shape, type: "geo", x: 80, y: 90, props: { w: 180, h: 110 } },
-      { id: ids.text, type: "text", x: 90, y: 230, props: { richText: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text }] }] }, autoSize: true } },
-    ]);
-    editor.select(ids.shape);
-    editor.updateShapes([{ id: ids.shape, type: "geo", x: 110, y: 100 }]);
-    editor.selectNone();
-  }, { ids, text });
-  // Fluent editor setters return the entire live Editor, including window/DOM
-  // references. Return only the selected tool id across the browser boundary.
-  assert.equal(await frame.evaluate(() => {
-    const editor = (window as any).__novartAcceptanceEditor;
-    editor.setCurrentTool("draw");
-    return editor.getCurrentToolId();
-  }), "draw");
-  const canvas = frame.locator(".tl-canvas").first(), box = await canvas.boundingBox();
-  assert.ok(box && box.width > 400 && box.height > 300, "Native canvas has an actual interactive viewport");
-  await page.mouse.move(box.x + 180, box.y + 160);
-  await page.mouse.down();
-  await page.mouse.move(box.x + 250, box.y + 190, { steps: 8 });
-  await page.mouse.move(box.x + 300, box.y + 155, { steps: 8 });
-  await page.mouse.up();
-  assert.equal(await frame.evaluate(() => {
-    const editor = (window as any).__novartAcceptanceEditor;
-    editor.setCurrentTool("select");
-    return editor.getCurrentToolId();
-  }), "select");
-  const draw = (await currentShapes(frame)).find(shape => shape.type === "draw");
-  assert.ok(draw, "A real pointer gesture with the native pen creates a draw shape");
-  const document = await eventually("native autosave writes text, moved shape and pen to the database", async () => {
-    const row = await prisma.editorDocument.findUnique({ where: { projectId } });
-    if (!row?.canvas) return null;
-    const store = decodeCanvas(row.canvas);
-    return store[ids.shape]?.x === 110 && JSON.stringify(store[ids.text]).includes(text) && store[draw.id] ? row : null;
-  }, 60_000);
-  assert.ok(document.revision >= 1);
-  await expect(frame.locator("#novart-bar .nv-save")).toHaveAttribute("data-save-state", "saved", { timeout: 30_000 });
-  await expect(frame.locator("#novart-bar .nv-save")).toContainText("已保存到服务器");
-  check("native shape, Chinese text and pointer-drawn stroke autosave through real HTTP into the database");
-
-  let uploadedImage: Awaited<ReturnType<typeof currentShapes>>[number] | undefined;
-  let recoveredImage: Awaited<ReturnType<typeof currentShapes>>[number] | undefined;
-  let uploadTaskId: string | undefined;
-  let exportFrame: Awaited<ReturnType<typeof createExportFrame>> | undefined;
-  let exportedFramePixels: Buffer | undefined;
-  let generatedImage: Awaited<ReturnType<typeof currentShapes>>[number] | undefined;
-  let generatedResult: { versionId: string; assetId: string; assetSha256: string; url: string; width: number; height: number } | undefined;
-  let generationRequestId: string | undefined;
-  let generatedPixels: Buffer | undefined;
-  let modifiedImage: typeof generatedImage;
-  let modifiedResult: typeof generatedResult;
-  let modifyRequestId: string | undefined;
-  let modifiedPixels: Buffer | undefined;
   if (process.env.WORKBENCH_TEST_MATERIAL_UPLOAD === "1") {
-    step("native image upload, worker persistence and document save");
-    const task = await nativeUpload(page, frame, `studio-ui-${run}.png`);
-    uploadTaskId = task.taskId;
-    assert.equal(task.projectId, projectId);
-    const taskRow = frame.getByTestId("product-upload-list").locator(`[data-task-id="${task.taskId}"]`);
-    await expect(taskRow).toHaveAttribute("data-status", "SUCCEEDED", { timeout: 120_000 });
-    uploadedImage = await eventually("uploaded material enters a real native image shape", async () => {
-      return (await currentShapes(frame)).find(shape => shape.id === `shape:novart-upload-${task.taskId}`);
-    });
-    assert.equal(uploadedImage.type, "c-image");
-    const imageUrl = new URL(String(uploadedImage.props.url), base);
-    assert.equal(imageUrl.origin, base.origin);
-    assert.match(imageUrl.pathname, new RegExp(`^/api/workspaces/${workspace.id}/assets/[^/]+/raw$`));
-    assert.equal(imageUrl.search, "");
-    const assetId = imageUrl.pathname.split("/").at(-2)!;
-    const asset = await prisma.asset.findUniqueOrThrow({ where: { id: assetId } });
-    assert.equal(asset.workspaceId, workspace.id);
-    assert.equal(asset.source, "UPLOAD");
-    assert.equal(asset.mimeType, "image/png");
-    assert.equal(asset.sizeBytes, uploadFixture.length);
-    assert.ok(asset.storageKey && !asset.url.startsWith("data:") && !asset.url.startsWith("blob:"));
-    assert.equal(await prisma.projectAsset.count({ where: { projectId, assetId } }), 1);
-    const raw = await page.context().request.get(imageUrl.href);
-    assert.equal(raw.status(), 200);
-    assert.equal(createHash("sha256").update(await raw.body()).digest("hex"), createHash("sha256").update(uploadFixture).digest("hex"));
-    assert.deepEqual(await readableImage(frame, imageUrl.pathname), [48, 32]);
-    await frame.evaluate(() => { (window as any).__novartAcceptanceEditor.undo(); });
-    assert.ok(!(await currentShapes(frame)).some(shape => shape.id === uploadedImage!.id), "Image insertion is undoable");
-    await frame.evaluate(() => { (window as any).__novartAcceptanceEditor.redo(); });
-    assert.ok((await currentShapes(frame)).some(shape => shape.id === uploadedImage!.id), "Redo restores the uploaded image");
-    await eventually("native autosave persists uploaded image reference", async () => {
-      const row = await prisma.editorDocument.findUnique({ where: { projectId } });
-      return row?.canvas && decodeCanvas(row.canvas)[uploadedImage!.id]?.props.url === imageUrl.pathname ? row : null;
-    }, 60_000);
-    await expect(frame.locator("#novart-bar .nv-save")).toHaveAttribute("data-save-state", "saved");
-    check("native upload menu uses a durable worker, real stored bytes and linked asset, then saves an undoable image shape");
+    enter("homepage attachment, actual project/worker save and input cleanup");
+    await page.waitForFunction(() => (window as any).NovartStudio?.snapshot().homeStart.loaded === true);
+    const brief = `首页带图创建，保存原始图片和需求 ${run}`, name = `owned-home-${run}.png`;
+    await page.locator("#ns-home-brief").fill(brief);
+    await page.locator("#hs-file-input").setInputFiles({ name, mimeType: "image/png", buffer: uploadFixture });
+    const attachment = page.locator("#hs-attachments .hs-attachment"); await expect(attachment).toHaveCount(1);
+    const attachmentId = await attachment.getAttribute("data-id"); assert.ok(attachmentId);
+    await eventually("original homepage input persisted before submission", async () => { const draft = await homepageDraft(page);
+      return draft?.version === 1 && draft.items.length === 1 && draft.items[0]?.id === attachmentId && draft.items[0]?.size === uploadFixture.length && draft.submitted === null ? draft : null; });
+    const homeCreation = page.waitForResponse(response => new URL(response.url()).pathname === "/compare/api/create" && response.request().method() === "POST");
+    const homeUpload = page.waitForResponse(response => new URL(response.url()).pathname === "/studio/material-upload" && response.request().method() === "POST", { timeout: 90000 });
+    await page.locator("#ns-create").click(); const homeCreated = await homeCreation; assert.ok(homeCreated.ok()); const { projectId: homeProjectId } = await homeCreated.json();
+    const homeProject = await prisma.project.findUniqueOrThrow({ where: { id: homeProjectId } }); assert.equal(homeProject.workspaceId, workspace.id);
+    assert.equal((await prisma.workbenchProjectState.findUniqueOrThrow({ where: { projectId: homeProjectId } })).brief, brief);
+    assert.equal(await prisma.project.count({ where: { workspaceId: workspace.id } }), 1, "Homepage creates exactly one real project");
+    const homeFrame = await editorFrame(page, homeProjectId), homeAccepted = await homeUpload; assert.equal(homeAccepted.status(), 202);
+    const homeTask = await homeAccepted.json(); assert.equal(homeTask.projectId, homeProjectId); assert.equal(homeTask.mutationId, attachmentId);
+    const homeReceipt = await materialReceipt(page, workspace.id, homeProjectId, homeTask.taskId); await assertMaterial(page, workspace.id, homeProjectId, homeReceipt.material, uploadFixture);
+    const uploadRow = await prisma.studioMaterialUpload.findUniqueOrThrow({ where: { taskId: homeTask.taskId } });
+    assert.equal(uploadRow.workspaceId, workspace.id); assert.equal(uploadRow.userId, user.id); assert.equal(uploadRow.projectId, homeProjectId);
+    assert.equal(uploadRow.mutationId, attachmentId); assert.equal(uploadRow.sha256, digest(uploadFixture)); assert.equal(uploadRow.assetId, homeReceipt.material.assetId); assert.equal(uploadRow.body, null);
+    const homeImageId = "shape:home-" + attachmentId, homeImage = homeFrame.locator(`[data-owned-id="${homeImageId}"][data-kind="image"]`);
+    await expect(homeImage).toHaveCount(1, { timeout: 45000 }); await expect(homeImage.locator("img")).toHaveAttribute("src", homeReceipt.material.url);
+    const homeSaved = await saved(homeFrame, homeProjectId, items => items.length === 1 && items[0]?.id === homeImageId && items[0]?.type === "c-image"
+      && items[0]?.props.url === homeReceipt.material.url && items[0]?.meta?.novartAssetId === homeReceipt.material.assetId && items[0]?.meta?.novartAssetSha256 === homeReceipt.material.assetSha256);
+    assert.ok(homeSaved.row.revision >= 1); await expect(page.locator("#hs-handoff")).toBeHidden({ timeout: 45000 });
+    await page.waitForFunction(() => { const home = (window as any).NovartStudio?.snapshot().homeStart; return home?.attachmentCount === 0 && home.submittedRequestId === null && home.running.length === 0; });
+    await eventually("confirmed handoff clears original input recovery row", async () => { const draft = await homepageDraft(page); return draft?.version === 1 && draft.items.length === 0 && draft.submitted === null ? draft : null; });
+    await expect(page.locator("#hs-file-input")).toHaveValue(""); await expect(page.locator("#ns-home-brief")).toHaveValue("");
+    assert.equal(await page.locator(`iframe[data-project-id="${homeProjectId}"]`).evaluate(node => (node as HTMLIFrameElement).inert), false);
+    assert.equal(await prisma.generation.count({ where: { projectId: homeProjectId } }), 0, "Homepage upload must not submit a paid generation");
+    check("homepage original file becomes a real persisted image before handoff/input recovery clears");
 
-    step("native image and composite frame PNG downloads");
-    await assertUploadedPngDownload(page, frame, uploadedImage.id, "uploaded-image");
-    exportFrame = await createExportFrame(frame, uploadedImage.id, run);
-    exportedFramePixels = (await assertFramePngDownload(page, frame, exportFrame.frame, "composite-frame")).data;
-    await eventually("export frame and both children persist to the real document", async () => {
-      const row = await prisma.editorDocument.findUnique({ where: { projectId } });
-      if (!row?.canvas) return null;
-      const store = decodeCanvas(row.canvas);
-      return store[exportFrame!.frame]?.props.w === 160 && store[exportFrame!.image]?.parentId === exportFrame!.frame
-        && store[exportFrame!.geo]?.parentId === exportFrame!.frame ? row : null;
-    });
-    check("native image download and frame right-click PNG export preserve uploaded pixels and composite the saved geometry");
-    const beforeInbox = (await currentShapes(frame)).map(shape => shape.id).sort();
-    frame = await openTaskFromInbox(page, projectId, "STUDIO_UPLOAD", task.taskId);
-    assert.deepEqual((await currentShapes(frame)).map(shape => shape.id).sort(), beforeInbox, "Opening upload notification must not duplicate or recreate any canvas image");
-    check("homepage inbox returns to the authenticated upload receipt without replacing the live canvas or inserting another image");
+    enter("fresh browser restores homepage image without IndexedDB input"); const homeFresh = await newPage();
+    await login(homeFresh, email, password, `/studio?workspaceId=${workspace.id}`); await studioReady(homeFresh);
+    await homeFresh.getByTestId("studio-nav-projects").click(); await homeFresh.locator(`#ns-project-library [data-project-id="${homeProjectId}"] [data-action="open-project"]`).click();
+    const restoredHomeFrame = await editorFrame(homeFresh, homeProjectId);
+    await expect(restoredHomeFrame.getByTestId("owned-canvas-item")).toHaveCount(1); const restoredHomeImage = restoredHomeFrame.locator(`[data-owned-id="${homeImageId}"]`);
+    await expect(restoredHomeImage.locator("img")).toHaveAttribute("src", homeReceipt.material.url);
+    await expect.poll(() => restoredHomeImage.locator("img").evaluate(node => { const image = node as HTMLImageElement; return image.complete && image.naturalWidth === 48 && image.naturalHeight === 32; })).toBe(true);
+    await assertMaterial(homeFresh, workspace.id, homeProjectId, homeReceipt.material, uploadFixture); await expect(homeFresh.locator("#hs-handoff")).toBeHidden();
+    const freshDraft = await homepageDraft(homeFresh); assert.equal(freshDraft?.items.length ?? 0, 0); assert.equal(freshDraft?.submitted ?? null, null);
+    assert.equal((await prisma.editorDocument.findUniqueOrThrow({ where: { projectId: homeProjectId } })).checksum, homeSaved.row.checksum);
+    assert.equal(await prisma.studioMaterialUpload.count({ where: { projectId: homeProjectId } }), 1, "Fresh restore must not submit another upload");
+    realHomepageHandoff = true; deferred.splice(deferred.indexOf("Homepage attachments handoff"), 1); check("fresh browser restores the homepage image from the server without duplicate upload");
+    await homeFresh.context().close(); currentPage = page;
+    await page.goto(new URL(`/studio?workspaceId=${workspace.id}#/home`, base).href); await studioReady(page);
+  }
 
-    step("accepted upload survives leaving the page");
-    const detached = await nativeUpload(page, frame, `studio-ui-detached-${run}.png`);
-    // No task-completion wait: immediately unload the native frame after 202.
-    await page.goto("about:blank", { waitUntil: "domcontentloaded" });
-    await eventually("worker completes accepted upload without a live editor", async () => {
-      const response = await page.context().request.get(new URL(`/studio/material-upload?workspaceId=${workspace.id}&projectId=${projectId}&taskId=${detached.taskId}`, base).href);
-      assert.equal(response.status(), 200);
-      const value = await response.json();
-      assert.notEqual(value.status, "FAILED", `Detached upload failed: ${value.error || "unknown"}`);
-      return value.status === "SUCCEEDED" ? value : null;
-    }, 120_000);
-    await page.goto(new URL(`/studio?workspaceId=${workspace.id}#/workspace/${projectId}`, base).href, { waitUntil: "domcontentloaded" });
-    await studioReady(page); frame = await editorFrame(page, projectId);
-    const detachedRow = frame.getByTestId("product-upload-list").locator(`[data-task-id="${detached.taskId}"]`);
-    await expect(detachedRow).toHaveAttribute("data-status", "SUCCEEDED");
-    await detachedRow.locator('[data-action="insert"]').click();
-    recoveredImage = await eventually("recovered task can be inserted from the visible receipt", async () => {
-      return (await currentShapes(frame)).find(shape => shape.id === `shape:novart-upload-${detached.taskId}`);
-    });
-    await eventually("recovered upload is saved in the native document", async () => {
-      const row = await prisma.editorDocument.findUnique({ where: { projectId } });
-      return row?.canvas && decodeCanvas(row.canvas)[recoveredImage!.id] ? row : null;
-    });
-    assert.deepEqual(await readableImage(frame, String(recoveredImage.props.url)), [48, 32]);
-    check("accepted upload completes after page unload and its server receipt restores insertion without uploading the file again");
-  } else console.log("SKIP material upload journey: WORKBENCH_TEST_MATERIAL_UPLOAD=1 and disposable storage/worker are required; upload is not verified by this run.");
+  enter("blank project opens owned editor"); const creation = page.waitForResponse(response => new URL(response.url()).pathname === "/compare/api/create" && response.request().method() === "POST"); await page.locator("#ns-create-blank").click();
+  const created = await creation; assert.ok(created.ok()); const { projectId } = await created.json(); const project = await prisma.project.findUniqueOrThrow({ where: { id: projectId } }); assert.equal(project.workspaceId, workspace.id);
+  let frame = await editorFrame(page, projectId); assert.equal(new URL(frame.url()).searchParams.get("workspaceId"), workspace.id); check("reviewed shell opens authenticated /studio-editor without tldraw or vendor webpack");
+
+  enter("pointer rectangle, Chinese text, stroke, resize and history"); await frame.getByRole("button", { name: "图形", exact: true }).click(); await gesture(page, frame, [[180, 160], [330, 260]]);
+  const rectangle = frame.locator('[data-testid="owned-canvas-item"][data-kind="shape"]'); await expect(rectangle).toHaveCount(1); const rectangleId = await rectangle.getAttribute("data-owned-id"); assert.ok(rectangleId);
+  await frame.getByRole("button", { name: "选择", exact: true }).click(); const initialBox = await rectangle.boundingBox(); assert.ok(initialBox);
+  await page.mouse.move(initialBox.x + 30, initialBox.y + 30); await page.mouse.down(); await page.mouse.move(initialBox.x + 75, initialBox.y + 60, { steps: 5 }); await page.mouse.up();
+  const moved = await rectangle.boundingBox(); assert.ok(moved && moved.x > initialBox.x + 35 && moved.y > initialBox.y + 20);
+  const handle = await frame.getByRole("button", { name: "调整右下尺寸", exact: true }).boundingBox(); assert.ok(handle); await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2); await page.mouse.down(); await page.mouse.move(handle.x + 70, handle.y + 50, { steps: 5 }); await page.mouse.up();
+  const resized = await rectangle.boundingBox(); assert.ok(resized && resized.width > moved.width + 45);
+  await frame.getByRole("button", { name: "文字", exact: true }).click(); await gesture(page, frame, [[470, 160], [660, 230]]); const chinese = `中文保存重开 ${run}`;
+  await frame.getByRole("textbox", { name: "编辑画布文字", exact: true }).fill(chinese); await frame.getByRole("textbox", { name: "编辑画布文字", exact: true }).press("Control+Enter");
+  await frame.getByRole("button", { name: "画笔", exact: true }).click(); await gesture(page, frame, [[150, 430], [190, 400], [240, 445], [280, 410]]);
+  const strokes = frame.locator('[data-testid="owned-canvas-item"][data-kind="stroke"]'); await expect(strokes).toHaveCount(1); await frame.getByRole("button", { name: "撤销", exact: true }).click(); await expect(strokes).toHaveCount(0); await frame.getByRole("button", { name: "重做", exact: true }).click(); await expect(strokes).toHaveCount(1);
+  const initial = await saved(frame, projectId, items => items.length === 3 && items.some(item => item.props.text === chinese) && items.some(item => item.props.novartKind === "stroke")); assert.ok(initial.items.find(item => item.id === rectangleId)!.props.w > 190);
+  check("actual pointer editing, Chinese input and undo/redo save into the real database");
+
+  let uploadedId: string | undefined;
+  if (process.env.WORKBENCH_TEST_MATERIAL_UPLOAD === "1") {
+    enter("real worker upload, authenticated bytes and undoable insertion"); const task = await upload(page, frame, `owned-ui-${run}.png`); assert.equal(task.projectId, projectId);
+    const receipt = await materialReceipt(page, workspace.id, projectId, task.taskId); await assertMaterial(page, workspace.id, projectId, receipt.material, uploadFixture);
+    const image = frame.locator('[data-testid="owned-canvas-item"][data-kind="image"]').filter({ has: frame.locator(`img[src="${receipt.material.url}"]`) }); await expect(image).toHaveCount(1, { timeout: 45000 }); uploadedId = (await image.getAttribute("data-owned-id"))!;
+    await frame.getByRole("button", { name: "撤销", exact: true }).click(); await expect(image).toHaveCount(0); await frame.getByRole("button", { name: "重做", exact: true }).click(); await expect(image).toHaveCount(1);
+    await saved(frame, projectId, items => items.some(item => item.id === uploadedId && item.type === "c-image" && item.props.url === receipt.material.url)); check("durable upload preserves bytes, ownership and undoable persistent image");
+
+    enter("accepted upload survives page unload and restores from server receipt"); const detachedName = `owned-detached-${run}.png`, detached = await upload(page, frame, detachedName); await page.goto("about:blank", { waitUntil: "domcontentloaded" });
+    const detachedReceipt = await materialReceipt(page, workspace.id, projectId, detached.taskId); await assertMaterial(page, workspace.id, projectId, detachedReceipt.material, uploadFixture);
+    await page.goto(new URL(`/studio?workspaceId=${workspace.id}#/workspace/${projectId}`, base).href); await studioReady(page); frame = await editorFrame(page, projectId);
+    await frame.getByRole("button", { name: "任务", exact: true }).click(); await frame.getByRole("button", { name: "刷新任务", exact: true }).click(); const row = frame.locator("section").filter({ has: frame.getByRole("heading", { name: detachedName, exact: true }) }); await expect(row).toContainText("已存入素材库");
+    // The worker may finish before unload: do not intentionally insert a second copy.
+    const existing = frame.locator(`[data-kind="image"] img[src="${detachedReceipt.material.url}"]`); if (await existing.count() === 0) await row.getByRole("button", { name: "加入画布", exact: true }).click();
+    await expect(existing).toHaveCount(1); await saved(frame, projectId, items => items.some(item => item.props.url === detachedReceipt.material.url)); check("accepted upload completes without a live page and inserts without reupload");
+  } else console.log("SKIP real upload acceptance: enable WORKBENCH_TEST_MATERIAL_UPLOAD with disposable storage/worker.");
 
   if (process.env.WORKBENCH_TEST_GENERATION === "1") {
-    step("native image generation with a real provider and durable response-loss retry");
-    await draftReady(frame);
-    await frame.waitForFunction(() => (window as any).NovartProductWorkflowSnapshot?.().loaded === true);
-    await frame.getByTestId("product-generation-settings").locator("summary").click();
-    await frame.getByRole("combobox", { name: "生成图片比例", exact: true }).selectOption("1:1");
-    await frame.getByRole("combobox", { name: "生成图片分辨率", exact: true }).selectOption("1K");
-    await frame.getByTestId("product-generation-settings").locator("summary").click();
-    const submittedMutations: string[] = [];
-    let responseLost = false;
-    const fault = async (route: Route) => {
-      if (route.request().method() !== "POST") return route.continue();
-      submittedMutations.push(String(route.request().postDataJSON().mutationId));
-      if (!responseLost) {
-        // Forward the real request to the app, then lose only its response.
-        // This does not synthesize a Generation, provider output or Asset.
-        const response = await route.fetch();
-        assert.equal(response.status(), 202, "Real provider/storage must be configured; unconfigured generation cannot pass this opt-in run");
-        responseLost = true;
-        return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Acceptance test: generation receipt lost" }) });
-      }
-      return route.continue();
-    };
-    await page.route("**/studio/generation?**", fault);
-    let accepted: { requestId: string; generationId: string; mutationId: string; projectId: string };
-    try {
-      await frame.getByTestId("agent-message-input").fill(`Create one simple violet geometric poster on a white background, with no text. Acceptance ${run}`);
-      const receipt = page.waitForResponse(response => new URL(response.url()).pathname === "/studio/generation" && response.request().method() === "POST" && response.status() === 202);
-      await frame.getByTestId("agent-send-button").click();
-      accepted = await (await receipt).json();
+    enter("real provider, lost-202 confirmation and manual insertion"); await frame.getByRole("button", { name: "生成", exact: true }).click(); const prompt = `Create one violet geometric poster on white with no text. Acceptance ${run}`;
+    await frame.getByRole("textbox", { name: "创作需求", exact: true }).fill(prompt); await frame.getByRole("combobox", { name: "图片比例", exact: true }).selectOption("1:1"); await frame.getByRole("combobox", { name: "图片画质", exact: true }).selectOption("1K");
+    let lost = false; const mutations: string[] = []; const fault = async (route: Route) => { if (route.request().method() !== "POST") return route.continue(); mutations.push(String(route.request().postDataJSON().mutationId));
+      if (!lost) { const actual = await route.fetch(); assert.equal(actual.status(), 202, "Opt-in run requires real provider/storage"); lost = true; return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Acceptance receipt loss; confirm existing operation" }) }); } return route.continue(); };
+    await page.route("**/studio/generation?**", fault); let accepted: any;
+    try { await frame.getByRole("button", { name: "生成图片", exact: true }).click(); await expect(frame.getByTestId("owned-notice")).toContainText("Acceptance receipt loss");
+      const next = page.waitForResponse(response => new URL(response.url()).pathname === "/studio/generation" && response.request().method() === "POST" && response.status() === 202); await frame.getByRole("button", { name: "确认上一份生成回执", exact: true }).click(); accepted = await (await next).json();
     } finally { await page.unroute("**/studio/generation?**", fault); }
-    assert.equal(accepted.projectId, projectId);
-    assert.equal(submittedMutations.length, 2, "Exactly one bounded lost-response retry is expected");
-    assert.equal(submittedMutations[0], submittedMutations[1], "A lost 202 must reuse its mutation, never pay for another request");
-    assert.equal(accepted.mutationId, submittedMutations[0]);
-    generationRequestId = accepted.requestId;
-    await expect(frame.getByTestId("agent-message-input")).toHaveText("");
-    const completed = await eventually("real generation and result archive complete", async () => {
-      const response = await page.context().request.get(new URL(`/studio/generation?workspaceId=${workspace.id}&projectId=${projectId}&requestId=${accepted.requestId}`, base).href);
-      assert.equal(response.status(), 200);
-      const value = await response.json();
-      assert.notEqual(value.status, "FAILED", `Generation failed: ${value.error || "unknown"}`);
-      assert.notEqual(value.resultState, "FAILED", `Result archive failed: ${value.archiveError || "unknown"}`);
-      return value.status === "SUCCEEDED" && value.resultState === "READY" ? value : null;
-    }, 720_000);
-    assert.equal(completed.results.length, 1);
-    generatedResult = completed.results[0];
-    assert.ok(generatedResult);
-    const generation = await prisma.generation.findUniqueOrThrow({ where: { id: accepted.generationId } });
-    assert.equal(generation.workspaceId, workspace.id); assert.equal(generation.projectId, projectId); assert.equal(generation.status, "SUCCEEDED");
-    assert.equal(await prisma.generation.count({ where: { projectId } }), 1, "The lost response created only one paid generation row");
-    const version = await prisma.generationVersion.findUniqueOrThrow({ where: { id: generatedResult.versionId } });
-    assert.equal(version.generationId, accepted.generationId);
-    const asset = await prisma.asset.findUniqueOrThrow({ where: { id: generatedResult.assetId } });
-    assert.equal(asset.workspaceId, workspace.id); assert.equal(asset.generationVersionId, version.id);
-    assert.ok(asset.storageKey && !asset.url.startsWith("data:") && !asset.url.startsWith("blob:"));
-    assert.equal(await prisma.projectAsset.count({ where: { projectId, assetId: asset.id } }), 1);
-    const rawUrl = new URL(generatedResult.url, base);
-    assert.equal(rawUrl.origin, base.origin);
-    assert.equal(rawUrl.pathname, `/api/workspaces/${workspace.id}/assets/${asset.id}/raw`);
-    const bytes = await page.context().request.get(rawUrl.href);
-    assert.equal(bytes.status(), 200);
-    assert.equal(createHash("sha256").update(await bytes.body()).digest("hex"), generatedResult.assetSha256);
-    assert.deepEqual(await readableImage(frame, rawUrl.pathname), [generatedResult.width, generatedResult.height]);
-    generatedImage = await eventually("real generated result enters original native c-image", async () => (await currentShapes(frame)).find(shape => shape.id === `shape:novart-generation-${version.id}`));
-    assert.equal(generatedImage.type, "c-image"); assert.equal(generatedImage.props.url, rawUrl.pathname);
-    await frame.evaluate(() => { (window as any).__novartAcceptanceEditor.undo(); });
-    assert.ok(!(await currentShapes(frame)).some(shape => shape.id === generatedImage!.id));
-    await frame.evaluate(() => { (window as any).__novartAcceptanceEditor.redo(); });
-    await eventually("native document persists the real generated material", async () => {
-      const row = await prisma.editorDocument.findUnique({ where: { projectId } });
-      return row?.canvas && decodeCanvas(row.canvas)[generatedImage!.id]?.props.url === rawUrl.pathname ? row : null;
-    }, 60_000);
-    assert.deepEqual([generatedImage.props.w, generatedImage.props.h], [generatedResult.width, generatedResult.height], "This 1:1 / 1K PNG check requires native-size geometry, without canvas downscaling");
-    const expectedPixels = await browserImagePixels(frame, rawUrl.pathname);
-    const exported = await nativePngDownload(page, frame, generatedImage.id, "generated-image", true);
-    assert.deepEqual([exported.info.width, exported.info.height, exported.info.channels], [generatedResult.width, generatedResult.height, 4]);
-    assert.ok(exported.data.equals(expectedPixels.data), "Native PNG export must preserve the browser-decoded archived generated pixels");
-    generatedPixels = exported.data;
-    await eventually("202 clears only the submitted native draft on the server", async () => {
-      const row = await prisma.workbenchChatDraft.findUnique({ where: { userId_projectId: { userId: user.id, projectId } } });
-      return row && !(row.inputForm as { text?: string } | null)?.text ? row : null;
-    });
-    check("real provider generation is idempotent across lost 202, archived as linked authenticated bytes, and inserted with native undo/save and PNG export");
-    const beforeInbox = (await currentShapes(frame)).map(shape => shape.id).sort();
-    frame = await openTaskFromInbox(page, projectId, "STUDIO_GENERATION", accepted.requestId);
-    assert.deepEqual((await currentShapes(frame)).map(shape => shape.id).sort(), beforeInbox, "Opening generation notification must not automatically insert its result again");
-    check("homepage inbox links the real archived generation back to its native task receipt without generating or inserting again");
-    await assertGenerationComplianceState(page, frame, projectId, generatedResult);
-    assert.equal(await prisma.generation.count({ where: { projectId } }), 1);
-    check("brand check reflects the real version receipt and image digest; an incomplete or unavailable check is never shown as passed");
-  } else console.log("SKIP generation journey: WORKBENCH_TEST_GENERATION=1 plus a real configured provider/storage/worker is required; no AI generation is verified by this run.");
+    assert.equal(mutations.length, 2); assert.equal(mutations[0], mutations[1]); assert.equal(accepted.mutationId, mutations[0]);
+    const complete = await eventually("real generation and archive", async () => { const response = await page.context().request.get(new URL(`/studio/generation?workspaceId=${workspace.id}&projectId=${projectId}&requestId=${accepted.requestId}`, base).href);
+      assert.equal(response.status(), 200); const value = await response.json(); assert.notEqual(value.status, "FAILED", "Real generation failed"); assert.notEqual(value.resultState, "FAILED", "Real archive failed"); return value.status === "SUCCEEDED" && value.resultState === "READY" ? value : null; }, 720000);
+    assert.equal(complete.results.length, 1); const result = complete.results[0], bytes = await assertMaterial(page, workspace.id, projectId, result);
+    const version = await prisma.generationVersion.findUniqueOrThrow({ where: { id: result.versionId } }); assert.equal(version.generationId, accepted.generationId); const gen = await prisma.generation.findUniqueOrThrow({ where: { id: accepted.generationId } }); assert.equal(gen.workspaceId, workspace.id); assert.equal(gen.projectId, projectId); assert.equal(gen.status, "SUCCEEDED");
+    assert.equal(await prisma.generation.count({ where: { projectId } }), 1, "Lost response must not create a second paid generation"); const dimensions = await sharp(bytes).metadata(); assert.deepEqual([dimensions.width, dimensions.height], [result.width, result.height]);
+    const image = frame.locator(`[data-kind="image"] img[src="${result.url}"]`); await expect(image).toHaveCount(0); await frame.getByRole("button", { name: "刷新任务", exact: true }).click(); const row = frame.locator("section").filter({ has: frame.getByRole("heading", { name: prompt, exact: true }) });
+    await expect(row).toContainText("图片已生成并保存"); await row.getByRole("button", { name: "加入画布", exact: true }).click(); await expect(image).toHaveCount(1); await frame.getByRole("button", { name: "撤销", exact: true }).click(); await expect(image).toHaveCount(0); await frame.getByRole("button", { name: "重做", exact: true }).click(); await expect(image).toHaveCount(1);
+    await saved(frame, projectId, items => items.some(item => item.props.url === result.url)); check("real provider, idempotent receipt, persisted bytes and manually inserted undoable result");
+  } else console.log("SKIP real generation acceptance: no provider result is claimed by this run.");
 
-  if (process.env.WORKBENCH_TEST_IMAGE_EDIT === "1") {
-    step("real whole-image edit preserves its source and requires manual insertion");
-    assert.ok(generatedImage && generatedResult, "The edit source must come from the real provider journey above");
-    const sourceImage = JSON.parse(JSON.stringify(generatedImage));
-    const sourceResult = generatedResult;
-    const sourceVersion = sourceVersionContent(await prisma.generationVersion.findUniqueOrThrow({ where: { id: sourceResult.versionId } }));
-    await draftReady(frame);
-    await frame.waitForFunction(() => (window as any).NovartProductWorkflowSnapshot?.().loaded === true);
-    await frame.locator("#nv-workflow-toggle").click();
-    const gallery = frame.locator("#nv-workflow-gallery");
-    const sourceCard = gallery.locator(`[data-shape-id="${sourceImage.id}"]`);
-    if (!await gallery.isVisible()) await frame.locator("#nv-workflow-gallery-toggle").click();
-    await sourceCard.locator('[data-action="set-target"]').click();
-    await frame.locator("#nv-workflow-save").click();
-    await frame.waitForFunction(({ id, sha256 }) => {
-      const state = (window as any).NovartProductWorkflowSnapshot?.();
-      return state?.mode === "modify" && state.target?.shapeId === id && state.target.assetSha256 === sha256 && !state.dirty && !state.busy && !state.stale;
-    }, { id: sourceImage.id, sha256: sourceResult.assetSha256 });
-    await frame.locator("#nv-workflow-close").click();
-    await expect(frame.getByTestId("agent-send-button")).toHaveAttribute("title", "修改图片");
+  enter("whole-scene PNG/SVG export"); await saved(frame, projectId); const png = await exportScene(page, frame, "png", "owned-scene"), svg = await exportScene(page, frame, "svg", "owned-scene"); assert.ok(svg.bytes.toString("utf8").includes(chinese));
+  if (uploadedId) assert.ok(svg.bytes.toString("utf8").includes(uploadFixture.toString("base64")), "SVG must embed actual persisted image bytes"); check("whole-scene PNG decodes and SVG includes saved Chinese text and actual image bytes");
 
-    const submitted: Record<string, unknown>[] = [];
-    let lostEditReceipt = false;
-    const loseEditReceipt = async (route: Route) => {
-      if (route.request().method() !== "POST") return route.continue();
-      submitted.push(route.request().postDataJSON());
-      if (!lostEditReceipt) {
-        const response = await route.fetch();
-        assert.equal(response.status(), 202, "Real image editing, storage and source authorization must accept this request");
-        lostEditReceipt = true;
-        return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Acceptance test: edit receipt lost" }) });
-      }
-      return route.continue();
-    };
-    await page.route("**/studio/generation?**", loseEditReceipt);
-    let accepted: { requestId: string; generationId: string; projectId: string; mutationId: string; mode: string };
-    try {
-      await frame.getByTestId("agent-message-input").fill(`Edit this image: change the background to pale blue, retain the central geometric subject, no text. Acceptance ${run}`);
-      const receipt = page.waitForResponse(response => new URL(response.url()).pathname === "/studio/generation" && response.request().method() === "POST" && response.status() === 202);
-      await frame.getByTestId("agent-send-button").click();
-      accepted = await (await receipt).json();
-    } finally { await page.unroute("**/studio/generation?**", loseEditReceipt); }
-    assert.equal(accepted.projectId, projectId); assert.equal(accepted.mode, "modify");
-    assert.equal(submitted.length, 2); assert.ok(isDeepStrictEqual(submitted[0], submitted[1]), "Lost edit receipts must retry the identical mutation and source revisions");
-    const firstEditSubmission = submitted[0];
-    assert.ok(firstEditSubmission, "The native edit form must submit an actual request");
-    assert.equal(accepted.mutationId, firstEditSubmission.mutationId);
-    modifyRequestId = accepted.requestId;
-    const completed = await eventually("real image edit and durable archive complete", async () => {
-      const response = await page.context().request.get(new URL(`/studio/generation?workspaceId=${workspace.id}&projectId=${projectId}&requestId=${accepted.requestId}`, base).href);
-      assert.equal(response.status(), 200);
-      const value = await response.json();
-      assert.equal(value.mode, "modify");
-      assert.notEqual(value.status, "FAILED", `Image edit failed: ${value.error || "unknown"}`);
-      assert.notEqual(value.resultState, "FAILED", `Edited result archive failed: ${value.archiveError || "unknown"}`);
-      return value.status === "SUCCEEDED" && value.resultState === "READY" ? value : null;
-    }, 720_000);
-    assert.equal(completed.results.length, 1);
-    modifiedResult = completed.results[0]; assert.ok(modifiedResult);
-    const result = modifiedResult;
-    assert.notEqual(result.assetId, sourceResult.assetId); assert.notEqual(result.versionId, sourceResult.versionId);
-    const version = await prisma.generationVersion.findUniqueOrThrow({ where: { id: result.versionId } });
-    assert.equal(version.generationId, accepted.generationId); assert.notEqual(version.generationId, sourceVersion.generationId);
-    assert.equal(version.parentVersionId, null, "The new generation must not use an invalid cross-generation parent");
-    assert.deepEqual((version.params as Record<string, unknown>).source, {
-      assetId: sourceResult.assetId, sha256: sourceResult.assetSha256, versionId: sourceResult.versionId,
-      generationId: sourceVersion.generationId, operation: "whole-image-edit",
-    });
-    const asset = await prisma.asset.findUniqueOrThrow({ where: { id: result.assetId } });
-    assert.equal(asset.workspaceId, workspace.id); assert.equal(asset.generationVersionId, version.id);
-    assert.ok(asset.storageKey && !asset.url.startsWith("data:") && !asset.url.startsWith("blob:"));
-    assert.equal(await prisma.projectAsset.count({ where: { projectId, assetId: asset.id } }), 1);
-    assert.equal(await prisma.generation.count({ where: { projectId } }), 2, "The entire opted-in journey must create only one generation plus one edit");
-    const rawUrl = new URL(result.url, base);
-    assert.equal(rawUrl.origin, base.origin); assert.equal(rawUrl.pathname, `/api/workspaces/${workspace.id}/assets/${asset.id}/raw`);
-    const raw = await page.context().request.get(rawUrl.href); assert.equal(raw.status(), 200);
-    const body = await raw.body(); assert.equal(createHash("sha256").update(body).digest("hex"), result.assetSha256);
-    const expectedPixels = await browserImagePixels(frame, rawUrl.pathname);
-    assert.deepEqual([expectedPixels.info.width, expectedPixels.info.height], [result.width, result.height]);
+  enter("profile and favorite persistence"); await page.getByTestId("studio-nav-settings").click(); const newNickname = `Saved profile ${run}`;
+  await page.locator("#ns-settings-nickname").fill(newNickname); await page.locator("#ns-settings-density").selectOption("compact"); await page.locator("#ns-settings-motion").selectOption("reduce"); await page.locator("#ns-settings-save").click();
+  await eventually("real profile row", async () => { const row = await prisma.workbenchUserState.findUnique({ where: { userId_workspaceId: { userId: user.id, workspaceId: workspace.id } } }); const profile = row?.profile as any; return profile?.nickname === newNickname && profile.density === "compact" && profile.motion === "reduce" ? row : null; }); await expect(page.locator("#ns-settings-status")).toHaveAttribute("data-state", "saved");
+  await page.getByTestId("studio-nav-projects").click(); await page.locator("#ns-project-refresh").click(); const card = page.locator(`#ns-project-library [data-project-id="${projectId}"]`); await expect(card).toContainText("已保存画布"); await card.locator('[data-action="favorite"]').click();
+  await eventually("real favorite row", async () => { const row = await prisma.workbenchUserState.findUnique({ where: { userId_workspaceId: { userId: user.id, workspaceId: workspace.id } } }); return row?.favorites.includes(projectId) ? row : null; }); check("profile and favorites persist through reviewed shell");
 
-    const receipt = frame.getByTestId("product-generation-tasks").locator(`[data-request-id="${accepted.requestId}"]`);
-    await expect(receipt).toHaveAttribute("data-mode", "modify");
-    await expect(receipt).toHaveAttribute("data-result-state", "READY", { timeout: 30_000 });
-    const resultShapeId = `shape:novart-generation-${result.versionId}`;
-    assert.ok(!(await currentShapes(frame)).some(shape => shape.id === resultShapeId), "Completed edits must never replace the source or insert automatically");
-    assert.deepEqual((await currentShapes(frame)).find(shape => shape.id === sourceImage.id), sourceImage);
-    await receipt.locator('[data-action="insert"]').click();
-    modifiedImage = await eventually("edited result is inserted through its visible receipt", async () => (await currentShapes(frame)).find(shape => shape.id === resultShapeId));
-    assert.equal(modifiedImage.type, "c-image"); assert.equal(modifiedImage.props.url, rawUrl.pathname);
-    assert.deepEqual([modifiedImage.props.w, modifiedImage.props.h], [result.width, result.height], "This 1:1 / 1K PNG check requires native-size geometry, without canvas downscaling");
-    assert.deepEqual((await currentShapes(frame)).find(shape => shape.id === sourceImage.id), sourceImage, "Manual insertion must preserve the entire source shape");
-    await frame.evaluate(() => { (window as any).__novartAcceptanceEditor.undo(); });
-    assert.ok(!(await currentShapes(frame)).some(shape => shape.id === resultShapeId));
-    assert.deepEqual((await currentShapes(frame)).find(shape => shape.id === sourceImage.id), sourceImage);
-    await frame.evaluate(() => { (window as any).__novartAcceptanceEditor.redo(); });
-    await eventually("source and edited result are both persisted without replacement", async () => {
-      const row = await prisma.editorDocument.findUnique({ where: { projectId } });
-      if (!row?.canvas) return null;
-      const store = decodeCanvas(row.canvas);
-      return store[resultShapeId]?.props.url === rawUrl.pathname && store[sourceImage.id]?.props.url === sourceImage.props.url ? row : null;
-    });
-    assert.deepEqual((await currentShapes(frame)).find(shape => shape.id === sourceImage.id), sourceImage, "Redo must preserve the entire source shape");
-    assert.ok(isDeepStrictEqual(sourceVersionContent(await prisma.generationVersion.findUniqueOrThrow({ where: { id: sourceResult.versionId } })), sourceVersion), "Editing must not rewrite the original image version or recipe");
-    const originalBytes = await page.context().request.get(new URL(sourceResult.url, base).href);
-    assert.equal(originalBytes.status(), 200);
-    assert.equal(createHash("sha256").update(await originalBytes.body()).digest("hex"), sourceResult.assetSha256, "Editing must not overwrite original stored bytes");
-    const exported = await nativePngDownload(page, frame, resultShapeId, "edited-image", true);
-    assert.deepEqual([exported.info.width, exported.info.height, exported.info.channels], [result.width, result.height, 4]);
-    assert.ok(exported.data.equals(expectedPixels.data), "Native PNG export must preserve the browser-decoded archived edited pixels");
-    modifiedPixels = exported.data;
-    check("real whole-image edit uses one durable request, preserves its original version/bytes, and supports manual insertion, undo/redo, save and native PNG export");
-  } else console.log("SKIP whole-image edit journey: WORKBENCH_TEST_IMAGE_EDIT=1 plus real generation/provider/storage/worker is required; editing is not verified by this run.");
+  enter("fresh browser restores scene and matching export pixels"); const finalRow = await prisma.editorDocument.findUniqueOrThrow({ where: { projectId } }), finalShapes = Object.values(store(finalRow.canvas)).filter(item => item.typeName === "shape");
+  const fresh = await newPage(); await login(fresh, email, password, `/studio?workspaceId=${workspace.id}`); await studioReady(fresh); await expect(fresh.locator("#ns-greeting")).toContainText(newNickname); await fresh.getByTestId("studio-nav-projects").click(); const freshCard = fresh.locator(`#ns-project-library [data-project-id="${projectId}"]`);
+  await expect(freshCard.locator('[data-action="favorite"]')).toHaveAttribute("aria-pressed", "true"); await freshCard.locator('[data-action="open-project"]').click(); frame = await editorFrame(fresh, projectId); await expect(frame.getByTestId("owned-canvas-item")).toHaveCount(finalShapes.length);
+  for (const item of finalShapes) { const node = frame.locator(`[data-owned-id="${item.id}"]`); await expect(node).toHaveCount(1); if (item.type === "c-image") await expect(node.locator("img")).toHaveAttribute("src", item.props.url); }
+  await expect(frame.getByTestId("owned-canvas")).toContainText(chinese); const freshPng = await exportScene(fresh, frame, "png", "fresh-owned-scene"); assert.deepEqual(freshPng.pixels, png.pixels, "Fresh server restore must export identical decoded pixels"); assert.equal((await prisma.editorDocument.findUniqueOrThrow({ where: { projectId } })).checksum, finalRow.checksum, "Opening/exporting must not rewrite the document"); check("fresh browser restores all scene objects without browser cache");
 
-  step("native chat draft autosave and checked receipt");
-  await draftReady(frame);
-  const draftText = `暂存的创作需求 ${run}`;
-  await frame.getByTestId("agent-message-input").fill(draftText);
-  await eventually("native chat draft saves to the account/project row", async () => {
-    const row = await prisma.workbenchChatDraft.findUnique({ where: { userId_projectId: { userId: user.id, projectId } } });
-    return row && (row.inputForm as { text?: string } | null)?.text === draftText ? row : null;
-  });
-  await expect(frame.locator("#m24-draft-receipt")).toHaveAttribute("data-draft-state", "saved", { timeout: 30_000 });
-  await expect(frame.locator("#m24-draft-receipt [role=status]")).toHaveText("草稿已随账号保存");
-  await draftReady(frame);
-  check("unsent native chat input is stored as a real per-user project draft");
+  enter("direct route membership and archived-project protection"); const outsiderEmail = `owned-outsider-${run}@example.invalid`; privateValues.push(outsiderEmail); const outsider = await prisma.user.create({ data: { email: outsiderEmail, passwordHash: await hashPassword(password) } }); fixtureUsers.push(outsider.id);
+  const unauthorized = await newPage(); await login(unauthorized, outsiderEmail, password, `/studio-editor?workspaceId=${workspace.id}&projectId=${projectId}`); await expect(unauthorized.getByTestId("owned-editor")).toHaveCount(0); await expect(unauthorized.getByRole("alert")).toBeVisible(); const denied = await unauthorized.context().request.get(new URL(`/api/workspaces/${workspace.id}/projects/${projectId}/editor-document`, base).href); assert.equal(denied.status(), 404);
+  const archived = await fresh.context().request.patch(new URL(`/api/workspaces/${workspace.id}/projects/${projectId}`, base).href, { headers: { Origin: base.origin }, data: { archive: true } }); assert.equal(archived.status(), 200);
+  await fresh.goto(new URL(`/studio-editor?workspaceId=${workspace.id}&projectId=${projectId}`, base).href); await expect(fresh.getByTestId("owned-canvas")).toBeVisible(); await expect(fresh.getByRole("button", { name: "画笔", exact: true })).toBeDisabled(); await expect(fresh.getByRole("button", { name: "上传图片", exact: true }).first()).toBeDisabled();
+  const refused = await fresh.context().request.put(new URL(`/api/workspaces/${workspace.id}/projects/${projectId}/editor-document`, base).href, { headers: { Origin: base.origin }, data: { format: "novart-native-v1", canvas: finalRow.canvas, revision: finalRow.revision, mutationId: randomUUID() } }); assert.equal(refused.status(), 409); assert.equal((await prisma.editorDocument.findUniqueOrThrow({ where: { projectId } })).checksum, finalRow.checksum); check("direct route membership and archived read-only protections remain enforced");
 
-  step("profile settings save and receipt");
-  await page.getByTestId("studio-nav-settings").click();
-  await expect(page).toHaveURL(/#\/settings$/);
-  await expect(page.locator("#ns-settings-save")).toBeEnabled();
-  const newNickname = `Saved profile ${run}`;
-  await page.locator("#ns-settings-nickname").fill(newNickname);
-  await page.locator("#ns-settings-density").selectOption("compact");
-  await page.locator("#ns-settings-motion").selectOption("reduce");
-  await page.locator("#ns-settings-save").click();
-  await eventually("profile preferences stored on server", async () => {
-    const row = await prisma.workbenchUserState.findUnique({ where: { userId_workspaceId: { userId: user.id, workspaceId: workspace.id } } });
-    const profile = row?.profile as { nickname?: string; density?: string; motion?: string } | undefined;
-    return profile?.nickname === newNickname && profile.density === "compact" && profile.motion === "reduce" ? row : null;
-  });
-  await expect(page.locator("#ns-settings-status")).toHaveAttribute("data-state", "saved");
-  await expect(page.locator("#ns-settings-status")).toHaveText("偏好已随账号与品牌保存");
-  await expect(page.locator("#ns-meta-alert")).toBeHidden();
-  check("personal preferences persist through the reviewed settings form");
-
-  step("project library favorite save and receipt");
-  await page.getByTestId("studio-nav-projects").click();
-  await expect(page).toHaveURL(/#\/projects$/);
-  await page.locator("#ns-project-refresh").click();
-  const card = page.locator(`#ns-project-library [data-project-id="${projectId}"]`);
-  await expect(card).toContainText("已保存画布");
-  await expect(card.locator('[data-action="favorite"]')).toHaveAttribute("aria-disabled", "false");
-  await card.locator('[data-action="favorite"]').click();
-  await eventually("favorite stored on server", async () => {
-    const row = await prisma.workbenchUserState.findUnique({ where: { userId_workspaceId: { userId: user.id, workspaceId: workspace.id } } });
-    return row?.favorites.includes(projectId) ? row : null;
-  });
-  await expect(card.locator('[data-action="favorite"]')).toHaveAttribute("aria-pressed", "true");
-  await expect(card.locator('[data-action="favorite"]')).toHaveAttribute("aria-disabled", "false");
-  await expect(page.locator("#ns-meta-alert")).toBeHidden();
-  await expect(page.locator("#ns-toast")).toHaveText("收藏已随账号与品牌保存");
-  check("project library shows the saved canvas and persists its favorite");
-
-  step("last draft edit followed by immediate pagehide");
-  await card.locator('[data-action="open-project"]').click();
-  frame = await editorFrame(page, projectId);
-  // Establish an idle, acknowledged draft before the final edit. After filling,
-  // navigate immediately: no save wait or sleep may mask the pagehide flush.
-  await draftReady(frame);
-  const finalDraftText = `离开页面前的末次需求 ${run}`;
-  await frame.getByTestId("agent-message-input").fill(finalDraftText);
-  await page.goto("about:blank", { waitUntil: "domcontentloaded" });
-  await eventually("real pagehide flush stores the final unsent edit", async () => {
-    const row = await prisma.workbenchChatDraft.findUnique({ where: { userId_projectId: { userId: user.id, projectId } } });
-    return row && (row.inputForm as { text?: string } | null)?.text === finalDraftText ? row : null;
-  });
-  check("immediate navigation flushes the last draft edit to the server without waiting for autosave");
-
-  // A second browser context has no editor IndexedDB/localStorage/cookies.
-  // Reopening here cannot pass by reading a cached native document or draft.
-  step("fresh browser restores server data");
-  const fresh = await newPage();
-  await login(fresh, email, password, `/studio?workspaceId=${workspace.id}#/workspace/${projectId}`);
-  // URL fragments are not part of server redirects; use the visible project card.
-  await studioReady(fresh);
-  await fresh.getByTestId("studio-nav-projects").click();
-  const freshCard = fresh.locator(`#ns-project-library [data-project-id="${projectId}"]`);
-  await expect(freshCard.locator('[data-action="favorite"]')).toHaveAttribute("aria-pressed", "true");
-  await freshCard.locator('[data-action="open-project"]').click();
-  frame = await editorFrame(fresh, projectId);
-  await frame.waitForFunction(ids => {
-    const shapes = (window as any).__novartAcceptanceEditor.getCurrentPageShapes();
-    return ids.every(id => shapes.some((shape: { id: string }) => shape.id === id));
-  }, [ids.shape, ids.text, draw.id], { timeout: 30_000 });
-  const reopened = await currentShapes(frame);
-  for (const id of [ids.shape, ids.text, draw.id]) assert.ok(reopened.some(shape => shape.id === id), `Fresh native editor restores ${id}`);
-  assert.equal(reopened.find(shape => shape.id === ids.shape)?.x, 110);
-  assert.equal(reopened.find(shape => shape.id === ids.shape)?.y, 100);
-  assert.deepEqual(reopened.find(shape => shape.id === draw.id)?.props, draw.props, "Fresh editor restores the actual pointer stroke geometry");
-  assert.ok(JSON.stringify(reopened.find(shape => shape.id === ids.text)).includes(text));
-  if (uploadedImage && uploadTaskId) {
-    const restored = reopened.find(shape => shape.id === uploadedImage.id);
-    assert.ok(restored, "Fresh browser restores uploaded native image from server document");
-    // Undefined optional native properties are intentionally absent after JSON.
-    assert.deepEqual(restored.props, JSON.parse(JSON.stringify(uploadedImage.props)));
-    assert.deepEqual(await readableImage(frame, String(restored.props.url)), [48, 32]);
-    const restoredTask = frame.getByTestId("product-upload-list").locator(`[data-task-id="${uploadTaskId}"]`);
-    await expect(restoredTask).toHaveAttribute("data-status", "SUCCEEDED");
-    await restoredTask.locator('[data-action="insert"]').click();
-    assert.equal((await currentShapes(frame)).filter(shape => shape.id === uploadedImage.id).length, 1, "Restored upload receipt never duplicates an existing image");
-    check("fresh browser restores image bytes, image geometry and server task without relying on browser blobs or cache");
-    await assertUploadedPngDownload(fresh, frame, uploadedImage.id, "fresh-uploaded-image");
-    assert.ok(exportFrame && exportedFramePixels);
-    const freshFrame = await assertFramePngDownload(fresh, frame, exportFrame.frame, "fresh-composite-frame");
-    assert.deepEqual(freshFrame.data, exportedFramePixels, "Fresh-context frame export must reproduce saved composition without previous Blob/cache state");
-    check("a fresh browser downloads the restored image and composite frame again with identical decoded pixels");
-    const beforeInbox = (await currentShapes(frame)).map(shape => shape.id).sort();
-    frame = await openTaskFromInbox(fresh, projectId, "STUDIO_UPLOAD", uploadTaskId);
-    assert.deepEqual((await currentShapes(frame)).map(shape => shape.id).sort(), beforeInbox);
-    check("a fresh browser restores the server upload notification and opens its existing receipt without relying on local task data");
-  }
-  if (recoveredImage) {
-    const restored = reopened.find(shape => shape.id === recoveredImage.id);
-    assert.ok(restored, "Fresh browser restores the image recovered after page unload");
-    assert.deepEqual(restored.props, JSON.parse(JSON.stringify(recoveredImage.props)));
-    assert.deepEqual(await readableImage(frame, String(restored.props.url)), [48, 32]);
-  }
-  if (generatedImage && generatedResult && generationRequestId) {
-    const restored = reopened.find(shape => shape.id === generatedImage.id);
-    assert.ok(restored, "Fresh browser restores the real generated image from the server document");
-    assert.deepEqual(restored.props, JSON.parse(JSON.stringify(generatedImage.props)));
-    assert.deepEqual(await readableImage(frame, String(restored.props.url)), [generatedResult.width, generatedResult.height]);
-    const receipt = frame.getByTestId("product-generation-tasks").locator(`[data-request-id="${generationRequestId}"]`);
-    await expect(receipt).toHaveAttribute("data-result-state", "READY");
-    await receipt.locator(`[data-action="insert"][data-version-id="${generatedResult.versionId}"]`).click();
-    assert.equal((await currentShapes(frame)).filter(shape => shape.id === generatedImage.id).length, 1);
-    assert.ok(generatedPixels);
-    const exported = await nativePngDownload(fresh, frame, generatedImage.id, "fresh-generated-image", true);
-    assert.deepEqual([exported.info.width, exported.info.height, exported.info.channels], [generatedResult.width, generatedResult.height, 4]);
-    assert.ok(exported.data.equals(generatedPixels), "Fresh browser export must reproduce generated pixels without the first browser's image cache");
-    check("fresh browser restores the real generation, its authenticated image, task and identical PNG export without duplicating it");
-  }
-  if (modifiedImage && modifiedResult && modifyRequestId && modifiedPixels) {
-    const restored = reopened.find(shape => shape.id === modifiedImage.id);
-    assert.ok(restored, "Fresh browser restores the edited result from the saved native document");
-    assert.deepEqual(restored.props, JSON.parse(JSON.stringify(modifiedImage.props)));
-    assert.deepEqual(await readableImage(frame, String(restored.props.url)), [modifiedResult.width, modifiedResult.height]);
-    const beforeInbox = (await currentShapes(frame)).map(shape => shape.id).sort();
-    frame = await openTaskFromInbox(fresh, projectId, "STUDIO_GENERATION", modifyRequestId);
-    const receipt = frame.getByTestId("product-generation-tasks").locator(`[data-request-id="${modifyRequestId}"]`);
-    await expect(receipt).toHaveAttribute("data-mode", "modify"); await expect(receipt).toHaveAttribute("data-result-state", "READY");
-    assert.deepEqual((await currentShapes(frame)).map(shape => shape.id).sort(), beforeInbox);
-    await receipt.locator('[data-action="insert"]').click();
-    assert.equal((await currentShapes(frame)).filter(shape => shape.id === modifiedImage!.id).length, 1);
-    const exported = await nativePngDownload(fresh, frame, modifiedImage.id, "fresh-edited-image", true);
-    assert.deepEqual([exported.info.width, exported.info.height, exported.info.channels], [modifiedResult.width, modifiedResult.height, 4]);
-    assert.ok(exported.data.equals(modifiedPixels), "Fresh browser export must reproduce edited pixels without the first browser's image cache");
-    check("fresh browser restores the original and edited images, authoritative modify receipt and identical PNG export without duplicate insertion");
-  }
-  await draftReady(frame);
-  await expect(frame.getByTestId("agent-message-input")).toHaveText(finalDraftText);
-  await fresh.getByTestId("studio-nav-settings").click();
-  await expect(fresh.locator("#ns-settings-nickname")).toHaveValue(newNickname);
-  await expect(fresh.locator("#ns-settings-density")).toHaveValue("compact");
-  await expect(fresh.locator("#ns-settings-motion")).toHaveValue("reduce");
-  check("a fresh browser restores canvas, Chinese text, pen, chat draft, favorite and profile from server data");
-
-  assert.deepEqual(networkProblems, [], "Studio must not access original vendor/business services");
-  assert.equal(await prisma.generation.count({ where: { projectId } }), (generatedImage ? 1 : 0) + (modifiedImage ? 1 : 0));
-  check(generatedImage ? "core editing adds no generation beyond the explicitly enabled provider journeys" : "core editing performs no remote business request or AI generation");
-  console.log(`Studio UI acceptance: ${passed} checks passed against the real app and disposable database.`);
+  assert.deepEqual(networkProblems, [], "Owned frame must not request captured SDK or remote business services"); assert.deepEqual(browserErrors, []); assert.equal(await prisma.generation.count({ where: { projectId } }), process.env.WORKBENCH_TEST_GENERATION === "1" ? 1 : 0);
+  await mkdir(artifacts, { recursive: true }); await writeFile(path.join(artifacts, "acceptance.json"), JSON.stringify({ editor: "novart-owned", checksPassed: passed, realDatabase: true, realUploads: process.env.WORKBENCH_TEST_MATERIAL_UPLOAD === "1", realHomepageHandoff, realGeneration: process.env.WORKBENCH_TEST_GENERATION === "1", deferred }, null, 2));
+  console.log(`Owned studio UI: ${passed} checks passed against real app/database. Deferred UI journeys: ${deferred.join("; ")}`);
 } catch (error) {
-  await mkdir(artifacts, { recursive: true });
-  await currentPage?.screenshot({ path: path.join(artifacts, "failure.png"), fullPage: true }).catch(() => undefined);
-  // Never write cookies, request bodies, storage state, credentials or tokenized URLs.
-  const diagnostics = {
-    step: activeStep,
-    error: diagnosticMessage(error instanceof Error ? error.message : String(error)),
-    networkProblems: networkProblems.slice(-30).map(diagnosticMessage),
-    browserErrors: browserErrors.slice(-30).map(diagnosticMessage),
-    serverFailures: serverFailures.slice(-30).map(diagnosticMessage),
-    recentRequests,
-    stateReceipts,
-    navigations: navigations.slice(-20),
-    frames: JSON.parse(JSON.stringify(await frameDiagnostics(currentPage), (_key, value: unknown) => typeof value === "string" ? diagnosticMessage(value) : value)),
-    page: currentPage ? new URL(currentPage.url()).pathname : null,
-  };
-  await writeFile(path.join(artifacts, "diagnostics.json"), JSON.stringify(diagnostics, null, 2));
-  console.error("Studio UI failure diagnostics: " + JSON.stringify(diagnostics));
-  console.error(`UI acceptance failed; diagnostics saved to ${artifacts}`);
-  throw error;
+  await mkdir(artifacts, { recursive: true }); await currentPage?.screenshot({ path: path.join(artifacts, "failure.png"), fullPage: true }).catch(() => undefined);
+  const diagnostics = { step, error: safe(error instanceof Error ? error.message : String(error)), networkProblems: networkProblems.map(safe), browserErrors, requests, page: currentPage ? new URL(currentPage.url()).pathname : null, deferred };
+  await writeFile(path.join(artifacts, "diagnostics.json"), JSON.stringify(diagnostics, null, 2)); console.error("Owned UI acceptance failed: " + JSON.stringify(diagnostics)); throw error;
 } finally {
-  await Promise.allSettled(contexts.map(context => context.close()));
-  await browser?.close();
-  if (fixtureUserId) await prisma.user.delete({ where: { id: fixtureUserId } });
-  await prisma.$disconnect();
+  await Promise.allSettled(contexts.map(context => context.close())); await browser?.close(); for (const id of fixtureUsers.reverse()) await prisma.user.delete({ where: { id } }); await prisma.$disconnect();
 }

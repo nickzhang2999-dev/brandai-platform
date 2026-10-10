@@ -28,6 +28,42 @@ from native_license_config import build_native_license_chunk, build_original_lic
 ASSET = re.compile(r'''["'(](\/(?:[A-Za-z0-9_.-]+\/)*[A-Za-z0-9_.-]+\.(?:js|css|png|svg|woff2?|ttf|jpg|webp))(?:["')?])''')
 
 
+def product_owned_shell_patch(text: str) -> str:
+    """Keep the archived preview intact; only the product shell uses owned RPC."""
+    start = '  async function prepareArchive(p) {'
+    end = '  function confirmArchive(p) {'
+    assert text.count(start) == text.count(end) == 1, 'Archive guard boundary changed'
+    left, right = text.index(start), text.index(end)
+    replacement = '''  async function prepareArchive(p) {
+    const entry = frames.get(p.projectId);
+    let savedRevision;
+    if (entry) {
+      const ctx = frameDocument(entry);
+      if (!entry.ready || !ctx?.win || !ctx.doc.querySelector('[data-testid="owned-editor"]')) throw new Error('画布还在加载，请稍后再归档。');
+      const requestId = crypto.randomUUID();
+      savedRevision = await new Promise((resolve, reject) => {
+        let timer;
+        const finish = (error, value) => { clearTimeout(timer); window.removeEventListener('message', receipt); error ? reject(error) : resolve(value); };
+        const receipt = event => {
+          const data = event.data;
+          if (event.origin !== location.origin || event.source !== ctx.win || data?.type !== 'nv-studio' || data.action !== 'confirm-save-result' || data.projectId !== p.projectId || data.requestId !== requestId) return;
+          if (data.status === 'saved' && Number.isInteger(data.revision) && data.revision >= 0) finish(null, data.revision);
+          else finish(new Error(data.error || '画布尚未确认保存，请稍后重试。'));
+        };
+        window.addEventListener('message', receipt);
+        timer = setTimeout(() => finish(new Error('画布保存确认超时，尚未归档。')), 25000);
+        ctx.win.postMessage({type:'nv-studio',action:'confirm-save',projectId:p.projectId,requestId}, location.origin);
+      });
+    }
+    const stored = await api('/api/canva/project/queryProject', {projectId:p.projectId});
+    if (stored.code !== 0 || stored.data?.projectId !== p.projectId) throw new Error('项目暂不可读，请刷新后重试。');
+    if (savedRevision !== undefined && stored.data.version !== savedRevision) throw new Error('项目刚刚发生更新，尚未归档。请刷新后重试。');
+    return stored.data.version;
+  }
+'''
+    return text[:left] + replacement + text[right:]
+
+
 def product_license_patch(url_path: str, body: bytes) -> bytes:
     """Bind both native aliases to our runtime config before other export edits.
 
@@ -91,6 +127,8 @@ def main():
     external: dict[str, str] = {}
 
     def product_patch(url_path: str, body: bytes, mime: str) -> bytes:
+        if url_path == '/home-start-attachments.js':
+            return (REPO / 'deploy/novart/studio/novart-owned-home-start.js').read_bytes()
         if url_path.startswith('/novart-product-'):
             return body
         if not any(kind in mime for kind in ['html', 'javascript', 'css']):
@@ -138,6 +176,7 @@ def main():
             assert text.count(before) == 1, 'Workflow help copy changed'
             text = text.replace(before, '先保存用途与创作方式，再从输入框提交；改图结果另存，原图保留。')
         if url_path == '/home-start-studio.js':
+            text = product_owned_shell_patch(text)
             before = 'const payload = clone(savedState);'
             assert text.count(before) == 1
             text = text.replace(before, before + ' payload.group = group;')

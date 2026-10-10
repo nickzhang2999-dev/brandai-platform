@@ -61,13 +61,24 @@ jobs:
           apps/ai/.venv/bin/pip install -r apps/ai/requirements.txt
           apps/ai/.venv/bin/pip install -r previews/novart-workbench/requirements.txt
           pnpm -F web exec playwright install --with-deps chromium
-      - name: Compile the authenticated studio assets
+      - name: Verify owned canvas adapters and compile the reviewed shell
         run: |
-          apps/ai/.venv/bin/python scripts/test-novart-product-license.py
-          node scripts/test-novart-product-license.cjs
-          node scripts/test-novart-canvas-ready.cjs
+          pnpm -F @brandai/contracts exec vitest run tests/owned-canvas.test.ts tests/owned-canvas-geometry.test.ts tests/owned-editor-api.test.ts
           node scripts/test-novart-home-start.cjs
           apps/ai/.venv/bin/python scripts/export-novart-studio.py
+      - name: Owned shell and homepage protocol checks
+        run: |
+          node scripts/test-novart-owned-shell.cjs
+          node scripts/test-novart-owned-home-start.cjs
+      - name: Owned React editor interaction regression with isolated fixtures
+        shell: bash
+        run: |
+          # Reuse the Chromium installed by web's Playwright dependency. This
+          # fixture gate is separate from the real database/worker acceptance.
+          export NOVART_CHROMIUM_EXECUTABLE="$(pnpm -F web exec node -e 'process.stdout.write(require("playwright/test").chromium.executablePath())')"
+          test -f "$NOVART_CHROMIUM_EXECUTABLE"
+          mkdir -p apps/web/.novart-ui-artifacts
+          NOVART_OWNED_REPORT=apps/web/.novart-ui-artifacts/owned-react-fixture.json node scripts/test-novart-owned-canvas-browser.cjs
       - name: Generate and migrate the disposable database
         run: |
           pnpm db:generate
@@ -142,7 +153,7 @@ jobs:
           if [ "$ui_status" -ne 0 ]; then exit "$ui_status"; fi
           exit "$log_status"
           BASH
-      - name: Real password login, document API and studio interaction tests
+      - name: Real login, owned canvas, database and durable upload acceptance
         shell: bash
         run: |
           setsid pnpm -F web start > /tmp/novart-integration-server.log 2>&1 &
@@ -163,6 +174,8 @@ jobs:
           done
           test "$ready" = 1
           bash "$RUNNER_TEMP/novart-parallel-tests.sh"
+      # Provider calls remain opt-in outside this core CI job. The UI report
+      # explicitly records realGeneration=false and deferred first-batch UI.
       - name: Prepare and build immutable CDS images
         env:
           REPOSITORY: ${{ github.repository }}
@@ -226,3 +239,11 @@ jobs:
       - name: Dispose of integration storage and objects
         if: always()
         run: docker rm -f novart-ci-storage >/dev/null 2>&1 || true
+      - name: Preserve owned canvas acceptance reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: novart-owned-ui-${{ github.run_id }}
+          path: apps/web/.novart-ui-artifacts/
+          if-no-files-found: ignore
+          retention-days: 7

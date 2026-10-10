@@ -1,7 +1,7 @@
 import { ZodError } from "zod";
 import { ApiException } from "./api";
 import { studioSession } from "./studio-session";
-import { studioAsset, studioHtml, studioLicenseConfig } from "./studio-assets";
+import { studioAsset, studioHtml } from "./studio-assets";
 import { readWorkbenchJson } from "./workbench-request";
 import { isWorkbenchSameOrigin } from "./workbench-origin";
 import { EditorDocumentError } from "./editor-document-codec";
@@ -30,10 +30,15 @@ export async function studioRoute(req: Request) {
       if (pathname === "/canvas") {
         const doc = await readEditorDocument(workspaceId, url.searchParams.get("projectId") ?? "", user.id);
         readOnly = doc.readOnly;
+        // The reviewed outer workspace now hosts our editor. No captured SDK
+        // scripts or public license configuration are needed for this entry.
+        const target = new URLSearchParams({ workspaceId, projectId: doc.projectId });
+        return new Response(null, { status: 302, headers: { ...headers,
+          Location: "/studio-editor?" + target.toString() } });
       }
       const asset = await studioAsset(pathname === "/canvas" ? "/canvas.html" : "/studio.html", true);
       if (!asset) throw new ApiException(503, "工作台资源尚未构建。");
-      return new Response(studioHtml(asset.bytes.toString("utf8"), { ...session, workspaceId, readOnly, canvasLicense: studioLicenseConfig() }), {
+      return new Response(studioHtml(asset.bytes.toString("utf8"), { ...session, workspaceId, readOnly }), {
         headers: { ...headers, "Content-Type": "text/html; charset=utf-8", "X-Frame-Options": "SAMEORIGIN",
           "Content-Security-Policy": "default-src 'self' data: blob: https:; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; style-src 'self' 'unsafe-inline' https:; connect-src 'self' data: blob:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'self'" },
       });

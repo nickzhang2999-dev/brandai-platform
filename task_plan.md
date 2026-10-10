@@ -1,5 +1,8 @@
 # Novart product integration
 
+## Current steering — owned canvas, 2026-10-10
+User chose the company-owned canvas route. Phase A [complete]: SDK-free React entry, loss-aware legacy adapter, core tools/history/export, authenticated document/upload/generation wiring and homepage handoff. Phase B [complete]: 23 actual Chromium interactions, 11 homepage and 6 archive protocol checks, L1 835, AI pytest 365, complete typecheck and low-memory production build passed. Phase C [pending]: real isolated DB/S3/provider acceptance, EXACT/modify/draft/complex legacy UI and exact-version release. Details: docs/novart-owned-canvas-plan.md. Goal mode remains disabled; no licensing bypass. Completion here is the first local owned-editor batch, not the launch-ready product.
+
 ## Goal and scope
 Deliver a launch-ready Novart product on `claude/novart-product-integration`: integrate the reviewed UI with reusable company backend services, verify real persistent materials/generation/save/reopen/export, deploy the exact tested version to the independent environment, and assess differences against company source. User explicitly requested this goal, autonomous routine approvals, multiple agents and logs on 2026-10-09. Preserve company main and shared business data; switching the existing production domain or merging main needs a concrete target and explicit release decision. Platform-enforced human approval cannot be bypassed.
 

@@ -34,16 +34,31 @@ const request = (path: string, body?: unknown) => new Request(base + path, body 
 });
 
 describe("authenticated workflow and material routes", () => {
-  it.each(["/studio", "/canvas?projectId=p"])("injects only the server license configuration into authenticated %s HTML", async path => {
+  it("serves the reviewed shell without a canvas SDK license", async () => {
     vi.stubEnv("NOVART_TLDRAW_LICENSE_KEY", "synthetic-not-a-real-license");
     vi.mocked(studioAsset).mockResolvedValue({ bytes: Buffer.from('<html><head><script src="/native.js"></script></head><body></body></html>'), mime: "text/html" });
     vi.mocked(readEditorDocument).mockResolvedValue({ readOnly: true } as Awaited<ReturnType<typeof readEditorDocument>>);
-    const response = await studioRoute(request(path + (path.includes("?") ? "&" : "?") + "NOVART_TLDRAW_LICENSE_KEY=untrusted-query"));
+    const response = await studioRoute(request("/studio?NOVART_TLDRAW_LICENSE_KEY=untrusted-query"));
     expect(response.status).toBe(200); expect(response.headers.get("cache-control")).toBe("no-store");
     const html = await response.text();
     const serialized = html.match(/<script id="novart-product-context" type="application\/json">([^<]*)<\/script>/)?.[1];
-    expect(JSON.parse(serialized!).canvasLicense).toEqual({ key: "synthetic-not-a-real-license", status: "configured" });
+    expect(JSON.parse(serialized!).canvasLicense).toBeUndefined();
+    expect(html).not.toContain("synthetic-not-a-real-license");
     expect(html).not.toContain("untrusted-query");
+  });
+  it("opens the owned editor only after checking the requested project", async () => {
+    vi.mocked(readEditorDocument).mockResolvedValue({ projectId: "p", readOnly: false } as Awaited<ReturnType<typeof readEditorDocument>>);
+    const response = await studioRoute(request("/canvas?projectId=p&workspaceId=untrusted-workspace"));
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toBe("/studio-editor?workspaceId=server-workspace&projectId=p");
+    expect(readEditorDocument).toHaveBeenCalledWith("server-workspace", "p", "server-user");
+    expect(studioAsset).not.toHaveBeenCalled();
+  });
+  it("does not open an owned canvas when project access fails", async () => {
+    vi.mocked(readEditorDocument).mockRejectedValueOnce(new Error("private detail"));
+    const response = await studioRoute(request("/canvas?projectId=other-project"));
+    expect(response.status).toBe(503); expect(response.headers.has("location")).toBe(false);
+    expect(await response.text()).not.toContain("private detail");
   });
   it("does not serve license context before authentication succeeds", async () => {
     f.session.mockRejectedValue(new Error("session unavailable"));

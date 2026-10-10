@@ -1,5 +1,11 @@
 # Integration findings
 
+## 2026-10-10 owned editor checkpoint
+- The owned runtime reads/writes the existing native envelope as data; no SDK is required by /studio-editor. Complex/unknown legacy scenes remain read-only rather than silently flattening.
+- Backend geometry continues to recognize c-image and frame records. Native pageStates camera uses world offsets, while the owned DOM uses pixel offsets; both directions now convert explicitly.
+- Headless Chromium drove actual React + product home scripts with isolated fixture HTTP responses: core editing, mixed save/reopen, complete PNG/SVG, persistent receipt insertion/history, responsive layout, parent handoff idempotency, readonly race and conflict/restore protection pass. These are interaction checks, not real DB/S3/provider acceptance.
+- Real authenticated isolated-stack UI acceptance is separately wired in CI, including homepage upload/reopen; unsupported EXACT/modify/draft/notices remain explicit. No online version was changed in this batch.
+
 ## 2026-10-09 — constrained build verification
 - Opt-in Next memory optimizations plus cpus=1/serial server compilation and tracing completed a real production build on this Windows host. Launcher caps each Node old-generation heap at 768 MiB; this is not a total-memory cap. Temporary files use the ignored repository directory, not C: user temp.
 - System committed-memory headroom also improved and the old preview process group disappeared before the run; do not attribute all improvement to configuration or invent a reduction percentage. No process shutdown or pagefile modification was performed.
@@ -81,3 +87,7 @@ The company project's right-hand preview URL is a working alias for the review g
 - The original c-image single download uses image-toolbar-download; generic download-button is not present in that selection state. Frame export uses the actual right-click Export -> PNG menu, while independent multiselection defaults to ZIP. Isolated single/frame PNG downloads, exact pixels and fresh-context re-export pass for unrotated/uncropped content only.
 - Windows committed memory, not just physical free RAM, limited concurrent tooling. Serial L1 (one thread, 768 MiB heap), typecheck/build (1024 MiB heap) and Next CIRCLE_NODE_TOTAL=1 pass without starting Docker. Build still logs absent local Redis connections; compilation is not runtime-health acceptance.
 - Latest read-only CDS check still finds company auto-deploy/push enabled, main running e99919a, company integration idle f968f1a and independent integration running 8474347. Existing skip/restore webhook handling remains unsafe; no verified branch exclusion yet.
+
+
+## Owned canvas decision, 2026-10-10
+Company OpenCanvas has image/shape/text, selection/transforms and persistence but lacks general brush/history/frame/rotation/export. Preserve existing rich document records through a SDK-free compatibility adapter; do not force them through the 200-item last-writer-wins CanvasState API.
