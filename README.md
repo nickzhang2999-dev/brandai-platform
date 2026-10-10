@@ -8,7 +8,7 @@
 
 这份独立评审程序用于操作与交互评审，使用独立文件存储，不接真实 AI、账号或生产业务数据。原有 Next.js 源码、`main`、正式站及根 `cds-compose.yml` 保持原样。镜像由 `Branch Image` 工作流构建并检查，专用配置位于 `previews/novart-workbench/cds-compose.preview.yml`，只导入独立 CDS 评审项目，避免覆盖原产品的共享服务。屏幕适配覆盖大屏、小笔记本、平板与窄屏浏览器；本分支不代表正式产品已集成或已发布。
 
-已部署代码版本为 `f8aa44ffed9c0fd75d39b804cfb49325d3dd1adf`。[CDS 评审服务](https://novart-workbench-preview-claude-novart-workbench-preview.geole.me/)的根页面只提供进入说明，完整访问入口私下交付。线上已验证项目和图片在容器重建后保留；公网浏览器的实际拖拽、输入和导出仍需试用复核，HTTP 检查不代替交互验收。
+已部署代码版本为 `9e5e2afd69f8ab75650e35e5cd027ae66b581181`。[CDS 评审服务](https://novart-workbench-preview-claude-novart-workbench-preview.geole.me/)的根页面只提供进入说明，完整访问入口私下交付。线上脚本与已测源码一致；缺少此域名的有效引擎授权时显示明确提示。项目和图片持久化已验证，授权阻塞解除前不能宣称公网编辑、恢复和导出已通过验收。
 
 
 > **当前开发版本：V0.0.22**（2026-09-17）
