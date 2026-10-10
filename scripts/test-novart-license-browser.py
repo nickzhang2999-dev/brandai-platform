@@ -1,8 +1,9 @@
 """Exercise real native licensing on loopback HTTP and local non-loopback HTTPS.
 
-The HTTPS name resolves only inside the disposable test browser. Neither the
-SDK's license checks nor its license key are replaced. A production refusal is
-expected: this verifies that it becomes visible, not that deployment is licensed.
+The HTTPS name resolves only inside the disposable test browser. None of the
+SDK's signature, domain or expiry checks are changed. The server supplies an
+empty or deliberately invalid fixture key through the normal license prop. A
+production refusal is expected; this does not certify a valid licensed deployment.
 Requires cryptography plus Node/playwright-core and a Chromium installation.
 """
 from __future__ import annotations
@@ -58,12 +59,13 @@ def main():
     sharing = (PACKAGE / "sharing").resolve()
     sharing.mkdir(exist_ok=True)
     reports = []
-    for mode in ("loopback-http", "production-https"):
+    for mode, fixture_key in (("loopback-http", ""), ("production-https", ""),
+            ("production-https", "novart-invalid-license-fixture")):
         with tempfile.TemporaryDirectory(prefix="native-license-test-", dir=sharing) as temporary:
             directory = Path(temporary).resolve()
             if directory.parent != sharing or not directory.name.startswith("native-license-test-"):
                 raise RuntimeError("Test directory escaped isolated sharing root")
-            runtime = ShareRuntime(directory)
+            runtime = ShareRuntime(directory, tldraw_license_key=fixture_key)
             try:
                 if mode == "production-https":
                     configure_test_tls(runtime, directory)
@@ -73,7 +75,8 @@ def main():
                     else f"http://127.0.0.1:{port}")
                 config_path, report_path = directory / "browser-config.json", directory / "result.json"
                 config_path.write_text(json.dumps({"mode": mode, "origin": origin, "port": port,
-                    "entry": "/share/" + runtime.key, "reportPath": str(report_path)}), encoding="utf-8")
+                    "entry": "/share/" + runtime.key, "reportPath": str(report_path),
+                    "licenseConfigured": bool(fixture_key)}), encoding="utf-8")
                 environment = {**os.environ, "TEMP": str(directory), "TMP": str(directory)}
                 result = subprocess.run(["node", str(Path(__file__).with_suffix(".cjs")), str(config_path)],
                     cwd=REPO, env=environment, timeout=100)

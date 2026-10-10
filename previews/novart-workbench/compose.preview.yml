@@ -4,6 +4,8 @@ services:
       context: .
       dockerfile: Dockerfile
     restart: unless-stopped
+    environment:
+      NOVART_TLDRAW_LICENSE_KEY: "${NOVART_TLDRAW_LICENSE_KEY:-}"
     labels:
       cds.path-prefix: "/"
     ports:

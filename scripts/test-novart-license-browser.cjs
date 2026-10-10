@@ -2,11 +2,11 @@
 const fs = require('node:fs');
 const assert = require('node:assert/strict');
 const {chromium} = require('playwright-core');
-const {mode, origin, port, entry, reportPath} = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const {mode, origin, port, entry, reportPath, licenseConfigured = false} = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 assert.ok(['loopback-http', 'production-https'].includes(mode));
 const production = mode === 'production-https';
 assert.equal(origin, production ? `https://novart-canvas.test:${port}` : `http://127.0.0.1:${port}`);
-const report = {mode, isolated: true, samples: [], crashLogs: [], controlledFrameRetry: false};
+const report = {mode, licenseConfigured, isolated: true, samples: [], crashLogs: [], controlledFrameRetry: false};
 let browser;
 let stage = 'launch-browser';
 
@@ -31,10 +31,12 @@ async function structuralState(page) {
           ['novart-local-license-read'], {}, require => {
             win.__novartLicenseTestRead = () => {
               const manager = require(37750).pW.getEditor().licenseManager;
-              const payload = JSON.parse(win.atob(require(10938).$y.split('.')[0].split('/')[1]));
+              const configured = win.__NOVART_TLDRAW_LICENSE_KEY;
+              const descriptor = Object.getOwnPropertyDescriptor(win, '__NOVART_TLDRAW_LICENSE_KEY');
               return {licenseState: manager?.state.get(), isDevelopment: manager?.isDevelopment,
-                licenseDomainMatches: payload[1].some(host => new RegExp('^' + host.toLowerCase()
-                  .replace(/\./g, '\\.').replace(/\*/g, '.*') + '$').test(win.location.hostname.toLowerCase()))};
+                licenseConfigured: typeof configured === 'string' && configured.length > 0,
+                licenseFromServer: require(10938).$y === configured,
+                licenseReadOnly: descriptor?.writable === false && descriptor?.configurable === false};
             };
           }
         ]);
@@ -123,10 +125,12 @@ async function persistedProject(page) {
     && typeof sample.isDevelopment === 'boolean' && settledStates.has(sample.licenseState));
   stage = 'verify-sdk-license-state';
   assert.ok(licensingSample, 'A real settled SDK license state must be observed while the editor is mounted');
+  assert.equal(licensingSample.licenseConfigured, licenseConfigured);
+  assert.equal(licensingSample.licenseFromServer, true);
+  assert.equal(licensingSample.licenseReadOnly, true);
   if (production) {
     assert.equal(licensingSample.isDevelopment, false);
     assert.equal(licensingSample.licenseState, 'unlicensed-production');
-    assert.equal(licensingSample.licenseDomainMatches, false);
     assert.equal(last.canvas, false); assert.equal(last.toolbar, false);
     assert.equal(last.licensePlaceholder, true); assert.equal(last.placeholderDisplay, 'none');
     assert.equal(last.boundary, false); assert.equal(last.crashMarker, null); assert.equal(last.outerHeader, true);
@@ -165,7 +169,7 @@ async function persistedProject(page) {
   report.fatal = {stage, errorName}; process.exitCode = 1;
 }).finally(async () => {
   await browser?.close(); fs.writeFileSync(reportPath, JSON.stringify(report, null, 2));
-  console.log(JSON.stringify({mode, passed: report.passed || false, stableForMs: report.stableForMs,
+  console.log(JSON.stringify({mode, licenseConfigured, passed: report.passed || false, stableForMs: report.stableForMs,
     mountedToRemovedMs: report.mountedToRemovedMs, persistedProjectUnchanged: report.persistedProjectUnchanged,
     productionLicenseUsable: report.productionLicenseUsable, fatal: report.fatal || null}));
 });

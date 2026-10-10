@@ -14,6 +14,7 @@ from urllib.parse import parse_qs, urlsplit
 from local_runtime import ROOT, DEMO_TOKEN
 from local_store import StoreError
 from home_start_runtime import HomeStartRuntime
+from native_license_config import validate_license_key
 
 
 def _parse_origin(value):
@@ -130,7 +131,9 @@ def _diagnostic_object(pairs):
 
 
 class ShareRuntime:
-    def __init__(self, data_dir, port=0, host='127.0.0.1', *, public_origin=None, additional_origins=None):
+    def __init__(self, data_dir, port=0, host='127.0.0.1', *, public_origin=None, additional_origins=None,
+        tldraw_license_key=None):
+        tldraw_license_key = validate_license_key(tldraw_license_key)
         self.public_origin = _parse_origin(public_origin) if public_origin is not None else None
         if public_origin is not None and self.public_origin is None:
             raise ValueError('Public origin must be a single http(s) origin without a path')
@@ -140,7 +143,7 @@ class ShareRuntime:
             raise ValueError('Share data must be isolated under sharing/')
         self.data_dir = data_dir
         data_dir.mkdir(parents=True, exist_ok=True)
-        self.inner = HomeStartRuntime(data_dir / 'demo-data').start()
+        self.inner = HomeStartRuntime(data_dir / 'demo-data', tldraw_license_key=tldraw_license_key).start()
         self.inner.server.socket.listen(128)
         token_path = data_dir / 'access-key.txt'
         if not token_path.exists(): token_path.write_text(secrets.token_urlsafe(32), encoding='ascii')
@@ -310,11 +313,15 @@ document.cookie='__locale=zh; Path=/; SameSite=Strict';
                     if not file.is_relative_to((ROOT/'originals').resolve()): return self.send({},404)
                     raw=file.read_bytes()
                     if hashlib.sha256(raw).hexdigest()!=asset['sha256']: return self.send({},503)
+                    if file == (ROOT/'originals/static/js/1773.fe2335a6.js').resolve():
+                        raw = runtime.novart_original_native_chunk
                     return self.send(raw,mime=asset.get('contentType') or 'application/octet-stream')
                 prefix='/lovart_canvas_online/'
                 if parsed.hostname=='web-static3.lovart.ai' and parsed.path.startswith(prefix):
                     file=(ROOT/'originals'/parsed.path[len(prefix):]).resolve()
                     if file.is_relative_to((ROOT/'originals').resolve()) and file.is_file():
+                        if file == (ROOT/'originals/static/js/1773.fe2335a6.js').resolve():
+                            return self.send(runtime.novart_original_native_chunk,mime='application/javascript')
                         return self.send(file.read_bytes(),mime=mimetypes.guess_type(file)[0] or 'application/octet-stream')
                 return self.send({'error':'此在线服务尚未接入演示版'},503)
 
@@ -336,7 +343,8 @@ if __name__=='__main__':
     args=parser.parse_args()
     if not args.room.replace('-','').isalnum(): raise ValueError('Invalid room')
     runtime=ShareRuntime(ROOT/'sharing'/args.room,args.port,args.host,public_origin=args.public_origin,
-        additional_origins=args.additional_origins).start()
+        additional_origins=args.additional_origins,
+        tldraw_license_key=os.environ.get('NOVART_TLDRAW_LICENSE_KEY')).start()
     (runtime.data_dir/'runtime.json').write_text(json.dumps({'port':runtime.server.server_port,'entryPath':'/share/'+runtime.key},indent=2),'utf-8')
     print('Review gateway ready on port '+str(runtime.server.server_port),flush=True)
     try:

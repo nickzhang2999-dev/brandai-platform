@@ -17,8 +17,13 @@ from PIL import Image, UnidentifiedImageError
 
 from compare_runtime import MAX_BODY_BYTES, _error_reply, _integer, _text
 from local_store import StoreError
+from local_runtime import ROOT
 from m6_runtime import _digest, _shape_id
+from m26_native_patch import build_native_chunk as build_m26_native_chunk
+from native_license_config import (build_license_script, build_native_license_chunk,
+    build_original_license_chunk, inject_license_script)
 from project_library_runtime import ProjectLibraryRuntime
+from rc3_native_patch import build_native as build_rc3_native_chunk
 
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
@@ -31,8 +36,16 @@ MANIFEST_FIELDS = {'schema', 'requestId', 'projectId', 'brief', 'assets', 'creat
 
 
 class HomeStartRuntime(ProjectLibraryRuntime):
-    def __init__(self, data_dir, port=0):
+    def __init__(self, data_dir, port=0, *, tldraw_license_key=None):
+        # Preflight configuration and exact frozen bytes before touching storage.
+        license_script = build_license_script(tldraw_license_key)
+        original = (ROOT / 'originals/static/js/1773.fe2335a6.js').read_bytes()
+        controls = (ROOT / 'originals/static/js/283.c3fbcbc3.js').read_bytes()
+        native = build_native_license_chunk(build_rc3_native_chunk(build_m26_native_chunk(original, controls)))
+        original_alias = build_original_license_chunk(original)
         super().__init__(data_dir, port)
+        self.m12_native_chunk = native
+        self.novart_original_native_chunk = original_alias
         self.start_assets_dir = self.store.data_dir / 'home-start-assets'
         self.start_jobs_dir = self.store.data_dir / 'home-start-jobs'
         try:
@@ -50,9 +63,16 @@ class HomeStartRuntime(ProjectLibraryRuntime):
                 path = urlsplit(self.path).path
                 if status == 200 and isinstance(data, bytes):
                     if path in ('/studio', '/studio/', '/canvas', '/canvas/') and mime.startswith('text/html'):
+                        if path in ('/canvas', '/canvas/'):
+                            try:
+                                data = inject_license_script(data, license_script)
+                            except ValueError:
+                                return super().reply({'error': 'Native license configuration unavailable'}, 503)
                         tags = (b'<link rel="stylesheet" href="/responsive-layout.css">'
                             b'<script defer src="/responsive-layout.js"></script>')
                         data = data.replace(b'</body>', tags + b'</body>', 1)
+                    elif path == '/originals/static/js/1773.fe2335a6.js' and 'javascript' in mime:
+                        data = runtime.novart_original_native_chunk
                     elif path == '/m21-canvas.js' and 'javascript' in mime:
                         anchor = b"matchMedia('(max-width:899px)')"
                         if data.count(anchor) != 1:

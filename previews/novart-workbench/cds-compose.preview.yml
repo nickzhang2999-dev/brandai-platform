@@ -5,6 +5,9 @@ x-cds-project:
   description: "NovartLab independent interactive frontend review"
   repo: "https://github.com/nickzhang2999-dev/brandai-platform.git"
 
+x-cds-env:
+  NOVART_TLDRAW_LICENSE_KEY: "${NOVART_TLDRAW_LICENSE_KEY:-}"
+
 services:
   workbench-preview:
     image: "ghcr.io/nickzhang2999-dev/brandai-platform/novart-workbench-preview:sha-${CDS_COMMIT_SHA}"
@@ -18,6 +21,7 @@ services:
       PYTHONUNBUFFERED: "1"
       PYTHONUTF8: "1"
       PYTHONDONTWRITEBYTECODE: "1"
+      NOVART_TLDRAW_LICENSE_KEY: "${NOVART_TLDRAW_LICENSE_KEY:-}"
     labels:
       cds.prebuilt-image: "true"
       cds.role: "web"
