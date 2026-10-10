@@ -12,14 +12,14 @@ const end = source.indexOf('  const delay =', start);
 assert.ok(start >= 0 && end > start, 'Native-readiness function source anchors must exist');
 const functionSource = source.slice(start, end);
 
-function reader({failed = false, mounted = false, registered = false, available = true} = {}) {
+function reader({failed = false, mounted = false, registered = false, available = true, failure = ''} = {}) {
   const calls = {registry: 0, module: 0, editor: 0};
   const shapes = [{id: 'shape:diagnostic'}];
   const app = {getEditor() { calls.editor++; return {getCurrentPageShapes() { return shapes; }}; }};
   const requireModule = id => { assert.equal(id, 37750); calls.module++; return {pW: app}; };
   requireModule.m = registered ? {37750() {}} : {};
   const win = {webpackChunk_lovartai_lovart_shell: {push(chunk) { calls.registry++; chunk[2](requireModule); }}};
-  const doc = {querySelector(selector) {
+  const doc = {documentElement: {dataset: {novartNativeFailure: failure}}, querySelector(selector) {
     if (selector === '.tl-error-boundary') return failed ? {} : null;
     return mounted ? {} : null;
   }};
@@ -54,4 +54,9 @@ function reader({failed = false, mounted = false, registered = false, available 
   assert.equal(fixture.read(), null);
   assert.deepEqual(fixture.calls, {registry: 0, module: 0, editor: 0});
 }
-console.log('Homepage handoff readiness: 5 checks passed (no browser or network).');
+for (const failure of ['bootstrap', 'canvas-crash']) {
+  const fixture = reader({failure, mounted: true, registered: true});
+  assert.throws(fixture.read, error => error.nativeStartup === true);
+  assert.deepEqual(fixture.calls, {registry: 0, module: 0, editor: 0}, 'A caught native failure must stop upload handoff before accessing a stale editor');
+}
+console.log('Homepage handoff readiness: 7 checks passed (no browser or network).');

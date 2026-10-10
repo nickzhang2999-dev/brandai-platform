@@ -107,7 +107,8 @@ window.createHomeStart = function createHomeStart(host) {
   }
   function readNative(entry) {
     const {win,doc} = host.frameDocument(entry) || {}; if (!win) return null;
-    if (doc.querySelector('.tl-error-boundary')) {
+    if (doc.querySelector('.tl-error-boundary')
+      || ['bootstrap', 'canvas-crash'].includes(doc.documentElement.dataset.novartNativeFailure)) {
       const error = new Error('画布打开失败，图片尚未导入。原始需求和图片仍保留，请重新打开或返回项目库。');
       error.nativeStartup = true;
       throw error;

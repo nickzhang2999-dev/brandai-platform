@@ -4,7 +4,7 @@
 
 | 范围 | 状态 | 入口 |
 | --- | --- | --- |
-| Novart 工作台前端评审版（首页带图、项目归档、原画布编辑） | 2026-10-09 已部署 a1c35a4：此前 403 已解除，就绪检查、失败出口和精简诊断已更新。本地三流程通过；用户仍报告画布及底栏出现后消失，线上恢复未通过，继续定位 | [`previews/novart-workbench`](previews/novart-workbench/) · [运行与部署说明](docs/novart-workbench-preview.md) · [403 证据与修复状态](docs/novart-preview-origin-2026-10-09.md) |
+| Novart 工作台前端评审版（首页带图、项目归档、原画布编辑） | 2026-10-10 已修补原编辑器自捕获异常的漏检，本地真引擎崩溃/重开与四项门禁通过；此前 403 已解除。线上用户的工具栏消失尚未定位到具体异常，不算验收通过；发布结果持续记入日志 | [`previews/novart-workbench`](previews/novart-workbench/) · [运行与部署说明](docs/novart-workbench-preview.md) · [当日开发日志](docs/开发日志-2026-10-10.md) |
 
 这份独立评审程序用于操作与交互评审，使用独立文件存储，不接真实 AI、账号或生产业务数据。原有 Next.js 源码、`main`、正式站及根 `cds-compose.yml` 保持原样。镜像由 `Branch Image` 工作流构建并检查，专用配置位于 `previews/novart-workbench/cds-compose.preview.yml`，只导入独立 CDS 评审项目，避免覆盖原产品的共享服务。屏幕适配覆盖大屏、小笔记本、平板与窄屏浏览器；本分支不代表正式产品已集成或已发布。
 

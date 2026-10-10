@@ -11,13 +11,13 @@ const selectors = {
   upload: '[data-testid="upload-menu-trigger"]', error: '.tl-error-boundary'
 };
 
-function fixture({shell = true, native = false, failed = false, motion = true} = {}) {
+function fixture({shell = true, native = false, failed = false, motion = true, failure = ''} = {}) {
   const nodes = new Map(), messages = [], listeners = new Map();
   const back = {removeAttribute() {}, setAttribute() {}};
   if (shell) { nodes.set(selectors.back, back); nodes.set(selectors.workflow, {}); }
   if (native) for (const key of ['canvas', 'toolbar', 'upload']) nodes.set(selectors[key], {});
   if (failed) nodes.set(selectors.error, {textContent: 'private error content must not be sent'});
-  const document = {documentElement: {dataset: {nvMotionReady: String(motion)}},
+  const document = {documentElement: {dataset: {nvMotionReady: String(motion), novartNativeFailure: failure}},
     querySelector: selector => nodes.get(selector) || null};
   let observer;
   const window = {
@@ -29,14 +29,14 @@ function fixture({shell = true, native = false, failed = false, motion = true} =
     parent: {postMessage(data, origin) { messages.push({data: JSON.parse(JSON.stringify(data)), origin}); }},
     MutationObserver: class {
       constructor(callback) { this.callback = callback; this.connected = false; observer = this; }
-      observe() { this.connected = true; }
+      observe(_target, options) { this.connected = true; this.options = options; }
       disconnect() { this.connected = false; }
     }
   };
   vm.runInNewContext(source, context);
   return {nodes, messages, document, listeners,
     mutate() { if (observer.connected) observer.callback(); },
-    connected: () => observer.connected};
+    connected: () => observer.connected, observedAttributes: () => observer.options.attributeFilter};
 }
 
 let checks = 0;
@@ -96,6 +96,26 @@ let checks = 0;
   f.mutate();
   assert.deepEqual(f.messages, [], 'A page being unloaded must not report readiness');
   assert.equal(f.listeners.has('message'), false);
+  checks += 1;
+}
+for (const failure of ['bootstrap', 'canvas-crash']) {
+  const f = fixture({native: true, failure});
+  assert.deepEqual(f.messages.map(m => m.data.action), ['startup-error'], 'Handled native failures must override present editor nodes');
+  assert.equal(f.document.documentElement.dataset.nvStudioCanvasReady, 'false');
+  assert.ok(f.observedAttributes().includes('data-novart-native-failure'), 'The bridge must observe the actual marker written by the diagnostic sender');
+  checks += 1;
+}
+{
+  const f = fixture({native: true});
+  f.document.documentElement.dataset.novartNativeFailure = 'canvas-crash';
+  f.nodes.delete(selectors.canvas); f.nodes.delete(selectors.toolbar); f.mutate();
+  assert.deepEqual(f.messages.map(m => m.data.action), ['ready', 'startup-error'], 'Handled runtime crashes revoke readiness even without a tldraw error boundary');
+  assert.equal(f.connected(), false);
+  checks += 1;
+}
+{
+  const f = fixture({native: true, failure: 'unrecognized'});
+  assert.equal(f.messages[0]?.data.action, 'ready', 'Only fixed native failure markers affect readiness');
   checks += 1;
 }
 // Parent-side readiness must not hide a failed frame or discard a different

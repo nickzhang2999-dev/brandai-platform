@@ -13,7 +13,8 @@
     if (failed) return;
     // The comparison header mounts before the native application. A shell-only
     // ready signal used to dismiss loading even when the editor never started.
-    if (document.querySelector('.tl-error-boundary')) {
+    if (document.querySelector('.tl-error-boundary')
+      || ['bootstrap', 'canvas-crash'].includes(document.documentElement.dataset.novartNativeFailure)) {
       failed = true;
       ready = false;
       document.documentElement.dataset.nvStudioCanvasReady = 'false';
@@ -93,7 +94,7 @@
   window.addEventListener('message', command);
   observer = new MutationObserver(install);
   observer.observe(document.documentElement, {subtree: true, childList: true, attributes: true,
-    attributeFilter: ['data-nv-motion-ready']});
+    attributeFilter: ['data-nv-motion-ready', 'data-novart-native-failure']});
   install();
   window.addEventListener('pagehide', () => {
     observer?.disconnect();

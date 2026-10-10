@@ -44,7 +44,8 @@
     return {kind: 'state', role, stage, embedded: parent !== window, framePath,
       controlled: Boolean(win.navigator.serviceWorker?.controller), canvas: Boolean(canvas),
       toolbar: Boolean(doc.querySelector('[data-testid="bottom-toolbar"]')),
-      boundary: Boolean(doc.querySelector('.tl-error-boundary')),
+      boundary: Boolean(doc.querySelector('.tl-error-boundary') ||
+        ['bootstrap', 'canvas-crash'].includes(doc.documentElement.dataset.novartNativeFailure)),
       width: dimension(rect.width), height: dimension(rect.height)};
   }
   function capture(stage, detail = {}) {
@@ -71,6 +72,23 @@
       } catch (_) {}
     }
     capture('error', {kind: 'error', errorName: names.has(error?.name) ? error.name : 'Other', frames});
+  }
+  // The captured shell and canvas catch these failures themselves, so neither
+  // window.error nor unhandledrejection sees them. Match only their two fixed
+  // call sites; preserve console arguments/return/throws and never send text.
+  if (role === 'canvas') {
+    const originalError = console.error;
+    console.error = function(...args) {
+      const result = originalError.apply(this, args);
+      const source = args[0] === '[Lovart Shell] Failed to initialize:' ? 'bootstrap' :
+        args[0] === '[canvas-crash]' ? 'canvas-crash' : null;
+      if (source) {
+        try { document.documentElement.dataset.novartNativeFailure = source; } catch (_) {}
+        try { failure(args[1]); } catch (_) {}
+        try { window.dispatchEvent(new Event('novart-native-failure')); } catch (_) {}
+      }
+      return result;
+    };
   }
   window.addEventListener('error', event => {
     const tag = event.target?.tagName;
