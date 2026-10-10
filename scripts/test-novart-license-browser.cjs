@@ -8,6 +8,7 @@ const production = mode === 'production-https';
 assert.equal(origin, production ? `https://novart-canvas.test:${port}` : `http://127.0.0.1:${port}`);
 const report = {mode, isolated: true, samples: [], crashLogs: [], controlledFrameRetry: false};
 let browser;
+let stage = 'launch-browser';
 
 async function structuralState(page) {
   return page.evaluate(() => {
@@ -78,14 +79,17 @@ async function persistedProject(page) {
     for (const prefix of ['[canvas-crash]', '[Lovart Shell] Failed to initialize:'])
       if (text.startsWith(prefix)) report.crashLogs.push(prefix);
   });
+  stage = 'open-review-room';
   await page.goto(origin + entry, {waitUntil: 'domcontentloaded'});
   await page.waitForURL('**/studio#/home', {timeout: 15000});
   await page.waitForFunction(() => !!navigator.serviceWorker.controller, null, {timeout: 15000});
+  stage = 'create-synthetic-project';
   await page.locator('#ns-create-blank').click();
   await page.waitForURL('**/studio#/workspace/**');
   await page.waitForSelector('.ns-frame-slot[data-active="true"] iframe');
   const canvasPath = await page.locator('.ns-frame-slot[data-active="true"] iframe').getAttribute('src');
   let firstMounted = null, before = null;
+  stage = 'observe-native-editor';
   const start = Date.now();
   for (let i = 0; i < 150; i++) {
     const current = {elapsedMs: Date.now() - start, ...await structuralState(page)};
@@ -112,13 +116,21 @@ async function persistedProject(page) {
   }
   assert.ok(firstMounted, 'The actual native canvas and toolbar must first appear');
   const last = report.samples.at(-1);
+  // License signature validation is asynchronous. The first mounted sample is
+  // only a timing baseline; assert the actual SDK state once it has settled.
+  const settledStates = new Set(['licensed', 'licensed-with-watermark', 'unlicensed', 'unlicensed-production', 'expired']);
+  const licensingSample = report.samples.find(sample => sample.canvas && sample.toolbar
+    && typeof sample.isDevelopment === 'boolean' && settledStates.has(sample.licenseState));
+  stage = 'verify-sdk-license-state';
+  assert.ok(licensingSample, 'A real settled SDK license state must be observed while the editor is mounted');
   if (production) {
-    assert.equal(firstMounted.isDevelopment, false);
-    assert.equal(firstMounted.licenseState, 'unlicensed-production');
-    assert.equal(firstMounted.licenseDomainMatches, false);
+    assert.equal(licensingSample.isDevelopment, false);
+    assert.equal(licensingSample.licenseState, 'unlicensed-production');
+    assert.equal(licensingSample.licenseDomainMatches, false);
     assert.equal(last.canvas, false); assert.equal(last.toolbar, false);
     assert.equal(last.licensePlaceholder, true); assert.equal(last.placeholderDisplay, 'none');
     assert.equal(last.boundary, false); assert.equal(last.crashMarker, null); assert.equal(last.outerHeader, true);
+    stage = 'verify-visible-license-refusal';
     await page.waitForFunction(() => document.getElementById('ns-workspace-status')?.innerText.includes('此域名授权'));
     report.visibleRefusal = await page.locator('#ns-workspace-status').innerText();
     assert.equal(await page.locator('#ns-workspace-status button').count(), 1);
@@ -128,20 +140,29 @@ async function persistedProject(page) {
     report.mountedToRemovedMs = last.elapsedMs - firstMounted.elapsedMs;
     assert.ok(report.mountedToRemovedMs >= 3500 && report.mountedToRemovedMs <= 10000);
     report.productionLicenseUsable = false;
+    stage = 'verify-license-diagnostic';
     const diagnostics = await page.evaluate(async () => (await (await fetch('/review/startup-diagnostics')).json()).events);
     assert.ok(diagnostics.some(event => event.licenseRejected === true));
   } else {
-    assert.equal(firstMounted.isDevelopment, true);
+    assert.equal(licensingSample.isDevelopment, true);
     assert.equal(last.ready, 'true');
     assert.ok(last.elapsedMs - firstMounted.elapsedMs >= 15000);
     report.stableForMs = last.elapsedMs - firstMounted.elapsedMs;
   }
+  stage = 'verify-synthetic-project-preserved';
   assert.deepEqual(report.crashLogs, []);
   assert.deepEqual(await persistedProject(page), before, 'License refusal must preserve the saved project and canvas');
   report.persistedProjectUnchanged = true;
   report.passed = true;
 })().catch(error => {
-  report.fatal = error.stack || String(error); process.exitCode = 1;
+  // Playwright errors can include the temporary /share/ access capability in
+  // navigation logs. Emit fixed diagnostic categories, never message or stack.
+  let errorName = 'Other';
+  try {
+    const allowed = new Set(['Error', 'TimeoutError', 'AssertionError', 'TypeError', 'ReferenceError', 'RangeError', 'SyntaxError']);
+    if (allowed.has(error?.name)) errorName = error.name;
+  } catch (_) {}
+  report.fatal = {stage, errorName}; process.exitCode = 1;
 }).finally(async () => {
   await browser?.close(); fs.writeFileSync(reportPath, JSON.stringify(report, null, 2));
   console.log(JSON.stringify({mode, passed: report.passed || false, stableForMs: report.stableForMs,
