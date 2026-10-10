@@ -11,6 +11,8 @@ import { chromium, expect, type Browser, type BrowserContext, type Frame, type P
 import { prisma } from "@brandai/db";
 import sharp from "sharp";
 import { hashPassword } from "../src/lib/password";
+import { uploadReceiptMatches, summarizeUploadReceipt, summarizeUploadRow, type AcceptedUpload, type UploadEvidenceRow } from "./studio-upload-evidence";
+import { classifyUploadFailure, uploadTaskToken } from "../src/lib/studio-upload-diagnostics";
 
 const base = new URL(process.env.WORKBENCH_TEST_URL ?? "http://127.0.0.1:3000");
 const database = new URL(process.env.DATABASE_URL ?? "http://invalid");
@@ -20,6 +22,7 @@ if (process.env.WORKBENCH_TEST_IMAGE_EDIT === "1") throw new Error("The modifica
 const artifacts = path.resolve(process.env.WORKBENCH_UI_ARTIFACTS ?? ".novart-ui-artifacts", `port-${base.port || "80"}`);
 const networkProblems: string[] = [], browserErrors: string[] = [], requests: Array<{ path: string; method: string; status: number }> = [];
 const privateValues: string[] = [], contexts: BrowserContext[] = [], fixtureUsers: string[] = [];
+const acceptedUploads: AcceptedUpload[] = [], uploadReceipts = new Map<string, ReturnType<typeof summarizeUploadReceipt>>();
 const deferred = ["Homepage attachments handoff", "Unsent creation draft autosave/pagehide recovery", "Workflow purpose and modification-target persistence", "Real EXACT-generation output frames", "Real image-modification provider acceptance", "Per-object/nested-frame export", "Compliance UI and notification deep links"];
 let browser: Browser | undefined, currentPage: Page | undefined, step = "initialize", passed = 0, realHomepageHandoff = false, realDraftPersistence = false, realWorkflowPersistence = false;
 const check = (label: string) => { passed++; console.log(`PASS ${label}`); };
@@ -134,12 +137,65 @@ async function exportScene(page: Page, frame: Frame, format: "png" | "svg", labe
 const uploadFixture = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAADAAAAAgCAIAAADbtmxLAAAAN0lEQVR4nO3OQQ0AMAgEMHSiBNmTMBccjyYV0Jp+p1R8ICQkJJQeCAkJCaUHQkJCQumBkJDQsg+b+YyX6uuGDAAAAABJRU5ErkJggg==", "base64");
 async function upload(page: Page, frame: Frame, name: string) {
   const chooser = page.waitForEvent("filechooser"); await frame.getByRole("button", { name: "上传图片", exact: true }).first().click();
-  const accepted = page.waitForResponse(response => new URL(response.url()).pathname === "/studio/material-upload" && response.request().method() === "POST"); await (await chooser).setFiles({ name, mimeType: "image/png", buffer: uploadFixture });
-  const response = await accepted; assert.equal(response.status(), 202, "Upload requires the real worker and configured storage"); return await response.json() as { taskId: string; projectId: string };
+  const projectId = new URL(frame.url()).searchParams.get("projectId"), workspaceId = new URL(frame.url()).searchParams.get("workspaceId");
+  assert.ok(projectId && workspaceId);
+  const submitted = page.waitForRequest(request => {
+    const url = new URL(request.url());
+    return url.origin === base.origin && url.pathname === "/studio/material-upload" && request.method() === "POST" && request.frame() === frame;
+  });
+  await (await chooser).setFiles({ name, mimeType: "image/png", buffer: uploadFixture });
+  // Chromium intentionally omits file multipart bodies from postDataBuffer.
+  // Bind the response to the exact Request object, then verify its mutation
+  // against the real outbox row for this unique file, user, project and SHA.
+  const request = await submitted, response = await request.response(); assert.ok(response, "Upload request must receive a response");
+  assert.equal(response.status(), 202, "Upload requires the real worker and configured storage");
+  const receipt: unknown = await response.json();
+  const rows = await prisma.studioMaterialUpload.findMany({ where: { workspaceId, projectId, userId: fixtureUsers[0], fileName: name, sha256: digest(uploadFixture), sizeBytes: uploadFixture.length },
+    select: { taskId: true, projectId: true, mutationId: true, fileName: true, sha256: true, sizeBytes: true } });
+  assert.equal(rows.length, 1, "This chosen file must have exactly one real durable upload");
+  const captured = rows[0]!; acceptedUploads.push({ ...captured, workspaceId });
+  uploadReceipts.set(captured.taskId, summarizeUploadReceipt(receipt));
+  assert.ok(uploadReceiptMatches(receipt, captured), "Upload receipt must match the actual file's persisted task, project and mutation");
+  return receipt;
 }
 async function materialReceipt(page: Page, workspaceId: string, projectId: string, taskId: string) {
   return eventually("real material worker", async () => { const response = await page.context().request.get(new URL(`/studio/material-upload?workspaceId=${workspaceId}&projectId=${projectId}&taskId=${taskId}`, base).href);
-    assert.equal(response.status(), 200); const value = await response.json(); assert.notEqual(value.status, "FAILED", "Real material task failed"); return value.status === "SUCCEEDED" ? value : null; }, 120000);
+    assert.equal(response.status(), 200); const value = await response.json();
+    uploadReceipts.set(taskId, summarizeUploadReceipt(value));
+    assert.ok(value.taskId === taskId && value.projectId === projectId, "Upload poll must return the requested task and project");
+    assert.notEqual(value.status, "FAILED", "Real material task failed"); return value.status === "SUCCEEDED" ? value : null; }, 120000);
+}
+async function uploadFailureEvidence() {
+  const records = [];
+  // Captured before fixture cleanup. Only accepted uploads from this test are
+  // queried; no file bytes, object keys, names or error messages leave memory.
+  for (const accepted of acceptedUploads.slice(-8)) {
+    try {
+      const rows = await prisma.$queryRaw<UploadEvidenceRow[]>`SELECT u."taskId", u."workspaceId", u."projectId", u."mutationId", u."fileName", u."sha256", u."sizeBytes",
+        octet_length(u."body") AS "bodyBytes", u."assetId", u."attemptToken", u."width", u."height", u."expiresAt", t."status", t."progress", t."error",
+        (a."id" IS NOT NULL) AS "assetPresent", (a."deprecatedAt" IS NOT NULL) AS "assetDeprecated"
+        FROM "StudioMaterialUpload" u JOIN "AsyncTask" t ON t."id" = u."taskId" LEFT JOIN "Asset" a ON a."id" = u."assetId"
+        WHERE u."taskId" = ${accepted.taskId} AND u."workspaceId" = ${accepted.workspaceId} AND u."projectId" = ${accepted.projectId} AND u."userId" = ${fixtureUsers[0] ?? ""}`;
+      records.push({ ...summarizeUploadRow(rows[0], accepted), api: uploadReceipts.get(accepted.taskId) ?? null });
+    } catch (error) { records.push({ task: uploadTaskToken(accepted.taskId), readable: false, failure: classifyUploadFailure(error), api: uploadReceipts.get(accepted.taskId) ?? null }); }
+  }
+  let redis: import("ioredis").default | undefined, queue: import("bullmq").Queue | undefined;
+  const jobs = [];
+  let queueError: ReturnType<typeof classifyUploadFailure> | undefined;
+  try {
+    const redisUrl = new URL(process.env.REDIS_URL ?? "redis://127.0.0.1:6379");
+    if (redisUrl.protocol !== "redis:" || !["127.0.0.1", "localhost"].includes(redisUrl.hostname)) throw new Error("Diagnostic Redis must be loopback");
+    const [{ default: IORedis }, { Queue }, { queuePrefix }] = await Promise.all([import("ioredis"), import("bullmq"), import("../src/lib/queue-prefix")]);
+    redis = new IORedis(redisUrl.href, { lazyConnect: true, maxRetriesPerRequest: 1, enableOfflineQueue: false, connectTimeout: 2000, commandTimeout: 2000, retryStrategy: () => null });
+    redis.on("error", () => undefined); await redis.connect();
+    queue = new Queue("studio-material-upload", { connection: redis, prefix: queuePrefix, skipMetasUpdate: true }); queue.on("error", () => undefined);
+    for (const accepted of acceptedUploads.slice(-8)) {
+      const job = await queue.getJob(accepted.taskId);
+      jobs.push({ task: uploadTaskToken(accepted.taskId), present: !!job, ...(job ? { state: await job.getState(), attemptsMade: job.attemptsMade, failure: classifyUploadFailure(job.failedReason) } : {}) });
+    }
+  } catch (error) { queueError = classifyUploadFailure(error); }
+  finally { redis?.disconnect(); await queue?.close().catch(() => undefined); }
+  return { beforeFixtureCleanup: true, records, jobs, ...(queueError ? { queueError } : {}) };
 }
 async function assertMaterial(page: Page, workspaceId: string, projectId: string, material: { assetId: string; url: string; assetSha256: string }, expected?: Buffer) {
   assert.equal(material.url, `/api/workspaces/${workspaceId}/assets/${material.assetId}/raw`); const asset = await prisma.asset.findUniqueOrThrow({ where: { id: material.assetId } });
@@ -373,8 +429,9 @@ try {
   await mkdir(artifacts, { recursive: true }); await writeFile(path.join(artifacts, "acceptance.json"), JSON.stringify({ editor: "novart-owned", checksPassed: passed, realDatabase: true, realUploads: process.env.WORKBENCH_TEST_MATERIAL_UPLOAD === "1", realHomepageHandoff, realDraftPersistence, realWorkflowPersistence, realGeneration: process.env.WORKBENCH_TEST_GENERATION === "1", realImageModification: false, realExactGeneration: false, deferred }, null, 2));
   console.log(`Owned studio UI: ${passed} checks passed against real app/database. Deferred UI journeys: ${deferred.join("; ")}`);
 } catch (error) {
+  const uploads = await uploadFailureEvidence();
   await mkdir(artifacts, { recursive: true }); await currentPage?.screenshot({ path: path.join(artifacts, "failure.png"), fullPage: true }).catch(() => undefined);
-  const diagnostics = { step, error: safe(error instanceof Error ? error.message : String(error)), networkProblems: networkProblems.map(safe), browserErrors, requests, page: currentPage ? new URL(currentPage.url()).pathname : null, deferred };
+  const diagnostics = { step, error: safe(error instanceof Error ? error.message : String(error)), uploads, networkProblems: networkProblems.map(safe), browserErrors, requests, page: currentPage ? new URL(currentPage.url()).pathname : null, deferred };
   await writeFile(path.join(artifacts, "diagnostics.json"), JSON.stringify(diagnostics, null, 2)); console.error("Owned UI acceptance failed: " + JSON.stringify(diagnostics)); throw error;
 } finally {
   await Promise.allSettled(contexts.map(context => context.close())); await browser?.close(); for (const id of fixtureUsers.reverse()) await prisma.user.delete({ where: { id } }); await prisma.$disconnect();

@@ -7,10 +7,12 @@ import { ApiException } from "@/lib/api";
 import { inspectStudioMaterialImage } from "@/lib/studio-materials-image";
 import { expireStudioMaterials, requireStudioMaterialProject } from "@/lib/studio-materials";
 import { enqueueStudioMaterial } from "@/lib/studio-materials-queue";
+import { uploadFailureEvent, type UploadStage } from "../studio-upload-diagnostics";
 
 export async function runStudioMaterialJob(job: Job<{ taskId: string }>) {
   const taskId = job.data.taskId;
   const token = randomUUID();
+  let claimDiagnostic: ReturnType<typeof uploadFailureEvent> | null = null;
   const row = await prisma.$transaction(async tx => {
     await tx.$queryRaw`SELECT "id" FROM "AsyncTask" WHERE "id" = ${taskId} FOR UPDATE`;
     const found = await tx.studioMaterialUpload.findUnique({ where: { taskId }, include: { task: true } });
@@ -18,22 +20,29 @@ export async function runStudioMaterialJob(job: Job<{ taskId: string }>) {
     if (found.expiresAt.getTime() <= Date.now() || !found.body) {
       await tx.asyncTask.update({ where: { id: taskId }, data: { status: "FAILED", error: "图片上传超时，请重新选择图片上传。" } });
       await tx.studioMaterialUpload.update({ where: { taskId }, data: { body: null, attemptToken: null } });
+      claimDiagnostic = uploadFailureEvent(taskId, "claim", true, "图片上传超时，请重新选择图片上传。", !found.body);
       return null;
     }
     await tx.studioMaterialUpload.update({ where: { taskId }, data: { attemptToken: token } });
     await tx.asyncTask.update({ where: { id: taskId }, data: { status: "RUNNING", progress: 10, error: null } });
     return found;
   });
+  if (claimDiagnostic) console.warn("[studio-upload-diagnostic] " + JSON.stringify(claimDiagnostic));
   if (!row) return;
   const signal = AbortSignal.timeout(Math.max(1, Math.min(60_000, row.expiresAt.getTime() - Date.now())));
+  let stage: UploadStage = "authorization";
   try {
     await requireStudioMaterialProject(row.workspaceId, row.userId, row.projectId, true);
+    stage = "checksum";
     const body = Buffer.from(row.body!);
     if (createHash("sha256").update(body).digest("hex") !== row.sha256) throw new ApiException(422, "上传内容校验失败，请重新选择图片。");
+    stage = "image-validation";
     const dimensions = await inspectStudioMaterialImage(body, row.mimeType);
     signal.throwIfAborted();
+    stage = "storage";
     const stored = await uploadBuffer(body, row.mimeType, `${row.workspaceId}/studio/${row.projectId}`, signal, row.objectKey);
     signal.throwIfAborted();
+    stage = "commit";
     await prisma.$transaction(async tx => {
       const project = await tx.$queryRaw<Array<{ archivedAt: Date | null }>>`SELECT "archivedAt" FROM "Project" WHERE "id" = ${row.projectId} AND "workspaceId" = ${row.workspaceId} FOR UPDATE`;
       if (!project[0] || project[0].archivedAt) throw new ApiException(409, "项目已归档或删除，未添加图片。");
@@ -52,16 +61,18 @@ export async function runStudioMaterialJob(job: Job<{ taskId: string }>) {
     });
   } catch (error) {
     const terminal = error instanceof ApiException || row.expiresAt.getTime() <= Date.now() || job.attemptsMade + 1 >= (job.opts.attempts ?? 1);
-    await prisma.$transaction(async tx => {
+    const recorded = await prisma.$transaction(async tx => {
       await tx.$queryRaw`SELECT "id" FROM "AsyncTask" WHERE "id" = ${taskId} FOR UPDATE`;
       const current = await tx.studioMaterialUpload.findUnique({ where: { taskId }, include: { task: true } });
       // A lost DB reply after commit, or an older stalled worker, must never
       // delete or overwrite a completed asset / newer worker's claim.
-      if (!current || current.task.status === "SUCCEEDED" || current.attemptToken !== token) return;
+      if (!current || current.task.status === "SUCCEEDED" || current.attemptToken !== token) return false;
       await tx.asyncTask.update({ where: { id: taskId }, data: { status: terminal ? "FAILED" : "PENDING", progress: 0,
         error: terminal ? (error instanceof ApiException ? error.message : "图片存储失败，请重新选择图片上传；若持续失败请联系管理员。") : null } });
       await tx.studioMaterialUpload.update({ where: { taskId }, data: { attemptToken: null, ...(terminal ? { body: null } : {}) } });
+      return true;
     });
+    if (recorded) console.warn("[studio-upload-diagnostic] " + JSON.stringify(uploadFailureEvent(taskId, stage, terminal, error)));
     if (!terminal) throw new Error("Studio image storage temporarily unavailable");
   }
 }

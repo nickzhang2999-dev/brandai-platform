@@ -1,5 +1,10 @@
 # Integration progress
 
+## 2026-10-10 16:46 — requested CDS report delivered
+
+- Root cause report distinguishes verified expose-only conversion/dependency gaps, CDS-root relative bind resolution, historical shared deployment impact, application defects and the unknown upload FAILED cause. Versioned source lines and safe evidence links checked; independent report review passed.
+- Current local batch passed contracts934 + UI24 = L1 958, AI365, full Web typecheck and production build. Upload diagnostics focused19 and actual multipart response binding passed. Storage actual-container CI has not run; no new deployment, storage bootstrap or paid provider call.
+
 ## 2026-10-10 afternoon — continuing first-product completion
 
 - Final local batch: L1 911 (887 contracts + 24 UI), AI365, full Web typecheck and low-memory production build passed. Product export: 124 assets / 76 captured mappings / 27,063,376 bytes. Actual Chromium fixture regression: 36 checks; archive6 + homepage11 boundaries passed. No actual provider/DB/S3 result is claimed by fixtures.
@@ -188,3 +193,6 @@ Repaired anonymous workflow API edge response and actual permission-error UI loc
 # 2026-10-10 16:11 real stack result
 
 b778553/BranchImage38036388613 completed success: backend95/UI15/built-container rechecks and checked-image publish. Final internal-admin storage configuration passes verify/lint/preview plus full local949/365/type/build gates; pending-import3d3d941a2c50 submitted, actual approval/service not yet confirmed. Zero provider calls/deployments.
+# 2026-10-10 16:34 report and correction
+
+CDS root cause report delivered. Approved Garage project-scope entity remains stopped; two fresh independent env keys set/reconciled with other env unchanged. Current CDS source proves relative infra bind uses CDS repoRoot. New storage image bakes public TOML, CI adds real isolated S3/permissions/recreation gate. c38 source95/UI15 passed, built UI upload FAILED with cause missing; diagnose exact response/task before cleanup. Zero model handoff/provider calls/deployments.

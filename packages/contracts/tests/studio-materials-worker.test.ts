@@ -81,4 +81,21 @@ describe("durable studio upload worker", () => {
     f.remove.mockRejectedValue(new Error("storage unavailable")); await sweepStudioMaterialUploads();
     expect(f.update).not.toHaveBeenCalled();
   });
+  it("records a real rejected checksum stage without logging staged bytes or raw task identifiers", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      row.sha256 = "0".repeat(64); await runStudioMaterialJob(job());
+      expect(row.task.status).toBe("FAILED");
+      const events = warning.mock.calls.map(([message]) => JSON.parse(String(message).split("[studio-upload-diagnostic] ")[1]!));
+      expect(events).toEqual([expect.objectContaining({ stage: "checksum", terminal: true, category: "UPLOAD_CHECKSUM_MISMATCH", httpStatus: 422 })]);
+      expect(JSON.stringify(events)).not.toContain("actual staged bytes"); expect(events[0].task).not.toBe("task");
+    } finally { warning.mockRestore(); }
+  });
+  it("does not report a terminal write when a newer worker owns the claim", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      f.upload.mockImplementation(async () => { row.attemptToken = "newer-worker"; throw new ApiException(403, "private error body"); });
+      await runStudioMaterialJob(job()); expect(row.task.status).toBe("RUNNING"); expect(warning).not.toHaveBeenCalled();
+    } finally { warning.mockRestore(); }
+  });
 });

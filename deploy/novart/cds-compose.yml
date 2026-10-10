@@ -9,6 +9,8 @@ x-cds-env:
   NOVART_GARAGE_RPC_SECRET: ""
   # Supply a separate admin token through CDS private settings; never commit its value.
   NOVART_GARAGE_ADMIN_TOKEN: ""
+  # Full SHA of a CI-verified immutable storage image, set only after publication.
+  NOVART_GARAGE_IMAGE_SHA: ""
   CDS_POSTGRES_USER: "${CDS_POSTGRES_USER:-}"
   CDS_POSTGRES_PASSWORD: "${CDS_POSTGRES_PASSWORD:-}"
   CDS_POSTGRES_DB: "${CDS_POSTGRES_DB:-}"
@@ -26,8 +28,8 @@ x-cds-env-meta:
 
 services:
   novart-storage:
-    # Official 2.4.1 multi-architecture manifest verified 2026-10-10.
-    image: "dxflrs/garage:v2.4.1@sha256:9c96caa2612d3411acc5b0e6701fb238dbfba33e533a6d7d3d811a4b12d0d020"
+    # The storage Dockerfile pins the official Garage base and bakes this repo config.
+    image: "ghcr.io/nickzhang2999-dev/brandai-platform/novart-product-storage:sha-${NOVART_GARAGE_IMAGE_SHA}"
     command: ["/garage", "-c", "/etc/garage.toml", "server", "--single-node"]
     restart: unless-stopped
     mem_limit: 512m
@@ -37,7 +39,6 @@ services:
       RUST_LOG: "garage=warn"
       RUST_BACKTRACE: "0"
     volumes:
-      - "./deploy/novart/storage/garage.toml:/etc/garage.toml:ro"
       - "novart_integration_garage_meta:/var/lib/garage/meta"
       - "novart_integration_garage_data:/var/lib/garage/data"
     # CDS requires ports to create infra and assigns a host TCP port.

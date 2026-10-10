@@ -1,5 +1,9 @@
 # CDS 问题记录｜2026-10-10
 
+完整原因、源码位置、证据边界与修复建议见 [CDS具体原因报告](cds-root-cause-report-2026-10-10.md)。16:34补充：当前线上03836f8cb的infra bind按CDS自身repoRoot解析（container.ts:2925），而非项目分支目录；基础设施依赖会在应用部署前启动（branches.ts:13217）。已获批相对TOML挂载因此不能保证读到项目配置，当前未启动故障配置。改为配置内置的预构建存储镜像，真实CI结果待确认。
+
+本日新存储两项独立密钥已实际设置，仅新RPC/admin字段变化；原环境字段比较一致。c38d476真实源95/API与15/UI过，但构建后UI一次已受理上传进入FAILED，原因记录不足；这一条尚不能归因于CDS，新增清理前脱敏诊断和准确请求回执绑定。公司原项目与共享数据本轮未变，实际AI调用0。
+
 ## 已确认：expose-only 存储声明获准后未转换为服务
 
 范围仅独立产品 `98cfea6cdcbd`。人工批准导入 `473923091fca` 后，保存的 Compose 有 `novart-storage` Garage 服务、两份独立卷和只读配置；实际基础设施仍只有原 PostgreSQL/Redis，没有新增存储，Web/Worker 的 dependsOn 却已含该缺失服务。导入结果 addedInfra=[]，三个应用 profile 保持 prebuilt。

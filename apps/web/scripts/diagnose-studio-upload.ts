@@ -4,6 +4,8 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, stat, open, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { summarizeUploadWorkerEvents } from "../src/lib/studio-upload-diagnostics";
+import { sanitizeCapturedUploadEvidence } from "./studio-upload-evidence";
 
 const knownErrors: Array<[string, RegExp]> = [
   ["redis-offline-queue", /Stream isn't writeable and enableOfflineQueue options is false/i],
@@ -34,7 +36,7 @@ function summarizeLog(text: string) {
     ["stored-secret-decrypt-failed", /\[ai-settings\] a stored secret failed to decrypt/],
     ["next-server-ready", /Ready in \d|✓ Ready/],
   ] as const) events[label] = lines.filter(line => pattern.test(line)).length;
-  return { linesRead: lines.length, events, errorCategoryCounts: counts, codes: classify(text).codes };
+  return { linesRead: lines.length, events, errorCategoryCounts: counts, codes: classify(text).codes, uploadFailures: summarizeUploadWorkerEvents(text) };
 }
 async function logSummary(filename?: string) {
   if (!filename) return { available: false };
@@ -53,6 +55,7 @@ function safeUiDiagnostic(value: unknown) {
   return {
     available: !!value, error: classify(raw.error), browserErrorCount: Array.isArray(raw.browserErrors) ? raw.browserErrors.length : 0,
     unexpectedNetworkCount: Array.isArray(raw.networkProblems) ? raw.networkProblems.length : 0,
+    uploadsBeforeCleanup: sanitizeCapturedUploadEvidence(raw.uploads),
     // No step names, user content, dynamic IDs, URLs, queries or error messages.
     requests: requests.slice(-50).map(item => {
       const row = item && typeof item === "object" ? item as Record<string, unknown> : {};

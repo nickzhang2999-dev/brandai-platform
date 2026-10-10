@@ -70,6 +70,7 @@ jobs:
         run: |
           node scripts/test-novart-owned-shell.cjs
           node scripts/test-novart-owned-home-start.cjs
+          node scripts/check-novart-garage-container.cjs --static-check
           pnpm -F web exec tsx scripts/diagnose-studio-upload.ts --self-test
       - name: Owned React editor interaction regression with isolated fixtures
         shell: bash
@@ -201,14 +202,32 @@ jobs:
           rsync -a --exclude cache apps/web/.next/ .novart-build/next/
           WEB_IMAGE="ghcr.io/${REPOSITORY,,}/novart-product-web:sha-${COMMIT_SHA}"
           AI_IMAGE="ghcr.io/${REPOSITORY,,}/novart-product-ai:sha-${COMMIT_SHA}"
+          STORAGE_IMAGE="ghcr.io/${REPOSITORY,,}/novart-product-storage:sha-${COMMIT_SHA}"
           echo "WEB_IMAGE=$WEB_IMAGE" >> "$GITHUB_ENV"
           echo "AI_IMAGE=$AI_IMAGE" >> "$GITHUB_ENV"
+          echo "STORAGE_IMAGE=$STORAGE_IMAGE" >> "$GITHUB_ENV"
           docker build -f deploy/novart/Dockerfile.web --build-arg COMMIT_SHA="$COMMIT_SHA" \
             --label "org.opencontainers.image.source=https://github.com/$REPOSITORY" \
             --label "org.opencontainers.image.revision=$COMMIT_SHA" -t "$WEB_IMAGE" .
           docker build -f deploy/novart/Dockerfile.ai --build-arg COMMIT_SHA="$COMMIT_SHA" \
             --label "org.opencontainers.image.source=https://github.com/$REPOSITORY" \
             --label "org.opencontainers.image.revision=$COMMIT_SHA" -t "$AI_IMAGE" .
+          # The build context contains only the public config and Dockerfile.
+          # No host checkout mount is needed by the resulting Garage image.
+          docker build -f deploy/novart/storage/Dockerfile --build-arg COMMIT_SHA="$COMMIT_SHA" \
+            --label "org.opencontainers.image.source=https://github.com/$REPOSITORY" \
+            --label "org.opencontainers.image.revision=$COMMIT_SHA" -t "$STORAGE_IMAGE" deploy/novart/storage
+      - name: Validate Garage storage image and durable permissions
+        id: garage_storage_gate
+        timeout-minutes: 8
+        env:
+          COMMIT_SHA: ${{ github.sha }}
+          NOVART_GARAGE_NETWORK: ${{ job.services.postgres.network }}
+          NOVART_GARAGE_NETWORK_ANCHOR: ${{ job.services.postgres.id }}
+        # No published ports: the Linux runner reaches the container's bridge
+        # address on the existing service network. The script creates, labels
+        # and disposes only its own new containers, volumes and test objects.
+        run: node scripts/check-novart-garage-container.cjs
       - name: Check the built containers against the disposable database
         run: |
           finish_containers() {
@@ -258,6 +277,15 @@ jobs:
           else:
               raise SystemExit('Built container health checks did not pass')
           PY
+      - name: Publish checked Garage storage image
+        id: publish_garage_storage
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_ACTOR: ${{ github.actor }}
+        run: |
+          trap 'docker logout ghcr.io >/dev/null 2>&1 || true' EXIT
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GH_ACTOR" --password-stdin
+          docker push "$STORAGE_IMAGE"
       - name: Publish checked images
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -279,6 +307,7 @@ jobs:
           # only known test outputs; never upload raw logs or diagnostics.json.
           path: |
             apps/web/.novart-ui-artifacts/owned-react-fixture.json
+            apps/web/.novart-ui-artifacts/garage-container.json
             apps/web/.novart-ui-artifacts/port-3000/acceptance.json
             apps/web/.novart-ui-artifacts/port-3000/failure-runtime.json
             apps/web/.novart-ui-artifacts/port-3000/failure.png
