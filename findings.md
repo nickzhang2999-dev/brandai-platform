@@ -1,5 +1,12 @@
 # Integration findings
 
+## 2026-10-10 afternoon live verification
+- The user's CDS right-hand review entry still loads 9e5e2af. Its package hash matches the frozen preview manifest and its old SDK files are served; /studio-editor is absent. The local owned editor has not been deployed there.
+- The independent product is still 8474347. Read-only configuration and AppSetting audit confirms no usable independent provider or S3 setup. This is a configuration prerequisite, not a fabricated successful generation or a CDS outage.
+- Native queryProject returns version as the string `novart-{revision}`. Fixed the new archive guard and protocol test to compare this real representation; a numeric fixture would have hidden a live archive failure.
+- Owned frame/c-image serialization passes two tests against the actual server EXACT geometry: authoritative frame bounds and image placement retained, incompatible aspect/opacity still rejected.
+- Direct notification links must preserve exactly one bounded taskId/requestId through /canvas -> /studio-editor. A link never creates a task; the authenticated receipt endpoint remains authoritative.
+
 ## 2026-10-10 owned editor checkpoint
 - The owned runtime reads/writes the existing native envelope as data; no SDK is required by /studio-editor. Complex/unknown legacy scenes remain read-only rather than silently flattening.
 - Backend geometry continues to recognize c-image and frame records. Native pageStates camera uses world offsets, while the owned DOM uses pixel offsets; both directions now convert explicitly.

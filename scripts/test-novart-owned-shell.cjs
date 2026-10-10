@@ -25,15 +25,15 @@ async function scenario({mounted=true,ready=true,status='saved',revision=7,store
   const context={frames:new Map(mounted?[[projectId,entry]]:[]),frameDocument:()=>({win,doc:{querySelector:()=>({})}}),
     crypto:{randomUUID:()=>requestId},location:{origin:'https://owned.invalid'},
     window:{addEventListener(_type,fn){handlers.add(fn);listeners++;},removeEventListener(_type,fn){if(handlers.delete(fn))listeners--; }},
-    api:async(route,payload)=>{calls.push(route);assert.equal(payload.projectId,projectId);return{code:0,data:{projectId,version:stored}};},
+    api:async(route,payload)=>{calls.push(route);assert.equal(payload.projectId,projectId);return{code:0,data:{projectId,version:'novart-'+stored}};},
     setTimeout(fn){if(timeout)queueMicrotask(fn);return 1;},clearTimeout(){},Error,Number};
   const prepare=vm.runInNewContext('('+guard+')',context);let result,error;
   try {result=await prepare({projectId});}catch(e){error=e;}
   assert.equal(listeners,0,'No leftover message listener');return{result,error,calls};
 }
 (async()=>{
-  let value=await scenario();assert.equal(value.result,7);assert.equal(value.calls.length,1);passed++;
-  value=await scenario({mounted:false});assert.equal(value.result,7);assert.equal(value.calls.length,1);passed++;
+  let value=await scenario();assert.equal(value.result,'novart-7');assert.equal(value.calls.length,1);passed++;
+  value=await scenario({mounted:false});assert.equal(value.result,'novart-7');assert.equal(value.calls.length,1);passed++;
   value=await scenario({ready:false});assert.match(value.error.message,/加载/);assert.equal(value.calls.length,0);passed++;
   value=await scenario({status:'failed'});assert.match(value.error.message,/保存未确认/);assert.equal(value.calls.length,0);passed++;
   value=await scenario({stored:8});assert.match(value.error.message,/更新/);passed++;

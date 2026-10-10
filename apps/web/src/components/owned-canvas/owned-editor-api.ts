@@ -1,11 +1,14 @@
 import { z } from "zod";
-import { StudioGenerationInput, StudioGenerationView, StudioMaterial, StudioMaterialUploadView, StudioWorkflowView } from "@brandai/contracts";
+import { StudioGenerationInput, StudioGenerationView, StudioGenerationComplianceView, StudioMaterial, StudioMaterialUploadView, StudioWorkflowView, StudioWorkflowAssets, StudioWorkflowSaveInput } from "@brandai/contracts";
 import { createDocumentSession, createNovartApiClient, NovartApiError } from "../../lib/novart-api-client";
 
 export type Material = z.infer<typeof StudioMaterial>;
 export type UploadTask = z.infer<typeof StudioMaterialUploadView>;
 export type GenerationTask = z.infer<typeof StudioGenerationView>;
+export type GenerationCompliance = z.infer<typeof StudioGenerationComplianceView>;
 export type Workflow = z.infer<typeof StudioWorkflowView>;
+export type WorkflowAssets = z.infer<typeof StudioWorkflowAssets>;
+export type WorkflowInput = z.infer<typeof StudioWorkflowSaveInput>;
 export type GenerationInput = z.infer<typeof StudioGenerationInput>;
 export type PersistentImage = Pick<Material, "assetId" | "assetSha256" | "width" | "height" | "url"> & { versionId?: string; fileName?: string };
 
@@ -63,7 +66,11 @@ export function createOwnedEditorApi(workspaceId: string, projectId: string, use
     value.results.forEach(image);
     return value;
   }
-  const getUpload = async (taskId: string, timeoutMs = 20000) => upload(await request(endpoint("/studio/material-upload", { taskId }), StudioMaterialUploadView, {}, timeoutMs));
+  const getUpload = async (taskId: string, timeoutMs = 20000) => {
+    const value = upload(await request(endpoint("/studio/material-upload", { taskId }), StudioMaterialUploadView, {}, timeoutMs));
+    if (value.taskId !== taskId) throw new NovartApiError("上传任务回执与请求不一致。", 422);
+    return value;
+  };
   const readWorkflow = async () => {
     const value = await request(endpoint("/workflow"), StudioWorkflowView);
     if (value.projectId !== projectId) throw new NovartApiError("素材用途不属于当前项目。", 422);
@@ -71,10 +78,42 @@ export function createOwnedEditorApi(workspaceId: string, projectId: string, use
   };
   return {
     api, session, image, readWorkflow,
+    async workflowAssets() {
+      const value = await request(endpoint("/workflow/assets"), StudioWorkflowAssets);
+      if (value.projectId !== projectId) throw new NovartApiError("素材选择不属于当前项目。", 422);
+      return value;
+    },
+    async saveWorkflow(input: WorkflowInput) {
+      const payload = StudioWorkflowSaveInput.parse(input);
+      if (payload.projectId !== projectId) throw new NovartApiError("素材设置不属于当前项目。", 400);
+      const value = await request(endpoint("/workflow"), StudioWorkflowView, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      if (value.projectId !== projectId || value.revision !== payload.revision + 1
+        || JSON.stringify([value.mode, value.target, value.references]) !== JSON.stringify([payload.mode, payload.target, payload.references])) {
+        throw new NovartApiError("素材设置的保存回执未确认，请读取服务器结果后继续。", null, "INVALID_RECEIPT", true);
+      }
+      return value;
+    },
     listMaterials: async () => (await request(endpoint("/studio/materials"), z.array(StudioMaterial))).map(image),
     listUploads: async () => (await request(endpoint("/studio/material-upload"), z.object({ tasks: z.array(StudioMaterialUploadView) }))).tasks.map(upload),
     listGenerations: async () => (await request(endpoint("/studio/generation"), z.object({ requests: z.array(StudioGenerationView) }))).requests.map(generation),
     getUpload,
+    async getGeneration(requestId: string) {
+      const value = generation(await request(endpoint("/studio/generation", { requestId }), StudioGenerationView));
+      if (value.requestId !== requestId) throw new NovartApiError("生成任务回执与请求不一致。", 422);
+      return value;
+    },
+    async retryArchive(requestId: string) {
+      const value = generation(await request(endpoint("/studio/generation/retry-archive"), StudioGenerationView,
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectId, requestId }) }));
+      if (value.requestId !== requestId) throw new NovartApiError("归档回执与当前任务不一致，请刷新确认。", null, "INVALID_RECEIPT", true);
+      return value;
+    },
+    async readCompliance(versionId: string, retry = false) {
+      const value = await request(endpoint(retry ? "/studio/generation/compliance/retry" : "/studio/generation/compliance", retry ? {} : { versionId }), StudioGenerationComplianceView,
+        retry ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectId, versionId }) } : {});
+      if (value.versionId !== versionId) throw new NovartApiError("品牌检查回执与当前图片不一致，请刷新确认。", retry ? null : 422, "INVALID_RECEIPT", retry);
+      return value;
+    },
     async uploadFile(file: File, mutationId: string) {
       if (!["image/png", "image/jpeg", "image/webp"].includes(file.type) || !file.size || file.size > 10 * 1024 * 1024) throw new NovartApiError("请选择 10 MB 以内的 PNG、JPEG 或 WebP 图片。", 400);
       const form = new FormData(); form.set("projectId", projectId); form.set("mutationId", mutationId); form.set("file", file, file.name || "image.png");
@@ -102,9 +141,16 @@ export function createOwnedEditorApi(workspaceId: string, projectId: string, use
     async submitGeneration(input: GenerationInput) {
       const payload = StudioGenerationInput.parse(input);
       if (payload.projectId !== projectId) throw new NovartApiError("生成请求不属于当前项目。", 400);
-      const value = generation(await request(endpoint("/studio/generation"), StudioGenerationView, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }));
-      if (value.mutationId !== payload.mutationId) throw new NovartApiError("生成回执与本次需求不一致，请刷新任务确认。", 409);
-      return value;
+      const receipt = await request(endpoint("/studio/generation"), StudioGenerationView, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      try {
+        const value = generation(receipt);
+        if (value.mutationId !== payload.mutationId) throw new Error("生成回执与本次需求不一致，请刷新任务确认。");
+        return value;
+      } catch (error) {
+        // The server accepted the POST. A foreign or inconsistent reply is not
+        // a definitive rejection: keep the original paid-request mutation.
+        throw new NovartApiError(error instanceof Error ? error.message : "生成回执尚未核对，请刷新任务确认。", null, "INVALID_RECEIPT", true);
+      }
     },
   };
 }

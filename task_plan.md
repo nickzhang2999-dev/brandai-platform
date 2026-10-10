@@ -1,5 +1,12 @@
 # Novart product integration
 
+## Active completion batch — 2026-10-10 afternoon
+- [in_progress] Owned editor workflow: saved reference purposes, EXACT output frame, whole-image modification, server draft recovery and task-notification focus. Three agents split workflow/client, draft/browser regressions and read-only CDS audit; root integrates routes and checks.
+- [complete] Live origin of the user's five-second disappearance: CDS right-side reviewed branch still routes to the independent old preview at 9e5e2af. It is not the local owned editor at 92d91f8. No new-version deployment is claimed.
+- [complete] Independent configuration audit: product remains 8474347; its AppSetting row and provider/S3 configuration are absent. Presence-only audit, no company settings copied.
+- [pending] Full local gates on the final candidate, exact-SHA skip-marker dry-run, push, actual isolated DB/S3/UI CI, verified-image release and public stable editing. Real provider acceptance requires private external configuration; missing configuration must remain visible.
+- [pending] Correct the right-side review entry after the product is verified. The branch entry API is scoped to its current preview domain, not an arbitrary cross-project alias; use an authorized explicit handoff rather than inventing a slug or deploying shared services.
+
 ## Current steering — owned canvas, 2026-10-10
 User chose the company-owned canvas route. Phase A [complete]: SDK-free React entry, loss-aware legacy adapter, core tools/history/export, authenticated document/upload/generation wiring and homepage handoff. Phase B [complete]: 23 actual Chromium interactions, 11 homepage and 6 archive protocol checks, L1 835, AI pytest 365, complete typecheck and low-memory production build passed. Phase C [pending]: real isolated DB/S3/provider acceptance, EXACT/modify/draft/complex legacy UI and exact-version release. Details: docs/novart-owned-canvas-plan.md. Goal mode remains disabled; no licensing bypass. Completion here is the first local owned-editor batch, not the launch-ready product.
 

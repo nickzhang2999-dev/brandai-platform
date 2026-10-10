@@ -26,6 +26,32 @@ describe("owned editor product API", () => {
     const api = setup(vi.fn().mockResolvedValue(response([{ ...material, url: "/api/workspaces/other/assets/asset-a/raw" }])));
     await expect(api.listMaterials()).rejects.toMatchObject({ status: 422 });
   });
+  it("retries only archival on the authenticated original task", async () => {
+    const task = { mode: "generate", requestId: "gen-a", projectId: identity.projectId, mutationId, generationId: "g-a", status: "SUCCEEDED", progress: null,
+      expiresAt: "2099-01-01T00:00:00.000Z", archiveExpiresAt: "2099-01-01T00:00:00.000Z", archiveProcessingExpiresAt: null, displayText: "saved request", resultState: "PENDING", results: [], error: null, archiveError: null, canRetryArchive: false };
+    const fetcher = vi.fn().mockResolvedValue(response(task, 202));
+    expect(await setup(fetcher).retryArchive("gen-a")).toEqual(task);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    const [path, init] = fetcher.mock.calls[0]!;
+    expect(path).toBe("/studio/generation/retry-archive?projectId=owned-p&workspaceId=owned-w");
+    expect(JSON.parse(init.body)).toEqual({ projectId: identity.projectId, requestId: "gen-a" });
+    expect(init.method).toBe("POST");
+    await expect(setup(vi.fn().mockResolvedValue(response({ ...task, requestId: "foreign" }))).retryArchive("gen-a")).rejects.toMatchObject({ code: "INVALID_RECEIPT", uncertain: true });
+  });
+  it("reads and explicitly retries only the existing image check", async () => {
+    const receipt = { taskId: null, versionId: "version-a", status: "NOT_REQUESTED", progress: 0, expiresAt: null, checkedImageSha256: null, report: null, error: null, canRetry: true };
+    const fetcher = vi.fn().mockImplementation(async () => response(receipt));
+    expect(await setup(fetcher).readCompliance("version-a")).toEqual(receipt);
+    expect(fetcher.mock.calls[0]![0]).toBe("/studio/generation/compliance?projectId=owned-p&versionId=version-a&workspaceId=owned-w");
+    await setup(fetcher).readCompliance("version-a", true);
+    expect(fetcher.mock.calls[1]![0]).toBe("/studio/generation/compliance/retry?projectId=owned-p&workspaceId=owned-w");
+    expect(JSON.parse(fetcher.mock.calls[1]![1].body)).toEqual({ projectId: identity.projectId, versionId: "version-a" });
+    await expect(setup(vi.fn().mockResolvedValue(response({ ...receipt, versionId: "other" }))).readCompliance("version-a")).rejects.toMatchObject({ status: 422 });
+  });
+  it("keeps absent VLM configuration and incomplete image reports visibly unavailable", async () => {
+    await expect(setup(vi.fn().mockResolvedValue(response({ error: "视觉检查服务未配置" }, 503))).readCompliance("version-a", true)).rejects.toMatchObject({ status: 503, uncertain: true, message: "视觉检查服务未配置" });
+    await expect(setup(vi.fn().mockResolvedValue(response({ versionId: "version-a", status: "SUCCEEDED", report: {} }))).readCompliance("version-a")).rejects.toMatchObject({ code: "INVALID_RECEIPT" });
+  });
 
   it("does not turn malformed or foreign-project upload receipts into success", async () => {
     const foreign = setup(vi.fn().mockResolvedValue(response({ ...upload, projectId: "other-project" })));
@@ -37,6 +63,16 @@ describe("owned editor product API", () => {
   it("preserves a real configuration error without inventing a generated result", async () => {
     const api = setup(vi.fn().mockResolvedValue(response({ error: "真实图片生成服务尚未配置。" }, 503)));
     await expect(api.submitGeneration({ projectId: identity.projectId, mutationId, prompt: "Test image", workflowRevision: 0, documentRevision: 0, sizeSelection: { ratioKey: "1:1", resolutionTier: "1K" } })).rejects.toMatchObject({ message: "真实图片生成服务尚未配置。", status: 503, uncertain: true });
+  });
+  it.each(["mutation", "project", "image"])("keeps the paid-request intent when an accepted POST has inconsistent %s semantics", async mismatch => {
+    const task = { mode: "generate", requestId: "gen-a", projectId: identity.projectId, mutationId, generationId: "g-a", status: "SUCCEEDED", progress: null,
+      expiresAt: "2099-01-01T00:00:00.000Z", archiveExpiresAt: "2099-01-01T00:00:00.000Z", archiveProcessingExpiresAt: null, displayText: "saved request", resultState: "READY",
+      results: [{ versionId: "version-a", assetId: material.assetId, assetSha256: material.assetSha256, width: 10, height: 20, mimeType: "image/png", url: material.url }], error: null, archiveError: null, canRetryArchive: false };
+    if (mismatch === "mutation") task.mutationId = "4b106a7f-d393-49c2-a396-511d8f010102";
+    if (mismatch === "project") task.projectId = "foreign-project";
+    if (mismatch === "image") task.results[0]!.url = "/api/workspaces/foreign/assets/asset-a/raw";
+    await expect(setup(vi.fn().mockResolvedValue(response(task, 202))).submitGeneration({ projectId: identity.projectId, mutationId, prompt: "Test image", workflowRevision: 0, documentRevision: 0, sizeSelection: { ratioKey: "1:1", resolutionTier: "1K" } }))
+      .rejects.toMatchObject({ status: null, uncertain: true, code: "INVALID_RECEIPT" });
   });
 
   it("keeps the request timeout connected after headers while the JSON body stalls", async () => {

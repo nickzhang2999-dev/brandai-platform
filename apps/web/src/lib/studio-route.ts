@@ -1,6 +1,7 @@
 import { ZodError } from "zod";
 import { ApiException } from "./api";
 import { studioSession } from "./studio-session";
+import { studioTaskIntent } from "./studio-task-intent";
 import { studioAsset, studioHtml } from "./studio-assets";
 import { readWorkbenchJson } from "./workbench-request";
 import { isWorkbenchSameOrigin } from "./workbench-origin";
@@ -33,6 +34,8 @@ export async function studioRoute(req: Request) {
         // The reviewed outer workspace now hosts our editor. No captured SDK
         // scripts or public license configuration are needed for this entry.
         const target = new URLSearchParams({ workspaceId, projectId: doc.projectId });
+        const task = studioTaskIntent(url.searchParams);
+        if (task) target.set(task.kind === "STUDIO_UPLOAD" ? "taskId" : "requestId", task.id);
         return new Response(null, { status: 302, headers: { ...headers,
           Location: "/studio-editor?" + target.toString() } });
       }

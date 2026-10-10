@@ -1,5 +1,17 @@
 # Integration progress
 
+## 2026-10-10 afternoon — continuing first-product completion
+
+- Final local batch: L1 911 (887 contracts + 24 UI), AI365, full Web typecheck and low-memory production build passed. Product export: 124 assets / 76 captured mappings / 27,063,376 bytes. Actual Chromium fixture regression: 36 checks; archive6 + homepage11 boundaries passed. No actual provider/DB/S3 result is claimed by fixtures.
+- Lost accepted POST with invalid semantics now retains the original paid-request intent. Same-tab reload restores it without POST; explicit confirmation repeats exact payload/mutation. Check cache keys bind version and image digest.
+- Real DB/S3/UI CI script now asserts draft/pageleave/fresh auth and workflow purpose/modify-target persistence. Exact provider/edit checks remain explicitly deferred.
+- Git direct network failed twice; the existing Windows local HTTP proxy works when supplied to one Git command. No global network/security setting changed. Push/CI/deploy evidence still pending this log checkpoint.
+- User identifies CDS right-side review as the still-failing page. Read-only audit proves it is the old 9e5e2af service, not the owned editor; no repeated user-refresh experiment requested.
+- Parallel work: workflow/EXACT/modify/client; server draft and real React fixture regressions; live CDS/configuration audit. Root fixes archive string-version contract and notification route/readiness wiring.
+- Focused route/actual EXACT geometry: 27 tests passed. Draft agent reports 16 protocol/state tests and 5 hook lifecycle tests passed. Full gates and real CI are pending for this batch.
+- Local test command initially used the wrong Vitest path; corrected to the installed package-local runner and passed. No dependency installation or infrastructure startup.
+- No push, deployment, real provider call or shared-data write in this checkpoint. External provider/S3 setup and correct reviewed entry remain release prerequisites.
+
 ## 2026-10-09 — low-memory production build passes
 - Added opt-in `build:low-memory`: one Next build CPU, serial server compilation/tracing, Webpack memory optimization and worker, bounded per-process heap/native thread pools, ignored repository-local temporary directory on D: here. Default build and runtime settings remain unchanged.
 - Launcher syntax and both config modes verified; actual production build exited 0. Log: D:/coding/.novart-tmp/low-memory-build.log (UTF-16LE). Earlier L1 786, AI365, typecheck and isolated native interaction results remain the source gates; no unrelated reruns.

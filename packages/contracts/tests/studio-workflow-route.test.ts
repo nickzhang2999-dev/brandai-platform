@@ -60,6 +60,19 @@ describe("authenticated workflow and material routes", () => {
     expect(response.status).toBe(503); expect(response.headers.has("location")).toBe(false);
     expect(await response.text()).not.toContain("private detail");
   });
+  it.each([["taskId", "upload-one"], ["requestId", "generation-one"]])("keeps an existing %s notification on the authorized owned-editor redirect", async (key, id) => {
+    vi.mocked(readEditorDocument).mockResolvedValue({ projectId: "p", readOnly: false } as Awaited<ReturnType<typeof readEditorDocument>>);
+    const response = await studioRoute(request(`/canvas?projectId=p&${key}=${id}&userId=untrusted`));
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toBe(`/studio-editor?workspaceId=server-workspace&projectId=p&${key}=${id}`);
+    expect(f.upload).not.toHaveBeenCalled(); expect(f.generate).not.toHaveBeenCalled();
+  });
+  it.each(["taskId=x&requestId=y", "taskId=x&taskId=y", "taskId=", "requestId=%2Fprivate", "taskId=" + "a".repeat(129)])("rejects ambiguous or malformed task links: %s", async query => {
+    vi.mocked(readEditorDocument).mockResolvedValue({ projectId: "p", readOnly: false } as Awaited<ReturnType<typeof readEditorDocument>>);
+    const response = await studioRoute(request(`/canvas?projectId=p&${query}`));
+    expect(response.status).toBe(422); expect(response.headers.has("location")).toBe(false);
+    expect(f.upload).not.toHaveBeenCalled(); expect(f.generate).not.toHaveBeenCalled();
+  });
   it("does not serve license context before authentication succeeds", async () => {
     f.session.mockRejectedValue(new Error("session unavailable"));
     const response = await studioRoute(request("/studio"));

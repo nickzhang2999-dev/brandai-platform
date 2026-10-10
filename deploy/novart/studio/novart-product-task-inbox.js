@@ -139,7 +139,16 @@
     if (location.hash !== '#/workspace/'+intent.projectId) { pending = null; status.textContent = ''; return; }
     if (Date.now() > intent.deadline) { pending = null; status.textContent = '此项目暂未展开，可在新标签页查看任务；当前画布与草稿仍保留。'; openElsewhere.hidden = false; return; }
     const frame = document.querySelector('iframe[data-testid="studio-canvas-frame"][data-project-id="'+intent.projectId+'"]');
-    if (!intent.sent && frame?.dataset.ready === 'true' && frame.closest('.ns-frame-slot')?.dataset.active === 'true' && frame.contentWindow.NovartProductTaskInbox?.ready()) {
+    // The owned React editor publishes readiness after restoring the real document.
+    // Keep the legacy adapter for the captured editor, but do not depend on it.
+    let taskReady = false;
+    try {
+      const editor = frame?.contentWindow;
+      taskReady = editor?.document.documentElement.dataset.nvStudioCanvasReady === 'true'
+        && !!editor.document.querySelector('[data-testid="owned-editor"]')
+        || !!editor?.NovartProductTaskInbox?.ready();
+    } catch { /* A navigating or foreign frame is not a valid task receiver. */ }
+    if (!intent.sent && frame?.dataset.ready === 'true' && frame.closest('.ns-frame-slot')?.dataset.active === 'true' && taskReady) {
       intent.frame = frame; intent.sent = true;
       frame.contentWindow.postMessage({type:'novart-product-task-open',workspaceId:context.workspaceId,userId:context.user.id,projectId:intent.projectId,kind:intent.kind,taskId:intent.taskId,token:intent.token},location.origin);
     }

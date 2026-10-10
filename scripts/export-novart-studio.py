@@ -57,7 +57,7 @@ def product_owned_shell_patch(text: str) -> str:
     }
     const stored = await api('/api/canva/project/queryProject', {projectId:p.projectId});
     if (stored.code !== 0 || stored.data?.projectId !== p.projectId) throw new Error('项目暂不可读，请刷新后重试。');
-    if (savedRevision !== undefined && stored.data.version !== savedRevision) throw new Error('项目刚刚发生更新，尚未归档。请刷新后重试。');
+    if (savedRevision !== undefined && stored.data.version !== 'novart-' + savedRevision) throw new Error('项目刚刚发生更新，尚未归档。请刷新后重试。');
     return stored.data.version;
   }
 '''
