@@ -105,3 +105,6 @@ Company OpenCanvas has image/shape/text, selection/transforms and persistence bu
 - CI 38031824770 real API/UI uploads timed out, but worker/server logs and queue snapshots were not collected. The startup mechanism is demonstrated; exclusive incident attribution awaits real CI evidence.
 - upload-artifact v4 excludes hidden files by default; .novart-ui-artifacts reports need include-hidden-files plus a precise safe allowlist. Avoid uploading raw service logs or environment/config data.
 - Material worker initial DB claim can fail outside its catch; a failed Bull job and PENDING task are a distinct diagnostic case. Do not erase intent or rerun a paid provider as a generic queue repair.
+# 2026-10-10 15:54 verified increment
+
+CI38035078835/fedbfa3 failed on bare /workflow anonymous307 and two alert matches at permission rejection; repaired response boundary plus exact real-error testid, retaining auth/404 checks. Approved CDS import473923091fca silently omitted expose-only Garage but persisted dangling dependsOn. Three official resync previews/noexecute pin classification to ports vs expose, not image whitelist. Runtime binding and persistence remain unproven. No new deploy, model handoff or paid image call.

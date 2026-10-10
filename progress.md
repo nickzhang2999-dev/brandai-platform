@@ -182,3 +182,6 @@ Core editor, product entry, compatible model/export and homepage handoff are int
 - CI 38031824770 passed repository gates, owned React fixtures and disposable setup but failed both real uploads at the retained 120-second deadline. No images published or deployment attempted. Independent product stays on 8474347.
 - Installed BullMQ RedisConnection reproduces a permanently rejected initialization after skipWaitingForReady INFO runs while connecting. Repair four producers with a bounded ready handshake and fresh owned connection after failure. This is a demonstrated mechanism, not yet proven as the sole cause of the CI failure.
 - Add failure-only redacted service/DB/queue diagnostics and exact hidden-report artifact allowlist. Retain actual acceptance checks and provider opt-in boundaries. Do not claim worker construction is successful consumption.
+# 2026-10-10 15:54 continuation
+
+Repaired anonymous workflow API edge response and actual permission-error UI locator; 13 actual Next regressions pass. Full contracts925/UI24/AI365, Web typecheck and low-memory production build pass. Archive6/home11 protocol checks pass. CDS approved storage declaration still lacks actual storage service, so deployment blocked pending verified configuration. Real-model one-image authorization recorded; no secret handoff or provider call executed.

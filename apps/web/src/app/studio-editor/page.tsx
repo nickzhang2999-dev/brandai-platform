@@ -35,7 +35,7 @@ export default async function OwnedEditorPage({ searchParams }: {
     if (error instanceof ApiException || error instanceof EditorDocumentError) {
       if (error.status === 401) redirect("/login?callbackUrl=" + encodeURIComponent(callback));
       return <main className="flex min-h-screen flex-col items-center justify-center gap-4 bg-bg p-8 text-fg">
-        <p role="alert">{error.message}</p>
+        <p role="alert" data-testid="owned-editor-access-error">{error.message}</p>
         <a className="rounded-full bg-primary px-5 py-2 text-primary-fg" href={"/studio?" + new URLSearchParams(query.has("workspaceId") ? { workspaceId: query.get("workspaceId")! } : {}) + "#/projects"} target="_top">返回项目库</a>
       </main>;
     }

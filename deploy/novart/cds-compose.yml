@@ -37,8 +37,10 @@ services:
       - "./deploy/novart/storage/garage.toml:/etc/garage.toml:ro"
       - "novart_integration_garage_meta:/var/lib/garage/meta"
       - "novart_integration_garage_data:/var/lib/garage/data"
-    # Container-network access only. No host ports, CDS HTTP entry or admin UI.
-    expose: ["3900"]
+    # CDS requires ports to create infra and assigns a host TCP port.
+    # This does not guarantee loopback-only binding; approval must acknowledge TCP mapping.
+    # No CDS HTTP entry, Garage admin listener, website service or public bucket.
+    ports: ["3900"]
     healthcheck:
       test: ["CMD", "/garage", "health", "--quiet"]
       interval: 10s

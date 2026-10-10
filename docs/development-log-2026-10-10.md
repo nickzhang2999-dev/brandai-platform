@@ -1,6 +1,16 @@
 # Novart 开发日志｜2026-10-10
 
-## 精确推送与真实上传阻断（当前收口）
+## 15:54 续作：真实联调修正与存储导入缺口
+
+候选 `fedbfa31e9391a7ad4b32b1e339325aac445d2fa` 的 CI **38035078835** 未通过，未发布镜像或部署。真实上传、持久图片字节和工作流读写已运行通过；API 后续匿名访问裸 `/workflow` 得到 307，而验收要求 JSON 401。原中间件只识别 `/workflow/` 前缀，漏了裸接口。现修正 API 边界并保留 `/studio`、`/studio-editor` 和相似页面路径的登录跳转；使用实际 NextRequest/NextResponse 的 13 项回归通过。
+
+同次浏览器验收在外部成员拒绝访问时被两个 `role=alert` 元素触发严格定位错误：Next 的隐藏 route announcer 与真实权限错误提示。为实际权限提示增加专属 testid，脚本精确定位该提示，同时继续核对无编辑器和文档 API 404；没有删除权限断言或选择任意第一个 alert。后续脚本与真实服务静态对照未发现另一处明确过时断言，仍以重新运行 CI 为准。
+
+CDS pending-import **473923091fca** 已获人工批准，但真实实体回读显示 **novart-storage 未创建**，Web/Worker 却有该依赖。保存的 YAML 保留 Garage、卷及配置，导入 addedInfra 为空；服务端 lint 200/findings=[] 没有发现这项遗漏。三次官方 `infra/resync/preview` 只读对照确认：原 expose-only 声明 adds0；仅改为 loopback ports 后 Garage adds1；独立 MinIO 对照也 adds1。调用前后项目/基础设施/profile 哈希一致，未 execute。现有证据锁定此链路忽略 expose-only，而非 Garage 镜像白名单。预览没有展示监听绑定、卷、命令等完整运行字段，不能据此承诺安全持久运行，当前不部署悬空依赖配置。详见 [CDS 当日问题](cds-development-issues-2026-10-10.md)。
+
+用户授权仅复用公司图片模型做小规模验收，模型配置密封转接与单张 1K 普通生图脚本均已准备，尚未执行配置转接或付费调用。本批 contracts925/UI24（L1共949）/AI365、完整 Web 类型检查及低内存生产构建全部通过；构建不启动本机基础设施，连接拒绝提示不当运行健康证据。实际独立Chromium fixture36项（含15秒稳定挂载）、归档协议6项、首页协议11项通过；fixture接口为loopback合成服务，不当真实DB/provider证明。本批完整真实栈仍待重跑。独立审查确认中间件路径边界、原成员鉴权和三重拒绝断言均保持。公司 main、共享数据和旧评审入口保留；右侧旧 SDK 入口不能算新版自研编辑器验收。
+
+## 精确推送与真实上传阻断（历史批次）
 
 ### 修复后的真实栈结果与通知断言更新
 

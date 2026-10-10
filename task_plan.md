@@ -1,6 +1,9 @@
 # Novart product integration
 
 ## Active completion batch — 2026-10-10 afternoon
+- [in_progress] Latest CI fedbfa3: repair bare /workflow anonymous JSON401 and unambiguous owned permission error assertion; 13 actual-Next regressions pass, full gates and real stack rerun before release.
+- [blocked] Approved storage import473923091fca saved YAML but dropped expose-only Garage service while keeping dependencies. Official preview-only comparisons confirm ports classification; actual private binding/volume/runtime preservation not proven. Do not deploy dangling configuration. See docs/cds-development-issues-2026-10-10.md.
+- [pending] Authorized one ordinary 1K image only: sealed image-settings handoff and one-shot acceptance remain unexecuted until exact green deployed revision and independent durable storage.
 - [in_progress] Owned editor workflow: saved reference purposes, EXACT output frame, whole-image modification, server draft recovery and task-notification focus. Three agents split workflow/client, draft/browser regressions and read-only CDS audit; root integrates routes and checks.
 - [complete] Live origin of the user's five-second disappearance: CDS right-side reviewed branch still routes to the independent old preview at 9e5e2af. It is not the local owned editor at 92d91f8. No new-version deployment is claimed.
 - [complete] Independent configuration audit: product remains 8474347; its AppSetting row and provider/S3 configuration are absent. Presence-only audit, no company settings copied.
