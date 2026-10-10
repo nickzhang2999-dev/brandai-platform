@@ -1,9 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ZodError } from "zod";
 const f = vi.hoisted(() => ({ session: vi.fn(), read: vi.fn(), assets: vi.fn(), save: vi.fn(), image: vi.fn(), upload: vi.fn(), task: vi.fn(), materials: vi.fn(), generate: vi.fn(), generation: vi.fn(), retryArchive: vi.fn(), compliance: vi.fn(), retryCompliance: vi.fn() }));
 vi.mock("../../../apps/web/src/lib/api", () => ({ ApiException: class extends Error { constructor(public status: number, message: string) { super(message); } } }));
 vi.mock("../../../apps/web/src/lib/studio-session", () => ({ studioSession: f.session }));
-vi.mock("../../../apps/web/src/lib/studio-assets", () => ({ studioAsset: vi.fn(), studioHtml: vi.fn() }));
+vi.mock("../../../apps/web/src/lib/studio-assets", async importOriginal => ({ ...await importOriginal<typeof import("../../../apps/web/src/lib/studio-assets")>(), studioAsset: vi.fn() }));
 vi.mock("../../../apps/web/src/lib/editor-documents", () => ({ readEditorDocument: vi.fn() }));
 vi.mock("../../../apps/web/src/lib/studio-state", () => ({}));
 vi.mock("../../../apps/web/src/lib/studio-workflow", () => ({ readStudioWorkflow: f.read, readStudioWorkflowAssets: f.assets, saveStudioWorkflow: f.save, studioWorkflowImage: f.image }));
@@ -12,6 +12,8 @@ vi.mock("../../../apps/web/src/lib/studio-generation", () => ({ submitStudioGene
 vi.mock("../../../apps/web/src/lib/studio-generation-artifacts", () => ({ retryStudioGenerationArtifacts: f.retryArchive }));
 vi.mock("../../../apps/web/src/lib/studio-generation-compliance", () => ({ readStudioGenerationCompliance: f.compliance, retryStudioGenerationCompliance: f.retryCompliance }));
 import { studioRoute } from "../../../apps/web/src/lib/studio-route";
+import { studioAsset } from "../../../apps/web/src/lib/studio-assets";
+import { readEditorDocument } from "../../../apps/web/src/lib/editor-documents";
 
 const base = "http://127.0.0.1:3000";
 const sha = "a".repeat(64);
@@ -26,11 +28,29 @@ beforeEach(() => {
   f.compliance.mockResolvedValue({ versionId: "v", status: "FAILED", report: null });
   f.retryCompliance.mockResolvedValue({ versionId: "v", status: "PENDING", report: null });
 });
+afterEach(() => vi.unstubAllEnvs());
 const request = (path: string, body?: unknown) => new Request(base + path, body === undefined ? {} : {
   method: "POST", headers: { origin: base, "content-type": "application/json" }, body: JSON.stringify(body),
 });
 
 describe("authenticated workflow and material routes", () => {
+  it.each(["/studio", "/canvas?projectId=p"])("injects only the server license configuration into authenticated %s HTML", async path => {
+    vi.stubEnv("NOVART_TLDRAW_LICENSE_KEY", "synthetic-not-a-real-license");
+    vi.mocked(studioAsset).mockResolvedValue({ bytes: Buffer.from('<html><head><script src="/native.js"></script></head><body></body></html>'), mime: "text/html" });
+    vi.mocked(readEditorDocument).mockResolvedValue({ readOnly: true } as Awaited<ReturnType<typeof readEditorDocument>>);
+    const response = await studioRoute(request(path + (path.includes("?") ? "&" : "?") + "NOVART_TLDRAW_LICENSE_KEY=untrusted-query"));
+    expect(response.status).toBe(200); expect(response.headers.get("cache-control")).toBe("no-store");
+    const html = await response.text();
+    const serialized = html.match(/<script id="novart-product-context" type="application\/json">([^<]*)<\/script>/)?.[1];
+    expect(JSON.parse(serialized!).canvasLicense).toEqual({ key: "synthetic-not-a-real-license", status: "configured" });
+    expect(html).not.toContain("untrusted-query");
+  });
+  it("does not serve license context before authentication succeeds", async () => {
+    f.session.mockRejectedValue(new Error("session unavailable"));
+    const response = await studioRoute(request("/studio"));
+    expect(response.status).not.toBe(200); expect(studioAsset).not.toHaveBeenCalled();
+    expect(await response.text()).not.toContain("canvasLicense");
+  });
   it("checks a published version by server identity and retries only the check", async () => {
     const read = await studioRoute(request("/studio/generation/compliance?projectId=p&versionId=v&userId=other"));
     expect(read.status).toBe(200); expect(f.compliance).toHaveBeenCalledWith("server-workspace", "server-user", { projectId: "p", versionId: "v" });

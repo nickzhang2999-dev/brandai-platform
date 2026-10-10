@@ -5,21 +5,39 @@
   if (query.get('studio') !== '1' || query.get('ui') !== 'novart' || parent === window) return;
   const projectId = query.get('projectId');
   if (!projectId) return;
-  let ready = false, observer = null;
+  let ready = false, failed = false, observer = null;
   const send = (action, extra = {}) => parent.postMessage({type: 'nv-studio', action, projectId, ...extra}, location.origin);
   const usable = node => node && !node.closest('[hidden],[inert]') && !node.disabled;
 
   function install() {
+    if (failed) return;
+    // The comparison header mounts before the native application. A shell-only
+    // ready signal used to dismiss loading even when the editor never started.
+    const licenseRequired = Boolean(document.querySelector('[data-testid="tl-license-expired"]'));
+    if (licenseRequired || document.querySelector('.tl-error-boundary')
+      || ['bootstrap', 'canvas-crash'].includes(document.documentElement.dataset.novartNativeFailure)) {
+      failed = true;
+      ready = false;
+      document.documentElement.dataset.nvStudioCanvasReady = 'false';
+      observer?.disconnect();
+      observer = null;
+      send('startup-error', {code: licenseRequired ? 'NATIVE_CANVAS_LICENSE_REQUIRED' : 'NATIVE_CANVAS_FAILED'});
+      return;
+    }
+    if (ready) return;
     const back = document.querySelector('#novart-bar .nv-back');
     if (!back || !document.querySelector('#nv-workflow-toggle') || document.documentElement.dataset.nvMotionReady !== 'true') return;
+    if (!document.querySelector('[data-testid="canvas"]')
+      || !document.querySelector('[data-testid="bottom-toolbar"]')
+      || !document.querySelector('[data-testid="upload-menu-trigger"]')) return;
     back.removeAttribute('target');
     back.href = '/studio#/projects';
     back.title = '返回项目库，保留当前画布会话';
     back.setAttribute('aria-label', '返回项目库');
     document.documentElement.dataset.nvStudioCanvasReady = 'true';
     ready = true;
-    observer?.disconnect();
-    observer = null;
+    // Retain only the readiness observer so a subsequent native error boundary
+    // also revokes readiness. No error text or project content crosses frames.
     send('ready');
   }
 
@@ -77,7 +95,7 @@
   window.addEventListener('message', command);
   observer = new MutationObserver(install);
   observer.observe(document.documentElement, {subtree: true, childList: true, attributes: true,
-    attributeFilter: ['data-nv-motion-ready']});
+    attributeFilter: ['data-nv-motion-ready', 'data-novart-native-failure']});
   install();
   window.addEventListener('pagehide', () => {
     observer?.disconnect();

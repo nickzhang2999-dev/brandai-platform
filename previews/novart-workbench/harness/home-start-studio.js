@@ -384,6 +384,36 @@
     entry.uploadTask.finally(() => { entry.uploadTask = null; });
   }
   function updateWorkspaceNav(id) { if (!id) return; lastWorkspaceId = id; const link = $('ns-current-workspace'); link.hidden = false; link.href = '#/workspace/' + encodeURIComponent(id); $('ns-workspace-label').textContent = project(id)?.projectName || '当前工作台'; link.title = '返回 ' + (project(id)?.projectName || '当前工作台') + '，保留编辑会话'; }
+  function workspaceStartupFailed(entry, reason = 'timeout') {
+    if (frames.get(entry.id) !== entry || (entry.ready && !['native-error', 'license-required'].includes(reason))) return;
+    // A late generic timeout must not downgrade a confirmed license refusal.
+    if (entry.startupError === 'license-required') reason = 'license-required';
+    if (entry.ready) entry.failedAfterReady = true;
+    entry.ready = false; entry.frame.dataset.ready = 'false';
+    entry.startupError = ['native-error', 'license-required'].includes(reason) ? reason : 'timeout';
+    clearTimeout(entry.timer);
+    if (reason === 'license-required') homeStart.canvasUnavailable(entry);
+    if (activeId !== entry.id || route.page !== 'workspace') return;
+    window.dispatchEvent(new Event('novart-startup-check'));
+    if (entry.startupError === 'license-required') {
+      const detail = '当前画布引擎未获得此域名授权。已保存的项目和原始图片仍保留，授权配置完成后再刷新页面。'
+        + (entry.failedAfterReady ? '最近的改动可能尚未保存。' : '');
+      $('ns-workspace-status').replaceChildren(node('div', '', detail),
+        button('返回项目库', 'ns-secondary', () => go('/projects')));
+      return;
+    }
+    const detail = entry.failedAfterReady
+      ? '画布运行出错。已保存的内容仍保留，最近的改动可能尚未保存。'
+      : entry.startupError === 'native-error'
+      ? '原生画布启动失败，图片和工具尚未恢复。已保存的内容仍保留。'
+      : '原生画布尚未启动，图片和工具还没有加载完成。已保存的内容仍保留。';
+    $('ns-workspace-status').replaceChildren(node('div', '', detail),
+      button('重新打开画布', 'ns-secondary', () => {
+        if (frames.get(entry.id) !== entry || entry.ready || activeId !== entry.id || route.page !== 'workspace') return;
+        clearTimeout(entry.timer); entry.focusCleanup?.(); entry.slot.remove(); frames.delete(entry.id);
+        ensureWorkspace(entry.id);
+      }), button('返回项目库', 'ns-secondary', () => go('/projects')));
+  }
   async function ensureWorkspace(id) {
     if (route.page !== 'workspace' || route.projectId !== id) return;
     activeId = id;
@@ -406,11 +436,12 @@
       const slot = node('div', 'ns-frame-slot'), frame = node('iframe'); frame.dataset.testid = 'studio-canvas-frame'; frame.dataset.projectId = id; slot.dataset.projectId = id; slot.dataset.active = 'false'; slot.inert = true; frame.title = (project(id).projectName || '未命名项目') + ' — 原画布编辑器'; frame.allow = 'clipboard-read; clipboard-write'; frame.src = '/canvas?projectId=' + encodeURIComponent(id) + '&v=1&ui=novart&studio=1&inputGuard=m10&canvasTools=m12&motion=m13&feedback=m14&visual=m16&statusUi=m20&layoutUi=m21&draftUi=m24&imageHistory=m25&floatingUi=m26&focusUi=m27&draftRead=rc2&referenceData=rc3'; slot.append(frame); $('ns-frames').append(slot);
       entry = {id, frame, slot, ready: false, pendingPanel: pendingPanels.get(id) || '', timer: 0}; frames.set(id, entry); pendingPanels.delete(id);
       const params = new URLSearchParams(location.search); if (!entry.pendingPanel && ['requirements', 'materials', 'upload'].includes(params.get('panel'))) { entry.pendingPanel = params.get('panel'); history.replaceState(history.state, '', '/studio' + location.hash); }
-      entry.timer = setTimeout(() => { if (!entry.ready && activeId === id && route.page === 'workspace') { $('ns-workspace-status').replaceChildren(node('div', '', '画布仍在加载。原编辑器资源加载完成后会自动继续。'), button('查看项目库', 'ns-secondary', () => go('/projects'))); } }, 22000);
+      entry.timer = setTimeout(() => workspaceStartupFailed(entry), 22000);
     }
     frames.forEach(item => { const active = item.id === id; item.slot.dataset.active = String(active); item.slot.style.visibility = active ? 'visible' : 'hidden'; item.slot.inert = !active; item.frame.setAttribute('aria-hidden', String(!active)); });
     updateWorkspaceNav(id);
     $('ns-workspace-status').textContent = entry.ready ? '' : '正在打开原画布…';
+    if (entry.startupError) workspaceStartupFailed(entry, entry.startupError);
     panelCommand(entry);
     restoreWorkspaceInput(entry);
     completeBlankRecovery(entry);
@@ -461,7 +492,8 @@
   window.addEventListener('message', event => {
     if (event.origin !== location.origin) return; const data = event.data; if (!data || data.type !== 'nv-studio' || typeof data.projectId !== 'string') return;
     const entry = frames.get(data.projectId); if (!entry || event.source !== entry.frame.contentWindow) return;
-    if (data.action === 'ready') { entry.ready = true; entry.frame.dataset.ready = 'true'; clearTimeout(entry.timer); trackWorkspaceInput(entry); prefsToFrame(entry); if (activeId === entry.id && route.page === 'workspace') $('ns-workspace-status').textContent = ''; panelCommand(entry); restoreWorkspaceInput(entry); updateWorkspaceReturn(entry); completeBlankRecovery(entry); homeStart.resume(entry); }
+    if (data.action === 'startup-error') workspaceStartupFailed(entry, data.code === 'NATIVE_CANVAS_LICENSE_REQUIRED' ? 'license-required' : 'native-error');
+    else if (data.action === 'ready') { if (entry.startupError === 'license-required') return; entry.ready = true; delete entry.startupError; delete entry.failedAfterReady; entry.frame.dataset.ready = 'true'; clearTimeout(entry.timer); trackWorkspaceInput(entry); prefsToFrame(entry); if (activeId === entry.id && route.page === 'workspace') $('ns-workspace-status').textContent = ''; panelCommand(entry); restoreWorkspaceInput(entry); updateWorkspaceReturn(entry); completeBlankRecovery(entry); homeStart.resume(entry); }
     else if (entry.ready && activeId === entry.id && data.action === 'navigate' && ['home', 'projects', 'resources', 'brand', 'settings'].includes(data.route)) {
       const origin = data.route === 'projects' ? workspaceOrigins.get(entry.id) : null;
       libraryReturnFocus = origin?.focus || null; go(origin?.path || '/' + data.route);

@@ -107,6 +107,17 @@ window.createHomeStart = function createHomeStart(host) {
   }
   function readNative(entry) {
     const {win,doc} = host.frameDocument(entry) || {}; if (!win) return null;
+    if (entry.startupError === 'license-required' || doc.querySelector('[data-testid="tl-license-expired"]')) {
+      const error = new Error('当前画布引擎未获得此域名授权，图片交接已停止。原始需求和图片仍保留，授权配置完成后再刷新页面。');
+      error.nativeStartup = true; error.nativeLicense = true;
+      throw error;
+    }
+    if (doc.querySelector('.tl-error-boundary')
+      || ['bootstrap', 'canvas-crash'].includes(doc.documentElement.dataset.novartNativeFailure)) {
+      const error = new Error('画布打开失败，图片尚未导入。原始需求和图片仍保留，请重新打开或返回项目库。');
+      error.nativeStartup = true;
+      throw error;
+    }
     // Shell readiness precedes lazy native chunks in ordinary browsers. Never
     // require an unregistered module: webpack would cache its failed creation.
     if (!doc.querySelector('[data-testid="canvas"]') || !doc.querySelector('[data-testid="upload-menu-trigger"]')) return null;
@@ -126,16 +137,23 @@ window.createHomeStart = function createHomeStart(host) {
     throw new Error('画布工具尚未加载完成，请重新打开后继续。');
   }
   function current(entry) { return host.current(entry) && !host.project(entry.id)?.archivedAt; }
+  function licenseState() {
+    return {kind:'error',title:'画布引擎需要授权',detail:'当前画布引擎未获得此域名授权，图片交接已停止。原始需求和图片仍保留，授权配置完成后再刷新页面。',licenseRequired:true};
+  }
   function paint(entry, state) {
+    if (entry.startupError === 'license-required') state = licenseState();
     states.set(entry.id,state); if (!current(entry)) return;
     const box = $('hs-handoff'); box.hidden = false; box.dataset.state = state.kind;
     box.replaceChildren(node('span','hs-handoff-mark',state.kind === 'error' ? '!' : '↗'),node('strong','',state.title),node('p','',state.detail));
     if (state.kind === 'error') {
       const actions = node('div','hs-handoff-actions');
-      actions.append(button(state.checkOnly ? '重新确认保存' : '重新打开并继续','ns-primary',() => state.checkOnly ? resume(entry,true) : location.reload()));
+      if (!state.licenseRequired) actions.append(button(state.checkOnly ? '重新确认保存' : '重新打开并继续','ns-primary',() => state.checkOnly ? resume(entry,true) : location.reload()));
       actions.append(button('返回项目库','ns-text-button',() => host.goProjects())); box.append(actions);
     }
     $('ns-frames').classList.add('hs-transferring'); entry.frame.inert = true;
+  }
+  function canvasUnavailable(entry) {
+    if (states.has(entry.id) || runs.has(entry.id)) paint(entry, licenseState());
   }
   function hide() { $('hs-handoff').hidden = true; $('ns-frames').classList.remove('hs-transferring'); document.querySelectorAll('#ns-frames iframe').forEach(frame => { frame.inert = false; }); }
   function transfer(entry, files) {
@@ -155,7 +173,7 @@ window.createHomeStart = function createHomeStart(host) {
           // after the native picker click has returned.
           win.setTimeout(() => {
             if (settled) return;
-            try { if (!current(entry)) throw new Error('页面已切换。'); input.files = transfer.files; input.dispatchEvent(new win.Event('change',{bubbles:true})); finish(); }
+            try { if (!current(entry)) throw new Error('页面已切换。'); readNative(entry); input.files = transfer.files; input.dispatchEvent(new win.Event('change',{bubbles:true})); finish(); }
             catch (error) { finish(error); }
           },0);
         } catch (error) { finish(error); }
@@ -169,6 +187,7 @@ window.createHomeStart = function createHomeStart(host) {
         for (let count=0;count<60;count++) {
           if (settled) return;
           if (!current(entry)) { finish(new Error('页面已切换。')); return; }
+          readNative(entry);
           const control = doc.querySelector('[data-testid="upload-menu-uploadImage"]');
           if (control) { control.click(); return; }
           await delay(80);
@@ -183,6 +202,7 @@ window.createHomeStart = function createHomeStart(host) {
       try { job = await api('/studio/start/job?projectId=' + encodeURIComponent(entry.id)); }
       catch (error) { if (error.status === 404) { states.delete(entry.id); if(current(entry)) hide(); return; } throw error; }
       if (!current(entry) || job.archived) return;
+      readNative(entry);
       if (job.creationStatus !== 'ready') throw new Error('这个项目还在准备，请返回首页继续创建。');
       if (job.status === 'complete') {
         confirmationOnly = true;
@@ -199,9 +219,11 @@ window.createHomeStart = function createHomeStart(host) {
         files.push({blob:await response.blob(),name:asset.uploadName});
       }
       if (!current(entry)) return;
+      readNative(entry);
       if (files.length) { nativeStarted = true; await transfer(entry,files); }
       for (let count=0;count<40;count++) {
         await delay(1000);
+        readNative(entry);
         job = await api('/studio/start/job?projectId='+encodeURIComponent(entry.id));
         if (job.archived) throw new Error('项目已归档，恢复后会继续。');
         if (job.completedAssets.length) {
@@ -218,7 +240,7 @@ window.createHomeStart = function createHomeStart(host) {
       }
       throw new Error('部分图片的保存尚未确认。已保存的图片会保留。');
     } catch (error) {
-      paint(entry,{kind:'error',title:confirmationOnly ? '图片已保存，正在确认交接' : '图片还没全部加入画布',detail:error.message,checkOnly:confirmationOnly});
+      paint(entry,error.nativeLicense ? licenseState() : {kind:'error',title:error.nativeStartup ? '画布暂时无法打开' : confirmationOnly ? '图片已保存，正在确认交接' : '图片还没全部加入画布',detail:error.message,checkOnly:confirmationOnly});
       // A native upload can keep retrying after our UI timeout. Keep the shared
       // import lock until the owning page is unloaded; retry replaces that page.
       if (nativeStarted && !confirmationOnly) await new Promise(resolve => window.addEventListener('pagehide',resolve,{once:true}));
@@ -266,6 +288,6 @@ window.createHomeStart = function createHomeStart(host) {
     }
   }).catch(() => { draftError = '浏览器暂存不可用。请保留本页；带图创建前需要恢复暂存空间。'; }).finally(() => { loaded = true; render(); });
   render();
-  return {create,hasDraft:() => Boolean(items.length || submitted),resume,routeChanged() { hide(); },
+  return {create,hasDraft:() => Boolean(items.length || submitted),resume,canvasUnavailable,routeChanged() { hide(); },
     busy:() => busy, snapshot:() => ({loaded,busy,attachmentCount:items.length,readyCount:items.filter(i=>i.asset).length,submittedRequestId:submitted?.requestId||null,running:[...runs.keys()]})};
 };

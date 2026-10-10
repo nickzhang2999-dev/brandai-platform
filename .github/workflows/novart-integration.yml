@@ -62,7 +62,12 @@ jobs:
           apps/ai/.venv/bin/pip install -r previews/novart-workbench/requirements.txt
           pnpm -F web exec playwright install --with-deps chromium
       - name: Compile the authenticated studio assets
-        run: apps/ai/.venv/bin/python scripts/export-novart-studio.py
+        run: |
+          apps/ai/.venv/bin/python scripts/test-novart-product-license.py
+          node scripts/test-novart-product-license.cjs
+          node scripts/test-novart-canvas-ready.cjs
+          node scripts/test-novart-home-start.cjs
+          apps/ai/.venv/bin/python scripts/export-novart-studio.py
       - name: Generate and migrate the disposable database
         run: |
           pnpm db:generate

@@ -12,6 +12,7 @@ x-cds-env:
   CDS_REDIS_PASSWORD: "${CDS_REDIS_PASSWORD:-}"
   CDS_REDIS_URL: "${CDS_REDIS_URL:-}"
   CDS_JWT_SECRET: "${CDS_JWT_SECRET:-}"
+  NOVART_TLDRAW_LICENSE_KEY: "${NOVART_TLDRAW_LICENSE_KEY:-}"
 x-cds-env-meta:
   CDS_POSTGRES_PASSWORD: { kind: auto, hint: "Dedicated integration database password" }
   CDS_REDIS_PASSWORD: { kind: auto, hint: "Dedicated integration queue password" }
@@ -58,6 +59,8 @@ services:
       SETTINGS_ENC_KEY: "${CDS_JWT_SECRET}"
       AUTH_TRUST_HOST: "true"
       AUTH_ALLOW_DEMO: "0"
+      # Browser SDK license for this public domain; never an AI-provider key.
+      NOVART_TLDRAW_LICENSE_KEY: "${NOVART_TLDRAW_LICENSE_KEY:-}"
       AI_SERVICE_URL: "http://${CDS_AI_HOST}:${CDS_AI_PORT}"
       WORKER_HEALTH_URL: "http://${CDS_WORKER_HOST}:${CDS_WORKER_PORT}"
       BRANDAI_QUEUE_PREFIX: "novart-integration"

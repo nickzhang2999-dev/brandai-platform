@@ -1,7 +1,7 @@
 import { ZodError } from "zod";
 import { ApiException } from "./api";
 import { studioSession } from "./studio-session";
-import { studioAsset, studioHtml } from "./studio-assets";
+import { studioAsset, studioHtml, studioLicenseConfig } from "./studio-assets";
 import { readWorkbenchJson } from "./workbench-request";
 import { isWorkbenchSameOrigin } from "./workbench-origin";
 import { EditorDocumentError } from "./editor-document-codec";
@@ -33,7 +33,7 @@ export async function studioRoute(req: Request) {
       }
       const asset = await studioAsset(pathname === "/canvas" ? "/canvas.html" : "/studio.html", true);
       if (!asset) throw new ApiException(503, "工作台资源尚未构建。");
-      return new Response(studioHtml(asset.bytes.toString("utf8"), { ...session, workspaceId, readOnly }), {
+      return new Response(studioHtml(asset.bytes.toString("utf8"), { ...session, workspaceId, readOnly, canvasLicense: studioLicenseConfig() }), {
         headers: { ...headers, "Content-Type": "text/html; charset=utf-8", "X-Frame-Options": "SAMEORIGIN",
           "Content-Security-Policy": "default-src 'self' data: blob: https:; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; style-src 'self' 'unsafe-inline' https:; connect-src 'self' data: blob:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'self'" },
       });

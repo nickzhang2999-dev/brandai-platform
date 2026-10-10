@@ -4,6 +4,11 @@
   'use strict';
   const context = JSON.parse(document.getElementById('novart-product-context').textContent);
   window.__NOVART_PRODUCT__ = Object.freeze(context);
+  // Install before any captured script executes. The SDK still validates the
+  // signature, domain and expiry; a configured value is not a license verdict.
+  const configuredLicense = context.canvasLicense?.key;
+  const licenseValue = typeof configuredLicense === 'string' && configuredLicense.length <= 8192 && !/[\u0000-\u001f\u007f-\u009f]/.test(configuredLicense) ? configuredLicense : '';
+  Object.defineProperty(globalThis, '__NOVART_TLDRAW_LICENSE_KEY', {value:licenseValue, writable:false, configurable:false, enumerable:false});
   const NativeWebSocket = window.WebSocket;
   window.WebSocket = class extends NativeWebSocket {
     constructor(address, protocols) {
@@ -83,6 +88,34 @@
   document.cookie = '__locale=zh; Path=/; SameSite=Strict';
   const startup = document.createElement('div'); startup.className = 'np-startup'; startup.setAttribute('role','status'); startup.textContent = '正在打开工作台…'; document.body.append(startup);
   const style = document.createElement('style'); style.textContent = '.np-startup{position:fixed;inset:0;z-index:99999;display:grid;place-content:center;background:#f7f6fa;color:#35313d;font:15px/1.8 system-ui;padding:24px}.np-startup form{display:grid;gap:14px;width:min(360px,85vw)}.np-startup input,.np-brand{border:1px solid #e5e1ec;border-radius:12px;padding:12px;background:white;color:#42394f;min-width:0}.np-brand{margin:12px 12px 8px;max-width:calc(100% - 24px);font:inherit}.np-note{font-size:12px;color:#82798e;line-height:1.6}.np-logout{margin-top:16px}'; document.head.append(style);
+  let nativeLicenseRejected = false, licenseObserver = null, licenseTimer = null;
+  function checkNativeLicense() {
+    if (nativeLicenseRejected || !document.querySelector('[data-testid="tl-license-expired"]')) return;
+    nativeLicenseRejected = true;
+    licenseObserver?.disconnect(); clearTimeout(licenseTimer);
+    document.documentElement.dataset.nvStudioCanvasReady = 'false';
+    startup.dataset.state = 'license-required';
+    const explanation = document.createElement('p'), projects = document.createElement('a');
+    explanation.textContent = '当前画布引擎未获得此域名授权。已保存的项目和素材仍保留，请管理员配置有效授权后刷新。';
+    projects.textContent = '返回项目库'; projects.className = 'ns-primary'; projects.target = '_top';
+    projects.href = '/studio?workspaceId=' + encodeURIComponent(context.workspaceId || '') + '#/projects';
+    startup.replaceChildren(explanation, projects);
+    if (!startup.isConnected) document.body.append(startup);
+    // Embedded canvases use the m8 startup-error protocol; this also covers
+    // direct /canvas visits, where there is no parent bridge.
+  }
+  if (location.pathname === '/canvas') {
+    licenseObserver = new MutationObserver(checkNativeLicense);
+    licenseObserver.observe(document.documentElement, {childList:true, subtree:true});
+    checkNativeLicense();
+    window.addEventListener('pagehide', () => { licenseObserver?.disconnect(); clearTimeout(licenseTimer); }, {once:true});
+  }
+  if (location.pathname === '/canvas' && (context.canvasLicense?.status !== 'configured' || !licenseValue)) {
+    const notice = document.createElement('p'); notice.className = 'np-note np-license-note'; notice.setAttribute('role','status');
+    notice.textContent = context.canvasLicense?.status === 'invalid' ? '画布授权配置需要检查，请联系管理员。已保存的项目和素材仍保留。' : '尚未配置画布授权，请联系管理员。已保存的项目和素材仍保留。';
+    notice.style.cssText = 'position:fixed;top:56px;right:16px;max-width:min(460px,90vw);z-index:99998;padding:10px 14px;border-radius:12px;background:#f2edfa;color:#77618b;pointer-events:none';
+    document.body.append(notice);
+  }
   const message = text => { startup.replaceChildren(); const p = document.createElement('p'); p.textContent = text; const retry = document.createElement('button'); retry.className='ns-primary'; retry.textContent='重新打开'; retry.onclick=() => location.reload(); startup.append(p,retry); };
   async function createBrand() {
     startup.replaceChildren(); const form = document.createElement('form'), title = document.createElement('h1'), input = document.createElement('input'), submit = document.createElement('button'), status = document.createElement('p');
@@ -106,6 +139,11 @@
     const scripts=[...document.querySelectorAll('script[type="application/x-novart"]')];
     scripts.sort((a,b)=>Number(a.hasAttribute('defer'))-Number(b.hasAttribute('defer')));
     for(const old of scripts) await new Promise((resolve,reject)=>{const script=document.createElement('script');script.async=false;if(old.src){script.src=old.src;script.onload=resolve;script.onerror=()=>reject(Error('工作台资源加载失败，请重试'));}else{script.textContent=old.textContent;}old.replaceWith(script);if(!script.src)resolve();});
+    checkNativeLicense();
+    if (nativeLicenseRejected) return;
+    // Observe the actual SDK node through its asynchronous startup/5s refusal,
+    // not synthetic license state. Stop after a bounded startup window.
+    if (licenseObserver) licenseTimer = setTimeout(() => licenseObserver?.disconnect(), 60000);
     const sidebar=document.querySelector('.ns-sidebar');
     if(sidebar) {
       const select=document.createElement('select');select.className='np-brand';select.setAttribute('aria-label','当前品牌');
@@ -121,6 +159,7 @@
       const deadline=Date.now()+20000;
       await new Promise((resolve, reject) => {
         const timer = setInterval(() => {
+          if (nativeLicenseRejected) { clearInterval(timer); reject(Error('画布授权校验未通过')); return; }
           if (Date.now() > deadline) { clearInterval(timer); reject(Error('只读画布未能就绪，请重新打开')); return; }
           // Wait for native mounting before requiring captured modules. Requiring
           // an unregistered module can cache incomplete exports during startup.
@@ -148,8 +187,9 @@
       availability(); new MutationObserver(availability).observe(document.body,{childList:true,subtree:true,attributes:true,attributeFilter:['disabled']});
     }
     window.NovartProductTaskInbox?.start();
+    if (nativeLicenseRejected) return;
     startup.remove();
     window.dispatchEvent(new Event('novart-product-ready'));
   }
-  start().catch(error=>message(error.message));
+  start().catch(error=>{ if (!nativeLicenseRejected) message(error.message); });
 })();

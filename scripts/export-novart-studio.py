@@ -23,8 +23,24 @@ OUT = REPO / '.novart-build' / 'studio'
 sys.path.insert(0, str(PREVIEW / 'harness'))
 from home_start_runtime import HomeStartRuntime  # noqa: E402
 from rc3_runtime import RC3_PARAMETERS  # noqa: E402
+from native_license_config import build_native_license_chunk, build_original_license_chunk  # noqa: E402
 
 ASSET = re.compile(r'''["'(](\/(?:[A-Za-z0-9_.-]+\/)*[A-Za-z0-9_.-]+\.(?:js|css|png|svg|woff2?|ttf|jpg|webp))(?:["')?])''')
+
+
+def product_license_patch(url_path: str, body: bytes) -> bytes:
+    """Bind both native aliases to our runtime config before other export edits.
+
+    Each shared builder verifies its exact input hash, unique module boundary
+    and byte-for-byte reversal. The captured files and SDK validators stay intact.
+    """
+    if url_path == '/m12-native/1773.fe2335a6.js':
+        return build_native_license_chunk(body)
+    if url_path == '/originals/static/js/1773.fe2335a6.js':
+        return build_original_license_chunk(body)
+    if url_path.endswith('/1773.fe2335a6.js'):
+        raise RuntimeError('Unexpected native license asset alias')
+    return body
 
 # These reviewed overlays also run in the local archive. Change their storage
 # claims only in the product export; browser recovery-cache wording stays local.
@@ -79,7 +95,7 @@ def main():
             return body
         if not any(kind in mime for kind in ['html', 'javascript', 'css']):
             return body
-        text = body.decode('utf-8')
+        text = product_license_patch(url_path, body).decode('utf-8')
         for before, after, count in PRODUCT_STORAGE_COPY.get(url_path, []):
             assert text.count(before) == count, f'Product storage copy changed: {url_path}: {before!r}'
             text = text.replace(before, after)
