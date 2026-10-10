@@ -1,5 +1,13 @@
 # Novart 开发日志｜2026-10-10
 
+## 16:11 真栈通过，存储初始化合批
+
+修正 `b77855317c1d64809618b6149139d5c22f35969d` 的 Branch Image **38036388613** 已完成 success。真实后端 **95 项**、实际页面 **15 项**全部通过，构建后 Web/AI/Worker 容器健康及验收再次通过，checked images已发布；未调用AI provider。包含首页带图上传、离页继续处理、指针形状/中文/笔迹入库、草稿与素材用途恢复、新认证会话画布及PNG像素一致、权限和归档只读。真实EXACT生成、真实改图、逐对象/嵌套导出、合规UI和通知深链仍列为未验收，不称完整上线。
+
+实际signed push因`[skip cds]`跳过，公司三分支元数据/最近部署基线不变，独立线上产品仍旧版8474347；不把镜像发布当部署成功。新存储配置合批包括CDS映射的S3端口3900、仅声明容器内3903管理接口、新独立token空占位以及显式Garage配置路径。两份本地verify均0error/2warning/6info、两份实际serverlint空findings、两份只读preview均仅新增Garage、更新/删除0，其余独立配置逆校验不变。
+
+新pending-import **3d3d941a2c50** 已提交；用户回复批准，实际平台状态仍需回读。管理初始化按Garage2.4.1官方REST完成，不假定存在CDS infra-exec，亦不使用自动默认key/bucket扩大权限。token/key尚未生成，安全transport纯测试仍在准备。本批完整门禁再次通过L1 949/AI365/typecheck/生产构建；管理配置的精确新SHA镜像仍须新CI通过后部署，不能借上一SHA成功。先验project scope/两个卷/真实端口和管理连通，再独立存储字节验收，最后授权单张1K普通生成。
+
 ## 15:54 续作：真实联调修正与存储导入缺口
 
 候选 `fedbfa31e9391a7ad4b32b1e339325aac445d2fa` 的 CI **38035078835** 未通过，未发布镜像或部署。真实上传、持久图片字节和工作流读写已运行通过；API 后续匿名访问裸 `/workflow` 得到 307，而验收要求 JSON 401。原中间件只识别 `/workflow/` 前缀，漏了裸接口。现修正 API 边界并保留 `/studio`、`/studio-editor` 和相似页面路径的登录跳转；使用实际 NextRequest/NextResponse 的 13 项回归通过。

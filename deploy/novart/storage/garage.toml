@@ -25,4 +25,9 @@ api_bind_addr = "0.0.0.0:3900"
 advertise_endpoint = "http://novart-storage:3900"
 advertise_path_style = true
 
-# Deliberately no [s3_web] and no [admin] listener. No public bucket or console.
+# Administrative REST is reachable only on the container network, never host-published.
+# The independent token comes from GARAGE_ADMIN_TOKEN, not this file.
+[admin]
+api_bind_addr = "0.0.0.0:3903"
+
+# Deliberately no [s3_web] listener, public bucket or console.

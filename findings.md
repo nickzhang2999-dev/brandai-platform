@@ -108,3 +108,6 @@ Company OpenCanvas has image/shape/text, selection/transforms and persistence bu
 # 2026-10-10 15:54 verified increment
 
 CI38035078835/fedbfa3 failed on bare /workflow anonymous307 and two alert matches at permission rejection; repaired response boundary plus exact real-error testid, retaining auth/404 checks. Approved CDS import473923091fca silently omitted expose-only Garage but persisted dangling dependsOn. Three official resync previews/noexecute pin classification to ports vs expose, not image whitelist. Runtime binding and persistence remain unproven. No new deploy, model handoff or paid image call.
+# 2026-10-10 16:11 verified result
+
+b778553 CI38036388613 success, backend95/UI15 plus container rechecks and publication. Garage v2.4.1 official Admin REST can initialize bucket/app key via internal3903; CDS does not have proven infra exec, so do not treat infra as branch profile. Final two compose plus TOML declare separate admin token placeholder and internal listener, publish only S3 port3900; actual scope/volumes/network must be read back. New platform approval3d3d941a2c50 pending actual status despite user's reply.

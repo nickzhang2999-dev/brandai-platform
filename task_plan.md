@@ -1,6 +1,8 @@
 # Novart product integration
 
 ## Active completion batch — 2026-10-10 afternoon
+- [complete] b778553/CI38036388613 real backend95 + real UI15 + built-container rechecks + checked-image publication all success. No provider call or product deployment.
+- [in_progress] Final storage config adds authenticated internal Garage admin REST to the CDS-mapped S3 port; pending-import3d3d941a2c50 submitted, user replied approval, actual platform status and project-scope service still checked. New precise image CI before deployment.
 - [in_progress] Latest CI fedbfa3: repair bare /workflow anonymous JSON401 and unambiguous owned permission error assertion; 13 actual-Next regressions pass, full gates and real stack rerun before release.
 - [blocked] Approved storage import473923091fca saved YAML but dropped expose-only Garage service while keeping dependencies. Official preview-only comparisons confirm ports classification; actual private binding/volume/runtime preservation not proven. Do not deploy dangling configuration. See docs/cds-development-issues-2026-10-10.md.
 - [pending] Authorized one ordinary 1K image only: sealed image-settings handoff and one-shot acceptance remain unexecuted until exact green deployed revision and independent durable storage.
