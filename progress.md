@@ -1,5 +1,36 @@
 # Integration progress
 
+## 2026-10-11 — canvas tools implemented and local gates complete
+
+- User authorized all inventoried missing tools. Three implementation agents split persistence/operations, scene/export and editor UI; root integrates real callbacks, checks guards and browser regressions.
+- Interface agreed on flat world-coordinate items with owned metadata (groupId/frameId); retain page parent and loss-aware legacy guard. Typography, normalized original crop, flips, visibility/lock and local line endpoints need identical screen/save/export semantics.
+- Current deployed core55e remains the baseline. No new provider call or company resource mutation authorized by this UI batch. Tools must pass real pointer/keyboard/history/reopen/export checks and all repository gates before exact-version CDS delivery.
+- Final gates: L1 989 (contracts965 + UI24), same project Windows venv AI365, full Web typecheck and production build exit0. POSIX `pnpm test:ai` failed under cmd first; that failure remains recorded, the equivalent Windows interpreter ran the complete suite. Build warned about unavailable local Redis; compilation does not prove a live backend stack.
+- Actual Chromium final2 report49 passed with zero page errors/external requests. Includes repeat-paste unique IDs, replacement undo, frame content not covered, saved hidden/locked/crop/text/group/frame state and scoped PNG/SVG actual pixel equality. Source freeze16 unchanged. This loopback synthetic API harness is real interaction evidence, not real DB/provider acceptance.
+- Earlier helper failure after undo was an empty-selection CtrlD precondition; explicit reselection corrected it without loosening assertions. Original false reports retained. Tiny crop division overflow additionally rejected with two edge tests.
+- GET-only CDS readback: isolated project98 still runs55e, prebuilt Web/AI/Worker profiles and independent Garage/PG/Redis volumes reusable; effective Web entry/studio. New SHA CI/push/isolated release/public tools acceptance remain pending; no paid provider request in this batch.
+
+## 2026-10-11 — corrected product delivery entry
+
+- Bare `/login` defaulted to the preserved company root page. New product UI lives at `/studio`; previous delivery URL was wrong.
+- Official isolated branch web-entry override now reads back `/studio`, with AI/Worker entries unchanged. Local independent compose entry label corrected; readiness remains `/login`. No application deployment, business write or provider call in this fix; local source/doc changes not pushed.
+- New current URL and dated entry-fix log recorded. Actual isolated browser verified four entry/UI checks: input callback without workspace pin, password auth200 -> `/studio`200, server-selected workspace auto-pinned, loaded new home and visible brief/create controls. One auth POST, zero business writes/provider calls. Overall v2 report remains false because a subsequent extra session read failed; do not label the whole report passed.
+
+## 2026-10-10 18:13 — first real core journey accepted
+
+- Same exact55e project: actual input upload1464B/256x256 and one ordinary1K generation1207420B/1024x1024 persisted through isolated Garage. Original paid report remains false because it incorrectly required generated output in the upload-only material list; its immutable operation is SUCCEEDED/READY.
+- Separate authenticated continuation7 passed, bound to original operation/report/project hashes: one generation/version re-read, both raw SHA verified, UI result insertion, one documentPUT revision2,15.302s/155 samples stable DOM, fresh-login same server document/raw bytes and identical SVG/PNG pixels. Continuation generates/uploads/creates0; total prior paid requests1. No synthetic provider result.
+- Core version is usable at the independent product login. Uploads appear in Materials; generated results appear in Tasks. True EXACT/edit/VLM/layer/masks, complex legacy compatibility and backup restoration remain separate acceptance work; no full-commercial-launch claim.
+- Logs/source/runtime/README synchronized locally; no new deployment or documentation-only push. Company registration/history unchanged, shared business data untouched this turn; original operation receipt not reset.
+
+## 2026-10-10 17:55 — exact isolated release and real public editing passed
+
+- Exact55e07ac CI38039517128 completed success: real backend95/UI15, built-container rechecks, Garage14 and checked image publication. Dedicated project98 now runs exact55e; original company registration baselines and recent deployment history unchanged.
+- Public HTTPS owned editor passed9 checks: actual login/project/pointer pen/Chinese, save and fresh-context login restore; canvas original DOM stable15.312s/155samples; SVG and PNG pixels/bytes identical. This editing-only report claims neither upload nor provider.
+- Garage approved771 resynced; shell health override cleared through scoped official runtime API, actual healthy, named volumes preserved. Original approved recipe still contains the override; future recreation must retain the recorded runtime correction.
+- Unique storage bootstrap completed one-bucket read/write only and original encrypted admin storage PUT. Authorized company image four-field sealed handoff completed one original admin PUT, own target encryption and other settings unchanged; providerCalls0. Real upload/one ordinary1K acceptance in progress, no paid dispatch yet.
+- Temporary public test transport/hydration/service-worker prerequisites were repaired separately from application/CDS defects; no paid retry, fixture success or unknown oldc38 upload attribution claimed. Documentation-only work after the deployed code; no additional push/deployment.
+
 ## 2026-10-10 16:46 — requested CDS report delivered
 
 - Root cause report distinguishes verified expose-only conversion/dependency gaps, CDS-root relative bind resolution, historical shared deployment impact, application defects and the unknown upload FAILED cause. Versioned source lines and safe evidence links checked; independent report review passed.

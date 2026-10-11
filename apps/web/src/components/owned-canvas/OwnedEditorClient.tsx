@@ -4,8 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { StudioMaterial, GenerationAspectRatioKey, resolveGenerationSize, type EditorDocumentView } from "@brandai/contracts";
 import { NovartApiError } from "../../lib/novart-api-client";
 import { decodeOwnedCanvas, encodeOwnedCanvas } from "../../lib/owned-canvas-codec";
-import { serializeOwnedDocument, type OwnedCanvasDocument } from "../../lib/owned-canvas-model";
-import { exportOwnedPng, exportOwnedSvg, getOwnedBounds } from "../../lib/owned-canvas-export";
+import { serializeOwnedDocument, type OwnedCanvasDocument, type OwnedCanvasItem } from "../../lib/owned-canvas-model";
+import { exportOwnedPng, exportOwnedSvg, getOwnedBounds, type OwnedExportOptions } from "../../lib/owned-canvas-export";
 import { OwnedCanvas } from "./OwnedCanvas";
 import { OwnedWorkflowPanel } from "./OwnedWorkflowPanel";
 import { OwnedGenerationCard } from "./OwnedGenerationCard";
@@ -53,6 +53,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
   const generationOperation = useRef<GenerationInput | null>(null), uploadOperation = useRef<{ file: File; mutationId: string; point?: { x: number; y: number } } | null>(null);
   const refreshBusy = useRef(false), generationBusy = useRef(false), uploadBusy = useRef(false), pollStarted = useRef(0);
   const handoffBusy = useRef(false);
+  const replacementOperation = useRef<{ api: ProductApi; itemId: string; file: File; mutationId: string } | null>(null);
   const workflowRef = useRef<OwnedWorkflowSession | null>(null), generationMode = useRef<"generate" | "modify" | null>(null), taskFocusBusy = useRef(false);
   const recoveryRef = useRef<ReturnType<typeof createOwnedGenerationRecovery> | null>(null);
   const canEdit = !!document && !readOnly && !view?.readOnly && !document.warnings.length && saveState !== "conflict";
@@ -312,6 +313,52 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
     await runUpload();
   }
 
+  async function replaceImage(itemId: string, files: File[]): Promise<Pick<OwnedCanvasItem, "url" | "assetId" | "assetSha256" | "versionId"> | null> {
+    const api = apiRef.current;
+    if (!api || !writableRef.current || !docRef.current) throw new Error("当前画布不可编辑，原图片仍保留。");
+    const target = docRef.current.items.find(item => item.id === itemId);
+    if (!target || target.kind !== "image" || target.locked || target.hidden) throw new Error("请先选中可编辑的图片。");
+    if (files.length !== 1) throw new Error("替换图片请一次选择一张。");
+    if (uploadBusy.current || uploadOperation.current) throw new Error("请先确认正在上传的图片结果。");
+    const file = files[0]!, previous = replacementOperation.current;
+    if (previous && previous.api !== api) replacementOperation.current = null;
+    else if (previous && (previous.itemId !== itemId || previous.file.name !== file.name || previous.file.size !== file.size || previous.file.lastModified !== file.lastModified)) {
+      throw new Error("上一次替换结果尚未确认，请先为原图片重新选择同一文件，或在任务面板确认素材。");
+    }
+    const operation = replacementOperation.current ?? { api, itemId, file, mutationId: crypto.randomUUID() };
+    replacementOperation.current = operation;
+    uploadBusy.current = true; setUploading(true);
+    try {
+      setNotice("正在保存替换素材，原图片仍保留…");
+      const task = await api.uploadFile(operation.file, operation.mutationId);
+      const accept = (value: UploadTask) => { if (alive.current && apiRef.current === api) setUploads(current => mergeTask(current, value, item => item.taskId)); };
+      accept(task);
+      const result = await api.pollUpload(task, accept);
+      if (!alive.current || apiRef.current !== api || !writableRef.current) throw new Error("页面状态已改变，替换素材仍保留在任务中，原图片未被覆盖。");
+      if (result.status === "FAILED") { replacementOperation.current = null; throw new Error(result.error || "替换素材保存失败，原图片未修改。"); }
+      if (result.status !== "SUCCEEDED" || !result.material) throw new Error("替换素材仍在处理中，请查看任务并确认后重试，原图片未修改。");
+      const material = result.material; api.image(material);
+      await new Promise<void>((resolve, reject) => {
+        const image = new Image(), timer = setTimeout(() => { image.src = ""; reject(new Error("替换素材读取超时，原图片仍保留。")); }, 20000);
+        image.onload = () => { clearTimeout(timer); image.naturalWidth === material.width && image.naturalHeight === material.height ? resolve() : reject(new Error("替换素材尺寸与回执不符。")); };
+        image.onerror = () => { clearTimeout(timer); reject(new Error("替换素材暂时无法读取，原图片仍保留。")); }; image.src = material.url;
+      });
+      const current = docRef.current?.items.find(item => item.id === itemId);
+      if (!alive.current || apiRef.current !== api || !writableRef.current || current?.kind !== "image" || current.locked || current.hidden
+        || current.assetId !== target.assetId || current.assetSha256 !== target.assetSha256 || current.url !== target.url) {
+        throw new Error("原图片或页面状态已改变，替换素材仍保留在任务中，请重新选择目标。");
+      }
+      replacementOperation.current = null; void refresh();
+      return { url: material.url, assetId: material.assetId, assetSha256: material.assetSha256, versionId: undefined };
+    } catch (error) {
+      if (error instanceof NovartApiError && !error.uncertain) replacementOperation.current = null;
+      if (alive.current && apiRef.current === api) setNotice(messageOf(error));
+      throw error;
+    } finally {
+      if (apiRef.current === api) { uploadBusy.current = false; if (alive.current) setUploading(false); }
+    }
+  }
+
   async function submitGeneration() {
     const api = apiRef.current;
     if (!api || !writableRef.current || generationBusy.current || generationRecoveryBlocked) return;
@@ -372,21 +419,21 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
     if (!current || !writableRef.current || pendingGeneration || generationBusy.current || !draft.ready || draft.blocked) return;
     const refs = workflowRef.current?.snapshot().draft?.references.filter(ref => ref.participates && ref.purpose === "EXACT") ?? [];
     const images = current.items.filter(item => refs.some(ref => ref.shapeId === item.id));
-    const bounds = images.length ? getOwnedBounds({ ...current, items: images }) : { x: 0, y: 0, w: 640, h: 480 };
+    const bounds = images.length ? getOwnedBounds(current, { itemIds: images.map(item => item.id) }) : { x: 0, y: 0, w: 640, h: 480 };
     const size = resolveGenerationSize({ ratioKey: ratio, resolutionTier: quality }), scale = Math.max(0.5, (bounds.w + 80) / size.width, (bounds.h + 80) / size.height);
     const w = size.width * scale, h = size.height * scale, id = "shape:" + crypto.randomUUID();
     changeDocument({ ...current, items: [{ id, kind: "frame", x: bounds.x + bounds.w / 2 - w / 2, y: bounds.y + bounds.h / 2 - h / 2, w, h, rotation: 0, opacity: 1, parentId: current.pageId, text: "输出画框", fill: "#ffffff" }, ...current.items] });
     setOutputFrameId(id); setNotice("已按当前输出比例创建新画框，原画框和图片保持不变。保存后可提交严格保留创作。");
   }
 
-  async function exportDocument(format: "png" | "svg" | "json") {
+  async function exportDocument(format: "png" | "svg" | "json", scope: Pick<OwnedExportOptions, "itemIds" | "frameId"> = {}) {
     const current = docRef.current;
     if (!current || current.warnings.length) { const error = new Error("旧内容尚未完整兼容，已停止导出以免遗漏。"); setNotice(error.message); throw error; }
     try {
-      const blob = format === "png" ? await exportOwnedPng(current) : format === "svg" ? new Blob([await exportOwnedSvg(current)], { type: "image/svg+xml" }) : new Blob([JSON.stringify(serializeOwnedDocument(current), null, 2)], { type: "application/json" });
+      const blob = format === "png" ? await exportOwnedPng(current, scope) : format === "svg" ? new Blob([await exportOwnedSvg(current, scope)], { type: "image/svg+xml" }) : new Blob([JSON.stringify(serializeOwnedDocument(current), null, 2)], { type: "application/json" });
       const url = URL.createObjectURL(blob), link = window.document.createElement("a");
-      link.href = url; link.download = "Novart-" + projectId + "." + format; link.click(); setTimeout(() => URL.revokeObjectURL(url), 10000);
-      setNotice("已导出当前画布。");
+      link.href = url; link.download = "Novart-" + projectId + (scope.frameId ? "-frame" : scope.itemIds ? "-selection" : "") + "." + format; link.click(); setTimeout(() => URL.revokeObjectURL(url), 10000);
+      setNotice(scope.frameId ? "已导出选中画框。" : scope.itemIds ? "已导出选中内容。" : "已导出当前画布。");
     } catch (error) { setNotice(messageOf(error)); throw error; }
   }
 
@@ -417,7 +464,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
     {(readOnly || view?.readOnly) && <div className="border-b border-border px-4 py-2 text-xs text-muted-fg">当前项目为只读，可查看与导出。</div>}
     <div className="relative flex min-h-0 flex-1">
       <main className="relative min-h-0 min-w-0 flex-1">
-        {document ? <OwnedCanvas key={projectId} document={document} onChange={changeDocument} readOnly={!canEdit} onUploadFiles={uploadFiles} onExport={format => exportDocument(format)} onSelectionChange={setSelectedIds} /> : <div className="grid h-full place-content-center text-sm text-muted-fg">{saveError ? "画布未能打开，原数据没有被修改。" : "正在读取项目…"}</div>}
+        {document ? <OwnedCanvas key={projectId} document={document} clipboardScope={`${userId}:${workspaceId}:${projectId}`} onChange={changeDocument} readOnly={!canEdit} onUploadFiles={uploadFiles} onReplaceImage={replaceImage} onExport={(format, scope) => exportDocument(format, scope)} onSelectionChange={setSelectedIds} /> : <div className="grid h-full place-content-center text-sm text-muted-fg">{saveError ? "画布未能打开，原数据没有被修改。" : "正在读取项目…"}</div>}
       </main>
       {panel && <aside aria-label="创作面板" className="absolute inset-y-0 right-0 z-20 flex w-[min(340px,92vw)] flex-col border-l border-border bg-card shadow-lg sm:relative sm:w-80 sm:shrink-0 sm:shadow-none">
         <div className="flex gap-1 border-b border-border p-3">{([['generate', '生成'], ['materials', '素材'], ['tasks', '任务']] as const).map(([id, label]) => <button key={id} type="button" className={button + (panel === id ? " !border-primary !bg-accent-soft !text-primary" : "")} onClick={() => setPanel(id)}>{label}</button>)}<button className="ml-auto px-2 text-muted-fg" aria-label="收起面板" onClick={() => setPanel(null)}>×</button></div>

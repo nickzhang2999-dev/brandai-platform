@@ -1,6 +1,37 @@
 # Novart product integration
 
-## Active completion batch — 2026-10-10 afternoon
+## Current tools-completion batch — 2026-10-11
+
+User authorized filling all inventoried canvas gaps and asks what remains before CDS delivery. Continue in integration branch, preserve company main/shared resources, no goal mode, no Computer Use, no local Docker and no additional paid generation.
+
+- [complete] Model and persistence: bounded owned v2 typography/crop/flip/visibility/lock/group/frame/line fields, copy/group/layout operations and loss-aware old-record protection.
+- [complete] Scene and export: shared screen/export layout; selected/group/frame PNG/SVG, inherited visibility and rotated frame clipping. Nonfinite or excessive crop expansion rejected.
+- [complete] Editor UI: clipboard/duplicate/right-click, contextual typography/crop/flip, alignment/distribution/groups/snapping, hide/lock/drag order, whole-stroke eraser/lines/arrows and frame child movement.
+- [complete] Root integration and final local gates: real replacement task/decode callback and hidden/crop generation guards; L1 989, AI 365 with the same Windows venv, Web typecheck and production build exit0; actual Chromium49 passed, source freeze16 unchanged.
+- [complete] Logs/README/SSOT/attribution updated; read-only CDS audit confirms existing prebuilt profiles and independent volumes can be reused. No new provider call or service configuration is required for these tools.
+- [pending] Exact-SHA skip-marker push/actual delivery receipt, cloud disposable DB/S3/worker/UI and verified images, then isolated release and authenticated public tools/save/reopen/export. Online baseline remains55e until actually released.
+
+Ownership: canvas_model_tools owns owned-canvas-model/operations and model tests; canvas_render_export owns owned-canvas-export/style helpers and export tests; canvas_editing_ui owns OwnedCanvas/CSS; root owns client wiring/workflow guards/browser harness/gates/docs. Shared dirty files remain excluded; append attribution without overwriting the preexisting row63 change.
+
+## Delivery-entry correction — 2026-10-11
+
+- [complete] Diagnose bare `/login` default root callback and preserved old company homepage; publish explicit `/studio#/home` handoff.
+- [complete] Official scoped CDS Web entry changed to `/studio`, readback confirmed and other service entries preserved. Local independent entry label corrected; no deployment or provider call.
+- [complete] Actual password login with unpinned input callback -> `/studio`200 and visible new home UI confirmed in four browser checks. Service-selected workspace auto-pinning is expected. Local source/docs remain unpushed.
+- [pending] Separate extra session-read acceptance harness failed after the entry/UI checks; preserve overall false report and diagnose separately, not as an entry/UI success claim.
+
+## Active completion checkpoint — 2026-10-10 18:13
+
+- [complete] Exact55e07ac local gates and CI38039517128 real backend95/UI15, built-container rechecks, Garage14, immutable image publication.
+- [complete] Isolated project98 deployed55e, application runtime pins and encryption continuity checked; official skip receipt and unchanged company registration/recent deployment history verified.
+- [complete] Public owned editing9: actual login/new project/pen/Chinese/save, continuous canvas15.312s/155 samples, fresh login restore and identical SVG/PNG pixels/bytes.
+- [complete] Actual approval771, official existing-infra resync, healthy baked Garage image/two named volumes, restricted one-bucket credentials encrypted by original admin endpoint. Approval record still has the old health override; runtime correction must be retained for future recreation.
+- [complete] Authorized sealed image-only four-field handoff through one original admin PUT, target own encryption and source/non-image settings unchanged. ProviderCalls0.
+- [complete] Real public upload, one ordinary1K generation, durable archive, actual UI result insertion, revision2 save, fresh-login restore and identical PNG/SVG. Bound continuation7 passed with no new upload/generation/create and one documentPUT; original failure report and immutable paid marker preserved. Upload-only Materials and generated-result Tasks remain an explicit product difference.
+- [pending] True provider EXACT/edit and extra visual/layer/mask capabilities, complex legacy migration, broader optimization. Current core proof does not accept these.
+- [complete] Update logs, CDS evidence and source comparison using actual core results. No goal mode, no Computer Use, no local Docker; no new push merely to republish documentation. Broader launch acceptance remains separate.
+
+## Historical checkpoint — 2026-10-10 afternoon before55e deployment
 - [complete] Latest local candidate gates passed: L1 958, AI365, full Web typecheck and production build. Source frozen for exact-SHA push and real container CI; storage/data/model/deployment acceptance remains separate.
 - [in_progress] User prioritizes usable product today. Ship core upload/edit/save/reopen/export and one authorized ordinary image after real isolated storage/CI/deploy gates; defer broader feature optimization.
 - [complete] Requested CDS root cause report created with versioned source lines, live approval/preview/receipts and separate application/unknown upload attribution.

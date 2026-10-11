@@ -146,6 +146,17 @@ async function fixtureSettled(condition) {const deadline=Date.now()+10000;while(
   stage='open-owned-editor';await page.goto(origin+'/studio-editor');
   await page.getByTestId('owned-canvas').waitFor();
   const surface=page.getByTestId('owned-canvas');
+  if(process.env.NOVART_OWNED_TOOLS_ONLY==='1') {
+    stage='upload-tools-only-fixture';await page.locator('input[type=file]').first().setInputFiles({name:'fixture.png',mimeType:'image/png',buffer:png});
+    await page.locator('[data-testid="owned-canvas-item"][data-kind="image"]').waitFor();
+    await page.waitForFunction(()=>document.querySelector('[data-testid="owned-editor"]')?.dataset.saveState==='saved');
+    stage='complete-owned-editing-tools';
+    try {await require('./check-owned-tools-interactions.cjs').runOwnedToolChecks({page,surface,check,records,shapes,png,
+      waitSaved:async()=>{await page.waitForFunction(()=>document.querySelector('[data-testid="owned-editor"]')?.dataset.saveState==='saved');}});}
+    catch(error){report.toolsFailureState=await page.evaluate(()=>({status:document.querySelector('.oc-status')?.textContent,
+      itemCount:document.querySelectorAll('[data-testid="owned-canvas-item"]').length,saveState:document.querySelector('[data-testid="owned-editor"]')?.dataset.saveState}));throw error;}
+    assert.deepEqual(report.externalRequests,[]);assert.deepEqual(report.errors,[]);report.passed=true;return;
+  }
   const bounds=await surface.boundingBox();assert.ok(bounds&&bounds.width>400&&bounds.height>300);
   const draw=async(label,x,y,w,h)=>{await page.getByRole('button',{name:label,exact:true}).click();await page.mouse.move(bounds.x+x,bounds.y+y);await page.mouse.down();await page.mouse.move(bounds.x+x+w,bounds.y+y+h,{steps:8});await page.mouse.up();};
   stage='draw-and-history';await draw('图形',160,130,150,110);await page.getByTestId('owned-canvas-item').waitFor();check('draw-rectangle');
@@ -274,8 +285,11 @@ async function fixtureSettled(condition) {const deadline=Date.now()+10000;while(
   stage='conflict';conflict=true;await page.goto(origin+'/studio-editor');await surface.waitFor();await draw('图形',180,140,120,80);await page.getByText('保存冲突',{exact:true}).waitFor();assert.equal(canvas,before);assert.equal(await page.getByRole('button',{name:'画笔',exact:true}).isDisabled(),true);check('save-conflict-preserves-server-and-local-content');conflict=false;
   stage='restore-failure';failRestore=true;const initialWrites=writes;await page.goto(origin+'/studio-editor');await page.getByText('合成恢复失败',{exact:false}).waitFor();await page.waitForTimeout(1500);assert.equal(writes,initialWrites);assert.equal(canvas,before);check('failed-restore-never-writes-empty');failRestore=false;
   stage='homepage-file-to-saved-owned-editor';canvas='';revision=0;uploads.clear();generations.clear();draft={projectId:fixture.projectId,revision:0,inputForm:null,updatedAt:null,referenceIssues:[]};workflow={projectId:fixture.projectId,revision:0,mode:'generate',target:null,references:[],updatedAt:null,issues:[]};await page.goto(origin+'/home-fixture');await page.waitForFunction(()=>homeStart.snapshot().loaded);await page.locator('#ns-home-brief').fill('首页带图测试');await page.locator('#hs-file-input').setInputFiles({name:'fixture.png',mimeType:'image/png',buffer:png});await page.waitForFunction(()=>homeStart.snapshot().attachmentCount===1);await page.locator('#ns-create').click();await page.waitForFunction(()=>homeStart.snapshot().submittedRequestId===null&&homeStart.snapshot().attachmentCount===0&&document.querySelector('iframe').contentDocument?.querySelector('[data-kind="image"]'),undefined,{timeout:45000});assert.equal(shapes().length,1);assert.ok(revision>=1);const homeSaved=canvas;const homeFrame=page.frames().find(frame=>new URL(frame.url()).pathname==='/studio-editor');assert.ok(homeFrame);await homeFrame.goto(origin+'/studio-editor');await homeFrame.getByTestId('owned-canvas-item').waitFor();assert.equal(canvas,homeSaved);check('homepage-file-handoff-clears-input-only-after-save-and-reopens');
+  stage='complete-owned-editing-tools';await page.goto(origin+'/studio-editor');await page.getByTestId('owned-canvas').waitFor();
+  await require('./check-owned-tools-interactions.cjs').runOwnedToolChecks({page,surface:page.getByTestId('owned-canvas'),check,records,shapes,png,
+    waitSaved:async()=>{await page.waitForFunction(()=>document.querySelector('[data-testid="owned-editor"]')?.dataset.saveState==='saved');}});
   assert.deepEqual(report.externalRequests,[]);assert.deepEqual(report.errors,[]);report.passed=true;
-})().catch(error=>{report.passed=false;report.fatal={stage,name:error.name,message:String(error.message).slice(0,500)};process.exitCode=1;}).finally(async()=>{
+})().catch(error=>{report.passed=false;report.fatal={stage,name:error.name,message:String(error.message).slice(0,500),stack:String(error.stack).slice(0,1600)};process.exitCode=1;}).finally(async()=>{
   await browser?.close();if(server)await new Promise(resolve=>server.close(resolve));
   const reportPath=process.env.NOVART_OWNED_REPORT;if(reportPath)fs.writeFileSync(reportPath,JSON.stringify(report,null,2));
   console.log(JSON.stringify(report));

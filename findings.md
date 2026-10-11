@@ -1,5 +1,30 @@
 # Integration findings
 
+## 2026-10-11 — missing tools confirmed and implementation contract
+
+- Final local implementation is complete for the requested tool list. Original basic records stay v1; advanced owned records carry bounded v2 metadata. Unknown legacy containers/effects still retain read-only protection. Local fonts are three family stacks; eraser deletes a whole stroke, not an image mask.
+- Screen/export share text/crop/flip/arrow layout. Scoped export validates the full document before filtering, then handles group/frame closure and rotated frame clipping. Repeated paste requires fresh IDs; frames are ordered under their contents. These failure-prone behaviors have actual browser/pixel checks.
+- Hidden owned layers or frame ancestors preserve prior workflow references but make them unavailable for generation. Display crop is editable/exportable; unsupported cropped-image AI semantics remain rejected rather than silently sending original pixels. Replacement uploads verify persisted identity before applying one undoable change.
+- Final L1 989/AI365/typecheck/build and actual Chromium49 passed;16 source hashes unchanged. No new cloud/paid acceptance claimed. Existing independent CDS service profiles/volumes are sufficient; only the tested application SHA needs cloud validation and isolated release.
+
+- Current OwnedCanvas toolbar has select/hand/text/stroke/four shapes/frame/upload/history/full export. No object clipboard, rich typography, crop/flip, alignment/group, layer hide/lock/dragorder or eraser/line/arrow. Existing frame is a flat decorative item; nested legacy containers remain protected.
+- Requirements MD W-02 includes object copy; crop/alignment examples are candidates until selected. User now explicitly authorized the full listed gaps. Retain compact context-driven UI and validate every operation through undo, stored reopen and export.
+- Cropped/flipped pixels must not silently become original-image generation references. Root will verify workflow geometry rejection/materialization boundaries before accepting new frontend semantics.
+
+## 2026-10-10 18:13 accepted core and material-list distinction
+
+- One real ordinary1K generation is SUCCEEDED/READY on exact55e; input upload and generated Asset bytes re-read from isolated storage. Bound continuation7 passed actual insertion/revision2 save/fresh login/SVG and PNG pixel equality, without another generation/upload/create request.
+- listStudioMaterials queries successful StudioMaterialUpload only. Requiring StudioGeneratedMaterial in that response was a temporary acceptance error; task READY projection separately checks persisted output/Asset/version/project membership. Preserve the original failure and record this visible product difference, do not silently broaden the API or fake success.
+- Ordinary generation/core editing acceptance does not accept real EXACT/whole-image edit/VLM/layer/masks or arbitrary legacy migrations. Current real-provider count is one original request, not another continuation call.
+
+## 2026-10-10 17:55 current facts
+
+- Exact55e07ac is deployed in isolated project98 after CI38039517128 success. Public owned editing9 checks passed; fresh real login restores the server document and identical SVG/PNG, with15.312s continuous original DOM.
+- Independent Garage is healthy and its one-bucket restricted application settings were encrypted through the original admin API. Approved771 skipped existing infra, requiring official resync; health CMD flattening required a separately recorded runtime override. Approval record and runtime are not identical.
+- Authorized image-only four-field handoff succeeded with own target encryption, source and non-image settings unchanged, providerCalls0. Public upload/one-image acceptance pending; configured keys do not prove generation.
+- Company right-side old preview remains distinct. Company registration versus live version can differ historically; same-mouth baseline plus recent deployment records show no new company deployment for55e.
+- Current temporary browser tests must allow and verify the production service worker and await React hydration. These test prerequisites are not new CDS or product defects.
+
 ## 2026-10-10 afternoon live verification
 - The user's CDS right-hand review entry still loads 9e5e2af. Its package hash matches the frozen preview manifest and its old SDK files are served; /studio-editor is absent. The local owned editor has not been deployed there.
 - The independent product is still 8474347. Read-only configuration and AppSetting audit confirms no usable independent provider or S3 setup. This is a configuration prerequisite, not a fabricated successful generation or a CDS outage.

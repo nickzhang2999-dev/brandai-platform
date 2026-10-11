@@ -2,6 +2,7 @@ import { gunzipSync } from "node:zlib";
 import { EDITOR_DOCUMENT_PREFIX, EDITOR_DOCUMENT_MAX_DECODED_BYTES } from "@brandai/contracts";
 import { StudioWorkflowAssets, StudioWorkflowIssue, StudioWorkflowSaveInput } from "../../../../packages/contracts/src/studio-workflow";
 import { inspectEditorDocument } from "./editor-document-codec";
+import { studioOwnedLayerHidden } from "./studio-owned-visibility";
 
 /** This list must come from authenticated, project-scoped persistent records. */
 export type WorkflowMaterial = { sha256: string; url: string; mimeType: string };
@@ -20,7 +21,7 @@ export function workflowAssets(projectId: string, canvas: string, materials: Wor
   }
   const dimension = (value: unknown) => typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
   for (const [id, value] of Object.entries(document.tldrawSnapshot.document.store)) {
-    const shape = value as { id?: unknown; typeName?: unknown; type?: unknown; props?: Record<string, unknown> } | null;
+    const shape = value as { id?: unknown; typeName?: unknown; type?: unknown; props?: Record<string, unknown>; meta?: Record<string, unknown> } | null;
     if (!shape || shape.typeName !== "shape" || shape.type !== "c-image") continue;
     if (shape.id !== id || id.length > 200 || !/^shape:[\x21-\x7e]+$/.test(id) || id.includes("\n")
       || !shape.props || typeof shape.props !== "object" || Array.isArray(shape.props)) {
@@ -29,6 +30,7 @@ export function workflowAssets(projectId: string, canvas: string, materials: Wor
       continue;
     }
     const props = shape.props;
+    const hidden = studioOwnedLayerHidden(document.tldrawSnapshot.document.store, shape);
     const material = typeof props.url === "string" ? byUrl.get(props.url) : undefined;
     if (!material) {
       issues.push({ code: material === null ? "AMBIGUOUS_MATERIAL" : "UNVERIFIED_MATERIAL", scope: "asset", shapeId: id, assetSha256: null,
@@ -37,7 +39,7 @@ export function workflowAssets(projectId: string, canvas: string, materials: Wor
     }
     assets.push({ shapeId: id, assetSha256: material.sha256,
       name: typeof props.name === "string" && props.name ? props.name.slice(0, 255) : "画布图片",
-      width: dimension(props.w), height: dimension(props.h), valid: true, mime: material.mimeType });
+      width: dimension(props.w), height: dimension(props.h), valid: !hidden, mime: material.mimeType });
   }
   return StudioWorkflowAssets.parse({ projectId, assets, issues });
 }
@@ -50,8 +52,8 @@ export function workflowReferenceIssue(
     : assets.find(asset => asset.shapeId === reference.shapeId);
   if (current?.assetSha256 === reference.assetSha256 && current.valid) return null;
   return { shapeId: reference.shapeId, assetSha256: reference.assetSha256, scope, blocking, ...(index === undefined ? {} : { index }),
-    code: !current ? "REFERENCE_MISSING" : "SHAPE_ASSET_CHANGED",
-    message: "原图片已删除、替换或不再可用；已保留原引用，请明确移除或重新选择。" };
+    code: !current ? "REFERENCE_MISSING" : !current.valid ? "SHAPE_HIDDEN" : "SHAPE_ASSET_CHANGED",
+    message: current && !current.valid ? "该图片图层已隐藏；原引用仍保留，请显示图层或取消参与生成。" : "原图片已删除、替换或不再可用；已保留原引用，请明确移除或重新选择。" };
 }
 
 export function workflowIssues(value: Pick<StudioWorkflowSaveInput, "references" | "target">, assets: StudioWorkflowAssets["assets"]) {

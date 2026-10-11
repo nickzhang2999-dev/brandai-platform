@@ -102,7 +102,7 @@ services:
       cds.role: "web"
       cds.path-prefix: "/"
       cds.web-entry-name: "Novart product integration"
-      cds.web-entry-path: "/login"
+      cds.web-entry-path: "/studio"
       cds.readiness-path: "/login"
       cds.readiness-timeout: "180"
   worker:

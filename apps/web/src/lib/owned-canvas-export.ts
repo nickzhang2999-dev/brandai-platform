@@ -1,19 +1,25 @@
 import { assertOwnedDocumentWritable, type OwnedCanvasDocument, type OwnedCanvasItem } from "./owned-canvas-model";
+import { getOwnedArrowBoundsPoints, getOwnedArrowMarker, getOwnedImageLayout, getOwnedLinePoints, getOwnedTextLayout } from "./owned-canvas-style";
 
-export type OwnedExportOptions = { origin?: string; fetcher?: typeof fetch };
+export type OwnedExportScope = { itemIds?: string[]; frameId?: string };
+export type OwnedExportOptions = OwnedExportScope & { origin?: string; fetcher?: typeof fetch };
+type ExportBounds = { x: number; y: number; w: number; h: number };
+export type OwnedExportScene = { document: OwnedCanvasDocument; bounds: ExportBounds; frame?: OwnedCanvasItem };
 const MAX_PIXELS = 16_000_000, MAX_SIDE = 8192, MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const MAX_EXPORT_BYTES = 32 * 1024 * 1024;
 const exportTooLarge = () => new Error("导出内容超过 32 MiB 安全上限，请减少图片或压缩素材后重试。");
 const escape = (value: string) => value.replace(/[&<>"']/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[character]!);
 
 /** Bounds use the same top-left rotation origin as the owned renderer. */
-export function getOwnedBounds(doc: OwnedCanvasDocument): { x: number; y: number; w: number; h: number } {
-  assertOwnedDocumentWritable(doc);
-  if (!doc.items.length) return { x: 0, y: 0, w: 1200, h: 800 };
+function boundsForItems(items: OwnedCanvasItem[]): ExportBounds {
+  if (!items.length) return { x: 0, y: 0, w: 1200, h: 800 };
   let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
-  for (const item of doc.items) {
-    const cos = Math.cos(item.rotation), sin = Math.sin(item.rotation), pad = (item.strokeWidth ?? 2) / 2;
-    const points = item.kind === "stroke" ? item.points! : [{ x: 0, y: 0 }, { x: item.w, y: 0 }, { x: item.w, y: item.h }, { x: 0, y: item.h }];
+  for (const item of items) {
+    const cos = Math.cos(item.rotation), sin = Math.sin(item.rotation);
+    const pad = item.kind === "image" || item.kind === "text" ? 0 : (item.strokeWidth ?? 2) / 2;
+    const points = item.kind === "stroke" ? item.points! : item.kind === "shape" && item.shape === "arrow" ? getOwnedArrowBoundsPoints(item)
+      : item.kind === "shape" && item.shape === "line" ? getOwnedLinePoints(item)
+        : [{ x: 0, y: 0 }, { x: item.w, y: 0 }, { x: item.w, y: item.h }, { x: 0, y: item.h }];
     for (const point of points) {
       const x = item.x + point.x * cos - point.y * sin, y = item.y + point.x * sin + point.y * cos;
       left = Math.min(left, x - pad); right = Math.max(right, x + pad);
@@ -21,6 +27,60 @@ export function getOwnedBounds(doc: OwnedCanvasDocument): { x: number; y: number
     }
   }
   return { x: Math.floor(left), y: Math.floor(top), w: Math.max(1, Math.ceil(right) - Math.floor(left)), h: Math.max(1, Math.ceil(bottom) - Math.floor(top)) };
+}
+
+/** Validate the WHOLE document before deriving a render-only subset. Never edit source. */
+export function selectOwnedExportScene(doc: OwnedCanvasDocument, scope: OwnedExportScope = {}): OwnedExportScene {
+  assertOwnedDocumentWritable(doc);
+  const byId = new Map(doc.items.map(item => [item.id, item]));
+  if (scope.itemIds !== undefined && (!Array.isArray(scope.itemIds) || scope.itemIds.length > 10_000
+    || scope.itemIds.some(id => typeof id !== "string" || !byId.has(id)))) throw new Error("导出选区包含不存在的对象，请重新选择。");
+  const frame = scope.frameId === undefined ? undefined : byId.get(scope.frameId);
+  if (scope.frameId !== undefined && (!frame || frame.kind !== "frame")) throw new Error("请选择一个可见画框后再导出。");
+  const groups = new Map<string, OwnedCanvasItem[]>(), children = new Map<string, OwnedCanvasItem[]>();
+  for (const item of doc.items) {
+    if (item.groupId) { const members = groups.get(item.groupId) ?? []; members.push(item); groups.set(item.groupId, members); }
+    if (item.frameId) { const members = children.get(item.frameId) ?? []; members.push(item); children.set(item.frameId, members); }
+  }
+  const hidden = new Set(doc.items.filter(item => item.hidden).map(item => item.id)), hiddenQueue = [...hidden];
+  for (let index = 0; index < hiddenQueue.length; index++) for (const child of children.get(hiddenQueue[index]!) ?? []) {
+    if (!hidden.has(child.id)) { hidden.add(child.id); hiddenQueue.push(child.id); }
+  }
+  if (frame && hidden.has(frame.id)) throw new Error("请选择一个可见画框后再导出。");
+  let selected: Set<string> | undefined;
+  if (scope.itemIds !== undefined) {
+    selected = new Set(scope.itemIds);
+    const queue = [...selected], expandedGroups = new Set<string>();
+    for (let index = 0; index < queue.length; index++) {
+      const item = byId.get(queue[index]!)!;
+      const related: OwnedCanvasItem[] = item.kind === "frame" ? [...(children.get(item.id) ?? [])] : [];
+      if (item.groupId && !expandedGroups.has(item.groupId)) { expandedGroups.add(item.groupId); related.push(...(groups.get(item.groupId) ?? [])); }
+      for (const member of related) if (!selected.has(member.id)) { selected.add(member.id); queue.push(member.id); }
+    }
+  }
+  let inFrame: Set<string> | undefined;
+  if (frame) {
+    inFrame = new Set([frame.id]);
+    const queue = [frame.id];
+    for (let index = 0; index < queue.length; index++) for (const child of children.get(queue[index]!) ?? []) {
+      if (!inFrame.has(child.id)) { inFrame.add(child.id); if (child.kind === "frame") queue.push(child.id); }
+    }
+  }
+  const items = doc.items.filter(item => !hidden.has(item.id) && (!selected || selected.has(item.id)) && (!inFrame || inFrame.has(item.id)))
+    .map(item => ({ ...item, ...(item.points ? { points: item.points.map(point => ({ ...point })) } : {}), ...(item.crop ? { crop: { ...item.crop } } : {}) }));
+  if (scope.itemIds !== undefined && !items.length) throw new Error("当前选区没有可导出的可见对象。");
+  const document = { ...doc, items };
+  const bounds = frame ? { x: 0, y: 0, w: Math.ceil(frame.w), h: Math.ceil(frame.h) } : boundsForItems(items);
+  return { document, bounds, ...(frame ? { frame: { ...frame } } : {}) };
+}
+
+/** This subset is for rendering only; retained membership references are not rewritten. */
+export function getExportDocument(doc: OwnedCanvasDocument, scope: OwnedExportScope = {}): OwnedCanvasDocument {
+  return selectOwnedExportScene(doc, scope).document;
+}
+
+export function getOwnedBounds(doc: OwnedCanvasDocument, scope: OwnedExportScope = {}): ExportBounds {
+  return selectOwnedExportScene(doc, scope).bounds;
 }
 
 function safeDimensions(bounds: { w: number; h: number }) {
@@ -104,14 +164,23 @@ function shapeMarkup(item: OwnedCanvasItem, index: number, image?: string): stri
   const fill = escape(item.fill ?? (item.kind === "text" ? "#202027" : "#ede9fe")), stroke = escape(item.stroke ?? "#7c5cff"), sw = item.strokeWidth ?? 2;
   const style = `fill="${fill}" stroke="${stroke}" stroke-width="${sw}" stroke-linejoin="round"`;
   let body: string;
-  if (item.kind === "image") body = `<image width="${item.w}" height="${item.h}" preserveAspectRatio="none" href="${image}"/>`;
+  if (item.kind === "image") {
+    if (!image) throw new Error("有图片读取失败，导出已取消，避免生成缺图文件。");
+    const layout = getOwnedImageLayout(item);
+    body = `<defs><clipPath id="owned-image-${index}"><rect width="${item.w}" height="${item.h}"/></clipPath></defs><g clip-path="url(#owned-image-${index})"><g transform="${layout.flipTransform}"><image x="${layout.x}" y="${layout.y}" width="${layout.w}" height="${layout.h}" preserveAspectRatio="none" href="${escape(image)}"/></g></g>`;
+  }
   else if (item.kind === "text") {
-    const font = item.fontSize ?? 24;
-    const lines = (item.text ?? "").split(/\r?\n/).map((line, row) => `<tspan x="0" y="${font + row * font * 1.2}">${escape(line)}</tspan>`).join("");
-    body = `<defs><clipPath id="owned-text-${index}"><rect width="${item.w}" height="${item.h}"/></clipPath></defs><text clip-path="url(#owned-text-${index})" xml:space="preserve" font-family="Arial, sans-serif" font-size="${font}" fill="${fill}">${lines}</text>`;
+    const layout = getOwnedTextLayout(item);
+    const lines = layout.lines.map(line => `<tspan x="${line.x}" y="${line.y}">${escape(line.text)}</tspan>`).join("");
+    body = `<defs><clipPath id="owned-text-${index}"><rect width="${item.w}" height="${item.h}"/></clipPath></defs><text clip-path="url(#owned-text-${index})" xml:space="preserve" font-family="${escape(layout.fontFamily)}" font-size="${layout.fontSize}" font-weight="${layout.fontWeight}" font-style="${layout.fontStyle}" text-anchor="${layout.anchor}" fill="${fill}">${lines}</text>`;
   } else if (item.kind === "stroke") {
     body = item.points!.length === 1 ? `<circle cx="${item.points![0]!.x}" cy="${item.points![0]!.y}" r="${sw / 2}" fill="${stroke}"/>`
       : `<polyline points="${item.points!.map(point => `${point.x},${point.y}`).join(" ")}" fill="none" stroke="${stroke}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"/>`;
+  } else if (item.kind === "shape" && (item.shape === "line" || item.shape === "arrow")) {
+    const [start, end] = getOwnedLinePoints(item), marker = getOwnedArrowMarker();
+    const arrow = item.shape === "arrow";
+    const definition = arrow ? `<defs><marker id="owned-arrow-${index}" viewBox="${marker.viewBox}" markerWidth="${marker.markerWidth}" markerHeight="${marker.markerHeight}" refX="${marker.refX}" refY="${marker.refY}" orient="${marker.orient}" markerUnits="${marker.markerUnits}"><path d="${marker.path}" fill="${stroke}"/></marker></defs>` : "";
+    body = `${definition}<line x1="${start.x}" y1="${start.y}" x2="${end.x}" y2="${end.y}" fill="none" stroke="${stroke}" stroke-width="${sw}" stroke-linecap="round"${arrow ? ` marker-end="url(#owned-arrow-${index})"` : ""}/>`;
   } else if (item.shape === "ellipse") body = `<ellipse cx="${item.w / 2}" cy="${item.h / 2}" rx="${item.w / 2}" ry="${item.h / 2}" ${style}/>`;
   else if (item.shape === "triangle") body = `<polygon points="${item.w / 2},0 ${item.w},${item.h} 0,${item.h}" ${style}/>`;
   else if (item.shape === "star") {
@@ -124,9 +193,9 @@ function shapeMarkup(item: OwnedCanvasItem, index: number, image?: string): stri
   return `<g transform="translate(${item.x} ${item.y}) rotate(${item.rotation * 180 / Math.PI})" opacity="${item.opacity}">${body}</g>`;
 }
 
-/** Export only a complete supported scene; never silently omit failed images. */
-export async function exportOwnedSvg(doc: OwnedCanvasDocument, options: OwnedExportOptions = {}): Promise<string> {
-  const bounds = getOwnedBounds(doc); safeDimensions(bounds);
+/** The selected scene has already passed full-source validation before filtering. */
+async function renderOwnedSvg(scene: OwnedExportScene, options: OwnedExportOptions): Promise<string> {
+  const { document: doc, bounds, frame } = scene; safeDimensions(bounds);
   const images = new Map<string, string>();
   let fetchedBytes = 0, embeddedCharacters = 0;
   // Sequential and deduplicated to bound network and decoded-image pressure.
@@ -139,14 +208,23 @@ export async function exportOwnedSvg(doc: OwnedCanvasDocument, options: OwnedExp
     embeddedCharacters += images.get(item.url!)!.length;
     if (embeddedCharacters > MAX_EXPORT_BYTES) throw exportTooLarge();
   }
-  const content = doc.items.map((item, index) => shapeMarkup(item, index, item.url ? images.get(item.url) : undefined)).join("");
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${bounds.w}" height="${bounds.h}" viewBox="${bounds.x} ${bounds.y} ${bounds.w} ${bounds.h}">${content}</svg>`;
+  let content = doc.items.map((item, index) => shapeMarkup(item, index, item.url ? images.get(item.url) : undefined)).join("");
+  // Scene children stay in world coordinates. Inverse frame transform maps them
+  // into output pixels; the outer clip is expressed in unrotated frame space.
+  if (frame) content = `<defs><clipPath id="owned-export-frame"><rect width="${frame.w}" height="${frame.h}"/></clipPath></defs><g clip-path="url(#owned-export-frame)"><g transform="rotate(${-frame.rotation * 180 / Math.PI}) translate(${-frame.x} ${-frame.y})">${content}</g></g>`;
+  const viewBox = frame ? `0 0 ${frame.w} ${frame.h}` : `${bounds.x} ${bounds.y} ${bounds.w} ${bounds.h}`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${bounds.w}" height="${bounds.h}" viewBox="${viewBox}">${content}</svg>`;
   if (new TextEncoder().encode(svg).byteLength > MAX_EXPORT_BYTES) throw exportTooLarge();
   return svg;
 }
 
+/** Export supported visible content; never silently omit a failed selected image. */
+export async function exportOwnedSvg(doc: OwnedCanvasDocument, options: OwnedExportOptions = {}): Promise<string> {
+  return renderOwnedSvg(selectOwnedExportScene(doc, options), options);
+}
+
 export async function exportOwnedPng(doc: OwnedCanvasDocument, options: OwnedExportOptions = {}): Promise<Blob> {
-  const svg = await exportOwnedSvg(doc, options), bounds = getOwnedBounds(doc);
+  const scene = selectOwnedExportScene(doc, options), svg = await renderOwnedSvg(scene, options), bounds = scene.bounds;
   const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
   try {
     const image = new Image();

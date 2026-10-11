@@ -1,5 +1,6 @@
 import { AssetUsageInput, ExactAssetTransform } from "@brandai/contracts";
 import { ApiException } from "./api";
+import { studioOwnedLayerHidden } from "./studio-owned-visibility";
 
 /** Native affine layout [a,b,c,d,e,f], acting on column vectors (x,y,1). */
 export type StudioExactMatrix = [number, number, number, number, number, number];
@@ -78,6 +79,8 @@ function visibleUnscaled(record: ObjectValue, props: ObjectValue) {
   if (record.opacity !== undefined && record.opacity !== 1) fail("严格保留暂不支持隐藏或半透明图层，请恢复图片和父级容器的不透明度。");
   if (props.opacity !== undefined && props.opacity !== 1) fail("严格保留暂不支持额外透明度。");
   const meta = object(record.meta) ? record.meta : {};
+  const owned = object(meta.novartOwned) ? meta.novartOwned : {};
+  if (props.novartVersion === 2 && owned.version === 2 && owned.hidden === true) fail("严格保留不接受隐藏图层，请先显示图片或画框。");
   if (meta.agentHiddenUntilFit === true || meta.isUploading === true) fail("图片或容器尚未完成加载，请等待完成后重新保存画布。");
   for (const value of [record, props, meta]) {
     if ((value.hidden !== undefined && value.hidden !== false) || (value.isHidden !== undefined && value.isHidden !== false) ||
@@ -97,6 +100,7 @@ function readShape(store: ObjectValue, id: string): Shape {
   if (!object(value) || value.typeName !== "shape" || value.id !== id || !object(value.props) || typeof value.type !== "string" ||
     typeof value.parentId !== "string" || !value.parentId || typeof value.index !== "string" || !/^[A-Za-z][A-Za-z0-9]{0,255}$/.test(value.index) ||
     !finite(value.x) || !finite(value.y) || Math.abs(value.x) > 1e9 || Math.abs(value.y) > 1e9 || !finite(value.rotation) || Math.abs(value.rotation) > 1e6) return fail("画布图层的坐标、父级或排序数据无效，请重新保存画布。");
+  if (studioOwnedLayerHidden(store, value)) return fail("严格保留不接受隐藏图层或无效画框，请先检查并显示图片和画框。");
   visibleUnscaled(value, value.props);
   return value as unknown as Shape;
 }

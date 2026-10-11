@@ -5,6 +5,7 @@ import { prisma, type Prisma } from "@brandai/db";
 import { BrandRule, EDITOR_DOCUMENT_MAX_DECODED_BYTES, EDITOR_DOCUMENT_PREFIX, StudioWorkflowTarget, WatermarkOverlayInput } from "@brandai/contracts";
 import { ApiException } from "./api";
 import { workflowAssets } from "./studio-workflow-codec";
+import { studioOwnedLayerHidden } from "./studio-owned-visibility";
 import { listStudioProjectMaterials } from "./studio-project-materials";
 import { StudioExactSnapshot, studioExactIntent } from "./studio-generation-exact";
 import { readStudioCleanBase, type StudioCleanBase } from "./studio-generation-base";
@@ -42,6 +43,8 @@ const adjustKeys = new Set(["light", "exposure", "contrast", "highlights", "shad
 function noEffects(shape: Record<string, unknown>, image: boolean) {
   const props = object(shape.props);
   const meta = object(shape.meta);
+  const owned = object(meta.novartOwned);
+  if (props.novartVersion === 2 && owned.version === 2 && owned.hidden === true) throw fail("整图修改不接受隐藏图层，请先显示图片或画框。");
   const no = (value: unknown, expected: number) => value === undefined || typeof value === "number" && Number.isFinite(value) && Math.abs(value - expected) <= 1e-6;
   if (!no(shape.rotation, 0) || !no(shape.opacity, 1) || !no(props.opacity, 1) || !no(props.radius, 0)) throw fail("整图修改目前读取完整原文件，请先重置旋转、透明度或圆角效果。");
   if ((props.flipX !== undefined && props.flipX !== false) || (props.flipY !== undefined && props.flipY !== false)) throw fail(image ? "整图修改目前读取完整原文件，请先重置图片翻转。" : "整图修改暂不支持父级容器翻转，请先重置容器翻转。");
@@ -68,6 +71,7 @@ function noEffects(shape: Record<string, unknown>, image: boolean) {
 function wholeImageTarget(store: Record<string, unknown>, shapeId: string, width: number, height: number) {
   const shape = object(store[shapeId]), props = object(shape.props);
   if (shape.id !== shapeId || shape.typeName !== "shape" || shape.type !== "c-image") throw fail();
+  if (studioOwnedLayerHidden(store, shape)) throw fail("整图修改不接受隐藏图层或无效画框，请先检查并显示图片和画框。");
   noEffects(shape, true);
   if (typeof props.w !== "number" || typeof props.h !== "number" || !Number.isFinite(props.w) || !Number.isFinite(props.h) || props.w <= 0 || props.h <= 0
     || Math.abs((props.w / props.h) / (width / height) - 1) > 1e-4) throw fail("整图修改暂不合并非等比拉伸，请恢复图片原始比例后重试。");

@@ -3,8 +3,14 @@ export type OwnedCanvasItem = {
   id: string; kind: "image" | "shape" | "text" | "stroke" | "frame";
   x: number; y: number; w: number; h: number; rotation: number; opacity: number;
   fill?: string; stroke?: string; strokeWidth?: number;
-  shape?: "rect" | "ellipse" | "triangle" | "star";
+  shape?: "rect" | "ellipse" | "triangle" | "star" | "line" | "arrow";
   text?: string; fontSize?: number; points?: { x: number; y: number }[];
+  fontFamily?: "sans" | "serif" | "mono"; fontWeight?: "normal" | "bold";
+  fontStyle?: "normal" | "italic"; textAlign?: "left" | "center" | "right"; lineHeight?: number;
+  /** Crop is normalized against the original image, before either flip. */
+  crop?: { x: number; y: number; w: number; h: number }; flipX?: boolean; flipY?: boolean;
+  /** Frame membership uses world coordinates; parentId remains the page. */
+  hidden?: boolean; locked?: boolean; groupId?: string; frameId?: string;
   url?: string; assetId?: string; assetSha256?: string; versionId?: string; parentId?: string;
 };
 export type OwnedCanvasDocument = {
@@ -20,6 +26,7 @@ const finite = (value: unknown): value is number => typeof value === "number" &&
 const coordinate = (value: unknown): value is number => finite(value) && Math.abs(value) <= 1e7;
 const dimension = (value: unknown): value is number => finite(value) && value > 0 && value <= 1e7;
 const shapeId = (value: unknown): value is string => typeof value === "string" && /^shape:[A-Za-z0-9_-]{1,128}$/.test(value);
+const groupId = (value: unknown): value is string => typeof value === "string" && /^group:[A-Za-z0-9_-]{1,128}$/.test(value);
 const color = (value: unknown) => typeof value === "string" && /^(?:#(?:[a-fA-F0-9]{3}|[a-fA-F0-9]{4}|[a-fA-F0-9]{6}|[a-fA-F0-9]{8})|(?:rgb|rgba)\([\d.,% ]+\)|black|white|transparent|none)$/.test(value);
 const safeUrl = (value: unknown): value is string => typeof value === "string" && value.length <= 4096
   && !/[\x00-\x20\x7f]/.test(value) && (/^\/(?!\/)/.test(value) || /^https?:\/\//.test(value));
@@ -50,13 +57,15 @@ export function emptyOwnedDocument(): OwnedCanvasDocument {
   } };
 }
 
-function unsupportedEffects(value: RecordValue, props: RecordValue): boolean {
+function unsupportedEffects(value: RecordValue, props: RecordValue, ownedV2: boolean): boolean {
   const meta = record(value.meta);
   for (const object of [value, props, meta]) {
+    // Native grouping/container conventions are never inferred as owned links.
+    if (["groupId", "frameId"].some(key => object[key] !== undefined)) return true;
     if (["hidden", "isHidden", "isLocked", "locked"].some(key => object[key] !== undefined && object[key] !== false)
       || (object.visible !== undefined && object.visible !== true) || (object.visibility !== undefined && object.visibility !== "visible")) return true;
     if (["scale", "scaleX", "scaleY", "skewX", "skewY", "transform", "matrix"].some(key => object[key] !== undefined)) return true;
-    if (["clip", "clipPath", "mask", "crop", "clipContent", "clipChildren", "flipX", "flipY"].some(key =>
+    if (["clip", "clipPath", "mask", "crop", "clipContent", "clipChildren", ...(!ownedV2 || object !== props ? ["flipX", "flipY"] : [])].some(key =>
       object[key] !== undefined && object[key] !== false && object[key] !== null)) return true;
     if (["filter", "filters", "effects", "blur", "blendMode"].some(key => object[key] !== undefined
       && object[key] !== false && object[key] !== null && object[key] !== "none" && object[key] !== "normal")) return true;
@@ -65,7 +74,7 @@ function unsupportedEffects(value: RecordValue, props: RecordValue): boolean {
   if (props.opacity !== undefined && props.opacity !== 1) return true;
   if (props.radius !== undefined && props.radius !== 0) return true;
   if (props.adjust !== undefined && (!isOwnedRecord(props.adjust) || Object.values(props.adjust).some(v => v !== 0))) return true;
-  if (props.cropRegion !== undefined) {
+  if (props.cropRegion !== undefined && !ownedV2) {
     const crop = record(props.cropRegion);
     if (crop.x !== 0 || crop.y !== 0 || crop.w !== 1 || crop.h !== 1 || Object.keys(crop).length !== 4) return true;
   }
@@ -74,18 +83,25 @@ function unsupportedEffects(value: RecordValue, props: RecordValue): boolean {
 
 function readItem(value: RecordValue): OwnedCanvasItem | null {
   const props = record(value.props), meta = record(value.meta);
+  const ownedMeta = record(meta.novartOwned), ownedV2 = props.novartVersion === 2 && ownedMeta.version === 2;
+  if ((props.novartVersion !== undefined && props.novartVersion !== 1 && props.novartVersion !== 2)
+    || (props.novartVersion === 2 && !ownedV2)
+    || (meta.novartOwned !== undefined && (!ownedV2 || Object.keys(ownedMeta).some(key => !["version", "hidden", "locked", "groupId", "frameId"].includes(key))))) return null;
   if (!shapeId(value.id) || !coordinate(value.x) || !coordinate(value.y)
     || !dimension(props.w) || !dimension(props.h) || !finite(value.rotation ?? 0)
     || typeof value.index !== "string" || !/^[A-Za-z][A-Za-z0-9]{0,255}$/.test(value.index)
     || !finite(value.opacity ?? 1) || Number(value.opacity ?? 1) < 0 || Number(value.opacity ?? 1) > 1
-    || unsupportedEffects(value, props)) return null;
-  const owned = props.novartVersion === 1;
+    || unsupportedEffects(value, props, ownedV2 && value.type === "c-image")) return null;
+  const owned = props.novartVersion === 1 || ownedV2;
+  if (!ownedV2 && (["fontFamily", "fontWeight", "fontStyle", "textAlign", "lineHeight"].some(key => props[key] !== undefined)
+    || ["line", "arrow"].includes(String(props.novartShape)))) return null;
   let kind: OwnedCanvasItem["kind"];
   if (value.type === "c-image") kind = "image";
   else if (owned && ["shape", "text", "stroke", "frame"].includes(String(props.novartKind))) kind = props.novartKind as OwnedCanvasItem["kind"];
   else if (value.type === "geo" && ["rectangle", "ellipse", "triangle", "star"].includes(String(props.geo))) kind = "shape";
   else if ((value.type === "text" || value.type === "c-text") && typeof props.text === "string" && finite(props.fontSize)) kind = "text";
   else return null;
+  if (kind !== "text" && ["fontFamily", "fontWeight", "fontStyle", "textAlign", "lineHeight"].some(key => props[key] !== undefined)) return null;
   // Native symbolic fonts/colors/fills and rich labels are not guessed. Preserve
   // their full records and block writes until an exact adapter exists.
   if (!owned && kind !== "image") {
@@ -95,12 +111,22 @@ function readItem(value: RecordValue): OwnedCanvasItem | null {
   const item: OwnedCanvasItem = { id: value.id, kind, x: value.x, y: value.y,
     w: props.w, h: props.h, rotation: Number(value.rotation ?? 0), opacity: Number(value.opacity ?? 1),
     ...(typeof value.parentId === "string" ? { parentId: value.parentId } : {}) };
+  if (ownedV2) {
+    for (const key of ["hidden", "locked", "groupId", "frameId"] as const) {
+      if (ownedMeta[key] !== undefined) Object.assign(item, { [key]: ownedMeta[key] });
+    }
+  }
   if (kind === "image") {
     if (!safeUrl(props.url)) return null;
     item.url = props.url;
     if (typeof meta.novartAssetId === "string") item.assetId = meta.novartAssetId;
     if (typeof meta.novartAssetSha256 === "string") item.assetSha256 = meta.novartAssetSha256;
     if (typeof meta.novartVersionId === "string") item.versionId = meta.novartVersionId;
+    if (ownedV2) {
+      if (props.cropRegion !== undefined) item.crop = props.cropRegion as OwnedCanvasItem["crop"];
+      if (props.flipX !== undefined) item.flipX = props.flipX as boolean;
+      if (props.flipY !== undefined) item.flipY = props.flipY as boolean;
+    }
   } else {
     const fill = props.novartFill ?? props.fill ?? (kind === "text" ? props.color ?? "#202027" : kind === "stroke" ? "none" : "#ede9fe");
     const stroke = props.novartStroke ?? props.stroke ?? "#7c5cff";
@@ -110,6 +136,12 @@ function readItem(value: RecordValue): OwnedCanvasItem | null {
     if (kind === "shape") item.shape = (props.novartShape ?? (props.geo === "rectangle" ? "rect" : props.geo) ?? "rect") as OwnedCanvasItem["shape"];
     if (kind === "text") { if (typeof props.text !== "string") return null; item.text = props.text; item.fontSize = Number(props.fontSize ?? 24); }
     if (kind === "stroke") { if (!Array.isArray(props.novartPoints)) return null; item.points = props.novartPoints as OwnedCanvasItem["points"]; }
+    if (ownedV2 && kind === "shape" && props.novartPoints !== undefined) item.points = props.novartPoints as OwnedCanvasItem["points"];
+    if (ownedV2 && kind === "text") {
+      for (const key of ["fontFamily", "fontWeight", "fontStyle", "textAlign", "lineHeight"] as const) {
+        if (props[key] !== undefined) Object.assign(item, { [key]: props[key] });
+      }
+    }
   }
   try { validateItem(item); } catch { return null; }
   return item;
@@ -122,11 +154,60 @@ function validateItem(item: OwnedCanvasItem) {
   for (const value of [item.fill, item.stroke]) if (value !== undefined && !color(value)) throw fail("暂不支持这种画布颜色。");
   if (item.strokeWidth !== undefined && (!finite(item.strokeWidth) || item.strokeWidth < 0 || item.strokeWidth > 1000)) throw fail("画笔宽度无效。");
   if (item.kind === "image" && !safeUrl(item.url)) throw fail("图片尚未持久化，请等待上传成功后再保存。");
-  if (item.shape !== undefined && !["rect", "ellipse", "triangle", "star"].includes(item.shape)) throw fail("图形类型无效。");
+  if (item.shape !== undefined && !["rect", "ellipse", "triangle", "star", "line", "arrow"].includes(item.shape)) throw fail("图形类型无效。");
+  for (const key of ["hidden", "locked", "flipX", "flipY"] as const) if (item[key] !== undefined && typeof item[key] !== "boolean") throw fail("图层状态无效。");
+  if ((item.groupId !== undefined && !groupId(item.groupId)) || (item.frameId !== undefined && !shapeId(item.frameId))) throw fail("分组或画框标识无效。");
+  if (item.crop !== undefined) {
+    const crop = item.crop;
+    if (item.kind !== "image" || !isOwnedRecord(crop) || Object.keys(crop).length !== 4
+      || ![crop.x, crop.y, crop.w, crop.h].every(finite) || crop.x < 0 || crop.y < 0 || crop.w <= 0 || crop.h <= 0
+      || crop.x + crop.w > 1 + 1e-9 || crop.y + crop.h > 1 + 1e-9) throw fail("裁剪范围必须在原图之内。");
+    if (!finite(item.w / crop.w) || !finite(item.h / crop.h) || item.w / crop.w > 1e9 || item.h / crop.h > 1e9) throw fail("裁剪范围过小，图片显示尺寸超过安全上限。");
+  }
+  if (item.kind !== "image" && (item.flipX !== undefined || item.flipY !== undefined)) throw fail("翻转仅支持图片。");
+  for (const [key, allowed] of [["fontFamily", ["sans", "serif", "mono"]], ["fontWeight", ["normal", "bold"]], ["fontStyle", ["normal", "italic"]], ["textAlign", ["left", "center", "right"]]] as const) {
+    if (item[key] !== undefined && (item.kind !== "text" || !(allowed as readonly string[]).includes(item[key]!))) throw fail("文字样式无效。");
+  }
+  if (item.lineHeight !== undefined && (item.kind !== "text" || !finite(item.lineHeight) || item.lineHeight < 0.5 || item.lineHeight > 5)) throw fail("文字行距无效。");
   if (item.kind === "text" && (typeof item.text !== "string" || item.text.length > 100_000
     || !finite(item.fontSize ?? 24) || (item.fontSize ?? 24) < 1 || (item.fontSize ?? 24) > 4096)) throw fail("文字内容或字号无效。");
   if (item.kind === "stroke" && (!Array.isArray(item.points) || item.points.length < 1 || item.points.length > 100_000
     || item.points.some(point => !isOwnedRecord(point) || !coordinate(point.x) || !coordinate(point.y)))) throw fail("笔迹数据无效。");
+  if (item.kind === "shape" && item.points !== undefined && (!["line", "arrow"].includes(item.shape ?? "") || !Array.isArray(item.points) || item.points.length !== 2
+    || item.points.some(point => !isOwnedRecord(point) || !coordinate(point.x) || !coordinate(point.y)
+      || point.x < 0 || point.y < 0 || point.x > item.w || point.y > item.h))) throw fail("线条端点无效。");
+  for (const key of ["assetId", "versionId"] as const) if (item[key] !== undefined && (typeof item[key] !== "string" || !/^[A-Za-z0-9_-]{1,256}$/.test(item[key]!))) throw fail("图片资源标识无效。");
+  if (item.assetSha256 !== undefined && !/^[a-fA-F0-9]{64}$/.test(item.assetSha256)) throw fail("图片资源摘要无效。");
+}
+
+/** Shared validation for pure editing operations and the save boundary. */
+export function validateOwnedCanvasItems(items: OwnedCanvasItem[], pageId?: string) {
+  if (items.length > 10_000) throw fail("画布元素数量超出当前编辑器上限。");
+  const byId = new Map<string, OwnedCanvasItem>(), groups = new Map<string, OwnedCanvasItem[]>();
+  let pointCount = 0, textLength = 0;
+  for (const item of items) {
+    validateItem(item);
+    if (byId.has(item.id) || (pageId !== undefined && item.parentId !== undefined && item.parentId !== pageId)) throw fail("暂不能保存重复对象或嵌套容器。");
+    byId.set(item.id, item);
+    if (item.groupId) { const members = groups.get(item.groupId); if (members) members.push(item); else groups.set(item.groupId, [item]); }
+    pointCount += item.points?.length ?? 0; textLength += item.text?.length ?? 0;
+    if (pointCount > 100_000 || textLength > 1_000_000) throw fail("画布笔迹或文字超过当前处理上限。");
+  }
+  const validatedFrames = new Set<string>();
+  for (const item of items) {
+    if (validatedFrames.has(item.id)) continue;
+    const visited = new Set([item.id]); let current = item;
+    while (current.frameId) {
+      const frame = byId.get(current.frameId);
+      if (!frame || frame.kind !== "frame" || visited.has(frame.id)) throw fail("画框关联缺失或存在循环。");
+      if (validatedFrames.has(frame.id)) break;
+      visited.add(frame.id); current = frame;
+    }
+    for (const id of visited) validatedFrames.add(id);
+  }
+  for (const members of groups.values()) {
+    if (members.length < 2 || members.some(item => item.frameId !== members[0]!.frameId)) throw fail("分组至少需要两个同级对象。");
+  }
 }
 
 export function parseOwnedDocument(input: unknown): OwnedCanvasDocument {
@@ -146,7 +227,7 @@ export function parseOwnedDocument(input: unknown): OwnedCanvasDocument {
   }
   if ((session.currentPageId !== undefined && (typeof session.currentPageId !== "string" || !pages.some(page => page.id === session.currentPageId)))
     || (session.currentPageId === undefined && pages.length > 1)) warnings.push("无法可靠确定当前画布页面，当前版本仅只读保留。");
-  if (source.novartOwnedCanvas !== undefined && record(source.novartOwnedCanvas).version !== 1) warnings.push("该画布来自更新的数据版本，当前版本仅只读保留。");
+  if (source.novartOwnedCanvas !== undefined && ![1, 2].includes(record(source.novartOwnedCanvas).version as number)) warnings.push("该画布来自更新的数据版本，当前版本仅只读保留。");
   const entries = Object.entries(store).filter(([, value]) => isOwnedRecord(value) && value.typeName === "shape")
     .sort(([, left], [, right]) => {
       const a = String(record(left).index ?? ""), b = String(record(right).index ?? "");
@@ -163,6 +244,7 @@ export function parseOwnedDocument(input: unknown): OwnedCanvasDocument {
   }
   if (Object.values(store).some(value => isOwnedRecord(value) && value.typeName === "binding")) warnings.push("画布包含尚未支持的对象关联，当前版本仅只读保留。");
   if (Object.entries(store).some(([id, value]) => id.startsWith("shape:") && (!isOwnedRecord(value) || value.typeName !== "shape"))) warnings.push("画布包含损坏或未知的对象记录，当前版本仅只读保留。");
+  try { validateOwnedCanvasItems(items); } catch { warnings.push("画布中的分组或画框关联无法可靠恢复，当前版本仅只读保留。"); }
   // Native session snapshots keep world-space camera offsets in pageStates:
   // viewport=(world+nativeCamera)*zoom. Our renderer stores viewport pixels:
   // viewport=world*zoom+ownedCamera. Never silently reset a recovered viewport.
@@ -170,7 +252,7 @@ export function parseOwnedDocument(input: unknown): OwnedCanvasDocument {
   if (session.pageStates !== undefined && !Array.isArray(session.pageStates)) warnings.push("旧版页面视角结构无法识别，当前版本仅只读保留。");
   const currentStates = pageStates.filter(value => isOwnedRecord(value) && value.pageId === pageId);
   if (currentStates.length > 1) warnings.push("旧版页面含有冲突的视角记录，当前版本仅只读保留。");
-  const ownedPixels = record(source.novartOwnedCanvas).version === 1 && isOwnedRecord(session.camera);
+  const ownedPixels = [1, 2].includes(record(source.novartOwnedCanvas).version as number) && isOwnedRecord(session.camera);
   const cameraInput = ownedPixels ? session.camera : record(currentStates[0]).camera ?? session.camera;
   if (cameraInput !== undefined && (!isOwnedRecord(cameraInput) || !own(cameraInput, "x") || !own(cameraInput, "y")
     || (!own(cameraInput, "z") && !own(cameraInput, "zoom")))) warnings.push("画布视角暂不能可靠转换，原始视角已保留。");
@@ -188,15 +270,7 @@ export function assertOwnedDocumentWritable(doc: OwnedCanvasDocument) {
     || original.warnings.length) throw fail();
   if (!/^page:[A-Za-z0-9_-]{1,128}$/.test(doc.pageId) || doc.pageId !== original.pageId
     || !coordinate(doc.camera.x) || !coordinate(doc.camera.y) || !finite(doc.camera.zoom) || doc.camera.zoom < 0.01 || doc.camera.zoom > 100) throw fail("画布页面或视角无效。");
-  if (doc.items.length > 10_000) throw fail("画布元素数量超出当前编辑器上限。");
-  const ids = new Set<string>(); let pointCount = 0, textLength = 0;
-  for (const item of doc.items) {
-    validateItem(item);
-    if (ids.has(item.id) || (item.parentId !== undefined && item.parentId !== doc.pageId)) throw fail("暂不能保存重复对象或嵌套容器。");
-    ids.add(item.id);
-    pointCount += item.points?.length ?? 0; textLength += item.text?.length ?? 0;
-    if (pointCount > 100_000 || textLength > 1_000_000) throw fail("画布笔迹或文字超过当前处理上限。");
-  }
+  validateOwnedCanvasItems(doc.items, doc.pageId);
   return original;
 }
 
@@ -209,19 +283,39 @@ export function serializeOwnedDocument(doc: OwnedCanvasDocument): RecordValue {
   doc.items.forEach((item, index) => {
     if (own(store, item.id) && !oldIds.has(item.id)) throw fail("新对象标识与保留记录冲突。");
     const previous = record(store[item.id]), props = { ...record(previous.props) }, meta = { ...record(previous.meta) };
+    const advanced = props.novartVersion === 2 || [item.hidden, item.locked, item.groupId, item.frameId, item.fontFamily, item.fontWeight, item.fontStyle,
+      item.textAlign, item.lineHeight, item.crop, item.flipX, item.flipY].some(value => value !== undefined) || ["line", "arrow"].includes(item.shape ?? "");
     props.w = item.w; props.h = item.h;
+    if (advanced) {
+      props.novartVersion = 2;
+      meta.novartOwned = { version: 2,
+        ...(item.hidden !== undefined ? { hidden: item.hidden } : {}), ...(item.locked !== undefined ? { locked: item.locked } : {}),
+        ...(item.groupId !== undefined ? { groupId: item.groupId } : {}), ...(item.frameId !== undefined ? { frameId: item.frameId } : {}) };
+    }
     if (item.kind === "image") {
       props.url = item.url;
-      if (item.assetId) meta.novartAssetId = item.assetId;
-      if (item.assetSha256) meta.novartAssetSha256 = item.assetSha256;
-      if (item.versionId) meta.novartVersionId = item.versionId;
+      if (item.assetId) meta.novartAssetId = item.assetId; else delete meta.novartAssetId;
+      if (item.assetSha256) meta.novartAssetSha256 = item.assetSha256; else delete meta.novartAssetSha256;
+      if (item.versionId) meta.novartVersionId = item.versionId; else delete meta.novartVersionId;
+      if (advanced) {
+        // Keep backend exact/edit guards aware of the original-image transform.
+        if (item.crop !== undefined) props.cropRegion = item.crop; else delete props.cropRegion;
+        if (item.flipX !== undefined) props.flipX = item.flipX; else delete props.flipX;
+        if (item.flipY !== undefined) props.flipY = item.flipY; else delete props.flipY;
+      }
     } else {
-      props.novartVersion = 1; props.novartKind = item.kind;
+      props.novartVersion = advanced ? 2 : 1; props.novartKind = item.kind;
       props.novartFill = item.fill ?? (item.kind === "text" ? "#202027" : item.kind === "stroke" ? "none" : "#ede9fe");
       props.novartStroke = item.stroke ?? "#7c5cff"; props.novartStrokeWidth = item.strokeWidth ?? 2;
       if (item.kind === "shape") props.novartShape = item.shape ?? "rect";
-      if (item.kind === "text") { props.text = item.text; props.fontSize = item.fontSize ?? 24; }
-      if (item.kind === "stroke") props.novartPoints = item.points;
+      if (item.kind === "text") {
+        props.text = item.text; props.fontSize = item.fontSize ?? 24;
+        if (advanced) for (const key of ["fontFamily", "fontWeight", "fontStyle", "textAlign", "lineHeight"] as const) {
+          if (item[key] !== undefined) props[key] = item[key]; else delete props[key];
+        }
+      }
+      if (item.kind === "stroke" || (item.kind === "shape" && ["line", "arrow"].includes(item.shape ?? ""))) props.novartPoints = item.points ?? [{ x: 0, y: 0 }, { x: item.w, y: item.h }];
+      else delete props.novartPoints;
     }
     store[item.id] = { ...previous, id: item.id, typeName: "shape",
       type: item.kind === "image" ? "c-image" : item.kind === "frame" ? "frame" : "novart-" + item.kind,
@@ -237,6 +331,6 @@ export function serializeOwnedDocument(doc: OwnedCanvasDocument): RecordValue {
     camera: { ...record(session.camera), x: doc.camera.x, y: doc.camera.y, z: doc.camera.zoom },
     pageStates: hadState ? pageStates.map(value => isOwnedRecord(value) && value.pageId === doc.pageId ? patchState(value) : value)
       : [...pageStates, patchState({})] };
-  source.novartOwnedCanvas = { ...record(source.novartOwnedCanvas), version: 1 };
+  source.novartOwnedCanvas = { ...record(source.novartOwnedCanvas), version: doc.items.some(item => record(record(store[item.id]).props).novartVersion === 2) ? 2 : 1 };
   return source;
 }
