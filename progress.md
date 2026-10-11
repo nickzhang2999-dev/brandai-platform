@@ -1,5 +1,13 @@
 # Integration progress
 
+## 2026-10-11 — push retry succeeded, exact-SHA cloud gates running
+
+- Windows system proxy was enabled but Git did not use it. Command-scoped existing proxy allowed push exit0; no global network/Git setting or certificate changes. Remote HEAD confirmed1d6754dbf8620db0671dd1b2387a2438549eb3e1.
+- Official before/after dry-runs and actual signed CDS skipped receipt passed; company3 branch/CI snapshots unchanged, recent runs referencing newSHA0. Existing independent product stays55e until verified release.
+- Branch Image38143196104/backend114481081872 in_progress: owned adapter/shell/protocol/actual React editor regression and DB migrations passed; private disposable storage then full repo/API/UI/container/image gates pending. No duplicate workflow/deploy/provider call. Earlier transport failures remain historical, not current push failure.
+- Final run381 failure: repo/storage gates and backend95 passed; actual UI process failed, mirrors/publish skipped. First visible BullMQ error may cover earlier UI failure: verify-studio-ui still expects old img/src while new CanvasImage uses SVG image/href; empty-upload diagnostics create Queue then disconnect Redis before close/initialization. Fix acceptance identities/decode and diagnostics lifecycle, not production queues. Preserve failure artifact11704066711 and first-visible error distinction.
+- Acceptance script fixed and frozen: SVGhref plus actual decode/natural dims/fresh restore; recognized owned1/2 plus writable parse; empty diagnostics skip Redis, nonempty waitReady and closeQueue before disconnect. Isolated Chrome3 and diagnostic fixtures3 passed, not real backend. Root reran L1989/WindowsAI365/full typecheck/build exit0; running canvas16 frozen sources unchanged. New exact-SHA real-stack CI still required.
+
 ## 2026-10-11 — canvas tools implemented and local gates complete
 
 - User authorized all inventoried missing tools. Three implementation agents split persistence/operations, scene/export and editor UI; root integrates real callbacks, checks guards and browser regressions.
@@ -9,6 +17,7 @@
 - Actual Chromium final2 report49 passed with zero page errors/external requests. Includes repeat-paste unique IDs, replacement undo, frame content not covered, saved hidden/locked/crop/text/group/frame state and scoped PNG/SVG actual pixel equality. Source freeze16 unchanged. This loopback synthetic API harness is real interaction evidence, not real DB/provider acceptance.
 - Earlier helper failure after undo was an empty-selection CtrlD precondition; explicit reselection corrected it without loosening assertions. Original false reports retained. Tiny crop division overflow additionally rejected with two edge tests.
 - GET-only CDS readback: isolated project98 still runs55e, prebuilt Web/AI/Worker profiles and independent Garage/PG/Redis volumes reusable; effective Web entry/studio. New SHA CI/push/isolated release/public tools acceptance remain pending; no paid provider request in this batch.
+- Tools committed locally1d6754d with skip marker; exact official push/workflow dry-runs passed, all side effectsfalse. Actual Git push failed3 times due reset/connectivity; alternate GitHub tree write403. Remote head remains55e, new CI runs0. Four original shared dirty files unchanged. Log records transport/access blockers separately from CDS; no remote update/deploy/paid call.
 
 ## 2026-10-11 — corrected product delivery entry
 

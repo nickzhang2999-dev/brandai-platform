@@ -7,12 +7,13 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { gunzipSync } from "node:zlib";
-import { chromium, expect, type Browser, type BrowserContext, type Frame, type Page, type Route } from "playwright/test";
+import { chromium, expect, type Browser, type BrowserContext, type Frame, type Locator, type Page, type Route } from "playwright/test";
 import { prisma } from "@brandai/db";
 import sharp from "sharp";
 import { hashPassword } from "../src/lib/password";
 import { uploadReceiptMatches, summarizeUploadReceipt, summarizeUploadRow, type AcceptedUpload, type UploadEvidenceRow } from "./studio-upload-evidence";
 import { classifyUploadFailure, uploadTaskToken } from "../src/lib/studio-upload-diagnostics";
+import { assertOwnedDocumentWritable, parseOwnedDocument } from "../src/lib/owned-canvas-model";
 
 const base = new URL(process.env.WORKBENCH_TEST_URL ?? "http://127.0.0.1:3000");
 const database = new URL(process.env.DATABASE_URL ?? "http://invalid");
@@ -41,7 +42,8 @@ type Shape = { id: string; typeName: string; type: string; x: number; y: number;
 function store(canvas: string): Record<string, Shape> {
   assert.ok(canvas.startsWith("SHAKKERDATA://"));
   const value = JSON.parse(gunzipSync(Buffer.from(canvas.slice("SHAKKERDATA://".length), "base64")).toString("utf8"));
-  assert.equal(value.novartOwnedCanvas?.version, 1, "Document must be saved by the owned model");
+  assert.ok([1, 2].includes(value.novartOwnedCanvas?.version), "Document must use a recognized owned model version");
+  assertOwnedDocumentWritable(parseOwnedDocument(value));
   assert.ok(value.tldrawSnapshot?.document?.store, "Compatible envelope must retain a document store"); return value.tldrawSnapshot.document.store;
 }
 async function saved(frame: Frame, projectId: string, predicate: (items: Shape[]) => boolean = () => true) {
@@ -166,6 +168,7 @@ async function materialReceipt(page: Page, workspaceId: string, projectId: strin
     assert.notEqual(value.status, "FAILED", "Real material task failed"); return value.status === "SUCCEEDED" ? value : null; }, 120000);
 }
 async function uploadFailureEvidence() {
+  if (!acceptedUploads.length) return { beforeFixtureCleanup: true, records: [], jobs: [] };
   const records = [];
   // Captured before fixture cleanup. Only accepted uploads from this test are
   // queried; no file bytes, object keys, names or error messages leave memory.
@@ -189,12 +192,18 @@ async function uploadFailureEvidence() {
     redis = new IORedis(redisUrl.href, { lazyConnect: true, maxRetriesPerRequest: 1, enableOfflineQueue: false, connectTimeout: 2000, commandTimeout: 2000, retryStrategy: () => null });
     redis.on("error", () => undefined); await redis.connect();
     queue = new Queue("studio-material-upload", { connection: redis, prefix: queuePrefix, skipMetasUpdate: true }); queue.on("error", () => undefined);
+    // Initialization reads Redis INFO under the existing 2-second command
+    // deadline. Finish it before querying or closing the shared connection.
+    await queue.waitUntilReady();
     for (const accepted of acceptedUploads.slice(-8)) {
       const job = await queue.getJob(accepted.taskId);
       jobs.push({ task: uploadTaskToken(accepted.taskId), present: !!job, ...(job ? { state: await job.getState(), attemptsMade: job.attemptsMade, failure: classifyUploadFailure(job.failedReason) } : {}) });
     }
   } catch (error) { queueError = classifyUploadFailure(error); }
-  finally { redis?.disconnect(); await queue?.close().catch(() => undefined); }
+  finally {
+    try { await queue?.close(); } catch (error) { queueError ??= classifyUploadFailure(error); }
+    finally { redis?.disconnect(); }
+  }
   return { beforeFixtureCleanup: true, records, jobs, ...(queueError ? { queueError } : {}) };
 }
 async function assertMaterial(page: Page, workspaceId: string, projectId: string, material: { assetId: string; url: string; assetSha256: string }, expected?: Buffer) {
@@ -202,6 +211,25 @@ async function assertMaterial(page: Page, workspaceId: string, projectId: string
   assert.equal(asset.workspaceId, workspaceId); assert.ok(asset.storageKey); assert.ok(!/^(?:blob|data):/.test(asset.url)); assert.equal(await prisma.projectAsset.count({ where: { projectId, assetId: asset.id } }), 1);
   const raw = await page.context().request.get(new URL(material.url, base).href); assert.equal(raw.status(), 200); const bytes = await raw.body(); assert.equal(digest(bytes), material.assetSha256);
   if (expected) { assert.equal(asset.source, "UPLOAD"); assert.equal(asset.sizeBytes, expected.length); assert.deepEqual(bytes, expected); } return bytes;
+}
+async function assertRenderedImage(node: Locator, url: string, dimensions?: { width: number; height: number }) {
+  const image = node.locator("svg image");
+  await expect(image).toHaveCount(1); await expect(image).toHaveAttribute("href", url);
+  // SVGImageElement has no complete/naturalWidth fields. Decode exactly the
+  // rendered href with the browser's raster decoder, within the previous
+  // default 5-second assertion window, and retain natural-size verification.
+  const decoded = await image.evaluate(async element => {
+    const probe = new Image(), source = (element as SVGImageElement).href.baseVal;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      probe.src = source;
+      await Promise.race([probe.decode(), new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("Rendered image decode timed out")), 5000); })]);
+      return { complete: probe.complete, width: probe.naturalWidth, height: probe.naturalHeight };
+    } finally { if (timer !== undefined) clearTimeout(timer); }
+  });
+  assert.equal(decoded.complete, true); assert.ok(decoded.width > 0 && decoded.height > 0, "Rendered image must decode real pixels");
+  if (dimensions) assert.deepEqual({ width: decoded.width, height: decoded.height }, dimensions);
+  await expect(node).not.toHaveAttribute("data-image-error", "true");
 }
 async function homepageDraft(page: Page) {
   // Inspect recoverable inputs only. Do not inject a receipt or manufacture a
@@ -252,7 +280,7 @@ try {
     assert.equal(uploadRow.workspaceId, workspace.id); assert.equal(uploadRow.userId, user.id); assert.equal(uploadRow.projectId, homeProjectId);
     assert.equal(uploadRow.mutationId, attachmentId); assert.equal(uploadRow.sha256, digest(uploadFixture)); assert.equal(uploadRow.assetId, homeReceipt.material.assetId); assert.equal(uploadRow.body, null);
     const homeImageId = "shape:home-" + attachmentId, homeImage = homeFrame.locator(`[data-owned-id="${homeImageId}"][data-kind="image"]`);
-    await expect(homeImage).toHaveCount(1, { timeout: 45000 }); await expect(homeImage.locator("img")).toHaveAttribute("src", homeReceipt.material.url);
+    await expect(homeImage).toHaveCount(1, { timeout: 45000 }); await assertRenderedImage(homeImage, homeReceipt.material.url, { width: 48, height: 32 });
     const homeSaved = await saved(homeFrame, homeProjectId, items => items.length === 1 && items[0]?.id === homeImageId && items[0]?.type === "c-image"
       && items[0]?.props.url === homeReceipt.material.url && items[0]?.meta?.novartAssetId === homeReceipt.material.assetId && items[0]?.meta?.novartAssetSha256 === homeReceipt.material.assetSha256);
     assert.ok(homeSaved.row.revision >= 1); await expect(page.locator("#hs-handoff")).toBeHidden({ timeout: 45000 });
@@ -268,8 +296,7 @@ try {
     await homeFresh.getByTestId("studio-nav-projects").click(); await homeFresh.locator(`#ns-project-library [data-project-id="${homeProjectId}"] [data-action="open-project"]`).click();
     const restoredHomeFrame = await editorFrame(homeFresh, homeProjectId);
     await expect(restoredHomeFrame.getByTestId("owned-canvas-item")).toHaveCount(1); const restoredHomeImage = restoredHomeFrame.locator(`[data-owned-id="${homeImageId}"]`);
-    await expect(restoredHomeImage.locator("img")).toHaveAttribute("src", homeReceipt.material.url);
-    await expect.poll(() => restoredHomeImage.locator("img").evaluate(node => { const image = node as HTMLImageElement; return image.complete && image.naturalWidth === 48 && image.naturalHeight === 32; })).toBe(true);
+    await assertRenderedImage(restoredHomeImage, homeReceipt.material.url, { width: 48, height: 32 });
     await assertMaterial(homeFresh, workspace.id, homeProjectId, homeReceipt.material, uploadFixture); await expect(homeFresh.locator("#hs-handoff")).toBeHidden();
     const freshDraft = await homepageDraft(homeFresh); assert.equal(freshDraft?.items.length ?? 0, 0); assert.equal(freshDraft?.submitted ?? null, null);
     assert.equal((await prisma.editorDocument.findUniqueOrThrow({ where: { projectId: homeProjectId } })).checksum, homeSaved.row.checksum);
@@ -408,7 +435,7 @@ try {
   const finalDraft = await persistedDraft(user.id, projectId, expectedDraft);
   const fresh = await newPage(); await login(fresh, email, password, `/studio?workspaceId=${workspace.id}`); await studioReady(fresh); await expect(fresh.locator("#ns-greeting")).toContainText(newNickname); await fresh.getByTestId("studio-nav-projects").click(); const freshCard = fresh.locator(`#ns-project-library [data-project-id="${projectId}"]`);
   await expect(freshCard.locator('[data-action="favorite"]')).toHaveAttribute("aria-pressed", "true"); await freshCard.locator('[data-action="open-project"]').click(); frame = await editorFrame(fresh, projectId); await expect(frame.getByTestId("owned-canvas-item")).toHaveCount(finalShapes.length);
-  for (const item of finalShapes) { const node = frame.locator(`[data-owned-id="${item.id}"]`); await expect(node).toHaveCount(1); if (item.type === "c-image") await expect(node.locator("img")).toHaveAttribute("src", item.props.url); }
+  for (const item of finalShapes) { const node = frame.locator(`[data-owned-id="${item.id}"]`); await expect(node).toHaveCount(1); if (item.type === "c-image") await assertRenderedImage(node, item.props.url); }
   await restoredDraft(frame, expectedDraft); assert.equal((await persistedDraft(user.id, projectId, expectedDraft)).revision, finalDraft.revision);
   realDraftPersistence = true; deferred.splice(deferred.indexOf("Unsent creation draft autosave/pagehide recovery"), 1);
   check("fresh browser restores the exact server draft without browser storage or a revision rewrite");

@@ -1,5 +1,21 @@
 # Novart 开发日志 · 2026-10-11
 
+## 用户要求再次推送：已成功，云端验收进行中
+
+用户在外部浏览器打开GitHub后要求重试。检查发现Windows系统代理启用，而Git未配置或继承代理；仅为本次Git命令使用现有本机系统代理，未修改全局Git/网络设置、证书校验或浏览器凭据。推送退出0：远端整合分支由55e07ac前进到 `1d6754dbf8620db0671dd1b2387a2438549eb3e1`，GitHub连接GET已核对相同HEAD。旧失败和备用连接403记录保留，浏览器登录本身不等同于Git写权限。
+
+推送前后官方push/workflow dry-run均通过，实际CDS签名投递回执 `d3b17c1c-533f-44ec-aa31-5cfb9f839d11` 为signatureValid=true、dispatchAction=skipped，skip marker确认。公司三分支注册/CI快照保持一致，最近部署记录无本次SHA；独立产品仍运行55e，未因推送自动发布。
+
+GitHub Branch Image精确SHA流水线[38143196104](https://github.com/nickzhang2999-dev/brandai-platform/actions/runs/38143196104)，product/backend job114481081872，最终失败在真实UI阶段。owned适配、工作台/protocol、实际React画布交互、DB迁移、独立临时存储和完整仓库门禁均通过；真实后端95项通过。镜像构建、复验与发布全部skipped，没有部署候选或付费模型调用。
+
+日志首个可见错误为BullMQ初始化Redis时的 `Stream isn't writeable and enableOfflineQueue options is false`。源码另确认真实UI脚本255/271/272/411仍寻找旧img/src/HTMLImageElement尺寸，而新画布已使用SVG image/href；失败诊断助手在可能为空的上传集合上创建Queue后先disconnect Redis，可能让未完成的INFO初始化错误覆盖原UI断言。该关联链是源码推断，不把它冒充日志已确认的唯一根因；目前修验收的图片选择器/真实解码和诊断生命周期，保留SHA/尺寸/重开/上传120秒门禁，不修改生产queue。
+
+修正完成：`apps/web/scripts/verify-studio-ui.ts`对SVG image的href检查后，以相同href真实decode并核对自然尺寸；首页及全新会话继续48×32，最终重开所有图片都解码。纯数据模型只接受认识的v1/v2并通过可写验证；未知版本/关系不放行。空上传诊断不创建Redis，非空诊断先awaitQueue.waitUntilReady，再查询，Queue关闭后才disconnectRedis，原2秒连接/命令及120秒上传期限不变。
+
+修正本地验证：隔离实际Chrome的SVG解码/错误尺寸拒绝/新页面重开3项通过，AST抽取诊断的空集合/正常生命周期/ready失败记录3项通过；这些不是实际后端验收。L1再次989、同项目WindowsAI365、完整Web类型检查、生产构建exit0。运行画布16个源码与先前49项实际交互冻结完全一致，仅修验收脚本，尚需新SHA重新执行真实栈及镜像门禁。
+
+本段是最新状态，后面“推送失败”保留此前时点事实。恢复的是代码上传通道；新增工具是否上线仍以该SHA完整CI、独立部署和公网实际验收为准。
+
 ## 自研画布工具补齐（本地完成，发布待执行）
 
 用户明确授权补齐对象复制、右键操作、文字排版、图片裁切翻转、对齐组合、图层显隐锁定排序、橡皮擦和直线箭头，以及画框联动和局部导出。三个子智能体分工实现数据模型／纯操作、渲染导出和交互 UI；主任务接通真实图片替换、后端效果边界和浏览器检查。
@@ -35,6 +51,14 @@ Windows的 `pnpm test:ai` 因POSIX `.venv/bin/python` 被cmd拒绝，保留首�
 本批尚未推送或发布，没有模型调用或公司共享资源写入。线上仍是之前已验证的55e核心版。CDS本轮GET-only回读确认独立project98的Web/AI/Worker均为预构建镜像，Garage及两块卷、PG/Redis独立卷可沿用，effective入口为/studio、readiness为/login。只更新应用镜像不需要重新导入存储配置或复制模型密钥。
 
 距CDS交付仍有三道检查：1）准确新提交带 `[skip cds]`，先跑官方push/workflow dry-run，再核对实际签名投递和公司分支快照；2）该SHA云端一次性DB/S3/Worker/实际页面、构建镜像复验通过并发布已验证镜像；3）只部署独立项目98，回读运行SHA后实际登录验新工具、保存重开和局部导出。此记录不是新批次上线证明，不重复之前唯一一次付费生图。
+
+### 提交与推送实际状态
+
+工具及日志已形成本地提交 `1d6754dbf8620db0671dd1b2387a2438549eb3e1`（`[skip cds] Complete owned canvas tools and scoped exports`）。提交前16个测试源码与冻结哈希一致，四处原有共享dirty字节不变；需求归因表只提交新增70行，既有63行仍未暂存。
+
+官方新SHA push/workflow self-test通过：push为ignored-skip-marker，workflow为workflow-acknowledged，deploy/stop/comment副作用均false；公司三分支快照保持原状态。实际Git推送连续三次失败，两次Recv failure: Connection was reset，第三次无法连接github.com:443；已读回远端分支仍为55e07ac。备用GitHub连接的Git tree写请求返回HTTP403 Resource not accessible by integration，未更新远端分支。此为本机网络和备用连接写权限问题，尚未进入CDS部署，不能记为CDS平台构建故障。
+
+当前云端新SHA流水线数量0、部署0、付费调用0；没有实际新push回执可验。恢复Git传输或提供具备仓库contents写权限的连接后，仍须先重新确认新提交与skip隔离，再执行云端镜像/真实栈门禁和独立发布。旧可用核心版保持运行。失败记录不作成功发布凭据。
 
 ## 新版产品入口纠正
 
