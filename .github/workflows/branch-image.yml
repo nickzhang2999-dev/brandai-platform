@@ -15,6 +15,7 @@ on:
       - 'scripts/test-novart-license-browser.py'
       - 'scripts/test-novart-license-browser.cjs'
       - 'scripts/test-novart-license-config.py'
+      - 'scripts/test-novart-product-entry.py'
       - '.github/workflows/branch-image.yml'
   workflow_dispatch:
 
@@ -42,6 +43,7 @@ jobs:
           python3 -B scripts/test-novart-share-origin.py
           python3 -B scripts/test-novart-startup-diagnostics.py
           python3 -B scripts/test-novart-license-config.py
+          python3 -B scripts/test-novart-product-entry.py
           node scripts/test-novart-home-start.cjs
           node scripts/test-novart-canvas-ready.cjs
           node scripts/test-novart-startup-diagnostics.cjs

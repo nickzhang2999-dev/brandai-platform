@@ -5,7 +5,7 @@ is replaced by a service worker and a finite local resource resolver; no remote
 requests are forwarded. The share cookie is a capability for one review room.
 """
 from __future__ import annotations
-import argparse, gzip, hashlib, http.client, json, math, mimetypes, os, re, secrets, threading, time
+import argparse, gzip, hashlib, http.client, ipaddress, json, math, mimetypes, os, re, secrets, threading, time
 from collections import deque
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -63,6 +63,31 @@ def _parse_additional_origins(value, public_origin):
             raise ValueError('Additional origins must be distinct http(s) origins without paths')
         result.add(origin)
     return frozenset(result)
+
+
+def _validate_product_entry(value):
+    """Accept a fixed server-owned HTTPS product entry, never a redirect input."""
+    if value is None:
+        return None
+    message = 'Product entry must be a single HTTPS origin followed by /studio'
+    if not isinstance(value, str) or len(value) > 2048 or not value.endswith('/studio'):
+        raise ValueError(message)
+    origin = _parse_origin(value[:-len('/studio')])
+    if origin is None or origin[0] != 'https':
+        raise ValueError(message)
+    hostname = origin[1]
+    try:
+        if '%' in hostname:
+            raise ValueError(message)
+        if ':' in hostname or re.fullmatch(r'[0-9.]+', hostname):
+            ipaddress.ip_address(hostname)
+        elif len(hostname) > 253 or any(re.fullmatch(
+            r'[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?', label) is None
+            for label in hostname.split('.')):
+            raise ValueError(message)
+    except ValueError:
+        raise ValueError(message) from None
+    return value
 
 
 def _write_origin_allowed(headers, public_origin, additional_origins=frozenset()):
@@ -132,7 +157,8 @@ def _diagnostic_object(pairs):
 
 class ShareRuntime:
     def __init__(self, data_dir, port=0, host='127.0.0.1', *, public_origin=None, additional_origins=None,
-        tldraw_license_key=None):
+        tldraw_license_key=None, product_entry=None):
+        self.product_entry = _validate_product_entry(product_entry)
         tldraw_license_key = validate_license_key(tldraw_license_key)
         self.public_origin = _parse_origin(public_origin) if public_origin is not None else None
         if public_origin is not None and self.public_origin is None:
@@ -203,6 +229,9 @@ class ShareRuntime:
                     return self.send({'status': 'ok' if ready else 'unavailable',
                         'service': 'novart-workbench-preview',
                         'packageSha256': owner.package_sha256}, 200 if ready else 503)
+                if (owner.product_entry is not None and self.command in ('GET', 'HEAD')
+                    and parsed.path in ('/', '/product')):
+                    return self.send(b'',302,extra={'Location':owner.product_entry})
                 if self.command == 'GET' and parsed.path.startswith('/share/'):
                     if not secrets.compare_digest(parsed.path[len('/share/'):], owner.key):
                         return self.send({'error':'评审链接无效'},404)
@@ -213,6 +242,9 @@ class ShareRuntime:
                         return self.send(b'',302,extra={'Location':'/studio#/home'})
                     return self.send('''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>NovartLab · 体验评审</title><style>html{color-scheme:light}body{margin:0;min-height:100vh;min-height:100dvh;display:grid;place-items:center;background:#fafafc;color:#26232c;font:16px/1.8 system-ui}main{box-sizing:border-box;width:min(100%,520px);padding:clamp(24px,6vw,48px)}h1{font-size:28px;margin:0 0 16px}p{color:#706c7b;margin:8px 0}</style></head><body><main><h1>NovartLab</h1><p>工作台已准备就绪。</p><p>请使用管理员提供的完整评审链接进入。</p></main></body></html>''',mime='text/html; charset=utf-8')
                 if not self.allowed(): return self.send({'error':'请使用完整的专属评审链接打开'},401)
+                if (owner.product_entry is not None and self.command in ('GET', 'HEAD')
+                    and parsed.path in ('/studio', '/share-start')):
+                    return self.send(b'',302,extra={'Location':owner.product_entry})
                 if self.command not in ('GET','HEAD'):
                     if not _write_origin_allowed(self.headers, owner.public_origin, owner.additional_origins):
                         return self.send({'error':'Cross-origin write rejected'},403)
@@ -340,11 +372,13 @@ if __name__=='__main__':
         help='Exact external http(s) origin when a reverse proxy rewrites Host; no path or wildcard')
     parser.add_argument('--additional-origins', default=os.environ.get('NOVART_REVIEW_ADDITIONAL_ORIGINS'),
         help='JSON array of at most 8 additional exact http(s) origins; requires --public-origin')
+    parser.add_argument('--product-entry', default=os.environ.get('NOVART_REVIEW_PRODUCT_ENTRY'),
+        help='Fixed HTTPS origin followed by /studio for the reviewed product; no query or fragment')
     args=parser.parse_args()
     if not args.room.replace('-','').isalnum(): raise ValueError('Invalid room')
     runtime=ShareRuntime(ROOT/'sharing'/args.room,args.port,args.host,public_origin=args.public_origin,
         additional_origins=args.additional_origins,
-        tldraw_license_key=os.environ.get('NOVART_TLDRAW_LICENSE_KEY')).start()
+        tldraw_license_key=os.environ.get('NOVART_TLDRAW_LICENSE_KEY'),product_entry=args.product_entry).start()
     (runtime.data_dir/'runtime.json').write_text(json.dumps({'port':runtime.server.server_port,'entryPath':'/share/'+runtime.key},indent=2),'utf-8')
     print('Review gateway ready on port '+str(runtime.server.server_port),flush=True)
     try:

@@ -92,7 +92,7 @@
     "harness/responsive-layout.js": "e496269f14f571b1130dd4058030d285812ea9745e24c65a727da89fb170fe76",
     "harness/share-client.js": "d1cd161a3a7a323c28d51fed43ab9a01737e338355e15acf79f1ec7d692176df",
     "harness/share-worker.js": "52de9e7198e1a8e04044f6f780ec0a88b077630557ef6e8b350414feefc244cb",
-    "harness/share_runtime.py": "27db5b0b13a1bf057181280c94f972b863f92af21b1dc344639c5413793244c1",
+    "harness/share_runtime.py": "855ffe1b95785f34cb6afba1b91f9a4442a506c257dab3de950f7344e3dd6ae7",
     "originals/capture.json": "f259d9a68cf9eced917fe16fae6e3de8026fce449b66f48cd301d0faa30a3055",
     "originals/entry-dependencies.json": "3d7eba5f2b118e0a658eed0a9ff4dcbd4d11fdef338c2d116ed590081959ad8c",
     "originals/external/assets-persist.lovart.ai/img/lovart-avatar.png": "4a3e7e1c9ca9550983549b1f404d1cd10c89867044e08f6e80fcbb09fa01922f",
