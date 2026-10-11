@@ -350,7 +350,7 @@ try {
   if (process.env.WORKBENCH_TEST_MATERIAL_UPLOAD === "1") {
     enter("real worker upload, authenticated bytes and undoable insertion"); const task = await upload(page, frame, `owned-ui-${run}.png`); assert.equal(task.projectId, projectId);
     const receipt = await materialReceipt(page, workspace.id, projectId, task.taskId); await assertMaterial(page, workspace.id, projectId, receipt.material, uploadFixture);
-    const image = frame.locator('[data-testid="owned-canvas-item"][data-kind="image"]').filter({ has: frame.locator(`img[src="${receipt.material.url}"]`) }); await expect(image).toHaveCount(1, { timeout: 45000 }); uploadedId = (await image.getAttribute("data-owned-id"))!;
+    const image = frame.locator('[data-testid="owned-canvas-item"][data-kind="image"]').filter({ has: frame.locator(`svg image[href="${receipt.material.url}"]`) }); await expect(image).toHaveCount(1, { timeout: 45000 }); await assertRenderedImage(image, receipt.material.url, { width: 48, height: 32 }); uploadedId = (await image.getAttribute("data-owned-id"))!;
     await frame.getByRole("button", { name: "撤销", exact: true }).click(); await expect(image).toHaveCount(0); await frame.getByRole("button", { name: "重做", exact: true }).click(); await expect(image).toHaveCount(1);
     await saved(frame, projectId, items => items.some(item => item.id === uploadedId && item.type === "c-image" && item.props.url === receipt.material.url)); check("durable upload preserves bytes, ownership and undoable persistent image");
 
@@ -359,8 +359,8 @@ try {
     await page.goto(new URL(`/studio?workspaceId=${workspace.id}#/workspace/${projectId}`, base).href); await studioReady(page); frame = await editorFrame(page, projectId);
     await frame.getByRole("button", { name: "任务", exact: true }).click(); await frame.getByRole("button", { name: "刷新任务", exact: true }).click(); const row = frame.locator(`section[data-task-id="${detached.taskId}"]`); await expect(row).toContainText("已存入素材库");
     // The worker may finish before unload: do not intentionally insert a second copy.
-    const existing = frame.locator(`[data-kind="image"] img[src="${detachedReceipt.material.url}"]`); if (await existing.count() === 0) await row.getByRole("button", { name: "加入画布", exact: true }).click();
-    await expect(existing).toHaveCount(1); await saved(frame, projectId, items => items.some(item => item.props.url === detachedReceipt.material.url)); check("accepted upload completes without a live page and inserts without reupload");
+    const existing = frame.locator('[data-kind="image"]').filter({ has: frame.locator(`svg image[href="${detachedReceipt.material.url}"]`) }); if (await existing.count() === 0) await row.getByRole("button", { name: "加入画布", exact: true }).click();
+    await expect(existing).toHaveCount(1); await assertRenderedImage(existing, detachedReceipt.material.url, { width: 48, height: 32 }); await saved(frame, projectId, items => items.some(item => item.props.url === detachedReceipt.material.url)); check("accepted upload completes without a live page and inserts without reupload");
 
     enter("real uploaded-image purposes and explicit modification target persist");
     assert.ok(uploadedId);
@@ -417,8 +417,8 @@ try {
     assert.equal(complete.results.length, 1); const result = complete.results[0], bytes = await assertMaterial(page, workspace.id, projectId, result);
     const version = await prisma.generationVersion.findUniqueOrThrow({ where: { id: result.versionId } }); assert.equal(version.generationId, accepted.generationId); const gen = await prisma.generation.findUniqueOrThrow({ where: { id: accepted.generationId } }); assert.equal(gen.workspaceId, workspace.id); assert.equal(gen.projectId, projectId); assert.equal(gen.status, "SUCCEEDED");
     assert.equal(await prisma.generation.count({ where: { projectId } }), 1, "Lost response must not create a second paid generation"); const dimensions = await sharp(bytes).metadata(); assert.deepEqual([dimensions.width, dimensions.height], [result.width, result.height]);
-    const image = frame.locator(`[data-kind="image"] img[src="${result.url}"]`); await expect(image).toHaveCount(0); await frame.getByRole("button", { name: "刷新任务", exact: true }).click(); const row = frame.locator(`section[data-task-id="${accepted.requestId}"]`);
-    await expect(row).toContainText("图片已生成并保存"); await row.getByRole("button", { name: "加入画布", exact: true }).click(); await expect(image).toHaveCount(1); await frame.getByRole("button", { name: "撤销", exact: true }).click(); await expect(image).toHaveCount(0); await frame.getByRole("button", { name: "重做", exact: true }).click(); await expect(image).toHaveCount(1);
+    const image = frame.locator('[data-kind="image"]').filter({ has: frame.locator(`svg image[href="${result.url}"]`) }); await expect(image).toHaveCount(0); await frame.getByRole("button", { name: "刷新任务", exact: true }).click(); const row = frame.locator(`section[data-task-id="${accepted.requestId}"]`);
+    await expect(row).toContainText("图片已生成并保存"); await row.getByRole("button", { name: "加入画布", exact: true }).click(); await expect(image).toHaveCount(1); await assertRenderedImage(image, result.url); await frame.getByRole("button", { name: "撤销", exact: true }).click(); await expect(image).toHaveCount(0); await frame.getByRole("button", { name: "重做", exact: true }).click(); await expect(image).toHaveCount(1);
     await saved(frame, projectId, items => items.some(item => item.props.url === result.url)); check("real provider, idempotent receipt, persisted bytes and manually inserted undoable result");
   } else console.log("SKIP real generation acceptance: no provider result is claimed by this run.");
 

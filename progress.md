@@ -1,6 +1,14 @@
 # Integration progress
 
+## 2026-10-11 — latest CDS preview request, precise UI regression follow-up
+
+- Actual f97/run38144791349 ended failure: real backend95 and first real UI journeys passed; stage uploaded-image insertion expected old img[src] through filter and found0. Upload task/job succeeded, asset and docPUT200, no browser/network errors. First failure is now preserved by fixed diagnostics, not an upload outage.
+- Fixed remaining3 template selectors (upload, detached restore, optional generation) to SVG image/href wrappers; added actual decode while retaining0/1 undo and no-duplicate rules, bytes/SHA/dims/120s/provider count. Full-file/AST audit and isolated Chrome source-selector checks passed; no running canvas/backend code changed.
+- L1989/WindowsAI365 passed again; ordinary typecheck firstOOM134, existing jitless+768MiB rerun full check exit0; actual production build exit0. Runtime16 source hashes unchanged, newSHA CI pending; no Docker/system-memory change/provider/release call.
+
 ## 2026-10-11 — push retry succeeded, exact-SHA cloud gates running
+
+- Follow-up f97ecb6 successfully pushed after the acceptance-script fix and full repeated gates. New Branch Image38144791349/backend114485769853 in_progress. Running canvas sources remain the same locally tested16; old failed381 is preserved. No image release/deploy/provider call yet.
 
 - Windows system proxy was enabled but Git did not use it. Command-scoped existing proxy allowed push exit0; no global network/Git setting or certificate changes. Remote HEAD confirmed1d6754dbf8620db0671dd1b2387a2438549eb3e1.
 - Official before/after dry-runs and actual signed CDS skipped receipt passed; company3 branch/CI snapshots unchanged, recent runs referencing newSHA0. Existing independent product stays55e until verified release.

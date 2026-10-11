@@ -1,5 +1,12 @@
 # Novart product integration
 
+## Latest steering — preview latest on isolated CDS
+
+- [complete] Read exact f97 CI terminal failure; backend95 and actual upload succeeded, remaining old selector strings caused UIcount failure. No candidate images published.
+- [complete] Fix all3 remaining SVG image identity selectors and strengthen actual decode; preserve original upload/history/reopen/provider gates and failures. Running canvas sources remain unchanged.
+- [complete] Required local gates: L1989/AI365/full low-memory typecheck passed after recorded normalOOM, production build exit0; runtime16 sources unchanged. Safe newSHA push/real cloud gate next.
+- [pending] After verified immutable image publication only: claim/deploy exactSHA in isolated project98, readback runtime/entry/health and authenticated public owned-tools save/reopen/export. No new paid generation; preserve companymain and shared data.
+
 ## Current tools-completion batch — 2026-10-11
 
 User authorized filling all inventoried canvas gaps and asks what remains before CDS delivery. Continue in integration branch, preserve company main/shared resources, no goal mode, no Computer Use, no local Docker and no additional paid generation.
@@ -14,6 +21,7 @@ User authorized filling all inventoried canvas gaps and asks what remains before
 - [complete] User-requested retry: command-scoped existing Windows proxy fixed Git transport; exact1d6754d pushed, remote HEAD and actual signed skipped delivery verified; company snapshots/recent runs unchanged. Earlier failed attempts retained.
 - [in_progress] Branch Image38143196104 exact1d cloud gates running; adapter/shell/protocol/actual React fixture and DB migrations passed. New image publication and independent release/public tools acceptance remain pending.
 - Run381 failed actualUI after real backend95/all gates success. Fixed only acceptance script old img/SVG expectations and diagnostic lifecycle; isolatedChrome3/diagnostic fixtures3 plus repeated L1989/AI365/type/build passed. Preserve failure evidence; prepare a new skip-marked SHA and require its fresh real CI before release.
+- [complete] Corrected f97ecb6 pushed with same existing command-scoped proxy and exact skip dry-run; follow-up automaticCI38144791349 running. Independent runtime remains55e; no provider call.
 
 Ownership: canvas_model_tools owns owned-canvas-model/operations and model tests; canvas_render_export owns owned-canvas-export/style helpers and export tests; canvas_editing_ui owns OwnedCanvas/CSS; root owns client wiring/workflow guards/browser harness/gates/docs. Shared dirty files remain excluded; append attribution without overwriting the preexisting row63 change.
 

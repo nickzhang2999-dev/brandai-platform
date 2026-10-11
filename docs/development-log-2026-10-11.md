@@ -1,6 +1,18 @@
 # Novart 开发日志 · 2026-10-11
 
+## 请求最新版CDS预览：补齐遗漏的真实UI图片检查
+
+本轮实际读回确认f97/run38144791349已失败，未生成发布镜像。真实后端95项通过；首页真实上传/新会话恢复、空项目、指针中文历史入库和草稿离页恢复通过。确切失败在verify-studio-ui.ts:353仍用filter内的`img[src]`，期望1却找到0。诊断显示上传SUCCEEDED、jobcompleted、原素材存在、文档PUT200，network/browser errors为空；此次原错误已正确记录，不能归成上传后端故障。
+
+上一轮只修直接img locator，漏了模板字符串中的353、362、420三处。现已统一改为对象wrapper内SVG image/href精确身份，插入后真实解码；原撤销重做0/1、离页不重复插图、48×32、bytes/SHA、120秒和provider次数检查全部保留。全文件/AST排查无旧图片选择器，本机Chrome提取实际源码选择器的匹配/尺寸/撤销/返页/错误href拒绝检查通过；此局部仍不是新版本真实后端验收，不调用provider。
+
+重复本地L1 989、Windows同项目AI365通过。首次普通类型检查因本机Node内存分配失败退出134，随后以现有jitless/768MiB/小semi-space方式完整typecheck退出0，保留首次失败；没有修改系统内存/网络设置或启动Docker。生产构建现已exit0，运行画布16源码冻结保持一致；待新SHA云端真实栈与镜像验收。公司main/共享资源及四处原dirty保持，当前独立公网仍为55e。
+
 ## 用户要求再次推送：已成功，云端验收进行中
+
+最新修正提交 `f97ecb6a8b26bc353b14f16905f899f1b7925d79` 已经成功推送，包含同一批新增工具和SVG图片/诊断生命周期验收修正。新[Branch Image38144791349](https://github.com/nickzhang2999-dev/brandai-platform/actions/runs/38144791349)自动开始，backend job114485769853；适配、页面协议已通过，实际React交互进行中。线上仍为55e，尚未更新应用镜像；失败的38143196104保留，不重新标为通过。
+
+f97实际CDS签名回执 `965d5a45-0192-4def-a680-ba8a17cb30d9` 已确认signatureValid=true、dispatchAction=skipped、skipMarkerConfirmed=true；新before/after dry-run和公司3分支/最近部署对照通过，引用新SHA的公司部署0。第一次只读回执查询安静退出1，安全HTTP状态重读后通过，未重新推送或部署；结果文件`product-real-push-receipt-f97ecb6-retry.json`保留。
 
 用户在外部浏览器打开GitHub后要求重试。检查发现Windows系统代理启用，而Git未配置或继承代理；仅为本次Git命令使用现有本机系统代理，未修改全局Git/网络设置、证书校验或浏览器凭据。推送退出0：远端整合分支由55e07ac前进到 `1d6754dbf8620db0671dd1b2387a2438549eb3e1`，GitHub连接GET已核对相同HEAD。旧失败和备用连接403记录保留，浏览器登录本身不等同于Git写权限。
 

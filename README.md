@@ -6,6 +6,8 @@
 
 发布状态：仅本次Git命令使用现有系统代理后，`1d6754d`已成功推到整合分支，远端HEAD读回一致。CDS实际签名回执确认skip，公司三分支保持不变。云端[38143196104](https://github.com/nickzhang2999-dev/brandai-platform/actions/runs/38143196104)门禁和真实后端95项通过，真实UI失败；检查脚本的旧图片标签断言及诊断连接生命周期正在修正，镜像未发布。新工具尚未部署，当前55e核心版继续运行。
 
+修正提交`f97ecb6`云端[38144791349](https://github.com/nickzhang2999-dev/brandai-platform/actions/runs/38144791349)最终后端95通过，真实UI又暴露filter模板内三处旧img选择器。真实上传/原字节和文档保存成功，现已补齐所有SVG选择器并保留撤销/恢复/尺寸/SHA断言；新SHA门禁和发布仍待完成。当前新增工具未部署，独立公网仍55e。
+
 2026-10-11 入口纠正：新版工作台请从 [Novart Studio](https://novart-product-integration-claude-novart-product-integration.geole.me/studio#/home) 进入。直接访问 `/login` 且没有 callback 时仍会返回公司原版首页；独立产品的 CDS 分支预览入口已通过官方配置改为 `/studio`。应用版本仍为已验收的 `55e07ac`，本次没有重新部署或调用模型。详见[入口修正日志](docs/development-log-2026-10-11.md)。
 
 2026-10-10 18:13 最新状态：精确 `55e07ac0aee4b5b8c20350b4ceaa474a54aa3179` 已通过完整云端 CI 并部署到[独立产品入口](https://novart-product-integration-claude-novart-product-integration.geole.me/studio#/home)。公网核心流程已真实通过：登录/项目→上传→一张1K真实生图→独立存储归档→加入画布→保存→全新登录重开→PNG/SVG导出一致；全部验收合计仅一次生图请求。画笔/中文9项和既有真实结果续验7项均通过；含图片的画布工具栏15.302秒持续挂载，文档保存revision2。原付费轮失败报告保留，续验只读取相同任务并保存画布，没有重新生图。已知区别：创作面板“素材”列表只列上传图，生成图在“任务”中插入；真实EXACT/改图/额外视觉与分层、复杂旧文档及备份恢复未完整验收，不称完整商用上线。公司 main 和共享业务数据本轮未修改，旧右侧评审入口未替换。详见[CDS报告](docs/cds-root-cause-report-2026-10-10.md)与[开发日志](docs/development-log-2026-10-10.md)。以下时间段保留当时记录，以本段为最新状态。
