@@ -1,6 +1,37 @@
 # CDS 问题报告 · 2026-10-12 · 主列表预览丢失入口路径
 
+## 当前新增：构建成功通知未订阅
+
+main `0fbdfd2` 的基础 CI `38226429370` 与 Branch Image `38226429393` 均成功。CDS收到有效签名push并等待该SHA镜像，但未收到workflow_run。GitHub公开App API核对 `cds-geole-preview`（4096637）的events没有workflow_run，permissions没有Actions。需CDS App管理员启用Actions只读和workflow_run订阅，才能让构建完成后自动更新预览；移除跳过标记和固定镜像只解决前半段。当前镜像模板已使用完整成功提交，保留原启动命令、环境和入口。官方claim-prebuilt可恢复单次预览，不能代替订阅修复。
+
+本节对应当前整合检查，以下4b88账号、部署及生产阻塞属于此前阶段的保留记录。
+
+## 最新收尾：账号/写入适配已完成，主列表按钮丢路径与正式目录仍待平台处理
+
+用户授权开普通预览账号后，main真实登录和画布13项操作/保存恢复/导出验收通过；原账号不存在的诊断属于环境差异，没有重置正式站账户或开放注册。排除新增专用用户/品牌/项目后，原12核心表保持；本轮实际新增User/品牌/成员关系/项目各1及EditorDocument1，模型调用0。
+
+部署后的 main 创建失败另有明确环境原因：Next 服务的 AUTH_URL 与主预览域不一致，`workbench-origin.ts` 按配置严格拒绝写入；失败请求没有落项目。修复只在 main 专用新模式的 Web 启动命令中配置可信公开 origin，不改共享项目环境桶或其他分支旧模式，不放宽来源校验。同固定镜像再部署run `dr_df058efa5e47ab986436e9c3` 后实际HTTP创建/20次文档保存通过。Docker exec 的环境与启动后 Next 进程 export 不同，原错误测量false保留，实际进程补核通过；不是新的CDS服务端故障。
+
+用户仍从 main 主列表“预览”看到旧首页，现已核对**主按钮**而非仅drawer：主列表调用 onPreview → openPreview → `$e`，使用 tr/er（分别导入helper的m/s）构造裸域名，未读取完整发布入口。配置已是 `/studio`、官方原生命令也返回完整地址，按钮仍可剥掉路径。产品裸根 `/` 保留旧首页，新工作台由 `/studio`提供。使用完整链接可进入已验新版；本轮未改CDS平台代码，不能把只修改入口配置报成按钮通用修复。
+
+正式发布唯一blocking仍是生产target的 `/opt/brandai-platform-prod` 非Git；完整4b88产物已被正式预检认可。没有强行发布、猜生产目录或切换到不匹配的源码Compose。下节账号尚待验收是历史快照，正式目录阻塞仍有效。
+
+## 最新：main 更新完成后的两个真实阻塞
+
+**新版 main 部署已完成，不再沿用旧 e999 运行状态。** run `dr_e4915a56693c53a5c4d379c3` 已于06:40:25Z完成，三个服务固定镜像/容器完整 SHA 为4b88；33份迁移和原12核心表保持检查通过。原生分支级 Web 入口改为 `/studio`，官方读回完整地址，公网实际脚本匹配部署 manifest。此前 signed skip 保持运行不变与本次获权部署是不同阶段。
+
+1. **预览账号环境差异，非已证明的 CDS 登录故障。** 用户正式站账号在 main 预览库不存在；main 注册关闭且管理员 allowlist 已配置。按用户修正后的密码实际登录仍被拒绝，没有改密码或开放注册。main 登录后的画布保存恢复/导出尚待合法账号实测，不以独立98的 UI 通过代替。无需、也不能通过重置原用户或无密码身份伪造来通过验收。
+2. **正式发布 target 配置仍不完整。** 当前预检 `pfl_487c80edc6a34a84` 已认可 main4b88 产物及 `/studio` 地址，SSH/脚本存在/回滚可定位均通过，唯一阻断为 `/opt/brandai-platform-prod` 不是 Git 根。GitHub URL、本地 D盘源码、CDS 的 Project.repoPath 都不能证明生产 SSH 目录的身份。现有正式 UI 仅提供 existing-script/generated-compose/generated-static，未找到已注册给本项目的内置本机产物策略；不能据此宣称整个 CDS 服务端绝无该能力。
+
+正式 target 没有变更，也没有执行正式 release；正式健康接口仍 HTTP200，只代表旧环境可达。下一步应取得真实远端 Git 根、可信脚本内容及资源/回滚合同后重新预检。推荐扫描出的旧源码 Compose 会挂载源目录并使用 Node20，与已验 immutable topology 不同，不能直接替换生产配置。
+
+操作回执 `main-preview-rollout-deploy-1791787089900604500.json` 的旧顶层断言因为 branch detail 的 commitSha 为 null 而 `ok=false`，原记录保留；官方 CLI 本次 exit0，后续独立 deployment run/fullSHA、实际镜像与容器环境均通过。此类诊断字段缺失不是重复部署的理由，没有再次发 deploy POST。
+
+证据见当日日志最新节及本机 `formal-main-4b88-preflight-current-1791787734698477300.json`。主列表路径是否仍被不同回调丢弃，需要以实际按钮目标确认；仅配置读回不能替代点击验收，不把不同 helper 导出函数的行为混为一谈。
+
 ## 最新验收与归因边界
+
+核心已真实快进main至4b88，main基础CI38209036645与完整镜像CI38209036689均整轮成功。两真实签名push均skipped，公司旧运行记录、profiles和共享infra不变；CDS非live githubCommitSha仍旧缓存值。真实Git refs应以实际ls-remote核对，不以卡片旧时间或缓存值推断没有push，也不为刷新显示触发旧seed/db push部署链。源码合并与部署状态须分开呈现，正式站没有更新。
 
 55ff独立产品部署后的公网启动已完成普通3项、禁用Service Worker 1项、已有激活Worker但未控制页面2项，共6项全部通过。实际资源正文绑定部署摘要与源码，首页进入已有画布后工具栏稳定至少10秒，当前revision28文档不变；业务写入、额外模型调用、页面异常均为0。旧revision20基线与失败记录保留，此次不宣称历史文档内容未变。
 

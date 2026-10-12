@@ -1,3 +1,17 @@
+## 本次产品整合分支检查
+
+用户确认最新工作分支是 `claude/novart-product-integration`，要求检查代码、与main的冲突，并在可合并时合并推送，不再使用跳过CDS标记。fresh fetch：main `0fbdfd2cbce4e427bf0901fe9a6b35ce160a4e63`，integration `74e2db2513406027328e7bd13985791f112134e1`，共同祖先 `4b88be6fd340bc090e02ca9bec1f562bb0ba42a0`。
+
+integration独有的 `a88bb58`、`ace6d71`、`74e2db2` 均为文档提交，合计4文件84行新增/6行删除；没有新的应用、迁移、依赖或构建代码。其全部业务实现已包含在main中。本轮实际合并只有README的进度说明冲突；两边历史证据保留，当前自动预览配置和本轮检查放在最前。其余3文件自动合并。代码内容保持当前已验证版本，历史提交中的跳过标记不改写，新合并提交不加该标记。
+
+## 当前构建结果与 CDS 回执
+
+`0fbdfd2cbce4e427bf0901fe9a6b35ce160a4e63` 的基础 CI `38226429370`、完整镜像流水线 `38226429393` 均 completed/success；后者于09:03:35Z完成。实际日志确认源码与构建后容器两轮各后端95、真实页面17项通过，AI365通过，镜像发布完成。本次整合仅修改文档，应用、依赖、迁移与工作流和该已验证提交相同。
+
+CDS 已收到0fb的真实签名push，但仍在等待构建通知。GitHub公开 App API实际返回 `cds-geole-preview`（4096637）的订阅为 check_run、delete、issue_comment、pull_request、push、release、repository，没有 workflow_run；权限也没有 Actions。CDS回执记录仅见push，没有对应构建完成事件。恢复后续全自动预览需要该App管理员配置 Actions只读权限及workflow_run订阅。本轮没有修改全局App或CDS平台代码，没有伪造webhook。
+
+官方 `branch claim-prebuilt --dry-run` 验证完整0fb和成功流水线后，通过同一命令的 `--deploy` 完成本次预览恢复。运行 `dr_7778a5ecbd870c5300eca7ed` 于09:10:51Z进入complete/running；三服务全部running，实际镜像均为完整0fb标签。公网 `/studio` 返回307到带正确callback的登录页，`/api/health` 返回200，Web/AI/Worker均ok，Worker报告提交0fbdfd2cbce4、原队列brandai-main和12消费者。日志确认原33迁移全部已应用，没有待执行迁移。首次Python公网读请求超时，后续独立curl实际入口和健康检查通过；不掩盖原网络失败，也不将配置成功或单次恢复写成全自动链路已恢复。Worker仍有原镜像内缺少git导致的源码轮询日志，当前队列健康，未为此改变镜像构建。
+
 ## 本次 main 推送与云端验收补充
 
 合并提交 `449979caa3cfcc4dda3031bd6b6a282c2a5a70d6` 已推送 main，父提交为 `4b88be6` 与 `d82e7c2`；CDS 自动收到推送并将 CI 目标设为同一 SHA。普通 CI `38225525918` 成功，产品构建 `38225525967` 在真实 UI 检查中失败，未发布新镜像，旧预览继续运行。
@@ -28,6 +42,54 @@
 ---
 
 # Novart 开发日志 · 2026-10-12
+
+## 最新收尾：main 专用账号与画布真实验收完成；正式发布仍被目录校验阻断
+
+用户随后明确要求“帮我搞个账号”。通过已授权项目级操作一次性创建 main 预览专用普通用户，`isAdmin=false`，并在真实登录后通过正式工作区 API 创建其独立测试品牌；没有重置旧账号、开放注册或修改管理员名单。凭据仅在 Git ignored 的 `.cds` 本地私密文件中，不写入日志、提交或公开回复。
+
+首次公司 main 的新建项目操作未通过，原失败报告保留。只读检查确认新品牌 `Project=0`、`WorkbenchProjectState=0`、受理 creationKey=0，并发现运行配置的 `AUTH_URL` 与 main 公网 origin 不一致。这是环境适配问题，不是密码错误或项目被吞。仅修改 Web 新增的 `novart-verified-4b88` 启动命令，在启动 Next 时显式设置真实 main 的公开 origin；旧 dev/release、项目环境桶、镜像、登录密钥与其他分支未改。来源验证仍然严格执行，没有接受任意 Origin。
+
+同一固定4b88镜像于 **07:04:51Z** 再部署完成，run `dr_df058efa5e47ab986436e9c3`。三容器完整 SHA 与 CI digest 保持；实际 Next 进程的 AUTH_URL 匹配 main，原六项环境指纹保持，可信资源清单及 bootstrap/worker bytes 未变。初次以 Docker exec 新进程读取 AUTH_URL 的 false 留档；exec 不继承 Next 启动时的 export，后续按 `/proc` 核实际唯一 Next 服务进程，不能将测量口径差异误报为修复失败。
+
+**公司 main 的真实 UI 验收现已通过13项。** 使用隔离 headless Chrome 和真实账号/API：新建1项目、中文文字与笔迹、文字样式/重复粘贴、对齐/组合/移动/取消组合、线条/箭头、笔迹擦除与撤销重做、画框内容随动、图层隐藏显示/锁定解锁、自动保存、重新登录恢复、真实 SVG/PNG 下载及恢复前后像素一致。工具栏同一DOM连续15.304秒未消失，revision20的7对象与checksum重开后相同；真实受理创建1、文档保存20，页面错误/异常阻断/外域请求均0。不是独立98测试项目，也没有替换页面源码。
+
+最终只读数据审计通过：明确排除本次新作用域后原12核心表数量及内容 checksum 全等部署前；新增 User/BrandWorkspace/Membership/Project 各1及 EditorDocument1，非管理员账号不在实际 admin allowlist。AppSetting整行和原六项环境指纹保持；本次新品牌素材、生成记录、上传任务和生成请求全0。原公司业务数据没有被覆盖。
+
+**main 主列表看到旧版仍是入口按钮问题。** 当前 CDS 真实 `BranchListPage-CKTFpzMd.js` 主按钮链不读取 `previewUrl/previewEntries`，使用 `previewUrl-Cu1wGG_9.js` 的 m/s 导出拼裸域名，丢弃 `/studio`；此前“drawer/helper会保留路径”不证明主按钮正确。原生命令和详情入口返回完整 `https://main-brandai-platform.geole.me/studio`。产品 `/` 的旧首页仍保留，新工作台在 `/studio`；本轮没有发布CDS平台代码或改产品默认根路由，交付应明确使用完整链接。
+
+正式预检仍认出完整4b88产物，但生产 target 的非Git目录尚未纠正；未调用正式release。真实AI修改、main环境新上传/付费生成、P0/P1/P2未在本轮提前验收。产品源码与冻结16文件未变，本批补日志及运行适配，测试调用模型0、本机Docker0。
+
+最新证据：`company-main-review-account-1791788272614270500.json`、`company-main-session-1791788325002.json`、`company-main-create-origin-1791788570090420900.json`、`company-main-origin-fix-1791788693680726000.json`、`trusted-manifest-main-4b88-origin-fixed-proc-1791788889346287800.json`、`company-main-owned-tools-20261012-2c2b3ca0-a8d3-4bfc-9602-2718a54e076a.json`、`company-main-core-after-review-execute-1791788963189945600.json`，均在本机 `.novart-tmp`。下节“账号UI待补”为开账号前的实际历史状态，以本节更新。
+
+## 最新：公司 main 已部署新版；账号验收与正式发布仍有配置阻塞
+
+用户授权“更新一下，然后正式发布”，并询问能否使用本地源码。本地源码已经正常合入 main，并使用 main 完整 CI `38209036689` 发布的不可变镜像；不需要 CDS 平台源码。主分支于 **2026-10-12 06:40:25Z** 完成部署，run `dr_e4915a56693c53a5c4d379c3`，完整提交 `4b88be6fd340bc090e02ca9bec1f562bb0ba42a0`。
+
+- 公司三个 profile 保留原 dev/release 模式及其他设置，新增 `novart-verified-4b88`；仅 main 分支切换到该模式。Web/Worker 使用同一经 CI 验证的 Web digest，AI 使用对应 AI digest。没有执行旧 Web 的 seed/db push。Worker 在启动消费者前执行受 advisory lock 保护的 migrate deploy。
+- 部署后 Web/Worker/AI 镜像及容器环境完整 SHA 均匹配。原 30 份迁移 checksum 全部核对后，只应用 3 份尚未执行的增量；最终 33 份逐一匹配该提交的 SQL，全部完成且无回滚记录。
+- 在任何业务写入前，12 张原核心表数量及内容 checksum 均与部署前一致。数据库身份、登录与设置加密材料、Redis 等六项环境指纹保持；Worker 实际队列前缀仍为 `brandai-main`。不使用独立产品环境的队列或测试项目。
+- 主分支 Web 入口使用已验证原生 PUT 合同改为 `/studio`，分支作用域，其他服务入口不变，不需再部署。官方读回地址为 `https://main-brandai-platform.geole.me/studio`；入口配置不等于裸根 `/` 自动跳转，也不冒称实际按钮点击验收完成。
+- 公网 bootstrap/worker 实际文件与本次容器 manifest 匹配；bootstrap 主体匹配 Git 4b88 源码，未替换浏览器源文件。匿名 `/studio` 正确 307 到登录页。
+
+**公司 main 的登录后 UI 验收没有通过。** 两次使用此前提供资料的诊断及一次按用户新提供密码大小写修正后的实际登录均被拒绝，失败报告保留。只读检查证明该用户在 main 预览数据库不存在，注册关闭、管理员 allowlist 已配置；不能将此归因于新密码不正确或自动创建管理员。没有重置密码、开放注册、绕过登录或搬运独立98账号/项目。画布操作、保存重开和导出在 main 的真实账号验收仍待补，独立产品已通过的记录不代替本环境。
+
+**正式站没有发布新版。** 新预检 `pfl_487c80edc6a34a84`，HTTP200/4.797秒，artifact 已绑定完整4b88和真实 `/studio` 地址；branch/commit/artifact/SSH/脚本存在/历史回滚均 pass。唯一 blocking 仍是正式 target `brandai-novartlab-local-prod` 的 `/opt/brandai-platform-prod` 不是 Git 仓库。脚本存在不代表已核对其内容和镜像消费/数据卷合同。项目当前无可证实已注册的本机产物正式发布策略，不能把 CDS 克隆目录猜成生产目录或跳过校验；没有修改正式 target 或调用正式 release。
+
+本批产品源码没有变化，无业务写、额外模型调用或本机 Docker。真实待办：提供/开通合法 main 预览账号完成 UI 验收；维护人确认生产 Git 根及发布脚本、保留生产资源和回滚方案，再通过正式预检后发布。
+
+本机脱敏证据均在 `.novart-tmp`：`company-main-runtime-execute-4b88-1791787395706999800.json`、`trusted-manifest-main-4b88-1791787494235542100.json`、`company-main-studio-entry-1791787524967618500.json`、`company-main-public-sources-1791787909887.json`、`company-main-session-1791787813108.json`、`company-main-auth-capabilities-1791787760282042700.json`、`formal-main-4b88-preflight-current-1791787734698477300.json`。早前“公司运行未变”属于源码合并时状态，由本节实际获权部署结果更新。
+
+## 实际合并 main：4b88，保留原运行环境
+
+2026-10-12 05:41Z，通过一次正常、非force的原子push，将main从 `e99919a64cd212d5d1b083fd7210842a1962d935` 快进至 `4b88be6fd340bc090e02ca9bec1f562bb0ba42a0`，同时推进整合分支55ff→4b88。实际 `git ls-remote` 两固定refs均读回完整4b88。提交前完整SHA的main/integration push与workflow_run共四项官方dry-run均200，deploy/stop/comment副作用均false；真实两条签名push回执分别于05:41:20.943Z及05:41:19.929Z记录skipped和skip marker。
+
+公司三分支lastDeploymentRunId、运行服务状态/镜像/模式、profile overrides、profiles及共享infra配置均保持。CDS非live视图的githubCommitSha仍为旧缓存值；不能将该字段误当Git远端未推进，也不为刷新它触发公司部署。初版报告因要求CDS缓存值推进而false，保持原文件；最终报告分别引用真实远端GET与signed skip/运行配置GET，所有对应断言通过。
+
+main基础CI `38209036645` 已整轮completed/success，实际日志L1 1000（UI24+contracts976）、AI365、完整Web类型和生产构建通过。main镜像流水线 `38209036689` 与product job `114678852637` 也已整轮completed/success：步骤16–23及post42–47全成功，preview按分支条件skipped。原始日志确认源码及构建后容器两轮各API95/UI17，摘要检查及禁用Service Worker恢复两轮通过，启动回归18通过；React步骤成功但未打印数量，不编造计数。web/ai/storage三镜像以完整sha-4b88发布且实际digest已记录，额外provider调用0。integration对照 `38209035926` 成功单列，不替代main终态。下列早前“main尚未push”记录保留为当时状态。
+
+55ff→4b88精确仅2份workflow和4份文档，产品运行源码、迁移、镜像构建源码未变。四项受保护文件与16项冻结文件实际哈希全部保持；独立预览仍运行已验收55ff，不冒称运行镜像已变4b88。正式目标目录非Git的实际阻断仍保留，没有正式release请求，也没有把GitHub仓库URL当远端Git目录。仅将后续验收事实写入整合分支文档，main保持核心不可变版本。
+
+本机安全证据：`.novart-tmp/main-core-push-selftests-1791783595594751700.json`、`main-core-push-final-evidence-4b88-1791783859324228400.json`、`main-source-runtime-correspondence-4b88be6-20261012.json`、`main-ci-4b88be6-20261012.json`、`product-startup-ci-main-4b88be6-20261012.json`。主干镜像CI报告SHA256 `da0f72da367a11a2c893f7f198b6a8679e107a0fc345de601391a31dde07e94a`。没有额外模型调用；CDS旧false及历史文档差异原记录均保留。
 
 ## 后续实际更新：公网启动六项通过，核心准备合并
 
