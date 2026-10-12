@@ -1,3 +1,5 @@
+> **历史隔离策略已失效（2026-10-12）**：本文涉及跳过 CDS 部署的隔离做法仅用于追溯，现已停止使用，不作为当前提交或部署指令。正常开发按现行 [CDS 提交规则](cds-push-policy.md) 与 [CLAUDE.md](../CLAUDE.md) 执行；原始记录保留。
+
 # Novart 联调记录 · Origin 403 与改图验收 · 2026-10-09
 
 本记录区分独立前端评审修复与产品集成工作。集成分支为 `claude/novart-product-integration`；独立前端修复已推送到 `claude/novart-workbench-preview`。本轮推进的是联调与验收准备，不代表最终产品已经集成完成、部署完成或通过真实用户验收。

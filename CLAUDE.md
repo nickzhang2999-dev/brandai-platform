@@ -33,6 +33,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
    - **未验证不交付**：push 前 `pnpm test && pnpm test:ai && pnpm -F web typecheck && pnpm -F web build` 必须全绿。**「沙箱无网/装不上依赖」不是放行理由**——换能联网环境跑，或把改动停在分支等门禁过。交付说明只写**已实测结果**，禁止「未完成校验」却同时标「已推送」（V0.02 犯过，`docs/10` #6）。
    - **会被刷新/分享的状态必须服务端权威**：租户/品牌/当前项目落 cookie 或进 URL，让 SSR/刷新/深链解析同一值；**只存 `localStorage` = 双事实源，禁止**（V0.02 多品牌切换犯过，`docs/10` #5；活动品牌现走 `lib/brand-cookie.ts` + `getOrCreateActiveBrand` 成员校验）。
 
+8. **正常开发不跳过 CDS（2026-10-12 现行规则）。** 正常提交的标题、正文不得包含 `[skip cds]`、`[cds skip]` 或 CDS 同样识别的 CI/Actions 跳过标记，也不得添加末尾 `skip-checks: true` trailer。历史隔离日志仅用于追溯，不能作为当前操作指令；其中“每次提交保留跳过标记”等临时做法已停止使用。构建、预览、正式发布继续通过 CDS 原生流程。首次进入新克隆/工作区运行 `node scripts/install-cds-push-guard.cjs` 安装本地推送门禁，推送前可执行 `node scripts/cds-pre-push.cjs --check-head`。不得用 `--no-verify` 绕过，不重写旧 Git 历史。需要暂停部署时按用户当次要求处理，不得依据历史日志自行决定。安装与检测边界见 [CDS 提交规则](docs/cds-push-policy.md)。
+
 ---
 
 ## §1 · 四个 canonical 操作

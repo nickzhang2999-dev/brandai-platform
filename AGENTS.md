@@ -23,6 +23,14 @@ pnpm -F web build      # 生产 build
 - 改动文档里写「typecheck 未完成 / 预览未完成」却同时勾「已提交并推送」——这就是 G-VERIFY 违例
   （V0.02 实际发生，见 `docs/10` #6）。交付说明里只能写**已实测的结果**，不能写承诺。
 
+### G-CDS · 正常开发不得跳过 CDS（CLAUDE.md §0.8）
+
+- 正常开发提交的标题与正文不得添加 CDS 识别的跳过标记或 `skip-checks: true` 末尾 trailer；构建、预览和正式发布沿用 CDS 原生流程。
+- 历史隔离日志中的跳过部署做法已于 **2026-10-12 停止使用**，只用于追溯，不得作为当前提交或部署指令。需要暂停部署时按用户当次要求处理，不得自行沿用旧策略。
+- 首次进入新克隆或工作区时运行 `node scripts/install-cds-push-guard.cjs`。普通 `git push` 自动检查本次推送的每个分支末端提交；旧祖先、删除分支及标签不参与本门禁。
+- 推送前可运行 `node scripts/cds-pre-push.cjs --check-head`；不得使用 `--no-verify` 绕过。安装器遇到已有非本项目钩子或自定义 `core.hooksPath` 会保留原设置并停止，需完成钩子整合后再推送。
+- Git 历史不重写。文档可以保留历史标记，提交信息中不要引用这些字面量。具体边界见 [CDS 提交规则](docs/cds-push-policy.md)。
+
 ### G-AUTHORITATIVE · 服务端权威（CLAUDE.md §0.3）
 - **租户 / 品牌 / 当前项目等"会被刷新和分享的状态"必须服务端权威**：落 cookie 或进 URL，
   让 SSR / 刷新 / 深链 / 分享链接解析到同一个值。**只存 `localStorage` = 双事实源**（客户端一套、
