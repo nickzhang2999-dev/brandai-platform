@@ -1,5 +1,7 @@
 # BrandAI — 品牌项目视觉 AI 生成平台
 
+2026-10-12 核心已实际合并：`main` 从 `e99919a` 正常快进至 `4b88be6fd340bc090e02ca9bec1f562bb0ba42a0`，整合分支核心同 SHA，实际远端读回一致。两条真实签名 CDS 推送回执均为 `[skip cds]`，公司部署记录、服务配置和共享基础设施保持。main [基础 CI 38209036645](https://github.com/nickzhang2999-dev/brandai-platform/actions/runs/38209036645) 与[完整镜像验收 38209036689](https://github.com/nickzhang2999-dev/brandai-platform/actions/runs/38209036689) **均整轮成功**，源码及构建后容器两轮各API95/UI17，三镜像完整SHA标签发布成功，额外模型调用0。main 产品实现与已部署55ff相同，期间只更新2份工作流与4份文档；后续实际合并/验收日志仅追加整合分支，main保持4b88。**公司main预览运行版本与正式站未更新**。下段的“尚未push”是合并前记录，以本段和当日日志最新追加为准。
+
 2026-10-12 最新状态：启动与内容版本修复 `55ffda3e29f40fba14e7fd78d4bddf39302e5d6f` 已完成独立产品部署，run `dr_748b9d7e343e16a9efc616ff` 于 **05:10:25Z** 完成。三项应用镜像及运行环境完整 SHA 一致，Garage 仍固定55e、原双卷健康，公司三分支七字段前后不变。完整云端 CI 两轮 API95/UI17 已通过；部署后的 runtime/入口与 bootstrap 来源核对通过。公网普通首次进入、暖启动、旧 CDS 入口、禁用 Service Worker、已有激活 Worker 但未控制页面时强制刷新和网络旁路，**6 项全部通过**，每项工具栏稳定至少10秒；现有 revision28 文档打开前后不变，业务写入和额外模型调用为0。此次验证当前文档，不宣称旧 revision20 基线未发生变化。[打开已验证的独立产品](https://novart-product-integration-claude-novart-product-integration.geole.me/studio)。
 
 main 流水线与合并计划提交 `9dcc11ad403c36cb7f6f896faa0222ddb8231c94` 已本地通过 L1 1000、AI365、类型和生产构建，**尚未推送 main，也未发布正式站**。正式预检 artifact 已在补齐官方 preview URL 后通过；唯一 blocking 为 `/opt/brandai-platform-prod` 不是 Git 根目录，project-identity 是旧目标快照警告。公司项目 repository 绑定正确，不能把此项写成公司仓库绑定错误或 SSH 整体故障。详见[当前发布计划](docs/novart-main-release-plan-2026-10-12.md)。

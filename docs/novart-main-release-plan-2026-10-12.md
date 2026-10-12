@@ -4,6 +4,7 @@
 
 ## 当前状态
 
+- 核心已于05:41Z正常快进合并main，实际远端main与整合分支核心为 `4b88be6fd340bc090e02ca9bec1f562bb0ba42a0`。两真实签名CDS推送skipped，公司运行与共享infra保持；main基础CI38209036645与main镜像流水线38209036689均整轮成功，源码/容器两轮各API95/UI17、三镜像fullSHA发布通过，额外provider调用0。后续实际结果仅补整合分支文档，main保持已验证核心4b88；下方9dcc“未push”是本批合并前状态。
 - 已部署独立核心：`55ffda3e29f40fba14e7fd78d4bddf39302e5d6f`；run `dr_748b9d7e343e16a9efc616ff` 于2026-10-12 05:10:25.528Z完成。三应用镜像和运行环境完整SHA一致，Garage固定55e原双卷healthy，公司七字段前后不变。
 - 云端55ff源码和镜像内两轮API95/UI17均通过，部署后的runtime/入口与版本化bootstrap来源核对通过；**公网普通3项、禁用worker1项、已有激活worker但未控制页面2项，共6项全部通过**，当前revision28文档保持，业务写入和额外模型调用为0。
 - 实际bootstrap摘要来自部署manifest（4cd3…）；本地7881…因映射key顺序不同，源码主体和语义map已严格匹配，不直接以本地整文件hash判线上旧版本。
@@ -12,7 +13,7 @@
 - main镜像流水线保留原preview job及完整source/container gate，代码merge命中paths。原公司source启动链未导出Studio资源；专用镜像已包含同批Next与manifest资源。正式目标怎样消费镜像或生成资源仍须核对。
 - 正式preflight在补齐官方previewUrl后artifact pass；唯一blocking为 `/opt/brandai-platform-prod`非Git根目录，project-identity为旧target身份快照warn。公司repo绑定正确；没有改target或触发正式release。
 - 公司Web profile release显式seed/db push，未改未执行；不能将该配置等同于内容尚未确认的正式SSH脚本。
-- 原四项工作区状态保留，本次没有读取或覆盖：`cds-compose.yml`、`docs/10_需求调整归因表.md`、`docs/novart-workbench-preview.md`、`packages/ui/tests/__snapshots__/business.test.tsx.snap`。
+- 原四项工作区状态保留，实际哈希保持，未修改或纳入本批提交：`cds-compose.yml`、`docs/10_需求调整归因表.md`、`docs/novart-workbench-preview.md`、`packages/ui/tests/__snapshots__/business.test.tsx.snap`。
 
 ## 核心完成证据与边界
 
@@ -31,9 +32,9 @@
 - [x] main 构建补丁已纳入明确本地候选 `9dcc11ad403c36cb7f6f896faa0222ddb8231c94`；P0未混入。尚未push/合并。
 - [ ] 解决源代码发布模式的 studio 资源导出，或明确使用包含资源的已验证不可变镜像；资源清单和脚本必须绑定同一提交。
 - [x] 本地候选required L1 1000、现有Windows venv AI365、Web typecheck/build已exit0。
-- [ ] 最终main精确SHA的source/container数据库、Worker、存储与UI完整CI通过；旧55ff成功不替代新SHA。
-- [ ] 合并前再次读取远端 main；保留公司数据与未提交文件，记录合并前后 SHA。若 main 已前进，重新审查差异。
-- [ ] 核对 main 的 CDS 自动部署行为，避免将源码合并无意变成未经核对的共享环境发布。实际合并后再记录回执，不提前勾选。
+- [x] 最终main精确4b88 SHA的source/container数据库、Worker、存储与UI完整CI38209036689通过，两轮各API95/UI17，三镜像完整SHA发布；不以旧55ff或integration对照代替。
+- [x] 合并前再次读取远端main=e99919a，确认可快进；一次正常原子push至4b88，实际远端读回一致，保留四项原未提交文件与16项冻结哈希。
+- [x] 精确4b88的四项官方dry-run与真实main/integration签名skipped回执已核对；公司现有三个部署记录、profiles与共享infra未变。main源码合并不触发公司旧seed/db push启动链。
 
 ### 2. 核心发布与启动问题收尾
 
@@ -71,7 +72,7 @@
 | 目标 | 作用与更新方式 | 本计划中的状态 |
 |---|---|---|
 | 独立 Novart 产品预览 | `novart-product-integration-claude-novart-product-integration.geole.me`，独立产品项目与配置，用于验证候选 | 55ff已部署且runtime/manifest通过；三种公网浏览器模式共6项通过 |
-| 公司 main 分支预览 | `main-brandai-platform.geole.me`；仓库说明其可随 main push/合并自动部署 | 合并和运行状态尚未更新，不以独立预览结果代替 |
+| 公司 main 分支预览 | `main-brandai-platform.geole.me`；本次源码push使用已核对skip marker | Git远端已为4b88，CDS运行环境仍旧版本，非liveGit缓存字段保持旧值；实际skip回执已核对，不以独立预览结果代替 |
 | 公司正式站 | `www.novartlab.com`；仓库记录的 CDS 发布目标为 `brandai-novartlab-local-prod`，通过 SSH 执行 `./cds-release-novartlab.sh` | 需重新核对实际 target/profile、发布脚本和回滚信息；main 合并不等于正式发布 |
 
 正式 target 信息依据仓库 `CLAUDE.md` §4 的发布说明，本计划未连接 SSH 或执行发布。平台强制审批按真实返回处理；配置缺失、待审批、未测试项目均如实保留。

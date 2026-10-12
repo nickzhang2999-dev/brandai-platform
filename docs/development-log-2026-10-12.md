@@ -1,5 +1,17 @@
 # Novart 开发日志 · 2026-10-12
 
+## 实际合并 main：4b88，保留原运行环境
+
+2026-10-12 05:41Z，通过一次正常、非force的原子push，将main从 `e99919a64cd212d5d1b083fd7210842a1962d935` 快进至 `4b88be6fd340bc090e02ca9bec1f562bb0ba42a0`，同时推进整合分支55ff→4b88。实际 `git ls-remote` 两固定refs均读回完整4b88。提交前完整SHA的main/integration push与workflow_run共四项官方dry-run均200，deploy/stop/comment副作用均false；真实两条签名push回执分别于05:41:20.943Z及05:41:19.929Z记录skipped和skip marker。
+
+公司三分支lastDeploymentRunId、运行服务状态/镜像/模式、profile overrides、profiles及共享infra配置均保持。CDS非live视图的githubCommitSha仍为旧缓存值；不能将该字段误当Git远端未推进，也不为刷新它触发公司部署。初版报告因要求CDS缓存值推进而false，保持原文件；最终报告分别引用真实远端GET与signed skip/运行配置GET，所有对应断言通过。
+
+main基础CI `38209036645` 已整轮completed/success，实际日志L1 1000（UI24+contracts976）、AI365、完整Web类型和生产构建通过。main镜像流水线 `38209036689` 与product job `114678852637` 也已整轮completed/success：步骤16–23及post42–47全成功，preview按分支条件skipped。原始日志确认源码及构建后容器两轮各API95/UI17，摘要检查及禁用Service Worker恢复两轮通过，启动回归18通过；React步骤成功但未打印数量，不编造计数。web/ai/storage三镜像以完整sha-4b88发布且实际digest已记录，额外provider调用0。integration对照 `38209035926` 成功单列，不替代main终态。下列早前“main尚未push”记录保留为当时状态。
+
+55ff→4b88精确仅2份workflow和4份文档，产品运行源码、迁移、镜像构建源码未变。四项受保护文件与16项冻结文件实际哈希全部保持；独立预览仍运行已验收55ff，不冒称运行镜像已变4b88。正式目标目录非Git的实际阻断仍保留，没有正式release请求，也没有把GitHub仓库URL当远端Git目录。仅将后续验收事实写入整合分支文档，main保持核心不可变版本。
+
+本机安全证据：`.novart-tmp/main-core-push-selftests-1791783595594751700.json`、`main-core-push-final-evidence-4b88-1791783859324228400.json`、`main-source-runtime-correspondence-4b88be6-20261012.json`、`main-ci-4b88be6-20261012.json`、`product-startup-ci-main-4b88be6-20261012.json`。主干镜像CI报告SHA256 `da0f72da367a11a2c893f7f198b6a8679e107a0fc345de601391a31dde07e94a`。没有额外模型调用；CDS旧false及历史文档差异原记录均保留。
+
 ## 后续实际更新：公网启动六项通过，核心准备合并
 
 独立55ff部署后，三种真实浏览器模式共6项通过：普通首次进入、暖启动、旧CDS入口3项；完全禁用Service Worker 1项；已有activated Worker但controller为空时强制刷新、网络旁路2项。每项工具栏持续稳定10.302–10.315秒，实际加载bootstrap均严格匹配部署容器摘要、55ff源码与76项资源映射。应用未注册或等待Service Worker；没有替换线上源码。三模式各实际登录一次，业务写入、额外模型调用、页面异常均为0。
