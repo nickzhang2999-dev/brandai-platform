@@ -1,5 +1,18 @@
 # CDS 问题报告 · 2026-10-12 · 主列表预览丢失入口路径
 
+## 最新：main 更新完成后的两个真实阻塞
+
+**新版 main 部署已完成，不再沿用旧 e999 运行状态。** run `dr_e4915a56693c53a5c4d379c3` 已于06:40:25Z完成，三个服务固定镜像/容器完整 SHA 为4b88；33份迁移和原12核心表保持检查通过。原生分支级 Web 入口改为 `/studio`，官方读回完整地址，公网实际脚本匹配部署 manifest。此前 signed skip 保持运行不变与本次获权部署是不同阶段。
+
+1. **预览账号环境差异，非已证明的 CDS 登录故障。** 用户正式站账号在 main 预览库不存在；main 注册关闭且管理员 allowlist 已配置。按用户修正后的密码实际登录仍被拒绝，没有改密码或开放注册。main 登录后的画布保存恢复/导出尚待合法账号实测，不以独立98的 UI 通过代替。无需、也不能通过重置原用户或无密码身份伪造来通过验收。
+2. **正式发布 target 配置仍不完整。** 当前预检 `pfl_487c80edc6a34a84` 已认可 main4b88 产物及 `/studio` 地址，SSH/脚本存在/回滚可定位均通过，唯一阻断为 `/opt/brandai-platform-prod` 不是 Git 根。GitHub URL、本地 D盘源码、CDS 的 Project.repoPath 都不能证明生产 SSH 目录的身份。现有正式 UI 仅提供 existing-script/generated-compose/generated-static，未找到已注册给本项目的内置本机产物策略；不能据此宣称整个 CDS 服务端绝无该能力。
+
+正式 target 没有变更，也没有执行正式 release；正式健康接口仍 HTTP200，只代表旧环境可达。下一步应取得真实远端 Git 根、可信脚本内容及资源/回滚合同后重新预检。推荐扫描出的旧源码 Compose 会挂载源目录并使用 Node20，与已验 immutable topology 不同，不能直接替换生产配置。
+
+操作回执 `main-preview-rollout-deploy-1791787089900604500.json` 的旧顶层断言因为 branch detail 的 commitSha 为 null 而 `ok=false`，原记录保留；官方 CLI 本次 exit0，后续独立 deployment run/fullSHA、实际镜像与容器环境均通过。此类诊断字段缺失不是重复部署的理由，没有再次发 deploy POST。
+
+证据见当日日志最新节及本机 `formal-main-4b88-preflight-current-1791787734698477300.json`。主列表路径是否仍被不同回调丢弃，需要以实际按钮目标确认；仅配置读回不能替代点击验收，不把不同 helper 导出函数的行为混为一谈。
+
 ## 最新验收与归因边界
 
 核心已真实快进main至4b88，main基础CI38209036645与完整镜像CI38209036689均整轮成功。两真实签名push均skipped，公司旧运行记录、profiles和共享infra不变；CDS非live githubCommitSha仍旧缓存值。真实Git refs应以实际ls-remote核对，不以卡片旧时间或缓存值推断没有push，也不为刷新显示触发旧seed/db push部署链。源码合并与部署状态须分开呈现，正式站没有更新。

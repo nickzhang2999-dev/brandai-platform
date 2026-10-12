@@ -4,6 +4,7 @@
 
 ## 当前状态
 
+- **最新：公司 main 已运行4b88。** 获用户授权后，run `dr_e4915a56693c53a5c4d379c3` 于06:40:25Z完成；不可变镜像、三容器完整SHA、33迁移及原12核心表保持通过，Web入口原生分支配置 `/studio`。main注册关闭且用户账号不在该预览库，真实登录后画布/保存恢复/导出仍待合法账号验收。正式预检已绑定该产物，唯一blocking仍为生产 target 目录非Git；未正式发布。下方“公司旧运行不变”是合并时历史状态。
 - 核心已于05:41Z正常快进合并main，实际远端main与整合分支核心为 `4b88be6fd340bc090e02ca9bec1f562bb0ba42a0`。两真实签名CDS推送skipped，公司运行与共享infra保持；main基础CI38209036645与main镜像流水线38209036689均整轮成功，源码/容器两轮各API95/UI17、三镜像fullSHA发布通过，额外provider调用0。后续实际结果仅补整合分支文档，main保持已验证核心4b88；下方9dcc“未push”是本批合并前状态。
 - 已部署独立核心：`55ffda3e29f40fba14e7fd78d4bddf39302e5d6f`；run `dr_748b9d7e343e16a9efc616ff` 于2026-10-12 05:10:25.528Z完成。三应用镜像和运行环境完整SHA一致，Garage固定55e原双卷healthy，公司七字段前后不变。
 - 云端55ff源码和镜像内两轮API95/UI17均通过，部署后的runtime/入口与版本化bootstrap来源核对通过；**公网普通3项、禁用worker1项、已有激活worker但未控制页面2项，共6项全部通过**，当前revision28文档保持，业务写入和额外模型调用为0。
@@ -30,7 +31,7 @@
 ### 1. 核心先合并 main
 
 - [x] main 构建补丁已纳入明确本地候选 `9dcc11ad403c36cb7f6f896faa0222ddb8231c94`；P0未混入。尚未push/合并。
-- [ ] 解决源代码发布模式的 studio 资源导出，或明确使用包含资源的已验证不可变镜像；资源清单和脚本必须绑定同一提交。
+- [x] 公司 main 使用完整4b88 CI不可变镜像，资源清单与公网实际脚本绑定容器及Git源码；生产发布入口仍待适配和校验。
 - [x] 本地候选required L1 1000、现有Windows venv AI365、Web typecheck/build已exit0。
 - [x] 最终main精确4b88 SHA的source/container数据库、Worker、存储与UI完整CI38209036689通过，两轮各API95/UI17，三镜像完整SHA发布；不以旧55ff或integration对照代替。
 - [x] 合并前再次读取远端main=e99919a，确认可快进；一次正常原子push至4b88，实际远端读回一致，保留四项原未提交文件与16项冻结哈希。
@@ -72,7 +73,7 @@
 | 目标 | 作用与更新方式 | 本计划中的状态 |
 |---|---|---|
 | 独立 Novart 产品预览 | `novart-product-integration-claude-novart-product-integration.geole.me`，独立产品项目与配置，用于验证候选 | 55ff已部署且runtime/manifest通过；三种公网浏览器模式共6项通过 |
-| 公司 main 分支预览 | `main-brandai-platform.geole.me`；本次源码push使用已核对skip marker | Git远端已为4b88，CDS运行环境仍旧版本，非liveGit缓存字段保持旧值；实际skip回执已核对，不以独立预览结果代替 |
+| 公司 main 分支预览 | `https://main-brandai-platform.geole.me/studio`；完整4b88 immutable镜像 | 新部署run已完成，运行与数据保护/公网资源核验通过；合法公司预览账号及登录后UI验收仍待补 |
 | 公司正式站 | `www.novartlab.com`；仓库记录的 CDS 发布目标为 `brandai-novartlab-local-prod`，通过 SSH 执行 `./cds-release-novartlab.sh` | 需重新核对实际 target/profile、发布脚本和回滚信息；main 合并不等于正式发布 |
 
 正式 target 信息依据仓库 `CLAUDE.md` §4 的发布说明，本计划未连接 SSH 或执行发布。平台强制审批按真实返回处理；配置缺失、待审批、未测试项目均如实保留。

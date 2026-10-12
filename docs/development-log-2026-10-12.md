@@ -1,5 +1,23 @@
 # Novart 开发日志 · 2026-10-12
 
+## 最新：公司 main 已部署新版；账号验收与正式发布仍有配置阻塞
+
+用户授权“更新一下，然后正式发布”，并询问能否使用本地源码。本地源码已经正常合入 main，并使用 main 完整 CI `38209036689` 发布的不可变镜像；不需要 CDS 平台源码。主分支于 **2026-10-12 06:40:25Z** 完成部署，run `dr_e4915a56693c53a5c4d379c3`，完整提交 `4b88be6fd340bc090e02ca9bec1f562bb0ba42a0`。
+
+- 公司三个 profile 保留原 dev/release 模式及其他设置，新增 `novart-verified-4b88`；仅 main 分支切换到该模式。Web/Worker 使用同一经 CI 验证的 Web digest，AI 使用对应 AI digest。没有执行旧 Web 的 seed/db push。Worker 在启动消费者前执行受 advisory lock 保护的 migrate deploy。
+- 部署后 Web/Worker/AI 镜像及容器环境完整 SHA 均匹配。原 30 份迁移 checksum 全部核对后，只应用 3 份尚未执行的增量；最终 33 份逐一匹配该提交的 SQL，全部完成且无回滚记录。
+- 在任何业务写入前，12 张原核心表数量及内容 checksum 均与部署前一致。数据库身份、登录与设置加密材料、Redis 等六项环境指纹保持；Worker 实际队列前缀仍为 `brandai-main`。不使用独立产品环境的队列或测试项目。
+- 主分支 Web 入口使用已验证原生 PUT 合同改为 `/studio`，分支作用域，其他服务入口不变，不需再部署。官方读回地址为 `https://main-brandai-platform.geole.me/studio`；入口配置不等于裸根 `/` 自动跳转，也不冒称实际按钮点击验收完成。
+- 公网 bootstrap/worker 实际文件与本次容器 manifest 匹配；bootstrap 主体匹配 Git 4b88 源码，未替换浏览器源文件。匿名 `/studio` 正确 307 到登录页。
+
+**公司 main 的登录后 UI 验收没有通过。** 两次使用此前提供资料的诊断及一次按用户新提供密码大小写修正后的实际登录均被拒绝，失败报告保留。只读检查证明该用户在 main 预览数据库不存在，注册关闭、管理员 allowlist 已配置；不能将此归因于新密码不正确或自动创建管理员。没有重置密码、开放注册、绕过登录或搬运独立98账号/项目。画布操作、保存重开和导出在 main 的真实账号验收仍待补，独立产品已通过的记录不代替本环境。
+
+**正式站没有发布新版。** 新预检 `pfl_487c80edc6a34a84`，HTTP200/4.797秒，artifact 已绑定完整4b88和真实 `/studio` 地址；branch/commit/artifact/SSH/脚本存在/历史回滚均 pass。唯一 blocking 仍是正式 target `brandai-novartlab-local-prod` 的 `/opt/brandai-platform-prod` 不是 Git 仓库。脚本存在不代表已核对其内容和镜像消费/数据卷合同。项目当前无可证实已注册的本机产物正式发布策略，不能把 CDS 克隆目录猜成生产目录或跳过校验；没有修改正式 target 或调用正式 release。
+
+本批产品源码没有变化，无业务写、额外模型调用或本机 Docker。真实待办：提供/开通合法 main 预览账号完成 UI 验收；维护人确认生产 Git 根及发布脚本、保留生产资源和回滚方案，再通过正式预检后发布。
+
+本机脱敏证据均在 `.novart-tmp`：`company-main-runtime-execute-4b88-1791787395706999800.json`、`trusted-manifest-main-4b88-1791787494235542100.json`、`company-main-studio-entry-1791787524967618500.json`、`company-main-public-sources-1791787909887.json`、`company-main-session-1791787813108.json`、`company-main-auth-capabilities-1791787760282042700.json`、`formal-main-4b88-preflight-current-1791787734698477300.json`。早前“公司运行未变”属于源码合并时状态，由本节实际获权部署结果更新。
+
 ## 实际合并 main：4b88，保留原运行环境
 
 2026-10-12 05:41Z，通过一次正常、非force的原子push，将main从 `e99919a64cd212d5d1b083fd7210842a1962d935` 快进至 `4b88be6fd340bc090e02ca9bec1f562bb0ba42a0`，同时推进整合分支55ff→4b88。实际 `git ls-remote` 两固定refs均读回完整4b88。提交前完整SHA的main/integration push与workflow_run共四项官方dry-run均200，deploy/stop/comment副作用均false；真实两条签名push回执分别于05:41:20.943Z及05:41:19.929Z记录skipped和skip marker。
