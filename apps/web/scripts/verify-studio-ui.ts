@@ -110,7 +110,13 @@ async function newPage(serviceWorkers: "allow" | "block" = "allow") {
   page.on("pageerror", error => browserErrors.push(safe(error.message))); page.on("dialog", dialog => { void dialog.accept(); }); return page;
 }
 async function login(page: Page, email: string, password: string, destination = "/studio") {
+  // Login fetches providers from useEffect, after React has attached the form
+  // handlers. DOMContentLoaded alone allows a cold browser to submit the SSR
+  // form natively and lose both the controlled input and callback URL.
+  const initialized = page.waitForResponse(response => new URL(response.url()).pathname === "/api/auth/providers"
+    && response.request().method() === "GET");
   await page.goto(new URL(destination, base).href, { waitUntil: "domcontentloaded" }); await expect(page).toHaveURL(/\/login\?/);
+  assert.equal((await initialized).status(), 200, "Login provider initialization must succeed before input");
   await page.locator('input[type="email"]').fill(email); await page.locator('input[type="password"]').fill(password); await page.locator('form button[type="submit"]').click();
   await expect(page).toHaveURL(/\/studio(?:-editor)?(?:[?#]|$)/, { timeout: 30000 });
 }
