@@ -68,6 +68,7 @@ jobs:
           apps/ai/.venv/bin/python scripts/export-novart-studio.py
       - name: Owned shell and homepage protocol checks
         run: |
+          node scripts/test-novart-product-worker.cjs
           node scripts/test-novart-owned-shell.cjs
           node scripts/test-novart-owned-home-start.cjs
           node scripts/check-novart-garage-container.cjs --static-check

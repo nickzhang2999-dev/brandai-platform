@@ -1,5 +1,40 @@
 # Integration progress
 
+## 2026-10-12 — resource startup failure under investigation and local correction
+
+- Unique timeout source locked to bootstrap worker ready/controller12s. Ordinary real cold/warm6 pass; controlled real Chrome hard/bypass2 fail same message with active/ready but no controller. User explicitly says normal opening fails, so browser operation attribution remains unconfirmed.
+- Real network/font timing confirms current home/library/ownedframe chain all first-party (97 requests); server /canvas gate redirects owned. Remove /studio legacy-worker prerequisite, preserve explicit legacycanvas, auth/brand/tenant/SDK boundaries.
+- Source-driven18 and license/home/archive protocol checks pass; true CI fresh restore now blocks workers and asserts uncontrollernull with real DB/scene recovery. L1989/AI365/typecheck passed. Build/cloud exactnewSHA/image/isolated release/public block/warm checks pending actual results.
+- Current product68cb and gatewayd82 remain separate; old companycard52 date not rewritten. Original failure evidence retained, no business/paid call from public diagnostics, shared dirty hashes protected.
+
+## 2026-10-12 — CDS right-card product entry fixed and accepted
+
+- Confirmed actual CDS main-card helper drops configured paths; details helper preserves them. Fixed old independent gateway with trusted optional HTTPS/studio redirect; no user-controlled next, capability or request-state forwarding.
+- Preview branch exact d82e pushed with skip marker; official dry-run and actual signed delivery skipped company deployments. CI38154006162 passed gateway regressions, actual image startup/auth/storage recreation, bridge checks and publication.
+- Independent preview cd9 deployed run dr_378f629c2beff24596ce41dc, immutable exact image/package. Two old public origins12 redirects pass, original30 files/full data hash unchanged.
+- Company old right card branch-only entry is now Novart 最新产品 /product; other entries retained, needsRedeployfalse, company3 runtime metadata/last runs unchanged. New product98 still exact68cb with original run/storage, no restart.
+- Real browser 5/5 through old bare root → new login → new home → visible library → existing owned editor; same original toolbar10.310s/106 samples stable, documentrevision20/checksum unchanged; auth1/business0/provider0/pageerrors0.
+- Logs and CDS/source-difference notes saved locally; no documentation-only push or further deployment. Existing unrelated dirty hashes preserved. Requested entry failure is complete; broader commercial/paid acceptance boundaries remain.
+
+## 2026-10-11 23:27 — latest-preview task complete with bound read-only public restore
+
+- Official project Novart-Product-Integration / branch claude/novart-product-integration running exact68cb; Web/AI/Worker actual fullSHA/image and healthy preserved Garage/volumes checked, company main/other branches unchanged.
+- Preserve original public11 reportfalse total180s timeout. Bound continuation5 passed: exact original report/private/project/revision20/document/scene/export hashes, actual fresh login, 7records/6v2 and advanced DOM restored, original toolbar15.307s/156samples stable, PNG/SVG pixels and PNGbytes identical, interior ink14245. AuthPOST1; all business writes/create/upload/provider0; pageErrors/external/blocked0.
+- Logs, CDS issue record, README, plan, integration and source differences synchronized locally; no documentation-only push/extra deployment. This completes the requested latest preview, not all broader commercial/provider/legacy acceptance.
+
+## 2026-10-11 23:16 — exact68cb deployed; public tool checks pass, bound restore continuation pending
+
+- CI38147140367 all success, exact68cb source+image API95/UI15 twice, React fixture49, Garage and publication/cleanup passed with provider0.
+- Claim dry409 is CDS baselineprebuilt compatibility inconsistency. Official supported baseline exact-commit deploy succeeded run dr_6813ca04040e2de4d4a644a4; actual Web/AI/Worker fullSHA and image refs68cb, worker isolation/health, fixed55e Garage/two volumes healthy confirmed. Company3/recent deployment audit unchanged; no profile/override definition change.
+- Public source-bound11 checks passed: advanced tools persisted revision20/7records/6v2, original toolbar15.308s/155samples, PNG/SVG identical pixels with14245 interior ink. Actual auth/backend, create1/doc20, upload/provider0, pageErrors/blocked writes/external0.
+- Whole public report remainsfalse due180s total cap during second-login verification. Preserve original and bound same-project/report/scene/export hashes to separate read-only fresh-login/restore/export continuation; no create/content writes allowed. Preview now68cb, broader commercial/paid edit scopes remain separate.
+
+## 2026-10-11 22:29 — exact latest68cb pushed; isolated release pending full CI
+
+- Exact68cb239732641b324c27058b69c22c12b9ab8ada pushed; automatic Branch Image38147140367/backend114492764746 running. No candidate release claim yet; independent preview stays55e.
+- Process-only direct transport fixed current missing local proxy listener for CDS/Git; no system/global settings changed. Official before/after exact dry-runs and signed skipped receipt ed4ce16b-f40e-45df-9986-49592ccceb80 passed. Company3 snapshots/recent deployments unchanged, referencing68cb0.
+- Prepared representative public-tools test, real document v2/fresh-login/pixel assertions and strict zero page errors/blocked writes/external requests; not executed before exact image release. No extra paid provider call.
+
 ## 2026-10-11 — latest CDS preview request, precise UI regression follow-up
 
 - Actual f97/run38144791349 ended failure: real backend95 and first real UI journeys passed; stage uploaded-image insertion expected old img[src] through filter and found0. Upload task/job succeeded, asset and docPUT200, no browser/network errors. First failure is now preserved by fixed diagnostics, not an upload outage.

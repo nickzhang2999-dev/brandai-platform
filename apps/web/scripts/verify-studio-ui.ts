@@ -98,8 +98,8 @@ async function saveWorkflow(frame: Frame) {
   await expect(frame.getByTestId("owned-workflow")).toHaveAttribute("data-workflow-dirty", "false");
   await expect(frame.getByRole("button", { name: "用途已保存", exact: true })).toBeVisible();
 }
-async function newPage() {
-  const context = await browser!.newContext({ viewport: { width: 1440, height: 1000 }, locale: "zh-CN", serviceWorkers: "allow" }); contexts.push(context);
+async function newPage(serviceWorkers: "allow" | "block" = "allow") {
+  const context = await browser!.newContext({ viewport: { width: 1440, height: 1000 }, locale: "zh-CN", serviceWorkers }); contexts.push(context);
   await context.route("**/*", async route => { const url = new URL(route.request().url());
     if (["http:", "https:"].includes(url.protocol) && url.origin !== base.origin) { networkProblems.push(`${url.origin}${url.pathname}`); await route.abort("blockedbyclient"); } else await route.continue(); });
   context.on("request", request => { const url = new URL(request.url());
@@ -433,8 +433,13 @@ try {
 
   enter("fresh browser restores scene and matching export pixels"); const finalRow = await prisma.editorDocument.findUniqueOrThrow({ where: { projectId } }), finalShapes = Object.values(store(finalRow.canvas)).filter(item => item.typeName === "shape");
   const finalDraft = await persistedDraft(user.id, projectId, expectedDraft);
-  const fresh = await newPage(); await login(fresh, email, password, `/studio?workspaceId=${workspace.id}`); await studioReady(fresh); await expect(fresh.locator("#ns-greeting")).toContainText(newNickname); await fresh.getByTestId("studio-nav-projects").click(); const freshCard = fresh.locator(`#ns-project-library [data-project-id="${projectId}"]`);
+  // The first-party shell and owned editor must work when this browser cannot
+  // be controlled by a resource service worker. Keep other journeys ordinary.
+  const fresh = await newPage("block"); await login(fresh, email, password, `/studio?workspaceId=${workspace.id}`); await studioReady(fresh);
+  assert.equal(await fresh.evaluate(() => navigator.serviceWorker.controller), null);
+  await expect(fresh.locator("#ns-greeting")).toContainText(newNickname); await fresh.getByTestId("studio-nav-projects").click(); const freshCard = fresh.locator(`#ns-project-library [data-project-id="${projectId}"]`);
   await expect(freshCard.locator('[data-action="favorite"]')).toHaveAttribute("aria-pressed", "true"); await freshCard.locator('[data-action="open-project"]').click(); frame = await editorFrame(fresh, projectId); await expect(frame.getByTestId("owned-canvas-item")).toHaveCount(finalShapes.length);
+  check("same-origin homepage and existing owned canvas open with service workers blocked");
   for (const item of finalShapes) { const node = frame.locator(`[data-owned-id="${item.id}"]`); await expect(node).toHaveCount(1); if (item.type === "c-image") await assertRenderedImage(node, item.props.url); }
   await restoredDraft(frame, expectedDraft); assert.equal((await persistedDraft(user.id, projectId, expectedDraft)).revision, finalDraft.revision);
   realDraftPersistence = true; deferred.splice(deferred.indexOf("Unsent creation draft autosave/pagehide recovery"), 1);

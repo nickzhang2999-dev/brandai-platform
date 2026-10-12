@@ -1,5 +1,19 @@
 # Novart 产品整合进度
 
+## 2026-10-12 · CDS 右侧入口已连到新版
+
+公司旧前端评审卡片已显示“Novart 最新产品”，正式[预览入口](https://novart-workbench-preview-claude-brandai-platform.geole.me/product)及裸根都跳至新产品/studio。独立旧网关d82e已实际CI验证并部署，新产品保持68cb。真实浏览器完成登录、新首页、项目库打开既有自有编辑器，工具栏10.310秒稳定、文档不变；没有业务写或模型调用。公司原三分支运行服务和旧独立数据卷保留，平台主列表丢路径的原因及兼容修复见[当日日志](development-log-2026-10-12.md)。
+
+## 2026-10-11 23:27 最新版预览完成
+
+正式 `Novart-Product-Integration` 项目/整合分支已运行精确68cb。[进入最新版](https://novart-product-integration-claude-novart-product-integration.geole.me/studio?build=68cb239#/home)。除下述完整CI、运行镜像和公网工具保存检查外，同一项目只读恢复续验5项已通过：重新登录恢复七对象/六ownedv2及高级属性，工具栏15.307秒稳定，PNG/SVG像素及PNG字节与首次导出相同，原文档revision20/全部哈希不变。原整轮超时false记录保持；只读续验绑定原证据和项目，没有重建、上传或付费调用。本次完成新增工具的最新版交付，以下各阶段按当时结果保留。
+
+## 2026-10-11 23:16 最新发布：68cb 已在独立CDS运行
+
+精确68cb的[完整云端验收](https://github.com/nickzhang2999-dev/brandai-platform/actions/runs/38147140367)成功：源码和镜像内各API95/UI15、React49、Garage权限/持久性和检查后镜像发布全部通过。正式部署run `dr_6813ca04040e2de4d4a644a4` 完成，Web/AI/Worker运行完整SHA和镜像一致。独立Garage仍固定55e/两卷healthy，公司原三分支不变。[最新产品入口](https://novart-product-integration-claude-novart-product-integration.geole.me/studio?build=68cb239#/home) 已可用。
+
+公网新增工具实际保存revision20、七对象/六ownedv2，原工具栏连续15.308秒不消失，首次PNG/SVG逐像素相同。原整轮脚本的180秒总截止在二次登录时触发，保留false报告；只读续验严格绑定同项目、文档/场景/导出哈希，正在完成恢复末段，不新建、不上传、不付费调用。此次CDS认领接口分类不一致及正式支持的baseline部署路径见[问题记录](cds-development-issues-2026-10-11.md)。以下较早检查点按当时状态保留。
+
 ## 2026-10-11 自研工具补齐：本地验收完成，云端发布待执行
 
 本次新增对象剪贴板/重复/右键、字体族/粗斜体/对齐/行距、裁切/翻转/真实图片替换、组合/对齐/分布/吸附、图层显隐/锁定/排序、整笔橡皮擦/线箭头、画框内容联动，以及选区/画框 PNG/SVG 导出。owned v2 扩展随原文档保存，基础对象仍兼容v1；旧未知对象或复杂效果仍只读保留。隐藏祖先与裁切的AI边界接在服务端守卫，未将显示效果当原文件生图。

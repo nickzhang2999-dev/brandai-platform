@@ -1,11 +1,31 @@
 # Novart product integration
 
+## Latest steering — resolve product startup timeout · 2026-10-12
+
+- [complete] Diagnose public normal/warm startup, resource controller12s and old-card metadata dates; preserve user normal-open report and separately labeled controlled reproductions.
+- [complete] Prove97 real requests and resource timings first-party, remove /studio worker dependency, keep explicit legacycanvas boundary; source18 tests and real CI blocked-worker restored-frame case added.
+- [complete] L1989/AI365/typecheck/production build and export124 files pass; shared dirty4/canvas source16 preserved, compiled bootstrap source checked.
+- [in_progress] Exact-SHA safe push/cloud image checks and independent product release; normal/warm/blocked-worker public acceptance and logs use actual results.
+
+## Latest steering — fix CDS right-card preview entry · 2026-10-12
+
+- [complete] Diagnose main-card path dropping from actual CDS bundles and official branch entry configuration.
+- [complete] Optional fixed product bridge on old preview branch; strict target validation, original permissions/data retained, independent review and9 loopback tests.
+- [complete] Old branch full local gates plus actual CI38154006162, exact immutable image publication and signed skipped push receipt.
+- [complete] Deploy only independent old preview cd9 atd82e, verify both public origins and original full-volume content hashes; preserve product68cb and company/main/shared data.
+- [complete] Company old right-card branch-only name/path updated, formal needsRedeployfalse, actual preview-url confirmed.
+- [complete] Real browser5 pass, actual login/home/project-library/owned-canvas toolbar10.310s stable with unchanged document and no business/provider writes; logs/CDS causes/source difference recorded locally.
+
 ## Latest steering — preview latest on isolated CDS
 
+- [complete] Exact68cb all CI success including both API95/UI15 and image/cleanup publication. Official baseline-prebuilt exact deployment complete dr_6813ca04040e2de4d4a644a4; actual Web/AI/Worker SHA68cb, storage55e/two volumes healthy, company unchanged.
+- [complete] Public representative tools11 passed with true revision20/7records/6v2, stable toolbar and samePNG/SVG pixels. Original total180s cap expired during second-login; originalfalse preserved. Bound same-project read-only continuation5 passed, exact document/scene/export hashes, fresh login and advanced DOM, toolbar15.307s stable; auth1/business writes0/provider0.
+- [complete] Exact68cb239 pushed; official before/after dry-runs and actual signed skipped receipt verify company3 unchanged, recent deployments referencing newSHA0. Current local proxy listener missing; process-only direct CDS/Git succeeds.
+- [complete] Automatic Branch Image38147140367/backend114492764746 on exact68cb completed success; product68cb deployed and publicly accepted in the later records below.
 - [complete] Read exact f97 CI terminal failure; backend95 and actual upload succeeded, remaining old selector strings caused UIcount failure. No candidate images published.
 - [complete] Fix all3 remaining SVG image identity selectors and strengthen actual decode; preserve original upload/history/reopen/provider gates and failures. Running canvas sources remain unchanged.
 - [complete] Required local gates: L1989/AI365/full low-memory typecheck passed after recorded normalOOM, production build exit0; runtime16 sources unchanged. Safe newSHA push/real cloud gate next.
-- [pending] After verified immutable image publication only: claim/deploy exactSHA in isolated project98, readback runtime/entry/health and authenticated public owned-tools save/reopen/export. No new paid generation; preserve companymain and shared data.
+- [complete] Exact68cb verified images published and officially deployed in isolated project98; runtime/entry/health and authenticated public owned-tools save/reopen/export completed. Claim helper409 is CDS baseline compatibility issue; supported exact-commit deployment used with pending guard, no mode definition changes. Company/main preserved; provider0.
 
 ## Current tools-completion batch — 2026-10-11
 

@@ -127,10 +127,14 @@
   async function start() {
     if (!context.workspaceId) { await createBrand(); return; }
     history.replaceState(history.state,'',location.href);
-    if (!('serviceWorker' in navigator)) throw Error('当前浏览器无法加载画布资源，请使用新版 Chrome 或 Edge。');
-    await navigator.serviceWorker.register('/novart-product-worker.js',{scope:'/'});
-    await navigator.serviceWorker.ready;
-    if (!navigator.serviceWorker.controller) await new Promise((resolve,reject) => { const timeout=setTimeout(()=>reject(Error('资源初始化超时，请重新打开')),12000); navigator.serviceWorker.addEventListener('controllerchange',()=>{clearTimeout(timeout);resolve();},{once:true}); });
+    // The authenticated shell and owned editor use same-origin resources.
+    // Only the explicit legacy canvas needs captured external asset rewriting.
+    if (location.pathname === '/canvas') {
+      if (!('serviceWorker' in navigator)) throw Error('当前浏览器无法加载画布资源，请使用新版 Chrome 或 Edge。');
+      await navigator.serviceWorker.register('/novart-product-worker.js',{scope:'/'});
+      await navigator.serviceWorker.ready;
+      if (!navigator.serviceWorker.controller) await new Promise((resolve,reject) => { const timeout=setTimeout(()=>reject(Error('资源初始化超时，请重新打开')),12000); navigator.serviceWorker.addEventListener('controllerchange',()=>{clearTimeout(timeout);resolve();},{once:true}); });
+    }
     const adapters = location.pathname === '/canvas' ? ['/novart-product-materials.js','/novart-product-generation.js','/novart-product-task-inbox.js'] : ['/novart-product-task-inbox.js'];
     for (const source of adapters) await new Promise((resolve,reject) => {
       const script=document.createElement('script');script.src=source;script.onload=resolve;script.onerror=()=>reject(Error('创作组件加载失败，请重新打开'));document.head.append(script);

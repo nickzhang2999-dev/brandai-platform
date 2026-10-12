@@ -1,5 +1,12 @@
 # Integration findings
 
+## 2026-10-12 — first-party startup dependency confirmed
+
+- User reports normal opening can reach resource-init timeout. Unique source is bootstrap12s wait for navigator.serviceWorker.controller after ready. Actual isolated ordinary6 pass does not disprove user context; separately controlled hard/bypass cases both reproduce active/ready with uncontrolled page and same timeout.
+- Actual home→library→existing owned-frame97 HTTP all same-origin, resource timings home36/editor20 include no external scripts/fonts/images. /canvas route already authorizes then redirects to owned editor; /studio has unnecessary legacy worker prerequisite.
+- Minimal change gates existing worker logic to explicit /canvas only; studio/studio/ do not read/register/wait worker. Original auth/tenancy/history/user storage/license boundary remains. Source18 lifecycle checks synthetic; real CI fresh restore will block workers, ordinary journeys remain allow.
+- Old companycard52e lastPushAt8Oct is its own metadata; actual newer skipped push delivery plus independent d82/68 manual deploys are distinct. Do not falsify oldcard version/date. Prefer current independent product card for deployment state.
+
 ## 2026-10-11 — missing tools confirmed and implementation contract
 
 - Final local implementation is complete for the requested tool list. Original basic records stay v1; advanced owned records carry bounded v2 metadata. Unknown legacy containers/effects still retain read-only protection. Local fonts are three family stacks; eraser deletes a whole stroke, not an image mask.

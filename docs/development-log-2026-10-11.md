@@ -1,5 +1,39 @@
 # Novart 开发日志 · 2026-10-11
 
+## 交付入口混淆：公司右侧旧评审分支与新版产品分开
+
+用户截图“工作台已准备就绪，请使用管理员提供的完整评审链接进入”，并确认点击公司项目a8的最右侧分支。非live官方GET映射确认该分支仍为 `claude/novart-workbench-preview`、旧评审服务；独立 `Novart-Product-Integration` 的 `claude/novart-product-integration` 仍运行68cb。旧ShareRuntime的根路径在评审Cookie缺失或不匹配时返回截图文案；产品apps/web没有此提示。没有根据截图判断新画布或账号故障。
+
+匿名HTTP核对：独立旧评审服务根路径复现该完整文案；新版产品/studio进入正常密码登录页面，不含该提示。本次给出独立新项目/CDS入口与新版Studio链接，不更改公司分支/共享配置，不补发旧评审访问码。入口对照证据中的能力访问路径已脱敏。后续交付说明应始终同时给项目名、分支名与新版链接，避免仅以“最右边”定位。
+
+## 23:27 收尾：最新版CDS预览与同项目保存恢复、导出已验收
+
+独立产品当前实际运行68cb，官方CDS读回项目名 `Novart-Product-Integration`、分支 `claude/novart-product-integration`、running及正式/studio预览URL。Web/AI/Worker完整运行SHA和已验收镜像一致；公司main及其余两分支保持原状。
+
+原公网11项记录因总180秒截止仍保留false。绑定原报告文件SHA、私有项目文件SHA、完整68cb、同项目revision20/checksum/decoded/sceneSHA及首次导出SHA的只读续验5项已通过：真实新会话密码登录、服务端七对象/六ownedv2及文字/组合/图层/画框字段恢复、工具栏15.307秒/156次持续原DOM、PNG/SVG逐像素与原导出一致，PNG字节也相同，内部非白像素14245。续验登录POST1、项目写/新建/上传/模型调用0，页面错误/外部请求/越界写0。原项目、原false报告和首次已保存证据不覆盖。
+
+结果文件：仓库外 `public-owned-tools-continuation-report-20261011-bac58b3a-7733-423b-a32d-035df967fadf.json`；原报告 `public-owned-tools-report-20261011-9fabf08c-a413-4918-8b00-79400fe427b9.json` 保持原SHA。部署run、运行核对、CI和公司隔离对照各保留独立证据。本次交付为新增工具的已验证预览；不将代表工具/旧单张普通生成提升为完整商业上线或全部旧编辑器行为恢复。
+
+以下检查点按各自发生时间保留，以最上方最新结果为准。日志/源码差异/进度文档已更新本地；不为文档更新再改变已部署的代码SHA。
+
+## 23:16 最新版68cb已经部署，公网工具检查及只读恢复续验
+
+[CI38147140367](https://github.com/nickzhang2999-dev/brandai-platform/actions/runs/38147140367) 精确68cb完整成功：源码及构建镜像分别实际 API95/UI15，React交互fixture49，Garage验收、storage/web/ai发布及全部清理通过。两轮临时栈都没有provider调用。
+
+CDS认领dry-run两次409 `branch_not_prebuilt`，已定位旧baseline `prebuiltImage`与新deployModes分类不一致，详见[当日CDS问题](cds-development-issues-2026-10-11.md)。使用官方本来支持的精确commit部署路径，不修改profile/override定义；第一次helper在写部署intent前中断，false记录保留，GET账本确认没有新部署后才重试。重试成功产生 `dr_6813ca04040e2de4d4a644a4`，完整SHA68cb、running/complete。读回Web/AI/Worker实际容器运行环境均为完整68cb，注册镜像一致，独立队列与健康正常；Garage仍固定55e、两块命名卷、healthy。公司三个分支及其最近部署记录保持，新SHA公司部署为0。
+
+公网独立Chrome实际执行新项目工具检查11项通过：重复粘贴唯一id、字体/加粗/斜体/对齐/行距、对齐组合移动解组、直线箭头、整笔擦除撤销重做、画框内容联动、图层显隐锁定；真实服务端revision20保存7对象、其中6个ownedv2。工具栏连续15.308秒/155次检查不消失，第一次PNG/SVG逐像素完全一致，画框内部非白像素14245。零外部请求/越界写/页面错误，创建1、文档写20、上传/生成0。
+
+原公网整轮report仍为false：新增工具增加操作时间，总180秒硬截止在第二次登录verify-session处触发，不能改成完整通过。保留原report和已保存项目，准备绑定相同输入报告哈希、项目/版本/文档哈希/导出哈希的只读恢复续验；只允许登录POST，其余业务写禁止，不重建或重做工具操作。正式预览已是68cb，可刷新当前页面；完整公网恢复结论待续验。
+
+## 22:29 最新版预览发布准备：68cb239 已推送，独立云端验收进行中
+
+最终修正提交 `68cb239732641b324c27058b69c22c12b9ab8ada` 已推送；自动 [Branch Image38147140367](https://github.com/nickzhang2999-dev/brandai-platform/actions/runs/38147140367) 正在验收。上一轮失败和其原始断言记录保留。当前独立产品仍运行55e，不能把推送或本地测试称为已上线。
+
+本轮网络读回发现本机系统代理地址未监听，代理路径请求失败；同进程仅对CDS使用直连、仅本次Git命令清空代理后成功，不修改系统/全局Git设置，不读取浏览器凭据。这属于本机连接故障，不归因CDS应用。官方精确SHA push/workflow前后dry-run均无部署副作用；实际签名回执 `ed4ce16b-f40e-45df-9986-49592ccceb80` 确认skipped。公司三分支和最近部署对照不变，引用68cb的公司部署为0。
+
+待本次CI全部通过、检查后不可变镜像发布，才在独立project98更新同一SHA的Web/AI/Worker；Garage固定55e及独立卷不变。随后进行公网真实登录、代表新增工具、服务端保存、全新会话恢复和导出检查；不新增上传或付费模型调用。公网脚本只准备完成，最终条件要求浏览器错误、越界写入和外部请求均为0，尚未执行。
+
 ## 请求最新版CDS预览：补齐遗漏的真实UI图片检查
 
 本轮实际读回确认f97/run38144791349已失败，未生成发布镜像。真实后端95项通过；首页真实上传/新会话恢复、空项目、指针中文历史入库和草稿离页恢复通过。确切失败在verify-studio-ui.ts:353仍用filter内的`img[src]`，期望1却找到0。诊断显示上传SUCCEEDED、jobcompleted、原素材存在、文档PUT200，network/browser errors为空；此次原错误已正确记录，不能归成上传后端故障。

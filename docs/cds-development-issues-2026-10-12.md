@@ -1,0 +1,33 @@
+# CDS 问题报告 · 2026-10-12 · 主列表预览丢失入口路径
+
+## 后续资源初始化超时与卡片时间：单独归因
+
+新版产品截图的“资源初始化超时”来自 Novart bootstrap 强等 service worker controller；它不是 CDS 主列表丢路径的同一故障。当前首页/项目库/自有画布实测97请求全部同源，去掉首页多余资源代理依赖是本项目可修复的产品初始化问题。独立Chrome六种正常场景未复现用户常态，两种明确受控绕过场景复现相同超时，不能把后者当作用户具体操作。修复及新发布验收见当日日志。
+
+公司旧右卡52e“最近推送3天前”取其 `lastPushAt`（10月8日13:41北京时间）。CDS已收到d82/68的新签名push，但 `[skip cds]` 按隔离要求不部署公司原分支；按钮现在跳到独立产品，卡片时间不会跟随跳转目标更新。这是不同环境的元数据展示，不应伪写commit/date。真实独立产品卡路由为 `/branches/98cfea6cdcbd?branch=novart-product-integration-claude-novart-product-integration`，来自已发布CDS路由代码。应明确区分“入口”和“实际产品部署”。
+
+## 现象及复现
+
+公司项目 `a8a098f7193a` 右侧 `claude/novart-workbench-preview` 的入口配置原为带路径的完整评审入口。点击主分支列表中的“预览”，实际只打开该入口域名的 `/`，因此看到“请使用管理员提供的完整评审链接进入”；详情页入口解析则保留完整路径。
+
+## 已核对的具体原因
+
+已读取 CDS 实际发布的 `BranchListPage-CKTFpzMd.js` 和 `previewUrl-Cu1wGG_9.js`。主列表回调调用后者 export `m=c`，仅用 protocol、previewSlug/id 与域名组装根地址，未使用配置的 `primaryEntry.url`/路径；详情页使用 `resolvePreviewEntryTargets`（export `r=w`），保留完整入口。两处行为不一致，主列表即使配置了 `/product` 等路径也会丢弃。
+
+来源是 CDS 当时线上实际 bundle，不把推测的源码行号当作已确认位置。正式 `GET /api/branches/:id/web-entry-config` 同时证明旧卡片入口存在带路径的 URL。
+
+正式 web-entry-config 只允许当前分支的 `/` 开头路径、名称和子域，不接受完整外部产品 URL。这是接口约束，不是另一项故障；不能靠直接写外部 URL 修复主列表。
+
+## 本次可完成的兼容修复
+
+在独立旧评审网关增加可选固定 HTTPS `/studio` 目标，公开 GET/HEAD `/` 和 `/product` 跳转，原分享入口保留鉴权链再跳转。目标仅由可信部署配置给定，旧参数、访问码、cookie 不传递，新产品继续登录。公司卡片仅改分支入口名称/路径，不部署公司项目，不修改平台或共享服务。
+
+提交 `d82e7c2843f417fde73558ebc2df493b21d732f6`；[CI38154006162](https://github.com/nickzhang2999-dev/brandai-platform/actions/runs/38154006162) 实際 Linux 镜像两种模式及发布通过。独立部署 `dr_378f629c2beff24596ce41dc` 完成；旧卷全文件哈希保持。正式 CDS 命令返回 [现已发布的产品入口](https://novart-workbench-preview-claude-brandai-platform.geole.me/product)。
+
+公网两旧域共12个固定跳转检查通过。真实浏览器从旧裸根进入新域登录，登录后首页及项目库打开既有自有画布；工具栏10.310秒稳定，文档不变，业务写/模型调用/页面错误均为0。此次问题已对 Novart 用户闭环。
+
+## CDS 平台应如何修复
+
+主列表应与详情页共用完整入口解析，优先打开服务端已发布的 primaryEntry URL；没有完整入口时才回退裸域名。需要覆盖带路径、多个服务入口、未部署分支和旧格式配置。发布时对照两个按钮最终地址，不能只检查按钮可点击或分支状态 running。
+
+本次兼容修复没有发布 CDS 平台源代码；其他仍使用主列表按钮的产品也可能受路径丢失影响。本项目先保证用户能正常预览，平台通用修复由其维护方完成。

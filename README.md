@@ -1,6 +1,16 @@
 # BrandAI — 品牌项目视觉 AI 生成平台
 
+2026-10-12 后续：正在修复正常打开出现“资源初始化超时”的问题。新版首页和自有画布实测资源全同源，已在源码移除首页对旧资源Worker的强制等待，保留旧画布兼容与账号隔离；18项生命周期回归通过，真实CI恢复流程增加禁用Worker检查。本轮候选待完整镜像及公网发布验收，当前运行产品仍68cb；详见[当日日志](docs/development-log-2026-10-12.md)。公司旧卡“3天前”是旧环境推送时间，产品部署应查看[独立产品卡](https://cds.geole.me/branches/98cfea6cdcbd?branch=novart-product-integration-claude-novart-product-integration)。
+
+2026-10-12：CDS 公司项目右侧旧评审分支入口已修复，入口名称为“Novart 最新产品”。[从 CDS 入口打开新版产品](https://novart-workbench-preview-claude-brandai-platform.geole.me/product)；裸根也能自动跳转。真实登录→新首页→项目库打开已有自有画布5项通过，工具栏10.310秒稳定、原文档不变。产品仍为68cb，旧入口桥接为d82e，数据卷与公司原运行服务保留。见 [开发日志](docs/development-log-2026-10-12.md)及 [CDS原因报告](docs/cds-development-issues-2026-10-12.md)。
+
 ## 产品整合分支 · 2026-10-10
+
+2026-10-11 23:27 **最新版68cb已在CDS运行，并完成同项目公网保存恢复与导出检查**：[打开最新版Novart](https://novart-product-integration-claude-novart-product-integration.geole.me/studio?build=68cb239#/home)。正式项目 `Novart-Product-Integration`，分支 `claude/novart-product-integration`。完整CI通过，运行镜像与SHA核对；原公网11项工具操作/保存/导出成功后因测试总截止保留false，严格绑定原项目/文档/场景/导出哈希的只读续验5项通过，零项目写和额外模型调用。公司原分支与独立存储卷保留。后面为各历史阶段结果，以本段及[当日日志](docs/development-log-2026-10-11.md)最上方记录为准。
+
+2026-10-11 23:16 当前运行版：**68cb239** 已完整通过[云端流水线](https://github.com/nickzhang2999-dev/brandai-platform/actions/runs/38147140367)并部署到[新版Studio](https://novart-product-integration-claude-novart-product-integration.geole.me/studio?build=68cb239#/home)。三项应用运行SHA已核对，固定图片存储及独立卷正常，公司分支不变。公网新增工具/真实保存/稳定工具栏/首次PNGSVG11项已过；整轮因测试180秒总时限在二次登录处结束，原false报告保留，只读保存恢复续验进行中。
+
+2026-10-11 22:29 当前发布状态：最终选择器修正`68cb239`已推送，[本次云端验收38147140367](https://github.com/nickzhang2999-dev/brandai-platform/actions/runs/38147140367)进行中。独立产品仍运行55e；完成全部真实栈及镜像检查后才更新CDS。实际签名skip回执和公司三分支对照已通过，本批不新增付费模型调用。
 
 2026-10-11 工具补齐：自研画布现已实现复制粘贴/右键、文字排版、图片裁切翻转和替换、对齐组合/吸附、图层显隐锁定排序、整笔橡皮擦/直线箭头、画框内容联动与选区/画框 PNG/SVG。最终本地 L1 **989**、AI **365**、类型检查、生产构建及实际 Chromium **49** 项通过；新增属性随保存重开保留，屏幕与导出像素对照通过。线上仍是下述已验收核心版 `55e07ac`；本批尚需新提交的云端真实栈检查、独立发布和公网工具验收。详见[当日开发日志](docs/development-log-2026-10-11.md)。
 
