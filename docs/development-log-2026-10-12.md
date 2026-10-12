@@ -1,3 +1,11 @@
+## 默认首页与登录去向
+
+用户要求直接访问域名即可使用新版首页，或登录后自动进入 `/studio`。当前根路由仍渲染旧产品首页，直接登录的默认callback也为 `/`；这是产品入口未接入新工作台的导航缺口（O）。
+
+本次在middleware将根路径307重定向到 `/studio`，保留query并在旧首页布局执行之前处理；后续仍经过工作台原有认证与权限检查。登录默认或无效callback落到 `/studio`，同源根callback也映射为工作台并保留query/hash；项目、编辑器与管理页的同源callback保持。现有真实UI检查改为首次从根路径登录、鲜浏览器从无callback登录页登录，继续验证相同真实账号、工作区与保存恢复。CDS配置、构建脚本和启动命令没有新增修改。
+
+本地门禁全部通过：L1 1000（缓存）、AI365、Web typecheck及生产build。实际Next生产服务+Chromium确认根路径保留query转工作台、匿名根路径到带studio callback的登录页、无callback登录页正常渲染，页面错误0。首次本地providers请求因本机没有AUTH_SECRET返回500，原失败保留；给隔离loopback进程设置临时本地鉴权参数后通过，不改部署环境。真实账号登录、源码/容器完整验收及新SHA预览更新以随后云端CI和CDS运行回执为准。
+
 ## 本次产品整合分支检查
 
 用户确认最新工作分支是 `claude/novart-product-integration`，要求检查代码、与main的冲突，并在可合并时合并推送，不再使用跳过CDS标记。fresh fetch：main `0fbdfd2cbce4e427bf0901fe9a6b35ce160a4e63`，integration `74e2db2513406027328e7bd13985791f112134e1`，共同祖先 `4b88be6fd340bc090e02ca9bec1f562bb0ba42a0`。

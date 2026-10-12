@@ -109,13 +109,14 @@ async function newPage(serviceWorkers: "allow" | "block" = "allow") {
   const page = await context.newPage(); currentPage = page; page.setDefaultTimeout(30000);
   page.on("pageerror", error => browserErrors.push(safe(error.message))); page.on("dialog", dialog => { void dialog.accept(); }); return page;
 }
-async function login(page: Page, email: string, password: string, destination = "/studio") {
+async function login(page: Page, email: string, password: string, destination = "/") {
   // Login fetches providers from useEffect, after React has attached the form
   // handlers. DOMContentLoaded alone allows a cold browser to submit the SSR
   // form natively and lose both the controlled input and callback URL.
   const initialized = page.waitForResponse(response => new URL(response.url()).pathname === "/api/auth/providers"
     && response.request().method() === "GET");
-  await page.goto(new URL(destination, base).href, { waitUntil: "domcontentloaded" }); await expect(page).toHaveURL(/\/login\?/);
+  await page.goto(new URL(destination, base).href, { waitUntil: "domcontentloaded" }); await expect(page).toHaveURL(/\/login(?:\?|$)/);
+  if (destination === "/") assert.equal(new URL(page.url()).searchParams.get("callbackUrl"), "/studio");
   assert.equal((await initialized).status(), 200, "Login provider initialization must succeed before input");
   await page.locator('input[type="email"]').fill(email); await page.locator('input[type="password"]').fill(password); await page.locator('form button[type="submit"]').click();
   await expect(page).toHaveURL(/\/studio(?:-editor)?(?:[?#]|$)/, { timeout: 30000 });
@@ -308,7 +309,7 @@ try {
     check("homepage original file becomes a real persisted image before handoff/input recovery clears");
 
     enter("fresh browser restores homepage image without IndexedDB input"); const homeFresh = await newPage();
-    await login(homeFresh, email, password, `/studio?workspaceId=${workspace.id}`); await studioReady(homeFresh);
+    await login(homeFresh, email, password, "/login"); await studioReady(homeFresh);
     await homeFresh.getByTestId("studio-nav-projects").click(); await homeFresh.locator(`#ns-project-library [data-project-id="${homeProjectId}"] [data-action="open-project"]`).click();
     const restoredHomeFrame = await editorFrame(homeFresh, homeProjectId);
     await expect(restoredHomeFrame.getByTestId("owned-canvas-item")).toHaveCount(1); const restoredHomeImage = restoredHomeFrame.locator(`[data-owned-id="${homeImageId}"]`);

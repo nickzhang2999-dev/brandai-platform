@@ -26,6 +26,14 @@ export function middleware(req: NextRequest) {
     return NextResponse.next();
   }
 
+  // The product homepage is Studio. Redirect before the legacy homepage's
+  // layout runs, and retain workspace/project query parameters for deep links.
+  if (pathname === "/") {
+    const url = req.nextUrl.clone();
+    url.pathname = "/studio";
+    return NextResponse.redirect(url);
+  }
+
   const hasSession = req.cookies
     .getAll()
     .some((c) => c.name.includes("session-token"));

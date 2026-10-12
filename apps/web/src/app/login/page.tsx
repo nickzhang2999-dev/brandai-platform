@@ -13,12 +13,13 @@ export default function LoginPage() {
   const [providers, setProviders] = useState<string[]>([]);
   function destination() {
     const value = new URLSearchParams(window.location.search).get("callbackUrl");
-    if (!value) return "/";
+    if (!value) return "/studio";
     try {
       const url = new URL(value, window.location.origin);
-      if (url.origin !== window.location.origin || url.pathname === "/login") return "/";
+      if (url.origin !== window.location.origin || url.pathname === "/login") return "/studio";
+      if (url.pathname === "/") url.pathname = "/studio";
       return url.pathname + url.search + url.hash;
-    } catch { return "/"; }
+    } catch { return "/studio"; }
   }
 
   useEffect(() => {
