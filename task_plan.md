@@ -5,7 +5,15 @@
 - [complete] Diagnose public normal/warm startup, resource controller12s and old-card metadata dates; preserve user normal-open report and separately labeled controlled reproductions.
 - [complete] Prove97 real requests and resource timings first-party, remove /studio worker dependency, keep explicit legacycanvas boundary; source18 tests and real CI blocked-worker restored-frame case added.
 - [complete] L1989/AI365/typecheck/production build and export124 files pass; shared dirty4/canvas source16 preserved, compiled bootstrap source checked.
-- [in_progress] Exact-SHA safe push/cloud image checks and independent product release; normal/warm/blocked-worker public acceptance and logs use actual results.
+- [complete] Exact7b3c51c safe push and signed skipped delivery verified; CI38196332671 source and built images both API95/UI16 passed, images published. No7b product deployment.
+- [complete] Local follow-up adds bootstrap compiled-content SHA256 to authenticated HTML script URL; malformed/missing manifest hash fails503 after authentication. L1 1000/AI365/typecheck/build/export124 pass; proposed real UI check compares DOM version with actual served bytes.
+- [blocked] CDS fresh company metadata cannot be confirmed: final single HTTP/2 GET timed out120.062s with no complete response. Release stopped before deploymentPOST/intent; no global network changes or further alternate retries. Current publicly verified product remains68cb.
+- [pending] Exact follow-up candidate safe push, actual image CI with17 UI checks, isolated release and public normal/warm/blocked-worker acceptance after formal metadata checks recover. No public success or new paid calls claimed.
+
+## User-requested backend integration inventory — 2026-10-12
+
+- [complete] One delegated local-source audit compares companymain e99919a with the current integration branch: reused/adapted capabilities, original functions without a new-product entry, genuinely added backend capabilities and separate owned-editor frontend functions. Report each status with source evidence; retained code and acceptance are separate.
+- [complete] Root reviewed `docs/novart-backend-reuse-and-additions-report-2026-10-12.md`, including9 new Prisma models and preserved original models. Key gap: WorkbenchBrandDraft does not update confirmed BrandRule; true template assets and Campaign Kit remain original services without a full new Studio entry. No backend feature expansion, business/provider/network call or service deployment is part of this inventory.
 
 ## Latest steering — fix CDS right-card preview entry · 2026-10-12
 

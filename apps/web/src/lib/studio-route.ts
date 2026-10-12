@@ -2,7 +2,7 @@ import { ZodError } from "zod";
 import { ApiException } from "./api";
 import { studioSession } from "./studio-session";
 import { studioTaskIntent } from "./studio-task-intent";
-import { studioAsset, studioHtml } from "./studio-assets";
+import { studioAsset, studioHtml, studioManifest } from "./studio-assets";
 import { readWorkbenchJson } from "./workbench-request";
 import { isWorkbenchSameOrigin } from "./workbench-origin";
 import { EditorDocumentError } from "./editor-document-codec";
@@ -39,9 +39,14 @@ export async function studioRoute(req: Request) {
         return new Response(null, { status: 302, headers: { ...headers,
           Location: "/studio-editor?" + target.toString() } });
       }
+      const manifest = await studioManifest();
+      const bootstrapSha256 = manifest.files?.["/novart-product-bootstrap.js"]?.sha256;
+      if (typeof bootstrapSha256 !== "string" || !/^[a-f0-9]{64}$/.test(bootstrapSha256)) {
+        throw new ApiException(503, "工作台启动资源版本无效，请重新构建。");
+      }
       const asset = await studioAsset(pathname === "/canvas" ? "/canvas.html" : "/studio.html", true);
       if (!asset) throw new ApiException(503, "工作台资源尚未构建。");
-      return new Response(studioHtml(asset.bytes.toString("utf8"), { ...session, workspaceId, readOnly }), {
+      return new Response(studioHtml(asset.bytes.toString("utf8"), { ...session, workspaceId, readOnly }, bootstrapSha256), {
         headers: { ...headers, "Content-Type": "text/html; charset=utf-8", "X-Frame-Options": "SAMEORIGIN",
           "Content-Security-Policy": "default-src 'self' data: blob: https:; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; style-src 'self' 'unsafe-inline' https:; connect-src 'self' data: blob:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'self'" },
       });

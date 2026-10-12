@@ -3,7 +3,7 @@ import { ZodError } from "zod";
 const f = vi.hoisted(() => ({ session: vi.fn(), read: vi.fn(), assets: vi.fn(), save: vi.fn(), image: vi.fn(), upload: vi.fn(), task: vi.fn(), materials: vi.fn(), generate: vi.fn(), generation: vi.fn(), retryArchive: vi.fn(), compliance: vi.fn(), retryCompliance: vi.fn() }));
 vi.mock("../../../apps/web/src/lib/api", () => ({ ApiException: class extends Error { constructor(public status: number, message: string) { super(message); } } }));
 vi.mock("../../../apps/web/src/lib/studio-session", () => ({ studioSession: f.session }));
-vi.mock("../../../apps/web/src/lib/studio-assets", async importOriginal => ({ ...await importOriginal<typeof import("../../../apps/web/src/lib/studio-assets")>(), studioAsset: vi.fn() }));
+vi.mock("../../../apps/web/src/lib/studio-assets", async importOriginal => ({ ...await importOriginal<typeof import("../../../apps/web/src/lib/studio-assets")>(), studioAsset: vi.fn(), studioManifest: vi.fn() }));
 vi.mock("../../../apps/web/src/lib/editor-documents", () => ({ readEditorDocument: vi.fn() }));
 vi.mock("../../../apps/web/src/lib/studio-state", () => ({}));
 vi.mock("../../../apps/web/src/lib/studio-workflow", () => ({ readStudioWorkflow: f.read, readStudioWorkflowAssets: f.assets, saveStudioWorkflow: f.save, studioWorkflowImage: f.image }));
@@ -12,13 +12,16 @@ vi.mock("../../../apps/web/src/lib/studio-generation", () => ({ submitStudioGene
 vi.mock("../../../apps/web/src/lib/studio-generation-artifacts", () => ({ retryStudioGenerationArtifacts: f.retryArchive }));
 vi.mock("../../../apps/web/src/lib/studio-generation-compliance", () => ({ readStudioGenerationCompliance: f.compliance, retryStudioGenerationCompliance: f.retryCompliance }));
 import { studioRoute } from "../../../apps/web/src/lib/studio-route";
-import { studioAsset } from "../../../apps/web/src/lib/studio-assets";
+import { studioAsset, studioManifest } from "../../../apps/web/src/lib/studio-assets";
 import { readEditorDocument } from "../../../apps/web/src/lib/editor-documents";
 
 const base = "http://127.0.0.1:3000";
 const sha = "a".repeat(64);
 beforeEach(() => {
   vi.resetAllMocks();
+  vi.mocked(studioManifest).mockResolvedValue({ format: "novart-studio-assets-v1", files: {
+    "/novart-product-bootstrap.js": { file: "novart-product-bootstrap.js", mime: "application/javascript", sha256: sha, bytes: 123 },
+  }, external: {} });
   f.session.mockResolvedValue({ user: { id: "server-user" }, workspaceId: "server-workspace", session: {} });
   f.read.mockResolvedValue({ revision: 1 }); f.assets.mockResolvedValue({ assets: [] }); f.save.mockResolvedValue({ revision: 2 });
   f.image.mockResolvedValue("/api/workspaces/server-workspace/assets/a/raw");
@@ -36,15 +39,37 @@ const request = (path: string, body?: unknown) => new Request(base + path, body 
 describe("authenticated workflow and material routes", () => {
   it("serves the reviewed shell without a canvas SDK license", async () => {
     vi.stubEnv("NOVART_TLDRAW_LICENSE_KEY", "synthetic-not-a-real-license");
+    vi.stubEnv("CDS_COMMIT_SHA", "c".repeat(40));
     vi.mocked(studioAsset).mockResolvedValue({ bytes: Buffer.from('<html><head><script src="/native.js"></script></head><body></body></html>'), mime: "text/html" });
     vi.mocked(readEditorDocument).mockResolvedValue({ readOnly: true } as Awaited<ReturnType<typeof readEditorDocument>>);
     const response = await studioRoute(request("/studio?NOVART_TLDRAW_LICENSE_KEY=untrusted-query"));
     expect(response.status).toBe(200); expect(response.headers.get("cache-control")).toBe("no-store");
     const html = await response.text();
+    expect(html).toContain(`defer src="/novart-product-bootstrap.js?v=${sha}"`);
+    expect(html).not.toContain('src="/novart-product-bootstrap.js"');
     const serialized = html.match(/<script id="novart-product-context" type="application\/json">([^<]*)<\/script>/)?.[1];
+    expect(JSON.parse(serialized!)).toMatchObject({ workspaceId: "server-workspace", readOnly: false });
     expect(JSON.parse(serialized!).canvasLicense).toBeUndefined();
     expect(html).not.toContain("synthetic-not-a-real-license");
     expect(html).not.toContain("untrusted-query");
+  });
+  it.each([undefined, null, "", "a".repeat(63), "a".repeat(65), "A".repeat(64), "g".repeat(64), '" onload="synthetic()'])(
+    "returns 503 instead of unversioned HTML for an invalid manifest bootstrap hash: %s", async hash => {
+      const manifest = await studioManifest();
+      vi.mocked(studioManifest).mockResolvedValueOnce({ ...manifest, files: {
+        "/novart-product-bootstrap.js": { ...manifest.files["/novart-product-bootstrap.js"], sha256: hash },
+      } } as Awaited<ReturnType<typeof studioManifest>>);
+      const response = await studioRoute(request("/studio"));
+      expect(response.status).toBe(503); expect(response.headers.get("cache-control")).toBe("no-store");
+      expect(await response.json()).toEqual({ error: "工作台启动资源版本无效，请重新构建。" });
+      expect(studioAsset).not.toHaveBeenCalled();
+    },
+  );
+  it("returns 503 when the compiled manifest has no bootstrap entry", async () => {
+    vi.mocked(studioManifest).mockResolvedValueOnce({ format: "novart-studio-assets-v1", files: {}, external: {} });
+    const response = await studioRoute(request("/studio/"));
+    expect(response.status).toBe(503); expect(await response.text()).not.toContain("<script");
+    expect(studioAsset).not.toHaveBeenCalled();
   });
   it("opens the owned editor only after checking the requested project", async () => {
     vi.mocked(readEditorDocument).mockResolvedValue({ projectId: "p", readOnly: false } as Awaited<ReturnType<typeof readEditorDocument>>);
@@ -77,6 +102,7 @@ describe("authenticated workflow and material routes", () => {
     f.session.mockRejectedValue(new Error("session unavailable"));
     const response = await studioRoute(request("/studio"));
     expect(response.status).not.toBe(200); expect(studioAsset).not.toHaveBeenCalled();
+    expect(studioManifest).not.toHaveBeenCalled();
     expect(await response.text()).not.toContain("canvasLicense");
   });
   it("checks a published version by server identity and retries only the check", async () => {

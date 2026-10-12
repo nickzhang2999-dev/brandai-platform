@@ -257,6 +257,16 @@ try {
   await studioReady(page); const workspace = await prisma.brandWorkspace.findFirstOrThrow({ where: { ownerId: user.id, name: brandName } }); assert.equal(new URL(page.url()).searchParams.get("workspaceId"), workspace.id); await expect(page.locator("#ns-greeting")).toContainText(nickname);
   check("real login and first brand remain server-authoritative");
 
+  const startupSource = await page.locator('script[defer][src^="/novart-product-bootstrap.js"]').getAttribute("src");
+  assert.ok(startupSource, "Authenticated HTML must declare its startup script");
+  const startupUrl = new URL(startupSource, base), startupVersion = startupUrl.searchParams.get("v");
+  assert.equal(startupUrl.origin, base.origin);
+  assert.match(startupVersion ?? "", /^[a-f0-9]{64}$/, "The startup URL must use its compiled content digest");
+  const startupResponse = await page.request.get(startupUrl.href);
+  assert.equal(startupResponse.status(), 200);
+  assert.equal(digest(await startupResponse.body()), startupVersion, "The versioned resource must match the HTML digest");
+  check("authenticated HTML versions its startup script with the served compiled content hash");
+
   if (process.env.WORKBENCH_TEST_MATERIAL_UPLOAD === "1") {
     enter("homepage attachment, actual project/worker save and input cleanup");
     await page.waitForFunction(() => (window as any).NovartStudio?.snapshot().homeStart.loaded === true);

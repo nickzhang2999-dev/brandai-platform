@@ -1,5 +1,12 @@
 # Integration progress
 
+## 2026-10-12 — startup fix CI green, cache follow-up locally validated, release held
+
+- Exact7b3c51c signed skipped push and whole CI38196332671 succeeded. Both source and built-container runs API95/UI16, including real restore with service workers blocked; immutable images published. No7b deployment occurred.
+- Follow-up source changes version the bootstrap request from the compiled manifest digest. Full checks pass: contracts976+UI24=L1 1000, AI365, Web typecheck, production build, asset export124 and source lifecycle18. Shared dirty4 and frozen canvas16 hashes preserved. New CI byte/digest check is added, not yet remotely executed; proposed UI total17.
+- Final company metadata HTTP/2 GET had no complete response after120.062s. Publication guard remains intact; no deployment intent/POST, no repeated alternate transport probes, no provider/business calls. Current verified public product68cb remains; candidate needs fresh isolation proof, precise image CI and public acceptance before claiming fixed online.
+- One separate agent's backend reuse/additions inventory is complete and root-reviewed: original capabilities/new-entry gaps and9 added persistence models, separate owned UI tools, actual acceptance boundaries. Brand draft vs confirmed BrandRule and true original template/Campaign Kit are explicit. Report does not add provider calls or expand backend scope. Preserve this locally validated source/report candidate in the integration branch; no new push/deploy while fresh isolation proof is unavailable.
+
 ## 2026-10-12 — resource startup failure under investigation and local correction
 
 - Unique timeout source locked to bootstrap worker ready/controller12s. Ordinary real cold/warm6 pass; controlled real Chrome hard/bypass2 fail same message with active/ready but no controller. User explicitly says normal opening fails, so browser operation attribution remains unconfirmed.

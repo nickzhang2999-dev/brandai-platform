@@ -33,10 +33,11 @@ export async function studioAsset(urlPath: string, allowHtml = false) {
   if (bytes.length !== entry.bytes || createHash("sha256").update(bytes).digest("hex") !== entry.sha256) throw new Error("Studio asset checksum mismatch");
   return { bytes, mime: entry.mime };
 }
-export function studioHtml(html: string, data: unknown) {
+export function studioHtml(html: string, data: unknown, bootstrapSha256: string) {
+  if (typeof bootstrapSha256 !== "string" || !/^[a-f0-9]{64}$/.test(bootstrapSha256)) throw new Error("Invalid studio bootstrap checksum");
   // Delay captured scripts until the authenticated bootstrap has installed the
   // transport and scoped browser state. Preserve their original source order.
   const deferred = html.replace(/<script\b([^>]*)>/g, (_all, attrs: string) => `<script type="application/x-novart"${attrs.replace(/\s+type=["'][^"']*["']/g, "")}>`);
   const json = JSON.stringify(data).replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
-  return deferred.replace("</head>", `<script id="novart-product-context" type="application/json">${json}</script><script defer src="/novart-product-bootstrap.js"></script></head>`);
+  return deferred.replace("</head>", `<script id="novart-product-context" type="application/json">${json}</script><script defer src="/novart-product-bootstrap.js?v=${encodeURIComponent(bootstrapSha256)}"></script></head>`);
 }

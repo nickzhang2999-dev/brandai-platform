@@ -1,5 +1,11 @@
 # Integration findings
 
+## 2026-10-12 — bootstrap resource freshness and release boundary
+
+- Actual public bootstrap response uses Cache-Control `max-age=14400, must-revalidate` and its served body still matches68cb; the source repair7b is not running. A query with the new digest was a cache MISS but still served68cb, which is consistent with no deployment and does not prove the CDN ignores queries.
+- Version the authenticated HTML startup URL with the manifest's compiled bootstrap SHA256, rather than a commit label or a timestamp. Route keeps authentication first; invalid/missing digest fails503, context escaping and deferred script order remain. Unit route/helper39 pass; full L1 1000/AI365/typecheck/build/export124 pass. New real CI check must verify actual response bytes match DOM v; it has not yet run remotely.
+- 7b CI38196332671 source/container API95/UI16 and image publication passed. Current release still stops before any POST because fresh company metadata GET lacks a complete response; final120.062s HTTP/2 deadline also failed. This does not establish a specific CDS application/network root cause. Company/main/shared data remain untouched.
+
 ## 2026-10-12 — first-party startup dependency confirmed
 
 - User reports normal opening can reach resource-init timeout. Unique source is bootstrap12s wait for navigator.serviceWorker.controller after ready. Actual isolated ordinary6 pass does not disprove user context; separately controlled hard/bypass cases both reproduce active/ready with uncontrolled page and same timeout.
