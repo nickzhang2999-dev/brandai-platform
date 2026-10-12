@@ -1,5 +1,31 @@
 # Novart 开发日志 · 2026-10-12
 
+## 后续实际更新：公网启动六项通过，核心准备合并
+
+独立55ff部署后，三种真实浏览器模式共6项通过：普通首次进入、暖启动、旧CDS入口3项；完全禁用Service Worker 1项；已有activated Worker但controller为空时强制刷新、网络旁路2项。每项工具栏持续稳定10.302–10.315秒，实际加载bootstrap均严格匹配部署容器摘要、55ff源码与76项资源映射。应用未注册或等待Service Worker；没有替换线上源码。三模式各实际登录一次，业务写入、额外模型调用、页面异常均为0。
+
+文档验收范围是当前revision28、8条记录、7个图形、6个ownedV2对象，打开前后revision及checksum不变。旧revision20基线首次检查因文档内容已变化而保留失败；当前文档更新时间04:32:47Z早于55ff部署完成05:10:25Z，不据此推断是谁修改或为何修改。原私密基线未覆盖，另建只读当前基线，也不宣称历史文档保持不变。
+
+本机C盘可用空间实测为0，导致部分隔离Chromium启动失败。仅把验收进程TEMP/TMP设到已核对的D盘临时目录后完成检查，未删除用户文件、修改系统环境或控制用户浏览器。这是本机测试环境问题，不记为CDS服务器故障。
+
+安全汇总：本机 `.novart-tmp/public-bootstrap-55ffda3-acceptance-summary-20261012.json`，SHA256 `82e49e3187219bc6400a02a199ef568d3eabf53d977dc836340047af42126b50`。源码、工作流和已完成本地四项必需门禁未变；本批只补文档，最终核心提交的main推送、签名跳过回执及云端CI待实际完成后追加。正式站仍受非Git目录阻断，没有触发正式发布。下段保留早前逐项待验状态，最新公网结果以本节为准。
+
+## 后续实际更新：55ff独立部署与预检归因纠正
+
+精确 `55ffda3e29f40fba14e7fd78d4bddf39302e5d6f` 的独立部署 run `dr_748b9d7e343e16a9efc616ff` 于 **2026-10-12 05:10:25.528Z** 完成。`runtime-receipt.json` 的 `ok=true`，Web/AI/Worker三镜像及环境 fullSHA已核对；Garage保留固定55e镜像和原双卷，healthy，公司部署前后七字段不变，providerCalls=0。实际 runtime/入口通过，不等于三种公网浏览器场景已通过；普通、暖启动和禁用worker仍待逐项实测。
+
+实际容器 manifest 的 bootstrap SHA256 为 `4cd3d71103631a1a4405d5c3dcfa5f85615fcb2481bf66a347ab2a65b4456456`，本地编译值为 `7881b04b01d1cc951f2c5f29ddbb9aa4fbc28cd823894d46f1b315fa8d6dbf7d`。差异来自资产映射对象key顺序；公网资源正文、源码主体及语义映射已严格匹配真实部署来源，并以部署容器manifest作摘要权威，未替换公网源脚本。不能以本地整文件摘要不同直接认定旧代码仍在运行，也不能跳过实际manifest/正文验证。
+
+连接卡住归因已纠正：诊断/发布helper的 `ProxyHandler({})` 强制直连，绕过用户已启用的Windows代理。复用已有代理且保留HTTPS Host/SNI/TLS后，公司GET实测2.25秒，项目/配置GET约2.5/2.9秒，main与feature共四项dry-run成功；未改系统代理、hosts或全局设置。此前直连/H2超时记录保留，不能再笼统记成CDS服务器bug。公网runtime首次urllib默认UA403/CF1010，后续curl UA200并完成新runtime报告；原failure未覆盖，不据此判断所有浏览器访问均失败。
+
+正式预检最初artifact fail来自小克诊断请求遗漏previewUrl，非已证明的镜像缺失。补入官方branch preview URL后，最新正式preflight HTTP200（5.062秒）：artifact pass，SSH/脚本/health/rollback pass，唯一blocking为remote-repository fail（`/opt/brandai-platform-prod`不是Git根目录），project-identity为旧target身份快照warn。公司gitRepoUrl/githubRepoFullName绑定核对正确。未更改target或触发正式release。
+
+公司Web profile的release命令包含明确seed与db push，源码配置如实记录；本轮未改也未执行。该CDS profile命令不能等同于尚未读到内容的正式SSH `./cds-release-novartlab.sh`，不据此宣称正式脚本已确认安全迁移/资源生成。正式脚本及远端目录仍需后续核对。
+
+main流水线候选 `9dcc11ad403c36cb7f6f896faa0222ddb8231c94` 已准备且本地L1 1000（Turbo缓存重放）/Windows AI365/完整typecheck/production build退出0，原preview job与backend全部21steps保持，四dirty与16冻结文件哈希不变。此时尚未push main，未正式发布；后续main精确SHA云端CI与公网三模式按真实结果再追加，不提前勾完成。
+
+本段证据来自本机 `.novart-tmp/release-product-startup-55ffda3e29f40fba14e7fd78d4bddf39302e5d6f/runtime-receipt.json`、`deploy-receipt.json`、`runtime-bootstrap-55ffda3-20261012.json`、`cds-existing-proxy-read-1791781506232204200.json`、`company-proxy-release-audit-1791781814409663800.json`、`formal-preflight-1791781862871253400.json`。旧timeout、UA403及浏览器false报告保持；下列记录为早前冻结状态。
+
 ## 核心 main 合并准备与正式发布预检
 
 用户确认先合并已验证核心，后续 P0 依次为完整品牌知识、识别/手册解析、用户管理；采用同域 `/manage/login` 独立管理入口。P1 蒙版/分层，P2 Campaign Kit、模板素材库，审核运营待排期。范围和验收见 `novart-main-release-plan-2026-10-12.md`，本批没有实现或提前计入这些 P0。

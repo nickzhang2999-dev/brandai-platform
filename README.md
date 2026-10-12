@@ -1,6 +1,10 @@
 # BrandAI — 品牌项目视觉 AI 生成平台
 
-2026-10-12 核心合并准备（本次提交时的冻结状态）：启动与资源版本修复 `55ffda3` 已推送，[完整云端流水线38203197224](https://github.com/nickzhang2999-dev/brandai-platform/actions/runs/38203197224)成功，源码及镜像内均 API95/UI17 通过。main 镜像流水线已补齐并通过本地 L1 1000、AI365、完整类型检查和生产构建；原 preview job 与实际验收步骤保持。用户确认先合并已验证核心，P0 后续依次补，管理入口采用 `/manage/login`；详见[合并与发布计划](docs/novart-main-release-plan-2026-10-12.md)。当前独立产品实际仍为68cb，55ff公网验收未完成；正式发布预检的 artifact、remote-repository 两项阻塞，不能把源码合并说成正式上线。
+2026-10-12 最新状态：启动与内容版本修复 `55ffda3e29f40fba14e7fd78d4bddf39302e5d6f` 已完成独立产品部署，run `dr_748b9d7e343e16a9efc616ff` 于 **05:10:25Z** 完成。三项应用镜像及运行环境完整 SHA 一致，Garage 仍固定55e、原双卷健康，公司三分支七字段前后不变。完整云端 CI 两轮 API95/UI17 已通过；部署后的 runtime/入口与 bootstrap 来源核对通过。公网普通首次进入、暖启动、旧 CDS 入口、禁用 Service Worker、已有激活 Worker 但未控制页面时强制刷新和网络旁路，**6 项全部通过**，每项工具栏稳定至少10秒；现有 revision28 文档打开前后不变，业务写入和额外模型调用为0。此次验证当前文档，不宣称旧 revision20 基线未发生变化。[打开已验证的独立产品](https://novart-product-integration-claude-novart-product-integration.geole.me/studio)。
+
+main 流水线与合并计划提交 `9dcc11ad403c36cb7f6f896faa0222ddb8231c94` 已本地通过 L1 1000、AI365、类型和生产构建，**尚未推送 main，也未发布正式站**。正式预检 artifact 已在补齐官方 preview URL 后通过；唯一 blocking 为 `/opt/brandai-platform-prod` 不是 Git 根目录，project-identity 是旧目标快照警告。公司项目 repository 绑定正确，不能把此项写成公司仓库绑定错误或 SSH 整体故障。详见[当前发布计划](docs/novart-main-release-plan-2026-10-12.md)。
+
+访问诊断纠正：此前 helper 强制 `ProxyHandler({})` 绕过用户已启用的 Windows 代理。按既有代理恢复请求后，GET 约2秒、main/feature四项 dry-run 通过，未改全系统设置；不再笼统把此前 API 超时报成 CDS 服务器 bug。公网 urllib 默认 UA 的403/CF1010和后续 curl UA 200分别保留，runtime新成功不覆盖旧失败。下列日期段保留当时冻结记录，以本段和[当日日志](docs/development-log-2026-10-12.md)的新记录为准。
 
 2026-10-12 后续：正常打开的启动等待修复已提交7b3c51c，云端源码和实际镜像两轮均API95/UI16通过；尚未部署。另已本地完成启动脚本按编译内容SHA256生成版本URL，针对公网4小时缓存与固定资源地址的更新风险；L1 1000、AI365、类型检查、生产构建及124资源导出通过，新增真实CI内容摘要检查尚待精确新提交执行。CDS公司项目状态GET多次未响应，最后一次HTTP/2也在120秒超时，发布保护门停止于任何部署POST之前。当前已验证运行产品仍68cb，不能称线上超时已修复；详见[当日日志](docs/development-log-2026-10-12.md)。公司旧卡“3天前”是旧环境推送时间，产品部署应查看[独立产品卡](https://cds.geole.me/branches/98cfea6cdcbd?branch=novart-product-integration-claude-novart-product-integration)。
 

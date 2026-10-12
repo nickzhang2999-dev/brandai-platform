@@ -1,6 +1,28 @@
 # CDS 问题报告 · 2026-10-12 · 主列表预览丢失入口路径
 
-## 核心合并的发布阻塞：本次实际预检
+## 最新验收与归因边界
+
+55ff独立产品部署后的公网启动已完成普通3项、禁用Service Worker 1项、已有激活Worker但未控制页面2项，共6项全部通过。实际资源正文绑定部署摘要与源码，首页进入已有画布后工具栏稳定至少10秒，当前revision28文档不变；业务写入、额外模型调用、页面异常均为0。旧revision20基线与失败记录保留，此次不宣称历史文档内容未变。
+
+另一本机障碍是C盘可用空间为0，影响隔离Chromium启动；仅测试进程临时目录切换至D盘后完成验收，未改系统设置或清理用户文件。应与已核实的CDS主列表路径丢失、正式target非Git目录、测试helper绕过既有代理分别记录，不能混成CDS服务器性能问题。
+
+公网汇总 `.novart-tmp/public-bootstrap-55ffda3-acceptance-summary-20261012.json`；独立预览可用不代表公司main运行版本或正式站已经更新。正式发布仍需正确远端Git目录和实际脚本，不能用GitHub仓库URL替代服务器路径。
+
+## 后续纠正：本机代理绕过、诊断请求完整性与正式目标阻断
+
+此前“CDS接口长时间未响应”不应笼统归为CDS服务器bug。已查明诊断/发布helper强制 `ProxyHandler({})`，绕过用户已启用的Windows系统代理；复用已有代理后公司GET为2.25秒，项目/配置GET约2.5/2.9秒，main/feature四项dry-run通过。系统代理、hosts和全局设置均未改，HTTPS Host/SNI/TLS校验保留。这解释本轮主要访问路径问题；原直连/H2超时记录保留，不把所有历史网络现象归成同一原因，也未取得服务器负载证据。
+
+公网runtime第一次urllib默认UA收到403/Cloudflare1010，curl UA请求为200并取得新runtime成功；两个结果分别保留。这与CDS控制面helper绕过代理是不同事实，不能用UA拒绝代替产品部署失败或浏览器实测。普通/暖启动/禁用worker三种公网浏览器验收此时仍pending。
+
+正式artifact首次fail是小克诊断POST遗漏previewUrl；补入官方branch preview URL后的最新preflight HTTP200，artifact pass。唯一blocking是remote-repository：`/opt/brandai-platform-prod`不是Git根目录；project-identity为旧target身份快照warn。公司项目gitRepoUrl/githubRepoFullName正确，SSH、deploy-command、scripts、health和rollback检查pass，不能说整个SSH或repository绑定失败。没有更改正式target或触发release，远端目录修正仍须走实际流程。
+
+公司Web profile的release命令实际含seed、db push和Next build，本轮未改、未执行。CDS profile与正式SSH脚本 `./cds-release-novartlab.sh` 不是同一份已确认内容；正式脚本尚待读取，不能从profile推定其迁移/备份/资源构建行为。
+
+独立55ff已于05:10:25Z完成部署，三应用镜像/环境fullSHA、Garage固定55e双卷healthy及公司七字段不变已核对。manifest bootstrap实际4cd3…与本地7881…因map key顺序不同；公网源码主体和语义映射严格匹配，以实际部署manifest校验，不再把字节顺序差异当旧版本证据。源码合并main提交9dcc此时尚未push，正式发布仍受远端目录阻断。
+
+证据：`.novart-tmp/cds-existing-proxy-read-1791781506232204200.json`、`company-proxy-release-audit-1791781814409663800.json`、`formal-preflight-1791781862871253400.json`、`release-product-startup-55ffda3e29f40fba14e7fd78d4bddf39302e5d6f/runtime-receipt.json`。以下段落保留早前状态，读最新结果应以本节及当日日志为准。
+
+## 早前核心合并预检记录（已由后续完整请求补核）
 
 独立产品55ff整条云端CI已成功，不能与CDS控制面查询未响应混成同一个构建故障。固定profiles与infra读取200，3个应用profile及Garage55e固定镜像、原双卷正确；typed产品分支一轮超时，随后加no-cache的一轮2.797秒200，仍运行68cb。这只能说明读取间歇成功，不能断言缓存或服务器CPU为根因。公司列表、审批列表和55ff实际签名投递多次未确认；timeout不是HTTP拒绝，也不等于审批通过。
 
