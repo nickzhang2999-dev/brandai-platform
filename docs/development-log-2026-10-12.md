@@ -1,5 +1,19 @@
 # Novart 开发日志 · 2026-10-12
 
+## 核心 main 合并准备与正式发布预检
+
+用户确认先合并已验证核心，后续 P0 依次为完整品牌知识、识别/手册解析、用户管理；采用同域 `/manage/login` 独立管理入口。P1 蒙版/分层，P2 Campaign Kit、模板素材库，审核运营待排期。范围和验收见 `novart-main-release-plan-2026-10-12.md`，本批没有实现或提前计入这些 P0。
+
+`55ffda3e29f40fba14e7fd78d4bddf39302e5d6f` 已推至整合分支。[完整CI38203197224](https://github.com/nickzhang2999-dev/brandai-platform/actions/runs/38203197224)成功，job114660880889 所有门禁、源码及镜像内API95/UI17、启动生命周期18、镜像发布通过，真实模型调用0。此前“尚未推送/云验收未运行”为历史状态，由本节更新；55ff未部署。
+
+fresh fetch main仍 `e99919a64cd212d5d1b083fd7210842a1962d935`，为55ff共同祖先，38/0可快进。审查发现原公司启动链不生成新Studio manifest，专用CI两层条件也排除main。本批只改两个workflow：允许main运行原完整编译、源码及镜像验收和完整SHA镜像发布，补Novart脚本/`.npmrc`的触发路径。原preview job、backend全部设置及21步骤保持，未改公司compose/profile、数据库、Worker或模型配置。docs-only不自动构建；手动选择main可构建当时HEAD，未支持任意历史SHA。
+
+本批顺序门禁全部退出0：L1 1000（976+24，Turbo缓存重放）、现有Windows venv AI365/1warning实跑、完整typecheck、productionbuild。四项原dirty和16个冻结文件前后SHA256相同，证据 `main-pipeline-gates-20261012-summary.json`。五个新增迁移为增表/增列/索引，但仍须核对正式迁移账本，避免旧P3005逻辑把新增表误登记已应用；新Worker不能先于迁移就绪。
+
+正式控制面确认项目a8、目标 `brandai-novartlab-local-prod`、目录 `/opt/brandai-platform-prod`、命令 `./cds-release-novartlab.sh` 与正式health地址。实际preflight HTTP200/9.328秒、ok=false：branch/commit/target/deploy-command/healthcheck/ssh/scripts/rollback-version通过，project-identity警告，artifact和remote-repository阻塞。补读细节48.281秒超时，原成功和失败保留；暂无足够信息解释两项阻塞根因。未执行正式发布，旧目标rollbackCommand为空不等于没有历史回滚版本。
+
+CDS profiles恰好3个且指纹与68成功发布相同；Garage仍固定55e及原双卷。一次no-cache typed产品分支GET2.797秒成功，三个运行镜像仍68cb。审批列表和实际55ff签名投递仍未确认，不把超时写成审批通过。55ff deploy POST、正式部署、付费调用均0。本节为合并前冻结记录，实际合并及新SHA main CI另行登记。
+
 ## 新反馈：正常打开时资源初始化超时 · 修复中
 
 ### 本轮收尾：内容版本修复已本地通过，发布未触发

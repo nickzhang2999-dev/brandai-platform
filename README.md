@@ -1,5 +1,7 @@
 # BrandAI — 品牌项目视觉 AI 生成平台
 
+2026-10-12 核心合并准备（本次提交时的冻结状态）：启动与资源版本修复 `55ffda3` 已推送，[完整云端流水线38203197224](https://github.com/nickzhang2999-dev/brandai-platform/actions/runs/38203197224)成功，源码及镜像内均 API95/UI17 通过。main 镜像流水线已补齐并通过本地 L1 1000、AI365、完整类型检查和生产构建；原 preview job 与实际验收步骤保持。用户确认先合并已验证核心，P0 后续依次补，管理入口采用 `/manage/login`；详见[合并与发布计划](docs/novart-main-release-plan-2026-10-12.md)。当前独立产品实际仍为68cb，55ff公网验收未完成；正式发布预检的 artifact、remote-repository 两项阻塞，不能把源码合并说成正式上线。
+
 2026-10-12 后续：正常打开的启动等待修复已提交7b3c51c，云端源码和实际镜像两轮均API95/UI16通过；尚未部署。另已本地完成启动脚本按编译内容SHA256生成版本URL，针对公网4小时缓存与固定资源地址的更新风险；L1 1000、AI365、类型检查、生产构建及124资源导出通过，新增真实CI内容摘要检查尚待精确新提交执行。CDS公司项目状态GET多次未响应，最后一次HTTP/2也在120秒超时，发布保护门停止于任何部署POST之前。当前已验证运行产品仍68cb，不能称线上超时已修复；详见[当日日志](docs/development-log-2026-10-12.md)。公司旧卡“3天前”是旧环境推送时间，产品部署应查看[独立产品卡](https://cds.geole.me/branches/98cfea6cdcbd?branch=novart-product-integration-claude-novart-product-integration)。
 
 2026-10-12：CDS 公司项目右侧旧评审分支入口已修复，入口名称为“Novart 最新产品”。[从 CDS 入口打开新版产品](https://novart-workbench-preview-claude-brandai-platform.geole.me/product)；裸根也能自动跳转。真实登录→新首页→项目库打开已有自有画布5项通过，工具栏10.310秒稳定、原文档不变。产品仍为68cb，旧入口桥接为d82e，数据卷与公司原运行服务保留。见 [开发日志](docs/development-log-2026-10-12.md)及 [CDS原因报告](docs/cds-development-issues-2026-10-12.md)。
