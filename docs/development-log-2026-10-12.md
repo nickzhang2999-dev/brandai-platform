@@ -1,5 +1,23 @@
 # Novart 开发日志 · 2026-10-12
 
+## 最新收尾：main 专用账号与画布真实验收完成；正式发布仍被目录校验阻断
+
+用户随后明确要求“帮我搞个账号”。通过已授权项目级操作一次性创建 main 预览专用普通用户，`isAdmin=false`，并在真实登录后通过正式工作区 API 创建其独立测试品牌；没有重置旧账号、开放注册或修改管理员名单。凭据仅在 Git ignored 的 `.cds` 本地私密文件中，不写入日志、提交或公开回复。
+
+首次公司 main 的新建项目操作未通过，原失败报告保留。只读检查确认新品牌 `Project=0`、`WorkbenchProjectState=0`、受理 creationKey=0，并发现运行配置的 `AUTH_URL` 与 main 公网 origin 不一致。这是环境适配问题，不是密码错误或项目被吞。仅修改 Web 新增的 `novart-verified-4b88` 启动命令，在启动 Next 时显式设置真实 main 的公开 origin；旧 dev/release、项目环境桶、镜像、登录密钥与其他分支未改。来源验证仍然严格执行，没有接受任意 Origin。
+
+同一固定4b88镜像于 **07:04:51Z** 再部署完成，run `dr_df058efa5e47ab986436e9c3`。三容器完整 SHA 与 CI digest 保持；实际 Next 进程的 AUTH_URL 匹配 main，原六项环境指纹保持，可信资源清单及 bootstrap/worker bytes 未变。初次以 Docker exec 新进程读取 AUTH_URL 的 false 留档；exec 不继承 Next 启动时的 export，后续按 `/proc` 核实际唯一 Next 服务进程，不能将测量口径差异误报为修复失败。
+
+**公司 main 的真实 UI 验收现已通过13项。** 使用隔离 headless Chrome 和真实账号/API：新建1项目、中文文字与笔迹、文字样式/重复粘贴、对齐/组合/移动/取消组合、线条/箭头、笔迹擦除与撤销重做、画框内容随动、图层隐藏显示/锁定解锁、自动保存、重新登录恢复、真实 SVG/PNG 下载及恢复前后像素一致。工具栏同一DOM连续15.304秒未消失，revision20的7对象与checksum重开后相同；真实受理创建1、文档保存20，页面错误/异常阻断/外域请求均0。不是独立98测试项目，也没有替换页面源码。
+
+最终只读数据审计通过：明确排除本次新作用域后原12核心表数量及内容 checksum 全等部署前；新增 User/BrandWorkspace/Membership/Project 各1及 EditorDocument1，非管理员账号不在实际 admin allowlist。AppSetting整行和原六项环境指纹保持；本次新品牌素材、生成记录、上传任务和生成请求全0。原公司业务数据没有被覆盖。
+
+**main 主列表看到旧版仍是入口按钮问题。** 当前 CDS 真实 `BranchListPage-CKTFpzMd.js` 主按钮链不读取 `previewUrl/previewEntries`，使用 `previewUrl-Cu1wGG_9.js` 的 m/s 导出拼裸域名，丢弃 `/studio`；此前“drawer/helper会保留路径”不证明主按钮正确。原生命令和详情入口返回完整 `https://main-brandai-platform.geole.me/studio`。产品 `/` 的旧首页仍保留，新工作台在 `/studio`；本轮没有发布CDS平台代码或改产品默认根路由，交付应明确使用完整链接。
+
+正式预检仍认出完整4b88产物，但生产 target 的非Git目录尚未纠正；未调用正式release。真实AI修改、main环境新上传/付费生成、P0/P1/P2未在本轮提前验收。产品源码与冻结16文件未变，本批补日志及运行适配，测试调用模型0、本机Docker0。
+
+最新证据：`company-main-review-account-1791788272614270500.json`、`company-main-session-1791788325002.json`、`company-main-create-origin-1791788570090420900.json`、`company-main-origin-fix-1791788693680726000.json`、`trusted-manifest-main-4b88-origin-fixed-proc-1791788889346287800.json`、`company-main-owned-tools-20261012-2c2b3ca0-a8d3-4bfc-9602-2718a54e076a.json`、`company-main-core-after-review-execute-1791788963189945600.json`，均在本机 `.novart-tmp`。下节“账号UI待补”为开账号前的实际历史状态，以本节更新。
+
 ## 最新：公司 main 已部署新版；账号验收与正式发布仍有配置阻塞
 
 用户授权“更新一下，然后正式发布”，并询问能否使用本地源码。本地源码已经正常合入 main，并使用 main 完整 CI `38209036689` 发布的不可变镜像；不需要 CDS 平台源码。主分支于 **2026-10-12 06:40:25Z** 完成部署，run `dr_e4915a56693c53a5c4d379c3`，完整提交 `4b88be6fd340bc090e02ca9bec1f562bb0ba42a0`。

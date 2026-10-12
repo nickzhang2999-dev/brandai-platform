@@ -4,6 +4,7 @@
 
 ## 当前状态
 
+- **最终更新：main账号/画布验收已完成。** 用户授权后新增专用普通账号与独立测试品牌；纠正main专用模式Next启动的公开origin，同4b88镜像最新run `dr_df058efa5e47ab986436e9c3` complete07:04:51Z。真实UI13项（文字/画笔/组合/图层/保存重新登录恢复/SVG与PNG）通过，原12核心表在明确过滤新增作用域后保持。CDS主列表按钮仍可丢弃 `/studio`，请使用官方完整地址；正式站仍因非Git目录未发布。以下账号待补为早前状态。
 - **最新：公司 main 已运行4b88。** 获用户授权后，run `dr_e4915a56693c53a5c4d379c3` 于06:40:25Z完成；不可变镜像、三容器完整SHA、33迁移及原12核心表保持通过，Web入口原生分支配置 `/studio`。main注册关闭且用户账号不在该预览库，真实登录后画布/保存恢复/导出仍待合法账号验收。正式预检已绑定该产物，唯一blocking仍为生产 target 目录非Git；未正式发布。下方“公司旧运行不变”是合并时历史状态。
 - 核心已于05:41Z正常快进合并main，实际远端main与整合分支核心为 `4b88be6fd340bc090e02ca9bec1f562bb0ba42a0`。两真实签名CDS推送skipped，公司运行与共享infra保持；main基础CI38209036645与main镜像流水线38209036689均整轮成功，源码/容器两轮各API95/UI17、三镜像fullSHA发布通过，额外provider调用0。后续实际结果仅补整合分支文档，main保持已验证核心4b88；下方9dcc“未push”是本批合并前状态。
 - 已部署独立核心：`55ffda3e29f40fba14e7fd78d4bddf39302e5d6f`；run `dr_748b9d7e343e16a9efc616ff` 于2026-10-12 05:10:25.528Z完成。三应用镜像和运行环境完整SHA一致，Garage固定55e原双卷healthy，公司七字段前后不变。
@@ -73,7 +74,7 @@
 | 目标 | 作用与更新方式 | 本计划中的状态 |
 |---|---|---|
 | 独立 Novart 产品预览 | `novart-product-integration-claude-novart-product-integration.geole.me`，独立产品项目与配置，用于验证候选 | 55ff已部署且runtime/manifest通过；三种公网浏览器模式共6项通过 |
-| 公司 main 分支预览 | `https://main-brandai-platform.geole.me/studio`；完整4b88 immutable镜像 | 新部署run已完成，运行与数据保护/公网资源核验通过；合法公司预览账号及登录后UI验收仍待补 |
+| 公司 main 分支预览 | `https://main-brandai-platform.geole.me/studio`；完整4b88 immutable镜像 | 最新dr_df058运行/来源配置通过，专用普通账号及真实UI13项、原数据保持均已验收；主列表按钮丢路径未修，须完整链接 |
 | 公司正式站 | `www.novartlab.com`；仓库记录的 CDS 发布目标为 `brandai-novartlab-local-prod`，通过 SSH 执行 `./cds-release-novartlab.sh` | 需重新核对实际 target/profile、发布脚本和回滚信息；main 合并不等于正式发布 |
 
 正式 target 信息依据仓库 `CLAUDE.md` §4 的发布说明，本计划未连接 SSH 或执行发布。平台强制审批按真实返回处理；配置缺失、待审批、未测试项目均如实保留。
