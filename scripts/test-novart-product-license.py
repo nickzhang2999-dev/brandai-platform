@@ -1,4 +1,4 @@
-"""Static product export checks. No server, browser, database or real license.
+"""Product export checks with a disposable loopback server and no real license.
 
 Assertions never include native source bytes: captured bundles contain a vendor
 license that must not appear in test output. Passing is not a licensed deployment.
@@ -9,7 +9,10 @@ import hashlib
 import importlib.util
 from pathlib import Path
 import sys
+import tempfile
 import unittest
+from urllib.parse import urlencode
+from urllib.request import urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'previews/novart-workbench/harness'))
@@ -54,6 +57,27 @@ class ProductLicenseExportTest(unittest.TestCase):
         path = '/originals/static/js/lib-tldraw.e6518aa1.js'
         sdk = (ROOT / 'previews/novart-workbench' / path.lstrip('/')).read_bytes()
         self.assertTrue(exporter.product_license_patch(path, sdk) == sdk, 'The SDK license validator is not an override target')
+
+    def test_product_compiler_receives_unconfigured_assets_from_preview_runtime(self):
+        # Exercise the shared HTTP compiler boundary, where a merge could apply
+        # the preview getter twice or freeze an empty license before product boot.
+        with tempfile.TemporaryDirectory(prefix='novart-export-license-') as directory:
+            runtime = exporter.HomeStartRuntime(directory, configure_native_license=False).start()
+            try:
+                project = runtime.store.create_project({'projectName': 'Export regression'})
+                path = '/canvas?' + urlencode({'projectId': project['projectId'], 'v': '1', **exporter.RC3_PARAMETERS})
+                with urlopen(runtime.origin + path, timeout=10) as response:
+                    document = response.read()
+                self.assertTrue(b'data-novart-license-config' not in document,
+                    'Product configuration must remain owned by its authenticated bootstrap')
+                for path in ('/m12-native/1773.fe2335a6.js', '/originals/static/js/1773.fe2335a6.js'):
+                    with urlopen(runtime.origin + path, timeout=10) as response:
+                        source = response.read()
+                    derived = exporter.product_license_patch(path, source)
+                    self.assertEqual(derived.count(REPLACEMENT), 1)
+                    self.assertEqual(derived.count(ANCHOR), 0)
+            finally:
+                runtime.close()
 
 
 if __name__ == '__main__':

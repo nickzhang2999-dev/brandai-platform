@@ -11,6 +11,7 @@ import gzip
 import hashlib
 import http.client
 import json
+from http.cookies import SimpleCookie
 from pathlib import Path
 import subprocess
 import struct
@@ -21,6 +22,8 @@ import zlib
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / 'previews' / 'novart-workbench'
 PUBLIC_ORIGIN = 'https://novart-review.invalid'
+ADDITIONAL_ORIGIN = 'https://novart-review-alias.invalid'
+PRODUCT_ENTRY = 'https://novart-product.invalid/studio'
 
 
 def require(condition, message):
@@ -83,6 +86,7 @@ def check_container(image, expected_sha):
         nonlocal port
         docker('run', '-d', '--name', name, '-p', '127.0.0.1::8769',
                '-e', 'NOVART_REVIEW_PUBLIC_ORIGIN=' + PUBLIC_ORIGIN,
+               '-e', 'NOVART_REVIEW_ADDITIONAL_ORIGINS=' + json.dumps([ADDITIONAL_ORIGIN]),
                '--mount', f'type=volume,source={volume},target=/app/sharing', image)
         binding = json.loads(docker('inspect', '--format', '{{json .NetworkSettings.Ports}}', name))
         port = int(binding['8769/tcp'][0]['HostPort'])
@@ -142,6 +146,14 @@ def check_container(image, expected_sha):
         canvas = 'SHAKKERDATA://' + base64.b64encode(gzip.compress(json.dumps(snapshot).encode())).decode()
         saved = api('saveProject', {**project, 'projectName': 'Saved before container recreation', 'canvas': canvas}, cookie)
         require(saved['version'] != project['version'], 'Version did not advance')
+        status, _, body = request('/api/canva/project/queryProject',
+                                  {'projectId': project['projectId']}, cookie=cookie,
+                                  headers={'Origin': ADDITIONAL_ORIGIN})
+        alias_project = json.loads(body)
+        require(status == 200 and alias_project.get('code') == 0
+                and alias_project['data']['canvas'] == canvas,
+                'Configured alias could not load the saved canvas')
+        checks.append('Configured second browser origin loads the same native document')
         require(request('/api/canva/project/saveProject', {}, cookie=cookie,
                         headers={'Origin': 'https://unrelated.invalid'})[0] == 403, 'Cross-origin write accepted')
         require(request('/api/canva/project/saveProject', {}, cookie=cookie,
@@ -160,11 +172,128 @@ def check_container(image, expected_sha):
         reopened = api('queryProject', {'projectId': project['projectId']}, cookie)
         require(reopened['canvas'] == canvas and reopened['version'] == saved['version'] and
                 reopened['projectName'] == 'Saved before container recreation', 'Project lost on recreation')
+        status, _, body = request('/api/canva/project/queryProject',
+                                  {'projectId': project['projectId']}, cookie=cookie,
+                                  headers={'Origin': ADDITIONAL_ORIGIN})
+        require(status == 200 and json.loads(body).get('data') == reopened,
+                'Configured alias or document changed on recreation')
         status, headers, restored_png = request('/studio/start/image/' + upload['sha256'], cookie=cookie)
         require(status == 200 and restored_png == png and 'image/png' in headers.get('Content-Type', ''),
                 'Uploaded image lost or changed on recreation')
         checks.append('New container with same volume restores project, image and access')
         print(json.dumps({'ok': True, 'checks': checks, 'packageSha256': expected_sha}, indent=2), flush=True)
+    finally:
+        subprocess.run(['docker', 'rm', '-f', name], capture_output=True, timeout=30)
+        subprocess.run(['docker', 'volume', 'rm', volume], capture_output=True, timeout=30)
+
+
+def check_product_entry(image, expected_sha):
+    """Check the image's optional gateway bridge without visiting its target."""
+    name = 'novart-product-entry-ci-' + uuid.uuid4().hex[:12]
+    volume = name + '-data'
+    port = 0
+    checks = []
+
+    def request(path, *, method='GET', cookie=None, headers=None, payload=None):
+        outgoing = dict(headers or {})
+        if cookie is not None:
+            outgoing['Cookie'] = cookie
+        if payload is not None:
+            payload = json.dumps(payload).encode()
+            outgoing['Content-Type'] = 'application/json'
+        # HTTPConnection never follows Location; the fixed .invalid target must
+        # not be contacted, and the old capability never leaves this loopback.
+        connection = http.client.HTTPConnection('127.0.0.1', port, timeout=12)
+        try:
+            connection.request(method, path, payload, outgoing)
+            response = connection.getresponse()
+            return response.status, dict(response.getheaders()), response.read()
+        finally:
+            connection.close()
+
+    def redirected(result, target=PRODUCT_ENTRY):
+        status, headers, body = result
+        require(status == 302 and headers.get('Location') == target and body == b'',
+                'Gateway did not use the fixed redirect target')
+        require(headers.get('Cache-Control') == 'no-store'
+                and headers.get('Referrer-Policy') == 'no-referrer'
+                and headers.get('X-Content-Type-Options') == 'nosniff',
+                'Gateway redirect protections missing')
+        if target == PRODUCT_ENTRY:
+            require(not any(key in headers for key in ('Set-Cookie', 'Cookie', 'Authorization', 'Referer')),
+                    'Gateway reflected private request headers')
+
+    try:
+        docker('volume', 'create', volume)
+        docker('run', '-d', '--name', name, '-p', '127.0.0.1::8769',
+               '-e', 'NOVART_REVIEW_PUBLIC_ORIGIN=' + PUBLIC_ORIGIN,
+               '-e', 'NOVART_REVIEW_PRODUCT_ENTRY=' + PRODUCT_ENTRY,
+               '--mount', f'type=volume,source={volume},target=/app/sharing', image)
+        binding = json.loads(docker('inspect', '--format', '{{json .NetworkSettings.Ports}}', name))
+        port = int(binding['8769/tcp'][0]['HostPort'])
+        deadline = time.monotonic() + 45
+        while time.monotonic() < deadline:
+            try:
+                status, headers, raw = request('/healthz')
+                health = json.loads(raw)
+                if status == 200 and health.get('status') == 'ok':
+                    require(health.get('service') == 'novart-workbench-preview'
+                            and health.get('packageSha256') == expected_sha
+                            and 'Location' not in headers, 'Wrong bridged gateway package or health')
+                    break
+            except (OSError, ValueError, http.client.HTTPException):
+                pass
+            time.sleep(0.25)
+        else:
+            raise AssertionError('Bridged gateway startup exceeded 45 seconds')
+        status, headers, body = request('/healthz', method='HEAD')
+        require(status == 200 and body == b'' and 'Location' not in headers, 'Health HEAD was redirected')
+        checks.append('Bridge-enabled image startup, health and immutable package identity')
+
+        query = '?cap=do-not-forward&next=https://unrelated.invalid/#do-not-forward'
+        for method in ('GET', 'HEAD'):
+            for path in ('/', '/product'):
+                redirected(request(path + query, method=method, cookie='novart_review=invalid',
+                    headers={'Authorization': 'Bearer isolated-header-fixture',
+                             'Referer': 'https://unrelated.invalid/?private=fixture'}))
+        checks.append('Public GET/HEAD use only the fixed target without request state')
+
+        runtime = json.loads(docker('exec', name, 'cat', '/app/sharing/preview/runtime.json'))
+        entry = runtime['entryPath']
+        require(entry.startswith('/share/') and '?' not in entry and '#' not in entry, 'Invalid review entry')
+        result = request(entry + query, headers={'X-Forwarded-Proto': 'https'})
+        redirected(result, '/share-start')
+        cookies = SimpleCookie()
+        cookies.load(result[1].get('Set-Cookie', ''))
+        review = cookies.get('novart_review')
+        require(review is not None and review.value == entry[len('/share/'):]
+                and review['path'] == '/' and review['httponly'] and review['secure']
+                and review['samesite'] == 'Strict', 'Original review cookie chain changed')
+        cookie = 'novart_review=' + review.value
+        for method in ('GET', 'HEAD'):
+            for path in ('/share-start', '/studio'):
+                redirected(request(path + query, method=method, cookie=cookie))
+                status, headers, _ = request(path, method=method)
+                require(status == 401 and 'Location' not in headers, 'Protected entry lost review authentication')
+        status, headers, _ = request('/share/invalid' + query)
+        require(status == 404 and 'Location' not in headers, 'Invalid review capability accepted')
+        require(request('/studio', cookie='novart_review=invalid')[0] == 401, 'Invalid review cookie accepted')
+        checks.append('Original capability and secure cookie chain reach the product; invalid access stays denied')
+
+        for method in ('POST', 'PUT'):
+            for path in ('/', '/product', '/studio', '/share-start'):
+                require(request(path, method=method)[0] == 401, 'Non-GET bypassed review authentication')
+                status, headers, _ = request(path, method=method, cookie=cookie,
+                    headers={'Origin': 'https://unrelated.invalid', 'X-Forwarded-Host': 'novart-review.invalid'})
+                require(status == 403 and 'Location' not in headers, 'Bridge bypassed the write origin guard')
+        diagnostic = dict(kind='state', role='shell', controlled=False, canvas=False,
+                          toolbar=False, boundary=False, width=0, height=0)
+        status, _, body = request('/review/startup-diagnostics', method='POST', cookie=cookie,
+                                 headers={'Origin': PUBLIC_ORIGIN}, payload=diagnostic)
+        require(status == 202 and json.loads(body).get('ok') is True, 'Valid authenticated gateway write changed')
+        checks.append('Authenticated writes retain the exact origin boundary')
+        print(json.dumps({'ok': True, 'mode': 'product-entry', 'checks': checks,
+                          'packageSha256': expected_sha}, indent=2), flush=True)
     finally:
         subprocess.run(['docker', 'rm', '-f', name], capture_output=True, timeout=30)
         subprocess.run(['docker', 'volume', 'rm', volume], capture_output=True, timeout=30)
@@ -180,3 +309,4 @@ if __name__ == '__main__':
         if not args.image:
             parser.error('--image is required for the container check')
         check_container(args.image, package_sha)
+        check_product_entry(args.image, package_sha)

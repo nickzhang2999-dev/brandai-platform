@@ -205,7 +205,7 @@ def main():
 
     with tempfile.TemporaryDirectory(prefix='studio-export-', dir=temp_root) as temporary:
         assert Path(temporary).resolve().is_relative_to(temp_root.resolve())
-        runtime = HomeStartRuntime(temporary)
+        runtime = HomeStartRuntime(temporary, configure_native_license=False)
         runtime.start()
         try:
             # This ID is solely for the compiler's archive guard; HTML must not contain it.

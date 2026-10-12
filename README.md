@@ -1,5 +1,17 @@
 # BrandAI — 品牌项目视觉 AI 生成平台
 
+## 2026-10-12 · 预览分支合入 main
+
+合并候选以 `claude/novart-workbench-preview` 的 `d82e7c2` 为冲突处理依据，纳入可信域名校验、启动诊断、许可配置和产品入口跳转。main `4b88be6` 已有的产品后端、自研画布及资源版本化功能保持兼容；共享资源导出的许可改写只执行一次。
+
+| 本次范围 | 已验证状态 |
+| --- | --- |
+| 源码与交互 | L1 1000、AI 365、Web 类型与生产构建、124 项产品资源导出通过；自研画布浏览器 49 项、评审画布 3 场景通过 |
+| CDS 自动预览 | 用户确认保留“推送后自动构建和预览”的操作方式；已将 main 三服务从固定 `4b88` 镜像改为 CDS 原生成功构建版本模板，保留原命令、源码构建模式及 `/studio` 入口。等待本次推送验证自动更新 |
+| 正式站 | 本轮未触发正式发布，仍通过 CDS 发布入口单独操作 |
+
+[合并与验证记录](docs/development-log-2026-10-12.md) · [CDS 配置变更记录](docs/cds-main-auto-preview-2026-10-12.json)。下文为历史阶段记录，以本节及当日日志最上方的实际结果为准。
+
 2026-10-12 最新状态：启动与内容版本修复 `55ffda3e29f40fba14e7fd78d4bddf39302e5d6f` 已完成独立产品部署，run `dr_748b9d7e343e16a9efc616ff` 于 **05:10:25Z** 完成。三项应用镜像及运行环境完整 SHA 一致，Garage 仍固定55e、原双卷健康，公司三分支七字段前后不变。完整云端 CI 两轮 API95/UI17 已通过；部署后的 runtime/入口与 bootstrap 来源核对通过。公网普通首次进入、暖启动、旧 CDS 入口、禁用 Service Worker、已有激活 Worker 但未控制页面时强制刷新和网络旁路，**6 项全部通过**，每项工具栏稳定至少10秒；现有 revision28 文档打开前后不变，业务写入和额外模型调用为0。此次验证当前文档，不宣称旧 revision20 基线未发生变化。[打开已验证的独立产品](https://novart-product-integration-claude-novart-product-integration.geole.me/studio)。
 
 main 流水线与合并计划提交 `9dcc11ad403c36cb7f6f896faa0222ddb8231c94` 已本地通过 L1 1000、AI365、类型和生产构建，**尚未推送 main，也未发布正式站**。正式预检 artifact 已在补齐官方 preview URL 后通过；唯一 blocking 为 `/opt/brandai-platform-prod` 不是 Git 根目录，project-identity 是旧目标快照警告。公司项目 repository 绑定正确，不能把此项写成公司仓库绑定错误或 SSH 整体故障。详见[当前发布计划](docs/novart-main-release-plan-2026-10-12.md)。
@@ -44,13 +56,33 @@ main 流水线与合并计划提交 `9dcc11ad403c36cb7f6f896faa0222ddb8231c94` �
 
 ## 独立前端评审分支 · 2026-10-09
 
+### 独立评审分支历史记录（合并保留）
+
+## CDS 最新产品入口兼容 · 2026-10-12
+
+CDS 主分支列表的预览按钮只打开域名，丢弃入口路径，导致旧评审入口显示“请使用管理员提供的完整评审链接进入”。本分支新增可选的固定产品入口桥接：独立评审服务配置 `NOVART_REVIEW_PRODUCT_ENTRY` 后，GET/HEAD `/` 和 `/product` 跳转至新产品 `/studio`；有效旧评审链接在原鉴权链之后跳转。新产品继续使用自己的登录，旧评审权限及数据卷保留。
+
+该桥接不运行新版产品代码。新版产品开发和运行在 `claude/novart-product-integration` 的独立项目，原评审程序的引擎授权限制不代表新版自有画布的状态。配置、发布检查及实际部署回执见 [入口修复日志](docs/development-log-2026-10-12.md)。
+
+## 独立前端评审分支 · 2026-10-08
+
+2026-10-10 补充：已选择接入公司自有 tldraw 授权。相关本地配置与三个 CDS 项目均未发现已有配置；自有授权入口及严格派生接线已在本地补齐，缺失/无效授权的真实 HTTPS 拒绝回归通过。本批尚未推送或部署，有效授权下的稳定编辑、恢复和导出仍待验收，见 [当日日志](docs/开发日志-2026-10-10.md)。
+
 | 范围 | 状态 | 入口 |
 | --- | --- | --- |
 | Novart 工作台前端评审版（首页带图、项目归档、原画布编辑） | 独立 CDS 运行 2db9229；同源写入 403 已修复，Linux CI 及公网 76 项 HTTP 检查通过；浏览器交互待复核，未接真实业务后端 | [`previews/novart-workbench`](previews/novart-workbench/) · [最新联调日志与源码差异](docs/novart-integration-2026-10-09-origin-and-edit-review.md) |
 
+### 独立评审分支历史记录（合并保留）
+
+| Novart 工作台前端评审版（首页带图、项目归档、原画布编辑） | 2026-10-10 在本机 HTTPS 测试域复现：捕获 SDK 的域名授权拒绝会在约 5 秒后卸载画布。已补明确授权提示和真实 HTTPS 回归；正式可用仍阻塞于公司自有有效授权，不能称上线验收通过。发布与现场确认见日志 | [`previews/novart-workbench`](previews/novart-workbench/) · [运行与部署说明](docs/novart-workbench-preview.md) · [当日开发日志](docs/开发日志-2026-10-10.md) |
+
 这份独立评审程序用于操作与交互评审，使用独立文件存储，不接真实 AI、账号或生产业务数据。评审分支本身保留原有 Next.js 源码、`main`、正式站及根 `cds-compose.yml`；上述产品整合分支的增量另行记录。镜像由 `Branch Image` 工作流构建并检查，专用配置位于 `previews/novart-workbench/cds-compose.preview.yml`，只导入独立 CDS 评审项目，避免覆盖原产品的共享服务。屏幕适配覆盖大屏、小笔记本、平板与窄屏浏览器；评审版不代表正式产品已集成或已发布。
 
 独立前端已部署代码版本为 `2db9229f03e0262e66ac7ff8c7465111d9cb166d`。[公司 CDS 分支页](https://cds.geole.me/branches/a8a098f7193a)中右侧 `claude/novart-workbench-preview` 的“预览”仍使用原有专属入口。访问凭据仅保存在受保护的 CDS 配置，不进入仓库；裸根网址仍显示进入说明。正常 Origin 的创建、上传、保存和重开 HTTP 检查已通过；公网浏览器的实际拖拽、输入和导出仍需试用复核，HTTP 检查不代替交互验收。公司三个分支与独立产品后端运行版本均未因本次修复更新。
+
+### 独立评审分支历史记录（合并保留）
+
+已部署代码版本为 `9e5e2afd69f8ab75650e35e5cd027ae66b581181`。[CDS 评审服务](https://novart-workbench-preview-claude-novart-workbench-preview.geole.me/)的根页面只提供进入说明，完整访问入口私下交付。线上脚本与已测源码一致；缺少此域名的有效引擎授权时显示明确提示。项目和图片持久化已验证，授权阻塞解除前不能宣称公网编辑、恢复和导出已通过验收。
 
 
 > **当前开发版本：V0.0.22**（2026-09-17）

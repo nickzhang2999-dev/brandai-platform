@@ -66,6 +66,8 @@ jobs:
           pnpm -F @brandai/contracts exec vitest run tests/owned-canvas.test.ts tests/owned-canvas-geometry.test.ts tests/owned-editor-api.test.ts
           node scripts/test-novart-home-start.cjs
           apps/ai/.venv/bin/python scripts/export-novart-studio.py
+          apps/ai/.venv/bin/python -B scripts/test-novart-product-license.py
+          node scripts/test-novart-product-license.cjs
       - name: Owned shell and homepage protocol checks
         run: |
           node scripts/test-novart-product-worker.cjs

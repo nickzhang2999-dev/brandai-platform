@@ -5,7 +5,8 @@ is replaced by a service worker and a finite local resource resolver; no remote
 requests are forwarded. The share cookie is a capability for one review room.
 """
 from __future__ import annotations
-import argparse, gzip, hashlib, http.client, json, mimetypes, os, secrets, threading, time
+import argparse, gzip, hashlib, http.client, ipaddress, json, math, mimetypes, os, re, secrets, threading, time
+from collections import deque
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -13,6 +14,7 @@ from urllib.parse import parse_qs, urlsplit
 from local_runtime import ROOT, DEMO_TOKEN
 from local_store import StoreError
 from home_start_runtime import HomeStartRuntime
+from native_license_config import validate_license_key
 
 
 def _parse_origin(value):
@@ -40,7 +42,55 @@ def _parse_origin(value):
         return None
 
 
-def _write_origin_allowed(headers, public_origin):
+def _parse_additional_origins(value, public_origin):
+    """Parse a bounded, explicit JSON allowlist before creating any runtime data."""
+    if value is None:
+        return frozenset()
+    if not isinstance(value, str) or len(value) > 4096:
+        raise ValueError('Additional origins must be a JSON array of at most 8 http(s) origins')
+    try:
+        values = json.loads(value)
+    except (ValueError, RecursionError) as error:
+        raise ValueError('Additional origins must be a JSON array of at most 8 http(s) origins') from error
+    if not isinstance(values, list) or len(values) > 8:
+        raise ValueError('Additional origins must be a JSON array of at most 8 http(s) origins')
+    if values and public_origin is None:
+        raise ValueError('Additional origins require a configured public origin')
+    result = set()
+    for value in values:
+        origin = _parse_origin(value)
+        if origin is None or origin == public_origin or origin in result:
+            raise ValueError('Additional origins must be distinct http(s) origins without paths')
+        result.add(origin)
+    return frozenset(result)
+
+
+def _validate_product_entry(value):
+    """Accept a fixed server-owned HTTPS product entry, never a redirect input."""
+    if value is None:
+        return None
+    message = 'Product entry must be a single HTTPS origin followed by /studio'
+    if not isinstance(value, str) or len(value) > 2048 or not value.endswith('/studio'):
+        raise ValueError(message)
+    origin = _parse_origin(value[:-len('/studio')])
+    if origin is None or origin[0] != 'https':
+        raise ValueError(message)
+    hostname = origin[1]
+    try:
+        if '%' in hostname:
+            raise ValueError(message)
+        if ':' in hostname or re.fullmatch(r'[0-9.]+', hostname):
+            ipaddress.ip_address(hostname)
+        elif len(hostname) > 253 or any(re.fullmatch(
+            r'[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?', label) is None
+            for label in hostname.split('.')):
+            raise ValueError(message)
+    except ValueError:
+        raise ValueError(message) from None
+    return value
+
+
+def _write_origin_allowed(headers, public_origin, additional_origins=frozenset()):
     origins = headers.get_all('Origin', [])
     # Retain the capability-authenticated non-browser clients used by the CLI/CI.
     if not origins:
@@ -57,20 +107,69 @@ def _write_origin_allowed(headers, public_origin):
     # A proxy may rewrite Host. Only server configuration can grant the public
     # origin; never use client-controlled Forwarded or X-Forwarded-* headers.
     # Without configuration preserve direct-connection Host matching.
-    return origin == (public_origin if public_origin is not None else host_origin)
+    if public_origin is not None:
+        return origin == public_origin or origin in additional_origins
+    return origin == host_origin
+
+
+def _startup_diagnostic(payload):
+    """Accept only bounded structural state, never user content or full errors."""
+    required = {'kind', 'role', 'controlled', 'canvas', 'toolbar', 'boundary', 'width', 'height'}
+    optional = {'errorName', 'frames', 'resource', 'stage', 'embedded', 'framePath', 'licenseRejected'}
+    if not isinstance(payload, dict) or not required <= payload.keys() or payload.keys() - required - optional:
+        raise ValueError('Invalid diagnostic fields')
+    enums = {'kind': {'state', 'error'}, 'role': {'shell', 'canvas'},
+        'errorName': {'Error', 'TypeError', 'ReferenceError', 'RangeError', 'SyntaxError', 'ChunkLoadError', 'Other'},
+        'stage': {'opened', 'timeout', 'ready', 'error'},
+        'framePath': {'/canvas', '/studio', '/share-start', 'about:blank', 'unavailable', 'none'}}
+    for key, values in enums.items():
+        if key in payload and (not isinstance(payload[key], str) or payload[key] not in values):
+            raise ValueError('Invalid diagnostic enum')
+    for key in ('controlled', 'canvas', 'toolbar', 'boundary', 'embedded', 'licenseRejected'):
+        if key in payload and type(payload[key]) is not bool:
+            raise ValueError('Invalid diagnostic flag')
+    for key in ('width', 'height'):
+        value = payload[key]
+        if type(value) not in (int, float) or not 0 <= value <= 10000 or not math.isfinite(value):
+            raise ValueError('Invalid diagnostic dimension')
+    if 'frames' in payload:
+        frames = payload['frames']
+        if (not isinstance(frames, list) or len(frames) > 4 or any(
+            not isinstance(frame, str) or len(frame) > 120
+            or re.fullmatch(r'[A-Za-z0-9_.-]+\.js:[0-9]+:[0-9]+', frame) is None for frame in frames)):
+            raise ValueError('Invalid diagnostic frames')
+    if 'resource' in payload:
+        resource = payload['resource']
+        if (not isinstance(resource, str) or len(resource) > 120
+            or re.fullmatch(r'[A-Za-z0-9_.-]+\.(?:js|css)', resource) is None):
+            raise ValueError('Invalid diagnostic resource')
+    return payload
+
+
+def _diagnostic_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError('Duplicate diagnostic field')
+        result[key] = value
+    return result
 
 
 class ShareRuntime:
-    def __init__(self, data_dir, port=0, host='127.0.0.1', *, public_origin=None):
+    def __init__(self, data_dir, port=0, host='127.0.0.1', *, public_origin=None, additional_origins=None,
+        tldraw_license_key=None, product_entry=None):
+        self.product_entry = _validate_product_entry(product_entry)
+        tldraw_license_key = validate_license_key(tldraw_license_key)
         self.public_origin = _parse_origin(public_origin) if public_origin is not None else None
         if public_origin is not None and self.public_origin is None:
             raise ValueError('Public origin must be a single http(s) origin without a path')
+        self.additional_origins = _parse_additional_origins(additional_origins, self.public_origin)
         data_dir = Path(data_dir).resolve()
         if not data_dir.is_relative_to((ROOT / 'sharing').resolve()):
             raise ValueError('Share data must be isolated under sharing/')
         self.data_dir = data_dir
         data_dir.mkdir(parents=True, exist_ok=True)
-        self.inner = HomeStartRuntime(data_dir / 'demo-data').start()
+        self.inner = HomeStartRuntime(data_dir / 'demo-data', tldraw_license_key=tldraw_license_key).start()
         self.inner.server.socket.listen(128)
         token_path = data_dir / 'access-key.txt'
         if not token_path.exists(): token_path.write_text(secrets.token_urlsafe(32), encoding='ascii')
@@ -78,6 +177,8 @@ class ShareRuntime:
         manifest_path = ROOT / 'PACKAGE_MANIFEST.json'
         self.package_sha256 = hashlib.sha256(manifest_path.read_bytes()).hexdigest() if manifest_path.is_file() else None
         self.resource_events = []
+        self.startup_diagnostics = deque(maxlen=32)
+        self.startup_diagnostics_lock = threading.Lock()
         owner = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -128,6 +229,9 @@ class ShareRuntime:
                     return self.send({'status': 'ok' if ready else 'unavailable',
                         'service': 'novart-workbench-preview',
                         'packageSha256': owner.package_sha256}, 200 if ready else 503)
+                if (owner.product_entry is not None and self.command in ('GET', 'HEAD')
+                    and parsed.path in ('/', '/product')):
+                    return self.send(b'',302,extra={'Location':owner.product_entry})
                 if self.command == 'GET' and parsed.path.startswith('/share/'):
                     if not secrets.compare_digest(parsed.path[len('/share/'):], owner.key):
                         return self.send({'error':'评审链接无效'},404)
@@ -138,9 +242,14 @@ class ShareRuntime:
                         return self.send(b'',302,extra={'Location':'/studio#/home'})
                     return self.send('''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>NovartLab · 体验评审</title><style>html{color-scheme:light}body{margin:0;min-height:100vh;min-height:100dvh;display:grid;place-items:center;background:#fafafc;color:#26232c;font:16px/1.8 system-ui}main{box-sizing:border-box;width:min(100%,520px);padding:clamp(24px,6vw,48px)}h1{font-size:28px;margin:0 0 16px}p{color:#706c7b;margin:8px 0}</style></head><body><main><h1>NovartLab</h1><p>工作台已准备就绪。</p><p>请使用管理员提供的完整评审链接进入。</p></main></body></html>''',mime='text/html; charset=utf-8')
                 if not self.allowed(): return self.send({'error':'请使用完整的专属评审链接打开'},401)
+                if (owner.product_entry is not None and self.command in ('GET', 'HEAD')
+                    and parsed.path in ('/studio', '/share-start')):
+                    return self.send(b'',302,extra={'Location':owner.product_entry})
                 if self.command not in ('GET','HEAD'):
-                    if not _write_origin_allowed(self.headers, owner.public_origin):
+                    if not _write_origin_allowed(self.headers, owner.public_origin, owner.additional_origins):
                         return self.send({'error':'Cross-origin write rejected'},403)
+                if parsed.path == '/review/startup-diagnostics':
+                    return self.startup_diagnostic(parsed.query)
                 if parsed.path == '/share-start':
                     return self.send('''<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>NovartLab · 体验评审</title><style>body{margin:0;background:#f7f5fb;color:#26232c;font:16px/1.8 system-ui;display:grid;place-content:center;min-height:100vh}main{max-width:480px;padding:40px}h1{font-size:26px}p{color:#787180}</style><main><h1>NovartLab</h1><p id="status">正在准备设计工作台…</p></main><script>
 document.cookie='usertoken=local-demo-not-a-real-token; Path=/; SameSite=Strict';
@@ -183,6 +292,38 @@ document.cookie='__locale=zh; Path=/; SameSite=Strict';
                     owner.resource_events.append({'error':type(error).__name__,'path':parsed.path})
                     return self.send({'error':'演示服务暂不可用，请重试'},503)
 
+            def startup_diagnostic(self, query):
+                if query:
+                    self.close_connection = True
+                    return self.send({'error': 'Invalid diagnostic request'}, 400)
+                if self.command == 'GET':
+                    with owner.startup_diagnostics_lock:
+                        events = list(owner.startup_diagnostics)
+                    return self.send({'events': events})
+                if self.command != 'POST':
+                    self.close_connection = True
+                    return self.send({'error': 'Method not allowed'}, 405, extra={'Allow': 'GET, POST'})
+                try:
+                    lengths = self.headers.get_all('Content-Length', [])
+                    if (len(lengths) != 1 or not re.fullmatch(r'[0-9]+', lengths[0])
+                        or self.headers.get('Transfer-Encoding')
+                        or self.headers.get_content_type() != 'application/json'):
+                        raise ValueError('Invalid diagnostic request')
+                    length = int(lengths[0])
+                    if length > 4096:
+                        self.close_connection = True
+                        return self.send({'error': 'Diagnostic request too large'}, 413)
+                    if not length:
+                        raise ValueError('Empty diagnostic request')
+                    payload = json.loads(self.rfile.read(length).decode('utf-8'), object_pairs_hook=_diagnostic_object)
+                    event = _startup_diagnostic(payload)
+                except (ValueError, UnicodeError, RecursionError):
+                    self.close_connection = True
+                    return self.send({'error': 'Invalid diagnostic request'}, 400)
+                with owner.startup_diagnostics_lock:
+                    owner.startup_diagnostics.append({**event, 'timestamp': time.time()})
+                return self.send({'ok': True}, 202)
+
             def resource(self, url, body):
                 parsed=urlsplit(url);clean=parsed.scheme+'://'+parsed.netloc+parsed.path
                 runtime=owner.inner; method=self.command
@@ -204,11 +345,15 @@ document.cookie='__locale=zh; Path=/; SameSite=Strict';
                     if not file.is_relative_to((ROOT/'originals').resolve()): return self.send({},404)
                     raw=file.read_bytes()
                     if hashlib.sha256(raw).hexdigest()!=asset['sha256']: return self.send({},503)
+                    if file == (ROOT/'originals/static/js/1773.fe2335a6.js').resolve():
+                        raw = runtime.novart_original_native_chunk
                     return self.send(raw,mime=asset.get('contentType') or 'application/octet-stream')
                 prefix='/lovart_canvas_online/'
                 if parsed.hostname=='web-static3.lovart.ai' and parsed.path.startswith(prefix):
                     file=(ROOT/'originals'/parsed.path[len(prefix):]).resolve()
                     if file.is_relative_to((ROOT/'originals').resolve()) and file.is_file():
+                        if file == (ROOT/'originals/static/js/1773.fe2335a6.js').resolve():
+                            return self.send(runtime.novart_original_native_chunk,mime='application/javascript')
                         return self.send(file.read_bytes(),mime=mimetypes.guess_type(file)[0] or 'application/octet-stream')
                 return self.send({'error':'此在线服务尚未接入演示版'},503)
 
@@ -225,9 +370,15 @@ if __name__=='__main__':
     parser=argparse.ArgumentParser();parser.add_argument('--port',type=int,default=8769);parser.add_argument('--room',default='boss-review');parser.add_argument('--host',choices=['127.0.0.1','0.0.0.0'],default='127.0.0.1')
     parser.add_argument('--public-origin', default=os.environ.get('NOVART_REVIEW_PUBLIC_ORIGIN'),
         help='Exact external http(s) origin when a reverse proxy rewrites Host; no path or wildcard')
+    parser.add_argument('--additional-origins', default=os.environ.get('NOVART_REVIEW_ADDITIONAL_ORIGINS'),
+        help='JSON array of at most 8 additional exact http(s) origins; requires --public-origin')
+    parser.add_argument('--product-entry', default=os.environ.get('NOVART_REVIEW_PRODUCT_ENTRY'),
+        help='Fixed HTTPS origin followed by /studio for the reviewed product; no query or fragment')
     args=parser.parse_args()
     if not args.room.replace('-','').isalnum(): raise ValueError('Invalid room')
-    runtime=ShareRuntime(ROOT/'sharing'/args.room,args.port,args.host,public_origin=args.public_origin).start()
+    runtime=ShareRuntime(ROOT/'sharing'/args.room,args.port,args.host,public_origin=args.public_origin,
+        additional_origins=args.additional_origins,
+        tldraw_license_key=os.environ.get('NOVART_TLDRAW_LICENSE_KEY'),product_entry=args.product_entry).start()
     (runtime.data_dir/'runtime.json').write_text(json.dumps({'port':runtime.server.server_port,'entryPath':'/share/'+runtime.key},indent=2),'utf-8')
     print('Review gateway ready on port '+str(runtime.server.server_port),flush=True)
     try:

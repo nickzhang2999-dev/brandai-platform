@@ -1,8 +1,32 @@
 # Novart 独立前端评审版
 
+## 2026-10-12 · 合入产品主干
+
+预览分支 `d82e7c2` 与 main `4b88be6` 合并，保留独立 Python 评审程序及 main 的 Next 产品。共享 `HomeStartRuntime` 的许可处理默认保持评审行为；产品编译器显式传入 `configure_native_license=False`，由产品导出器和认证运行时各处理自己的配置，避免重复注入。HTTP 资源回归同时检查两条原生资源地址及画布 HTML，不扩大原有 CI 的构建触发范围。本次未执行正式站发布；历史部署记录见下文。
+
 独立前端体验程序位于 `claude/novart-workbench-preview` 分支的 `previews/novart-workbench`。现有 Next.js 页面、正式业务接口、数据库结构不变。根 `cds-compose.yml` 保留原产品配置；评审版通过单独的预构建镜像和 CDS 评审项目接入。
 
-## 已部署状态 · 2026-10-08
+## 2026-10-10：公司自有画布授权接入口
+
+当前选择继续使用原生画布。相关本地配置和三个 CDS 项目未发现自有授权，但未核对供应商账户，不能判断公司是否购买过。新接入口已在本地实现，尚未推送或部署；线上版本和各轮验收见 [当日日志](开发日志-2026-10-10.md)。
+
+部署时使用服务端环境项 `NOVART_TLDRAW_LICENSE_KEY`，填写公司拥有、覆盖实际访问域名且兼容当前 SDK 的授权。不要填写 AI API Key，不把值写入仓库或公开日志。`share_runtime.py` 在启动时读取；配置变更需重新启动服务并完整刷新页面。`/canvas` 同步注入不可写的公共 SDK 配置，已知哈希的派生模块读取它；原始文件及 SDK 签名、域名和期限校验完整保留。
+
+未配置使用空字符串，不能用 URL、浏览器存储或原模板授权替代。配置存在不代表授权有效：必须在真实受授权域名验证编辑器持续稳定，再跑图片/笔画、保存、刷新恢复和导出。当前 HTTPS 回归仅证明缺失及无效授权会准确拒绝、保留已存项目，不代表生产许可验收通过。
+
+产品分支使用自己的 SSR 启动上下文及 exporter，不能将此评审运行时整份合入产品造成双重注入。
+
+## 历史问题与热修复状态 · 2026-10-09
+
+线上现运行 `2db9229f03e0262e66ac7ff8c7465111d9cb166d`。旧版 f720c44 创建画布时，反向代理传给应用的 `Host` 为 `127.0.0.1:15526`，与浏览器的公网 `Origin` 不一致，被应用误拒为 `403 Cross-origin write rejected`。此前正向 HTTP 检查未带 Origin，遗漏了浏览器条件。问题属于应用校验假设和验收覆盖缺口，现有证据不足以认定 CDS 平台缺陷。
+
+热修复镜像与 `NOVART_REVIEW_PUBLIC_ORIGIN` 已部署到独立评审项目，和产品集成分支分开。运行时按服务端明确配置的协议、主机和端口校验请求，不信任客户端可伪造的转发头。容器回读确认配置为官方 CLI 返回的公开 origin；未配置时仍保留直连 Host 校验。部署记录为 `dr_3483c099da752e5cf5fc1451`，实际运行 `prebuilt=true`、1/1 服务健康，无 drift。
+
+12 项本地 HTTP 回归、172 项包校验和、L1 254 项、AI 155 项、Web typecheck/build 通过。[CI 37899305284](https://github.com/nickzhang2999-dev/brandai-platform/actions/runs/37899305284) 已验证 Linux 容器鉴权、反代写入和重建持久化并发布镜像。CDS 真实 push 投递按 `[skip cds]` 跳过公司部署，公司三个分支版本与状态回读未变。公网验收 76 项通过，覆盖正常 Origin 创建/上传/保存/重开、跨站拒绝及 57 个资源响应；运行包 SHA 与 CI 一致。浏览器连接仍失败，真实拖拽、中文输入等用户操作未验收；旧测试样本已清理，本轮未将其算作跨重建验证。详见 [403 问题记录](novart-preview-origin-2026-10-09.md)。
+
+本轮不修改公司 `main`、根产品 compose、共享数据库或共享服务；独立评审持久卷和既有项目数据继续保留。下文 10 月 7–8 日的通过项是历史结果，不能替代本次热修复的部署与验收。
+
+## 历史部署状态 · 2026-10-08
 
 - CDS 项目：`Novart-Workbench-Preview`（`cd9d15b4c592`），配置导入 `e1104a20c10b` 已由用户批准。
 - 部署分支：`claude/novart-workbench-preview`；运行代码提交 `f720c4449c7a873cc352f429017709deace1572f`。后续仅更新本文的提交不改变运行镜像版本。
@@ -61,6 +85,8 @@ python print_review_link.py --origin http://127.0.0.1:8769 --room review
 初始化已完成：官方 `cdscli verify previews/novart-workbench/cds-compose.preview.yml` 为 100/A，无错误或警告；用户已完成项目授权和配置审批。新项目首次 clone 自动探测了根配置中的 web/worker/ai，这三份尚未运行的配置已从独立项目移除，当前仅保留 `workbench-preview-novart-workbench-preview`。原 BrandAI 项目未改动。
 
 后续更新流程：仓库四项门禁 → CI 构建与 Linux 容器检查 → 确认精确 SHA 镜像可被 CDS 拉取 → 核对本项目只有评审 profile、`prebuiltImage: true` 和原持久卷 → 对现有分支执行带 `--commit <40 位 SHA>` 的部署 → 从官方 `preview-url` 读取入口并核对 `/healthz`。配置变化才重新导入子目录的专用 compose；不要导入根产品 compose。重新执行 project clone 会触发根配置探测，必须核对没有重新带入原产品的服务。本次镜像匿名拉取已通过，无需额外配置镜像账号。
+
+本次 Origin 热修复还须把 `NOVART_REVIEW_PUBLIC_ORIGIN` 注入独立评审服务，并在新容器中确认生效；取值以发布时官方 `preview-url` 返回的公开 origin 为准。部署前保留原评审持久卷，不通过清空数据、重新生成访问空间或改动公司共享 profile 规避 403。部署后带真实公网 `Origin` 复验同源请求，同时保留跨域及伪造转发头的拒绝检查；无 `Origin` 的脚本请求不能再作为浏览器同源通过的唯一证据。
 
 线上验收必须验证 `/healthz` 返回 `status: ok`、`service: novart-workbench-preview`，且 `packageSha256` 等于本次 `PACKAGE_MANIFEST.json` 的 SHA-256；在服务内执行 `python print_review_link.py --origin https://实际入口` 私下交付访问链接。随后验证 HTTPS、首页上传、画布编辑保存重开、归档恢复及重建容器后数据仍在。尚未完成的线上检查不能由 CI 绿灯替代。
 

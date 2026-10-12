@@ -64,9 +64,9 @@ async function runOwnedToolChecks({page, surface, check, records, shapes, png, w
     },true);
   });
   const imageId=shapes().find(value=>value.type==='c-image').id, imageBefore=structuredClone(record(imageId));
-  await node(imageId).click();await key('Control+c');await key('Control+v');await save();
+  await node(imageId).click();await key('ControlOrMeta+c');await key('ControlOrMeta+v');await save();
   assert.equal(shapes().filter(value=>value.type==='c-image').length,2);
-  await key('Control+v');await save();
+  await key('ControlOrMeta+v');await save();
   const secondPasteCount=shapes().filter(value=>value.type==='c-image').length;
   if(secondPasteCount!==3) {
     const observation=await page.evaluate(()=>({
@@ -81,7 +81,7 @@ async function runOwnedToolChecks({page, surface, check, records, shapes, png, w
   await button('撤销').click();await save();assert.equal(shapes().filter(value=>value.type==='c-image').length,2);
   // Undo removed the selected second paste. Select an existing object before
   // testing duplicate; Ctrl+D with an empty selection correctly does nothing.
-  await select(imageId);await key('Control+d');await save();assert.equal(shapes().filter(value=>value.type==='c-image').length,3);
+  await select(imageId);await key('ControlOrMeta+d');await save();assert.equal(shapes().filter(value=>value.type==='c-image').length,3);
   const imageCopies=shapes().filter(value=>value.type==='c-image'&&value.id!==imageId);
   for(const copy of imageCopies) {assert.equal(copy.props.url,imageBefore.props.url);assert.equal(copy.meta.novartAssetSha256,imageBefore.meta.novartAssetSha256);}
   await button('撤销').click();await save();assert.equal(shapes().filter(value=>value.type==='c-image').length,2);
@@ -118,7 +118,7 @@ async function runOwnedToolChecks({page, surface, check, records, shapes, png, w
   await clear();await button('文字').click();const canvasBox=await box(surface);
   await page.mouse.click(canvasBox.x+380,canvasBox.y+330);
   const editor=page.getByRole('textbox',{name:'编辑画布文字',exact:true});await editor.waitFor();
-  await editor.fill('工具属性测试<&"\n第二行');await editor.press('Control+Enter');await save();
+  await editor.fill('工具属性测试<&"\n第二行');await editor.press('ControlOrMeta+Enter');await save();
   const textId=shapes().find(value=>value.props.novartKind==='text').id;
   await field('文字字号',30);await button('文字加粗').click();await button('文字斜体').click();
   await button('文字排版').click();await page.getByRole('combobox',{name:'文字字体',exact:true}).selectOption('serif');
@@ -129,14 +129,14 @@ async function runOwnedToolChecks({page, surface, check, records, shapes, png, w
   assert.deepEqual(textPaint,{family:'Georgia, Times New Roman, serif',weight:'bold',style:'italic',anchor:'middle',lines:[{x:'120',y:'30'},{x:'120',y:'78'}]});
   check('owned-tools-text-font-weight-style-alignment-lineheight-render-and-save');
 
-  await key('Control+d');await save();const secondTextId=shapes().filter(value=>value.props.novartKind==='text'&&value.id!==textId)[0].id;
+  await key('ControlOrMeta+d');await save();const secondTextId=shapes().filter(value=>value.props.novartKind==='text'&&value.id!==textId)[0].id;
   await select(textId);await select(secondTextId,true);await action('元素左对齐');await save();
   assert.equal(record(textId).x,record(secondTextId).x);await action('组合选中元素');await save();
   const groupId=owned(record(textId)).groupId;assert.ok(groupId);assert.equal(owned(record(secondTextId)).groupId,groupId);
   const groupedBefore=[structuredClone(record(textId)),structuredClone(record(secondTextId))];await key('Shift+ArrowRight');await save();
   assert.equal(record(textId).x,groupedBefore[0].x+10);assert.equal(record(secondTextId).x,groupedBefore[1].x+10);
   await action('取消组合');await save();assert.equal(owned(record(textId)).groupId,undefined);assert.equal(owned(record(secondTextId)).groupId,undefined);
-  await select(secondTextId);await key('Control+d');await save();const thirdTextId=shapes().filter(value=>value.props.novartKind==='text'&&![textId,secondTextId].includes(value.id))[0].id;
+  await select(secondTextId);await key('ControlOrMeta+d');await save();const thirdTextId=shapes().filter(value=>value.props.novartKind==='text'&&![textId,secondTextId].includes(value.id))[0].id;
   await select(thirdTextId);await key('Shift+ArrowRight');await key('Shift+ArrowRight');await key('Shift+ArrowRight');await save();
   await select(textId);await select(secondTextId,true);await select(thirdTextId,true);await action('水平等距分布');await save();
   const textOrder=[textId,secondTextId,thirdTextId].map(record).sort((a,b)=>a.x-b.x);

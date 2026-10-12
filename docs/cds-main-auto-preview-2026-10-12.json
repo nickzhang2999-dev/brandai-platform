@@ -1,0 +1,75 @@
+{
+  "status": "applied-and-read-back",
+  "projectId": "a8a098f7193a",
+  "branchId": "brandai-platform-main",
+  "changes": [
+    {
+      "profileId": "web",
+      "modeId": "novart-verified-4b88",
+      "modeImage": {
+        "before": "ghcr.io/nickzhang2999-dev/brandai-platform/novart-product-web:sha-4b88be6fd340bc090e02ca9bec1f562bb0ba42a0@sha256:641bdaa993b72024039250de9863ba4628f15d031a54dad55b7173fb242f447c",
+        "after": "ghcr.io/nickzhang2999-dev/brandai-platform/novart-product-web:sha-${CDS_COMMIT_SHA}"
+      },
+      "branchImageOverride": {
+        "before": "ghcr.io/nickzhang2999-dev/brandai-platform/novart-product-web:sha-4b88be6fd340bc090e02ca9bec1f562bb0ba42a0@sha256:641bdaa993b72024039250de9863ba4628f15d031a54dad55b7173fb242f447c",
+        "after": null,
+        "note": "Removed duplicate pinned override; inherit the deployment-mode image template."
+      },
+      "modeLabel": {
+        "before": "Novart verified main 4b88",
+        "after": "Novart CI verified"
+      },
+      "modeDockerImage": {
+        "before": null,
+        "after": "ghcr.io/nickzhang2999-dev/brandai-platform/novart-product-web:sha-${CDS_COMMIT_SHA}"
+      }
+    },
+    {
+      "profileId": "worker",
+      "modeId": "novart-verified-4b88",
+      "modeImage": {
+        "before": "ghcr.io/nickzhang2999-dev/brandai-platform/novart-product-web:sha-4b88be6fd340bc090e02ca9bec1f562bb0ba42a0@sha256:641bdaa993b72024039250de9863ba4628f15d031a54dad55b7173fb242f447c",
+        "after": "ghcr.io/nickzhang2999-dev/brandai-platform/novart-product-web:sha-${CDS_COMMIT_SHA}"
+      },
+      "branchImageOverride": {
+        "before": "ghcr.io/nickzhang2999-dev/brandai-platform/novart-product-web:sha-4b88be6fd340bc090e02ca9bec1f562bb0ba42a0@sha256:641bdaa993b72024039250de9863ba4628f15d031a54dad55b7173fb242f447c",
+        "after": null,
+        "note": "Removed duplicate pinned override; inherit the deployment-mode image template."
+      },
+      "modeLabel": {
+        "before": "Novart verified main 4b88",
+        "after": "Novart CI verified"
+      },
+      "modeDockerImage": {
+        "before": null,
+        "after": "ghcr.io/nickzhang2999-dev/brandai-platform/novart-product-web:sha-${CDS_COMMIT_SHA}"
+      }
+    },
+    {
+      "profileId": "ai",
+      "modeId": "novart-verified-4b88",
+      "modeImage": {
+        "before": "ghcr.io/nickzhang2999-dev/brandai-platform/novart-product-ai:sha-4b88be6fd340bc090e02ca9bec1f562bb0ba42a0@sha256:159506f3fd4caa8193dc1f6806be7255728d8953c629ac3ccfad5bab3b2f76d7",
+        "after": "ghcr.io/nickzhang2999-dev/brandai-platform/novart-product-ai:sha-${CDS_COMMIT_SHA}"
+      },
+      "branchImageOverride": {
+        "before": "ghcr.io/nickzhang2999-dev/brandai-platform/novart-product-ai:sha-4b88be6fd340bc090e02ca9bec1f562bb0ba42a0@sha256:159506f3fd4caa8193dc1f6806be7255728d8953c629ac3ccfad5bab3b2f76d7",
+        "after": null,
+        "note": "Removed duplicate pinned override; inherit the deployment-mode image template."
+      },
+      "modeLabel": {
+        "before": "Novart verified main 4b88",
+        "after": "Novart CI verified"
+      },
+      "modeDockerImage": {
+        "before": null,
+        "after": "ghcr.io/nickzhang2999-dev/brandai-platform/novart-product-ai:sha-${CDS_COMMIT_SHA}"
+      }
+    }
+  ],
+  "behavior": "CDS resolves CDS_COMMIT_SHA to the successfully built ciTargetSha and deploys after Branch Image succeeds. Keep existing commands, source build modes, services, environment and data volumes.",
+  "formalProductionRelease": false,
+  "checkedAt": "2026-10-12T08:44:10Z",
+  "deployTriggered": false,
+  "previewUrl": "https://main-brandai-platform.geole.me/studio"
+}
