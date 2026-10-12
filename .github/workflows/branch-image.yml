@@ -3,7 +3,7 @@ name: Branch Image
 # Publish immutable images for main and the isolated Novart branches. Deployment is a separate gate.
 on:
   push:
-    branches: [main, claude/novart-workbench-preview, claude/novart-product-integration]
+    branches: [main, devUpdate1012, claude/novart-workbench-preview, claude/novart-product-integration]
     paths:
       - 'previews/novart-workbench/**'
       - 'scripts/check-novart-container.py'
@@ -31,7 +31,7 @@ concurrency:
 
 jobs:
   product:
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/claude/novart-product-integration'
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/devUpdate1012' || github.ref == 'refs/heads/claude/novart-product-integration'
     uses: ./.github/workflows/novart-integration.yml
 
   preview:
