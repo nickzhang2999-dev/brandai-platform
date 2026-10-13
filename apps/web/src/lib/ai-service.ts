@@ -5,6 +5,7 @@ export const REQUIRED_AI_GENERATION_REVISION = "gpt-image-2-size-quality-r1";
 export const REQUIRED_AI_VISUAL_CHECK_REVISION = "studio-visual-check-evidence-r1";
 export const REQUIRED_AI_PROVIDER_RETRY_REVISION = "single-provider-attempt-r1";
 export const REQUIRED_AI_STUDIO_EDIT_REVISION = "studio-whole-image-edit-r1";
+export const REQUIRED_AI_STUDIO_DECOMPOSITION_REVISION = "studio-real-layer-single-attempt-r1";
 
 const CONFIGURED_BASE =
   process.env.BRANDAI_AI_SERVICE_URL ??
@@ -21,9 +22,10 @@ export type AiServiceResolution = {
   visualCheckRevision?: string;
   providerRetryRevision?: string;
   studioEditRevision?: string;
+  studioDecompositionRevision?: string;
 };
 
-export type AiServiceRequirements = { requireVisualCheck?: boolean; requireSingleAttempt?: boolean; requireStudioEdit?: boolean };
+export type AiServiceRequirements = { requireVisualCheck?: boolean; requireSingleAttempt?: boolean; requireStudioEdit?: boolean; requireStudioDecomposition?: boolean };
 
 let cachedResolution: { value: AiServiceResolution; expiresAt: number } | null =
   null;
@@ -47,6 +49,7 @@ async function probe(base: string): Promise<AiServiceResolution | null> {
       visualCheckRevision?: unknown;
       providerRetryRevision?: unknown;
       studioEditRevision?: unknown;
+      studioDecompositionRevision?: unknown;
     };
     return {
       base,
@@ -65,6 +68,7 @@ async function probe(base: string): Promise<AiServiceResolution | null> {
           : undefined,
       providerRetryRevision: typeof body.providerRetryRevision === "string" ? body.providerRetryRevision : undefined,
       studioEditRevision: typeof body.studioEditRevision === "string" ? body.studioEditRevision : undefined,
+      studioDecompositionRevision: typeof body.studioDecompositionRevision === "string" ? body.studioDecompositionRevision : undefined,
     };
   } catch {
     return null;
@@ -86,9 +90,11 @@ export async function resolveAiService(requirements: AiServiceRequirements = {})
   const now = Date.now();
   const requireVisualCheck = requirements.requireVisualCheck === true;
   const requireStudioEdit = requirements.requireStudioEdit === true;
-  const requireSingleAttempt = requirements.requireSingleAttempt === true || requireStudioEdit;
+  const requireStudioDecomposition = requirements.requireStudioDecomposition === true;
+  const requireSingleAttempt = requirements.requireSingleAttempt === true || requireStudioEdit || requireStudioDecomposition;
   if (cachedResolution && cachedResolution.expiresAt > now &&
       (!requireStudioEdit || cachedResolution.value.studioEditRevision === REQUIRED_AI_STUDIO_EDIT_REVISION) &&
+      (!requireStudioDecomposition || cachedResolution.value.studioDecompositionRevision === REQUIRED_AI_STUDIO_DECOMPOSITION_REVISION) &&
       (!requireSingleAttempt || cachedResolution.value.providerRetryRevision === REQUIRED_AI_PROVIDER_RETRY_REVISION) &&
       (!requireVisualCheck || cachedResolution.value.visualCheckRevision === REQUIRED_AI_VISUAL_CHECK_REVISION)) {
     return cachedResolution.value;
@@ -111,6 +117,9 @@ export async function resolveAiService(requirements: AiServiceRequirements = {})
       if (requireStudioEdit && health?.studioEditRevision !== REQUIRED_AI_STUDIO_EDIT_REVISION) {
         throw new Error("Configured AI service does not support the required whole-image-edit revision");
       }
+      if (requireStudioDecomposition && health?.studioDecompositionRevision !== REQUIRED_AI_STUDIO_DECOMPOSITION_REVISION) {
+        throw new Error("Configured AI service does not support the required real-layer decomposition revision");
+      }
       Object.assign(value, health, { source: "configured" });
     }
     cachedResolution = { value, expiresAt: now + CACHE_MS };
@@ -128,6 +137,7 @@ export async function resolveAiService(requirements: AiServiceRequirements = {})
         result?.parserRevision === REQUIRED_AI_PARSER_REVISION &&
         result.generationRevision === REQUIRED_AI_GENERATION_REVISION &&
         (!requireStudioEdit || result.studioEditRevision === REQUIRED_AI_STUDIO_EDIT_REVISION) &&
+        (!requireStudioDecomposition || result.studioDecompositionRevision === REQUIRED_AI_STUDIO_DECOMPOSITION_REVISION) &&
         (!requireSingleAttempt || result.providerRetryRevision === REQUIRED_AI_PROVIDER_RETRY_REVISION) &&
         (!requireVisualCheck || result.visualCheckRevision === REQUIRED_AI_VISUAL_CHECK_REVISION),
     );
@@ -147,7 +157,9 @@ export async function resolveAiService(requirements: AiServiceRequirements = {})
   // older branch and silently return the wrong dimensions/quality. A visible
   // retryable generation failure is safer than persisting a false 3:1 result.
   throw new Error(
-    requireSingleAttempt
+    requireStudioDecomposition
+      ? "No compatible AI service found for the required real-layer decomposition revision and single-provider-attempt support"
+      : requireSingleAttempt
       ? "No compatible AI service found for the required single-provider-attempt revision and requested capabilities"
       : requireVisualCheck
       ? "No compatible AI service found for the required parser, generation and visual-check evidence revisions"

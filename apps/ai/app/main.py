@@ -158,6 +158,7 @@ PARSER_REVISION = "grounded-six-slot-r6"
 GENERATION_REVISION = "gpt-image-2-size-quality-r1"
 VISUAL_CHECK_REVISION = "studio-visual-check-evidence-r1"
 PROVIDER_RETRY_REVISION = "single-provider-attempt-r1"
+STUDIO_DECOMPOSITION_REVISION = "studio-real-layer-single-attempt-r1"
 
 
 @app.get("/health")
@@ -176,6 +177,7 @@ async def health():
         "visualCheckRevision": VISUAL_CHECK_REVISION,
         "providerRetryRevision": PROVIDER_RETRY_REVISION,
         "studioEditRevision": STUDIO_EDIT_REVISION,
+        "studioDecompositionRevision": STUDIO_DECOMPOSITION_REVISION,
     }
 
 

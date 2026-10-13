@@ -1,5 +1,31 @@
 # Novart 开发日志 · 2026-10-13
 
+## 迁移后的真实联调追加
+
+用户要求继续联调，工作区和分支仍为 `brandai-devUpdate1012` / `devUpdate1012`。不使用目标模式、Computer Use、本地 Docker，不操作 CDS 或共享业务数据库。
+
+### 迁移版本真实云端结果
+
+核对提交 `7c83011b13488933f9bf8d820873802a5958c63a` 的 GitHub Actions [38344585370](https://github.com/nickzhang2999-dev/brandai-platform/actions/runs/38344585370)：`product / backend` 成功。两份数据库迁移已在一次性 PostgreSQL 实际应用，源码与构建后容器两轮各通过后端 95 项、真实页面 17 项；真实登录、上传 Worker/S3、画布保存恢复均经过原有验收。镜像检查与发布步骤成功，不将镜像发布等同于 CDS 或正式站部署。
+
+该轮原有真实栈脚本尚未覆盖新增知识管理和分层接口；三个新浏览器 fixture 仍是合成服务，不能由这份成功推断真实分层模型完成验收。关联 job 为 `115122902966`，工件 `11788667609`；本地只保存不含凭据的元数据，原日志通过连接器仅提取检查计数。
+
+### 本轮整合修复和追加验收
+
+- **分层服务能力门禁**：原分层客户端虽传单次调用约束，却未要求服务端宣告新版分层能力，可能选中旧 AI 服务。新增 `studioDecompositionRevision=studio-real-layer-single-attempt-r1`，真实分层必须同时满足此能力和 `single-provider-attempt-r1`；覆盖显式地址、共享网络服务发现和缓存。先加回归得到 TS 9 项和 Python health 1 项失败，修复后定向 TS 90 / Python 76 通过；完整 L1 为 1158＋28、AI 421、Web 类型及生产构建通过。
+- **品牌知识真实后端**：新增 `verify-studio-brand-knowledge-backend.ts`，接入主 runner，16 组真实 HTTP/Auth.js/Postgres 断言。独立验收品牌、原账号真实邀请，覆盖并发导入幂等、确认/替换、删除后重放、快照恢复及备份逆操作、角色和租户边界。所有业务写入走 API，Prisma 仅读取核验。
+- **分层真实后端边界**：新增 `verify-studio-decomposition-backend.ts`，23 项检查经真实 multipart 上传、Worker/S3、raw 字节、原生画布 HTTP 保存，再验证无分层配置时 503 与各拒绝边界；每次拒绝后核对任务、计量、素材及画布不变。任何真实分层配置或密钥都会使零调用验收主动停止，避免意外模型调用。
+- **品牌知识真实页面**：在原真实 Next 页面验收中增加 5 组操作：评审入口与草稿保存、中文规则创建/启用/编辑、导入回执、刷新及新登录恢复、VIEWER 只读控件。全部完成才设 `realKnowledge=true`；`realDecomposition=false` 明确保留。
+- **CI 门禁**：源码和容器两个阶段均要求真实知识页面报告、独立数据库结果和真实性边界；容器阶段另核对新 AI health 能力。保留原上传、画布与隔离数据库检查，没有假造成功分层任务。
+
+追加代码的本地验证证据为 `D:/coding/.novart-tmp/devUpdate1012-integration-{l1,ai,typecheck,build}-20261013.log`。首次全量类型检查发现 helper 两个数组索引可能为空，保留两份回执数量和内容断言后以显式非空检查修复；重跑通过。工作流 YAML 和内嵌 Python 块均通过解析；首次命令行转义错误改用字面 here-string 后修正。追加的真实 HTTP/页面验收在此提交准备时尚待隔离 CI 实际运行，不能在本节提前标通过。
+
+### 运行环境和真实模型边界
+
+本机没有现成 Postgres/Redis/S3 进程、端口或本地私有运行配置；仅有 docker-desktop WSL，因此采用已有 GitHub Linux 一次性栈，不在 Win10 启动 Docker。存储必须沿用 `prepare-studio-storage.ts` 在专用数据库保存显式 AppSetting；只写 S3 环境变量不能证明分层存储已配置。
+
+分层使用独立 `layerProvider/layerApiKey` 配置。普通生图账号不自动适用于 Fal 分层。本地可用配置不存在，当前远端可用性本轮没有读取；历史配置不能代表今天。已询问配置保存位置，不要求发送密钥。本轮模型调用为 0；真实 Fal 质量、成功图层归档、授权 raw 读取和结果编辑闭环仍需该配置及一次小规模真实验收。
+
 ## 工作区切换与两个功能迁移
 
 用户指定 `devUpdate1012` 为后续开发区域，要求将昨天新增的品牌知识管理、AI 分层放入该分支，本轮先不处理 CDS。

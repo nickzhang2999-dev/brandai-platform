@@ -9,6 +9,7 @@ def test_health(client):
         "visualCheckRevision": "studio-visual-check-evidence-r1",
         "providerRetryRevision": "single-provider-attempt-r1",
         "studioEditRevision": "studio-whole-image-edit-r1",
+        "studioDecompositionRevision": "studio-real-layer-single-attempt-r1",
     }
 
 

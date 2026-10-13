@@ -286,3 +286,7 @@ b778553/BranchImage38036388613 completed success: backend95/UI15/built-container
 # 2026-10-10 16:34 report and correction
 
 CDS root cause report delivered. Approved Garage project-scope entity remains stopped; two fresh independent env keys set/reconciled with other env unchanged. Current CDS source proves relative infra bind uses CDS repoRoot. New storage image bakes public TOML, CI adds real isolated S3/permissions/recreation gate. c38 source95/UI15 passed, built UI upload FAILED with cause missing; diagnose exact response/task before cleanup. Zero model handoff/provider calls/deployments.
+# 2026-10-13 continued backend integration
+
+Read repository/global startup rules and current migration log. Dispatched three agents: runtime/config audit, a real HTTP/Auth.js/Postgres knowledge journey, and layer service-capability review. No CDS operations, local Docker startup, shared data writes or model calls. Continue the existing file plan; no goal mode.
+Verified 7c83011 real CI source/container backend95/UI17; added 16 knowledge HTTP/DB and23 layer preservation checks plus5 real knowledge UI journeys. Layer capability tests reproduced9 TS and1 Python failure before repair. Local full L1 1158+28, AI421, typecheck and production build pass. Initial typecheck strict-index error fixed with explicit receipt checks; inline workflow Python shell-quoting error fixed using literal here-string. Next: actual new-feature cloud acceptance.

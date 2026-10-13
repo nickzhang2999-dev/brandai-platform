@@ -149,3 +149,10 @@ CI38035078835/fedbfa3 failed on bare /workflow anonymous307 and two alert matche
 # 2026-10-10 16:11 verified result
 
 b778553 CI38036388613 success, backend95/UI15 plus container rechecks and publication. Garage v2.4.1 official Admin REST can initialize bucket/app key via internal3903; CDS does not have proven infra exec, so do not treat infra as branch profile. Final two compose plus TOML declare separate admin token placeholder and internal listener, publish only S3 port3900; actual scope/volumes/network must be read back. New platform approval3d3d941a2c50 pending actual status despite user's reply.
+# 2026-10-13 real integration continuation
+
+- Current source and remote were verified at `7c83011` on `devUpdate1012`. Local gates and isolated React fixture checks passed in the migration batch; actual new-feature DB/provider acceptance has not yet been run.
+- No local Postgres/Redis/object-storage listener or private runtime configuration was found. Prefer the repository's existing disposable GitHub Actions stack over starting Docker on this Windows machine.
+- The connected GitHub commit-runs wrapper filters to pull-request events, so its empty result does not describe this push. Use read-only Actions REST metadata through the existing Git credential helper; never echo/store credentials.
+- Layer configuration is separate from ordinary image generation. Dedicated service capability gating is now implemented and regression-tested; real provider quality is still untested.
+- Exact-commit Actions run38344585370 succeeded on 7c83011; the source and built-container suites each passed backend95/UI17. New feature-specific real checks are connected for the next CI run, not inferred from that older success.

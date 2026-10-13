@@ -1,5 +1,15 @@
 # Novart product integration
 
+## Active continuation — real backend integration, 2026-10-13
+
+User requested continued integration after migration to `devUpdate1012`. Use this checkout; no goal mode, manual CDS operations, local Docker startup or shared business-data changes.
+
+- [complete] Confirm isolated runtime availability, provider configuration boundaries and exact-commit CI status: 7c83011 source/container backend95 + UI17 passed; local infrastructure is absent.
+- [complete] Prepare real HTTP/auth/database knowledge (16), source-preserving layer boundaries (23) and actual knowledge browser journeys (5); connect them to existing disposable acceptance.
+- [complete] Review the layer worker/storage/document path and fix the missing service-capability requirement with failing-then-passing regressions; no provider or shared-data calls.
+- [in_progress] Run the new real backend journeys in isolated CI. Current required local gates pass: L1 1158+28, AI421, typecheck/build. Normal guarded commit/push is the CI delivery path.
+- [pending] Update today's log, README and remaining external-configuration/acceptance gaps. Do not equate synthetic layers with actual model quality.
+
 ## Current working area — 2026-10-13
 
 User selected the existing `devUpdate1012` branch as the future development area and requested migration of yesterday's brand-knowledge and AI-layer features. Current checkout: `D:/coding/公司/brandai-devUpdate1012`, starting commit `5499be0fbed5926084ec29892f9a4c23643b6aa4`. CDS operations are out of this batch's scope. Historical deployment restrictions below are records, not current routing instructions; follow current AGENTS/CLAUDE and normal guarded commits.

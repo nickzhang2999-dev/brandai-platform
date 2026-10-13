@@ -72,10 +72,12 @@ async function call<TReq, TRes>(path: string, body: TReq, options?: AiCallOption
   signal?.throwIfAborted();
   const requireVisualCheck = path === "/v1/compliance/check" && options?.requireRealVlmProvider === true;
   const requireStudioEdit = path === "/v1/studio/edit";
-  const requireSingleAttempt = requireStudioEdit || (["/v1/generate", "/v1/compliance/check"].includes(path) && (options?.requireRealImageProvider === true || options?.requireRealVlmProvider === true));
+  const requireStudioDecomposition = path === "/v1/decompose" && options?.requireRealLayerProvider === true;
+  const requireSingleAttempt = requireStudioEdit || requireStudioDecomposition || (["/v1/generate", "/v1/compliance/check"].includes(path) && (options?.requireRealImageProvider === true || options?.requireRealVlmProvider === true));
   const setup = Promise.all([resolveAiService(requireVisualCheck || requireSingleAttempt ? {
     ...(requireVisualCheck ? { requireVisualCheck: true } : {}), ...(requireSingleAttempt ? { requireSingleAttempt: true } : {}),
     ...(requireStudioEdit ? { requireStudioEdit: true } : {}),
+    ...(requireStudioDecomposition ? { requireStudioDecomposition: true } : {}),
   } : undefined), providerHeaders(
     requireStudioEdit || (path === "/v1/generate" && options?.requireRealImageProvider === true),
     requireVisualCheck,

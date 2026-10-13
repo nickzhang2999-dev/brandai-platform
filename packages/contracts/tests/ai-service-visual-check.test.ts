@@ -4,6 +4,7 @@ vi.mock("node:dns/promises", () => ({ resolve4: f.dns }));
 const current = { parserRevision: "grounded-six-slot-r6", generationRevision: "gpt-image-2-size-quality-r1", visualCheckRevision: "studio-visual-check-evidence-r1", providerRetryRevision: "single-provider-attempt-r1" };
 const older = { parserRevision: current.parserRevision, generationRevision: current.generationRevision };
 const editable = { ...current, studioEditRevision: "studio-whole-image-edit-r1" };
+const layered = { ...current, studioDecompositionRevision: "studio-real-layer-single-attempt-r1" };
 const load = () => import("../../../apps/web/src/lib/ai-service");
 beforeEach(() => {
   vi.resetModules(); vi.resetAllMocks(); vi.stubGlobal("fetch", f.fetch);
@@ -14,6 +15,46 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 describe("product visual-check service capability gate", () => {
+  it("rejects a generation-compatible explicit service before any real decomposition dispatch", async () => {
+    f.fetch.mockImplementation(async () => Response.json(current));
+    const { resolveAiService } = await load();
+    await resolveAiService({ requireSingleAttempt: true });
+    await expect(resolveAiService({ requireStudioDecomposition: true })).rejects.toThrow("real-layer decomposition revision");
+    f.fetch.mockImplementation(async () => Response.json(layered));
+    expect(await resolveAiService({ requireStudioDecomposition: true })).toMatchObject(layered);
+    await resolveAiService({ requireStudioDecomposition: true });
+    expect(f.fetch).toHaveBeenCalledTimes(3);
+  });
+  it("decomposition capability cannot bypass single-provider-attempt support", async () => {
+    f.fetch.mockImplementation(async () => Response.json({ ...layered, providerRetryRevision: undefined }));
+    const { resolveAiService } = await load();
+    await expect(resolveAiService({ requireStudioDecomposition: true })).rejects.toThrow("single-provider-attempt revision");
+  });
+  it("selects a layer-capable shared service instead of a cached generation-only container", async () => {
+    vi.stubEnv("BRANDAI_AI_SERVICE_URL", "http://ai:8000");
+    f.fetch.mockImplementation(async (url: string) => Response.json(url.includes("10.0.0.1") ? current : layered));
+    const { resolveAiService } = await load();
+    expect((await resolveAiService({ requireSingleAttempt: true })).base).toBe("http://10.0.0.1:8000");
+    expect((await resolveAiService({ requireStudioDecomposition: true })).base).toBe("http://10.0.0.2:8000");
+    expect(f.dns).toHaveBeenCalledTimes(2);
+  });
+  it("fails closed when every shared service lacks real decomposition support", async () => {
+    vi.stubEnv("BRANDAI_AI_SERVICE_URL", "http://ai:8000");
+    f.fetch.mockImplementation(async () => Response.json(current));
+    const { resolveAiService } = await load();
+    await expect(resolveAiService({ requireStudioDecomposition: true })).rejects.toThrow("real-layer decomposition revision");
+    expect(f.fetch.mock.calls.every(([url]) => url !== "http://ai:8000/health")).toBe(true);
+  });
+  it.each([123, null, "studio-real-layer-single-attempt-r0"])("rejects invalid or stale decomposition capability %j", async studioDecompositionRevision => {
+    f.fetch.mockResolvedValue(Response.json({ ...layered, studioDecompositionRevision }));
+    const { resolveAiService } = await load();
+    await expect(resolveAiService({ requireStudioDecomposition: true })).rejects.toThrow("real-layer decomposition revision");
+  });
+  it("refuses an unreachable explicit decomposition service before paid dispatch", async () => {
+    f.fetch.mockRejectedValue(new Error("offline"));
+    const { resolveAiService } = await load();
+    await expect(resolveAiService({ requireStudioDecomposition: true })).rejects.toThrow();
+  });
   it("rechecks a valid generation cache before allowing edits and requires the edit revision", async () => {
     f.fetch.mockImplementation(async () => Response.json(current));
     const { resolveAiService } = await load();

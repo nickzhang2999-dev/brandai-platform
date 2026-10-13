@@ -24,9 +24,11 @@ const artifacts = path.resolve(process.env.WORKBENCH_UI_ARTIFACTS ?? ".novart-ui
 const networkProblems: string[] = [], browserErrors: string[] = [], requests: Array<{ path: string; method: string; status: number }> = [];
 const privateValues: string[] = [], contexts: BrowserContext[] = [], fixtureUsers: string[] = [];
 const acceptedUploads: AcceptedUpload[] = [], uploadReceipts = new Map<string, ReturnType<typeof summarizeUploadReceipt>>();
-const deferred = ["Homepage attachments handoff", "Unsent creation draft autosave/pagehide recovery", "Workflow purpose and modification-target persistence", "Real EXACT-generation output frames", "Real image-modification provider acceptance", "Per-object/nested-frame export", "Compliance UI and notification deep links"];
-let browser: Browser | undefined, currentPage: Page | undefined, step = "initialize", passed = 0, realHomepageHandoff = false, realDraftPersistence = false, realWorkflowPersistence = false;
+const deferred = ["Homepage attachments handoff", "Unsent creation draft autosave/pagehide recovery", "Workflow purpose and modification-target persistence", "Real EXACT-generation output frames", "Real image-modification provider acceptance", "Real AI decomposition quality, private layer storage and editable result round trip", "Per-object/nested-frame export", "Compliance UI and notification deep links"];
+const knowledgeChecks: string[] = [];
+let browser: Browser | undefined, currentPage: Page | undefined, step = "initialize", passed = 0, realHomepageHandoff = false, realDraftPersistence = false, realWorkflowPersistence = false, realKnowledge = false;
 const check = (label: string) => { passed++; console.log(`PASS ${label}`); };
+const knowledgeCheck = (label: string) => { knowledgeChecks.push(label); check(label); };
 const enter = (label: string) => { step = label; console.log(`STEP ${label}`); };
 const digest = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
 function safe(value: string) {
@@ -131,6 +133,23 @@ async function editorFrame(page: Page, projectId: string) {
   await expect(frame.getByTestId("owned-canvas")).toBeVisible(); await expect(frame.getByRole("button", { name: "画笔", exact: true })).toBeVisible();
   await frame.waitForFunction(() => document.documentElement.dataset.nvStudioCanvasReady === "true");
   assert.equal(await frame.evaluate(() => Boolean((window as any).webpackChunk_lovartai_lovart_shell)), false, "Owned frame must not mount vendor webpack"); await expect(frame.locator(".tl-container, .tl-canvas")).toHaveCount(0); return frame;
+}
+async function knowledgeFrame(page: Page, workspaceId: string) {
+  await page.locator("#ns-brand-knowledge-tab").click();
+  const iframe = page.locator("iframe.ns-knowledge-frame"); await expect(iframe).toBeVisible();
+  const frame = await (await iframe.elementHandle())!.contentFrame(); assert.ok(frame);
+  await expect(frame.getByTestId("brand-knowledge-editor")).toHaveAttribute("data-workspace-id", workspaceId);
+  assert.equal(new URL(frame.url()).pathname, "/studio-brand-knowledge");
+  assert.equal(new URL(frame.url()).searchParams.get("workspaceId"), workspaceId);
+  return frame;
+}
+function knowledgeRuleCard(surface: Frame | Page, summary: string) {
+  return surface.locator("div.group.relative").filter({ has: surface.locator("div.mt-1\\.5 > span").filter({ hasText: summary }) });
+}
+async function knowledgeRuleMenu(surface: Frame | Page, summary: string) {
+  const card = knowledgeRuleCard(surface, summary); await expect(card).toBeVisible(); await card.hover();
+  const details = card.locator("details"); if (await details.getAttribute("open") === null) await details.locator("summary").click();
+  return details;
 }
 async function gesture(page: Page, frame: Frame, points: Array<[number, number]>) {
   const box = await frame.getByTestId("owned-canvas").boundingBox(); assert.ok(box); await page.mouse.move(box.x + points[0]![0], box.y + points[0]![1]); await page.mouse.down();
@@ -474,13 +493,113 @@ try {
   await fresh.goto(new URL(`/studio-editor?workspaceId=${workspace.id}&projectId=${projectId}`, base).href); await expect(fresh.getByTestId("owned-canvas")).toBeVisible(); await expect(fresh.getByRole("button", { name: "画笔", exact: true })).toBeDisabled(); await expect(fresh.getByRole("button", { name: "上传图片", exact: true }).first()).toBeDisabled();
   const refused = await fresh.context().request.put(new URL(`/api/workspaces/${workspace.id}/projects/${projectId}/editor-document`, base).href, { headers: { Origin: base.origin }, data: { format: "novart-native-v1", canvas: finalRow.canvas, revision: finalRow.revision, mutationId: randomUUID() } }); assert.equal(refused.status(), 409); assert.equal((await prisma.editorDocument.findUniqueOrThrow({ where: { projectId } })).checksum, finalRow.checksum); check("direct route membership and archived read-only protections remain enforced");
 
+  // Use this browser suite's own real brand/accounts, never the parallel HTTP
+  // runner's fixtures. These journeys run after generation so confirming a
+  // knowledge rule cannot change any previously accepted provider request.
+  enter("reviewed shell opens real brand knowledge and saves source draft"); currentPage = fresh;
+  await fresh.goto(new URL(`/studio?workspaceId=${workspace.id}#/home`, base).href); await studioReady(fresh);
+  await fresh.getByTestId("studio-nav-brand").click(); await expect(fresh.locator("#ns-brand-draft-panel")).toBeVisible();
+  const knowledgeColors = ["#123456", "#ABCDEF", "#7C5CFF"], knowledgeNotes = `真实浏览器品牌草稿 ${run}：导入后仍需人工启用。`;
+  for (const [index, color] of knowledgeColors.entries()) await fresh.locator(`#ns-brand-color-${index}`).fill(color);
+  await fresh.locator("#ns-brand-font").selectOption("serif"); await fresh.locator("#ns-brand-notes").fill(knowledgeNotes);
+  await fresh.locator("#ns-brand-save").click(); await expect(fresh.locator("#ns-brand-status")).toHaveAttribute("data-state", "saved");
+  const knowledgeDraft = await prisma.workbenchBrandDraft.findUniqueOrThrow({ where: { workspaceId: workspace.id } });
+  assert.deepEqual(knowledgeDraft.colors, knowledgeColors); assert.equal(knowledgeDraft.font, "serif"); assert.equal(knowledgeDraft.notes, knowledgeNotes);
+  let knowledge = await knowledgeFrame(fresh, workspace.id);
+  await expect(knowledge.getByRole("textbox", { name: "品牌套件名称", exact: true })).toHaveValue(brandName);
+  knowledgeCheck("real-knowledge-reviewed-shell-entry-and-source-draft-save");
+
+  enter("actual knowledge manual draft confirmation and edit");
+  const knowledgeSummary = `真实中文品牌规则 ${run}：措辞准确，不夸大。`, updatedKnowledgeSummary = `已核对的中文品牌规则 ${run}：表达清楚，有依据。`;
+  await knowledge.getByRole("button", { name: "手动添加规则", exact: true }).click();
+  await knowledge.getByRole("textbox", { name: "新规则说明", exact: true }).fill(knowledgeSummary);
+  const createdKnowledgeResponse = fresh.waitForResponse(response => new URL(response.url()).pathname === `/api/workspaces/${workspace.id}/rules` && response.request().method() === "POST");
+  await knowledge.getByRole("button", { name: "保存为草稿", exact: true }).click(); const createdKnowledge = await createdKnowledgeResponse;
+  assert.equal(createdKnowledge.status(), 201); const knowledgeRule = await createdKnowledge.json(); assert.equal(knowledgeRule.type, "copy"); assert.equal(knowledgeRule.status, "DRAFT");
+  await expect(knowledgeRuleCard(knowledge, knowledgeSummary)).toBeVisible();
+  const draftRuleRow = await prisma.brandRule.findUniqueOrThrow({ where: { id: knowledgeRule.id } }); assert.equal(draftRuleRow.workspaceId, workspace.id); assert.equal(draftRuleRow.status, "DRAFT");
+  let menu = await knowledgeRuleMenu(knowledge, knowledgeSummary);
+  const confirmedKnowledgeResponse = fresh.waitForResponse(response => new URL(response.url()).pathname === `/api/workspaces/${workspace.id}/rules/${knowledgeRule.id}` && response.request().method() === "PATCH");
+  await menu.getByRole("button", { name: "启用", exact: true }).click(); assert.equal((await confirmedKnowledgeResponse).status(), 200);
+  await expect(knowledgeRuleCard(knowledge, knowledgeSummary).locator("..")).toContainText("已启用");
+  menu = await knowledgeRuleMenu(knowledge, knowledgeSummary); await menu.getByRole("button", { name: "编辑", exact: true }).click();
+  const ruleEditor = knowledge.getByRole("dialog", { name: "编辑文案语气", exact: true }); await expect(ruleEditor).toBeVisible();
+  await ruleEditor.getByRole("textbox", { name: "规则说明", exact: true }).fill(updatedKnowledgeSummary);
+  const editedKnowledgeResponse = fresh.waitForResponse(response => new URL(response.url()).pathname === `/api/workspaces/${workspace.id}/rules/${knowledgeRule.id}` && response.request().method() === "PATCH");
+  await ruleEditor.getByRole("button", { name: "保存", exact: true }).click(); assert.equal((await editedKnowledgeResponse).status(), 200);
+  await expect(knowledgeRuleCard(knowledge, updatedKnowledgeSummary)).toBeVisible();
+  const editedRuleRow = await prisma.brandRule.findUniqueOrThrow({ where: { id: knowledgeRule.id } }); assert.equal(editedRuleRow.summary, updatedKnowledgeSummary); assert.equal(editedRuleRow.status, "CONFIRMED");
+  knowledgeCheck("real-knowledge-chinese-rule-draft-confirm-edit-persists");
+
+  enter("actual source draft import persists an explicit durable receipt");
+  const importKnowledgeResponse = fresh.waitForResponse(response => new URL(response.url()).pathname === "/api/studio/brand-knowledge/import-draft" && response.request().method() === "POST");
+  await knowledge.getByRole("button", { name: "导入为待确认规则", exact: true }).click(); const importKnowledge = await importKnowledgeResponse;
+  assert.equal(importKnowledge.status(), 200); const knowledgeReceipt = await importKnowledge.json(); assert.equal(knowledgeReceipt.created, 2); assert.equal(knowledgeReceipt.replayed, false);
+  await expect(knowledge.getByRole("button", { name: "此草稿版本已导入", exact: true })).toBeDisabled();
+  const importRow = await prisma.workbenchKnowledgeImport.findUniqueOrThrow({ where: { workspaceId_userId_mutationId: { workspaceId: workspace.id, userId: user.id, mutationId: knowledgeReceipt.mutationId } } });
+  assert.equal(importRow.draftRevision, knowledgeDraft.revision); assert.deepEqual(importRow.ruleIds, knowledgeReceipt.ruleIds); assert.equal(importRow.ruleCount, 2);
+  const importedRuleRows = await prisma.brandRule.findMany({ where: { workspaceId: workspace.id, id: { in: knowledgeReceipt.ruleIds } } });
+  assert.equal(importedRuleRows.length, 2); assert.ok(importedRuleRows.every(rule => rule.status === "DRAFT"));
+  assert.deepEqual((importedRuleRows.find(rule => rule.type === "color")!.value as any).colors, knowledgeColors);
+  assert.equal((await prisma.brandRule.findUniqueOrThrow({ where: { id: knowledgeRule.id } })).status, "CONFIRMED");
+  knowledgeCheck("real-knowledge-source-import-creates-two-drafts-with-durable-receipt");
+
+  enter("whole-page refresh and fresh password session restore saved knowledge without writes");
+  const beforeKnowledgeReopen = await prisma.brandRule.findMany({ where: { workspaceId: workspace.id }, orderBy: { id: "asc" } });
+  await fresh.reload({ waitUntil: "domcontentloaded" }); await studioReady(fresh); knowledge = await knowledgeFrame(fresh, workspace.id);
+  await expect(knowledgeRuleCard(knowledge, updatedKnowledgeSummary).locator("..")).toContainText("已启用");
+  assert.equal(await prisma.workbenchKnowledgeImport.count({ where: { workspaceId: workspace.id } }), 1, "Refresh must not submit the import automatically");
+  const freshKnowledge = await newPage("block"); await login(freshKnowledge, email, password, `/studio?workspaceId=${workspace.id}`); await studioReady(freshKnowledge);
+  await freshKnowledge.goto(new URL(`/studio-brand-knowledge?workspaceId=${workspace.id}`, base).href);
+  await expect(freshKnowledge.getByTestId("studio-brand-knowledge")).toHaveAttribute("data-workspace-id", workspace.id);
+  await expect(knowledgeRuleCard(freshKnowledge, updatedKnowledgeSummary).locator("..")).toContainText("已启用");
+  await expect(freshKnowledge.getByRole("textbox", { name: "品牌套件名称", exact: true })).toHaveValue(brandName);
+  assert.deepEqual(await prisma.brandRule.findMany({ where: { workspaceId: workspace.id }, orderBy: { id: "asc" } }), beforeKnowledgeReopen);
+  assert.equal(await prisma.workbenchKnowledgeImport.count({ where: { workspaceId: workspace.id } }), 1);
+  knowledgeCheck("real-knowledge-refresh-and-new-session-restore-without-auto-write");
+
+  enter("real viewer membership renders read-only knowledge controls");
+  // The existing outsider account has already proved nonmember canvas denial.
+  // Invite it only now, through the real owner API, for a genuine VIEWER page.
+  const viewerInvite = await fresh.context().request.post(new URL(`/api/workspaces/${workspace.id}/members`, base).href, { headers: { Origin: base.origin }, data: { email: outsiderEmail, role: "VIEWER" } });
+  assert.equal(viewerInvite.status(), 201);
+  const viewerKnowledgeWrites: string[] = [];
+  const observeKnowledgeWrite = (request: import("playwright/test").Request) => {
+    const url = new URL(request.url()); if (!["GET", "HEAD", "OPTIONS"].includes(request.method())
+      && (url.pathname.startsWith(`/api/workspaces/${workspace.id}/rules`) || url.pathname === "/api/studio/brand-knowledge/import-draft")) viewerKnowledgeWrites.push(`${request.method()} ${url.pathname}`);
+  };
+  unauthorized.context().on("request", observeKnowledgeWrite); currentPage = unauthorized;
+  await unauthorized.goto(new URL(`/studio-brand-knowledge?workspaceId=${workspace.id}`, base).href);
+  await expect(unauthorized.getByTestId("brand-knowledge-editor")).toHaveAttribute("data-workspace-id", workspace.id);
+  await expect(knowledgeRuleCard(unauthorized, updatedKnowledgeSummary)).toBeVisible();
+  await expect(unauthorized.getByRole("textbox", { name: "品牌套件名称", exact: true })).toHaveAttribute("readonly", "");
+  await expect(unauthorized.getByRole("checkbox", { name: "应用品牌知识到项目", exact: true })).toBeDisabled();
+  await expect(unauthorized.getByRole("button", { name: "手动添加规则", exact: true })).toHaveCount(0);
+  await expect(unauthorized.getByText("规则操作", { exact: true })).toHaveCount(0);
+  await expect(unauthorized.getByRole("button", { name: "导入为待确认规则", exact: true })).toBeDisabled();
+  await knowledgeRuleCard(unauthorized, updatedKnowledgeSummary).getByRole("button").click();
+  const viewerRuleDialog = unauthorized.getByRole("dialog", { name: "查看文案语气", exact: true }); await expect(viewerRuleDialog).toBeVisible();
+  await expect(viewerRuleDialog.getByRole("textbox", { name: "规则说明", exact: true })).toHaveValue(updatedKnowledgeSummary);
+  await expect(viewerRuleDialog.getByRole("textbox", { name: "规则说明", exact: true })).toHaveAttribute("readonly", "");
+  await expect(viewerRuleDialog.getByRole("button", { name: "保存", exact: true })).toHaveCount(0);
+  await viewerRuleDialog.getByRole("button", { name: "关闭", exact: true }).click();
+  await unauthorized.getByRole("button", { name: "版本快照", exact: true }).click();
+  await expect(unauthorized.getByRole("region", { name: "规则版本快照", exact: true })).toBeVisible();
+  await expect(unauthorized.getByRole("button", { name: "保存当前规则版本", exact: true })).toHaveCount(0);
+  await expect(unauthorized.getByRole("button", { name: "恢复此版本", exact: true })).toHaveCount(0);
+  assert.deepEqual(viewerKnowledgeWrites, []); unauthorized.context().off("request", observeKnowledgeWrite);
+  assert.deepEqual(await prisma.brandRule.findMany({ where: { workspaceId: workspace.id }, orderBy: { id: "asc" } }), beforeKnowledgeReopen);
+  assert.equal(await prisma.workbenchKnowledgeImport.count({ where: { workspaceId: workspace.id } }), 1);
+  assert.equal(await prisma.studioDecompositionRequest.count({ where: { workspaceId: workspace.id } }), 0, "Knowledge checks must not invoke AI decomposition");
+  realKnowledge = true; knowledgeCheck("real-knowledge-viewer-read-only-page-hides-write-controls");
+
   assert.deepEqual(networkProblems, [], "Owned frame must not request captured SDK or remote business services"); assert.deepEqual(browserErrors, []); assert.equal(await prisma.generation.count({ where: { projectId } }), process.env.WORKBENCH_TEST_GENERATION === "1" ? 1 : 0);
-  await mkdir(artifacts, { recursive: true }); await writeFile(path.join(artifacts, "acceptance.json"), JSON.stringify({ editor: "novart-owned", checksPassed: passed, realDatabase: true, realUploads: process.env.WORKBENCH_TEST_MATERIAL_UPLOAD === "1", realHomepageHandoff, realDraftPersistence, realWorkflowPersistence, realGeneration: process.env.WORKBENCH_TEST_GENERATION === "1", realImageModification: false, realExactGeneration: false, deferred }, null, 2));
+  await mkdir(artifacts, { recursive: true }); await writeFile(path.join(artifacts, "acceptance.json"), JSON.stringify({ editor: "novart-owned", checksPassed: passed, realDatabase: true, realUploads: process.env.WORKBENCH_TEST_MATERIAL_UPLOAD === "1", realHomepageHandoff, realDraftPersistence, realWorkflowPersistence, realKnowledge, knowledgeChecks, realGeneration: process.env.WORKBENCH_TEST_GENERATION === "1", realImageModification: false, realExactGeneration: false, realDecomposition: false, deferred }, null, 2));
   console.log(`Owned studio UI: ${passed} checks passed against real app/database. Deferred UI journeys: ${deferred.join("; ")}`);
 } catch (error) {
   const uploads = await uploadFailureEvidence();
   await mkdir(artifacts, { recursive: true }); await currentPage?.screenshot({ path: path.join(artifacts, "failure.png"), fullPage: true }).catch(() => undefined);
-  const diagnostics = { step, error: safe(error instanceof Error ? error.message : String(error)), uploads, networkProblems: networkProblems.map(safe), browserErrors, requests, page: currentPage ? new URL(currentPage.url()).pathname : null, deferred };
+  const diagnostics = { step, error: safe(error instanceof Error ? error.message : String(error)), uploads, networkProblems: networkProblems.map(safe), browserErrors, requests, page: currentPage ? new URL(currentPage.url()).pathname : null, realKnowledge, knowledgeChecks, realDecomposition: false, deferred };
   await writeFile(path.join(artifacts, "diagnostics.json"), JSON.stringify(diagnostics, null, 2)); console.error("Owned UI acceptance failed: " + JSON.stringify(diagnostics)); throw error;
 } finally {
   await Promise.allSettled(contexts.map(context => context.close())); await browser?.close(); for (const id of fixtureUsers.reverse()) await prisma.user.delete({ where: { id } }); await prisma.$disconnect();

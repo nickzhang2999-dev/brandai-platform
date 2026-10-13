@@ -211,8 +211,19 @@ jobs:
           done
           test "$ready" = 1
           bash "$RUNNER_TEMP/novart-parallel-tests.sh"
-      # Provider calls remain opt-in outside this core CI job. The UI report
-      # explicitly records realGeneration=false and deferred first-batch UI.
+      - name: Check the real knowledge journey and truthful layer acceptance boundary
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          report = json.loads(Path('apps/web/.novart-ui-artifacts/port-3000/acceptance.json').read_text())
+          assert report['realDatabase'] is True and report['realKnowledge'] is True
+          assert len(report['knowledgeChecks']) >= 4
+          assert report['realDecomposition'] is False and report['realGeneration'] is False
+          print('PASS real authenticated knowledge UI/database journey; real layer-model quality is still deferred')
+          PY
+      # Paid provider acceptance remains opt-in outside this core CI job.
+      # Knowledge uses the real DB; unconfigured layers must preserve source.
       - name: Prepare and build immutable CDS images
         env:
           REPOSITORY: ${{ github.repository }}
@@ -284,6 +295,16 @@ jobs:
           WORKBENCH_TEST_URL=http://127.0.0.1:3100 bash "$RUNNER_TEMP/novart-parallel-tests.sh"
           python - <<'PY'
           import json, time, urllib.request
+          from pathlib import Path
+          report = json.loads(Path('apps/web/.novart-ui-artifacts/port-3100/acceptance.json').read_text())
+          assert report['realDatabase'] is True and report['realKnowledge'] is True
+          assert len(report['knowledgeChecks']) >= 4
+          assert report['realDecomposition'] is False and report['realGeneration'] is False
+          with urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=10) as response:
+              ai_health = json.load(response)
+          assert ai_health.get('studioDecompositionRevision') == 'studio-real-layer-single-attempt-r1'
+          assert ai_health.get('providerRetryRevision') == 'single-provider-attempt-r1'
+          print('PASS built AI container advertises real-layer and single-attempt capabilities; no model call made')
           for attempt in range(30):
               try:
                   with urllib.request.urlopen('http://127.0.0.1:3100/api/health', timeout=10) as response:

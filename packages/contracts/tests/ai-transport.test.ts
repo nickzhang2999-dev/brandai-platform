@@ -17,6 +17,29 @@ afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 // This isolated fixture checks transport only. No provider or DB is contacted.
 const body = {} as Parameters<typeof ai.generate>[0];
 
+it("requires real decomposition capability and one provider attempt before dispatch", async () => {
+  const request = { imageUrl: "data:image/png;base64,YQ==", layerCount: 2 } as Parameters<typeof ai.decompose>[0];
+  f.settings.mockResolvedValue({ image: {}, layer: { provider: "fal", apiKey: "fixture-layer" }, vlm: {} });
+  await ai.decompose(request, { requireRealLayerProvider: true });
+  expect(f.service).toHaveBeenCalledWith({ requireStudioDecomposition: true, requireSingleAttempt: true });
+  expect(f.fetch).toHaveBeenCalledOnce();
+  expect(f.fetch.mock.calls[0][0]).toBe("http://internal-ai.invalid/v1/decompose");
+  expect(JSON.parse(f.fetch.mock.calls[0][1].body)).toEqual({ ...request, providerRetryPolicy: "never" });
+  expect(f.fetch.mock.calls[0][1].headers).toMatchObject({ "X-OV-Layer-Provider": "fal", "X-OV-Layer-Key": "fixture-layer" });
+});
+it("never posts decomposition when service capability cannot be confirmed", async () => {
+  f.settings.mockResolvedValue({ image: {}, layer: { provider: "fal", apiKey: "fixture-layer" }, vlm: {} });
+  f.service.mockRejectedValue(new Error("Unsupported real-layer decomposition revision"));
+  await expect(ai.decompose({} as never, { requireRealLayerProvider: true })).rejects.toThrow("Unsupported real-layer decomposition revision");
+  expect(f.fetch).not.toHaveBeenCalled();
+});
+it("does not require product layer capabilities or alter legacy decomposition payloads", async () => {
+  const request = { imageUrl: "data:image/png;base64,YQ==", layerCount: 2 } as Parameters<typeof ai.decompose>[0];
+  await ai.decompose(request);
+  expect(f.service).toHaveBeenCalledWith(undefined);
+  expect(JSON.parse(f.fetch.mock.calls[0][1].body)).toEqual(request);
+});
+
 it("requires real image configuration and edit capability without inserting a forbidden top-level retry field", async () => {
   const request = { imageUrl: "data:image/png;base64,YQ==", generation: { providerRetryPolicy: "never" } } as Parameters<typeof ai.studioEdit>[0];
   f.settings.mockResolvedValue({ image: { provider: "openai", apiKey: "fixture" }, layer: {}, vlm: {} });
