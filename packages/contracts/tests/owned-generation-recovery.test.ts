@@ -9,6 +9,14 @@ function storage() {
 }
 
 describe("owned generation same-tab input recovery (no network or task authority)", () => {
+  it("restores explicit AUTO PSD without inventing a manual count or replacing the intent", () => {
+    const target = storage(), value = initial(); value.input.psdLayerMode = "AUTO";
+    const journal = createOwnedGenerationRecovery(identity, target); journal.store(value);
+    const restored = createOwnedGenerationRecovery(identity, target).load();
+    expect(restored).toEqual(value); expect(restored!.input).not.toHaveProperty("psdLayerCount");
+    expect(() => journal.store({ ...value, input: { ...value.input, psdLayerMode: "MANUAL", psdLayerCount: 4 } })).toThrow(OwnedGenerationRecoveryError);
+    expect(journal.load()).toEqual(value);
+  });
   it("writes and verifies a complete immutable intent before returning it for POST", () => {
     const target = storage(), journal = createOwnedGenerationRecovery(identity, target), input = initial();
     const returned = journal.store(input); expect(returned).toEqual(input); expect(target.setItem).toHaveBeenCalledOnce(); expect(target.getItem).toHaveBeenCalledTimes(2);

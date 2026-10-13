@@ -20,6 +20,8 @@ import type {
   RecognizeResponse,
   SummarizeRequest,
   SummarizeResponse,
+  StudioLayerPlanRequest,
+  StudioLayerPlanResponse,
 } from "@brandai/contracts";
 import { resolveAiService } from "@/lib/ai-service";
 import { getEffectiveAiSettings } from "@/lib/settings";
@@ -73,14 +75,16 @@ async function call<TReq, TRes>(path: string, body: TReq, options?: AiCallOption
   const requireVisualCheck = path === "/v1/compliance/check" && options?.requireRealVlmProvider === true;
   const requireStudioEdit = path === "/v1/studio/edit";
   const requireStudioDecomposition = path === "/v1/decompose" && options?.requireRealLayerProvider === true;
-  const requireSingleAttempt = requireStudioEdit || requireStudioDecomposition || (["/v1/generate", "/v1/compliance/check"].includes(path) && (options?.requireRealImageProvider === true || options?.requireRealVlmProvider === true));
+  const requireStudioLayerPlan = path === "/v1/studio/layer-plan";
+  const requireSingleAttempt = requireStudioEdit || requireStudioDecomposition || requireStudioLayerPlan || (["/v1/generate", "/v1/compliance/check"].includes(path) && (options?.requireRealImageProvider === true || options?.requireRealVlmProvider === true));
   const setup = Promise.all([resolveAiService(requireVisualCheck || requireSingleAttempt ? {
     ...(requireVisualCheck ? { requireVisualCheck: true } : {}), ...(requireSingleAttempt ? { requireSingleAttempt: true } : {}),
     ...(requireStudioEdit ? { requireStudioEdit: true } : {}),
     ...(requireStudioDecomposition ? { requireStudioDecomposition: true } : {}),
+    ...(requireStudioLayerPlan ? { requireStudioLayerPlan: true } : {}),
   } : undefined), providerHeaders(
     requireStudioEdit || (path === "/v1/generate" && options?.requireRealImageProvider === true),
-    requireVisualCheck,
+    requireVisualCheck || requireStudioLayerPlan,
     path === "/v1/decompose" && options?.requireRealLayerProvider === true,
   )]);
   const [service, headers] = await (signal ? withinAiDeadline(setup, signal) : setup);
@@ -107,6 +111,8 @@ async function call<TReq, TRes>(path: string, body: TReq, options?: AiCallOption
 }
 
 export const ai = {
+  studioLayerPlan: (b: StudioLayerPlanRequest, options?: AiCallOptions) =>
+    call<StudioLayerPlanRequest, StudioLayerPlanResponse>("/v1/studio/layer-plan", b, { ...options, requireRealVlmProvider: true }),
   ingestWebsite: (b: IngestWebsiteRequest) =>
     call<IngestWebsiteRequest, IngestWebsiteResponse>(
       "/v1/ingest/website",

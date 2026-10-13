@@ -6,6 +6,7 @@ export const REQUIRED_AI_VISUAL_CHECK_REVISION = "studio-visual-check-evidence-r
 export const REQUIRED_AI_PROVIDER_RETRY_REVISION = "single-provider-attempt-r1";
 export const REQUIRED_AI_STUDIO_EDIT_REVISION = "studio-whole-image-edit-r1";
 export const REQUIRED_AI_STUDIO_DECOMPOSITION_REVISION = "studio-real-layer-single-attempt-r1";
+export const REQUIRED_AI_STUDIO_LAYER_PLAN_REVISION = "semantic-layer-plan-r1";
 
 const CONFIGURED_BASE =
   process.env.BRANDAI_AI_SERVICE_URL ??
@@ -23,9 +24,10 @@ export type AiServiceResolution = {
   providerRetryRevision?: string;
   studioEditRevision?: string;
   studioDecompositionRevision?: string;
+  studioLayerPlanRevision?: string;
 };
 
-export type AiServiceRequirements = { requireVisualCheck?: boolean; requireSingleAttempt?: boolean; requireStudioEdit?: boolean; requireStudioDecomposition?: boolean };
+export type AiServiceRequirements = { requireVisualCheck?: boolean; requireSingleAttempt?: boolean; requireStudioEdit?: boolean; requireStudioDecomposition?: boolean; requireStudioLayerPlan?: boolean };
 
 let cachedResolution: { value: AiServiceResolution; expiresAt: number } | null =
   null;
@@ -50,6 +52,7 @@ async function probe(base: string): Promise<AiServiceResolution | null> {
       providerRetryRevision?: unknown;
       studioEditRevision?: unknown;
       studioDecompositionRevision?: unknown;
+      studioLayerPlanRevision?: unknown;
     };
     return {
       base,
@@ -69,6 +72,7 @@ async function probe(base: string): Promise<AiServiceResolution | null> {
       providerRetryRevision: typeof body.providerRetryRevision === "string" ? body.providerRetryRevision : undefined,
       studioEditRevision: typeof body.studioEditRevision === "string" ? body.studioEditRevision : undefined,
       studioDecompositionRevision: typeof body.studioDecompositionRevision === "string" ? body.studioDecompositionRevision : undefined,
+      studioLayerPlanRevision: typeof body.studioLayerPlanRevision === "string" ? body.studioLayerPlanRevision : undefined,
     };
   } catch {
     return null;
@@ -91,10 +95,12 @@ export async function resolveAiService(requirements: AiServiceRequirements = {})
   const requireVisualCheck = requirements.requireVisualCheck === true;
   const requireStudioEdit = requirements.requireStudioEdit === true;
   const requireStudioDecomposition = requirements.requireStudioDecomposition === true;
-  const requireSingleAttempt = requirements.requireSingleAttempt === true || requireStudioEdit || requireStudioDecomposition;
+  const requireStudioLayerPlan = requirements.requireStudioLayerPlan === true;
+  const requireSingleAttempt = requirements.requireSingleAttempt === true || requireStudioEdit || requireStudioDecomposition || requireStudioLayerPlan;
   if (cachedResolution && cachedResolution.expiresAt > now &&
       (!requireStudioEdit || cachedResolution.value.studioEditRevision === REQUIRED_AI_STUDIO_EDIT_REVISION) &&
       (!requireStudioDecomposition || cachedResolution.value.studioDecompositionRevision === REQUIRED_AI_STUDIO_DECOMPOSITION_REVISION) &&
+      (!requireStudioLayerPlan || cachedResolution.value.studioLayerPlanRevision === REQUIRED_AI_STUDIO_LAYER_PLAN_REVISION) &&
       (!requireSingleAttempt || cachedResolution.value.providerRetryRevision === REQUIRED_AI_PROVIDER_RETRY_REVISION) &&
       (!requireVisualCheck || cachedResolution.value.visualCheckRevision === REQUIRED_AI_VISUAL_CHECK_REVISION)) {
     return cachedResolution.value;
@@ -120,6 +126,9 @@ export async function resolveAiService(requirements: AiServiceRequirements = {})
       if (requireStudioDecomposition && health?.studioDecompositionRevision !== REQUIRED_AI_STUDIO_DECOMPOSITION_REVISION) {
         throw new Error("Configured AI service does not support the required real-layer decomposition revision");
       }
+      if (requireStudioLayerPlan && health?.studioLayerPlanRevision !== REQUIRED_AI_STUDIO_LAYER_PLAN_REVISION) {
+        throw new Error("Configured AI service does not support real semantic-layer planning");
+      }
       Object.assign(value, health, { source: "configured" });
     }
     cachedResolution = { value, expiresAt: now + CACHE_MS };
@@ -138,6 +147,7 @@ export async function resolveAiService(requirements: AiServiceRequirements = {})
         result.generationRevision === REQUIRED_AI_GENERATION_REVISION &&
         (!requireStudioEdit || result.studioEditRevision === REQUIRED_AI_STUDIO_EDIT_REVISION) &&
         (!requireStudioDecomposition || result.studioDecompositionRevision === REQUIRED_AI_STUDIO_DECOMPOSITION_REVISION) &&
+        (!requireStudioLayerPlan || result.studioLayerPlanRevision === REQUIRED_AI_STUDIO_LAYER_PLAN_REVISION) &&
         (!requireSingleAttempt || result.providerRetryRevision === REQUIRED_AI_PROVIDER_RETRY_REVISION) &&
         (!requireVisualCheck || result.visualCheckRevision === REQUIRED_AI_VISUAL_CHECK_REVISION),
     );
@@ -157,7 +167,9 @@ export async function resolveAiService(requirements: AiServiceRequirements = {})
   // older branch and silently return the wrong dimensions/quality. A visible
   // retryable generation failure is safer than persisting a false 3:1 result.
   throw new Error(
-    requireStudioDecomposition
+    requireStudioLayerPlan
+      ? "No compatible AI service found for real semantic-layer planning"
+      : requireStudioDecomposition
       ? "No compatible AI service found for the required real-layer decomposition revision and single-provider-attempt support"
       : requireSingleAttempt
       ? "No compatible AI service found for the required single-provider-attempt revision and requested capabilities"

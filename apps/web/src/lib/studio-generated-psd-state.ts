@@ -8,6 +8,12 @@ export function generatedPsdLayerCount(jobData: unknown): number | null {
   const parsed = z.number().int().min(2).max(10).safeParse(value);
   return parsed.success ? parsed.data : null;
 }
+export function generatedPsdLayerMode(jobData: unknown): "AUTO" | "MANUAL" | null {
+  if (!jobData || typeof jobData !== "object" || Array.isArray(jobData)) return null;
+  const job = jobData as Record<string, unknown>;
+  if (job.studioPsdLayerMode === "AUTO") return "AUTO";
+  return generatedPsdLayerCount(jobData) === null ? null : "MANUAL";
+}
 export const GeneratedPsdOutbox = z.object({
   status: z.enum(["PENDING", "REGISTERED", "FAILED"]),
   decompositionRequestId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/).nullable(),
@@ -18,7 +24,12 @@ export function generatedPsdOutbox(jobData: unknown) {
     ? (jobData as Record<string, unknown>).studioGeneratedPsd : undefined;
   return GeneratedPsdOutbox.safeParse(value);
 }
-export function generatedPsdIntent(layerCount: number | undefined) {
+export function generatedPsdIntent(layerCount: number | undefined, mode?: "AUTO" | "MANUAL") {
+  if (mode === "AUTO") {
+    if (layerCount !== undefined) throw new Error("AUTO PSD count is server-selected");
+    return { studioPsdLayerMode: "AUTO" as const,
+      studioGeneratedPsd: { status: "PENDING" as const, decompositionRequestId: null, error: null } };
+  }
   if (layerCount === undefined) return {};
   z.number().int().min(2).max(10).parse(layerCount);
   return { studioPsdLayerCount: layerCount,

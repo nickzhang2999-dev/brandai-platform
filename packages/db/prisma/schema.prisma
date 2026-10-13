@@ -809,6 +809,7 @@ model StudioDecompositionRequest {
   documentRevision Int
   layerCount Int
   intent String?
+  planningJson Json?
   sourceWidth Int
   sourceHeight Int
   sourceObjectKey String

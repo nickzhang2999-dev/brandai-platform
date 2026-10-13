@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createOwnedEditorApi } from "../../../apps/web/src/components/owned-canvas/owned-editor-api";
+import { StudioGenerationView } from "../src/studio-generation";
 
 const identity = { workspaceId: "owned-w", projectId: "owned-p", userId: "owned-u" };
 const document = { workspaceId: identity.workspaceId, projectId: identity.projectId, format: "novart-native-v1", canvas: "", revision: 0, checksum: null, updatedAt: null, readOnly: false };
@@ -30,7 +31,7 @@ describe("owned editor product API", () => {
     const task = { mode: "generate", requestId: "gen-a", projectId: identity.projectId, mutationId, generationId: "g-a", status: "SUCCEEDED", progress: null,
       expiresAt: "2099-01-01T00:00:00.000Z", archiveExpiresAt: "2099-01-01T00:00:00.000Z", archiveProcessingExpiresAt: null, displayText: "saved request", resultState: "PENDING", results: [], error: null, archiveError: null, canRetryArchive: false, psdLayerCount: null };
     const fetcher = vi.fn().mockResolvedValue(response(task, 202));
-    expect(await setup(fetcher).retryArchive("gen-a")).toEqual(task);
+    expect(await setup(fetcher).retryArchive("gen-a")).toEqual(StudioGenerationView.parse(task));
     expect(fetcher).toHaveBeenCalledTimes(1);
     const [path, init] = fetcher.mock.calls[0]!;
     expect(path).toBe("/studio/generation/retry-archive?projectId=owned-p&workspaceId=owned-w");

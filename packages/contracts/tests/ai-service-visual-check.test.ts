@@ -5,6 +5,7 @@ const current = { parserRevision: "grounded-six-slot-r6", generationRevision: "g
 const older = { parserRevision: current.parserRevision, generationRevision: current.generationRevision };
 const editable = { ...current, studioEditRevision: "studio-whole-image-edit-r1" };
 const layered = { ...current, studioDecompositionRevision: "studio-real-layer-single-attempt-r1" };
+const planned = { ...layered, studioLayerPlanRevision: "semantic-layer-plan-r1" };
 const load = () => import("../../../apps/web/src/lib/ai-service");
 beforeEach(() => {
   vi.resetModules(); vi.resetAllMocks(); vi.stubGlobal("fetch", f.fetch);
@@ -15,6 +16,27 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 describe("product visual-check service capability gate", () => {
+  it("requires the semantic analysis capability before an AUTO task can send a paid vision request", async () => {
+    f.fetch.mockImplementation(async () => Response.json(layered));
+    const { resolveAiService } = await load();
+    await resolveAiService({ requireStudioDecomposition: true });
+    await expect(resolveAiService({ requireStudioLayerPlan: true })).rejects.toThrow("semantic-layer planning");
+    f.fetch.mockImplementation(async () => Response.json(planned));
+    expect(await resolveAiService({ requireStudioLayerPlan: true })).toMatchObject(planned);
+    await resolveAiService({ requireStudioLayerPlan: true }); expect(f.fetch).toHaveBeenCalledTimes(3);
+  });
+  it("semantic analysis cannot opt out of once-only provider attempts", async () => {
+    f.fetch.mockImplementation(async () => Response.json({ ...planned, providerRetryRevision: undefined }));
+    const { resolveAiService } = await load();
+    await expect(resolveAiService({ requireStudioLayerPlan: true })).rejects.toThrow("single-provider-attempt revision");
+  });
+  it("selects the actual planner-capable container rather than an older layer-only service", async () => {
+    vi.stubEnv("BRANDAI_AI_SERVICE_URL", "http://ai:8000");
+    f.fetch.mockImplementation(async (url: string) => Response.json(url.includes("10.0.0.1") ? layered : planned));
+    const { resolveAiService } = await load();
+    expect((await resolveAiService({ requireStudioDecomposition: true })).base).toBe("http://10.0.0.1:8000");
+    expect((await resolveAiService({ requireStudioLayerPlan: true })).base).toBe("http://10.0.0.2:8000");
+  });
   it("rejects a generation-compatible explicit service before any real decomposition dispatch", async () => {
     f.fetch.mockImplementation(async () => Response.json(current));
     const { resolveAiService } = await load();

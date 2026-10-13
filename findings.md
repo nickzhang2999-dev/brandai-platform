@@ -1,5 +1,11 @@
 # Integration findings
 
+## 2026-10-13 — automatic layer semantics
+
+- Official Fal Qwen Image Layered API exposes num_layers (default4); Qwen model card supports variable and recursive decomposition. These establish count-controlled semantic decomposition, not an existing automatic object-count feature. Sources: https://fal.ai/models/fal-ai/qwen-image-layered/api and https://huggingface.co/Qwen/Qwen-Image-Layered.
+- Current code limits layerCount2–10, full-layer total40M pixels, and PSD estimate width*height*4*(count+3)*3 <=256MiB. UI2K-two-layer advice leaks export implementation to users; improve intent selection and bounded export rather than falsely relabeling fixed4 as automatic.
+- Content analysis and decomposition are separate operations and must not be silently repeated or paid during local verification. Recursive refinement must retain persisted asset identity, permissions and EXACT source protection.
+
 ## 2026-10-12 — bootstrap resource freshness and release boundary
 
 - Actual public bootstrap response uses Cache-Control `max-age=14400, must-revalidate` and its served body still matches68cb; the source repair7b is not running. A query with the new digest was a cache MISS but still served68cb, which is consistent with no deployment and does not prove the CDN ignores queries.

@@ -10,12 +10,12 @@ import { enqueueStudioGeneration } from "./studio-generation-queue";
 import { readStudioGenerationResults } from "./studio-generation-artifacts";
 import type { GenerateJobData } from "./workers/generate.worker";
 import { lockStudioIntake } from "./studio-intake-lock";
-import { generatedPsdLayerCount } from "./studio-generated-psd-state";
+import { generatedPsdLayerCount, generatedPsdLayerMode } from "./studio-generated-psd-state";
 type Receipt = Prisma.StudioGenerationRequestGetPayload<Record<string, never>>;
 
 async function receipt(row: Receipt, canWrite = true) {
   const results = await readStudioGenerationResults(row);
-  return StudioGenerationView.parse({ mode: (row.jobData as {studioEdit?: unknown})?.studioEdit ? "modify" : "generate", psdLayerCount: generatedPsdLayerCount(row.jobData), requestId: row.id, mutationId: row.mutationId, projectId: row.projectId, generationId: row.generationId,
+  return StudioGenerationView.parse({ mode: (row.jobData as {studioEdit?: unknown})?.studioEdit ? "modify" : "generate", psdLayerCount: generatedPsdLayerCount(row.jobData), psdLayerMode: generatedPsdLayerMode(row.jobData), requestId: row.id, mutationId: row.mutationId, projectId: row.projectId, generationId: row.generationId,
     status: row.status, progress: null, expiresAt: row.expiresAt.toISOString(), displayText: row.prompt, error: row.error,
     ...results, canRetryArchive: canWrite && results.canRetryArchive });
 }

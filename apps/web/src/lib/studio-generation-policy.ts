@@ -93,7 +93,7 @@ export async function prepareStudioGeneration(db: Prisma.TransactionClient, ws: 
   if (usages.length > 8 || new Set(usages.map(item => item.assetId)).size !== usages.length) throw new ApiException(422, "改图参考与继承的严格保留素材重复或合计超过8张，请调整素材用途。");
   const prepared = await prepareGeneration(ws, { ...CreateGenerationInput.parse({ projectId: input.projectId, sceneType: "SOCIAL_POSTER", sellingPoint: input.prompt,
     scene: "", chatDisplayText: "", versionCount: 1, textMode: "direct", sizeSelection: input.sizeSelection, assetUsages: usages }), chatDisplayText: input.prompt }, { client: db, persistHardBlock: false });
-  const jobData = { ...prepared.jobData, ...generatedPsdIntent(input.psdLayerCount), studioExpectedAssetSha256: Object.fromEntries(expectedDigests), ...(exactLayout ? { studioExactLayout: exactLayout } : {}), ...(edit ? { studioEdit: edit.snapshot } : {}) };
+  const jobData = { ...prepared.jobData, ...generatedPsdIntent(input.psdLayerCount, input.psdLayerMode), studioExpectedAssetSha256: Object.fromEntries(expectedDigests), ...(exactLayout ? { studioExactLayout: exactLayout } : {}), ...(edit ? { studioEdit: edit.snapshot } : {}) };
   return { ...prepared, jobData, contextHash: await studioGenerationContextHash(db, ws, input.projectId, jobData) };
 }
 

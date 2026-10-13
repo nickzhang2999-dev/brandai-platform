@@ -20,6 +20,7 @@ export async function verifyStudioPsdFile(outputDir?: string) {
   const sources: Buffer[] = [];
   const rgba: Buffer[] = [];
   const names = ["Background - synthetic", "Red square - synthetic", "Blue translucent overlap - synthetic"];
+  const bounds = [{ left: 0, top: 0, width, height }, { left: 16, top: 12, width: 40, height: 40 }, { left: 40, top: 20, width: 40, height: 28 }];
   for (let order = 0; order < 3; order++) {
     const pixels = Buffer.alloc(width * height * 4);
     for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
@@ -46,16 +47,21 @@ export async function verifyStudioPsdFile(outputDir?: string) {
     assert.equal(document.children?.length, 3);
     assert.deepEqual(document.children?.map(layer => layer.name), [...names].reverse());
     document.children?.forEach((layer, index) => {
-      assert.ok(layer.imageData); assert.equal(layer.imageData.width, width); assert.equal(layer.imageData.height, height);
-      assert.equal(layer.left, 0); assert.equal(layer.top, 0); assert.equal(layer.right, width); assert.equal(layer.bottom, height);
-      assert.deepEqual(Buffer.from(layer.imageData.data), rgba[2 - index]);
+      const box = bounds[2 - index]!;
+      assert.ok(layer.imageData); assert.equal(layer.imageData.width, box.width); assert.equal(layer.imageData.height, box.height);
+      assert.equal(layer.left, box.left); assert.equal(layer.top, box.top);
+      assert.equal(layer.right, box.left + box.width); assert.equal(layer.bottom, box.top + box.height);
+      const restored = Buffer.alloc(width * height * 4);
+      for (let y = 0; y < box.height; y++) Buffer.from(layer.imageData.data.buffer, layer.imageData.data.byteOffset + y * box.width * 4, box.width * 4)
+        .copy(restored, ((box.top + y) * width + box.left) * 4);
+      assert.deepEqual(restored, rgba[2 - index]);
     });
   });
   const pixel = (x: number, y: number) => Array.from(document.imageData!.data.subarray((y * width + x) * 4, (y * width + x) * 4 + 4));
   check("Transparent alpha and semitransparent pixels remain independently editable", () => {
-    assert.equal(document.children![0]!.imageData!.data[3], 0);
-    assert.equal(document.children![0]!.imageData!.data[(24 * width + 44) * 4 + 3], 128);
-    assert.equal(document.children![1]!.imageData!.data[3], 0);
+    assert.equal(document.children![0]!.imageData!.data[3], 128);
+    assert.equal(document.children![0]!.imageData!.data[((24 - 20) * 40 + 44 - 40) * 4 + 3], 128);
+    assert.equal(document.children![1]!.imageData!.data[3], 255);
     assert.equal(document.children![2]!.imageData!.data[3], 255);
   });
   check("Stored composite preview matches known background/overlap order", () => {
@@ -69,13 +75,15 @@ export async function verifyStudioPsdFile(outputDir?: string) {
   const originalPreview = Buffer.from(document.imageData!.data);
   const reopened = document.children!.filter(layer => layer.name !== names[2]);
   const hiddenForegroundRender = await sharp({ create: { width, height, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } })
-    .composite([...reopened].reverse().map(layer => ({ input: Buffer.from(layer.imageData!.data), raw: { width, height, channels: 4 as const } })))
+    .composite([...reopened].reverse().map(layer => ({ input: Buffer.from(layer.imageData!.data),
+      left: layer.left!, top: layer.top!, raw: { width: layer.imageData!.width, height: layer.imageData!.height, channels: 4 as const } })))
     .raw().toBuffer();
   check("Hiding foreground in the reopened file changes the render while retaining layer bitmaps", () => {
     assert.equal(reopened.length, 2);
     const red = reopened.find(layer => layer.name === names[1])!;
     const offset = (24 * width + 44) * 4;
-    assert.deepEqual(Array.from(red.imageData!.data.subarray(offset, offset + 4)), [220, 40, 70, 255]);
+    const redOffset = ((24 - red.top!) * red.imageData!.width + 44 - red.left!) * 4;
+    assert.deepEqual(Array.from(red.imageData!.data.subarray(redOffset, redOffset + 4)), [220, 40, 70, 255]);
     assert.deepEqual(Array.from(hiddenForegroundRender.subarray(offset, offset + 4)), [220, 40, 70, 255]);
     assert.notDeepEqual(Array.from(originalPreview.subarray(offset, offset + 4)), [220, 40, 70, 255]);
   });

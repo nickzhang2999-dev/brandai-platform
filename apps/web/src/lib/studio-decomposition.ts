@@ -14,11 +14,14 @@ import { artifactDeadline, inspectArtifactImage, readArtifactImageBytes } from "
 import { encryptStudioBase, decryptStudioBase, requireStudioBaseEncryption } from "./studio-generation-base";
 import { getObjectStream, uploadBuffer, deleteObject } from "./s3";
 import { nodeStreamToBuffer } from "./image-preview";
-import { assertStudioLayerBudget, inspectStudioLayer } from "./studio-decomposition-images";
+import { assertStudioLayerBudget, inspectStudioLayer, STUDIO_LAYER_TOTAL_PIXELS } from "./studio-decomposition-images";
 import { enqueueStudioDecomposition } from "./studio-decomposition-queue";
 import { ai } from "./ai";
 import { recordUsage } from "./usage";
 import { generatedPsdLayerCount, generatedPsdMutationId, generatedPsdSourceShapeId } from "./studio-generated-psd-state";
+import { generatedPsdLayerMode } from "./studio-generated-psd-state";
+import { StudioLayerPlanResponse } from "@brandai/contracts";
+import { newStudioLayerPlanning, readStudioLayerPlanning, studioLayerMaxCount, semanticDecompositionIntent } from "./studio-decomposition-planning";
 import { assertStudioPsdBudget, StudioPsdEncodingError } from "./studio-psd-codec";
 
 type Row = Prisma.StudioDecompositionRequestGetPayload<object>;
@@ -28,7 +31,7 @@ const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(valu
 const keysOf = (row: Pick<Row, "objectKeys">) => z.array(z.string().max(512)).max(30).parse(row.objectKeys);
 const outputOf = (row: Row) => row.outputJson === null ? null : PrivateOutput.parse(row.outputJson);
 const receiptSelect = { id: true, mutationId: true, projectId: true, workspaceId: true, sourceShapeId: true, assetId: true, assetSha256: true,
-  documentRevision: true, layerCount: true, sourceWidth: true, sourceHeight: true, status: true, error: true,
+  documentRevision: true, layerCount: true, planningJson: true, sourceWidth: true, sourceHeight: true, status: true, error: true,
   createdAt: true, expiresAt: true, archiveExpiresAt: true, archiveToken: true, objectKeys: true, publishedLayers: true } satisfies Prisma.StudioDecompositionRequestSelect;
 type ReceiptRow = Prisma.StudioDecompositionRequestGetPayload<{ select: typeof receiptSelect }>;
 const identity = (workspaceId: string, userId: string, input: z.infer<typeof StudioDecompositionInput>) => ({ workspaceId, userId, projectId: input.projectId, mutationId: input.mutationId });
@@ -52,10 +55,12 @@ async function actorInTransaction(tx: Prisma.TransactionClient, row: Pick<Row, "
     if (!member || !["OWNER", "EDITOR"].includes(member.role)) throw new ApiException(403, "品牌编辑权限已变化，任务已停止。");
   }
 }
-async function configured() {
+async function configured(requirePlanning = false) {
   const [settings, storage] = await Promise.all([getEffectiveAiSettings(), getEffectiveStorage()]);
   if (settings.layer.provider?.trim().toLowerCase() !== "fal" || !settings.layer.apiKey?.trim()) throw new ApiException(503, "真实 AI 分层服务尚未配置，请联系管理员配置图层分解服务。");
   if (!storage.configured) throw new ApiException(503, "图片存储尚未配置，暂不能保存图层。");
+  if (requirePlanning && (!settings.vlm || settings.vlm.provider?.trim().toLowerCase() === "mock" || !settings.vlm.provider?.trim() || !settings.vlm.apiKey?.trim()))
+    throw new ApiException(503, "按内容自动分层需要配置真实视觉分析服务；当前不能自动判断图层数量，未提交模型。");
   requireStudioBaseEncryption();
 }
 function canRetry(row: Pick<Row, "status" | "archiveExpiresAt" | "objectKeys" | "archiveToken">) {
@@ -63,17 +68,22 @@ function canRetry(row: Pick<Row, "status" | "archiveExpiresAt" | "objectKeys" | 
     && row.archiveExpiresAt.getTime() > Date.now() && keysOf(row).length < 30 && row.archiveToken === null;
 }
 function receipt(row: ReceiptRow) {
+  const planning = readStudioLayerPlanning(row.planningJson);
+  const layers = row.status === "SUCCEEDED" ? z.array(StudioDecompositionLayer).parse(row.publishedLayers) : [];
   return StudioDecompositionView.parse({ requestId: row.id, mutationId: row.mutationId, projectId: row.projectId,
     sourceShapeId: row.sourceShapeId, assetId: row.assetId, assetSha256: row.assetSha256,
-    documentRevision: row.documentRevision, layerCount: row.layerCount, sourceWidth: row.sourceWidth, sourceHeight: row.sourceHeight,
+    documentRevision: row.documentRevision, layerCount: layers.length || row.layerCount, sourceWidth: row.sourceWidth, sourceHeight: row.sourceHeight,
+    layerMode: planning.mode, analysisStatus: planning.mode === "AUTO" && row.status === "FAILED" && !planning.result ? "FAILED" : planning.status, analysisSummary: planning.result?.plan.summary ?? null,
     status: row.status, error: row.error, createdAt: row.createdAt.toISOString(), expiresAt: row.expiresAt.toISOString(),
     archiveExpiresAt: row.archiveExpiresAt?.toISOString() ?? null, canRetryArchive: canRetry(row),
-    layers: row.status === "SUCCEEDED" ? z.array(StudioDecompositionLayer).parse(row.publishedLayers) : [] });
+    layers });
 }
 
-/** Only new-product assets with a verified durable archive can become inputs.
- * Legacy remote assets and previously split layers need a separate policy. */
-async function sourceAsset(workspaceId: string, projectId: string, assetId: string, expectedHash: string) {
+/** Only a scoped durable original or a published layer can become an input.
+ * Every recursive ancestor is checked, including the exact-original guard. */
+async function sourceAsset(workspaceId: string, projectId: string, assetId: string, expectedHash: string, ancestors = new Set<string>()) {
+  if (ancestors.has(assetId) || ancestors.size >= 8) throw new ApiException(422, "图层来源循环或继续分层深度已达到安全上限，请保留当前图层。");
+  ancestors.add(assetId);
   const asset = await prisma.asset.findFirst({ where: { id: assetId, workspaceId, deprecatedAt: null,
     projectLinks: { some: { projectId, project: { workspaceId } } } } });
   if (!asset) throw new ApiException(404, "原图片不属于当前品牌与项目。");
@@ -81,7 +91,17 @@ async function sourceAsset(workspaceId: string, projectId: string, assetId: stri
     prisma.studioMaterialUpload.findFirst({ where: { workspaceId, projectId, assetId, sha256: expectedHash, task: { status: "SUCCEEDED" } } }),
     prisma.studioGeneratedMaterial.findFirst({ where: { workspaceId, projectId, assetId, sha256: expectedHash, status: "SUCCEEDED" }, include: { request: { select: { jobData: true } } } }),
   ]);
-  const row = upload ?? generated;
+  let row: { objectKey: string | null; width: number | null; height: number | null; mimeType: string | null; sizeBytes: number | null } | null = upload ?? generated;
+  if (!row && asset.storageKey?.startsWith(`${workspaceId}/studio-layer-assets/`)) {
+    const parts = asset.storageKey.split("/");
+    if (parts.length !== 6 || parts[2] !== projectId || !/^\d\.bin$/.test(parts[5]!)) throw new ApiException(422, "图层存储来源与项目不一致。");
+    const parent = await prisma.studioDecompositionRequest.findFirst({ where: { id: parts[3], workspaceId, projectId, status: "SUCCEEDED" } });
+    const layer = parent && z.array(StudioDecompositionLayer).parse(parent.publishedLayers).find(value => value.assetId === assetId);
+    if (!parent || !layer || layer.assetSha256 !== expectedHash || layer.order !== Number(parts[5]![0]) || !keysOf(parent).includes(asset.storageKey)
+      || layer.width !== parent.sourceWidth || layer.height !== parent.sourceHeight) throw new ApiException(422, "继续分层需要完整保存且校验通过的原图层。");
+    await sourceAsset(workspaceId, projectId, parent.assetId, parent.assetSha256, ancestors);
+    row = { objectKey: asset.storageKey, width: layer.width, height: layer.height, mimeType: layer.mimeType, sizeBytes: layer.sizeBytes };
+  }
   if (!row || !row.width || !row.height || !row.mimeType || !row.sizeBytes || !["image/png", "image/jpeg", "image/webp"].includes(row.mimeType)
     || !asset.storageKey || asset.storageKey !== row.objectKey || row.sizeBytes !== asset.sizeBytes || asset.mimeType !== row.mimeType) throw new ApiException(422, "原图片的存储校验记录不完整，暂不能分层。");
   if (generated) {
@@ -115,13 +135,14 @@ export async function submitStudioDecomposition(workspaceId: string, userId: str
     if (current.status === "PENDING" && !current.providerStartedAt) await enqueueStudioDecomposition(current.id);
     return receipt(current);
   }
-  await configured();
+  const mode = input.layerMode ?? "MANUAL";
+  await configured(mode === "AUTO");
   const document = await readEditorDocument(workspaceId, input.projectId, userId);
   if (document.readOnly || document.revision !== input.documentRevision) throw new ApiException(409, "画布已变化或只读，请先保存再重新选择图片。");
   try { requireOwnedLayerSource(await decodeOwnedCanvas(document.canvas), input); }
   catch (error) { throw new ApiException(422, error instanceof Error ? error.message : "原图片无法确认。"); }
   const source = await sourceAsset(workspaceId, input.projectId, input.assetId, input.assetSha256);
-  assertStudioLayerBudget(source.sourceWidth, source.sourceHeight, input.layerCount);
+  assertStudioLayerBudget(source.sourceWidth, source.sourceHeight, input.layerCount ?? 2);
   await expireStudioDecompositions(workspaceId);
   const row = await prisma.$transaction(async tx => {
     // A separate intake lane bounds model queue/claim memory without changing
@@ -140,7 +161,7 @@ export async function submitStudioDecomposition(workspaceId: string, userId: str
     if (!saved || saved.workspaceId !== workspaceId || saved.revision !== input.documentRevision || saved.checksum !== document.checksum) throw new ApiException(409, "画布刚刚被更新，请保存后重试。");
     return tx.studioDecompositionRequest.create({ data: { ...scope, ...source, payloadHash,
       sourceShapeId: input.sourceShapeId, assetId: input.assetId, assetSha256: input.assetSha256, documentRevision: input.documentRevision,
-      layerCount: input.layerCount, intent: input.intent ?? null, expiresAt: new Date(Date.now() + STUDIO_DECOMPOSITION_TTL_MS) } });
+      layerCount: input.layerCount ?? 2, planningJson: newStudioLayerPlanning(mode), intent: input.intent ?? null, expiresAt: new Date(Date.now() + STUDIO_DECOMPOSITION_TTL_MS) } });
   }, { timeout: 10_000 });
   await enqueueStudioDecomposition(row.id); return receipt(row);
 }
@@ -153,24 +174,25 @@ export async function submitGeneratedStudioDecomposition(generationRequestId: st
   const generation = await prisma.studioGenerationRequest.findUnique({ where: { id: generationRequestId } });
   if (!generation || generation.status !== "SUCCEEDED") throw new ApiException(409, "原图片尚未完成生成，暂不能准备 PSD。");
   const layerCount = generatedPsdLayerCount(generation.jobData);
-  if (layerCount === null) throw new ApiException(409, "该次生成没有选择可编辑 PSD。");
+  const mode = generatedPsdLayerMode(generation.jobData);
+  if (mode === null) throw new ApiException(409, "该次生成没有选择可编辑 PSD。");
   const { workspaceId, userId, projectId } = generation;
   await projectAccess(workspaceId, userId, projectId, true);
   const scope = { workspaceId, userId, projectId, mutationId: generatedPsdMutationId(generation.id, generation.mutationId) };
   const existing = await prisma.studioDecompositionRequest.findUnique({ where: { workspaceId_userId_projectId_mutationId: scope } });
   if (existing) {
-    if (existing.layerCount !== layerCount) throw new ApiException(409, "自动 PSD 的受理层数已变化，未提交新模型任务。");
+    if (readStudioLayerPlanning(existing.planningJson).mode !== mode || (mode === "MANUAL" && existing.layerCount !== layerCount)) throw new ApiException(409, "自动 PSD 的受理分层方式已变化，未提交新模型任务。");
     return receipt(existing);
   }
   const material = await prisma.studioGeneratedMaterial.findFirst({ where: { requestId: generation.id, workspaceId, userId, projectId, status: "SUCCEEDED" }, orderBy: { createdAt: "asc" } });
   if (!material?.assetId || !material.sha256) throw new ApiException(409, "原图片尚未完成持久化，请等待保存结果。");
   const source = await sourceAsset(workspaceId, projectId, material.assetId, material.sha256);
-  assertStudioLayerBudget(source.sourceWidth, source.sourceHeight, layerCount);
-  try { assertStudioPsdBudget(source.sourceWidth, source.sourceHeight, layerCount); }
+  assertStudioLayerBudget(source.sourceWidth, source.sourceHeight, layerCount ?? 2);
+  try { assertStudioPsdBudget(source.sourceWidth, source.sourceHeight, layerCount ?? 2); }
   catch (error) { if (error instanceof StudioPsdEncodingError) throw new ApiException(422, "这张图片的尺寸与层数超过 PSD 导出内存预算，未调用分层模型。请选择更少图层或更小尺寸。"); throw error; }
   const input = StudioDecompositionInput.parse({ projectId, mutationId: scope.mutationId,
     sourceShapeId: generatedPsdSourceShapeId(material.assetId), assetId: material.assetId,
-    assetSha256: material.sha256, documentRevision: generation.documentRevision, layerCount });
+    assetSha256: material.sha256, documentRevision: generation.documentRevision, ...(mode === "AUTO" ? { layerMode: "AUTO" } : { layerCount }) });
   await expireStudioDecompositions(workspaceId);
   const row = await prisma.$transaction(async tx => {
     await tx.$queryRaw`SELECT pg_advisory_xact_lock(20261012, 3)::text`;
@@ -193,7 +215,7 @@ export async function submitGeneratedStudioDecomposition(generationRequestId: st
       || !asset || asset.storageKey !== source.sourceObjectKey || asset.sizeBytes !== source.sourceSizeBytes || asset.mimeType !== source.sourceMimeType) throw new ApiException(409, "原图片存储或归属已变化，未提交分层模型。");
     return tx.studioDecompositionRequest.create({ data: { ...scope, ...source, payloadHash: hash(input),
       sourceShapeId: input.sourceShapeId, assetId: input.assetId, assetSha256: input.assetSha256,
-      documentRevision: input.documentRevision, layerCount, intent: null,
+      documentRevision: input.documentRevision, layerCount: layerCount ?? 2, planningJson: newStudioLayerPlanning(mode), intent: null,
       expiresAt: new Date(Date.now() + STUDIO_DECOMPOSITION_TTL_MS) } });
   }, { timeout: 10_000 });
   // The DB row is the outbox. Redis delivery failure must not create a new
@@ -225,15 +247,68 @@ export async function runStudioDecomposition(requestId: string) {
   // Another delivery owns the ambiguous paid call; only its deadline/saved
   // output can progress it. Do not call or fail that owner's in-flight request.
   if (row.providerStartedAt && !row.outputJson) return;
+  const initialPlanning = readStudioLayerPlanning(row.planningJson);
+  // A second delivery cannot own a vision call whose receipt is ambiguous.
+  if (initialPlanning.mode === "AUTO" && initialPlanning.status === "RUNNING" && !initialPlanning.result) return;
   const originalDeadline = row.expiresAt;
   const signal = AbortSignal.timeout(Math.max(1, originalDeadline.getTime() - Date.now()));
   let ownedProviderClaim: Date | null = null;
+  let ownedAnalysisClaim: Prisma.InputJsonValue | null = null;
   try {
     if (!row.providerStartedAt) {
-      await configured(); await projectAccess(row.workspaceId, row.userId, row.projectId, true);
-      const original = await artifactDeadline(readArtifactImageBytes({ imageUrl: "", objectKey: row.sourceObjectKey }, signal), signal);
+      await configured(initialPlanning.mode === "AUTO"); await projectAccess(row.workspaceId, row.userId, row.projectId, true);
+      // Recheck all source ancestors before any paid call; an archived exact
+      // composition or retired parent can never be washed through a layer.
+      await sourceAsset(row.workspaceId, row.projectId, row.assetId, row.assetSha256);
+      const original = row.sourceObjectKey.startsWith(`${row.workspaceId}/studio-layer-assets/`)
+        ? await readStudioLayerAsset(row.workspaceId, { id: row.assetId, storageKey: row.sourceObjectKey }, signal)
+        : await artifactDeadline(readArtifactImageBytes({ imageUrl: "", objectKey: row.sourceObjectKey }, signal), signal);
       const metadata = await inspectArtifactImage(original, signal);
       if (metadata.sha256 !== row.assetSha256 || metadata.width !== row.sourceWidth || metadata.height !== row.sourceHeight || metadata.sizeBytes !== row.sourceSizeBytes || metadata.mimeType !== row.sourceMimeType) throw new ApiException(422, "原图片的实际内容与受理记录不一致，未提交模型。");
+      let planning = initialPlanning;
+      if (planning.mode === "AUTO" && planning.status === "PENDING") {
+        const maxLayers = studioLayerMaxCount(row.sourceWidth, row.sourceHeight, STUDIO_LAYER_TOTAL_PIXELS);
+        assertStudioLayerBudget(row.sourceWidth, row.sourceHeight, 2);
+        const analysisClaim = { ...planning, status: "RUNNING" as const, startedAt: new Date().toISOString() };
+        const claimed = await prisma.$transaction(async tx => {
+          await actorInTransaction(tx, row!);
+          return tx.studioDecompositionRequest.updateMany({ where: { id: requestId, status: "PENDING", providerStartedAt: null,
+            planningJson: { equals: row!.planningJson as Prisma.InputJsonValue }, expiresAt: { gt: new Date() } },
+            data: { status: "RUNNING", planningJson: analysisClaim } });
+        });
+        if (!claimed.count) return;
+        ownedAnalysisClaim = analysisClaim;
+        let result;
+        try {
+          result = StudioLayerPlanResponse.parse(await ai.studioLayerPlan({ imageUrl: `data:${metadata.mimeType};base64,${original.toString("base64")}`,
+            maxLayers, providerRetryPolicy: "never", ...(row.intent ? { intent: row.intent } : {}) },
+            { signal, requireRealVlmProvider: true, maxResponseBytes: 16_000 }));
+        } catch (error) {
+          if (error instanceof Error && error.message.includes("HTTP 422")) throw new ApiException(422, "图片未得到可靠的可拆分内容方案，未调用分层模型。请保留原图或选择需要编辑的其他图层。");
+          throw error;
+        }
+        if (result.plan.layerCount > maxLayers) throw new ApiException(422, "内容分析建议的拆分超过当前像素处理预算，未调用分层模型。");
+        assertStudioLayerBudget(row.sourceWidth, row.sourceHeight, result.plan.layerCount);
+        signal.throwIfAborted();
+        planning = { ...analysisClaim, status: "SUCCEEDED", result };
+        const saved = await prisma.$transaction(async tx => {
+          await actorInTransaction(tx, row!);
+          return tx.studioDecompositionRequest.updateMany({ where: { id: requestId, status: "RUNNING", providerStartedAt: null,
+            planningJson: { equals: analysisClaim }, expiresAt: { gt: new Date() } },
+            data: { status: "PENDING", layerCount: result.plan.layerCount, planningJson: planning } });
+        });
+        if (!saved.count) return;
+        ownedAnalysisClaim = null;
+        await recordUsage({ workspaceId: row.workspaceId, userId: row.userId, kind: "LAYER_PLAN", status: "SUCCEEDED",
+          provider: result.usage.provider, model: result.usage.model, imageCount: 1, latencyMs: result.usage.latencyMs });
+        row = await prisma.studioDecompositionRequest.findUniqueOrThrow({ where: { id: requestId } });
+      }
+      if (planning.mode === "AUTO" && (planning.status !== "SUCCEEDED" || !planning.result || planning.result.plan.layerCount !== row.layerCount))
+        throw new ApiException(422, "自动分层没有完整的已保存内容分析方案，未调用分层模型。");
+      assertStudioLayerBudget(row.sourceWidth, row.sourceHeight, row.layerCount);
+      // A persisted plan can resume after worker loss without another vision
+      // request; the once-only decomposition claim remains independent.
+      await sourceAsset(row.workspaceId, row.projectId, row.assetId, row.assetSha256);
       const claimTime = new Date();
       const claimed = await prisma.$transaction(async tx => {
         await actorInTransaction(tx, row!);
@@ -244,7 +319,7 @@ export async function runStudioDecomposition(requestId: string) {
       ownedProviderClaim = claimTime;
       signal.throwIfAborted();
       const result = DecomposeResponse.parse(await ai.decompose({ imageUrl: `data:${metadata.mimeType};base64,${original.toString("base64")}`, layerCount: row.layerCount,
-        providerRetryPolicy: "never", ...(row.intent ? { intent: row.intent } : {}) }, { signal, requireRealLayerProvider: true, maxResponseBytes: 32 * 1024 * 1024 }));
+        providerRetryPolicy: "never", ...(semanticDecompositionIntent(row.intent, planning) ? { intent: semanticDecompositionIntent(row.intent, planning) } : {}) }, { signal, requireRealLayerProvider: true, maxResponseBytes: 32 * 1024 * 1024 }));
       signal.throwIfAborted();
       if (result.usage?.provider !== "FalLayerProvider" || result.layers.length < 2 || result.layers.length > 10) throw new ApiException(502, "真实分层模型未返回完整的透明图层结果。");
       assertStudioLayerBudget(row.sourceWidth, row.sourceHeight, result.layers.length);
@@ -259,9 +334,12 @@ export async function runStudioDecomposition(requestId: string) {
   } catch (error) {
     // Never echo provider URLs, headers or prompts from an upstream exception.
     await prisma.studioDecompositionRequest.updateMany({ where: { id: requestId, expiresAt: originalDeadline,
-      ...(ownedProviderClaim ? { status: "RUNNING", providerStartedAt: ownedProviderClaim, archiveToken: null } : { status: "PENDING", providerStartedAt: null }) },
-      data: { status: "FAILED", error: !ownedProviderClaim && error instanceof ApiException && error.status === 503
-        ? "真实分层服务或图层存储尚未配置。原图片已保留，可继续编辑或下载；自动 PSD 未完成，请联系管理员配置。"
+      ...(ownedProviderClaim ? { status: "RUNNING", providerStartedAt: ownedProviderClaim, archiveToken: null }
+        : ownedAnalysisClaim ? { status: "RUNNING", providerStartedAt: null, planningJson: { equals: ownedAnalysisClaim } }
+        : { status: "PENDING", providerStartedAt: null }) },
+      data: { status: "FAILED", ...(ownedAnalysisClaim ? { planningJson: { ...initialPlanning, status: "FAILED", startedAt: (ownedAnalysisClaim as { startedAt: string }).startedAt } } : {}),
+        error: !ownedProviderClaim && error instanceof ApiException && [422, 503].includes(error.status) ? error.message
+        : ownedAnalysisClaim ? "图片内容分析未完成，未调用分层模型。原图片已保留，系统不会自动重复付费分析。"
         : "AI 分层或图层保存未完成。原图片保持不变；已有模型结果可尝试重新保存，不会自动重复调用模型。", archiveToken: null, archivingStartedAt: null } });
   }
 }

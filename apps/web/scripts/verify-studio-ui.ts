@@ -369,11 +369,15 @@ try {
   await expect(psdChoice).toBeEnabled(); await expect(psdChoice).not.toBeChecked();
   await psdChoice.check();
   const psdLayers = frame.getByRole("combobox", { name: "PSD图层数量", exact: true });
+  await expect(psdLayers).toHaveCount(0);
+  await expect(frame.getByTestId("owned-psd-layer-options").getByText("按内容自动拆分，无需指定层数。", { exact: true })).toBeVisible();
+  await frame.getByTestId("owned-psd-layer-options").locator("summary").click();
+  await frame.getByTestId("owned-psd-layer-options").getByRole("radio", { name: "手动指定层数", exact: true }).check();
   await expect(psdLayers).toHaveValue("4"); await psdLayers.selectOption("2");
   await expect(psdLayers).toHaveValue("2"); await psdChoice.uncheck();
   assert.equal(await prisma.studioDecompositionRequest.count({ where: { workspaceId: workspace.id, projectId } }), 0);
   assert.equal(await prisma.generation.count({ where: { projectId } }), 0);
-  check("actual product offers explicit PSD selection and layer count without invoking generation or decomposition");
+  check("actual product defaults PSD to content analysis and retains advanced manual count without model calls");
   enter("unsent composer autosave and actual page-unload recovery");
   await frame.getByRole("textbox", { name: "创作需求", exact: true }).fill(expectedDraft.prompt);
   await frame.getByRole("combobox", { name: "图片比例", exact: true }).selectOption(expectedDraft.ratio);

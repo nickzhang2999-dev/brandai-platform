@@ -39,15 +39,22 @@ class StudioGenerationInput(StrictModel):
     documentRevision: int = Field(ge=0, le=2147483646)
     outputFrameId: ShapeId | None = None
     psdLayerCount: int | None = Field(default=None, ge=2, le=10, strict=True)
+    psdLayerMode: Literal["AUTO", "MANUAL"] | None = None
 
     @model_validator(mode="before")
     @classmethod
     def no_null_frame(cls, value):
         if isinstance(value, dict):
-            for key in ("outputFrameId", "psdLayerCount"):
+            for key in ("outputFrameId", "psdLayerCount", "psdLayerMode"):
                 if key in value and value[key] is None:
                     raise ValueError(f"{key} must be omitted, not null")
         return value
+
+    @model_validator(mode="after")
+    def correct_psd_mode(self):
+        if (self.psdLayerMode == "AUTO" and self.psdLayerCount is not None) or (self.psdLayerMode == "MANUAL" and self.psdLayerCount is None):
+            raise ValueError("AUTO chooses its own PSD count; MANUAL requires a count")
+        return self
 
     @field_validator("prompt", mode="before")
     @classmethod
@@ -83,6 +90,7 @@ class StudioGenerationResult(StrictModel):
 class StudioGenerationView(StrictModel):
     mode: Literal["generate", "modify"] = "generate"
     psdLayerCount: int | None = Field(default=None, ge=2, le=10, strict=True)
+    psdLayerMode: Literal["AUTO", "MANUAL"] | None = None
     requestId: ProjectId
     mutationId: MutationId
     projectId: ProjectId

@@ -7,6 +7,8 @@ import { NovartApiError } from "../../lib/novart-api-client";
 import { createOwnedLayerRecovery } from "./owned-layer-recovery";
 import type { createOwnedEditorApi, DecompositionInput, DecompositionTask } from "./owned-editor-api";
 import { downloadOwnedPsd } from "./owned-psd-download";
+import { OwnedLayerOptions } from "./OwnedLayerOptions";
+import { matchesOwnedDecomposition, ownedLayerTaskTitle, ownedLayerTaskStatus, type OwnedLayerMode } from "./owned-layer-options";
 
 type Api = ReturnType<typeof createOwnedEditorApi>;
 type Props = {
@@ -17,18 +19,20 @@ type Props = {
 };
 const control = "rounded-full border border-border bg-card px-3 py-2 text-xs text-fg hover:bg-muted disabled:opacity-40";
 const message = (error: unknown) => error instanceof Error ? error.message : "操作未完成，请重新读取任务。";
-const matches = (input: DecompositionInput, task: DecompositionTask) => input.mutationId === task.mutationId && input.projectId === task.projectId
-  && input.assetId === task.assetId && input.assetSha256 === task.assetSha256 && input.sourceShapeId === task.sourceShapeId
-  && input.documentRevision === task.documentRevision && input.layerCount === task.layerCount;
-
 export function OwnedLayerPanel({ api, workspaceId, projectId, userId, document, selectedIds, readOnly, onPrepare, onPlace }: Props) {
-  const [tasks, setTasks] = useState<DecompositionTask[]>([]), [layerCount, setLayerCount] = useState(4), [intent, setIntent] = useState("");
+  const [tasks, setTasks] = useState<DecompositionTask[]>([]), [layerMode, setLayerMode] = useState<OwnedLayerMode>("AUTO"), [layerCount, setLayerCount] = useState(4), [intent, setIntent] = useState("");
+  const [refineSourceId, setRefineSourceId] = useState<string | null>(null);
   const [pending, setPending] = useState(false), [busy, setBusy] = useState(false), [reading, setReading] = useState(false);
   const [blocked, setBlocked] = useState(false), [notice, setNotice] = useState("");
   const recovery = useRef<ReturnType<typeof createOwnedLayerRecovery> | null>(null), operation = useRef<DecompositionInput | null>(null);
   const alive = useRef(true), activeApi = useRef(api), serial = useRef(false), readBusy = useRef(false);
   activeApi.current = api;
-  const source = selectedIds.length === 1 ? document?.items.find(item => item.id === selectedIds[0] && item.kind === "image") : undefined;
+  const sourceId = refineSourceId ?? (selectedIds.length === 1 ? selectedIds[0] : undefined);
+  const source = document?.items.find(item => item.id === sourceId && item.kind === "image");
+  const sourceLayer = source && tasks.flatMap(task => task.layers).find(layer => layer.assetId === source.assetId && layer.assetSha256 === source.assetSha256);
+  const refining = !!sourceLayer;
+  const selectionKey = selectedIds.join(":");
+  useEffect(() => { setRefineSourceId(null); }, [selectionKey]);
   let sourceError = "请选择一张已保存的图片。";
   if (source && document && source.assetId && source.assetSha256) {
     try { requireOwnedLayerSource(document, { sourceShapeId: source.id, assetId: source.assetId, assetSha256: source.assetSha256 }); sourceError = ""; }
@@ -38,7 +42,7 @@ export function OwnedLayerPanel({ api, workspaceId, projectId, userId, document,
   const accept = (task: DecompositionTask) => setTasks(values => [task, ...values.filter(value => value.requestId !== task.requestId)].slice(0, 50));
   const confirm = useCallback((values: DecompositionTask[]) => {
     const input = operation.current;
-    if (input && values.some(task => matches(input, task))) {
+    if (input && values.some(task => matchesOwnedDecomposition(input, task))) {
       if (!recovery.current) throw new Error("分层确认记录尚未准备完成。");
       recovery.current.clear(input); operation.current = null; setPending(false);
     }
@@ -56,11 +60,11 @@ export function OwnedLayerPanel({ api, workspaceId, projectId, userId, document,
   }, [confirm]);
 
   useEffect(() => {
-    alive.current = true; operation.current = null; setPending(false); setBlocked(false); setTasks([]);
+    alive.current = true; operation.current = null; setPending(false); setBlocked(false); setTasks([]); setRefineSourceId(null); setLayerMode("AUTO"); setLayerCount(4);
     try {
       recovery.current = createOwnedLayerRecovery({ workspaceId, projectId, userId });
       operation.current = recovery.current.load(); setPending(!!operation.current);
-      if (operation.current) setNotice("上次分层受理结果还未确认。页面只读取已有任务，确认按钮会使用同一次请求。");
+      if (operation.current) { setLayerMode(operation.current.layerMode ?? "MANUAL"); setLayerCount(operation.current.layerCount ?? 4); setNotice("上次分层受理结果还未确认。页面只读取已有任务，确认按钮会使用同一次请求。"); }
     } catch (error) { setBlocked(true); setNotice(message(error)); }
     void refresh();
     return () => { alive.current = false; };
@@ -76,13 +80,16 @@ export function OwnedLayerPanel({ api, workspaceId, projectId, userId, document,
     serial.current = true; setBusy(true);
     try {
       if (!operation.current) {
+        const chosenSource = source;
+        if (!chosenSource?.assetId || !chosenSource.assetSha256) throw new Error("请先选择一张已存入当前项目的图片。");
         const saved = await onPrepare(); if (!current(expected)) return;
-        const selected = selectedIds.length === 1 ? saved.document.items.find(item => item.id === selectedIds[0]) : null;
-        if (!selected?.assetId || !selected.assetSha256) throw new Error("请先选择一张已存入当前项目的图片。");
+        const selected = saved.document.items.find(item => item.id === sourceId);
+        if (!selected?.assetId || !selected.assetSha256 || selected.assetId !== chosenSource.assetId || selected.assetSha256 !== chosenSource.assetSha256) throw new Error("选中的图片已变化，本次未提交；请重新选择后分层。");
         requireOwnedLayerSource(saved.document, { sourceShapeId: selected.id, assetId: selected.assetId, assetSha256: selected.assetSha256 });
         if (!recovery.current) throw new Error("分层确认记录暂不可用，本次未提交。");
         operation.current = recovery.current.store({ projectId, mutationId: crypto.randomUUID(), sourceShapeId: selected.id,
-          assetId: selected.assetId, assetSha256: selected.assetSha256, documentRevision: saved.revision, layerCount, ...(intent.trim() ? { intent: intent.trim() } : {}) });
+          assetId: selected.assetId, assetSha256: selected.assetSha256, documentRevision: saved.revision,
+          ...(layerMode === "AUTO" ? { layerMode: "AUTO" as const } : { layerMode: "MANUAL" as const, layerCount }), ...(intent.trim() ? { intent: intent.trim() } : {}) });
         setPending(true);
       }
       const receipt = await expected.submitDecomposition(operation.current);
@@ -119,18 +126,25 @@ export function OwnedLayerPanel({ api, workspaceId, projectId, userId, document,
     finally { if (current(expected)) { serial.current = false; setBusy(false); } }
   }
   return <section className="space-y-4" aria-label="AI 分层" data-testid="owned-layer-panel">
-    <div><h2 className="text-sm font-semibold">AI 分层</h2><p className="mt-1 text-xs leading-5 text-muted-fg">把图片拆成可分别编辑的透明图层，保留原图。分层会使用模型额度，提交前可调整层数。</p></div>
-    <p className="text-xs leading-5 text-muted-fg">{sourceError || "已选择原图片。原图和全部结果分别保存，完成后由你展开。"}</p>
-    <label className="block text-xs text-muted-fg">拆分层数<select aria-label="拆分层数" className={control + " ml-2"} value={layerCount} disabled={readOnly || busy || pending || blocked} onChange={event => setLayerCount(Number(event.target.value))}>{Array.from({ length: 9 }, (_, index) => index + 2).map(value => <option key={value} value={value}>{value} 层</option>)}</select></label>
+    <div><h2 className="text-sm font-semibold">{refining ? "进一步分层" : "AI 分层"}</h2><p className="mt-1 text-xs leading-5 text-muted-fg">按图片内容拆成可分别编辑的透明图层，原图保留。{layerMode === "AUTO" ? "会额外使用内容分析与分层服务额度。" : "会使用分层服务额度。"}</p></div>
+    <p className="text-xs leading-5 text-muted-fg" data-testid="owned-layer-source">{sourceError || (refining ? `已选择${sourceLayer?.name || "已保存图层"}，只拆分这一个图层，其余图层保留。` : "已选择图片。原图和全部结果分别保存，完成后由你展开。")}</p>
+    {refineSourceId && source && <div className="flex items-center gap-3 rounded-2xl border border-border p-3"><img src={source.url} alt="进一步分层的对象" className="h-14 w-14 shrink-0 rounded-lg bg-muted object-contain" /><button type="button" className={control} disabled={pending || busy} onClick={() => setRefineSourceId(null)}>返回画布选中对象</button></div>}
+    <OwnedLayerOptions mode={layerMode} count={layerCount} context="分层" disabled={readOnly || busy || pending || blocked} onMode={setLayerMode} onCount={setLayerCount} />
     <textarea aria-label="分层说明" className="min-h-24 w-full rounded-2xl border border-border bg-bg p-3 text-sm" placeholder="可选：优先拆分主体、文字和背景…" maxLength={500} value={intent} disabled={readOnly || busy || pending || blocked} onChange={event => setIntent(event.target.value)} />
-    <button type="button" className="w-full rounded-full bg-primary py-3 text-sm text-primary-fg disabled:opacity-40" disabled={!api || readOnly || busy || blocked || !pending && !!sourceError} onClick={() => void submit()}>{busy ? "正在确认…" : pending ? "确认同一次分层" : "开始 AI 分层"}</button>
+    <button type="button" className="w-full rounded-full bg-primary py-3 text-sm text-primary-fg disabled:opacity-40" data-testid="owned-layer-submit" disabled={!api || readOnly || busy || blocked || !pending && !!sourceError} onClick={() => void submit()}>{busy ? "正在确认…" : pending ? "确认同一次分层" : refining ? "进一步分层" : "开始 AI 分层"}</button>
     {!!notice && <p role="status" className="rounded-xl bg-accent-soft p-3 text-xs leading-6" data-testid="owned-layer-notice">{notice}</p>}
     <button type="button" className={control} disabled={reading || busy} onClick={() => void refresh()}>{reading ? "正在读取…" : "刷新分层任务"}</button>
     {!tasks.length && <p className="py-4 text-center text-xs text-muted-fg">当前项目还没有分层任务。</p>}
     {tasks.map(task => <article className="space-y-3 rounded-2xl border border-border p-3" key={task.requestId} data-testid="owned-layer-task" data-status={task.status}>
-      <div className="flex justify-between text-xs"><strong>{task.layerCount} 层分解</strong><span>{task.status === "SUCCEEDED" ? "图层已保存" : task.status === "FAILED" ? "未完成" : Date.parse(task.expiresAt) <= Date.now() ? "等待确认超时" : task.status === "RUNNING" ? "正在分层" : "等待处理"}</span></div>
+      <div className="flex flex-wrap justify-between gap-2 text-xs"><strong>{ownedLayerTaskTitle(task)}</strong><span>{ownedLayerTaskStatus(task)}</span></div>
+      {task.analysisSummary && <p className="text-xs leading-5 text-muted-fg">{task.analysisSummary}</p>}
       {task.error && <p role="alert" className="text-xs leading-5 text-muted-fg">{task.error}</p>}
-      {task.layers.length > 0 && <div className="grid grid-cols-2 gap-2">{task.layers.map(layer => <div key={layer.assetId} className="rounded-xl bg-muted p-2"><img src={layer.url} alt={"图层 " + (layer.order + 1)} loading="lazy" className="aspect-square w-full object-contain" /><p className="mt-1 text-xs text-muted-fg">图层 {layer.order + 1}</p></div>)}</div>}
+      {task.layers.length > 0 && <><div className="grid grid-cols-2 gap-2">{task.layers.map(layer => {
+        const label = layer.name || `图层 ${layer.order + 1}`;
+        const item = document?.items.find(value => value.kind === "image" && value.assetId === layer.assetId && value.assetSha256 === layer.assetSha256 && !value.hidden);
+        return <div key={layer.assetId} className="min-w-0 space-y-2 rounded-xl bg-muted p-2"><img src={layer.url} alt={label} loading="lazy" className="aspect-square w-full object-contain" /><p className="truncate text-xs text-muted-fg" title={label}>{label}</p>
+          <button type="button" className={control + " w-full !px-2"} aria-label={`进一步分层：${label}`} disabled={!item || readOnly || busy || pending || blocked} onClick={() => { if (item) { setRefineSourceId(item.id); setLayerMode("AUTO"); setNotice(`已选择${label}。确认拆分后才会调用模型，原图层与其他图层仍保留。`); } }}>进一步分层</button></div>;
+      })}</div><p className="text-xs leading-5 text-muted-fg">展开到画布后，可选择其中一个图层继续细拆。</p></>}
       {task.status === "SUCCEEDED" && <div className="flex flex-wrap gap-2"><button type="button" className={control} disabled={readOnly || busy} onClick={() => void place(task)}>展开为可编辑图层</button>
         {api && <button type="button" className={control} disabled={busy} onClick={() => void download(task)} data-testid="owned-layer-psd-download">下载 PSD</button>}
       </div>}

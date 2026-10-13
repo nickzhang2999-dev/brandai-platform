@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createOwnedEditorApi } from "../../../apps/web/src/components/owned-canvas/owned-editor-api";
 const input = { projectId: "p", mutationId: "00000000-0000-4000-8000-000000000001", sourceShapeId: "shape:a", assetId: "a", assetSha256: "a".repeat(64), documentRevision: 3, layerCount: 4 };
-const pending = { ...input, requestId: "r", sourceWidth: 100, sourceHeight: 100, status: "PENDING", error: null, createdAt: "2026-10-12T00:00:00.000Z", expiresAt: "2026-10-12T00:06:00.000Z", archiveExpiresAt: null, canRetryArchive: false, layers: [] };
+const pending = { ...input, layerMode: "MANUAL", analysisStatus: "NOT_REQUESTED", analysisSummary: null, requestId: "r", sourceWidth: 100, sourceHeight: 100, status: "PENDING", error: null, createdAt: "2026-10-12T00:00:00.000Z", expiresAt: "2026-10-12T00:06:00.000Z", archiveExpiresAt: null, canRetryArchive: false, layers: [] };
 const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json" } });
 const setup = (fetcher: typeof fetch) => createOwnedEditorApi("w", "p", "u", { fetcher, origin: "https://novart.test" });
 describe("owned decomposition API", () => {
@@ -25,5 +25,17 @@ describe("owned decomposition API", () => {
     await setup(fetcher).retryLayerArchive("r");
     expect(fetcher.mock.calls[0]![0]).toBe("/studio/decomposition/retry-archive?projectId=p&workspaceId=w");
     expect(JSON.parse(fetcher.mock.calls[0]![1].body)).toEqual({ projectId: "p", requestId: "r" }); expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+  it("submits AUTO without a guessed count and accepts a resolved server plan", async () => {
+    const { layerCount: _unused, ...identity } = input;
+    const automatic = { ...identity, layerMode: "AUTO" as const };
+    const fetcher = vi.fn().mockResolvedValue(response({ ...pending, layerMode: "AUTO", layerCount: 6, analysisStatus: "SUCCEEDED", analysisSummary: "合成六层方案" }, 202));
+    const result = await setup(fetcher).submitDecomposition(automatic);
+    expect(JSON.parse(fetcher.mock.calls[0]![1].body)).toEqual(automatic); expect(result.layerCount).toBe(6);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+  it("keeps the original AUTO journal when a receipt silently switches to manual", async () => {
+    const { layerCount: _unused, ...identity } = input;
+    await expect(setup(vi.fn().mockResolvedValue(response(pending, 202))).submitDecomposition({ ...identity, layerMode: "AUTO" })).rejects.toMatchObject({ uncertain: true, code: "INVALID_RECEIPT" });
   });
 });

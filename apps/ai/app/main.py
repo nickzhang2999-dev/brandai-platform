@@ -26,6 +26,7 @@ from .providers.http_providers import (
     _DEFAULT_IMAGE_QUALITY,
     _estimate_cost_usd,
 )
+from .studio_layer_plan import LayerPlanRequest, LayerPlanResponse, LayerPlan, layer_plan_prompt, STUDIO_LAYER_PLAN_REVISION
 from .schemas import (
     ComplianceCheckRequest,
     ComplianceCheckResponse,
@@ -178,6 +179,7 @@ async def health():
         "providerRetryRevision": PROVIDER_RETRY_REVISION,
         "studioEditRevision": STUDIO_EDIT_REVISION,
         "studioDecompositionRevision": STUDIO_DECOMPOSITION_REVISION,
+        "studioLayerPlanRevision": STUDIO_LAYER_PLAN_REVISION,
     }
 
 
@@ -975,6 +977,39 @@ async def edit(
     return EditResponse(
         imageUrl=url, width=w, height=h, params={"op": req.op, **req.payload}
     )
+
+
+@app.post("/v1/studio/layer-plan", response_model=LayerPlanResponse)
+async def studio_layer_plan(req: LayerPlanRequest, vlm: VLMProvider = Depends(resolve_vlm_provider)):
+    # This action uses one additional paid vision call, owned by the durable
+    # worker analysis claim. Unknown/mock adapters fail before any fallback.
+    from .providers.http_providers import HttpVLMProvider
+    if type(vlm) is not HttpVLMProvider or not vlm.api_key.strip():
+        raise HTTPException(status_code=503, detail="Real semantic vision planner unavailable")
+    try:
+        raw = base64.b64decode(req.imageUrl.split(",", 1)[1], validate=True)
+        if len(raw) > 32 * 1024 * 1024:
+            raise ValueError("Image too large")
+        from PIL import Image
+        with Image.open(io.BytesIO(raw)) as image:
+            if image.width * image.height > 20_000_000 or image.format not in ("PNG", "JPEG", "WEBP"):
+                raise ValueError("Invalid planner image")
+            image.verify()
+    except Exception:
+        raise HTTPException(status_code=422, detail="Semantic planner requires a verified bounded image") from None
+    started = time.perf_counter()
+    result = await call_with_retry_policy("never", vlm._chat_json, [
+        {"type": "text", "text": layer_plan_prompt(req.maxLayers, req.intent)},
+        {"type": "image_url", "image_url": {"url": req.imageUrl}},
+    ], system="You plan image editing layers from actual pixels. Reply with JSON only.", max_tokens=2400)
+    try:
+        plan = LayerPlan.model_validate(result)
+        if plan.layerCount > req.maxLayers:
+            raise ValueError("Plan exceeds server budget")
+    except Exception:
+        raise HTTPException(status_code=422, detail="No valid semantic layer plan within the processing budget") from None
+    return LayerPlanResponse(revision=STUDIO_LAYER_PLAN_REVISION, plan=plan,
+        usage={"provider": "HttpVLMProvider", "model": vlm.model, "latencyMs": int((time.perf_counter() - started) * 1000)})
 
 
 @app.post(

@@ -18,6 +18,15 @@ describe("layer intake journal", () => {
     expect(() => journal.clear({ ...input, documentRevision: 4 })).toThrow();
     expect(journal.load()).toEqual(input); journal.clear(input); expect(journal.load()).toBeNull();
   });
+  it("restores an exact AUTO request and never replaces it with a manual guess", () => {
+    const { layerCount: _unused, ...source } = input;
+    const automatic = { ...source, layerMode: "AUTO" as const };
+    const port = storage(), journal = createOwnedLayerRecovery(identity, port);
+    expect(journal.store(automatic)).toEqual(automatic);
+    expect(createOwnedLayerRecovery(identity, port).load()).toEqual(automatic);
+    expect(() => journal.store(input)).toThrow(); expect(() => journal.clear(input)).toThrow();
+    expect(journal.load()).toEqual(automatic); journal.clear(automatic); expect(journal.load()).toBeNull();
+  });
   it("fails closed if a write does not survive readback or the record is malformed", () => {
     const port = storage(); const broken = { ...port, setItem() {} };
     expect(() => createOwnedLayerRecovery(identity, broken).store(input)).toThrow();

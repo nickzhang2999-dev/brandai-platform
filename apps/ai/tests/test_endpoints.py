@@ -10,6 +10,7 @@ def test_health(client):
         "providerRetryRevision": "single-provider-attempt-r1",
         "studioEditRevision": "studio-whole-image-edit-r1",
         "studioDecompositionRevision": "studio-real-layer-single-attempt-r1",
+        "studioLayerPlanRevision": "semantic-layer-plan-r1",
     }
 
 

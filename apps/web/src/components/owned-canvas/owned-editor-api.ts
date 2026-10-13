@@ -2,6 +2,7 @@ import { z } from "zod";
 import { StudioGenerationInput, StudioGenerationView, StudioGenerationComplianceView, StudioMaterial, StudioMaterialUploadView, StudioWorkflowView, StudioWorkflowAssets, StudioWorkflowSaveInput, StudioGeneratedPsdView } from "@brandai/contracts";
 import { createDocumentSession, createNovartApiClient, NovartApiError } from "../../lib/novart-api-client";
 import { StudioDecompositionInput, StudioDecompositionView } from "../../../../../packages/contracts/src/studio-decomposition";
+import { matchesOwnedDecomposition, matchesOwnedPsdSelection } from "./owned-layer-options";
 
 export type Material = z.infer<typeof StudioMaterial>;
 export type UploadTask = z.infer<typeof StudioMaterialUploadView>;
@@ -160,8 +161,7 @@ export function createOwnedEditorApi(workspaceId: string, projectId: string, use
       let result: DecompositionTask;
       try { result = decomposition(receipt); }
       catch { throw new NovartApiError("分层受理回执的品牌或项目不一致，请先核对已有任务。", null, "INVALID_RECEIPT", true); }
-      if (result.mutationId !== input.mutationId || result.sourceShapeId !== input.sourceShapeId || result.assetId !== input.assetId
-        || result.assetSha256 !== input.assetSha256 || result.documentRevision !== input.documentRevision || result.layerCount !== input.layerCount) {
+      if (!matchesOwnedDecomposition(input, result)) {
         throw new NovartApiError("分层受理回执与原图片不一致，请先读取已有任务。", null, "INVALID_RECEIPT", true);
       }
       return result;
@@ -238,7 +238,7 @@ export function createOwnedEditorApi(workspaceId: string, projectId: string, use
       const receipt = await request(endpoint("/studio/generation"), StudioGenerationView, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       try {
         const value = generation(receipt);
-        if (value.mutationId !== payload.mutationId || (value.psdLayerCount ?? null) !== (payload.psdLayerCount ?? null)) throw new Error("生成回执与本次需求或 PSD 选择不一致，请刷新任务确认。");
+        if (value.mutationId !== payload.mutationId || !matchesOwnedPsdSelection(payload, value)) throw new Error("生成回执与本次需求或 PSD 选择不一致，请刷新任务确认。");
         return value;
       } catch (error) {
         // The server accepted the POST. A foreign or inconsistent reply is not

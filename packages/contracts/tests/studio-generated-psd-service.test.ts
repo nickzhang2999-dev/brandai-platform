@@ -10,6 +10,7 @@ vi.mock("../../../apps/web/src/lib/studio-decomposition", () => ({ submitGenerat
 import { ApiException } from "../../../apps/web/src/lib/api";
 import { registerStudioGeneratedPsd, dispatchStudioGeneratedPsds, readStudioGeneratedPsd } from "../../../apps/web/src/lib/studio-generated-psd";
 import { generatedPsdIntent } from "../../../apps/web/src/lib/studio-generated-psd-state";
+import { newStudioLayerPlanning } from "../../../apps/web/src/lib/studio-decomposition-planning";
 
 let row: any;
 const layers = [0, 1].map(order => ({ assetId: `layer${order}`, assetSha256: "a".repeat(64), mimeType: "image/png", width: 8, height: 8, order, sizeBytes: 30,
@@ -28,6 +29,21 @@ beforeEach(() => {
 });
 
 describe("automatic PSD durable outbox, simulated persistence and no paid model", () => {
+  it("persists AUTO intent without a browser count and registers only through the worker outbox", async () => {
+    row.jobData = { generationId: "g", ...generatedPsdIntent(undefined, "AUTO") };
+    f.submit.mockResolvedValue({ ...decomp("PENDING"), layerMode: "AUTO", analysisStatus: "PENDING", analysisSummary: null });
+    expect(await readStudioGeneratedPsd("w", "u", { projectId: "p", requestId: "r" })).toMatchObject({ requested: true, status: "PENDING" });
+    expect(f.submit).not.toHaveBeenCalled();
+    await registerStudioGeneratedPsd("r"); await registerStudioGeneratedPsd("r");
+    expect(f.submit).toHaveBeenCalledOnce(); expect(row.jobData.studioPsdLayerMode).toBe("AUTO");
+    expect(row.jobData).not.toHaveProperty("studioPsdLayerCount"); expect(row.jobData.studioGeneratedPsd.status).toBe("REGISTERED");
+  });
+  it("recovers an existing AUTO identity with any server-resolved count after a crash", async () => {
+    row.createdAt = new Date(0); row.jobData = { generationId: "g", ...generatedPsdIntent(undefined, "AUTO") };
+    f.findDecomp.mockResolvedValue({ id: "d", layerCount: 7, planningJson: newStudioLayerPlanning("AUTO") });
+    await registerStudioGeneratedPsd("r");
+    expect(f.submit).not.toHaveBeenCalled(); expect(row.jobData.studioGeneratedPsd).toMatchObject({ status: "REGISTERED", decompositionRequestId: "d" });
+  });
   it("ordinary generation/read performs zero submission, updates and queue activity", async () => {
     row.jobData = { generationId: "g" };
     await registerStudioGeneratedPsd("r");
@@ -71,6 +87,12 @@ describe("automatic PSD durable outbox, simulated persistence and no paid model"
     f.submit.mockRejectedValueOnce(new Error("synthetic DB disconnect")); await registerStudioGeneratedPsd("r");
     expect(row.jobData.studioGeneratedPsd.status).toBe("PENDING");
     await registerStudioGeneratedPsd("r"); expect(row.jobData.studioGeneratedPsd.status).toBe("REGISTERED");
+  });
+  it("configuration failures are reported as service availability, never disguised as EXACT source protection", async () => {
+    row.jobData = { generationId: "g", ...generatedPsdIntent(undefined, "AUTO") };
+    f.submit.mockRejectedValue(new ApiException(503, "fixture unavailable")); await registerStudioGeneratedPsd("r");
+    expect(row.jobData.studioGeneratedPsd.error).toContain("尚未配置"); expect(row.jobData.studioGeneratedPsd.error).not.toContain("严格保留素材");
+    expect(row.status).toBe("SUCCEEDED");
   });
   it.each([403, 404, 409, 422])("terminalizes safety denial %i while retaining original generation and immutable selection", async status => {
     f.submit.mockRejectedValue(new ApiException(status, "synthetic reject")); await registerStudioGeneratedPsd("r"); await registerStudioGeneratedPsd("r");

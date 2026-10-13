@@ -110,7 +110,9 @@ jobs:
           print('PASS automatic PSD selection, recovery and file-download interaction; isolated fixtures only')
           PY
       - name: Write and read actual layered PSD format proof
-        run: NOVART_PSD_PROOF_DIR=.novart-ui-artifacts/psd-file-proof pnpm -F web exec tsx scripts/verify-studio-psd-file.ts
+        run: |
+          NOVART_PSD_PROOF_DIR=.novart-ui-artifacts/psd-file-proof pnpm -F web exec tsx scripts/verify-studio-psd-file.ts
+          NOVART_PSD_MEMORY_PROOF_DIR=.novart-ui-artifacts/psd-memory-proof pnpm -F web exec tsx scripts/verify-studio-psd-memory.ts
       - name: Generate and migrate the disposable database
         run: |
           pnpm db:generate
@@ -306,6 +308,7 @@ jobs:
           # Prove the packaged ag-psd module and Worker writer are available in
           # the actual built image, independently of real model acceptance.
           docker exec novart-ci-web pnpm -F web exec tsx scripts/verify-studio-psd-file.ts
+          docker exec novart-ci-web pnpm -F web exec tsx scripts/verify-studio-psd-memory.ts
           python - <<'PY'
           import json, time, urllib.request
           from pathlib import Path

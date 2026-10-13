@@ -29,15 +29,24 @@ class StudioDecompositionInput(StrictModel):
     assetId: ProjectId
     assetSha256: Sha256
     documentRevision: int = Field(ge=0)
-    layerCount: int = Field(ge=2, le=10)
+    layerMode: Literal["AUTO", "MANUAL"] | None = None
+    layerCount: int | None = Field(default=None, ge=2, le=10, strict=True)
     intent: str | None = Field(default=None, max_length=500)
 
     @model_validator(mode="before")
     @classmethod
     def no_null_intent(cls, value):
-        if isinstance(value, dict) and "intent" in value and value["intent"] is None:
-            raise ValueError("intent must be omitted, not null")
+        if isinstance(value, dict):
+            for key in ("intent", "layerMode", "layerCount"):
+                if key in value and value[key] is None:
+                    raise ValueError(f"{key} must be omitted, not null")
         return value
+
+    @model_validator(mode="after")
+    def correct_mode(self):
+        if (self.layerMode == "AUTO" and self.layerCount is not None) or (self.layerMode != "AUTO" and self.layerCount is None):
+            raise ValueError("AUTO chooses its own count; MANUAL requires a layer count")
+        return self
 
     @field_validator("intent", mode="before")
     @classmethod
@@ -83,6 +92,17 @@ class StudioDecompositionLayer(StrictModel):
     url: str = Field(pattern=r"^/api/workspaces/[a-zA-Z0-9_-]{1,128}/assets/[a-zA-Z0-9_-]{1,128}/raw\z")
     alphaBounds: StudioDecompositionAlphaBounds
     inkCoverage: float = Field(ge=0, le=1, allow_inf_nan=False)
+    name: str | None = Field(default=None, min_length=1, max_length=80)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def trim_name(cls, value):
+        if value is None:
+            raise ValueError("name must be omitted, not null")
+        value = value.strip(_JS_WHITESPACE)
+        if _utf16_length(value) > 80:
+            raise ValueError("name exceeds 80 UTF-16 code units")
+        return value
 
     @model_validator(mode="after")
     def within_full_frame(self):
@@ -100,6 +120,9 @@ class StudioDecompositionView(StrictModel):
     assetSha256: Sha256
     documentRevision: int = Field(ge=0)
     layerCount: int = Field(ge=2, le=10)
+    layerMode: Literal["AUTO", "MANUAL"] = "MANUAL"
+    analysisStatus: Literal["NOT_REQUESTED", "PENDING", "RUNNING", "SUCCEEDED", "FAILED"] = "NOT_REQUESTED"
+    analysisSummary: str | None = Field(default=None, max_length=600)
     sourceWidth: Dimension
     sourceHeight: Dimension
     status: Literal["PENDING", "RUNNING", "SUCCEEDED", "FAILED"]
@@ -119,10 +142,12 @@ class StudioDecompositionView(StrictModel):
 
     @model_validator(mode="after")
     def only_complete_public_layers(self):
+        if self.layerMode == "AUTO" and ((self.status == "SUCCEEDED" and (self.analysisStatus != "SUCCEEDED" or not self.analysisSummary)) or self.analysisStatus == "NOT_REQUESTED"):
+            raise ValueError("AUTO requires real semantic analysis before publishing layers")
         if self.status != "SUCCEEDED" and self.layers:
             raise ValueError("Unpublished layers must stay private")
         if self.status == "SUCCEEDED" and (
-            len(self.layers) < 2
+            len(self.layers) < 2 or len(self.layers) != self.layerCount
             or any(layer.order != index or layer.width != self.sourceWidth or layer.height != self.sourceHeight for index, layer in enumerate(self.layers))
             or len({layer.assetId for layer in self.layers}) != len(self.layers)
         ):

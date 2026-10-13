@@ -1,5 +1,17 @@
 # Integration progress
 
+## 2026-10-13 — content-aware layering started
+
+- Final frozen batch: contracts1294/UI34, AI441, independent complete types and production build pass. Actual core49/semantic19 browser journeys pass with zero external/model calls. PSD original5/native2K8-layer4 file checks pass, full RGBA/positions/faint alpha preserved. All earlier incomplete/helper/snapshot/TS errors resolved; bounded pixel diagnostics remove test OOM.
+- Normal guarded commit/push is the next delivery step; no manual CDS/main/shared-data operation. New exact-SHA cloud stack remains separately unverified. Developer log/README/source comparison distinguish synthetic format/UI proofs from real layer quality.
+
+- User accepted content-aware automatic decomposition and selected-layer refinement, including frontend changes, then requested more subagents. Three agents own backend/contracts, UI, and PSD memory respectively; root owns integration/browser gates/logs.
+- Existing count2–10 is our contract boundary; Fal uses requested num_layers rather than automatically counted image elements. Current output/export limits include40M total pixels and256MiB conservative PSD estimate. No claim that a model detects all objects or returns editable typography.
+- Preserve explicit PSD opt-in, old manual tasks, original images and single decomposition-provider attempt. Additional semantic analysis must run in worker, record actual results, and report missing configuration clearly.
+- Actual Chromium new flow19 passes with synthetic receipts: AUTO intent without client count, bounded polling, valid binary download, one saved-layer refinement POST, ancestor/sibling preservation, undo/redo/reopen and390px layout; original core49 baseline passes. These are interaction checks, provider0.
+- Early integration before backend freeze exposed missing generatedPsdLayerMode export (6 service failures), one old UI receipt expectation, one unhandled JS heap OOM in contracts and health snapshot drift (429 AI pass/1 fail). Owners are correcting them; no push/build-success claim until the completed batch passes.
+- Independent synthetic frontend review started on loopback8768, health confirms no real backend/provider/auth. Existing8766 process preserved. Local preview is not an AI quality or durable database acceptance result.
+
 ## 2026-10-12 — startup fix CI green, cache follow-up locally validated, release held
 
 - Exact7b3c51c signed skipped push and whole CI38196332671 succeeded. Both source and built-container runs API95/UI16, including real restore with service workers blocked; immutable images published. No7b deployment occurred.

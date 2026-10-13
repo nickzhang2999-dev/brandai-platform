@@ -1,5 +1,14 @@
 # Novart product integration
 
+## Content-aware layering and recursive refinement · 2026-10-13
+
+- [complete] Explicit AUTO/MANUAL intent, old-task compatibility, worker semantic analysis and persistent once-only plan/decomposition claims.
+- [complete] Content-aware generation UI, advanced manual mode and persisted-layer refinement with original/sibling preservation.
+- [complete] Alpha>0 bounded PSD buffers, fixed writer and actual native2K/eight-layer file/readback proof; resource/deadline/access guards retained.
+- [complete local] Root integration: full L1 1294+34, AI441, independent typecheck/production build, core49 and semantic19 Chromium journeys pass. Normal guarded branch commit/push follows; new-SHA CI remains separate.
+- [complete] Independent local frontend preview8768 and development/source-difference logs. Synthetic UI/file proofs remain distinct from real model quality; no manual CDS/main/shared-data or unconfigured model calls.
+- [pending external] Company-configured real vision+decomposition quality acceptance and deployed complete Web/Worker/AI version with nullable planningJson migration; not claimed by local fixtures.
+
 ## DeepFlare branding · 2026-10-13
 
 - [complete] Apply user's corrected scope: logo and visible product name together; inspect original PDF-compatible AI and preserve source.

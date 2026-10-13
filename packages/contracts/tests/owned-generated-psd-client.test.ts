@@ -49,6 +49,16 @@ describe("owned automatic PSD client", () => {
     const fetcher = vi.fn().mockResolvedValue(response(generation, 202)); await setup(fetcher).submitGeneration(input);
     expect(JSON.parse(fetcher.mock.calls[0]?.[1].body)).toEqual(input); expect(fetcher).toHaveBeenCalledTimes(1);
   });
+  it("submits AUTO without a count and refuses an unrequested or manual receipt", async () => {
+    const { psdLayerCount: _unused, ...identity } = input;
+    const automatic = { ...identity, psdLayerMode: "AUTO" as const };
+    const fetcher = vi.fn().mockResolvedValue(response({ ...generation, psdLayerMode: "AUTO", psdLayerCount: null }, 202));
+    await setup(fetcher).submitGeneration(automatic);
+    expect(JSON.parse(fetcher.mock.calls[0]![1].body)).toEqual(automatic);
+    for (const value of [{ ...generation, psdLayerMode: null, psdLayerCount: null }, generation]) {
+      await expect(setup(vi.fn().mockResolvedValue(response(value, 202))).submitGeneration(automatic)).rejects.toMatchObject({ uncertain: true, code: "INVALID_RECEIPT" });
+    }
+  });
   it("validates the binary before returning a downloadable PSD", async () => {
     const bytes = psdHeader(), fetcher = vi.fn().mockResolvedValue(new Response(bytes, { headers: { "content-type": "image/vnd.adobe.photoshop", "content-length": String(bytes.length) } }));
     const value = await setup(fetcher).downloadPsd(decomposition as never);

@@ -120,6 +120,12 @@ export async function verifyStudioDecompositionBackend({ call, check, base, ws }
   await rejected("cross-origin layering is denied before accepting a task", "owner", endpoint, "POST", payload, 403, "https://foreign.invalid");
   await rejected("layer count outside the contract is rejected", "owner", endpoint, "POST", { ...payload, layerCount: 1 }, 422);
   await rejected("client cannot inject provider configuration into layering", "owner", endpoint, "POST", { ...payload, provider: "fal" }, 422);
+  const { layerCount: ignoredLayerCount, ...automaticSource } = payload;
+  const automaticPayload = { ...automaticSource, layerMode: "AUTO" };
+  await rejected("automatic content analysis refuses a client-selected count", "owner", endpoint, "POST", { ...automaticPayload, layerCount: 4 }, 422);
+  await rejected("viewer cannot submit automatic content analysis", "viewer", endpoint, "POST", automaticPayload, 403);
+  await rejected("cross-origin automatic content analysis is denied", "owner", endpoint, "POST", automaticPayload, 403, "https://foreign.invalid");
+  await rejected("unconfigured real provider cannot manufacture an automatic semantic plan", "owner", endpoint, "POST", automaticPayload, 503);
   for (const actor of ["owner", "editor"]) {
     const unavailable = await rejected(`${actor} receives explicit 503 without a real layer provider or durable task`, actor, endpoint, "POST", payload, 503);
     assert.ok(typeof unavailable.data?.error === "string" && unavailable.data.error.length > 0);

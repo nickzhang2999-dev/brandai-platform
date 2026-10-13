@@ -10,6 +10,8 @@ import { OwnedCanvas } from "./OwnedCanvas";
 import { OwnedWorkflowPanel } from "./OwnedWorkflowPanel";
 import { OwnedGenerationCard } from "./OwnedGenerationCard";
 import { OwnedLayerPanel } from "./OwnedLayerPanel";
+import { OwnedLayerOptions } from "./OwnedLayerOptions";
+import { matchesOwnedPsdSelection, ownedPsdSelection, type OwnedLayerMode } from "./owned-layer-options";
 import { generatedOwnedSourceShapeId, placeGeneratedOwnedLayers } from "./owned-generated-layer-placement";
 import { createOwnedWorkflowSession, type OwnedWorkflowSession, type WorkflowSessionState } from "./owned-workflow-session";
 import { useOwnedDraft } from "./use-owned-draft";
@@ -42,7 +44,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
   const [prompt, setPrompt] = useState("");
   const [ratio, setRatio] = useState<GenerationInput["sizeSelection"]["ratioKey"]>("1:1");
   const [quality, setQuality] = useState<"1K" | "2K">("1K");
-  const [preparePsd, setPreparePsd] = useState(false), [psdLayerCount, setPsdLayerCount] = useState(4);
+  const [preparePsd, setPreparePsd] = useState(false), [psdLayerMode, setPsdLayerMode] = useState<OwnedLayerMode>("AUTO"), [psdLayerCount, setPsdLayerCount] = useState(4);
   const psdSelectionRestored = useRef(false);
   const [submitting, setSubmitting] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -129,11 +131,11 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
       if (values[2].status === "fulfilled") {
         setGenerations(values[2].value);
         if (!psdSelectionRestored.current) {
-          const requested = generationOperation.current?.psdLayerCount ?? values[2].value[0]?.psdLayerCount;
-          setPreparePsd(!!requested); setPsdLayerCount(requested ?? 4); psdSelectionRestored.current = true;
+          const selection = ownedPsdSelection(generationOperation.current ?? values[2].value[0]);
+          setPreparePsd(selection.requested); setPsdLayerMode(selection.requested ? selection.mode : "AUTO"); setPsdLayerCount(selection.count); psdSelectionRestored.current = true;
         }
         const accepted = values[2].value.find(task => task.mutationId === generationOperation.current?.mutationId);
-        if (accepted && accepted.mode === generationMode.current) {
+        if (accepted && accepted.mode === generationMode.current && generationOperation.current && matchesOwnedPsdSelection(generationOperation.current, accepted)) {
           try { clearGenerationIntent(); } catch (error) { setNotice(messageOf(error)); }
         }
       }
@@ -167,7 +169,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
     pendingSave.current = null; saveBlocked.current = false;
     saveBusy.current = false; refreshBusy.current = false; uploadBusy.current = false; generationBusy.current = false; handoffBusy.current = false; taskFocusBusy.current = false;
     generationMode.current = null; setSelectedIds([]);
-    psdSelectionRestored.current = false; setPreparePsd(false); setPsdLayerCount(4);
+    psdSelectionRestored.current = false; setPreparePsd(false); setPsdLayerMode("AUTO"); setPsdLayerCount(4);
     uploadOperation.current = null; generationOperation.current = null; setPendingUpload(false); setPendingGeneration(false);
     recoveryRef.current = null; setGenerationRecoveryBlocked(false);
     try {
@@ -175,7 +177,8 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
       const pending = recovery.load();
       if (pending) {
         generationOperation.current = pending.input; generationMode.current = pending.mode; setPendingGeneration(true);
-        setPreparePsd(!!pending.input.psdLayerCount); setPsdLayerCount(pending.input.psdLayerCount ?? 4); psdSelectionRestored.current = true;
+        const selection = ownedPsdSelection(pending.input);
+        setPreparePsd(selection.requested); setPsdLayerMode(selection.requested ? selection.mode : "AUTO"); setPsdLayerCount(selection.count); psdSelectionRestored.current = true;
         setNotice("上一份创作的受理结果还未确认。原请求已保留，请查看任务或确认同一份回执；不会自动提交。");
       }
     } catch (error) { setGenerationRecoveryBlocked(true); setNotice(messageOf(error)); }
@@ -429,7 +432,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
         if (!writableRef.current || savedSequence.current !== sequence.current) throw new Error("画布已变化，请保存后重新提交。");
         if (!recoveryRef.current) throw new Error("浏览器暂不能保存创作确认记录，本次未提交。");
         const intent = recoveryRef.current.store({ mode: current.mode, input: { projectId, mutationId: crypto.randomUUID(), prompt: savedDraft.prompt.trim(), sizeSelection: { ratioKey: savedDraft.ratio, resolutionTier: savedDraft.quality }, workflowRevision: current.revision, documentRevision: saved.revision,
-          ...(preparePsd && current.mode === "generate" ? { psdLayerCount } : {}),
+          ...(preparePsd && current.mode === "generate" ? psdLayerMode === "AUTO" ? { psdLayerMode: "AUTO" as const } : { psdLayerMode: "MANUAL" as const, psdLayerCount } : {}),
           ...(needsFrame ? { outputFrameId: savedDraft.outputFrameId } : {}) } });
         generationOperation.current = intent.input; generationMode.current = intent.mode;
         setPendingGeneration(true);
@@ -529,11 +532,9 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
             <textarea aria-label="创作需求" className="min-h-40 w-full resize-y rounded-2xl border border-border bg-bg p-3 text-sm outline-none focus:border-primary" placeholder="想创作什么？" maxLength={4000} value={prompt} onChange={event => setPrompt(event.target.value)} onCompositionStart={draft.compositionStart} onCompositionEnd={draft.compositionEnd} disabled={!canEdit || pendingGeneration || submitting || generationRecoveryBlocked || !draft.ready || draft.blocked} />
             <div className="flex gap-2"><select aria-label="图片比例" className={button} value={ratio} disabled={!canEdit || pendingGeneration || submitting || generationRecoveryBlocked || !draft.ready || draft.blocked} onChange={event => setRatio(event.target.value as typeof ratio)}>{GenerationAspectRatioKey.options.filter(value => value !== "custom").map(value => <option key={value}>{value}</option>)}</select><select aria-label="图片画质" className={button} value={quality} disabled={!canEdit || pendingGeneration || submitting || generationRecoveryBlocked || !draft.ready || draft.blocked} onChange={event => setQuality(event.target.value as typeof quality)}><option>1K</option><option>2K</option></select></div>
             {workflow?.mode === "generate" && <div className="space-y-2 rounded-2xl bg-accent-soft p-3" data-testid="owned-psd-selection">
-              <div className="flex flex-wrap items-center gap-3"><label className="flex items-center gap-2 text-xs font-medium"><input type="checkbox" aria-label="同时准备可编辑PSD" className="h-4 w-4 accent-primary" checked={preparePsd} disabled={!canEdit || pendingGeneration || submitting || generationRecoveryBlocked || !draft.ready || draft.blocked} onChange={event => { psdSelectionRestored.current = true; setPreparePsd(event.target.checked); }} />同时准备可编辑PSD</label>
-                {preparePsd && <select aria-label="PSD图层数量" className={button} value={psdLayerCount} disabled={!canEdit || pendingGeneration || submitting || generationRecoveryBlocked || !draft.ready || draft.blocked} onChange={event => { psdSelectionRestored.current = true; setPsdLayerCount(Number(event.target.value)); }}>{Array.from({ length: 9 }, (_, index) => index + 2).map(value => <option key={value} value={value}>{value} 层</option>)}</select>}
-              </div>
-              {preparePsd && <><p className="text-xs leading-5 text-muted-fg">图片生成后自动分层，会额外使用模型额度。原图先可用，PSD 在后台准备。</p>
-                <p className="text-xs leading-5 text-muted-fg">当前 2K 方图建议选择 2 层；最终按实际像素尺寸校验，超限时不分层，原图仍保留。</p></>}
+              <label className="flex items-center gap-2 text-xs font-medium"><input type="checkbox" aria-label="同时准备可编辑PSD" className="h-4 w-4 accent-primary" checked={preparePsd} disabled={!canEdit || pendingGeneration || submitting || generationRecoveryBlocked || !draft.ready || draft.blocked} onChange={event => { psdSelectionRestored.current = true; setPreparePsd(event.target.checked); if (event.target.checked) setPsdLayerMode("AUTO"); }} />同时准备可编辑 PSD</label>
+              {preparePsd && <><OwnedLayerOptions mode={psdLayerMode} count={psdLayerCount} context="PSD" disabled={!canEdit || pendingGeneration || submitting || generationRecoveryBlocked || !draft.ready || draft.blocked} onMode={mode => { psdSelectionRestored.current = true; setPsdLayerMode(mode); }} onCount={count => { psdSelectionRestored.current = true; setPsdLayerCount(count); }} />
+                <p className="text-xs leading-5 text-muted-fg">{psdLayerMode === "AUTO" ? "图片保存后先做内容分析，再拆分图层，会额外使用分析与分层服务额度。" : "图片保存后按指定层数拆分，会额外使用分层服务额度。"}原图先可用，PSD 在后台准备。</p></>}
             </div>}
             <div className="text-xs text-muted-fg" data-testid="owned-draft-status" data-draft-state={draft.state}>{draft.error || (draft.state === "saved" ? "需求已保存" : draft.state === "saving" ? "正在保存需求…" : draft.dirty ? "需求有待保存修改" : "正在恢复需求…")}{["error", "loading"].includes(draft.state) && <button type="button" className="ml-2 underline" onClick={() => void draft.retry().catch(error => setNotice(messageOf(error)))}>重新确认需求</button>}</div>
             <OwnedWorkflowPanel key={projectId} state={workflowState} document={document} selectedIds={selectedIds} readOnly={!canEdit} frozen={pendingGeneration || submitting || generationRecoveryBlocked || !draft.ready || draft.blocked} outputFrameId={outputFrameId} onOutputFrameChange={setOutputFrameId} onCreateOutputFrame={createOutputFrame} onChange={changeWorkflow} onSave={() => void workflowRef.current?.save().catch(error => setNotice(messageOf(error)))} onRefresh={() => void refreshWorkflow()} onResolveConflict={choice => { try { workflowRef.current?.resolveConflict(choice); } catch (error) { setNotice(messageOf(error)); } }} />

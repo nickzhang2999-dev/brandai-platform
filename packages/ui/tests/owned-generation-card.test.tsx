@@ -8,7 +8,7 @@ import { createOwnedEditorApi, type GenerationTask, type GenerationCompliance } 
 // These tests do not exercise any real provider, storage, account or database.
 const image = { versionId: "fixture-version", assetId: "fixture-asset", assetSha256: "a".repeat(64), width: 16, height: 16, mimeType: "image/png" as const, url: "/api/workspaces/fixture-workspace/assets/fixture-asset/raw" };
 const task = (override: Partial<GenerationTask> = {}): GenerationTask => ({ mode: "generate", requestId: "fixture-request", mutationId: "94f32517-d416-46ea-b8a0-401fe8d4ed65", projectId: "fixture-project", generationId: "fixture-generation", status: "SUCCEEDED", progress: null,
-  expiresAt: "2099-01-01T00:00:00.000Z", archiveExpiresAt: "2099-01-02T00:00:00.000Z", archiveProcessingExpiresAt: null, displayText: "合成结果卡片交互", resultState: "READY", results: [image], error: null, archiveError: null, canRetryArchive: false, psdLayerCount: null, ...override });
+  expiresAt: "2099-01-01T00:00:00.000Z", archiveExpiresAt: "2099-01-02T00:00:00.000Z", archiveProcessingExpiresAt: null, displayText: "合成结果卡片交互", resultState: "READY", results: [image], error: null, archiveError: null, canRetryArchive: false, psdLayerCount: null, psdLayerMode: null, ...override });
 const check = (override: Partial<GenerationCompliance> = {}): GenerationCompliance => ({ taskId: "fixture-check", versionId: image.versionId, status: "SUCCEEDED", progress: 100, expiresAt: "2099-01-01T00:00:00.000Z", checkedImageSha256: image.assetSha256,
   report: { overall: "PASS", textResults: [{ level: "PASS", reason: "合成文字检查理由" }], visualResults: [{ level: "PASS", reason: "合成视觉检查理由", replacement: "合成建议" }], checkedAt: "2026-10-10T00:00:00.000Z" }, error: null, canRetry: false, ...override });
 const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json" } });
@@ -38,6 +38,20 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("owned generation card explicit actions", () => {
+  it("reads an AUTO PSD without inventing a layer count or submitting another paid request", async () => {
+    const f = fixture(task({ psdLayerMode: "AUTO" }), true, () => response({ projectId: "fixture-project", requestId: "fixture-request", requested: true, status: "PENDING", error: null, decomposition: null, downloadUrl: null }));
+    await settle(); expect(screen.getByTestId("owned-generated-psd").textContent).toContain("按内容自动分层");
+    expect(screen.getByTestId("owned-generated-psd").textContent).not.toContain("2 层");
+    expect(f.fetcher).toHaveBeenCalledTimes(1); expect(f.fetcher.mock.calls[0]![1].method).not.toBe("POST");
+    expect(f.submit).not.toHaveBeenCalled(); expect(f.onInsert).not.toHaveBeenCalled();
+  });
+  it("shows automatic-analysis failure while retaining the usable original image action", async () => {
+    fixture(task({ psdLayerMode: "AUTO" }), true, () => response({ projectId: "fixture-project", requestId: "fixture-request", requested: true, status: "FAILED", error: "内容分析服务未配置", decomposition: null, downloadUrl: null }));
+    await settle(); expect(screen.getByTestId("owned-generated-psd-status").textContent).toContain("内容分析服务未配置");
+    expect(screen.getByTestId("owned-generated-psd-status").textContent).toContain("生成图片仍保留");
+    expect((screen.getByRole("button", { name: "加入画布" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByRole("button", { name: "下载 PSD" })).toBeNull();
+  });
   it("does not automatically generate, inspect, archive or insert on mount/rerender", async () => {
     const f = fixture(task({ canRetryArchive: true })); await settle(); f.rerender(<OwnedGenerationCard {...f.props} task={{ ...f.props.task }} />); await settle();
     expect(f.fetcher).not.toHaveBeenCalled(); expect(f.submit).not.toHaveBeenCalled(); expect(f.archive).not.toHaveBeenCalled(); expect(f.inspect).not.toHaveBeenCalled(); expect(f.onInsert).not.toHaveBeenCalled();

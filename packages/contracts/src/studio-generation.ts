@@ -17,7 +17,11 @@ export const StudioGenerationInput = NativeProjectQueryInput.pick({ projectId: t
   documentRevision: z.number().int().min(0).max(2147483646),
   outputFrameId: StudioWorkflowTarget.shape.shapeId.optional(),
   psdLayerCount: z.number().int().min(2).max(10).optional(),
-}).strict();
+  psdLayerMode: z.enum(["AUTO", "MANUAL"]).optional(),
+}).strict().superRefine((input, context) => {
+  if ((input.psdLayerMode === "AUTO" && input.psdLayerCount !== undefined) || (input.psdLayerMode === "MANUAL" && input.psdLayerCount === undefined))
+    context.addIssue({ code: "custom", message: "AUTO chooses its own PSD count; MANUAL requires a count", path: ["psdLayerCount"] });
+});
 export const StudioGenerationQuery = NativeProjectQueryInput.pick({ projectId: true }).extend({
   requestId: NativeProjectQueryInput.shape.projectId.optional(),
 }).strict();
@@ -26,6 +30,7 @@ export const StudioGenerationArchiveRetryInput = StudioGenerationRetryInput;
 export const StudioGenerationView = z.object({
   mode: z.enum(["generate", "modify"]).default("generate"),
   psdLayerCount: z.number().int().min(2).max(10).nullable().default(null),
+  psdLayerMode: z.enum(["AUTO", "MANUAL"]).nullable().default(null),
   requestId: NativeProjectQueryInput.shape.projectId, mutationId: z.string().uuid(),
   projectId: NativeProjectQueryInput.shape.projectId, generationId: NativeProjectQueryInput.shape.projectId,
   status: z.enum(["PENDING", "RUNNING", "SUCCEEDED", "FAILED"]), progress: z.null(),

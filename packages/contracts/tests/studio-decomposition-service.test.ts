@@ -6,7 +6,7 @@ const f = vi.hoisted(() => ({ role: vi.fn(), project: vi.fn(), document: vi.fn()
   settings: vi.fn(), storage: vi.fn(), asset: vi.fn(), uploadReceipt: vi.fn(), generatedReceipt: vi.fn(),
   find: vi.fn(), findOrThrow: vi.fn(), findFirst: vi.fn(), list: vi.fn(), create: vi.fn(), updateMany: vi.fn(), update: vi.fn(), count: vi.fn(),
   transaction: vi.fn(), lock: vi.fn(), workspace: vi.fn(), user: vi.fn(), membership: vi.fn(), saved: vi.fn(),
-  queue: vi.fn(), readBytes: vi.fn(), inspect: vi.fn(), layer: vi.fn(), budget: vi.fn(), paid: vi.fn(), usage: vi.fn(),
+  queue: vi.fn(), readBytes: vi.fn(), inspect: vi.fn(), layer: vi.fn(), budget: vi.fn(), paid: vi.fn(), plan: vi.fn(), usage: vi.fn(),
   put: vi.fn(), get: vi.fn(), remove: vi.fn(), assetCreate: vi.fn(), linkCreate: vi.fn(),
   generationRequest: vi.fn(), archivedSource: vi.fn(),
 }));
@@ -25,9 +25,9 @@ vi.mock("../../../apps/web/src/lib/studio-generation-artifacts-image", () => ({
   STUDIO_ARTIFACT_MAX_BYTES: 32 * 1024 * 1024, artifactDeadline: (promise: unknown) => promise,
   readArtifactImageBytes: f.readBytes, inspectArtifactImage: f.inspect,
 }));
-vi.mock("../../../apps/web/src/lib/studio-decomposition-images", () => ({ inspectStudioLayer: f.layer, assertStudioLayerBudget: f.budget }));
+vi.mock("../../../apps/web/src/lib/studio-decomposition-images", () => ({ inspectStudioLayer: f.layer, assertStudioLayerBudget: f.budget, STUDIO_LAYER_TOTAL_PIXELS: 40_000_000 }));
 vi.mock("../../../apps/web/src/lib/studio-decomposition-queue", () => ({ enqueueStudioDecomposition: f.queue }));
-vi.mock("../../../apps/web/src/lib/ai", () => ({ ai: { decompose: f.paid } }));
+vi.mock("../../../apps/web/src/lib/ai", () => ({ ai: { decompose: f.paid, studioLayerPlan: f.plan } }));
 vi.mock("../../../apps/web/src/lib/usage", () => ({ recordUsage: f.usage }));
 vi.mock("../../../apps/web/src/lib/s3", () => ({ uploadBuffer: f.put, getObjectStream: f.get, deleteObject: f.remove }));
 vi.mock("../../../apps/web/src/lib/image-preview", () => ({ nodeStreamToBuffer: async (stream: Readable) => {
@@ -36,6 +36,7 @@ vi.mock("../../../apps/web/src/lib/image-preview", () => ({ nodeStreamToBuffer: 
 
 import { submitStudioDecomposition, submitGeneratedStudioDecomposition, readStudioDecompositions, retryStudioLayerArchive, runStudioDecomposition, readStudioLayerAsset } from "../../../apps/web/src/lib/studio-decomposition";
 import { encryptStudioBase, decryptStudioBase } from "../../../apps/web/src/lib/studio-generation-base";
+import { newStudioLayerPlanning } from "../../../apps/web/src/lib/studio-decomposition-planning";
 
 // This suite proves service decisions with simulated persistence, not a real
 // database/provider acceptance. Only the envelope crypto below runs unmocked.
@@ -67,7 +68,7 @@ function matches(value: any, where: any): boolean {
       if (op === "gt") return actual > target;
       if (op === "lte") return actual <= target;
       if (op === "lt") return actual < target;
-      if (op === "equals") return actual === (target === "DB_NULL" ? null : target);
+      if (op === "equals") return JSON.stringify(actual) === JSON.stringify(target === "DB_NULL" ? null : target);
       if (op === "not") return actual !== (target === "DB_NULL" ? null : target);
       throw new Error(`Unsupported fixture predicate ${op}`);
     });
@@ -127,6 +128,13 @@ describe("automatic PSD accepts only a real generated archive, never an unsaved 
     expect(first.requestId).toBe(replay.requestId); expect(first.sourceShapeId).toMatch(/^shape:generated-[a-f0-9]{40}$/);
     expect(f.create).toHaveBeenCalledOnce(); expect(f.document).not.toHaveBeenCalled(); expect(f.paid).not.toHaveBeenCalled();
     expect(f.generatedReceipt).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ workspaceId: "w", projectId: "p", status: "SUCCEEDED" }) }));
+  });
+  it("registers an AUTO generation continuation with no client count and a durable pending semantic plan", async () => {
+    const { generation } = automaticSource(); generation.jobData = { studioPsdLayerMode: "AUTO" } as any;
+    const received = await submitGeneratedStudioDecomposition("generation-request");
+    expect(received).toMatchObject({ layerMode: "AUTO", analysisStatus: "PENDING", analysisSummary: null });
+    expect(row().planningJson).toEqual(newStudioLayerPlanning("AUTO")); expect(row().layerCount).toBe(2);
+    await submitGeneratedStudioDecomposition("generation-request"); expect(f.create).toHaveBeenCalledOnce(); expect(f.paid).not.toHaveBeenCalled(); expect(f.plan).not.toHaveBeenCalled();
   });
   it("does not register or pay when PSD was unselected or the original archive is unavailable", async () => {
     const { generation } = automaticSource(); generation.jobData = {} as any;
@@ -321,5 +329,84 @@ describe("private raw layers: real AES and simulated storage", () => {
     if (scenario === "tamperedCiphertext") { const body = objects.get(key)!; body[body.length - 1] = body[body.length - 1]! ^ 1; }
     if (scenario === "wrongPlaintext") objects.set(key, encryptStudioBase(Buffer.from("other valid encrypted bytes"), { workspaceId: "w", projectId: "p", outputId: "request_0" }));
     await expect(readStudioLayerAsset("w", asset, signal())).rejects.toMatchObject({ status: 422 });
+  });
+});
+
+describe("semantic AUTO planning: simulated once-only paid boundaries, not model quality acceptance", () => {
+  const plan = (count = 3) => ({ revision: "semantic-layer-plan-r1", plan: { layerCount: count, summary: "检测到主体、文字与背景，可独立编辑。",
+    groups: Array.from({ length: count }, (_, index) => ({ name: `内容${index + 1}`, description: `可见组${index + 1}` })) },
+    usage: { provider: "HttpVLMProvider", model: "fixture-vision", latencyMs: 21 } });
+  beforeEach(() => {
+    f.settings.mockResolvedValue({ layer: { provider: "fal", apiKey: "synthetic-layer" }, vlm: { provider: "openai", apiKey: "synthetic-vision" } });
+    f.plan.mockResolvedValue(plan());
+    f.paid.mockResolvedValue({ ...result, layers: [...result.layers, { imageUrl: "https://private-provider.invalid/layer-2", width: 8, height: 8 }] });
+  });
+  it("chooses the actual count from a persisted image analysis before one decomposition call, independent of the placeholder", async () => {
+    seed({ planningJson: newStudioLayerPlanning("AUTO") });
+    await runStudioDecomposition("request"); await runStudioDecomposition("request");
+    expect(f.plan).toHaveBeenCalledOnce(); expect(f.paid).toHaveBeenCalledOnce();
+    expect(f.plan.mock.calls[0]![0]).toMatchObject({ maxLayers: 10, providerRetryPolicy: "never", imageUrl: expect.stringContaining("data:image/png;base64,") });
+    expect(f.paid.mock.calls[0]![0]).toMatchObject({ layerCount: 3, intent: expect.stringContaining("内容3"), providerRetryPolicy: "never" });
+    expect(row()).toMatchObject({ status: "SUCCEEDED", layerCount: 3, planningJson: { status: "SUCCEEDED", result: plan() } });
+    expect(await readStudioDecompositions("w", "u", { projectId: "p", requestId: "request" })).toMatchObject({ layerMode: "AUTO", analysisStatus: "SUCCEEDED", layerCount: 3, layers: expect.any(Array) });
+    expect(f.usage).toHaveBeenCalledWith(expect.objectContaining({ kind: "LAYER_PLAN", imageCount: 1, model: "fixture-vision" }));
+    expect(row().publishedLayers.every((layer: any) => !layer.name?.startsWith("内容"))).toBe(true);
+  });
+  it("resumes a persisted analysis after worker loss without another vision call", async () => {
+    seed({ layerCount: 3, planningJson: { ...newStudioLayerPlanning("AUTO"), status: "SUCCEEDED", startedAt: new Date().toISOString(), result: plan() } });
+    await runStudioDecomposition("request");
+    expect(f.plan).not.toHaveBeenCalled(); expect(f.paid).toHaveBeenCalledOnce(); expect(row().status).toBe("SUCCEEDED");
+  });
+  it("does not duplicate an ambiguous in-flight analysis delivery", async () => {
+    seed({ status: "RUNNING", planningJson: { ...newStudioLayerPlanning("AUTO"), status: "RUNNING", startedAt: new Date().toISOString() } });
+    await runStudioDecomposition("request");
+    expect(f.plan).not.toHaveBeenCalled(); expect(f.paid).not.toHaveBeenCalled(); expect(row().status).toBe("RUNNING");
+  });
+  it("single-attempt analysis errors preserve the original and cannot be retried automatically or downgraded to fixed count", async () => {
+    seed({ planningJson: newStudioLayerPlanning("AUTO") }); f.plan.mockRejectedValue(new Error("https://upstream.invalid/secret?token=fixture"));
+    await runStudioDecomposition("request"); await runStudioDecomposition("request");
+    expect(f.plan).toHaveBeenCalledOnce(); expect(f.paid).not.toHaveBeenCalled();
+    expect(row()).toMatchObject({ status: "FAILED", providerStartedAt: null, planningJson: { status: "FAILED" }, publishedLayers: [] });
+    expect(row().error).not.toMatch(/upstream|secret|token/);
+    expect(await readStudioDecompositions("w", "u", { projectId: "p", requestId: "request" })).toMatchObject({ layerMode: "AUTO", analysisStatus: "FAILED" });
+  });
+  it("unsupported or unsafe content plans do not enter the decomposition model", async () => {
+    seed({ planningJson: newStudioLayerPlanning("AUTO") }); f.plan.mockRejectedValue(new Error("图片服务请求失败（HTTP 422）"));
+    await runStudioDecomposition("request"); expect(f.paid).not.toHaveBeenCalled(); expect(row().error).toContain("未得到可靠的可拆分内容方案");
+  });
+  it("budgeted maximum is computed from native dimensions before calling the analysis and never silently downsamples", async () => {
+    seed({ sourceWidth: 2048, sourceHeight: 2048, planningJson: newStudioLayerPlanning("AUTO") });
+    f.inspect.mockResolvedValue({ sha256: digest(bytes), width: 2048, height: 2048, sizeBytes: bytes.length, mimeType: "image/png" });
+    f.plan.mockResolvedValue(plan(10)); await runStudioDecomposition("request");
+    expect(f.plan.mock.calls[0]![0].maxLayers).toBe(9); expect(f.paid).not.toHaveBeenCalled(); expect(row().status).toBe("FAILED");
+  });
+  it("rejects missing real vision configuration at AUTO intake and preserves manual legacy availability", async () => {
+    f.settings.mockResolvedValue({ layer: { provider: "fal", apiKey: "synthetic-layer" }, vlm: { provider: "mock", apiKey: "" } });
+    const { layerCount: _count, ...auto } = input;
+    await expect(submitStudioDecomposition("w", "u", { ...auto, layerMode: "AUTO" })).rejects.toMatchObject({ status: 503 });
+    expect(f.create).not.toHaveBeenCalled(); expect(f.plan).not.toHaveBeenCalled();
+    await submitStudioDecomposition("w", "u", input); expect(f.create).toHaveBeenCalledOnce();
+  });
+  it("accepts a verified published layer as a source, decrypts its exact bytes and checks its original ancestry", async () => {
+    const key = "w/studio-layer-assets/p/parent/attempt/0.bin";
+    const parent = seed({ id: "parent", status: "SUCCEEDED", publishedLayers: layers().map((value, index) => ({ ...value, assetId: `sdl_parent_${index}` })), objectKeys: [key] });
+    objects.set(key, encryptStudioBase(bytes, { workspaceId: "w", projectId: "p", outputId: "parent_0" }));
+    f.asset.mockImplementation(async ({ where }) => where.id === "sdl_parent_0"
+      ? { id: "sdl_parent_0", storageKey: key, sizeBytes: bytes.length, mimeType: "image/png" }
+      : { id: "source", storageKey: "w/source.png", sizeBytes: bytes.length, mimeType: "image/png" });
+    f.uploadReceipt.mockImplementation(async ({ where }) => where.assetId === "source" ? { objectKey: "w/source.png", width: 8, height: 8, sizeBytes: bytes.length, mimeType: "image/png" } : null);
+    seed({ assetId: "sdl_parent_0", sourceObjectKey: key, planningJson: newStudioLayerPlanning("AUTO") });
+    await runStudioDecomposition("request");
+    expect(row().status).toBe("SUCCEEDED"); expect(parent.status).toBe("SUCCEEDED"); expect(f.plan).toHaveBeenCalledOnce(); expect(f.get).toHaveBeenCalledWith(key, expect.any(AbortSignal));
+    expect(f.asset.mock.calls.some(([args]) => args.where.id === "source")).toBe(true);
+  });
+  it("an exact-material ancestor cannot be washed through a previously published child layer", async () => {
+    const key = "w/studio-layer-assets/p/parent/attempt/0.bin";
+    seed({ id: "parent", status: "SUCCEEDED", publishedLayers: layers().map((value, index) => ({ ...value, assetId: `sdl_parent_${index}` })), objectKeys: [key] });
+    f.asset.mockImplementation(async ({ where }) => ({ id: where.id, storageKey: where.id === "source" ? "w/source.png" : key, sizeBytes: bytes.length, mimeType: "image/png" }));
+    f.uploadReceipt.mockResolvedValue(null);
+    f.generatedReceipt.mockImplementation(async ({ where }) => where.assetId === "source" ? { objectKey: "w/source.png", width: 8, height: 8, sizeBytes: bytes.length, mimeType: "image/png", request: { jobData: { assetUsages: [{ mode: "EXACT" }] } } } : null);
+    seed({ assetId: "sdl_parent_0", sourceObjectKey: key, planningJson: newStudioLayerPlanning("AUTO") });
+    await runStudioDecomposition("request"); expect(row().status).toBe("FAILED"); expect(f.plan).not.toHaveBeenCalled(); expect(f.paid).not.toHaveBeenCalled();
   });
 });
