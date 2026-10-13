@@ -7,8 +7,9 @@ User requested continued integration after migration to `devUpdate1012`. Use thi
 - [complete] Confirm isolated runtime availability, provider configuration boundaries and exact-commit CI status: 7c83011 source/container backend95 + UI17 passed; local infrastructure is absent.
 - [complete] Prepare real HTTP/auth/database knowledge (16), source-preserving layer boundaries (23) and actual knowledge browser journeys (5); connect them to existing disposable acceptance.
 - [complete] Review the layer worker/storage/document path and fix the missing service-capability requirement with failing-then-passing regressions; no provider or shared-data calls.
-- [in_progress] Run the new real backend journeys in isolated CI. Current required local gates pass: L1 1158+28, AI421, typecheck/build. Normal guarded commit/push is the CI delivery path.
-- [pending] Update today's log, README and remaining external-configuration/acceptance gaps. Do not equate synthetic layers with actual model quality.
+- [complete] Run the new real backend journeys in isolated CI38346622593 on code5d2f51c: source and built containers each backend134/UI22 passed. Local L1 1158+28, AI421, typecheck/build also pass.
+- [complete] Update today's log, README and exact CI proof; preserve the distinction between real knowledge persistence and still-unverified layer-model quality.
+- [pending external configuration] Real single-image layer-model success, private layer archive/raw and editable result round trip require an independently configured real layer provider. Current remote configuration remains unverified; model calls0, no manual CDS operation.
 
 ## Current working area — 2026-10-13
 
