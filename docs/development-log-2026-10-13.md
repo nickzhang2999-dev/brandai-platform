@@ -27,6 +27,14 @@
 
 本地成果保存于 `D:/coding/.novart-tmp/devUpdate1012-psd-proof-20261013/`，包括 `Novart-synthetic-editable-layers.psd`、合成预览、独立 PNG 和报告。PSD SHA-256 为 `8fa53fa1a730e2a1a95c7855c678d280e3894eb96cd7a32776fe02ada510a8f4`。浏览器报告为 `devUpdate1012-auto-psd-browser-20261013.json`；四项门禁日志为 `devUpdate1012-auto-psd-{l1,ai,typecheck,build}-20261013.log`，均在 `.novart-tmp` 中。
 
+### 本轮实际云端结果
+
+代码 `f82ed27fc56acdc35c571027d7837554c256e850` 已正常推送并通过 [Actions 38355837716](https://github.com/nickzhang2999-dev/brandai-platform/actions/runs/38355837716)，最终 `completed / success`，后端 job `115158396116`。从实际日志核对两轮各 **Workbench backend 141、Owned studio UI 23** 项通过，API/UI exit 均为 0；源码和构建后 Web/Worker/AI 容器均执行了真实登录、数据库、上传 Worker/S3、画布与知识联调。新增 PSD 权限/作用域和默认开关检查已实际执行。
+
+自动 PSD fixture 及源码格式检查通过，构建后的 Web 容器也实际运行同一 PSD 写入/回读/隐藏层重合成检查，证明 `ag-psd` 与 Worker 打包依赖可用。完整仓库门禁、独立 Garage 存储镜像检查、Web/AI 镜像发布和一次性环境清理通过。镜像发布不等同于 CDS 预览或正式站更新，未操作 CDS。
+
+两轮真实性边界继续保持 `realKnowledge=true`、`realDecomposition=false`、`realGeneration=false`。本轮模型调用 0；不能用新增文件或交互样例宣布真实 AI 分层完成。安全摘录保存于 `D:/coding/.novart-tmp/devUpdate1012-auto-psd-ci-proof-20261013.json`，只含提交、run/job、计数与验证类别，不存凭据或原始业务日志。下文“提交准备时尚待云端”的句子是当时状态，最终执行结果以本节为准。
+
 ### 修正与待验收
 
 审阅修正了服务端与浏览器自动源 ID 不一致、导出请求的 workspace query hint、mutable outbox 被纳入不可变生成哈希、生成回执遗漏 PSD 选择核对，以及报错 JSON 被浏览器保存为文件等问题。初始 PSD 回读缺少 ImageData 分配器已补实际 RGBA 分配并重跑；浏览器 fixture CSS 覆盖错误已修且重跑，生产 CSS 未改。

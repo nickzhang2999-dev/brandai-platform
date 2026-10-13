@@ -219,6 +219,6 @@ Required before push: `pnpm test`, `pnpm test:ai`, `pnpm -F web typecheck`, `pnp
 - [complete] Reuse existing generation/decomposition and ag-psd: explicit immutable selection, stable server outbox continuation and scoped read-only progress.
 - [complete] Studio PSD download with authorization, durable layer checks, bounded terminable encoding; actual binary/alpha/ordering/composite and reopened hidden-layer render verified.
 - [complete] Generated/manual downloads, original preservation, refresh recovery and atomic editable-layer placement; 12 real-browser isolated interaction checks pass.
-- [complete locally; pending cloud] Full L1 1256+28, AI430, typecheck/build and existing49 canvas checks pass. Real HTTP/database/source-and-container checks are connected to CI but not yet run for this increment.
-- [complete documentation; pending delivery] README, feature SSOT and today's log updated with exact fixture/model boundary; normal guarded devUpdate1012 push after local gates.
+- [complete] Full L1 1256+28, AI430, typecheck/build and existing49 canvas checks pass. Exact codef82ed27 CI38355837716 completed success: source and built containers each real backend141/UI23, plus actual PSD writer/read/recompose in the packaged Web image.
+- [complete] Normal guarded devUpdate1012 push completed; README, feature SSOT and today's log record actual results and the separate fixture/model boundary. No manual CDS operations.
 - [pending external configuration] Real successful generated-image-to-model-layers-to-PSD quality acceptance requires an available real layer provider. No model download or paid call in this increment.
