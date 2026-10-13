@@ -711,5 +711,6 @@ NotificationKind = Literal["GENERATE", "EDIT", "RECOGNIZE", "PARSE_MANUAL", "DES
 AsyncTaskKind = Literal["RECOGNIZE", "PARSE_MANUAL", "EDIT", "DESCRIBE", "INGEST", "SUMMARIZE", "DECOMPOSE", "STUDIO_UPLOAD", "STUDIO_COMPLIANCE"]
 
 from .studio_generation_schemas import StudioGenerationInput, StudioGenerationQuery, StudioGenerationRetryInput, StudioGenerationArchiveRetryInput, StudioGenerationView
+from .studio_generated_psd_schemas import StudioGeneratedPsdQuery, StudioGeneratedPsdView
 from .studio_compliance_schemas import StudioGenerationComplianceInput, StudioGenerationComplianceQuery, StudioGenerationComplianceView
 from .studio_decomposition_schemas import StudioDecompositionInput, StudioDecompositionQuery, StudioDecompositionRetryInput, StudioDecompositionLayer, StudioDecompositionView

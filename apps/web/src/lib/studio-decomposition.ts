@@ -18,6 +18,8 @@ import { assertStudioLayerBudget, inspectStudioLayer } from "./studio-decomposit
 import { enqueueStudioDecomposition } from "./studio-decomposition-queue";
 import { ai } from "./ai";
 import { recordUsage } from "./usage";
+import { generatedPsdLayerCount, generatedPsdMutationId, generatedPsdSourceShapeId } from "./studio-generated-psd-state";
+import { assertStudioPsdBudget, StudioPsdEncodingError } from "./studio-psd-codec";
 
 type Row = Prisma.StudioDecompositionRequestGetPayload<object>;
 type Layer = z.infer<typeof StudioDecompositionLayer>;
@@ -143,6 +145,63 @@ export async function submitStudioDecomposition(workspaceId: string, userId: str
   await enqueueStudioDecomposition(row.id); return receipt(row);
 }
 
+/** Internal-only continuation of an accepted generation. The original image
+ * must have completed its real byte archive; no client URL/asset/geometry or
+ * current canvas selection is trusted. Missing model configuration is a
+ * separate durable worker failure and never rolls back the original image. */
+export async function submitGeneratedStudioDecomposition(generationRequestId: string) {
+  const generation = await prisma.studioGenerationRequest.findUnique({ where: { id: generationRequestId } });
+  if (!generation || generation.status !== "SUCCEEDED") throw new ApiException(409, "原图片尚未完成生成，暂不能准备 PSD。");
+  const layerCount = generatedPsdLayerCount(generation.jobData);
+  if (layerCount === null) throw new ApiException(409, "该次生成没有选择可编辑 PSD。");
+  const { workspaceId, userId, projectId } = generation;
+  await projectAccess(workspaceId, userId, projectId, true);
+  const scope = { workspaceId, userId, projectId, mutationId: generatedPsdMutationId(generation.id, generation.mutationId) };
+  const existing = await prisma.studioDecompositionRequest.findUnique({ where: { workspaceId_userId_projectId_mutationId: scope } });
+  if (existing) {
+    if (existing.layerCount !== layerCount) throw new ApiException(409, "自动 PSD 的受理层数已变化，未提交新模型任务。");
+    return receipt(existing);
+  }
+  const material = await prisma.studioGeneratedMaterial.findFirst({ where: { requestId: generation.id, workspaceId, userId, projectId, status: "SUCCEEDED" }, orderBy: { createdAt: "asc" } });
+  if (!material?.assetId || !material.sha256) throw new ApiException(409, "原图片尚未完成持久化，请等待保存结果。");
+  const source = await sourceAsset(workspaceId, projectId, material.assetId, material.sha256);
+  assertStudioLayerBudget(source.sourceWidth, source.sourceHeight, layerCount);
+  try { assertStudioPsdBudget(source.sourceWidth, source.sourceHeight, layerCount); }
+  catch (error) { if (error instanceof StudioPsdEncodingError) throw new ApiException(422, "这张图片的尺寸与层数超过 PSD 导出内存预算，未调用分层模型。请选择更少图层或更小尺寸。"); throw error; }
+  const input = StudioDecompositionInput.parse({ projectId, mutationId: scope.mutationId,
+    sourceShapeId: generatedPsdSourceShapeId(material.assetId), assetId: material.assetId,
+    assetSha256: material.sha256, documentRevision: generation.documentRevision, layerCount });
+  await expireStudioDecompositions(workspaceId);
+  const row = await prisma.$transaction(async tx => {
+    await tx.$queryRaw`SELECT pg_advisory_xact_lock(20261012, 3)::text`;
+    const duplicate = await tx.studioDecompositionRequest.findUnique({ where: { workspaceId_userId_projectId_mutationId: scope } });
+    if (duplicate) { if (duplicate.payloadHash !== hash(input)) throw new ApiException(409, "自动 PSD 请求来源已变化。"); return duplicate; }
+    const [local, global] = await Promise.all([
+      tx.studioDecompositionRequest.count({ where: { workspaceId, status: { in: ["PENDING", "RUNNING"] } } }),
+      tx.studioDecompositionRequest.count({ where: { status: { in: ["PENDING", "RUNNING"] } } }),
+    ]);
+    if (local >= 10 || global >= 100) throw new ApiException(429, "分层任务队列繁忙，原图片可继续使用。");
+    await tx.$queryRaw`SELECT "id" FROM "Project" WHERE "id"=${projectId} AND "workspaceId"=${workspaceId} FOR UPDATE`;
+    await actorInTransaction(tx, scope);
+    const [current, asset] = await Promise.all([
+      tx.studioGeneratedMaterial.findUnique({ where: { outputId: material.outputId } }),
+      tx.asset.findFirst({ where: { id: material.assetId!, workspaceId, deprecatedAt: null,
+        projectLinks: { some: { projectId, project: { workspaceId } } } } }),
+    ]);
+    if (!current || current.requestId !== generation.id || current.workspaceId !== workspaceId || current.projectId !== projectId || current.userId !== userId || current.status !== "SUCCEEDED"
+      || current.assetId !== material.assetId || current.sha256 !== material.sha256 || current.objectKey !== source.sourceObjectKey
+      || !asset || asset.storageKey !== source.sourceObjectKey || asset.sizeBytes !== source.sourceSizeBytes || asset.mimeType !== source.sourceMimeType) throw new ApiException(409, "原图片存储或归属已变化，未提交分层模型。");
+    return tx.studioDecompositionRequest.create({ data: { ...scope, ...source, payloadHash: hash(input),
+      sourceShapeId: input.sourceShapeId, assetId: input.assetId, assetSha256: input.assetSha256,
+      documentRevision: input.documentRevision, layerCount, intent: null,
+      expiresAt: new Date(Date.now() + STUDIO_DECOMPOSITION_TTL_MS) } });
+  }, { timeout: 10_000 });
+  // The DB row is the outbox. Redis delivery failure must not create a new
+  // mutation/provider claim or make a completed image fail.
+  await enqueueStudioDecomposition(row.id).catch(() => false);
+  return receipt(row);
+}
+
 export async function retryStudioLayerArchive(workspaceId: string, userId: string, raw: unknown) {
   const input = StudioDecompositionQuery.extend({ requestId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/) }).parse(raw);
   await projectAccess(workspaceId, userId, input.projectId, true); await expireStudioDecompositions(workspaceId);
@@ -197,11 +256,13 @@ export async function runStudioDecomposition(requestId: string) {
     }
     row = await prisma.studioDecompositionRequest.findUniqueOrThrow({ where: { id: requestId } });
     if (row.outputJson) await archiveLayers(row, signal);
-  } catch {
+  } catch (error) {
     // Never echo provider URLs, headers or prompts from an upstream exception.
     await prisma.studioDecompositionRequest.updateMany({ where: { id: requestId, expiresAt: originalDeadline,
       ...(ownedProviderClaim ? { status: "RUNNING", providerStartedAt: ownedProviderClaim, archiveToken: null } : { status: "PENDING", providerStartedAt: null }) },
-      data: { status: "FAILED", error: "AI 分层或图层保存未完成。原图片保持不变；已有模型结果可尝试重新保存，不会自动重复调用模型。", archiveToken: null, archivingStartedAt: null } });
+      data: { status: "FAILED", error: !ownedProviderClaim && error instanceof ApiException && error.status === 503
+        ? "真实分层服务或图层存储尚未配置。原图片已保留，可继续编辑或下载；自动 PSD 未完成，请联系管理员配置。"
+        : "AI 分层或图层保存未完成。原图片保持不变；已有模型结果可尝试重新保存，不会自动重复调用模型。", archiveToken: null, archivingStartedAt: null } });
   }
 }
 async function archiveLayers(row: Row, signal: AbortSignal) {

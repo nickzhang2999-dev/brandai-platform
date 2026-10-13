@@ -25,6 +25,9 @@ const nextConfig = {
   // Next appends this commit id to asset URLs so every deployed tree is atomic.
   deploymentId: resolveDeploymentId(),
   transpilePackages: ["@brandai/ui", "@brandai/contracts", "@brandai/db"],
+  // PSD encoding runs in a terminable Node worker. Keep the installed module
+  // available to that worker instead of bundling it into the Next handler.
+  serverExternalPackages: ["ag-psd"],
   images: {
     remotePatterns: [
       { protocol: "https", hostname: "**" },

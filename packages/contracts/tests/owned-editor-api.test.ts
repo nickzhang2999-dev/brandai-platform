@@ -28,7 +28,7 @@ describe("owned editor product API", () => {
   });
   it("retries only archival on the authenticated original task", async () => {
     const task = { mode: "generate", requestId: "gen-a", projectId: identity.projectId, mutationId, generationId: "g-a", status: "SUCCEEDED", progress: null,
-      expiresAt: "2099-01-01T00:00:00.000Z", archiveExpiresAt: "2099-01-01T00:00:00.000Z", archiveProcessingExpiresAt: null, displayText: "saved request", resultState: "PENDING", results: [], error: null, archiveError: null, canRetryArchive: false };
+      expiresAt: "2099-01-01T00:00:00.000Z", archiveExpiresAt: "2099-01-01T00:00:00.000Z", archiveProcessingExpiresAt: null, displayText: "saved request", resultState: "PENDING", results: [], error: null, archiveError: null, canRetryArchive: false, psdLayerCount: null };
     const fetcher = vi.fn().mockResolvedValue(response(task, 202));
     expect(await setup(fetcher).retryArchive("gen-a")).toEqual(task);
     expect(fetcher).toHaveBeenCalledTimes(1);

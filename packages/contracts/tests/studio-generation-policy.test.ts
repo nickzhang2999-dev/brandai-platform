@@ -23,6 +23,16 @@ beforeEach(() => {
   db = { workbenchProjectState: { findUnique: f.state }, editorDocument: { findUnique: f.doc }, asset: { findMany: f.assets }, prohibitionRule: { findMany: f.proh } };
 });
 describe("saved workflow selection to company generation", () => {
+  it("freezes the PSD selection but excludes mutable continuation state from the accepted provider context", async () => {
+    const accepted = await prepareStudioGeneration(db, "w", "u", { ...input, psdLayerCount: 2 });
+    expect(accepted.jobData.studioPsdLayerCount).toBe(2);
+    expect(accepted.jobData.studioGeneratedPsd).toMatchObject({ status: "PENDING" });
+    expect(await studioGenerationContextHash(db, "w", "p", { ...accepted.jobData,
+      studioGeneratedPsd: { status: "REGISTERED", decompositionRequestId: "d", error: null } })).toBe(accepted.contextHash);
+    expect(await studioGenerationContextHash(db, "w", "p", { ...accepted.jobData, studioPsdLayerCount: 3 })).not.toBe(accepted.contextHash);
+    const ordinary = await prepareStudioGeneration(db, "w", "u", input);
+    expect(ordinary.jobData).not.toHaveProperty("studioPsdLayerCount"); expect(ordinary.jobData).not.toHaveProperty("studioGeneratedPsd");
+  });
   it("freezes an authorized edit target in the existing quota preparation and revalidates its source independently of later canvas state", async () => {
     state.workflowMode = "modify"; state.workflowTarget = { shapeId: "shape:image", assetSha256: sha }; state.workflowReferences = [];
     const snapshot = { assetId: "a", sha256: sha, width: 20, height: 10, shapeId: "shape:image", recipeHash: "b".repeat(64) };

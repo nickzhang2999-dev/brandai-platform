@@ -1,21 +1,67 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import type { createOwnedEditorApi, GenerationTask, GenerationCompliance, PersistentImage } from "./owned-editor-api";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { createOwnedEditorApi, GenerationTask, GenerationCompliance, PersistentImage, GeneratedPsdTask, DecompositionTask } from "./owned-editor-api";
+import { downloadOwnedPsd } from "./owned-psd-download";
 
 type Props = { task: GenerationTask; api: ReturnType<typeof createOwnedEditorApi> | null; canEdit: boolean;
-  onTask(task: GenerationTask): void; onNotice(message: string): void; onInsert(image: PersistentImage): Promise<void> };
+  onTask(task: GenerationTask): void; onNotice(message: string): void; onInsert(image: PersistentImage): Promise<void>;
+  onInsertLayers?(task: DecompositionTask, source: PersistentImage): Promise<void> };
 const button = "rounded-full border border-border px-3 py-2 text-xs disabled:opacity-40";
 const explain = (error: unknown) => error instanceof Error ? error.message : "任务尚未确认，请刷新后继续。";
 const imageKey = (image: GenerationTask["results"][number]) => image.versionId + ":" + image.assetSha256;
 
 /** Reads only existing receipts. Archive/check retries are separate explicit
  * actions and never submit another image-generation request. */
-export function OwnedGenerationCard({ task, api, canEdit, onTask, onNotice, onInsert }: Props) {
+export function OwnedGenerationCard({ task, api, canEdit, onTask, onNotice, onInsert, onInsertLayers }: Props) {
   const alive = useRef(false), running = useRef(false), latest = useRef({ task, api, canEdit });
   latest.current = { task, api, canEdit };
   const [busy, setBusy] = useState(false), [checks, setChecks] = useState<Record<string, GenerationCompliance>>({});
+  const [psd, setPsd] = useState<GeneratedPsdTask | null>(null), [psdError, setPsdError] = useState(""), [psdReading, setPsdReading] = useState(false), [psdPaused, setPsdPaused] = useState(false);
+  const psdDeadline = useRef(0), psdReadBusy = useRef(false);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  const readPsd = useCallback(async () => {
+    const context = latest.current;
+    if (!context.api || !context.task.psdLayerCount || psdReadBusy.current) return;
+    psdReadBusy.current = true; setPsdReading(true);
+    try {
+      const receipt = await context.api.getGeneratedPsd(context.task.requestId, Math.max(1, Math.min(20000, psdDeadline.current - Date.now())));
+      if (!alive.current || latest.current.api !== context.api || latest.current.task.requestId !== context.task.requestId) return;
+      if (receipt.decomposition && receipt.decomposition.layerCount !== context.task.psdLayerCount) throw new Error("PSD 图层数量与本次创作不一致，请刷新确认。");
+      setPsd(receipt); setPsdError("");
+    } catch (error) {
+      if (alive.current && latest.current.api === context.api && latest.current.task.requestId === context.task.requestId) setPsdError(explain(error));
+    } finally {
+      if (latest.current.api === context.api && latest.current.task.requestId === context.task.requestId) { psdReadBusy.current = false; if (alive.current) setPsdReading(false); }
+    }
+  }, []);
+  useEffect(() => {
+    psdDeadline.current = Date.now() + 360000; psdReadBusy.current = false; setPsd(null); setPsdError(""); setPsdPaused(false);
+    if (task.psdLayerCount && api) void readPsd();
+  }, [task.requestId, task.psdLayerCount, api, readPsd]);
+  useEffect(() => {
+    if (!task.psdLayerCount || !api || !psd || !["PENDING", "RUNNING"].includes(psd.status) || psdError || psdPaused || psdReading) return;
+    const remaining = psdDeadline.current - Date.now();
+    if (remaining <= 0) { setPsdPaused(true); return; }
+    const timer = setTimeout(() => { if (Date.now() >= psdDeadline.current) setPsdPaused(true); else void readPsd(); }, Math.min(2500, remaining));
+    return () => clearTimeout(timer);
+  }, [task.psdLayerCount, api, psd, psdError, psdPaused, psdReading, readPsd]);
+  async function refreshPsd() { psdDeadline.current = Date.now() + 360000; setPsdPaused(false); await readPsd(); }
+  async function expandPsd() {
+    const context = latest.current, decomposition = psd?.decomposition;
+    if (!context.canEdit || !decomposition || psd?.status !== "READY" || !onInsertLayers) return;
+    const source = context.task.results.find(image => image.assetId === decomposition.assetId && image.assetSha256 === decomposition.assetSha256);
+    if (!source) throw new Error("PSD 原图与当前生成结果不一致，请刷新确认，图片仍保留。");
+    await onInsertLayers(decomposition, source);
+  }
+  async function downloadPsd() {
+    const context = latest.current, decomposition = psd?.decomposition;
+    if (!context.api || psd?.status !== "READY" || !decomposition) return;
+    const source = context.task.results.find(image => image.assetId === decomposition.assetId && image.assetSha256 === decomposition.assetSha256);
+    if (!source) throw new Error("PSD 原图与当前生成结果不一致，未下载文件，请刷新确认。");
+    await downloadOwnedPsd(context.api, decomposition);
+    if (alive.current && latest.current.api === context.api) onNotice("PSD 已下载，原图和图层仍保留。");
+  }
   async function action(work: () => Promise<void>) {
     if (!alive.current || running.current) return;
     running.current = true; setBusy(true);
@@ -45,6 +91,15 @@ export function OwnedGenerationCard({ task, api, canEdit, onTask, onNotice, onIn
     {task.mode === "modify" && <p className="text-xs text-muted-fg">整图修改 · 原图保留</p>}
     <p className="text-xs leading-5 text-muted-fg">{task.status === "FAILED" ? task.error : task.resultState === "READY" ? "图片已生成并保存" : task.resultState === "FAILED" ? task.archiveError || "生成结果保存失败" : task.status === "SUCCEEDED" ? "生成完成，正在保存图片" : task.status === "RUNNING" ? "正在生成…" : "已受理，排队中"}</p>
     {task.canRetryArchive && <button type="button" className={button} disabled={!canEdit || busy} onClick={() => void action(retryArchive)}>重试保存结果</button>}
+    {!!task.psdLayerCount && <div className="space-y-2 rounded-xl bg-accent-soft p-3" data-testid="owned-generated-psd" data-status={psd?.status ?? "LOADING"}>
+      <p className="text-xs font-semibold">可编辑 PSD · {task.psdLayerCount} 层</p>
+      <p role="status" className="text-xs leading-5 text-muted-fg" data-testid="owned-generated-psd-status">{psdError || (psdPaused ? "自动读取已暂停，任务仍在后台处理；可刷新确认。" : psd?.status === "READY" ? "PSD 图层已保存，可以下载或展开编辑。" : psd?.status === "FAILED" ? (psd.error || "PSD 准备未完成。") + " 生成图片仍保留。" : psd?.status === "RUNNING" ? "正在准备可编辑图层，原图可以先使用。" : psd?.status === "NOT_REQUESTED" ? "服务端尚未确认 PSD 请求，请刷新任务。" : "PSD 已请求，图片生成保存后将在后台准备。")}</p>
+      <div className="flex flex-wrap gap-2">
+        {psd?.status === "READY" && psd.downloadUrl && <button type="button" className={button + " bg-card"} disabled={!api || busy} onClick={() => void action(downloadPsd)} data-testid="owned-generated-psd-download">下载 PSD</button>}
+        {psd?.status === "READY" && onInsertLayers && <button type="button" className={button + " bg-card"} disabled={!canEdit || busy} onClick={() => void action(expandPsd)}>展开为可编辑图层</button>}
+        <button type="button" className={button + " bg-card"} disabled={!api || psdReading} onClick={() => void refreshPsd()}>{psdReading ? "正在读取 PSD…" : "刷新 PSD 进度"}</button>
+      </div>
+    </div>}
     {task.resultState === "READY" && task.results.map(image => {
       const check = checks[imageKey(image)];
       const label = !check ? "尚未读取品牌检查" : check.status === "FAILED" ? check.error : check.status === "NOT_REQUESTED" ? "图片尚未检查" : check.status === "SUCCEEDED" ? "品牌检查：" + (check.report?.overall === "PASS" ? "通过" : check.report?.overall === "RISK" ? "建议复核" : "需要调整") : "品牌检查处理中 · " + check.progress + "%";

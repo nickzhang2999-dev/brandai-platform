@@ -214,3 +214,11 @@ Required before push: `pnpm test`, `pnpm test:ai`, `pnpm -F web typecheck`, `pnp
 - Deployment steering: user requested current integration branch on CDS. Prebuilt images and real DB tests passed for b124ef1. Dedicated project creation requires approval (403 with original scoped key).
 - IMPORTANT: original project auto-deploy picked up both pushes and used shared infra. Additive document migration and seed ran. The integration branch is now stopped; main code/services unchanged. Do not push again until automated branch routing is resolved. Preserve audit in docs/novart-product-integration.md and avoid blind data rollback.
 - Historical deployment: independent CDS project 98cfea6cdcbd first ran ec5ff74 and later 8474347 with separate infrastructure. The temporary company webhook pause was subsequently proven unsafe on 2026-10-08 when delayed deployment followed restoration; it is not an accepted guard. Full frontend binding remains unaccepted.
+## Automatic layered PSD delivery · 2026-10-13
+
+- [complete] Reuse existing generation/decomposition and ag-psd: explicit immutable selection, stable server outbox continuation and scoped read-only progress.
+- [complete] Studio PSD download with authorization, durable layer checks, bounded terminable encoding; actual binary/alpha/ordering/composite and reopened hidden-layer render verified.
+- [complete] Generated/manual downloads, original preservation, refresh recovery and atomic editable-layer placement; 12 real-browser isolated interaction checks pass.
+- [complete locally; pending cloud] Full L1 1256+28, AI430, typecheck/build and existing49 canvas checks pass. Real HTTP/database/source-and-container checks are connected to CI but not yet run for this increment.
+- [complete documentation; pending delivery] README, feature SSOT and today's log updated with exact fixture/model boundary; normal guarded devUpdate1012 push after local gates.
+- [pending external configuration] Real successful generated-image-to-model-layers-to-PSD quality acceptance requires an available real layer provider. No model download or paid call in this increment.

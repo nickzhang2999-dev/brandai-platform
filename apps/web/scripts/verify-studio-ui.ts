@@ -364,6 +364,17 @@ try {
   let expectedDraft: DraftExpectation = { prompt: `草稿自动保存 ${run}\n中文第二行，不提交生成。`, ratio: "4:3", quality: "2K" };
   await frame.getByRole("button", { name: "生成", exact: true }).click();
   await expect(frame.getByRole("textbox", { name: "创作需求", exact: true })).toBeEnabled();
+  enter("real product automatic PSD controls do not submit a model task");
+  const psdChoice = frame.getByRole("checkbox", { name: "同时准备可编辑PSD", exact: true });
+  await expect(psdChoice).toBeEnabled(); await expect(psdChoice).not.toBeChecked();
+  await psdChoice.check();
+  const psdLayers = frame.getByRole("combobox", { name: "PSD图层数量", exact: true });
+  await expect(psdLayers).toHaveValue("4"); await psdLayers.selectOption("2");
+  await expect(psdLayers).toHaveValue("2"); await psdChoice.uncheck();
+  assert.equal(await prisma.studioDecompositionRequest.count({ where: { workspaceId: workspace.id, projectId } }), 0);
+  assert.equal(await prisma.generation.count({ where: { projectId } }), 0);
+  check("actual product offers explicit PSD selection and layer count without invoking generation or decomposition");
+  enter("unsent composer autosave and actual page-unload recovery");
   await frame.getByRole("textbox", { name: "创作需求", exact: true }).fill(expectedDraft.prompt);
   await frame.getByRole("combobox", { name: "图片比例", exact: true }).selectOption(expectedDraft.ratio);
   await frame.getByRole("combobox", { name: "图片画质", exact: true }).selectOption(expectedDraft.quality);

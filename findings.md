@@ -157,3 +157,8 @@ b778553 CI38036388613 success, backend95/UI15 plus container rechecks and public
 - Layer configuration is separate from ordinary image generation. Dedicated service capability gating is now implemented and regression-tested; real provider quality is still untested.
 - Exact-commit Actions run38344585370 succeeded on 7c83011; the source and built-container suites each passed backend95/UI17. New feature-specific real checks are connected for the next CI run, not inferred from that older success.
 - The next actual run38346622593 on5d2f51c completed success: both source and built containers backend134/UI22, including knowledge16/layer-preservation23/new knowledgeUI5. Actual report gates prove realKnowledge=true and realDecomposition=false. The prior pending statement is historical, not current acceptance status.
+## Automatic PSD reuse · 2026-10-13
+
+- Official Qwen-Image-Layered `src/app.py` implements image-to-RGBA layers and PSD/ZIP/PPTX writing. Its example uses CUDA/bfloat16; no model download or live inference has been performed here.
+- Existing company layer-set exporter already writes independent RGBA layers with ag-psd. New Studio layers are separate persistent records and require a new scoped export boundary rather than passing them through the old GenerationVersion URL.
+- A product skill is orchestration: generation, durable layer preparation and PSD writing remain actual executable steps. Paid decomposition is explicit opt-in per request, server-authoritative and must not automatically retry an uncertain model call.

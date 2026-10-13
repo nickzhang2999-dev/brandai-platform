@@ -87,6 +87,7 @@ jobs:
           NOVART_OWNED_LAYERS_ONLY=1 NOVART_OWNED_REPORT=apps/web/.novart-ui-artifacts/owned-layer-fixture.json node scripts/test-novart-owned-canvas-browser.cjs
           NOVART_KNOWLEDGE_REPORT=apps/web/.novart-ui-artifacts/brand-knowledge-fixture.json node scripts/test-novart-brand-knowledge-browser.cjs
           NOVART_LAYER_INBOX_REPORT=apps/web/.novart-ui-artifacts/layer-inbox-fixture.json node scripts/test-novart-layer-inbox.cjs
+          NOVART_AUTO_PSD_REPORT=apps/web/.novart-ui-artifacts/automatic-psd-fixture.json NOVART_AUTO_PSD_SCREENSHOT=apps/web/.novart-ui-artifacts/automatic-psd-fixture.png node scripts/test-novart-auto-psd-browser.cjs
           python - <<'PY'
           import json
           from pathlib import Path
@@ -100,7 +101,16 @@ jobs:
               assert len(report['checks']) == expected, name
               assert all(isinstance(check, str) or check['status'] == 'PASS' for check in report['checks']), name
               print(f'PASS {name}: {expected} isolated interaction checks; no real provider or database acceptance claimed')
+          report = json.loads((root / 'automatic-psd-fixture.json').read_text())
+          assert report['passed'] is True and report['isolated'] is True
+          assert report['realBackend'] is False and report['realProvider'] is False
+          assert report['providerCalls'] == 0 and len(report['checks']) >= 7
+          assert not report['externalRequests'] and not report['errors']
+          assert all(isinstance(check, str) or check['status'] == 'PASS' for check in report['checks'])
+          print('PASS automatic PSD selection, recovery and file-download interaction; isolated fixtures only')
           PY
+      - name: Write and read actual layered PSD format proof
+        run: NOVART_PSD_PROOF_DIR=.novart-ui-artifacts/psd-file-proof pnpm -F web exec tsx scripts/verify-studio-psd-file.ts
       - name: Generate and migrate the disposable database
         run: |
           pnpm db:generate
@@ -293,6 +303,9 @@ jobs:
           done
           test "$ready" = 1
           WORKBENCH_TEST_URL=http://127.0.0.1:3100 bash "$RUNNER_TEMP/novart-parallel-tests.sh"
+          # Prove the packaged ag-psd module and Worker writer are available in
+          # the actual built image, independently of real model acceptance.
+          docker exec novart-ci-web pnpm -F web exec tsx scripts/verify-studio-psd-file.ts
           python - <<'PY'
           import json, time, urllib.request
           from pathlib import Path
@@ -351,6 +364,11 @@ jobs:
             apps/web/.novart-ui-artifacts/owned-layer-fixture.json
             apps/web/.novart-ui-artifacts/brand-knowledge-fixture.json
             apps/web/.novart-ui-artifacts/layer-inbox-fixture.json
+            apps/web/.novart-ui-artifacts/automatic-psd-fixture.json
+            apps/web/.novart-ui-artifacts/automatic-psd-fixture.png
+            apps/web/.novart-ui-artifacts/psd-file-proof/*.json
+            apps/web/.novart-ui-artifacts/psd-file-proof/*.psd
+            apps/web/.novart-ui-artifacts/psd-file-proof/*.png
             apps/web/.novart-ui-artifacts/garage-container.json
             apps/web/.novart-ui-artifacts/port-3000/acceptance.json
             apps/web/.novart-ui-artifacts/port-3000/failure-runtime.json

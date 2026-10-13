@@ -11,6 +11,7 @@ import { listStudioProjectMaterials } from "./studio-project-materials";
 import { requireArtifactWrite } from "./studio-generation-artifacts";
 import { deriveStudioExactLayout } from "./studio-exact-geometry";
 import { resolveStudioEditSource, inspectStudioEditSource, assertStudioEditNotModelReference, type StudioEditSourceSnapshot } from "./studio-generation-edit";
+import { generatedPsdIntent } from "./studio-generated-psd-state";
 
 function canonical(value: unknown): unknown {
   if (value instanceof Date) return value.toISOString();
@@ -92,14 +93,16 @@ export async function prepareStudioGeneration(db: Prisma.TransactionClient, ws: 
   if (usages.length > 8 || new Set(usages.map(item => item.assetId)).size !== usages.length) throw new ApiException(422, "改图参考与继承的严格保留素材重复或合计超过8张，请调整素材用途。");
   const prepared = await prepareGeneration(ws, { ...CreateGenerationInput.parse({ projectId: input.projectId, sceneType: "SOCIAL_POSTER", sellingPoint: input.prompt,
     scene: "", chatDisplayText: "", versionCount: 1, textMode: "direct", sizeSelection: input.sizeSelection, assetUsages: usages }), chatDisplayText: input.prompt }, { client: db, persistHardBlock: false });
-  const jobData = { ...prepared.jobData, studioExpectedAssetSha256: Object.fromEntries(expectedDigests), ...(exactLayout ? { studioExactLayout: exactLayout } : {}), ...(edit ? { studioEdit: edit.snapshot } : {}) };
+  const jobData = { ...prepared.jobData, ...generatedPsdIntent(input.psdLayerCount), studioExpectedAssetSha256: Object.fromEntries(expectedDigests), ...(exactLayout ? { studioExactLayout: exactLayout } : {}), ...(edit ? { studioEdit: edit.snapshot } : {}) };
   return { ...prepared, jobData, contextHash: await studioGenerationContextHash(db, ws, input.projectId, jobData) };
 }
 
 /** A queued intent keeps its accepted selection while the user keeps editing.
  * Revalidate the authoritative sources and brand policy, not later canvas revisions. */
-export async function studioGenerationContextHash(db: Prisma.TransactionClient, ws: string, projectId: string, job: { assetUsages?: {assetId: string}[]; generationId?: string; studioExpectedAssetSha256?: Record<string, string>; studioEdit?: StudioEditSourceSnapshot }) {
-  const { generationId: _generationId, ...snapshot } = job;
+export async function studioGenerationContextHash(db: Prisma.TransactionClient, ws: string, projectId: string, job: { assetUsages?: {assetId: string}[]; generationId?: string; studioExpectedAssetSha256?: Record<string, string>; studioEdit?: StudioEditSourceSnapshot; studioGeneratedPsd?: unknown }) {
+  // The PSD choice is immutable and remains in the context hash. Its terminal
+  // continuation journal is operational state, never an accepted AI input.
+  const { generationId: _generationId, studioGeneratedPsd: _continuationJournal, ...snapshot } = job;
   const usages = job.assetUsages ?? [];
   if (job.studioEdit) await inspectStudioEditSource(db, ws, projectId, job.studioEdit);
   const [rules, prohibitions, assets] = await Promise.all([

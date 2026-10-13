@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const f = vi.hoisted(() => ({ transaction: vi.fn(), query: vi.fn(), gate: vi.fn(), read: vi.fn(), update: vi.fn(), updateMany: vi.fn(), output: vi.fn(), clearOutputs: vi.fn(), pending: vi.fn(), missing: vi.fn(), ensure: vi.fn(), enqueue: vi.fn(), settings: vi.fn(), bytes: vi.fn(), inspect: vi.fn(), process: vi.fn(), upload: vi.fn(), priorAsset: vi.fn(), logo: vi.fn(), asset: vi.fn(), version: vi.fn(), existingVersion: vi.fn(), link: vi.fn(), check: vi.fn(), enqueueCheck: vi.fn(), exact: vi.fn(), base: vi.fn(), editLock: vi.fn() }));
+const f = vi.hoisted(() => ({ transaction: vi.fn(), query: vi.fn(), gate: vi.fn(), read: vi.fn(), update: vi.fn(), updateMany: vi.fn(), output: vi.fn(), clearOutputs: vi.fn(), pending: vi.fn(), missing: vi.fn(), ensure: vi.fn(), enqueue: vi.fn(), settings: vi.fn(), bytes: vi.fn(), inspect: vi.fn(), process: vi.fn(), upload: vi.fn(), priorAsset: vi.fn(), logo: vi.fn(), asset: vi.fn(), version: vi.fn(), existingVersion: vi.fn(), link: vi.fn(), check: vi.fn(), enqueueCheck: vi.fn(), exact: vi.fn(), base: vi.fn(), editLock: vi.fn(), psd: vi.fn() }));
 vi.mock("../../db/src/index", () => ({ Prisma: {}, prisma: { $transaction: f.transaction,
   studioGeneratedMaterial: { updateMany: f.updateMany, findMany: f.pending }, studioGenerationOutput: { updateMany: f.clearOutputs }, studioGenerationRequest: { findMany: f.missing }, asset: { findUnique: f.priorAsset, findFirst: f.logo } } }));
 vi.mock("@/lib/queue", () => ({ connection: {}, queuePrefix: "test" }));
@@ -12,6 +12,7 @@ vi.mock("@/lib/studio-generation-artifacts-image", () => ({ artifactDeadline: as
 vi.mock("@/lib/studio-generation-artifacts-queue", () => ({ enqueueStudioArtifact: f.enqueue }));
 vi.mock("@/lib/studio-generation-compliance", () => ({ registerStudioGenerationCompliance: f.check }));
 vi.mock("@/lib/studio-generation-compliance-queue", () => ({ enqueueStudioCompliance: f.enqueueCheck }));
+vi.mock("@/lib/studio-generated-psd", () => ({ registerStudioGeneratedPsd: f.psd }));
 vi.mock("@/lib/studio-exact-image", () => ({ compositeStudioExactImage: f.exact }));
 vi.mock("@/lib/studio-generation-base", () => ({ storeStudioCleanBase: f.base, requireStudioBaseEncryption: vi.fn() }));
 vi.mock("@/lib/studio-generation-exact", async () => ({ ...await vi.importActual("../../../apps/web/src/lib/studio-generation-exact"), loadStudioExactAsset: vi.fn() }));
@@ -62,6 +63,16 @@ function enableExact() {
 }
 
 describe("generation archive worker (unit fixtures; no provider or remote storage)", () => {
+  it("starts an opted-in PSD only after a published original and isolates its failure from the image archive", async () => {
+    row.request.jobData = { studioPsdLayerCount: 2 };
+    f.psd.mockImplementation(async () => { expect(row.status).toBe("SUCCEEDED"); expect(row.assetId).toBeTruthy(); throw new Error("synthetic continuation outage"); });
+    await runStudioGenerationArtifactJob(job());
+    expect(f.psd).toHaveBeenCalledWith("request"); expect(row.status).toBe("SUCCEEDED"); expect(row.output.imageUrl).toBeNull();
+    expect(f.updateMany).not.toHaveBeenCalled();
+  });
+  it("never enters a PSD continuation for an unselected generation", async () => {
+    await runStudioGenerationArtifactJob(job()); expect(row.status).toBe("SUCCEEDED"); expect(f.psd).not.toHaveBeenCalled();
+  });
   it("archives edits as new roots with authorized source provenance, never an invalid cross-generation parent", async () => {
     const source = { assetId: "source", sha256: sha, width: 48, height: 32, shapeId: "shape:source", recipeHash: "b".repeat(64), versionId: "old-version", outputId: "old-output", sourceGenerationId: "old-generation" };
     row.output.params.imageKind = "EDITED"; row.output.params.studioPostprocess.editSource = source;

@@ -38,12 +38,15 @@ class StudioGenerationInput(StrictModel):
     workflowRevision: int = Field(ge=0, le=2147483646)
     documentRevision: int = Field(ge=0, le=2147483646)
     outputFrameId: ShapeId | None = None
+    psdLayerCount: int | None = Field(default=None, ge=2, le=10, strict=True)
 
     @model_validator(mode="before")
     @classmethod
     def no_null_frame(cls, value):
-        if isinstance(value, dict) and "outputFrameId" in value and value["outputFrameId"] is None:
-            raise ValueError("outputFrameId must be omitted, not null")
+        if isinstance(value, dict):
+            for key in ("outputFrameId", "psdLayerCount"):
+                if key in value and value[key] is None:
+                    raise ValueError(f"{key} must be omitted, not null")
         return value
 
     @field_validator("prompt", mode="before")
@@ -79,6 +82,7 @@ class StudioGenerationResult(StrictModel):
 
 class StudioGenerationView(StrictModel):
     mode: Literal["generate", "modify"] = "generate"
+    psdLayerCount: int | None = Field(default=None, ge=2, le=10, strict=True)
     requestId: ProjectId
     mutationId: MutationId
     projectId: ProjectId

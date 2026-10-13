@@ -143,6 +143,13 @@ export async function runStudioGenerationArtifactJob(job: Job<{ outputId: string
     // The committed task is the outbox. A queue outage cannot roll back a
     // published picture or cause the image provider to be called again.
     if (check.status === "PENDING" && check.jobId) await enqueueStudioCompliance(check.id, check.jobId).catch(() => false);
+    // The immutable selection is in the already accepted request. Only after
+    // real source bytes are published may its independent PSD continuation
+    // enqueue. Import lazily: ordinary generation never enters this pipeline.
+    if (object(row.request.jobData).studioPsdLayerCount !== undefined) {
+      await import("@/lib/studio-generated-psd")
+        .then(module => module.registerStudioGeneratedPsd(row.request.id)).catch(() => undefined);
+    }
   } catch (error) {
     const terminal = error instanceof ApiException || row.expiresAt.getTime() <= Date.now() || job.attemptsMade + 1 >= (job.opts.attempts ?? 1);
     const updated = await prisma.studioGeneratedMaterial.updateMany({ where: { outputId, status: "RUNNING", attemptToken: token },

@@ -29,3 +29,4 @@ export * from "./studio-generation";
 export * from "./studio-compliance";
 export * from "./studio-edit";
 export * from "./studio-decomposition";
+export * from "./studio-generated-psd";

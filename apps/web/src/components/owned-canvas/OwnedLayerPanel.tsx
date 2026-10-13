@@ -6,6 +6,7 @@ import { requireOwnedLayerSource } from "../../lib/owned-canvas-decomposition";
 import { NovartApiError } from "../../lib/novart-api-client";
 import { createOwnedLayerRecovery } from "./owned-layer-recovery";
 import type { createOwnedEditorApi, DecompositionInput, DecompositionTask } from "./owned-editor-api";
+import { downloadOwnedPsd } from "./owned-psd-download";
 
 type Api = ReturnType<typeof createOwnedEditorApi>;
 type Props = {
@@ -110,6 +111,13 @@ export function OwnedLayerPanel({ api, workspaceId, projectId, userId, document,
     catch (error) { if (current(expected)) setNotice(message(error)); }
     finally { if (current(expected)) { serial.current = false; setBusy(false); } }
   }
+  async function download(task: DecompositionTask) {
+    const expected = activeApi.current; if (!expected || serial.current || task.status !== "SUCCEEDED") return;
+    serial.current = true; setBusy(true);
+    try { await downloadOwnedPsd(expected, task); if (current(expected)) setNotice("PSD 已下载，原图和图层仍保留。"); }
+    catch (error) { if (current(expected)) setNotice(message(error)); }
+    finally { if (current(expected)) { serial.current = false; setBusy(false); } }
+  }
   return <section className="space-y-4" aria-label="AI 分层" data-testid="owned-layer-panel">
     <div><h2 className="text-sm font-semibold">AI 分层</h2><p className="mt-1 text-xs leading-5 text-muted-fg">把图片拆成可分别编辑的透明图层，保留原图。分层会使用模型额度，提交前可调整层数。</p></div>
     <p className="text-xs leading-5 text-muted-fg">{sourceError || "已选择原图片。原图和全部结果分别保存，完成后由你展开。"}</p>
@@ -123,7 +131,9 @@ export function OwnedLayerPanel({ api, workspaceId, projectId, userId, document,
       <div className="flex justify-between text-xs"><strong>{task.layerCount} 层分解</strong><span>{task.status === "SUCCEEDED" ? "图层已保存" : task.status === "FAILED" ? "未完成" : Date.parse(task.expiresAt) <= Date.now() ? "等待确认超时" : task.status === "RUNNING" ? "正在分层" : "等待处理"}</span></div>
       {task.error && <p role="alert" className="text-xs leading-5 text-muted-fg">{task.error}</p>}
       {task.layers.length > 0 && <div className="grid grid-cols-2 gap-2">{task.layers.map(layer => <div key={layer.assetId} className="rounded-xl bg-muted p-2"><img src={layer.url} alt={"图层 " + (layer.order + 1)} loading="lazy" className="aspect-square w-full object-contain" /><p className="mt-1 text-xs text-muted-fg">图层 {layer.order + 1}</p></div>)}</div>}
-      {task.status === "SUCCEEDED" && <button type="button" className={control + " w-full"} disabled={readOnly || busy} onClick={() => void place(task)}>展开为可编辑图层</button>}
+      {task.status === "SUCCEEDED" && <div className="flex flex-wrap gap-2"><button type="button" className={control} disabled={readOnly || busy} onClick={() => void place(task)}>展开为可编辑图层</button>
+        {api && <button type="button" className={control} disabled={busy} onClick={() => void download(task)} data-testid="owned-layer-psd-download">下载 PSD</button>}
+      </div>}
       {task.canRetryArchive && <button type="button" className={control} disabled={readOnly || busy} onClick={() => void retryArchive(task)}>重新保存已有图层</button>}
     </article>)}
   </section>;

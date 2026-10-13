@@ -8,6 +8,12 @@ def body():
 def test_intent_and_trim():
     assert StudioGenerationInput.model_validate(body()).prompt == "tree"
     assert StudioGenerationInput.model_validate(body() | dict(outputFrameId="shape:frame")).outputFrameId == "shape:frame"
+    assert StudioGenerationInput.model_validate(body()).psdLayerCount is None
+    assert StudioGenerationInput.model_validate(body() | dict(psdLayerCount=4)).psdLayerCount == 4
+
+@pytest.mark.parametrize("value", [None, 0, 1, 11, 2.5, "2", True])
+def test_psd_layer_count_is_explicit_optional_bounded_integer(value):
+    with pytest.raises(ValidationError): StudioGenerationInput.model_validate(body() | dict(psdLayerCount=value))
 
 @pytest.mark.parametrize("value", [None, "frame", "shape:f\n", {"x": 2}])
 def test_frame_is_optional_identity_not_geometry(value):

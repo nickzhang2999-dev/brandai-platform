@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { StudioGenerationInput, StudioGenerationView, StudioGenerationComplianceView, StudioMaterial, StudioMaterialUploadView, StudioWorkflowView, StudioWorkflowAssets, StudioWorkflowSaveInput } from "@brandai/contracts";
+import { StudioGenerationInput, StudioGenerationView, StudioGenerationComplianceView, StudioMaterial, StudioMaterialUploadView, StudioWorkflowView, StudioWorkflowAssets, StudioWorkflowSaveInput, StudioGeneratedPsdView } from "@brandai/contracts";
 import { createDocumentSession, createNovartApiClient, NovartApiError } from "../../lib/novart-api-client";
 import { StudioDecompositionInput, StudioDecompositionView } from "../../../../../packages/contracts/src/studio-decomposition";
 
@@ -14,6 +14,7 @@ export type GenerationInput = z.infer<typeof StudioGenerationInput>;
 export type PersistentImage = Pick<Material, "assetId" | "assetSha256" | "width" | "height" | "url"> & { versionId?: string; fileName?: string };
 export type DecompositionTask = z.infer<typeof StudioDecompositionView>;
 export type DecompositionInput = z.infer<typeof StudioDecompositionInput>;
+export type GeneratedPsdTask = z.infer<typeof StudioGeneratedPsdView>;
 
 /** Every request remains pinned to the authenticated page's brand and user.
  * X-Novart-User is an identity-consistency hint; the server still authenticates
@@ -74,6 +75,24 @@ export function createOwnedEditorApi(workspaceId: string, projectId: string, use
     value.layers.forEach(image);
     return value;
   }
+  function decompositionExportUrl(value: DecompositionTask) {
+    decomposition(value);
+    if (value.status !== "SUCCEEDED") throw new NovartApiError("图层尚未完整保存，暂不能下载 PSD。", 422);
+    return `/api/workspaces/${encodeURIComponent(workspaceId)}/studio/decomposition/${encodeURIComponent(value.requestId)}/export?` + new URLSearchParams({ projectId, format: "psd" });
+  }
+  function generatedPsd(value: GeneratedPsdTask, requestId: string) {
+    if (value.projectId !== projectId || value.requestId !== requestId || value.requested === (value.status === "NOT_REQUESTED")) throw new NovartApiError("PSD 任务回执与当前项目不一致。", 422);
+    if (value.decomposition) decomposition(value.decomposition);
+    if (value.status === "READY") {
+      if (!value.decomposition || !value.downloadUrl) throw new NovartApiError("PSD 图层还未确认保存，请刷新任务。", 422);
+      const expected = decompositionExportUrl(value.decomposition), received = new URL(value.downloadUrl, origin), target = new URL(expected, origin);
+      if (received.origin !== origin || received.username || received.password || received.hash || received.pathname !== target.pathname
+        || received.searchParams.size !== 2 || received.searchParams.get("projectId") !== projectId || received.searchParams.get("format") !== "psd") throw new NovartApiError("PSD 下载地址不属于当前项目。", 422);
+      return { ...value, downloadUrl: expected };
+    }
+    if (value.downloadUrl !== null || !value.requested && (value.decomposition !== null || value.error !== null)) throw new NovartApiError("PSD 回执尚未完整确认。", 422);
+    return value;
+  }
   const getUpload = async (taskId: string, timeoutMs = 20000) => {
     const value = upload(await request(endpoint("/studio/material-upload", { taskId }), StudioMaterialUploadView, {}, timeoutMs));
     if (value.taskId !== taskId) throw new NovartApiError("上传任务回执与请求不一致。", 422);
@@ -85,7 +104,48 @@ export function createOwnedEditorApi(workspaceId: string, projectId: string, use
     return value;
   };
   return {
-    api, session, image, readWorkflow,
+    api, session, image, readWorkflow, decompositionExportUrl,
+    async getGeneratedPsd(requestId: string, timeoutMs = 20000) {
+      return generatedPsd(await request(endpoint(`/api/workspaces/${encodeURIComponent(workspaceId)}/studio/generated-psd`, { requestId }), StudioGeneratedPsdView, {}, timeoutMs), requestId);
+    },
+    async downloadPsd(task: DecompositionTask) {
+      const path = decompositionExportUrl(task), controller = new AbortController(), timer = setTimeout(() => controller.abort(), 60000);
+      const maximum = 96 * 1024 * 1024;
+      try {
+        const response = await scopedFetch(path, { signal: controller.signal });
+        if (!response.ok) {
+          const body = await response.json().catch(() => null);
+          throw new NovartApiError(typeof body?.error === "string" ? body.error : "PSD 导出未完成，请稍后重试，原图和图层仍保留。", response.status);
+        }
+        const contentType = response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase();
+        const declaredLength = response.headers.get("content-length");
+        if (!["image/vnd.adobe.photoshop", "application/octet-stream", "application/vnd.adobe.photoshop"].includes(contentType ?? "")
+          || declaredLength !== null && (!/^\d+$/.test(declaredLength) || Number(declaredLength) > maximum || Number(declaredLength) < 26)) {
+          await response.body?.cancel(); throw new NovartApiError("PSD 响应格式或文件大小不正确，原图和图层仍保留。", 422);
+        }
+        const reader = response.body?.getReader();
+        if (!reader) throw new NovartApiError("PSD 文件尚未返回，请稍后重试。", 422);
+        const chunks: Uint8Array<ArrayBuffer>[] = []; let total = 0;
+        try {
+          while (true) {
+            const part = await reader.read(); if (part.done) break;
+            total += part.value.byteLength;
+            if (total > maximum || controller.signal.aborted || options.signal?.aborted) throw new NovartApiError("PSD 下载超过限制或已中止，原图和图层仍保留。", 422);
+            chunks.push(new Uint8Array(part.value));
+          }
+        } catch (error) { await reader.cancel().catch(() => undefined); throw error; }
+        if (declaredLength !== null && Number(declaredLength) !== total || total < 26) throw new NovartApiError("PSD 下载不完整，请重试，原图和图层仍保留。", 422);
+        const blob = new Blob(chunks, { type: "image/vnd.adobe.photoshop" }), header = new Uint8Array(await blob.slice(0, 26).arrayBuffer());
+        const view = new DataView(header.buffer), signature = new TextDecoder().decode(header.slice(0, 4));
+        if (signature !== "8BPS" || view.getUint16(4) !== 1 || header.slice(6, 12).some(value => value !== 0)
+          || view.getUint16(12) < 1 || view.getUint16(12) > 56 || view.getUint32(14) !== task.sourceHeight || view.getUint32(18) !== task.sourceWidth
+          || view.getUint16(22) !== 8 || view.getUint16(24) !== 3) throw new NovartApiError("PSD 文件头或原图尺寸不正确，未下载错误文件。", 422);
+        return { blob, fileName: `novart-${task.requestId}.psd` };
+      } catch (error) {
+        if (error instanceof NovartApiError) throw error;
+        throw new NovartApiError(controller.signal.aborted ? "PSD 导出超时，请稍后重试，原图和图层仍保留。" : "PSD 下载中断，原图和图层仍保留。", null);
+      } finally { clearTimeout(timer); }
+    },
     listDecompositions: async () => (await request(endpoint("/studio/decomposition"), z.object({ requests: z.array(StudioDecompositionView) }).strict())).requests.map(decomposition),
     async getDecomposition(requestId: string) {
       const value = decomposition(await request(endpoint("/studio/decomposition", { requestId }), StudioDecompositionView));
@@ -178,7 +238,7 @@ export function createOwnedEditorApi(workspaceId: string, projectId: string, use
       const receipt = await request(endpoint("/studio/generation"), StudioGenerationView, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       try {
         const value = generation(receipt);
-        if (value.mutationId !== payload.mutationId) throw new Error("生成回执与本次需求不一致，请刷新任务确认。");
+        if (value.mutationId !== payload.mutationId || (value.psdLayerCount ?? null) !== (payload.psdLayerCount ?? null)) throw new Error("生成回执与本次需求或 PSD 选择不一致，请刷新任务确认。");
         return value;
       } catch (error) {
         // The server accepted the POST. A foreign or inconsistent reply is not

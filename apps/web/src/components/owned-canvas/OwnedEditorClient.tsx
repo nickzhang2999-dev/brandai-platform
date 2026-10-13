@@ -10,7 +10,7 @@ import { OwnedCanvas } from "./OwnedCanvas";
 import { OwnedWorkflowPanel } from "./OwnedWorkflowPanel";
 import { OwnedGenerationCard } from "./OwnedGenerationCard";
 import { OwnedLayerPanel } from "./OwnedLayerPanel";
-import { placeOwnedLayers } from "../../lib/owned-canvas-decomposition";
+import { generatedOwnedSourceShapeId, placeGeneratedOwnedLayers } from "./owned-generated-layer-placement";
 import { createOwnedWorkflowSession, type OwnedWorkflowSession, type WorkflowSessionState } from "./owned-workflow-session";
 import { useOwnedDraft } from "./use-owned-draft";
 import { createOwnedGenerationRecovery, OwnedGenerationRecoveryError } from "./owned-generation-recovery";
@@ -41,6 +41,8 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
   const [prompt, setPrompt] = useState("");
   const [ratio, setRatio] = useState<GenerationInput["sizeSelection"]["ratioKey"]>("1:1");
   const [quality, setQuality] = useState<"1K" | "2K">("1K");
+  const [preparePsd, setPreparePsd] = useState(false), [psdLayerCount, setPsdLayerCount] = useState(4);
+  const psdSelectionRestored = useRef(false);
   const [submitting, setSubmitting] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -125,6 +127,10 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
       if (values[1].status === "fulfilled") setUploads(values[1].value);
       if (values[2].status === "fulfilled") {
         setGenerations(values[2].value);
+        if (!psdSelectionRestored.current) {
+          const requested = generationOperation.current?.psdLayerCount ?? values[2].value[0]?.psdLayerCount;
+          setPreparePsd(!!requested); setPsdLayerCount(requested ?? 4); psdSelectionRestored.current = true;
+        }
         const accepted = values[2].value.find(task => task.mutationId === generationOperation.current?.mutationId);
         if (accepted && accepted.mode === generationMode.current) {
           try { clearGenerationIntent(); } catch (error) { setNotice(messageOf(error)); }
@@ -160,6 +166,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
     pendingSave.current = null; saveBlocked.current = false;
     saveBusy.current = false; refreshBusy.current = false; uploadBusy.current = false; generationBusy.current = false; handoffBusy.current = false; taskFocusBusy.current = false;
     generationMode.current = null; setSelectedIds([]);
+    psdSelectionRestored.current = false; setPreparePsd(false); setPsdLayerCount(4);
     uploadOperation.current = null; generationOperation.current = null; setPendingUpload(false); setPendingGeneration(false);
     recoveryRef.current = null; setGenerationRecoveryBlocked(false);
     try {
@@ -167,6 +174,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
       const pending = recovery.load();
       if (pending) {
         generationOperation.current = pending.input; generationMode.current = pending.mode; setPendingGeneration(true);
+        setPreparePsd(!!pending.input.psdLayerCount); setPsdLayerCount(pending.input.psdLayerCount ?? 4); psdSelectionRestored.current = true;
         setNotice("上一份创作的受理结果还未确认。原请求已保留，请查看任务或确认同一份回执；不会自动提交。");
       }
     } catch (error) { setGenerationRecoveryBlocked(true); setNotice(messageOf(error)); }
@@ -292,11 +300,14 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
       || pendingSave.current || saveBlocked.current) throw new Error("画布保存尚未确认，请先保存后再提交分层。");
     return { document: docRef.current, revision: saved.revision };
   }
-  async function insertLayers(task: DecompositionTask) {
+  async function insertLayers(task: DecompositionTask, suppliedSource?: PersistentImage) {
     const api = apiRef.current;
     if (!api || !writableRef.current || !docRef.current) throw new Error("当前画布不可编辑，图层仍保存在任务中。");
     if (task.projectId !== projectId || task.status !== "SUCCEEDED" || task.layers.length < 2
       || task.layers.reduce((sum, layer) => sum + layer.width * layer.height, 0) > 40_000_000) throw new Error("图层还未完整保存或超过画布内存预算。");
+    let source = suppliedSource;
+    if (task.sourceShapeId === await generatedOwnedSourceShapeId(task.assetId) && !source) source = (await api.listMaterials()).find(image => image.assetId === task.assetId && image.assetSha256 === task.assetSha256);
+    if (source) api.image(source);
     // Decode sequentially instead of allocating every full-resolution raster
     // at once. The overall wait has an exit even when image responses stall.
     const deadline = Date.now() + 60_000;
@@ -313,7 +324,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
     }
     const before = docRef.current;
     if (!before) throw new Error("画布尚未准备完成。");
-    const placed = await placeOwnedLayers(before, task, workspaceId);
+    const placed = await placeGeneratedOwnedLayers(before, task, workspaceId, source, selectedIds);
     if (!alive.current || apiRef.current !== api || !writableRef.current || docRef.current !== before) throw new Error("画布刚刚发生变化，请重新展开图层，原内容仍保留。");
     if (!placed.replayed) changeDocument(placed.document);
     setNotice(placed.replayed ? "这一组图层已经在画布中，保留当前编辑。" : "图层已展开，原图隐藏保留。可解除组合后分别移动、隐藏和编辑。");
@@ -417,6 +428,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
         if (!writableRef.current || savedSequence.current !== sequence.current) throw new Error("画布已变化，请保存后重新提交。");
         if (!recoveryRef.current) throw new Error("浏览器暂不能保存创作确认记录，本次未提交。");
         const intent = recoveryRef.current.store({ mode: current.mode, input: { projectId, mutationId: crypto.randomUUID(), prompt: savedDraft.prompt.trim(), sizeSelection: { ratioKey: savedDraft.ratio, resolutionTier: savedDraft.quality }, workflowRevision: current.revision, documentRevision: saved.revision,
+          ...(preparePsd && current.mode === "generate" ? { psdLayerCount } : {}),
           ...(needsFrame ? { outputFrameId: savedDraft.outputFrameId } : {}) } });
         generationOperation.current = intent.input; generationMode.current = intent.mode;
         setPendingGeneration(true);
@@ -513,6 +525,13 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
             <div><h2 className="text-sm font-semibold">{workflow?.mode === "modify" ? "修改整张图片" : "生成新图片"}</h2><p className="mt-1 text-xs leading-5 text-muted-fg">描述想法，结果单独保留，由你决定是否加入画布。</p></div>
             <textarea aria-label="创作需求" className="min-h-40 w-full resize-y rounded-2xl border border-border bg-bg p-3 text-sm outline-none focus:border-primary" placeholder="想创作什么？" maxLength={4000} value={prompt} onChange={event => setPrompt(event.target.value)} onCompositionStart={draft.compositionStart} onCompositionEnd={draft.compositionEnd} disabled={!canEdit || pendingGeneration || submitting || generationRecoveryBlocked || !draft.ready || draft.blocked} />
             <div className="flex gap-2"><select aria-label="图片比例" className={button} value={ratio} disabled={!canEdit || pendingGeneration || submitting || generationRecoveryBlocked || !draft.ready || draft.blocked} onChange={event => setRatio(event.target.value as typeof ratio)}>{GenerationAspectRatioKey.options.filter(value => value !== "custom").map(value => <option key={value}>{value}</option>)}</select><select aria-label="图片画质" className={button} value={quality} disabled={!canEdit || pendingGeneration || submitting || generationRecoveryBlocked || !draft.ready || draft.blocked} onChange={event => setQuality(event.target.value as typeof quality)}><option>1K</option><option>2K</option></select></div>
+            {workflow?.mode === "generate" && <div className="space-y-2 rounded-2xl bg-accent-soft p-3" data-testid="owned-psd-selection">
+              <div className="flex flex-wrap items-center gap-3"><label className="flex items-center gap-2 text-xs font-medium"><input type="checkbox" aria-label="同时准备可编辑PSD" className="h-4 w-4 accent-primary" checked={preparePsd} disabled={!canEdit || pendingGeneration || submitting || generationRecoveryBlocked || !draft.ready || draft.blocked} onChange={event => { psdSelectionRestored.current = true; setPreparePsd(event.target.checked); }} />同时准备可编辑PSD</label>
+                {preparePsd && <select aria-label="PSD图层数量" className={button} value={psdLayerCount} disabled={!canEdit || pendingGeneration || submitting || generationRecoveryBlocked || !draft.ready || draft.blocked} onChange={event => { psdSelectionRestored.current = true; setPsdLayerCount(Number(event.target.value)); }}>{Array.from({ length: 9 }, (_, index) => index + 2).map(value => <option key={value} value={value}>{value} 层</option>)}</select>}
+              </div>
+              {preparePsd && <><p className="text-xs leading-5 text-muted-fg">图片生成后自动分层，会额外使用模型额度。原图先可用，PSD 在后台准备。</p>
+                <p className="text-xs leading-5 text-muted-fg">当前 2K 方图建议选择 2 层；最终按实际像素尺寸校验，超限时不分层，原图仍保留。</p></>}
+            </div>}
             <div className="text-xs text-muted-fg" data-testid="owned-draft-status" data-draft-state={draft.state}>{draft.error || (draft.state === "saved" ? "需求已保存" : draft.state === "saving" ? "正在保存需求…" : draft.dirty ? "需求有待保存修改" : "正在恢复需求…")}{["error", "loading"].includes(draft.state) && <button type="button" className="ml-2 underline" onClick={() => void draft.retry().catch(error => setNotice(messageOf(error)))}>重新确认需求</button>}</div>
             <OwnedWorkflowPanel key={projectId} state={workflowState} document={document} selectedIds={selectedIds} readOnly={!canEdit} frozen={pendingGeneration || submitting || generationRecoveryBlocked || !draft.ready || draft.blocked} outputFrameId={outputFrameId} onOutputFrameChange={setOutputFrameId} onCreateOutputFrame={createOutputFrame} onChange={changeWorkflow} onSave={() => void workflowRef.current?.save().catch(error => setNotice(messageOf(error)))} onRefresh={() => void refreshWorkflow()} onResolveConflict={choice => { try { workflowRef.current?.resolveConflict(choice); } catch (error) { setNotice(messageOf(error)); } }} />
             <button type="button" className="w-full rounded-full bg-primary py-3 text-sm text-primary-fg disabled:opacity-40" disabled={!canEdit || submitting || generationRecoveryBlocked || !workflow || !pendingGeneration && (!prompt.trim() || !draft.ready || draft.blocked || !!workflowState?.dirty || !!workflowState?.busy || workflowState?.status !== "ready" || workflow.mode === "generate" && workflow.references.some(value => value.participates && value.purpose === "EXACT") && !outputFrameId)} onClick={() => void submitGeneration()}>{submitting ? "正在确认受理…" : pendingGeneration ? "确认上一份生成回执" : workflow?.mode === "modify" ? "提交整图修改" : "生成图片"}</button>
@@ -531,7 +550,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
             {uploads.map(task => <section className="space-y-2 rounded-2xl border border-border p-3" key={task.taskId} data-task-id={task.taskId}><h3 className="truncate text-xs font-semibold">{task.material?.fileName || "图片上传"}</h3><p className="text-xs text-muted-fg">{task.status === "SUCCEEDED" ? "已存入素材库" : task.status === "FAILED" ? task.error : Date.now() > Date.parse(task.expiresAt) ? "处理时间较长，请刷新确认结果" : `保存中 · ${task.progress}%`}</p>{task.material && <button className={button} disabled={!canEdit} onClick={() => void insertImage(task.material!).catch(error => setNotice(messageOf(error)))}>加入画布</button>}</section>)}
             {generations.map(task => <OwnedGenerationCard key={projectId + ":" + task.requestId} task={task} api={apiRef.current} canEdit={canEdit} onNotice={setNotice}
               onTask={updated => { setGenerations(current => mergeTask(current, updated, value => value.requestId)); pollStarted.current = Date.now(); setPollPaused(false); }}
-              onInsert={image => insertImage(image)} />)}
+              onInsert={image => insertImage(image)} onInsertLayers={insertLayers} />)}
           </>}
         </div>
         <div className="flex items-center gap-2 border-t border-border p-3"><span className="mr-auto text-xs text-muted-fg">导出</span>{(["png", "svg", "json"] as const).map(format => <button key={format} className={button} disabled={!document || !!document.warnings.length} onClick={() => void exportDocument(format).catch(() => undefined)}>{format.toUpperCase()}</button>)}</div>

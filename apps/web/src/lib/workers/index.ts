@@ -28,6 +28,7 @@ import { createStudioGenerationComplianceWorker } from "./studio-generation-comp
 import { createStudioDecompositionWorker } from "./studio-decomposition.worker";
 import { sweepStaleGenerations } from "@/lib/generations";
 import { dispatchStudioGenerations } from "@/lib/studio-generation";
+import { dispatchStudioGeneratedPsds } from "@/lib/studio-generated-psd";
 import { queuePrefix } from "@/lib/queue";
 import {
   REQUIRED_AI_GENERATION_REVISION,
@@ -125,7 +126,7 @@ try {
   const dispatchStudio = async () => {
     if (dispatchingStudio) return;
     dispatchingStudio = true;
-    try { await dispatchStudioGenerations(); }
+    try { await dispatchStudioGenerations(); await dispatchStudioGeneratedPsds(); }
     catch { console.error("[studio-generation] outbox recovery unavailable"); }
     finally { dispatchingStudio = false; }
   };

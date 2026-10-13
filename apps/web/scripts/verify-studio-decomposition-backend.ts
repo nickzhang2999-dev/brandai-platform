@@ -127,6 +127,18 @@ export async function verifyStudioDecompositionBackend({ call, check, base, ws }
   }
   const missingRequest = "missing-layer-" + randomUUID();
   await rejected("unknown layer request cannot expose a receipt", "owner", `${query}&requestId=${missingRequest}`, "GET", undefined, 404);
+  // These new delivery boundaries run through real Auth.js/Next/PG. No
+  // synthetic provider result is inserted to manufacture a successful PSD.
+  const missingGeneration = "missing-generation-" + randomUUID();
+  const automaticPsd = `/api/workspaces/${ws}/studio/generated-psd?projectId=${pid}&requestId=${missingGeneration}`;
+  const psdDownload = `/api/workspaces/${ws}/studio/decomposition/${missingRequest}/export?projectId=${pid}&format=psd`;
+  await rejected("anonymous cannot read automatic PSD progress", "anonymous", automaticPsd, "GET", undefined, 401);
+  await rejected("nonmember cannot read another workspace's automatic PSD progress", "outsider", automaticPsd, "GET", undefined, 404);
+  await rejected("missing generation cannot manufacture an automatic PSD receipt", "owner", automaticPsd, "GET", undefined, 404);
+  await rejected("anonymous cannot download private layered PSD", "anonymous", psdDownload, "GET", undefined, 401);
+  await rejected("nonmember cannot download another workspace's layered PSD", "outsider", psdDownload, "GET", undefined, 404);
+  await rejected("missing layer task cannot produce an empty or flattened PSD", "owner", psdDownload, "GET", undefined, 404);
+  await rejected("viewer cannot obtain a fabricated PSD for an unknown task", "viewer", psdDownload, "GET", undefined, 404);
   await rejected("unknown project cannot read layering history", "owner", `${endpoint}&projectId=missing-project-${randomUUID()}`, "GET", undefined, 404);
   const retry = { projectId: pid, requestId: missingRequest };
   await rejected("missing archive retry cannot manufacture model output", "owner", retryEndpoint, "POST", retry, 404);

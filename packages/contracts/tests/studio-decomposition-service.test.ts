@@ -8,10 +8,12 @@ const f = vi.hoisted(() => ({ role: vi.fn(), project: vi.fn(), document: vi.fn()
   transaction: vi.fn(), lock: vi.fn(), workspace: vi.fn(), user: vi.fn(), membership: vi.fn(), saved: vi.fn(),
   queue: vi.fn(), readBytes: vi.fn(), inspect: vi.fn(), layer: vi.fn(), budget: vi.fn(), paid: vi.fn(), usage: vi.fn(),
   put: vi.fn(), get: vi.fn(), remove: vi.fn(), assetCreate: vi.fn(), linkCreate: vi.fn(),
+  generationRequest: vi.fn(), archivedSource: vi.fn(),
 }));
 vi.mock("../../db/src/index", () => ({ Prisma: { DbNull: "DB_NULL" }, prisma: {
   project: { findFirst: f.project }, asset: { findFirst: f.asset }, studioMaterialUpload: { findFirst: f.uploadReceipt }, studioGeneratedMaterial: { findFirst: f.generatedReceipt },
   studioDecompositionRequest: { findUnique: f.find, findUniqueOrThrow: f.findOrThrow, findFirst: f.findFirst, findMany: f.list, create: f.create, updateMany: f.updateMany, update: f.update, count: f.count }, $transaction: f.transaction,
+  studioGenerationRequest: { findUnique: f.generationRequest },
 } }));
 vi.mock("../../../apps/web/src/lib/api", () => ({ ApiException: class extends Error { constructor(public status: number, message: string) { super(message); } } }));
 vi.mock("../../../apps/web/src/lib/workspace", () => ({ requireWorkspaceRole: f.role }));
@@ -32,7 +34,7 @@ vi.mock("../../../apps/web/src/lib/image-preview", () => ({ nodeStreamToBuffer: 
   const chunks: Buffer[] = []; for await (const chunk of stream) chunks.push(Buffer.from(chunk)); return Buffer.concat(chunks);
 } }));
 
-import { submitStudioDecomposition, readStudioDecompositions, retryStudioLayerArchive, runStudioDecomposition, readStudioLayerAsset } from "../../../apps/web/src/lib/studio-decomposition";
+import { submitStudioDecomposition, submitGeneratedStudioDecomposition, readStudioDecompositions, retryStudioLayerArchive, runStudioDecomposition, readStudioLayerAsset } from "../../../apps/web/src/lib/studio-decomposition";
 import { encryptStudioBase, decryptStudioBase } from "../../../apps/web/src/lib/studio-generation-base";
 
 // This suite proves service decisions with simulated persistence, not a real
@@ -102,9 +104,60 @@ beforeEach(() => {
   tx = { $queryRaw: f.lock, studioDecompositionRequest: { findUnique: f.find, findUniqueOrThrow: f.findOrThrow, count: f.count, create: f.create, updateMany: f.updateMany, update: f.update },
     brandWorkspace: { findUnique: f.workspace }, user: { findUnique: f.user }, membership: { findUnique: f.membership }, project: { findFirst: f.project }, editorDocument: { findUnique: f.saved },
     asset: { findFirst: f.asset, create: f.assetCreate }, projectAsset: { create: f.linkCreate } };
+  tx.studioGeneratedMaterial = { findUnique: f.archivedSource };
   f.transaction.mockImplementation(async fn => {
     const backup = structuredClone({ rows: [...rows], assets: publishedAssets, links: publishedLinks });
     try { return await fn(tx); } catch (error) { rows = new Map(backup.rows); publishedAssets = backup.assets; publishedLinks = backup.links; throw error; }
+  });
+});
+
+describe("automatic PSD accepts only a real generated archive, never an unsaved browser image", () => {
+  function automaticSource(overrides: Record<string, unknown> = {}) {
+    const generation = { id: "generation-request", workspaceId: "w", userId: "u", projectId: "p", mutationId: input.mutationId, documentRevision: 4, status: "SUCCEEDED", jobData: { studioPsdLayerCount: 2 } };
+    const material = { outputId: "generated-output", requestId: generation.id, workspaceId: "w", userId: "u", projectId: "p", assetId: "source", sha256: input.assetSha256,
+      status: "SUCCEEDED", objectKey: "w/source.png", width: 8, height: 8, sizeBytes: bytes.length, mimeType: "image/png", request: { jobData: generation.jobData }, ...overrides };
+    f.generationRequest.mockResolvedValue(generation); f.uploadReceipt.mockResolvedValue(null);
+    f.generatedReceipt.mockResolvedValue(material); f.archivedSource.mockResolvedValue(material);
+    return { generation, material };
+  }
+  it("registers a durable deterministic request without a canvas selection/document, lost-receipt replay pays nothing", async () => {
+    automaticSource(); f.document.mockRejectedValue(new Error("must not require canvas insertion"));
+    const first = await submitGeneratedStudioDecomposition("generation-request");
+    const replay = await submitGeneratedStudioDecomposition("generation-request");
+    expect(first.requestId).toBe(replay.requestId); expect(first.sourceShapeId).toMatch(/^shape:generated-[a-f0-9]{40}$/);
+    expect(f.create).toHaveBeenCalledOnce(); expect(f.document).not.toHaveBeenCalled(); expect(f.paid).not.toHaveBeenCalled();
+    expect(f.generatedReceipt).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ workspaceId: "w", projectId: "p", status: "SUCCEEDED" }) }));
+  });
+  it("does not register or pay when PSD was unselected or the original archive is unavailable", async () => {
+    const { generation } = automaticSource(); generation.jobData = {} as any;
+    await expect(submitGeneratedStudioDecomposition("generation-request")).rejects.toMatchObject({ status: 409 });
+    generation.jobData = { studioPsdLayerCount: 2 }; f.generatedReceipt.mockResolvedValue(null);
+    await expect(submitGeneratedStudioDecomposition("generation-request")).rejects.toMatchObject({ status: 409 });
+    expect(f.create).not.toHaveBeenCalled(); expect(f.paid).not.toHaveBeenCalled();
+  });
+  it("preserves EXACT source protection in the automatic intake", async () => {
+    const { material } = automaticSource(); material.request.jobData = { assetUsages: [{ mode: "EXACT" }] } as any;
+    await expect(submitGeneratedStudioDecomposition("generation-request")).rejects.toMatchObject({ status: 409 });
+    expect(f.create).not.toHaveBeenCalled(); expect(f.queue).not.toHaveBeenCalled(); expect(f.paid).not.toHaveBeenCalled();
+  });
+  it("rejects excessive PSD memory before creating or charging a decomposition", async () => {
+    automaticSource({ width: 16384, height: 16384 });
+    await expect(submitGeneratedStudioDecomposition("generation-request")).rejects.toMatchObject({ status: 422, message: expect.stringContaining("PSD") });
+    expect(f.create).not.toHaveBeenCalled(); expect(f.paid).not.toHaveBeenCalled();
+  });
+  it("fences changed source ownership/hash and downgraded actors inside the transaction", async () => {
+    automaticSource(); f.archivedSource.mockResolvedValue({ ...await f.generatedReceipt(), userId: "other" });
+    await expect(submitGeneratedStudioDecomposition("generation-request")).rejects.toMatchObject({ status: 409 }); expect(f.create).not.toHaveBeenCalled();
+    automaticSource(); f.workspace.mockResolvedValue({ ownerId: "someone" }); f.membership.mockResolvedValue({ role: "VIEWER" });
+    await expect(submitGeneratedStudioDecomposition("generation-request")).rejects.toMatchObject({ status: 403 }); expect(f.create).not.toHaveBeenCalled(); expect(f.paid).not.toHaveBeenCalled();
+  });
+  it("keeps missing configuration as an independent persistent FAILED receipt with the original generation untouched", async () => {
+    const { generation } = automaticSource(); await submitGeneratedStudioDecomposition(generation.id);
+    f.settings.mockResolvedValue({ layer: { provider: "mock", apiKey: "" } });
+    await runStudioDecomposition("request"); await runStudioDecomposition("request");
+    expect(row().status).toBe("FAILED"); expect(row().error).toContain("尚未配置"); expect(row().providerStartedAt).toBeNull();
+    expect(generation.status).toBe("SUCCEEDED"); expect(f.paid).not.toHaveBeenCalled(); expect(f.usage).not.toHaveBeenCalled();
+    expect(await readStudioDecompositions("w", "u", { projectId: "p", requestId: "request" })).toMatchObject({ status: "FAILED", layers: [], error: expect.stringContaining("尚未配置") });
   });
 });
 afterEach(() => vi.unstubAllEnvs());
