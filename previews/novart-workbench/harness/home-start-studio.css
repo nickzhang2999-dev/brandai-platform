@@ -13,3 +13,6 @@
 #ns-frames.hs-transferring{pointer-events:none;opacity:.4}.hs-pick:focus-visible,.hs-remove:focus-visible,.hs-retry:focus-visible{outline:2px solid #9879b5;outline-offset:3px}
 @media(max-width:600px){.hs-attachments{grid-template-columns:1fr}.hs-handoff{left:50%;width:calc(100vw - 40px)}.hs-pick{font-size:12px}.ns-composer-footer .ns-keyboard-hint{display:none}}
 @media(prefers-reduced-motion:no-preference){.hs-attachment{animation:hs-enter .18s ease-out}@keyframes hs-enter{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}}
+.ns-brand-layout[hidden],.ns-knowledge-panel[hidden]{display:none}
+.ns-knowledge-panel{margin-top:20px;min-width:0}
+.ns-knowledge-frame{display:block;width:100%;height:max(680px,calc(100dvh - 200px));border:0;border-radius:24px;background:var(--background,#FAFAFC)}

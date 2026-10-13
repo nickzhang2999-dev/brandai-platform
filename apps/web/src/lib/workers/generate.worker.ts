@@ -512,6 +512,7 @@ export async function runGenerateJob(
       // fetchable URL so the compiler can emit `referenceImages` the AI service
       // folds into the prompt / forwards to the provider.
       const assetUrls = await loadAssetUrlMap(
+        workspaceId,
         prohRows.flatMap((p) => [
           p.positiveExampleAssetId,
           p.negativeExampleAssetId,

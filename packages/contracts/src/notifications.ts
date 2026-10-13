@@ -25,6 +25,7 @@ export const NotificationKind = z.enum([
   "DECOMPOSE",
   "STUDIO_UPLOAD",
   "STUDIO_GENERATION",
+  "STUDIO_DECOMPOSITION",
 ]);
 export type NotificationKind = z.infer<typeof NotificationKind>;
 

@@ -3,6 +3,7 @@ import { prisma, Prisma } from "@brandai/db";
 import { RuleStrength, RuleType } from "@brandai/contracts";
 import { handleError, ok, parse, requireUser } from "@/lib/api";
 import { requireOwnedWorkspace, requireWorkspaceRole } from "@/lib/workspace";
+import { lockBrandKnowledgeWorkspace } from "@/lib/brand-knowledge-safety";
 
 /**
  * Lightweight manual brand-rule entry (M1). Deep AI recognition is M2.
@@ -49,7 +50,9 @@ export async function POST(
     const { wsId } = await params;
     await requireWorkspaceRole(wsId, user.id, "EDITOR");
     const input = parse(CreateRuleInput, await req.json());
-    const rule = await prisma.brandRule.create({
+    const rule = await prisma.$transaction(async tx => {
+      await lockBrandKnowledgeWorkspace(tx, wsId);
+      return tx.brandRule.create({
       data: {
         workspaceId: wsId,
         type: input.type,
@@ -59,6 +62,7 @@ export async function POST(
         value: (input.value ?? {}) as Prisma.InputJsonValue,
         evidence: [] as Prisma.InputJsonValue,
       },
+      });
     });
     return ok(rule, { status: 201 });
   } catch (err) {

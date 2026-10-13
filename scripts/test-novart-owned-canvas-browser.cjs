@@ -12,6 +12,7 @@ const zlib = require('node:zlib');
 const {spawnSync} = require('node:child_process');
 const {chromium} = require('playwright-core');
 const repo = path.resolve(__dirname, '..');
+const layersOnly = process.env.NOVART_OWNED_LAYERS_ONLY === '1';
 const temporaryRoot = path.join(repo, '.novart-build', 'temporary');
 fs.mkdirSync(temporaryRoot, {recursive: true});
 const directory = fs.mkdtempSync(path.join(temporaryRoot, 'owned-browser-'));
@@ -20,22 +21,34 @@ const esbuildPackage = fs.readdirSync(path.join(repo, 'node_modules/.pnpm')).fin
 assert.ok(esbuildPackage, 'Use the already installed build dependency');
 const esbuild = require(path.join(repo, 'node_modules/.pnpm', esbuildPackage, 'node_modules/esbuild'));
 const fixture = {workspaceId:'fixture-workspace', projectId:'fixture-project', userId:'fixture-user'};
-const report = {isolated:true, realBackend:false, realProvider:false, checks:[], externalRequests:[], errors:[]};
+const report = {isolated:true, realBackend:false, realProvider:false, realAuthentication:false, providerCalls:0,
+  fixtureScope:'Loopback in-memory HTTP persistence; actual production React editor and styles',
+  checks:[], externalRequests:[], errors:[]};
 let stage = 'build-fixture', browser, server, contracts;
 let canvas = '', revision = 0, readOnly = false, writes = 0, failRestore = false, conflict = false, delayMaterials = 0;
 let draft = {projectId:fixture.projectId,revision:0,inputForm:null,updatedAt:null,referenceIssues:[]};
 let workflow = {projectId:fixture.projectId,revision:0,mode:'generate',target:null,references:[],updatedAt:null,issues:[]};
 let draftWrites = 0, workflowWrites = 0, generationPosts = 0;
 const uploads = new Map(), generations = new Map(), taskReads = [], generationPostInputs = [];
+const decompositions = new Map(), decompositionPostInputs = [], layerTaskReads = [], layerDownloads = [];
+let decompositionPosts = 0, failLayerDownload = layersOnly;
 function pngChunk(type, value) {
   const payload=Buffer.concat([Buffer.from(type),value]), result=Buffer.alloc(value.length+12);let crc=0xffffffff;
   for(const byte of payload) {crc^=byte;for(let bit=0;bit<8;bit++) crc=(crc>>>1)^((crc&1)?0xedb88320:0);}
   result.writeUInt32BE(value.length);payload.copy(result,4);result.writeUInt32BE((crc^0xffffffff)>>>0,result.length-4);return result;
 }
 const imageHeader=Buffer.alloc(13);imageHeader.writeUInt32BE(1,0);imageHeader.writeUInt32BE(1,4);imageHeader[8]=8;imageHeader[9]=6;
-const png=Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]),pngChunk('IHDR',imageHeader),pngChunk('IDAT',zlib.deflateSync(Buffer.from([0,124,92,255,255]))),pngChunk('IEND',Buffer.alloc(0))]);
+function fixturePng(width,height,pixel) {
+  const header=Buffer.alloc(13);header.writeUInt32BE(width,0);header.writeUInt32BE(height,4);header[8]=8;header[9]=6;
+  const rgba=Buffer.alloc(height*(width*4+1));for(let y=0;y<height;y++)for(let x=0;x<width;x++)Buffer.from(pixel(x,y)).copy(rgba,y*(width*4+1)+1+x*4);
+  return Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]),pngChunk('IHDR',header),pngChunk('IDAT',zlib.deflateSync(rgba)),pngChunk('IEND',Buffer.alloc(0))]);
+}
+const foregroundPixel=(x,y)=>x>=3&&x<7&&y>=2&&y<5?[220,70,90,255]:[0,0,0,0];
+const png=layersOnly?fixturePng(12,8,(x,y)=>foregroundPixel(x,y)[3]?foregroundPixel(x,y):[124,92,255,255]):Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]),pngChunk('IHDR',imageHeader),pngChunk('IDAT',zlib.deflateSync(Buffer.from([0,124,92,255,255]))),pngChunk('IEND',Buffer.alloc(0))]);
 const assetSha256 = crypto.createHash('sha256').update(png).digest('hex');
-const material = {id:'fixture-asset',assetId:'fixture-asset',assetSha256,fileName:'fixture.png',mimeType:'image/png',sizeBytes:png.length,width:1,height:1,url:'/api/workspaces/fixture-workspace/assets/fixture-asset/raw',kind:'image'};
+const material = {id:'fixture-asset',assetId:'fixture-asset',assetSha256,fileName:'fixture.png',mimeType:'image/png',sizeBytes:png.length,width:layersOnly?12:1,height:layersOnly?8:1,url:'/api/workspaces/fixture-workspace/assets/fixture-asset/raw',kind:'image'};
+const layerPngs=[fixturePng(12,8,()=>[124,92,255,255]),fixturePng(12,8,foregroundPixel)];
+const layerResults=layerPngs.map((bytes,order)=>({assetId:'fixture-layer-'+order,assetSha256:crypto.createHash('sha256').update(bytes).digest('hex'),mimeType:'image/png',width:12,height:8,order,sizeBytes:bytes.length,url:`/api/workspaces/${fixture.workspaceId}/assets/fixture-layer-${order}/raw`,alphaBounds:order?{left:3,top:2,width:4,height:3}:{left:0,top:0,width:12,height:8},inkCoverage:order?12/96:1}));
 function json(res, value, status=200) {res.writeHead(status, {'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(value));}
 function documentView() {return {workspaceId:fixture.workspaceId,projectId:fixture.projectId,format:'novart-native-v1',canvas,revision,checksum:canvas?crypto.createHash('sha256').update(canvas).digest('hex'):null,updatedAt:revision?new Date().toISOString():null,readOnly};}
 function records() {return canvas ? JSON.parse(zlib.gunzipSync(Buffer.from(canvas.slice('SHAKKERDATA://'.length),'base64'))).tldrawSnapshot.document.store : {};}
@@ -72,7 +85,7 @@ async function handle(req,res) {
     if(conflict || value.revision!==revision) return json(res,{error:'画布已在其他页面更新',code:'DOCUMENT_CONFLICT'},409);
     canvas=value.canvas;revision++;writes++;return json(res,documentView());
   }
-  if(['/studio/draft','/workflow','/workflow/assets','/studio/generation'].includes(url.pathname)
+  if(['/studio/draft','/workflow','/workflow/assets','/studio/generation','/studio/decomposition'].includes(url.pathname)
     && (url.searchParams.get('workspaceId')!==fixture.workspaceId||url.searchParams.get('projectId')!==fixture.projectId||req.headers['x-novart-user']!==fixture.userId)) return json(res,{error:'Fixture identity scope mismatch'},403);
   if(url.pathname==='/studio/draft') {
     if(req.method==='GET') return json(res,contracts.WorkbenchDraftView.parse(draft));
@@ -116,12 +129,35 @@ async function handle(req,res) {
     if(url.searchParams.has('requestId')) {const id=url.searchParams.get('requestId');taskReads.push({kind:'STUDIO_GENERATION',id});return generations.has(id)?json(res,contracts.StudioGenerationView.parse(generations.get(id))):json(res,{error:'任务不存在'},404);}
     return json(res,{requests:[...generations.values()].map(value=>contracts.StudioGenerationView.parse(value))});
   }
+  if(url.pathname==='/studio/decomposition') {
+    if(req.method==='POST') {
+      decompositionPosts++;const input=JSON.parse((await body(req)).toString());decompositionPostInputs.push(input);
+      const parsed=contracts.StudioDecompositionInput.safeParse(input);
+      if(!parsed.success||parsed.data.projectId!==fixture.projectId) return json(res,{error:'Fixture decomposition input rejected'},422);
+      const value=parsed.data,source=records()[value.sourceShapeId];
+      if(value.documentRevision!==revision||!source||source.type!=='c-image'||source.meta?.novartAssetId!==value.assetId||source.meta?.novartAssetSha256!==value.assetSha256||value.assetId!==material.assetId||value.assetSha256!==assetSha256||value.layerCount!==2) return json(res,{error:'Fixture decomposition saved source mismatch'},409);
+      const replay=[...decompositions.values()].find(item=>item.view.mutationId===value.mutationId);
+      if(replay)return json(res,replay.view,202);
+      const {intent:_intent,...snapshot}=value;
+      const view=contracts.StudioDecompositionView.parse({requestId:'fixture-decomposition',...snapshot,sourceWidth:12,sourceHeight:8,status:'PENDING',error:null,createdAt:new Date().toISOString(),expiresAt:new Date(Date.now()+6*60000).toISOString(),archiveExpiresAt:null,canRetryArchive:false,layers:[]});
+      decompositions.set(view.requestId,{view,reads:0});layerTaskReads.push({requestId:view.requestId,status:'PENDING',method:'POST'});return json(res,view,202);
+    }
+    function read(value) {
+      if(['PENDING','RUNNING'].includes(value.view.status)) {value.reads++;value.view={...value.view,status:value.reads>=2?'SUCCEEDED':'RUNNING',layers:value.reads>=2?layerResults:[]};}
+      layerTaskReads.push({requestId:value.view.requestId,status:value.view.status,method:'GET',direct:url.searchParams.has('requestId')});
+      return contracts.StudioDecompositionView.parse(value.view);
+    }
+    if(url.searchParams.has('requestId')) {const value=decompositions.get(url.searchParams.get('requestId'));return value?json(res,read(value)):json(res,{error:'任务不存在'},404);}
+    return json(res,{requests:[...decompositions.values()].map(read)});
+  }
   if(url.pathname===`/api/workspaces/${fixture.workspaceId}/notifications`) {
     if(req.headers['x-novart-user']!==fixture.userId||url.searchParams.get('scope')!=='studio') return json(res,{error:'Fixture notification scope mismatch'},403);
     const notifications=[...[...uploads.values()].map(task=>({id:'fixture-notification-'+task.taskId,kind:'STUDIO_UPLOAD',status:task.status,title:'合成上传任务提醒',createdAt:new Date().toISOString(),href:'/canvas?'+new URLSearchParams({workspaceId:fixture.workspaceId,projectId:fixture.projectId,taskId:task.taskId})})),...[...generations.values()].map(task=>({id:'fixture-notification-'+task.requestId,kind:'STUDIO_GENERATION',status:task.status,title:'合成生成失败提醒',createdAt:new Date().toISOString(),href:'/canvas?'+new URLSearchParams({workspaceId:fixture.workspaceId,projectId:fixture.projectId,requestId:task.requestId})}))];
     return json(res,{items:notifications});
   }
   if(url.pathname===material.url) {res.setHeader('Content-Type','image/png');return res.end(png);}
+  const layerIndex=layerResults.findIndex(value=>value.url===url.pathname);
+  if(layerIndex>=0) {const failed=failLayerDownload&&layerIndex===1;layerDownloads.push({order:layerIndex,failed});res.setHeader('Cache-Control','no-store');if(failed)return json(res,{error:'合成图层下载失败，仅验证全组原子插入'},503);res.setHeader('Content-Type','image/png');return res.end(layerPngs[layerIndex]);}
   return json(res,{error:'No fixture for this route'},404);
 }
 function check(name) {report.checks.push(name);}
@@ -129,10 +165,10 @@ async function fixtureSettled(condition) {const deadline=Date.now()+10000;while(
 
 (async()=>{
   const entry=path.join(directory,'entry.tsx');
-  fs.writeFileSync(entry,`import React from '${path.join(repo,'apps/web/node_modules/react').replaceAll('\\','/')}';\nimport {createRoot} from '${path.join(repo,'apps/web/node_modules/react-dom/client').replaceAll('\\','/')}';\nimport {OwnedEditorClient} from '${path.join(repo,'apps/web/src/components/owned-canvas/OwnedEditorClient').replaceAll('\\','/')}';\nconst params=new URLSearchParams(location.search),task=params.get('taskId'),request=params.get('requestId');const initialTask=task&&!request?{kind:'STUDIO_UPLOAD' as const,id:task}:request&&!task?{kind:'STUDIO_GENERATION' as const,id:request}:undefined;const fixtureRoot=createRoot(document.getElementById('root')!);window.changeFixtureReadOnly=(readOnly:boolean)=>fixtureRoot.render(<OwnedEditorClient {...${JSON.stringify(fixture)}} readOnly={readOnly} initialTask={initialTask} projectName="交互回归"/>);window.changeFixtureReadOnly(false);`);
+  fs.writeFileSync(entry,`import React from '${path.join(repo,'apps/web/node_modules/react').replaceAll('\\','/')}';\nimport {createRoot} from '${path.join(repo,'apps/web/node_modules/react-dom/client').replaceAll('\\','/')}';\nimport {OwnedEditorClient} from '${path.join(repo,'apps/web/src/components/owned-canvas/OwnedEditorClient').replaceAll('\\','/')}';\nconst params=new URLSearchParams(location.search),task=params.get('taskId'),request=params.get('requestId'),layerRequest=params.get('layerRequestId');const initialTask=[task,request,layerRequest].filter(Boolean).length!==1?undefined:task?{kind:'STUDIO_UPLOAD' as const,id:task}:request?{kind:'STUDIO_GENERATION' as const,id:request}:layerRequest?{kind:'STUDIO_DECOMPOSITION' as const,id:layerRequest}:undefined;const fixtureRoot=createRoot(document.getElementById('root')!);window.changeFixtureReadOnly=(readOnly:boolean)=>fixtureRoot.render(<OwnedEditorClient {...${JSON.stringify(fixture)}} readOnly={readOnly} initialTask={initialTask} projectName="交互回归"/>);window.changeFixtureReadOnly(false);`);
   await esbuild.build({entryPoints:[entry],outfile:path.join(directory,'app.js'),bundle:true,platform:'browser',format:'iife',jsx:'automatic',tsconfig:path.join(repo,'apps/web/tsconfig.json'),nodePaths:[path.join(repo,'apps/web/node_modules')],define:{'process.env.NODE_ENV':'"development"'},logLevel:'silent'});
   const schemaEntry=path.join(directory,'schema.ts');
-  fs.writeFileSync(schemaEntry,`export {WorkbenchDraftView,WorkbenchDraftSaveInput,StudioWorkflowSaveInput,StudioWorkflowView,StudioGenerationInput,StudioGenerationView} from '${path.join(repo,'packages/contracts/src/index').replaceAll('\\','/')}';\nexport {workflowAssets,workflowIssues,assertWorkflowSelection} from '${path.join(repo,'apps/web/src/lib/studio-workflow-codec').replaceAll('\\','/')}';`);
+  fs.writeFileSync(schemaEntry,`export {WorkbenchDraftView,WorkbenchDraftSaveInput,StudioWorkflowSaveInput,StudioWorkflowView,StudioGenerationInput,StudioGenerationView,StudioDecompositionInput,StudioDecompositionView} from '${path.join(repo,'packages/contracts/src/index').replaceAll('\\','/')}';\nexport {workflowAssets,workflowIssues,assertWorkflowSelection} from '${path.join(repo,'apps/web/src/lib/studio-workflow-codec').replaceAll('\\','/')}';`);
   await esbuild.build({entryPoints:[schemaEntry],outfile:path.join(directory,'schema.cjs'),bundle:true,platform:'node',format:'cjs',tsconfig:path.join(repo,'apps/web/tsconfig.json'),nodePaths:[path.join(repo,'apps/web/node_modules')],logLevel:'silent'});contracts=require(path.join(directory,'schema.cjs'));
   const css=spawnSync(process.execPath,[path.join(repo,'apps/web/node_modules/tailwindcss/lib/cli.js'),'-i',path.join(repo,'packages/ui/src/styles.css'),'-o',path.join(directory,'tokens.css'),'-c',path.join(repo,'apps/web/tailwind.config.ts'),'--content',path.join(repo,'apps/web/src/components/owned-canvas/*.{ts,tsx}')],{cwd:repo,encoding:'utf8',env:{...process.env,TEMP:directory,TMP:directory},timeout:60000});
   assert.equal(css.status,0,'Actual product styles must compile');
@@ -146,6 +182,12 @@ async function fixtureSettled(condition) {const deadline=Date.now()+10000;while(
   stage='open-owned-editor';await page.goto(origin+'/studio-editor');
   await page.getByTestId('owned-canvas').waitFor();
   const surface=page.getByTestId('owned-canvas');
+  if(layersOnly) {
+    await require('./check-owned-layer-interactions.cjs').runOwnedLayerChecks({page,surface,origin,fixture,png,material,layerResults,shapes,records,check,report,
+      setStage:value=>{stage=value;},allowLayerDownloads:()=>{failLayerDownload=false;},
+      state:()=>({canvas,revision,writes,decompositionPosts,decompositionPostInputs,layerTaskReads,layerDownloads})});
+    assert.deepEqual(report.externalRequests,[]);assert.deepEqual(report.errors,[]);report.passed=true;return;
+  }
   if(process.env.NOVART_OWNED_TOOLS_ONLY==='1') {
     stage='upload-tools-only-fixture';await page.locator('input[type=file]').first().setInputFiles({name:'fixture.png',mimeType:'image/png',buffer:png});
     await page.locator('[data-testid="owned-canvas-item"][data-kind="image"]').waitFor();

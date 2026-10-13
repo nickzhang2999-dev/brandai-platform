@@ -22,6 +22,9 @@ export async function POST(
       if (e instanceof Error && e.message === "SNAPSHOT_NOT_FOUND") {
         throw new ApiException(404, "Snapshot not found");
       }
+      if (e instanceof Error && e.message === "SNAPSHOT_INVALID") {
+        throw new ApiException(422, "快照内容或品牌归属异常，原知识规则未修改。");
+      }
       throw e;
     }
   } catch (err) {

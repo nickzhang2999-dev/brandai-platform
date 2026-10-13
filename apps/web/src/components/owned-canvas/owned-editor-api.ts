@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { StudioGenerationInput, StudioGenerationView, StudioGenerationComplianceView, StudioMaterial, StudioMaterialUploadView, StudioWorkflowView, StudioWorkflowAssets, StudioWorkflowSaveInput } from "@brandai/contracts";
 import { createDocumentSession, createNovartApiClient, NovartApiError } from "../../lib/novart-api-client";
+import { StudioDecompositionInput, StudioDecompositionView } from "../../../../../packages/contracts/src/studio-decomposition";
 
 export type Material = z.infer<typeof StudioMaterial>;
 export type UploadTask = z.infer<typeof StudioMaterialUploadView>;
@@ -11,6 +12,8 @@ export type WorkflowAssets = z.infer<typeof StudioWorkflowAssets>;
 export type WorkflowInput = z.infer<typeof StudioWorkflowSaveInput>;
 export type GenerationInput = z.infer<typeof StudioGenerationInput>;
 export type PersistentImage = Pick<Material, "assetId" | "assetSha256" | "width" | "height" | "url"> & { versionId?: string; fileName?: string };
+export type DecompositionTask = z.infer<typeof StudioDecompositionView>;
+export type DecompositionInput = z.infer<typeof StudioDecompositionInput>;
 
 /** Every request remains pinned to the authenticated page's brand and user.
  * X-Novart-User is an identity-consistency hint; the server still authenticates
@@ -66,6 +69,11 @@ export function createOwnedEditorApi(workspaceId: string, projectId: string, use
     value.results.forEach(image);
     return value;
   }
+  function decomposition(value: DecompositionTask) {
+    if (value.projectId !== projectId) throw new NovartApiError("分层任务不属于当前项目。", 422);
+    value.layers.forEach(image);
+    return value;
+  }
   const getUpload = async (taskId: string, timeoutMs = 20000) => {
     const value = upload(await request(endpoint("/studio/material-upload", { taskId }), StudioMaterialUploadView, {}, timeoutMs));
     if (value.taskId !== taskId) throw new NovartApiError("上传任务回执与请求不一致。", 422);
@@ -78,6 +86,32 @@ export function createOwnedEditorApi(workspaceId: string, projectId: string, use
   };
   return {
     api, session, image, readWorkflow,
+    listDecompositions: async () => (await request(endpoint("/studio/decomposition"), z.object({ requests: z.array(StudioDecompositionView) }).strict())).requests.map(decomposition),
+    async getDecomposition(requestId: string) {
+      const value = decomposition(await request(endpoint("/studio/decomposition", { requestId }), StudioDecompositionView));
+      if (value.requestId !== requestId) throw new NovartApiError("分层任务回执与请求不一致。", 422);
+      return value;
+    },
+    async submitDecomposition(raw: DecompositionInput) {
+      const input = StudioDecompositionInput.parse(raw);
+      if (input.projectId !== projectId) throw new NovartApiError("分层输入不属于当前项目。", 400);
+      const receipt = await request(endpoint("/studio/decomposition"), StudioDecompositionView,
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) });
+      let result: DecompositionTask;
+      try { result = decomposition(receipt); }
+      catch { throw new NovartApiError("分层受理回执的品牌或项目不一致，请先核对已有任务。", null, "INVALID_RECEIPT", true); }
+      if (result.mutationId !== input.mutationId || result.sourceShapeId !== input.sourceShapeId || result.assetId !== input.assetId
+        || result.assetSha256 !== input.assetSha256 || result.documentRevision !== input.documentRevision || result.layerCount !== input.layerCount) {
+        throw new NovartApiError("分层受理回执与原图片不一致，请先读取已有任务。", null, "INVALID_RECEIPT", true);
+      }
+      return result;
+    },
+    async retryLayerArchive(requestId: string) {
+      const result = decomposition(await request(endpoint("/studio/decomposition/retry-archive"), StudioDecompositionView,
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectId, requestId }) }));
+      if (result.requestId !== requestId) throw new NovartApiError("图层保存回执与本次任务不一致。", null, "INVALID_RECEIPT", true);
+      return result;
+    },
     async workflowAssets() {
       const value = await request(endpoint("/workflow/assets"), StudioWorkflowAssets);
       if (value.projectId !== projectId) throw new NovartApiError("素材选择不属于当前项目。", 422);

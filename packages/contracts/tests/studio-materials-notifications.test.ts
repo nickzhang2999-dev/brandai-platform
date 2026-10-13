@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const f = vi.hoisted(() => ({ generations: vi.fn(), tasks: vi.fn(), uploads: vi.fn(), projects: vi.fn(), studio: vi.fn() }));
+const f = vi.hoisted(() => ({ generations: vi.fn(), tasks: vi.fn(), uploads: vi.fn(), projects: vi.fn(), studio: vi.fn(), layers: vi.fn() }));
 vi.mock("../../db/src/index", () => ({ prisma: { generation: { findMany: f.generations }, asyncTask: { findMany: f.tasks }, studioMaterialUpload: { findMany: f.uploads }, project: { findMany: f.projects } } }));
 vi.mock("../../../apps/web/src/lib/brand-preview", () => ({ BRAND_PREVIEW_PROJECT_NAME: "hidden-preview" }));
 vi.mock("../../../apps/web/src/lib/studio-notifications", () => ({ listStudioGenerationNotifications: f.studio }));
+vi.mock("../../../apps/web/src/lib/studio-layer-notifications", () => ({ listStudioLayerNotifications: f.layers }));
 import { listWorkspaceNotifications } from "../../../apps/web/src/lib/notifications";
 const upload = { taskId: "upload-task", projectId: "p", fileName: "my image.png", task: { status: "SUCCEEDED", error: null, updatedAt: new Date("2026-10-09T00:00:00Z") } };
-beforeEach(() => { vi.resetAllMocks(); f.generations.mockResolvedValue([]); f.tasks.mockResolvedValue([]); f.uploads.mockResolvedValue([upload]); f.projects.mockResolvedValue([{ id: "p" }]); f.studio.mockResolvedValue([]); });
+beforeEach(() => { vi.resetAllMocks(); f.generations.mockResolvedValue([]); f.tasks.mockResolvedValue([]); f.uploads.mockResolvedValue([upload]); f.projects.mockResolvedValue([{ id: "p" }]); f.studio.mockResolvedValue([]); f.layers.mockResolvedValue([]); });
 describe("private upload terminal notifications", () => {
   it("queries uploads by authenticated user plus workspace and never puts them in the shared task query", async () => {
     const items = await listWorkspaceNotifications("w", 30, "u");
@@ -16,6 +17,7 @@ describe("private upload terminal notifications", () => {
   });
   it("a legacy caller without a user id cannot accidentally read private upload events", async () => {
     expect(await listWorkspaceNotifications("w")).toEqual([]); expect(f.uploads).not.toHaveBeenCalled();
+    expect(f.studio).not.toHaveBeenCalled(); expect(f.layers).not.toHaveBeenCalled();
   });
   it("filters deleted or mismatched projects before creating a product deep link", async () => {
     f.projects.mockResolvedValue([]); expect(await listWorkspaceNotifications("w", 30, "u")).toEqual([]);
@@ -32,5 +34,23 @@ describe("private upload terminal notifications", () => {
     const items = await listWorkspaceNotifications("w", 30, "u", "studio");
     expect(items).toHaveLength(1); expect(f.generations).not.toHaveBeenCalled(); expect(f.tasks).not.toHaveBeenCalled();
     expect(f.studio).toHaveBeenCalledWith("w", "u", 30);
+    expect(f.layers).toHaveBeenCalledWith("w", "u", 30);
+  });
+  it("merges successful and failed layer events with uploads and generation by terminal time", async () => {
+    const layer = { id: "studio-decomposition:layers", kind: "STUDIO_DECOMPOSITION", status: "SUCCEEDED", title: "AI 图层已保存", detail: "返回画布查看。",
+      href: "/canvas?workspaceId=w&projectId=p&layerRequestId=layers", createdAt: "2026-10-09T00:03:00.000Z" };
+    const failed = { ...layer, id: "studio-decomposition:failed", status: "FAILED", title: "AI 分层未完成", href: "/canvas?workspaceId=w&projectId=p&layerRequestId=failed", createdAt: "2026-10-09T00:01:00.000Z" };
+    const generation = { ...layer, id: "studio-generation:generated", kind: "STUDIO_GENERATION", href: "/canvas?workspaceId=w&projectId=p&requestId=generated", createdAt: "2026-10-09T00:02:00.000Z" };
+    f.layers.mockResolvedValue([failed, layer]); f.studio.mockResolvedValue([generation]);
+    const items = await listWorkspaceNotifications("w", 30, "u", "studio");
+    expect(f.layers).toHaveBeenCalledWith("w", "u", 30);
+    expect(items.map(item => item.id)).toEqual([layer.id, generation.id, failed.id, "task:upload-task"]);
+    expect(items[0]).toEqual(layer); expect(items[2]).toEqual(failed);
+    expect(f.generations).not.toHaveBeenCalled(); expect(f.tasks).not.toHaveBeenCalled();
+    expect((await listWorkspaceNotifications("w", 2, "u", "studio")).map(item => item.id)).toEqual([layer.id, generation.id]);
+  });
+  it("does not consult any private product source without an authenticated user, including studio-only scope", async () => {
+    expect(await listWorkspaceNotifications("w", 30, undefined, "studio")).toEqual([]);
+    expect(f.uploads).not.toHaveBeenCalled(); expect(f.studio).not.toHaveBeenCalled(); expect(f.layers).not.toHaveBeenCalled();
   });
 });

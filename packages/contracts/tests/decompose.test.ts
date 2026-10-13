@@ -57,7 +57,7 @@ describe("分解请求契约", () => {
 
   it("请求体里没有尺寸 / 张数 / 场景——它是动作不是生图模型", () => {
     const keys = Object.keys(DecomposeRequest.shape);
-    expect(keys.sort()).toEqual(["imageUrl", "intent", "layerCount"]);
+    expect(keys.sort()).toEqual(["imageUrl", "intent", "layerCount", "providerRetryPolicy"]);
     for (const forbidden of [
       "size",
       "width",
@@ -69,6 +69,26 @@ describe("分解请求契约", () => {
     ]) {
       expect(keys).not.toContain(forbidden);
     }
+  });
+
+  it("重试策略可省略，旧请求不会被注入新字段或改变层数和意图", () => {
+    expect(DecomposeRequest.parse({ imageUrl: "https://x/a.png" })).toStrictEqual({
+      imageUrl: "https://x/a.png", layerCount: 4,
+    });
+    const legacy = { imageUrl: "https://x/a.png", layerCount: 2, intent: "人物保留一层" };
+    expect(DecomposeRequest.parse(legacy)).toStrictEqual(legacy);
+  });
+
+  it("显式禁用 provider 重试只接受 never，并原样传递", () => {
+    const request = {
+      imageUrl: "https://x/a.png", layerCount: 2, intent: "人物保留一层",
+      providerRetryPolicy: "never",
+    };
+    expect(DecomposeRequest.parse(request)).toStrictEqual(request);
+  });
+
+  it.each(["always", "NEVER", "", null, 0, true, {}, []].map((value) => [value]))("拒绝非法 providerRetryPolicy：%j", (providerRetryPolicy) => {
+    expect(DecomposeRequest.safeParse({ imageUrl: "https://x/a.png", providerRetryPolicy }).success).toBe(false);
   });
 
   it("层数只能来自请求体（不是设备偏好）——BFF 入参形状与 AI 入参一致", () => {

@@ -484,6 +484,8 @@ export const DECOMPOSE_LAYER_MIN = 1;
 export const DECOMPOSE_LAYER_MAX = 10;
 
 export const DecomposeRequest = z.object({
+  /** Studio paid intents are single-attempt, with a real layer provider. */
+  providerRetryPolicy: z.literal("never").optional(),
   imageUrl: z.string(),
   /** 要拆几层。上游是必填参数，不是「期望值」——给多少就必须凑够多少。 */
   layerCount: z

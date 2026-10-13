@@ -794,6 +794,44 @@ model StudioGeneratedMaterial {
   @@index([requestId])
 }
 
+// Durable paid-provider receipt. Source identities and staged layer output are
+// private soft references; every read/write rechecks the actual project scope.
+model StudioDecompositionRequest {
+  id String @id @default(cuid())
+  workspaceId String
+  userId String
+  projectId String
+  mutationId String @db.Uuid
+  payloadHash String
+  sourceShapeId String
+  assetId String
+  assetSha256 String
+  documentRevision Int
+  layerCount Int
+  intent String?
+  sourceWidth Int
+  sourceHeight Int
+  sourceObjectKey String
+  sourceMimeType String
+  sourceSizeBytes Int
+  status JobStatus @default(PENDING)
+  providerStartedAt DateTime?
+  expiresAt DateTime
+  archiveExpiresAt DateTime?
+  outputJson Json?
+  publishedLayers Json @default("[]")
+  objectKeys Json @default("[]")
+  archiveToken String?
+  archivingStartedAt DateTime?
+  error String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([workspaceId, userId, projectId, mutationId], map: "StudioDecompositionRequest_identity_key")
+  @@index([workspaceId, projectId, createdAt], map: "StudioDecompositionRequest_history_idx")
+  @@index([status, expiresAt])
+}
+
 model AppSetting {
   id            String   @id @default("singleton")
   imageProvider String?
@@ -830,4 +868,21 @@ model AppSetting {
   registrationOpen      Boolean  @default(false)
   updatedAt     DateTime @updatedAt
   updatedById   String?
+}
+
+// Studio draft import receipts are separate from editable/deletable BrandRule rows.
+model WorkbenchKnowledgeImport {
+  id String @id @default(cuid())
+  workspaceId String
+  userId String
+  mutationId String
+  draftRevision Int
+  payloadHash String
+  source Json
+  receipt Json
+  ruleIds Json
+  ruleCount Int
+  createdAt DateTime @default(now())
+  @@unique([workspaceId, userId, mutationId], map: "WorkbenchKnowledgeImport_scope_key")
+  @@index([workspaceId, createdAt])
 }

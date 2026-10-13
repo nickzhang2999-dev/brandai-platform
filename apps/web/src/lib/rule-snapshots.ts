@@ -5,6 +5,9 @@ import type {
   RestoreRuleSnapshotResult,
 } from "@brandai/contracts";
 import { getConfirmedRules } from "@/lib/rules";
+import { z } from "zod";
+import { BrandRule as BrandRuleSchema } from "@brandai/contracts";
+import { assertRuleAssetsInWorkspace, lockBrandKnowledgeWorkspace } from "./brand-knowledge-safety";
 
 /**
  * C8 规则版本管理 — the single source of truth for capturing / listing /
@@ -44,8 +47,16 @@ export async function createRuleSnapshot(
   input: { label: string; note?: string },
   createdById?: string,
 ): Promise<RuleSnapshotSummary> {
-  const rules = await getConfirmedRules(workspaceId);
-  const row = await prisma.ruleSnapshot.create({
+  return prisma.$transaction(async tx => {
+    await lockBrandKnowledgeWorkspace(tx, workspaceId);
+    return captureSnapshot(tx, workspaceId, input, createdById);
+  });
+}
+
+async function captureSnapshot(tx: Prisma.TransactionClient, workspaceId: string,
+  input: { label: string; note?: string }, createdById?: string) {
+  const rules = await getConfirmedRules(workspaceId, { client: tx });
+  const row = await tx.ruleSnapshot.create({
     data: {
       workspaceId,
       label: input.label,
@@ -102,26 +113,23 @@ export async function restoreRuleSnapshot(
   snapshotId: string,
   actorId?: string,
 ): Promise<RestoreRuleSnapshotResult> {
-  const snapshot = await prisma.ruleSnapshot.findUnique({
-    where: { id: snapshotId },
-  });
-  if (!snapshot || snapshot.workspaceId !== workspaceId) {
-    return Promise.reject(new Error("SNAPSHOT_NOT_FOUND"));
-  }
-
-  // Auto-backup the current confirmed set first (reversible restore).
-  const backup = await createRuleSnapshot(
-    workspaceId,
-    { label: `回滚前自动备份 · ${new Date().toISOString().slice(0, 16)}` },
-    actorId,
-  );
-
-  const snapRules = (
-    Array.isArray(snapshot.rules) ? snapshot.rules : []
-  ) as unknown as SerializedRule[];
-  const snapIds = new Set(snapRules.map((r) => r.id));
-
-  const result = await prisma.$transaction(async (tx) => {
+  return prisma.$transaction(async (tx) => {
+    await lockBrandKnowledgeWorkspace(tx, workspaceId);
+    const snapshot = await tx.ruleSnapshot.findUnique({ where: { id: snapshotId } });
+    if (!snapshot || snapshot.workspaceId !== workspaceId) throw new Error("SNAPSHOT_NOT_FOUND");
+    const parsed = z.array(BrandRuleSchema.extend({ structured: z.record(z.unknown()).nullable().optional() })).safeParse(snapshot.rules);
+    if (!parsed.success || parsed.data.some(r => r.workspaceId !== workspaceId || r.status !== "CONFIRMED")
+      || new Set(parsed.data.map(r => r.id)).size !== parsed.data.length || snapshot.ruleCount !== parsed.data.length) {
+      throw new Error("SNAPSHOT_INVALID");
+    }
+    const snapRules = parsed.data as SerializedRule[];
+    const snapIds = new Set(snapRules.map(r => r.id));
+    const existing = await tx.brandRule.findMany({ where: { id: { in: [...snapIds] } }, select: { id: true, workspaceId: true } });
+    if (existing.some(r => r.workspaceId !== workspaceId)) throw new Error("SNAPSHOT_INVALID");
+    for (const rule of snapRules) await assertRuleAssetsInWorkspace(tx, workspaceId, rule);
+    // Backup and restore share one transaction/lock. No partial backup or lost intervening edit.
+    const backup = await captureSnapshot(tx, workspaceId,
+      { label: `回滚前自动备份 · ${new Date().toISOString().slice(0, 16)}` }, actorId);
     // Retire confirmed rules that the snapshot does not contain.
     const currentConfirmed = await tx.brandRule.findMany({
       where: { workspaceId, status: "CONFIRMED" },
@@ -130,7 +138,7 @@ export async function restoreRuleSnapshot(
     const toRetire = currentConfirmed.filter((r) => !snapIds.has(r.id));
     if (toRetire.length > 0) {
       await tx.brandRule.updateMany({
-        where: { id: { in: toRetire.map((r) => r.id) } },
+        where: { workspaceId, id: { in: toRetire.map((r) => r.id) } },
         data: { status: "REJECTED" },
       });
     }
@@ -145,8 +153,6 @@ export async function restoreRuleSnapshot(
       });
     }
 
-    return { restored: snapRules.length, retired: toRetire.length };
+    return { restored: snapRules.length, retired: toRetire.length, backupSnapshotId: backup.id };
   });
-
-  return { ...result, backupSnapshotId: backup.id };
 }

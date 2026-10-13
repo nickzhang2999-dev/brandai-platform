@@ -9,12 +9,14 @@ import { exportOwnedPng, exportOwnedSvg, getOwnedBounds, type OwnedExportOptions
 import { OwnedCanvas } from "./OwnedCanvas";
 import { OwnedWorkflowPanel } from "./OwnedWorkflowPanel";
 import { OwnedGenerationCard } from "./OwnedGenerationCard";
+import { OwnedLayerPanel } from "./OwnedLayerPanel";
+import { placeOwnedLayers } from "../../lib/owned-canvas-decomposition";
 import { createOwnedWorkflowSession, type OwnedWorkflowSession, type WorkflowSessionState } from "./owned-workflow-session";
 import { useOwnedDraft } from "./use-owned-draft";
 import { createOwnedGenerationRecovery, OwnedGenerationRecoveryError } from "./owned-generation-recovery";
-import { createOwnedEditorApi, type Material, type UploadTask, type GenerationTask, type PersistentImage, type GenerationInput, type WorkflowInput } from "./owned-editor-api";
+import { createOwnedEditorApi, type Material, type UploadTask, type GenerationTask, type PersistentImage, type GenerationInput, type WorkflowInput, type DecompositionTask } from "./owned-editor-api";
 
-type InitialTask = { kind: "STUDIO_UPLOAD" | "STUDIO_GENERATION"; id: string };
+type InitialTask = { kind: "STUDIO_UPLOAD" | "STUDIO_GENERATION" | "STUDIO_DECOMPOSITION"; id: string };
 export type OwnedEditorClientProps = { workspaceId: string; projectId: string; userId: string; readOnly?: boolean; projectName?: string; initialTask?: InitialTask };
 type ProductApi = ReturnType<typeof createOwnedEditorApi>;
 type SaveState = "loading" | "saved" | "dirty" | "saving" | "error" | "conflict";
@@ -29,7 +31,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
   const [saveState, setSaveState] = useState<SaveState>("loading");
   const [saveError, setSaveError] = useState("");
   const [notice, setNotice] = useState("");
-  const [panel, setPanel] = useState<"generate" | "materials" | "tasks" | null>("generate");
+  const [panel, setPanel] = useState<"generate" | "materials" | "tasks" | "layers" | null>("generate");
   const [materials, setMaterials] = useState<Material[]>([]);
   const [uploads, setUploads] = useState<UploadTask[]>([]);
   const [generations, setGenerations] = useState<GenerationTask[]>([]);
@@ -135,13 +137,14 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
 
   const openExistingTask = useCallback(async (kind: InitialTask["kind"], id: string) => {
     const api = apiRef.current;
-    if (!api || !docRef.current || !/^[a-zA-Z0-9_-]{1,128}$/.test(id) || !["STUDIO_UPLOAD", "STUDIO_GENERATION"].includes(kind)) throw new Error("任务不属于当前画布或画布尚未就绪。");
+    if (!api || !docRef.current || !/^[a-zA-Z0-9_-]{1,128}$/.test(id) || !["STUDIO_UPLOAD", "STUDIO_GENERATION", "STUDIO_DECOMPOSITION"].includes(kind)) throw new Error("任务不属于当前画布或画布尚未就绪。");
     if (taskFocusBusy.current) throw new Error("正在读取上一条任务，请稍后重试。");
     taskFocusBusy.current = true;
     try {
       if (kind === "STUDIO_UPLOAD") { const task = await api.getUpload(id); if (!alive.current || apiRef.current !== api) return false; setUploads(current => mergeTask(current, task, value => value.taskId)); }
-      else { const task = await api.getGeneration(id); if (!alive.current || apiRef.current !== api) return false; setGenerations(current => mergeTask(current, task, value => value.requestId)); }
-      setPanel("tasks"); setNotice("已展开服务器中的任务记录，图片是否加入画布由你决定。"); return true;
+      else if (kind === "STUDIO_GENERATION") { const task = await api.getGeneration(id); if (!alive.current || apiRef.current !== api) return false; setGenerations(current => mergeTask(current, task, value => value.requestId)); }
+      else { await api.getDecomposition(id); if (!alive.current || apiRef.current !== api) return false; }
+      setPanel(kind === "STUDIO_DECOMPOSITION" ? "layers" : "tasks"); setNotice("已展开服务器中的任务记录，是否加入画布由你决定。"); return true;
     } finally { if (apiRef.current === api) taskFocusBusy.current = false; }
   }, []);
 
@@ -205,7 +208,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
       if (event.origin === location.origin && event.source === parent && parent !== window && data?.type === "novart-product-task-open"
         && data.workspaceId === workspaceId && data.userId === userId && data.projectId === projectId
         && typeof data.token === "string" && /^[a-zA-Z0-9_-]{1,128}$/.test(data.token)
-        && typeof data.taskId === "string" && /^[a-zA-Z0-9_-]{1,128}$/.test(data.taskId) && ["STUDIO_UPLOAD", "STUDIO_GENERATION"].includes(data.kind)) {
+        && typeof data.taskId === "string" && /^[a-zA-Z0-9_-]{1,128}$/.test(data.taskId) && ["STUDIO_UPLOAD", "STUDIO_GENERATION", "STUDIO_DECOMPOSITION"].includes(data.kind)) {
         const api = apiRef.current;
         const reply = (ok: boolean, error?: string) => { if (alive.current && apiRef.current === api) parent.postMessage({ type: "novart-product-task-opened", workspaceId, userId, projectId, kind: data.kind, taskId: data.taskId, token: data.token, ok, ...(error ? { error } : {}) }, location.origin); };
         void openExistingTask(data.kind, data.taskId).then(opened => { if (opened) reply(true); }).catch(error => reply(false, messageOf(error))); return;
@@ -281,6 +284,40 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
     const center = point ?? { x: (360 - current.camera.x) / current.camera.zoom, y: (260 - current.camera.y) / current.camera.zoom };
     changeDocument({ ...current, items: [...current.items, { id: identity ?? "shape:" + crypto.randomUUID(), kind: "image", x: center.x - w / 2, y: center.y - h / 2, w, h, rotation: 0, opacity: 1, parentId: current.pageId, url: material.url, assetId: material.assetId, assetSha256: material.assetSha256, ...(material.versionId ? { versionId: material.versionId } : {}) }] });
     setNotice("图片已加入画布，保存状态见顶部。");
+  }
+
+  async function prepareLayers() {
+    const saved = await save();
+    if (!alive.current || !writableRef.current || !docRef.current || !saved || sequence.current !== savedSequence.current
+      || pendingSave.current || saveBlocked.current) throw new Error("画布保存尚未确认，请先保存后再提交分层。");
+    return { document: docRef.current, revision: saved.revision };
+  }
+  async function insertLayers(task: DecompositionTask) {
+    const api = apiRef.current;
+    if (!api || !writableRef.current || !docRef.current) throw new Error("当前画布不可编辑，图层仍保存在任务中。");
+    if (task.projectId !== projectId || task.status !== "SUCCEEDED" || task.layers.length < 2
+      || task.layers.reduce((sum, layer) => sum + layer.width * layer.height, 0) > 40_000_000) throw new Error("图层还未完整保存或超过画布内存预算。");
+    // Decode sequentially instead of allocating every full-resolution raster
+    // at once. The overall wait has an exit even when image responses stall.
+    const deadline = Date.now() + 60_000;
+    for (const layer of task.layers) {
+      api.image(layer);
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw new Error("图层读取超时，原图未改动，可稍后重新展开。");
+      await new Promise<void>((resolve, reject) => {
+        const image = new Image(), timer = setTimeout(() => { image.src = ""; reject(new Error("图层读取超时，原图未改动。")); }, Math.min(20_000, remaining));
+        image.onload = () => { clearTimeout(timer); image.naturalWidth === layer.width && image.naturalHeight === layer.height ? resolve() : reject(new Error("图层尺寸与保存回执不一致，原图未改动。")); };
+        image.onerror = () => { clearTimeout(timer); reject(new Error("图层暂时无法读取，原图未改动。")); }; image.src = layer.url;
+      });
+      if (!alive.current || apiRef.current !== api || !writableRef.current) throw new Error("页面状态已变化，图层尚未加入画布。");
+    }
+    const before = docRef.current;
+    if (!before) throw new Error("画布尚未准备完成。");
+    const placed = await placeOwnedLayers(before, task, workspaceId);
+    if (!alive.current || apiRef.current !== api || !writableRef.current || docRef.current !== before) throw new Error("画布刚刚发生变化，请重新展开图层，原内容仍保留。");
+    if (!placed.replayed) changeDocument(placed.document);
+    setNotice(placed.replayed ? "这一组图层已经在画布中，保留当前编辑。" : "图层已展开，原图隐藏保留。可解除组合后分别移动、隐藏和编辑。");
+    await save();
   }
 
   async function runUpload() {
@@ -458,6 +495,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
       <span className="text-xs text-muted-fg" role="status" data-testid="owned-save-status">{saveLabel}</span>
       {canEdit && <button type="button" className={button} disabled={saveState === "saving" || saveState === "saved"} onClick={() => void save().catch(() => undefined)}>{saveState === "error" ? "确认保存" : "保存"}</button>}
       <button type="button" className={button} onClick={() => setPanel(current => current ? null : "generate")} aria-expanded={!!panel}>创作</button>
+      <button type="button" className={button} onClick={() => setPanel("layers")} aria-expanded={panel === "layers"}>AI 分层</button>
     </header>
     {!!saveError && <div role="alert" className="border-b border-border bg-accent-soft px-4 py-2 text-xs">{saveError}{saveState === "conflict" && " 当前内容仍在本页，请先导出副本再重新打开。"}{!document && <button type="button" className="ml-3 underline" onClick={() => location.reload()}>重新打开</button>}</div>}
     {!!document?.warnings.length && <div role="alert" className="border-b border-border bg-accent-soft px-4 py-2 text-xs">原项目含暂不能可靠转换的对象，已启用只读保护，未覆盖原稿。{document.warnings.join("；")}</div>}
@@ -467,9 +505,10 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
         {document ? <OwnedCanvas key={projectId} document={document} clipboardScope={`${userId}:${workspaceId}:${projectId}`} onChange={changeDocument} readOnly={!canEdit} onUploadFiles={uploadFiles} onReplaceImage={replaceImage} onExport={(format, scope) => exportDocument(format, scope)} onSelectionChange={setSelectedIds} /> : <div className="grid h-full place-content-center text-sm text-muted-fg">{saveError ? "画布未能打开，原数据没有被修改。" : "正在读取项目…"}</div>}
       </main>
       {panel && <aside aria-label="创作面板" className="absolute inset-y-0 right-0 z-20 flex w-[min(340px,92vw)] flex-col border-l border-border bg-card shadow-lg sm:relative sm:w-80 sm:shrink-0 sm:shadow-none">
-        <div className="flex gap-1 border-b border-border p-3">{([['generate', '生成'], ['materials', '素材'], ['tasks', '任务']] as const).map(([id, label]) => <button key={id} type="button" className={button + (panel === id ? " !border-primary !bg-accent-soft !text-primary" : "")} onClick={() => setPanel(id)}>{label}</button>)}<button className="ml-auto px-2 text-muted-fg" aria-label="收起面板" onClick={() => setPanel(null)}>×</button></div>
+        <div className="flex gap-1 border-b border-border p-3">{([['generate', '生成'], ['materials', '素材'], ['tasks', '任务'], ['layers', '分层']] as const).map(([id, label]) => <button key={id} type="button" className={button + (panel === id ? " !border-primary !bg-accent-soft !text-primary" : "")} onClick={() => setPanel(id)}>{label}</button>)}<button className="ml-auto px-2 text-muted-fg" aria-label="收起面板" onClick={() => setPanel(null)}>×</button></div>
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
           {!!notice && <p role="status" className="rounded-xl bg-accent-soft p-3 text-xs leading-6" data-testid="owned-notice">{notice}</p>}
+          {panel === "layers" && <OwnedLayerPanel key={projectId} api={apiRef.current} workspaceId={workspaceId} projectId={projectId} userId={userId} document={document} selectedIds={selectedIds} readOnly={!canEdit} onPrepare={prepareLayers} onPlace={insertLayers} />}
           {panel === "generate" && <>
             <div><h2 className="text-sm font-semibold">{workflow?.mode === "modify" ? "修改整张图片" : "生成新图片"}</h2><p className="mt-1 text-xs leading-5 text-muted-fg">描述想法，结果单独保留，由你决定是否加入画布。</p></div>
             <textarea aria-label="创作需求" className="min-h-40 w-full resize-y rounded-2xl border border-border bg-bg p-3 text-sm outline-none focus:border-primary" placeholder="想创作什么？" maxLength={4000} value={prompt} onChange={event => setPrompt(event.target.value)} onCompositionStart={draft.compositionStart} onCompositionEnd={draft.compositionEnd} disabled={!canEdit || pendingGeneration || submitting || generationRecoveryBlocked || !draft.ready || draft.blocked} />

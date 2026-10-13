@@ -650,6 +650,31 @@
   ['ns-brand-name', 'ns-brand-color-0', 'ns-brand-color-1', 'ns-brand-color-2', 'ns-brand-font', 'ns-brand-notes'].forEach(id => $(id).addEventListener('input', changeBrand));
   $('ns-settings-form').addEventListener('submit', event => { event.preventDefault(); saveGroup('profile'); }); $('ns-brand-form').addEventListener('submit', event => { event.preventDefault(); saveGroup('brand'); });
   ['ns-meta-retry', 'ns-settings-latest', 'ns-brand-latest'].forEach(id => $(id).addEventListener('click', () => loadState(true))); $('ns-favorites-retry').addEventListener('click', () => saveGroup('favorites'));
+  let knowledgeFrame = null;
+  function selectBrandPanel(knowledge) {
+    const tabs = [$('ns-brand-draft-tab'), $('ns-brand-knowledge-tab')];
+    tabs.forEach((tab, index) => { const selected = index === Number(knowledge); tab.setAttribute('aria-selected', String(selected)); tab.tabIndex = selected ? 0 : -1; });
+    $('ns-brand-draft-panel').hidden = knowledge; $('ns-brand-knowledge-panel').hidden = !knowledge;
+    if (!knowledge || knowledgeFrame) return;
+    const workspaceId = window.__NOVART_PRODUCT__?.workspaceId;
+    if (typeof workspaceId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(workspaceId)) {
+      $('ns-brand-knowledge-status').textContent = '请先选择品牌，再打开品牌知识。'; return;
+    }
+    // The workspace comes from the authenticated shell, never another tab's cookie.
+    const frame = node('iframe', 'ns-knowledge-frame'); frame.title = '当前品牌知识管理';
+    frame.src = '/studio-brand-knowledge?' + new URLSearchParams({workspaceId, embedded: '1'});
+    frame.addEventListener('load', () => { $('ns-brand-knowledge-status').textContent = brandDirty ? '品牌草稿尚未保存。导入时只会读取服务器已经保存的草稿。' : ''; });
+    knowledgeFrame = frame; $('ns-brand-knowledge-status').textContent = brandDirty ? '正在打开知识库。品牌草稿尚未保存，当前输入仍保留。' : '正在读取品牌知识…';
+    $('ns-brand-knowledge-host').append(frame);
+  }
+  [$('ns-brand-draft-tab'), $('ns-brand-knowledge-tab')].forEach((tab, index) => {
+    tab.addEventListener('click', () => selectBrandPanel(index === 1));
+    tab.addEventListener('keydown', event => {
+      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+      event.preventDefault(); const next = event.key === 'Home' ? 0 : event.key === 'End' ? 1 : 1 - index;
+      selectBrandPanel(next === 1); $(next ? 'ns-brand-knowledge-tab' : 'ns-brand-draft-tab').focus();
+    });
+  });
   $('ns-settings-return').addEventListener('click', () => returnToOrigin(settingsOrigin)); $('ns-brand-return').addEventListener('click', () => returnToOrigin(brandOrigin));
   window.addEventListener('storage', event => { if (event.key === draftKey && event.newValue) { showMeta('另一个页面修改了本机草稿；这里的输入仍保留。请重新读取已保存设置后检查。'); } });
 

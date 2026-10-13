@@ -18,7 +18,7 @@ export default async function OwnedEditorPage({ searchParams }: {
   for (const name of ["workspaceId", "projectId"]) {
     if (typeof params[name] === "string") query.set(name, params[name]);
   }
-  for (const name of ["taskId", "requestId"]) {
+  for (const name of ["taskId", "requestId", "layerRequestId"]) {
     const value = params[name];
     for (const id of typeof value === "string" ? [value] : value ?? []) query.append(name, id);
   }

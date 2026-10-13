@@ -1,5 +1,18 @@
 # Novart product integration
 
+## Current working area — 2026-10-13
+
+User selected the existing `devUpdate1012` branch as the future development area and requested migration of yesterday's brand-knowledge and AI-layer features. Current checkout: `D:/coding/公司/brandai-devUpdate1012`, starting commit `5499be0fbed5926084ec29892f9a4c23643b6aa4`. CDS operations are out of this batch's scope. Historical deployment restrictions below are records, not current routing instructions; follow current AGENTS/CLAUDE and normal guarded commits.
+
+- [complete] Verify target branch/repository/rules; create independent checkout and install the native push guard.
+- [complete] Transfer 77 scoped feature files from the old dirty integration tree, preserving source files and excluding unrelated dirty files/private configuration.
+- [complete] Repair the two recorded regressions, inspect backend integration, and refresh package/resource manifests without relaxing checks.
+- [complete] Run current-branch L1 (1147 contracts + 28 UI), AI tests (421), full Web typecheck/build, push-guard regressions (14) and real-browser fixture journeys (49 core + 10 layers + 14 knowledge + 16 inbox).
+- [complete] Record precise acceptance boundaries. Source migration and local validation are complete; real provider/database acceptance remains separate.
+- Git delivery: normal guarded commit/push to `devUpdate1012`; exact local/remote verification is recorded in `D:/coding/.novart-tmp/devUpdate1012-delivery-20261013.json`. Future work uses this checkout. No main merge, paid-provider test or manual CDS deployment in this batch.
+
+Transfer evidence: `D:/coding/.novart-tmp/devUpdate1012-transfer-20261013/inventory.json`. Current log: `docs/development-log-2026-10-13.md`.
+
 ## Latest steering — resolve product startup timeout · 2026-10-12
 
 - [complete] Diagnose public normal/warm startup, resource controller12s and old-card metadata dates; preserve user normal-open report and separately labeled controlled reproductions.

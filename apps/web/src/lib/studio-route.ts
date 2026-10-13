@@ -35,7 +35,7 @@ export async function studioRoute(req: Request) {
         // scripts or public license configuration are needed for this entry.
         const target = new URLSearchParams({ workspaceId, projectId: doc.projectId });
         const task = studioTaskIntent(url.searchParams);
-        if (task) target.set(task.kind === "STUDIO_UPLOAD" ? "taskId" : "requestId", task.id);
+        if (task) target.set(task.kind === "STUDIO_UPLOAD" ? "taskId" : task.kind === "STUDIO_GENERATION" ? "requestId" : "layerRequestId", task.id);
         return new Response(null, { status: 302, headers: { ...headers,
           Location: "/studio-editor?" + target.toString() } });
       }

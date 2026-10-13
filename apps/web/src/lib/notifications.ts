@@ -5,6 +5,7 @@ import type {
 } from "@brandai/contracts";
 import { BRAND_PREVIEW_PROJECT_NAME } from "./brand-preview";
 import { listStudioGenerationNotifications } from "./studio-notifications";
+import { listStudioLayerNotifications } from "./studio-layer-notifications";
 
 /**
  * A3 / L3 — derive the in-app notification inbox from REAL server state. There
@@ -61,7 +62,7 @@ export async function listWorkspaceNotifications(
   userId?: string,
   scope: "all" | "studio" = "all",
 ): Promise<NotificationItem[]> {
-  const [gens, tasks, uploads, studioGenerations] = await Promise.all([
+  const [gens, tasks, uploads, studioGenerations, studioLayers] = await Promise.all([
     scope === "studio" ? Promise.resolve([]) : prisma.generation.findMany({
       where: {
         workspaceId,
@@ -113,9 +114,10 @@ export async function listWorkspaceNotifications(
       select: { taskId: true, projectId: true, fileName: true, task: { select: { status: true, error: true, updatedAt: true } } },
     }) : Promise.resolve([]),
     userId ? listStudioGenerationNotifications(workspaceId, userId, limit) : Promise.resolve([]),
+    userId ? listStudioLayerNotifications(workspaceId, userId, limit) : Promise.resolve([]),
   ]);
 
-  const items: NotificationItem[] = [...studioGenerations];
+  const items: NotificationItem[] = [...studioGenerations, ...studioLayers];
 
   for (const g of gens) {
     const succeeded = g.status === "SUCCEEDED";

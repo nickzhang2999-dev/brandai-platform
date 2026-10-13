@@ -84,6 +84,23 @@ jobs:
           test -f "$NOVART_CHROMIUM_EXECUTABLE"
           mkdir -p apps/web/.novart-ui-artifacts
           NOVART_OWNED_REPORT=apps/web/.novart-ui-artifacts/owned-react-fixture.json node scripts/test-novart-owned-canvas-browser.cjs
+          NOVART_OWNED_LAYERS_ONLY=1 NOVART_OWNED_REPORT=apps/web/.novart-ui-artifacts/owned-layer-fixture.json node scripts/test-novart-owned-canvas-browser.cjs
+          NOVART_KNOWLEDGE_REPORT=apps/web/.novart-ui-artifacts/brand-knowledge-fixture.json node scripts/test-novart-brand-knowledge-browser.cjs
+          NOVART_LAYER_INBOX_REPORT=apps/web/.novart-ui-artifacts/layer-inbox-fixture.json node scripts/test-novart-layer-inbox.cjs
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path('apps/web/.novart-ui-artifacts')
+          for name, expected in (('owned-layer-fixture.json', 10), ('brand-knowledge-fixture.json', 14), ('layer-inbox-fixture.json', 16)):
+              report = json.loads((root / name).read_text())
+              assert report['passed'] is True and report['isolated'] is True, name
+              assert report['realBackend'] is False and report['realProvider'] is False, name
+              assert report['providerCalls'] == 0, name
+              assert not report['externalRequests'] and not report['errors'], name
+              assert len(report['checks']) == expected, name
+              assert all(isinstance(check, str) or check['status'] == 'PASS' for check in report['checks']), name
+              print(f'PASS {name}: {expected} isolated interaction checks; no real provider or database acceptance claimed')
+          PY
       - name: Generate and migrate the disposable database
         run: |
           pnpm db:generate
@@ -310,6 +327,9 @@ jobs:
           # only known test outputs; never upload raw logs or diagnostics.json.
           path: |
             apps/web/.novart-ui-artifacts/owned-react-fixture.json
+            apps/web/.novart-ui-artifacts/owned-layer-fixture.json
+            apps/web/.novart-ui-artifacts/brand-knowledge-fixture.json
+            apps/web/.novart-ui-artifacts/layer-inbox-fixture.json
             apps/web/.novart-ui-artifacts/garage-container.json
             apps/web/.novart-ui-artifacts/port-3000/acceptance.json
             apps/web/.novart-ui-artifacts/port-3000/failure-runtime.json

@@ -71,12 +71,13 @@ export function serializeProhibition(row: {
  * with no matching asset are simply absent from the map.
  */
 export async function loadAssetUrlMap(
+  workspaceId: string,
   assetIds: Array<string | null | undefined>,
 ): Promise<Record<string, string>> {
   const ids = [...new Set(assetIds.filter((x): x is string => !!x))];
   if (ids.length === 0) return {};
   const assets = await prisma.asset.findMany({
-    where: { id: { in: ids } },
+    where: { workspaceId, id: { in: ids } },
     select: { id: true, url: true },
   });
   return Object.fromEntries(assets.map((a) => [a.id, a.url]));
@@ -104,6 +105,7 @@ export async function loadProhibitionReferenceImages(
     orderBy: { createdAt: "asc" },
   });
   const urlById = await loadAssetUrlMap(
+    workspaceId,
     rows.flatMap((r) => [r.positiveExampleAssetId, r.negativeExampleAssetId]),
   );
   const refs: ReferenceImage[] = [];

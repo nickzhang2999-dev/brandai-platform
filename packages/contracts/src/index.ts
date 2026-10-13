@@ -28,3 +28,4 @@ export * from "./studio-workflow";
 export * from "./studio-generation";
 export * from "./studio-compliance";
 export * from "./studio-edit";
+export * from "./studio-decomposition";

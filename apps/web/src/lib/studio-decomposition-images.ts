@@ -1,0 +1,107 @@
+import { createHash } from "node:crypto";
+import sharp from "sharp";
+import { INK_ALPHA_THRESHOLD } from "@brandai/contracts";
+import { ApiException } from "./api";
+import { artifactDeadline, STUDIO_ARTIFACT_MAX_BYTES } from "./studio-generation-artifacts-image";
+
+export const STUDIO_LAYER_TOTAL_PIXELS = 40_000_000;
+const formats = new Set(["png", "jpeg", "webp"]);
+const failure = (message: string) => new ApiException(422, message);
+const invalid = () => failure("分层图片损坏、格式不受支持或超过32MB，未发布图层。");
+
+function validDimensions(width: number, height: number) {
+  return Number.isSafeInteger(width) && Number.isSafeInteger(height)
+    && width > 0 && height > 0 && width <= 16384 && height <= 16384;
+}
+
+/** The caller checks this whole-group budget before provider/decode work. */
+export function assertStudioLayerBudget(width: number, height: number, count: number): void {
+  if (!validDimensions(width, height) || !Number.isSafeInteger(count) || count < 2 || count > 10
+    || width * height * count > STUDIO_LAYER_TOTAL_PIXELS) {
+    throw failure("分层数量或总像素超过处理上限，请减少图层数或降低原图尺寸（2–10层，总计不超过4000万像素）。");
+  }
+}
+
+export type StudioInspectedLayer = {
+  body: Buffer;
+  assetSha256: string;
+  mimeType: "image/png";
+  width: number;
+  height: number;
+  sizeBytes: number;
+  alphaBounds: { left: number; top: number; width: number; height: number };
+  inkCoverage: number;
+  hasTransparency: boolean;
+};
+
+/** Only actual bounded bytes reach Sharp. A smaller full-frame image may be
+ * scaled uniformly to the source dimensions; a cropped/aspect-mismatched
+ * image has no placement information and cannot be published as a layer.
+ * Alpha stays intact: there is no flatten, white fill, trim or canvas crop. */
+export async function inspectStudioLayer(
+  body: Buffer,
+  sourceWidth: number,
+  sourceHeight: number,
+  signal: AbortSignal,
+): Promise<StudioInspectedLayer> {
+  signal.throwIfAborted();
+  if (!validDimensions(sourceWidth, sourceHeight) || sourceWidth * sourceHeight > STUDIO_LAYER_TOTAL_PIXELS) {
+    throw failure("原图尺寸超过分层处理上限，请降低原图尺寸后重试。");
+  }
+  if (!Buffer.isBuffer(body) || !body.length || body.length > STUDIO_ARTIFACT_MAX_BYTES) throw invalid();
+  const image = sharp(body, { limitInputPixels: STUDIO_LAYER_TOTAL_PIXELS, failOn: "warning" });
+  const abort = () => { image.destroy(); };
+  signal.addEventListener("abort", abort, { once: true });
+  try {
+    const metadata = await artifactDeadline(image.metadata(), signal);
+    if (!formats.has(metadata.format ?? "") || !metadata.width || !metadata.height || (metadata.pages ?? 1) !== 1) throw invalid();
+    const rotated = (metadata.orientation ?? 0) >= 5;
+    const width = rotated ? metadata.height : metadata.width;
+    const height = rotated ? metadata.width : metadata.height;
+    if (!validDimensions(width, height) || width * height > STUDIO_LAYER_TOTAL_PIXELS) throw invalid();
+    if (width * sourceHeight !== height * sourceWidth || width > sourceWidth || height > sourceHeight) {
+      throw failure("分层服务返回的图层不是原图完整画幅，或尺寸比例不一致；缺少位置记录，未拉伸或裁切发布。");
+    }
+    image.rotate().toColourspace("srgb").ensureAlpha();
+    if (width !== sourceWidth || height !== sourceHeight) image.resize({ width: sourceWidth, height: sourceHeight, fit: "fill" });
+    // Decode once to a bounded RGBA buffer. The PNG below is encoded from the
+    // exact pixels analysed here, so its bounds/hash describe the public bytes.
+    const decoded = await artifactDeadline(image.raw().toBuffer({ resolveWithObject: true }), signal);
+    signal.throwIfAborted();
+    if (decoded.info.width !== sourceWidth || decoded.info.height !== sourceHeight || decoded.info.channels !== 4
+      || decoded.data.length !== sourceWidth * sourceHeight * 4) throw invalid();
+    let ink = 0, minX = sourceWidth, minY = sourceHeight, maxX = -1, maxY = -1;
+    let hasTransparency = false;
+    for (let y = 0; y < sourceHeight; y++) {
+      signal.throwIfAborted();
+      for (let x = 0; x < sourceWidth; x++) {
+        const alpha = decoded.data[(y * sourceWidth + x) * 4 + 3]!;
+        if (alpha < 255) hasTransparency = true;
+        if (alpha < INK_ALPHA_THRESHOLD) continue;
+        ink++;
+        minX = Math.min(minX, x); minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
+      }
+    }
+    if (!ink) throw failure("分层服务返回了空白或全透明图层，未发布不完整的分层结果。");
+    const encoding = sharp(decoded.data, { raw: { width: sourceWidth, height: sourceHeight, channels: 4 }, limitInputPixels: STUDIO_LAYER_TOTAL_PIXELS });
+    const abortEncoding = () => { encoding.destroy(); };
+    signal.addEventListener("abort", abortEncoding, { once: true });
+    let output: Buffer;
+    try { output = await artifactDeadline(encoding.png().toBuffer(), signal); }
+    finally { signal.removeEventListener("abort", abortEncoding); encoding.destroy(); }
+    signal.throwIfAborted();
+    if (!output.length || output.length > STUDIO_ARTIFACT_MAX_BYTES) throw invalid();
+    return { body: output, assetSha256: createHash("sha256").update(output).digest("hex"), mimeType: "image/png",
+      width: sourceWidth, height: sourceHeight, sizeBytes: output.length,
+      alphaBounds: { left: minX, top: minY, width: maxX - minX + 1, height: maxY - minY + 1 },
+      inkCoverage: ink / (sourceWidth * sourceHeight), hasTransparency };
+  } catch (error) {
+    signal.throwIfAborted();
+    if (error instanceof ApiException) throw error;
+    throw invalid();
+  } finally {
+    signal.removeEventListener("abort", abort);
+    image.destroy();
+  }
+}

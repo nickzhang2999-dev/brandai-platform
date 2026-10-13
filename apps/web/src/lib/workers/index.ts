@@ -25,6 +25,7 @@ import { createImagePreviewWorker } from "./image-preview.worker";
 import { createStudioMaterialWorker } from "./studio-materials.worker";
 import { createStudioGenerationArtifactWorker } from "./studio-generation-artifacts.worker";
 import { createStudioGenerationComplianceWorker } from "./studio-generation-compliance.worker";
+import { createStudioDecompositionWorker } from "./studio-decomposition.worker";
 import { sweepStaleGenerations } from "@/lib/generations";
 import { dispatchStudioGenerations } from "@/lib/studio-generation";
 import { queuePrefix } from "@/lib/queue";
@@ -87,6 +88,7 @@ try {
     createStudioMaterialWorker(),
     createStudioGenerationArtifactWorker(),
     createStudioGenerationComplianceWorker(),
+    createStudioDecompositionWorker(),
   );
   workersReady = true;
   console.log(`[workers] started: ${workers.length} worker(s)`);

@@ -52,7 +52,7 @@
         <p id="ns-create-recovery" class="ns-create-recovery" role="status" data-testid="studio-create-recovery" hidden></p>
       </div>
       <div class="ns-section-heading"><div><h2>最近项目</h2></div><a href="#/projects" class="ns-text-link">查看全部 <svg><use href="#ns-icon-next"/></svg></a></div><div id="ns-recent-projects" class="ns-project-grid" aria-live="polite"></div>
-      
+
     </section>
     <section class="ns-page" data-page="projects" aria-labelledby="ns-projects-title" hidden>
       <div class="ns-page-heading"><div><h1 id="ns-projects-title">项目库</h1><p>从上次的想法，继续创作。</p></div><button id="ns-project-new" class="ns-primary"><svg><use href="#ns-icon-plus"/></svg>新建项目</button></div>
@@ -68,8 +68,9 @@
     </section>
     <section class="ns-page ns-form-page" data-page="brand" aria-labelledby="ns-brand-title" hidden>
       <button class="ns-text-button ns-return" id="ns-brand-return">‹ 返回素材库</button>
-      <div class="ns-page-heading"><div><h1 id="ns-brand-title">品牌规范</h1><p>留下品牌的颜色、字体和使用习惯。</p></div></div>
-      <div class="ns-brand-layout">
+      <div class="ns-page-heading"><div><h1 id="ns-brand-title">品牌规范</h1><p>整理品牌的使用习惯，确认知识规则后用于生成。</p></div></div>
+      <div class="ns-tabs" role="tablist" aria-label="品牌管理"><button id="ns-brand-draft-tab" role="tab" aria-selected="true" aria-controls="ns-brand-draft-panel">品牌草稿</button><button id="ns-brand-knowledge-tab" role="tab" aria-selected="false" aria-controls="ns-brand-knowledge-panel" tabindex="-1">品牌知识</button></div>
+      <div id="ns-brand-draft-panel" class="ns-brand-layout" role="tabpanel" aria-labelledby="ns-brand-draft-tab">
         <form id="ns-brand-form" class="ns-form-card">
           <div class="ns-field-group"><label for="ns-brand-name">品牌名称 <span id="ns-brand-name-count" class="ns-field-count"></span></label><input id="ns-brand-name" maxlength="120" placeholder="例如：海风咖啡" aria-describedby="ns-brand-name-count"></div>
           <fieldset class="ns-brand-colors"><legend>品牌色</legend><div class="ns-color-fields"><div class="ns-color-field">
@@ -88,8 +89,9 @@
           <div class="ns-field-group"><label for="ns-brand-notes">使用说明 <span id="ns-brand-notes-count" class="ns-field-count"></span></label><textarea id="ns-brand-notes" maxlength="4000" rows="4" placeholder="例如：标题简洁，保留留白，照片以自然光为主。" aria-describedby="ns-brand-notes-count"></textarea></div>
           <div class="ns-form-footer"><span id="ns-brand-status" role="status">正在读取本机规范…</span><button id="ns-brand-save" class="ns-primary" type="submit">保存规范</button></div><button id="ns-brand-latest" class="ns-text-button" type="button" hidden>重新读取，保留草稿</button>
         </form>
-        <div class="ns-brand-right"><div class="ns-preview-heading"><span>实时预览</span><span>随输入更新</span></div><div id="ns-brand-preview" class="ns-brand-preview"><span class="ns-preview-eyebrow">BRAND NOTES</span><strong id="ns-brand-preview-name">你的品牌</strong><p>让每一次设计，<br>都有熟悉的气质。</p><div class="ns-preview-line"></div><span id="ns-brand-preview-notes">一些颜色，一点留白，和你自己的表达。</span><div class="ns-preview-palette"><i></i><i></i><i></i></div></div><p class="ns-panel-note">仅作本机视觉参考，暂不应用到画布或 AI 生成。</p></div>
+        <div class="ns-brand-right"><div class="ns-preview-heading"><span>实时预览</span><span>随输入更新</span></div><div id="ns-brand-preview" class="ns-brand-preview"><span class="ns-preview-eyebrow">BRAND NOTES</span><strong id="ns-brand-preview-name">你的品牌</strong><p>让每一次设计，<br>都有熟悉的气质。</p><div class="ns-preview-line"></div><span id="ns-brand-preview-notes">一些颜色，一点留白，和你自己的表达。</span><div class="ns-preview-palette"><i></i><i></i><i></i></div></div><p class="ns-panel-note">这是草稿预览。保存后可在「品牌知识」导入并逐项确认，确认规则才会用于 AI 生成。</p></div>
       </div>
+      <div id="ns-brand-knowledge-panel" class="ns-knowledge-panel" role="tabpanel" aria-labelledby="ns-brand-knowledge-tab" hidden><p id="ns-brand-knowledge-status" role="status" class="ns-panel-note">打开后读取当前品牌的知识规则。</p><div id="ns-brand-knowledge-host"></div></div>
     </section>
     <section class="ns-page ns-form-page" data-page="settings" aria-labelledby="ns-settings-title" hidden>
       <button class="ns-text-button ns-return" id="ns-settings-return"><svg><use href="#ns-icon-back"/></svg><span>返回来源页面</span></button>

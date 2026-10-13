@@ -24,6 +24,7 @@ describe("L3 · NotificationKind / NotificationStatus", () => {
       "INGEST",
       "STUDIO_UPLOAD",
       "STUDIO_GENERATION",
+      "STUDIO_DECOMPOSITION",
     ]) {
       expect(NotificationKind.safeParse(k).success).toBe(true);
     }

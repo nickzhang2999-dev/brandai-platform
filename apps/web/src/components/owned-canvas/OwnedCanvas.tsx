@@ -85,8 +85,10 @@ export function OwnedCanvas({ document: incoming, onChange, readOnly = false, on
       if (added.length) {
         // An upload/generation callback owns its persistence; record its new
         // IDs as one reversible insertion without replaying onChange on receipt.
-        history.current = [...history.current.slice(-(HISTORY_LIMIT - 1)), { changes: added.map(item => ({ id: item.id, after: item })), beforeOrder: live.current.items.map(item => item.id), afterOrder: incoming.items.map(item => item.id) }];
-        future.current = []; setHistoryVersion(v => v + 1);
+        // A full-scene insertion may also hide its retained source (AI layers).
+        // Capture both changes so one undo restores the original image too.
+        const edit = createEdit(live.current, incoming);
+        if (edit) { history.current = [...history.current.slice(-(HISTORY_LIMIT - 1)), edit]; future.current = []; setHistoryVersion(v => v + 1); }
       }
     }
     const active = gesture.current;

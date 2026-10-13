@@ -519,6 +519,15 @@ class DecomposeRequest(BaseModel):
     a set of RGBA layers rather than a finished image.
     """
 
+    providerRetryPolicy: Optional[Literal["never"]] = None
+
+    @field_validator("providerRetryPolicy", mode="before")
+    @classmethod
+    def reject_null_retry_policy(cls, value):
+        if value is None:
+            raise ValueError("providerRetryPolicy cannot be null")
+        return value
+
     imageUrl: str
     # 边界必须与 Zod 侧逐字对齐(1–10 / intent ≤500),不能只靠 provider 里那句
     # clamp 兜着:任何不经 web 路由直接打 FastAPI 的调用方,看到的会是另一套契约,
@@ -698,8 +707,9 @@ class StudioMaterialUploadView(StudioMaterialUploadInput):
 from .studio_workflow_schemas import StudioWorkflowSaveInput, StudioWorkflowView, StudioWorkflowAssets
 
 # Mirrored BFF notification kind; upload events remain scoped to the initiator.
-NotificationKind = Literal["GENERATE", "EDIT", "RECOGNIZE", "PARSE_MANUAL", "DESCRIBE", "INGEST", "SUMMARIZE", "DECOMPOSE", "STUDIO_UPLOAD", "STUDIO_GENERATION"]
+NotificationKind = Literal["GENERATE", "EDIT", "RECOGNIZE", "PARSE_MANUAL", "DESCRIBE", "INGEST", "SUMMARIZE", "DECOMPOSE", "STUDIO_UPLOAD", "STUDIO_GENERATION", "STUDIO_DECOMPOSITION"]
 AsyncTaskKind = Literal["RECOGNIZE", "PARSE_MANUAL", "EDIT", "DESCRIBE", "INGEST", "SUMMARIZE", "DECOMPOSE", "STUDIO_UPLOAD", "STUDIO_COMPLIANCE"]
 
 from .studio_generation_schemas import StudioGenerationInput, StudioGenerationQuery, StudioGenerationRetryInput, StudioGenerationArchiveRetryInput, StudioGenerationView
 from .studio_compliance_schemas import StudioGenerationComplianceInput, StudioGenerationComplianceQuery, StudioGenerationComplianceView
+from .studio_decomposition_schemas import StudioDecompositionInput, StudioDecompositionQuery, StudioDecompositionRetryInput, StudioDecompositionLayer, StudioDecompositionView

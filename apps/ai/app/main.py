@@ -992,6 +992,11 @@ async def decompose(
     实测真上游 12–42 秒,第一次调用就打穿 30 秒边缘网关上限——调用方必须是
     worker,绝不能是 HTTP handler(§2.1)。
     """
+    # The Studio request was already claimed once in Postgres. The existing
+    # fal adapter performs exactly one POST; mock/unknown adapters must not
+    # silently replace this paid product operation.
+    if req.providerRetryPolicy == "never" and type(provider).__name__ != "FalLayerProvider":
+        raise HTTPException(status_code=503, detail="Real single-attempt layer provider unavailable")
     if not (req.imageUrl or "").strip():
         raise HTTPException(status_code=400, detail="imageUrl is required")
     started = time.perf_counter()

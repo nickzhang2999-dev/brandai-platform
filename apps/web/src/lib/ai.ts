@@ -30,7 +30,7 @@ import { readBoundedAiJson, withinAiDeadline, type AiCallOptions } from "@/lib/a
  * per-request headers (X-OV-{Image,Vlm}-*). Only sent when a key is configured;
  * absent → the AI service uses its own env/mock fallback.
  */
-async function providerHeaders(requireRealImageProvider = false, requireRealVlmProvider = false): Promise<Record<string, string>> {
+async function providerHeaders(requireRealImageProvider = false, requireRealVlmProvider = false, requireRealLayerProvider = false): Promise<Record<string, string>> {
   const s = await getEffectiveAiSettings();
   // Validate the same snapshot that produces the outgoing headers. A separate
   // intake/claim check cannot prevent configuration changing while queued.
@@ -43,6 +43,9 @@ async function providerHeaders(requireRealImageProvider = false, requireRealVlmP
     throw new Error("真实图片检查服务尚未配置，未执行品牌检查。请联系管理员检查配置。");
   }
   const h: Record<string, string> = {};
+  if (requireRealLayerProvider && (s.layer.provider?.trim().toLowerCase() !== "fal" || !s.layer.apiKey?.trim())) {
+    throw new Error("真实图层分解服务配置已不可用，未调用演示模型。请联系管理员检查配置。");
+  }
   if (s.image.apiKey) {
     h["X-OV-Image-Provider"] = s.image.provider;
     h["X-OV-Image-Key"] = s.image.apiKey;
@@ -76,6 +79,7 @@ async function call<TReq, TRes>(path: string, body: TReq, options?: AiCallOption
   } : undefined), providerHeaders(
     requireStudioEdit || (path === "/v1/generate" && options?.requireRealImageProvider === true),
     requireVisualCheck,
+    path === "/v1/decompose" && options?.requireRealLayerProvider === true,
   )]);
   const [service, headers] = await (signal ? withinAiDeadline(setup, signal) : setup);
   signal?.throwIfAborted();
@@ -123,8 +127,8 @@ export const ai = {
    * 图层分解。只有 worker 该调它——实测真上游 12–42 秒，第一次调用就打穿
    * 30 秒边缘网关上限（§2.1：AI 调用不许出现在 HTTP handler 里）。
    */
-  decompose: (b: DecomposeRequest) =>
-    call<DecomposeRequest, DecomposeResponse>("/v1/decompose", b),
+  decompose: (b: DecomposeRequest, options?: AiCallOptions) =>
+    call<DecomposeRequest, DecomposeResponse>("/v1/decompose", b, options),
   complianceCheck: (b: ComplianceCheckRequest, options?: AiCallOptions) =>
     call<ComplianceCheckRequest, ComplianceCheckResponse>(
       "/v1/compliance/check",

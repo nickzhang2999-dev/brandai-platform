@@ -1,8 +1,9 @@
 import { prisma, Prisma } from "@brandai/db";
-import { UpdateRuleInput, VI } from "@brandai/contracts";
+import { UpdateRuleInput } from "@brandai/contracts";
 import { ApiException, handleError, ok, parse, requireUser } from "@/lib/api";
 import { requireWorkspaceRole } from "@/lib/workspace";
 import { serializeRule } from "@/lib/rules";
+import { assertRuleAssetsInWorkspace, lockBrandKnowledgeWorkspace, validatedRuleStructured } from "@/lib/brand-knowledge-safety";
 
 async function loadRule(wsId: string, ruleId: string, userId: string) {
   await requireWorkspaceRole(wsId, userId, "EDITOR");
@@ -29,60 +30,40 @@ export async function PATCH(
   try {
     const user = await requireUser();
     const { wsId, ruleId } = await params;
-    const existing = await loadRule(wsId, ruleId, user.id);
+    await loadRule(wsId, ruleId, user.id);
 
     const input = parse(UpdateRuleInput, await req.json());
 
-    let structured: Prisma.InputJsonValue | undefined;
-    if (input.structured) {
-      const moduleName = VI.RULE_TYPE_TO_MODULE[existing.type];
-      const schema = moduleName ? VI.MODULE_BY_NAME[moduleName] : undefined;
-      if (!schema) {
-        throw new ApiException(
-          400,
-          `no VI module bound to rule type '${existing.type}'`,
-        );
+    const updated = await prisma.$transaction(async tx => {
+      await lockBrandKnowledgeWorkspace(tx, wsId);
+      const current = await tx.brandRule.findFirst({ where: { id: ruleId, workspaceId: wsId } });
+      if (!current) throw new ApiException(404, "Rule not found");
+      const structured = validatedRuleStructured(current.type, input.structured);
+      const data = {
+        ...(input.status ? { status: input.status } : {}),
+        ...(input.strength ? { strength: input.strength } : {}),
+        ...(input.summary ? { summary: input.summary } : {}),
+        ...(input.value ? { value: input.value as Prisma.InputJsonValue } : {}),
+        ...(structured !== undefined ? { structured } : {}),
+      };
+      // A broken old reference must not prevent the user from disabling a rule.
+      // New reference edits and any rule remaining effective still need validation.
+      if ((input.status ?? current.status) === "CONFIRMED" || structured !== undefined) {
+        await assertRuleAssetsInWorkspace(tx, wsId, { evidence: current.evidence, structured: structured ?? current.structured });
       }
-      const parsed = schema.safeParse({
-        ...input.structured,
-        module: moduleName,
-      });
-      if (!parsed.success) {
-        throw new ApiException(400, "Invalid structured payload", {
-          issues: parsed.error.issues,
+      if (input.status === "CONFIRMED") {
+        await tx.brandRule.updateMany({
+          where: {
+            workspaceId: wsId,
+            type: current.type,
+            status: "CONFIRMED",
+            NOT: { id: ruleId },
+          },
+          data: { status: "REJECTED" },
         });
       }
-      structured = parsed.data as unknown as Prisma.InputJsonValue;
-    }
-
-    const data = {
-      ...(input.status ? { status: input.status } : {}),
-      ...(input.strength ? { strength: input.strength } : {}),
-      ...(input.summary ? { summary: input.summary } : {}),
-      ...(input.value ? { value: input.value as Prisma.InputJsonValue } : {}),
-      ...(structured !== undefined ? { structured } : {}),
-    };
-    const updated =
-      input.status === "CONFIRMED"
-        ? await prisma.$transaction(async (tx) => {
-            await tx.brandRule.updateMany({
-              where: {
-                workspaceId: wsId,
-                type: existing.type,
-                status: "CONFIRMED",
-                NOT: { id: ruleId },
-              },
-              data: { status: "REJECTED" },
-            });
-            return tx.brandRule.update({
-              where: { id: ruleId },
-              data,
-            });
-          })
-        : await prisma.brandRule.update({
-            where: { id: ruleId },
-            data,
-          });
+      return tx.brandRule.update({ where: { id: ruleId }, data });
+    });
     return ok(serializeRule(updated));
   } catch (err) {
     return handleError(err);
@@ -97,7 +78,12 @@ export async function DELETE(
     const user = await requireUser();
     const { wsId, ruleId } = await params;
     await loadRule(wsId, ruleId, user.id);
-    await prisma.brandRule.delete({ where: { id: ruleId } });
+    await prisma.$transaction(async tx => {
+      await lockBrandKnowledgeWorkspace(tx, wsId);
+      const current = await tx.brandRule.findFirst({ where: { id: ruleId, workspaceId: wsId } });
+      if (!current) throw new ApiException(404, "Rule not found");
+      await tx.brandRule.delete({ where: { id: ruleId } });
+    });
     return ok({ ok: true });
   } catch (err) {
     return handleError(err);

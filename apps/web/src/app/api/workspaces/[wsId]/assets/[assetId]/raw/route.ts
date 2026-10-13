@@ -13,6 +13,7 @@ import {
   parseImagePreviewWidth,
 } from "@/lib/image-preview";
 import { enqueueImagePreview } from "@/lib/queue";
+import { readStudioLayerAsset } from "@/lib/studio-decomposition";
 
 /**
  * M-A · 资产公网代理 — streams an asset's bytes back over the canonical public
@@ -51,6 +52,12 @@ export async function GET(
     const asset = await prisma.asset.findUnique({ where: { id: assetId } });
     if (!asset || asset.workspaceId !== wsId) {
       throw new ApiException(404, "Asset not found");
+    }
+    // Layer blobs are encrypted on disk even on legacy public buckets. This
+    // authorized branch never lets the generic preview worker see ciphertext.
+    if (asset.storageKey.startsWith(`${wsId}/studio-layer-assets/`)) {
+      const body = await readStudioLayerAsset(wsId, asset, AbortSignal.timeout(20_000));
+      return new Response(new Uint8Array(body), { headers: { "Content-Type": "image/png", "Content-Length": String(body.length), "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff" } });
     }
 
     const previewWidth = parseImagePreviewWidth(req);
