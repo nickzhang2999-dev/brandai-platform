@@ -24,6 +24,7 @@ const messageOf = (error: unknown) => error instanceof Error ? error.message : "
 const activeGeneration = (task: GenerationTask) => ["PENDING", "RUNNING"].includes(task.status) || task.status === "SUCCEEDED" && ["NOT_REQUESTED", "PENDING", "RUNNING"].includes(task.resultState);
 const mergeTask = <T,>(items: T[], item: T, identity: (value: T) => string) => [item, ...items.filter(value => identity(value) !== identity(item))].slice(0, 50);
 const button = "rounded-full border border-border bg-card px-3 py-2 text-xs text-fg hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40";
+const headerButton = "shrink-0 whitespace-nowrap rounded-full border border-border bg-card px-2 py-2 text-xs text-fg hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40 sm:px-3";
 
 export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = false, projectName = "创作项目", initialTask }: OwnedEditorClientProps) {
   const [document, setDocument] = useState<OwnedCanvasDocument | null>(null);
@@ -481,7 +482,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
     try {
       const blob = format === "png" ? await exportOwnedPng(current, scope) : format === "svg" ? new Blob([await exportOwnedSvg(current, scope)], { type: "image/svg+xml" }) : new Blob([JSON.stringify(serializeOwnedDocument(current), null, 2)], { type: "application/json" });
       const url = URL.createObjectURL(blob), link = window.document.createElement("a");
-      link.href = url; link.download = "Novart-" + projectId + (scope.frameId ? "-frame" : scope.itemIds ? "-selection" : "") + "." + format; link.click(); setTimeout(() => URL.revokeObjectURL(url), 10000);
+      link.href = url; link.download = "DeepFlare-" + projectId + (scope.frameId ? "-frame" : scope.itemIds ? "-selection" : "") + "." + format; link.click(); setTimeout(() => URL.revokeObjectURL(url), 10000);
       setNotice(scope.frameId ? "已导出选中画框。" : scope.itemIds ? "已导出选中内容。" : "已导出当前画布。");
     } catch (error) { setNotice(messageOf(error)); throw error; }
   }
@@ -501,13 +502,15 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
 
   const saveLabel = saveState === "loading" ? "正在打开…" : saveState === "saving" ? "正在保存…" : saveState === "dirty" ? "有未保存修改" : saveState === "conflict" ? "保存冲突" : saveState === "error" ? "保存未确认" : view?.updatedAt ? "已保存 " + new Date(view.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "已打开";
   return <div className="flex h-dvh min-h-0 flex-col overflow-hidden bg-bg text-fg" data-testid="owned-editor" data-save-state={saveState} data-document-revision={view?.revision}>
-    <header className="flex min-h-14 shrink-0 items-center gap-3 border-b border-border bg-card px-3 sm:px-5">
-      <button type="button" className={button} onClick={() => void back()} aria-label="返回项目库">← 项目</button>
+    <header className="flex min-h-14 shrink-0 items-center gap-1 border-b border-border bg-card px-2 sm:gap-3 sm:px-5">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src="/brand/deepflare-mark.svg" alt="DeepFlare · 曜影深蓝" className="h-6 w-6 shrink-0 object-contain sm:h-7 sm:w-7" />
+      <button type="button" className={headerButton} onClick={() => void back()} aria-label="返回项目库">←<span className="hidden sm:inline"> 项目</span></button>
       <strong className="min-w-0 flex-1 truncate text-sm">{projectName}</strong>
-      <span className="text-xs text-muted-fg" role="status" data-testid="owned-save-status">{saveLabel}</span>
-      {canEdit && <button type="button" className={button} disabled={saveState === "saving" || saveState === "saved"} onClick={() => void save().catch(() => undefined)}>{saveState === "error" ? "确认保存" : "保存"}</button>}
-      <button type="button" className={button} onClick={() => setPanel(current => current ? null : "generate")} aria-expanded={!!panel}>创作</button>
-      <button type="button" className={button} onClick={() => setPanel("layers")} aria-expanded={panel === "layers"}>AI 分层</button>
+      <span className="max-w-24 shrink-0 truncate text-xs text-muted-fg sm:max-w-none" title={saveLabel} role="status" data-testid="owned-save-status">{saveLabel}</span>
+      {canEdit && <button type="button" className={headerButton} disabled={saveState === "saving" || saveState === "saved"} onClick={() => void save().catch(() => undefined)}>{saveState === "error" ? "确认保存" : "保存"}</button>}
+      <button type="button" className={headerButton} onClick={() => setPanel(current => current ? null : "generate")} aria-expanded={!!panel}>创作</button>
+      <button type="button" className={headerButton} onClick={() => setPanel("layers")} aria-expanded={panel === "layers"}>AI 分层</button>
     </header>
     {!!saveError && <div role="alert" className="border-b border-border bg-accent-soft px-4 py-2 text-xs">{saveError}{saveState === "conflict" && " 当前内容仍在本页，请先导出副本再重新打开。"}{!document && <button type="button" className="ml-3 underline" onClick={() => location.reload()}>重新打开</button>}</div>}
     {!!document?.warnings.length && <div role="alert" className="border-b border-border bg-accent-soft px-4 py-2 text-xs">原项目含暂不能可靠转换的对象，已启用只读保护，未覆盖原稿。{document.warnings.join("；")}</div>}

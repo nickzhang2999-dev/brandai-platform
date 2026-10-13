@@ -1,5 +1,13 @@
 # Novart product integration
 
+## DeepFlare branding · 2026-10-13
+
+- [complete] Apply user's corrected scope: logo and visible product name together; inspect original PDF-compatible AI and preserve source.
+- [complete] Full/mark/dark-wordmark/favicon resources, homepage/login/navigation/editor/metadata/download branding; preserve internal compatibility and data.
+- [complete] Desktop/mobile/dark visual checks4, canvas49 and PSD12 interaction checks; full L1 1256+28, AI430, typecheck/build and asset compiler125 passed. Last L1 rerun cached; no live provider/login claim.
+- [complete] Existing local preview refreshed by in-place asset compilation after optional process starts/restart were blocked by automatic approval; current process/document retained.
+- [complete local delivery] Normal guarded devUpdate1012 commit/push follows the verified source; no manual CDS changes. Cloud status for this increment is separately pending and must not be inferred from the prior PSD run.
+
 ## Active continuation — real backend integration, 2026-10-13
 
 User requested continued integration after migration to `devUpdate1012`. Use this checkout; no goal mode, manual CDS operations, local Docker startup or shared business-data changes.

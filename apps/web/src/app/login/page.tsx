@@ -63,12 +63,14 @@ export default function LoginPage() {
       <CreamCard className="w-full max-w-sm p-8">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          src="/brand/nova-art-lab-logo.png"
-          alt="NOVA ART LAB"
-          className="h-20 w-full object-contain"
+          src="/brand/deepflare-logo.svg"
+          alt="DeepFlare · 曜影深蓝"
+          className="h-20 w-full object-contain dark:hidden"
         />
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/brand/deepflare-logo-dark.svg" alt="DeepFlare · 曜影深蓝" className="hidden h-20 w-full object-contain dark:block" />
         <h1 className="mt-3 font-serif text-3xl leading-tight text-foreground">
-          {mode === "login" ? "登录 BrandAI" : "创建账号"}
+          {mode === "login" ? "登录 DeepFlare" : "创建账号"}
         </h1>
         <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
           {mode === "login"

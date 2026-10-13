@@ -170,7 +170,7 @@ export default function HomePage() {
           你好，{user.name}
         </h1>
         <p className="mt-3 text-base text-muted-foreground">
-          用一句话描述你的品牌广告需求，BrandAI 帮你 AI 拆解、立项并受控出图。
+          用一句话描述你的品牌广告需求，DeepFlare 帮你 AI 拆解、立项并受控出图。
         </p>
       </section>
 
@@ -199,7 +199,7 @@ export default function HomePage() {
           }
         />
         <p className="mt-2 pl-6 text-xs text-muted-foreground">
-          提交后 BrandAI 会用 AI 拆解出核心卖点、画面场景与风格关键词，立项为草稿
+          提交后 DeepFlare 会用 AI 拆解出核心卖点、画面场景与风格关键词，立项为草稿
           项目，并把拆解结果预填进工作台（服务端异步处理，可离开稍后查看）。
         </p>
         {busy ? (

@@ -52,7 +52,7 @@ describe("owned automatic PSD client", () => {
   it("validates the binary before returning a downloadable PSD", async () => {
     const bytes = psdHeader(), fetcher = vi.fn().mockResolvedValue(new Response(bytes, { headers: { "content-type": "image/vnd.adobe.photoshop", "content-length": String(bytes.length) } }));
     const value = await setup(fetcher).downloadPsd(decomposition as never);
-    expect(value.fileName).toBe("novart-psd-decomposition.psd"); expect(value.blob.size).toBe(30);
+    expect(value.fileName).toBe("DeepFlare-psd-decomposition.psd"); expect(value.blob.size).toBe(30);
     expect(fetcher.mock.calls[0]?.[0]).toBe(downloadUrl + "&workspaceId=" + workspaceId);
   });
   it("does not download a JSON rejection as PSD", async () => {

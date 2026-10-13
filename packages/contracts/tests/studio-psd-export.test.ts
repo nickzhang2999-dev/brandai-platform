@@ -34,7 +34,7 @@ beforeEach(async () => {
 describe("Studio PSD access boundaries (simulated persistence; real PSD codec; no provider)", () => {
   it("allows a current viewer to download all scoped, published internal layers as a genuine PSD", async () => {
     const output = await exportFile();
-    expect(output).toMatchObject({ fileName: "Novart-layers-request.psd", layerCount: 2, width: 8, height: 8 });
+    expect(output).toMatchObject({ fileName: "DeepFlare-layers-request.psd", layerCount: 2, width: 8, height: 8 });
     expect(readPsdForFileProof(output.body, { useImageData: true }).children).toHaveLength(2);
     expect(f.role).toHaveBeenCalledWith("w", "u", "VIEWER");
     expect(f.read.mock.calls.map(args => args.slice(0, 2))).toEqual(stored.map(asset => ["w", { id: asset.id, storageKey: asset.storageKey }]));

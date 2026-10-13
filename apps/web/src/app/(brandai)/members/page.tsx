@@ -298,7 +298,7 @@ function InviteDialog({
     <DialogShell onClose={onCancel}>
       <div className="text-lg font-semibold">邀请成员</div>
       <p className="mt-1 text-sm text-muted-foreground">
-        对方需先注册 BrandAI 账号，再用其邮箱邀请进入本品牌空间。
+        对方需先注册 DeepFlare 账号，再用其邮箱邀请进入本品牌空间。
       </p>
 
       <div className="mt-5">

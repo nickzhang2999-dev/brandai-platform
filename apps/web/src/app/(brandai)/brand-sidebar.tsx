@@ -89,10 +89,12 @@ export function BrandSidebar({
           <Link href="/" className="mb-7 flex items-center px-2">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src="/brand/nova-art-lab-logo.png"
-              alt="NOVA ART LAB"
-              className="h-12 w-[156px] object-contain object-left"
+              src="/brand/deepflare-logo.svg"
+              alt="DeepFlare · 曜影深蓝"
+              className="h-12 w-[156px] object-contain object-left dark:hidden"
             />
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/brand/deepflare-logo-dark.svg" alt="DeepFlare · 曜影深蓝" className="hidden h-12 w-[156px] object-contain object-left dark:block" />
           </Link>
         ) : null}
 
@@ -104,10 +106,11 @@ export function BrandSidebar({
             >
               <Link
                 href="/"
-                aria-label="BrandAI 首页"
-                className="flex h-9 w-9 items-center justify-center rounded-full bg-foreground text-xs font-semibold text-background"
+                aria-label="DeepFlare 首页"
+                className="flex h-9 w-9 items-center justify-center rounded-full transition-colors hover:bg-muted"
               >
-                BR
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src="/brand/deepflare-mark.svg" alt="" className="h-7 w-7 object-contain" />
               </Link>
               <Link
                 href="/campaigns"

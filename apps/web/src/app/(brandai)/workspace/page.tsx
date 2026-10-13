@@ -3246,7 +3246,7 @@ function UpgradeDialog({
             知道了
           </button>
           <a
-            href={`mailto:${upgradeContactEmail}?subject=BrandAI 套餐升级咨询`}
+            href={`mailto:${upgradeContactEmail}?subject=DeepFlare 套餐升级咨询`}
           >
             <button
               type="button"

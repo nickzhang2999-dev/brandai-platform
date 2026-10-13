@@ -56,7 +56,7 @@ export async function exportStudioDecompositionPsd(
     const active = await prisma.user.findUnique({ where: { id: userId }, select: { isActive: true } });
     if (!active?.isActive) throw new ApiException(403, "账号已被停用。");
     signal.throwIfAborted();
-    return { body, fileName: `Novart-layers-${requestId.slice(0, 32)}.psd`, layerCount: layers.length, width: row.sourceWidth, height: row.sourceHeight };
+    return { body, fileName: `DeepFlare-layers-${requestId.slice(0, 32)}.psd`, layerCount: layers.length, width: row.sourceWidth, height: row.sourceHeight };
   } catch (error) {
     if (signal.aborted) throw new ApiException(504, "PSD 导出超时或已取消，原图与图层仍保留，请稍后重试。");
     if (error instanceof StudioPsdEncodingError) throw new ApiException(error.status, error.message);

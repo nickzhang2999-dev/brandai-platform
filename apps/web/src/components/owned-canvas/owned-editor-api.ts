@@ -140,7 +140,7 @@ export function createOwnedEditorApi(workspaceId: string, projectId: string, use
         if (signature !== "8BPS" || view.getUint16(4) !== 1 || header.slice(6, 12).some(value => value !== 0)
           || view.getUint16(12) < 1 || view.getUint16(12) > 56 || view.getUint32(14) !== task.sourceHeight || view.getUint32(18) !== task.sourceWidth
           || view.getUint16(22) !== 8 || view.getUint16(24) !== 3) throw new NovartApiError("PSD 文件头或原图尺寸不正确，未下载错误文件。", 422);
-        return { blob, fileName: `novart-${task.requestId}.psd` };
+        return { blob, fileName: `DeepFlare-${task.requestId}.psd` };
       } catch (error) {
         if (error instanceof NovartApiError) throw error;
         throw new NovartApiError(controller.signal.aborted ? "PSD 导出超时，请稍后重试，原图和图层仍保留。" : "PSD 下载中断，原图和图层仍保留。", null);

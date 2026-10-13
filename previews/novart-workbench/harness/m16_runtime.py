@@ -11,6 +11,8 @@ ASSET_MIMES = {
     '/m16-studio.js': 'application/javascript; charset=utf-8',
     '/m16-canvas.css': 'text/css; charset=utf-8',
     '/m16-logo.png': 'image/png',
+    '/deepflare-logo.svg': 'image/svg+xml',
+    '/deepflare-mark.svg': 'image/svg+xml',
 }
 CANVAS_STYLE_TAG = b'<link rel="stylesheet" href="/m16-canvas.css">'
 ORIGINAL_HTML_TAG = b'<html lang="zh-CN">'

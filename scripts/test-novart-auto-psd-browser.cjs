@@ -59,6 +59,7 @@ const documentView = () => ({workspaceId: fixture.workspaceId, projectId: fixtur
 const assets = () => contracts.workflowAssets(fixture.projectId, canvas, generations.length ? [{sha256: assetSha256, url: material.url, mimeType: material.mimeType}] : []);
 async function handle(req, res) {
   const url = new URL(req.url, 'http://127.0.0.1');
+  if (/^\/brand\/deepflare-(?:logo(?:-dark)?|mark|icon)\.svg$/.test(url.pathname)) {res.setHeader('content-type', 'image/svg+xml'); return res.end(fs.readFileSync(path.join(repo, 'apps/web/public', url.pathname)));}
   if (['/app.js', '/app.css'].includes(url.pathname)) {res.setHeader('content-type', url.pathname.endsWith('.js') ? 'application/javascript' : 'text/css'); return res.end(url.pathname.endsWith('.css') ? Buffer.concat([fs.readFileSync(path.join(directory, 'tokens.css')), fs.readFileSync(path.join(directory, 'app.css'))]) : fs.readFileSync(path.join(directory, 'app.js')));}
   if (url.pathname.startsWith('/fonts/')) {const file = path.resolve(repo, 'apps/web/public', url.pathname.slice(1)); if (file.startsWith(path.join(repo, 'apps/web/public/fonts') + path.sep) && fs.existsSync(file)) return res.end(fs.readFileSync(file)); res.writeHead(404); return res.end();}
   if (url.pathname === '/') {res.setHeader('content-type', 'text/html'); return res.end('<html><head><meta charset="utf-8"><link rel="stylesheet" href="/app.css"></head><body><div id="root"></div><script src="/app.js"></script></body></html>');}

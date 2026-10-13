@@ -6,8 +6,15 @@ import { NavigationProgress } from "./navigation-progress";
 import { Providers } from "./providers";
 
 export const metadata: Metadata = {
-  title: "BrandAI · 品牌视觉 AI",
+  title: "DeepFlare · 品牌视觉 AI",
   description: "以项目为中心,基于品牌套件批量生成符合规范的商业视觉内容",
+  icons: {
+    icon: [
+      { url: "/brand/deepflare-icon.svg", type: "image/svg+xml" },
+      { url: "/brand/deepflare-icon-32.png", type: "image/png", sizes: "32x32" },
+    ],
+    apple: [{ url: "/brand/deepflare-icon-180.png", sizes: "180x180", type: "image/png" }],
+  },
 };
 
 /**
