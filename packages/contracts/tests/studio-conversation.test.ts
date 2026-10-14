@@ -4,6 +4,8 @@ import { parseStudioConversationIntent } from "../../../apps/web/src/lib/studio-
 
 const one = { referenceId: "shape:one", shapeId: "shape:one", assetId: "a1", assetSha256: "a".repeat(64), name: "图片1", width: 1080, height: 1920 };
 const two = { ...one, referenceId: "shape:two", shapeId: "shape:two", assetId: "a2", name: "图片2" };
+const four = { ...one, referenceId: "shape:four", shapeId: "shape:four", assetId: "a4", name: "图片4" };
+const forty = { ...one, referenceId: "shape:forty", shapeId: "shape:forty", assetId: "a40", name: "图片40" };
 const base = { mutationId: "831a0280-2cf1-41ba-ac94-621053c4a4c6", documentRevision: 1, workflowRevision: 0,
   text: "生成一张海报", references: [], sizeSelection: { ratioKey: "1:1", resolutionTier: "1K" } };
 const parse = (text: string, references: unknown[] = [], extra = {}) => parseStudioConversationIntent(StudioConversationInput.parse({ ...base, text, references, ...extra }));
@@ -34,6 +36,80 @@ describe("durable conversation contract and conservative action/size routing", (
     expect(intent.action).toBe("modify"); expect(intent.targetReferenceId).toBe(one.referenceId);
     expect(intent.requestedSize).toEqual({ width: 1080, height: 1920 }); expect(intent.sizeSource).toBe("target");
     expect(parse("重新修改图片1背景", [one]).action).toBe("modify");
+  });
+  it.each([
+    "构图保持不变，场景要有真实感，渲染光影，阳光洒下",
+    "构图保持不变，场景替换为真实感场景，渲染光影",
+    "保留原构图，增强光影",
+    "保持构图不变，画面需要更有真实感",
+    "场景替换成阳光下的真实街景",
+  ])("routes clear scene/lighting adjustment to the only editable image: %s", text => {
+    const intent = parse(text, [four]);
+    expect(intent.action).toBe("modify"); expect(intent.targetReferenceId).toBe(four.referenceId);
+    expect(intent.referenceIds).toEqual([]); expect(intent.sizeSource).toBe("target");
+    expect(intent.requestedSize).toEqual({ width: four.width, height: four.height });
+  });
+  it.each([
+    "阳光很好", "光影很好，场景很真实", "构图保持不变", "构图保持不变，阳光很好",
+    "保留构图，参考这个渲染光影效果", "场景替换功能很好",
+  ])("does not turn an attached image and visual commentary into a paid edit: %s", text => {
+    const intent = parse(text, [four]); expect(intent.action).toBe("clarify"); expect(intent.targetReferenceId).toBeNull();
+  });
+  it.each([
+    "构图保持不变，不需要渲染光影",
+    "构图保持不变，不要增强光影",
+    "构图保持不变，场景不需要真实感",
+    "不要把场景替换为街景",
+    "图片4不要场景替换为街景",
+    "图片4无需场景替换为街景",
+  ])("never charges from a negated new scene/lighting instruction: %s", text => {
+    for (const refs of [[four], [four, forty]]) {
+      const intent = parse(text, refs); expect(intent.action).toBe("clarify"); expect(intent.targetReferenceId).toBeNull();
+    }
+  });
+  it("keeps affirmative scene changes separate from a negated lighting constraint", () => {
+    const intent = parse("图片4场景替换为真实街景，不需要渲染光影", [four, forty]);
+    expect(intent.action).toBe("modify"); expect(intent.targetReferenceId).toBe(four.referenceId);
+    expect(parse("图片4场景替换为特别真实的街景，不需要渲染光影", [four, forty]).targetReferenceId).toBe(four.referenceId);
+  });
+  it.each([
+    "构图保持不变，场景要有真实感，渲染光影，阳光洒下",
+    "构图保持不变，场景替换为真实感场景，渲染光影",
+  ])("still clarifies the same visual instruction with multiple unnamed targets: %s", text => {
+    expect(parse(text, [one, four]).action).toBe("clarify");
+  });
+  it("resolves an explicit scene target and never matches a numeric name prefix", () => {
+    for (const text of ["图片4的场景替换为真实感场景，参考图片40", "图片4构图保持不变，场景要有真实感，渲染光影"])
+      expect(parse(text, [forty, four]).targetReferenceId).toBe(four.referenceId);
+    const intent = parse("图片40场景替换为阳光下的街景", [four, forty]);
+    expect(intent.action).toBe("modify"); expect(intent.targetReferenceId).toBe(forty.referenceId); expect(intent.referenceIds).toEqual([four.referenceId]);
+    expect(parse("图片40场景替换为阳光下的街景", [four, one]).action).toBe("clarify");
+    expect(parse("图片4场景替换为街景，图片40场景替换为海边", [four, forty]).action).toBe("clarify");
+  });
+  it("keeps explicit new-image generation ahead of visual edit hints", () => {
+    for (const text of ["参考图片4，生成一张新图，构图保持不变，场景要有真实感，渲染光影", "设计一张新图，场景替换为真实感场景"])
+      expect(parse(text, [four]).action).toBe("generate");
+    expect(parse("生成一张新图，图片4场景替换为街景", [four, forty]).action).toBe("generate");
+  });
+  it.each([
+    "生成一个海报，构图保持不变，渲染光影",
+    "设计一幅新图，构图保持不变，场景要有真实感",
+    "制作一个海报，图片4场景替换为真实街景",
+    "生成1张海报，构图保持不变，渲染光影",
+  ])("prioritizes explicit creation with a supported image count word: %s", text => {
+    for (const refs of [[four], [four, forty]]) {
+      const intent = parse(text, refs); expect(intent.action).toBe("generate"); expect(intent.targetReferenceId).toBeNull();
+      expect(intent.referenceIds).toEqual(refs.map(ref => ref.referenceId));
+    }
+    expect(parse(text, [four, forty], { quickEditTargetId: four.referenceId }).targetReferenceId).toBe(four.referenceId);
+  });
+  it("never changes a forced quick-edit target to a named lighting reference", () => {
+    const intent = parse("图片4构图保持不变，场景要有真实感，渲染光影", [one, four], { quickEditTargetId: one.referenceId });
+    expect(intent.action).toBe("modify"); expect(intent.targetReferenceId).toBe(one.referenceId); expect(intent.referenceIds).toEqual([four.referenceId]);
+  });
+  it("requires an editable canvas target even for a clear visual instruction", () => {
+    const { shapeId: _shapeId, ...brandOnly } = four;
+    expect(parse("构图保持不变，场景要有真实感，渲染光影", [brandOnly]).action).toBe("clarify");
   });
   it("separates an explicit target from ordered reference pictures", () => {
     const intent = parse("把图片2的背景改成图片1的风格", [one, two]);

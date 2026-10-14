@@ -9,14 +9,29 @@ export function parseStudioConversationIntent(input: StudioConversationInput, pr
   const forced = forcedId ? refs.find(ref => ref.referenceId === forcedId) : undefined;
   const clarify = (message: string) => StudioConversationIntent.parse({ action: "clarify", targetReferenceId: null, referenceIds: refs.map(ref => ref.referenceId), prompt: text,
     clarification: message, requestedSize: null, sizeSource: "default", sizeSelection: input.sizeSelection, parser: "safe-rules-v1" });
-  const explicitNew = decision?.action === "generate" || /(?:重新(?:生成|设计|制作)|新建|新做|全新|另做|另外|再生成|生成一张|设计一张|制作一张|合成|融合|组合|结合|new\s+(?:image|design)|combine|compose)/i.test(text);
-  const edit = /(?:修改|改成|改为|改一下|改图|调整|换成|变成|去掉|删除|移除|背景.*(?:改|换)|(?:改|换).*背景|edit|change|remove)/i.test(text);
+  const explicitNew = decision?.action === "generate" || /(?:重新(?:生成|设计|制作)|新建|新做|全新|另做|另外|再生成|(?:生成|设计|制作)\s*(?:一|1)\s*(?:张|幅|个)|合成|融合|组合|结合|new\s+(?:image|design)|combine|compose)/i.test(text);
+  const compositionPattern = "(?:构图\\s*(?:保持|维持)(?:不变|原样)|(?:保持|维持|保留)\\s*(?:原有|原|当前)?构图(?:不变|原样)?|不(?:改|改变|修改|调整)\\s*(?:原有|原|当前)?构图)";
+  // Negation applies only to these new natural-language rules, not the legacy
+  // editor commands. Keep separate affirmative clauses so a negative lighting
+  // constraint does not suppress an explicit scene replacement elsewhere.
+  const affirmativeClauses = text.split(/[，,。；;\n]/).filter(clause => !/(?:不要|不需要|无需|不用|不必|禁止|不想|不能|不准|别(?=\s*(?:把|将|再|做|进行|让|使|弄|给|对|场景|环境|渲染|增强|改善|优化|增加|补充)))/.test(clause));
+  const preservesComposition = affirmativeClauses.some(clause => new RegExp(compositionPattern).test(clause));
+  const atmosphereAdjustment = affirmativeClauses.some(clause => /(?:场景|画面|环境)\s*(?:要|需要|应当|变得|变为)\s*(?:更)?(?:有|具有|呈现)?\s*(?:更)?(?:真实感|真实|写实|逼真)|(?:^|并|同时)\s*(?:请|帮我|需要|要|希望)?\s*(?:渲染|增强|改善|优化|增加|补充)\s*(?:光影|光照|光线|灯光|日照|阳光|真实感)/i.test(clause));
+  const sceneReplacementPattern = "(?:场景|环境)\\s*(?:替换|更换)\\s*(?:为|成|到)";
+  // A description such as "阳光很好" or a preservation request alone is
+  // not a paid edit. Existing composition + a concrete visual instruction is.
+  const contextualEdit = preservesComposition && atmosphereAdjustment;
+  const sceneReplacementClauses = affirmativeClauses.filter(clause => new RegExp(sceneReplacementPattern).test(clause));
+  const sceneReplacement = sceneReplacementClauses.length > 0;
+  const edit = /(?:修改|改成|改为|改一下|改图|调整|换成|变成|去掉|删除|移除|背景.*(?:改|换)|(?:改|换).*背景|edit|change|remove)/i.test(text) || contextualEdit || sceneReplacement;
   const continuing = /(?:继续|上一张|刚才那张|上张|last\s+(?:image|result))/i.test(text);
   let target = forced;
   if (!target && !explicitNew) {
     const named = refs.filter(ref => {
       const escaped = ref.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      return new RegExp(`(?:修改|调整|改|edit|change)\\s*(?:一下\\s*)?${escaped}(?![0-9])|${escaped}(?![0-9])\\s*(?:的)?[^，。;]{0,16}(?:改成|改为|换成|修改)`, "i").test(text);
+      return new RegExp(`(?:修改|调整|改|edit|change)\\s*(?:一下\\s*)?${escaped}(?![0-9])|${escaped}(?![0-9])\\s*(?:的)?[^，。;]{0,16}(?:改成|改为|换成|修改)`, "i").test(text)
+        || sceneReplacementClauses.some(clause => new RegExp(`${escaped}(?![0-9])\\s*(?:的)?[^，。;]{0,16}${sceneReplacementPattern}`, "i").test(clause))
+        || contextualEdit && affirmativeClauses.some(clause => new RegExp(`${escaped}(?![0-9])\\s*(?:的)?${compositionPattern}`, "i").test(clause));
     });
     if (named.length > 1) return clarify("这次要修改哪张图片？请明确写出图片名称，其他图片可以作为参考。");
     target = named[0];

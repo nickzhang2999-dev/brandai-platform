@@ -1,5 +1,54 @@
 # DeepFlare 开发日志 · 2026-10-14
 
+## 最新授权：发布本轮登录页与自然改图修复到CDS开发分区
+
+帅帅明确要求“推送到cds吧”，授权将上一轮仅本地的登录页与图片4意图修复，正常提交/推送现有devUpdate1012，并在完整云端验收后部署该分区。保留main、正式环境和共享业务数据，模型调用仍为0。
+
+- 4份代码/测试SHA与login-intent-frozen-20261014.json完全一致；最终门禁为L1 1475+34、AI487、Web完整类型和生产构建退出0、3组组件浏览器和5项实际Next检查通过。没有源码变化，不重复全量测试来消耗时间。
+- 按现有本机代理正常fetch，HEAD与origin/devUpdate1012均d5778b6，ahead/behind=0。普通推送守卫重新安装并检查，不强推、不重写历史、不添加跳过标记。
+- 候选仅包含登录页、意图规则、对应测试及README/归因/实际开发和CDS记录。仓库外账号密码、本地辅助脚本、用户上传、构建物、虚拟环境和配置密钥不入库。
+- 走既有Branch Image源码/容器两轮完整验收，再使用CDS官方CLI按同一新SHA部署预构建镜像。若平台再次漏识别成功run，先dry-run核对SHA与真实workflow链接，再按已提供的claim-prebuilt恢复元数据；不切服务器源码编译，不伪造验收或绕过强制审批。
+
+本节是提交前候选复核与发布授权，尚未冒称新SHA已在CDS运行。Git回执、云端结果和实际公网版本会在操作后追加。
+
+## 本地登录页打磨、账号交付与图片4意图修复
+
+帅帅要求先在本地修改登录页，并提供可用账号；随后连续反馈单张图片4的场景/光影需求被追问。两件事在同一轮本地收尾，保持现有分支HEAD d5778b6，无提交/推送/部署；CDS仍运行上一轮已发布的d5778b6，不包含此轮源码改动。
+
+### 登录页与账号
+
+- 仅login/page.tsx调整：Logo由80px收至64px、标题略收小，输入与按钮统一48px和圆角，每字段标签/输入成组，注册切换居中；增加密码显隐及键盘操作、保留鼠标点击时输入焦点与已有值，切换注册重新掩码，区分username/current-password/new-password自动填充。沿用现有认证接口、提供者及登录回跳规则。
+- 三组实际组件浏览器回归（桌面亮色/暗色/390px）通过；实际Next生产页面另5项通过，包括显隐/焦点、键盘、注册切换和值保留、触控高度、手机无横向溢出，页面错误和写请求为0。截图和报告保存在ignored .novart-build中，明确是界面检查，不算本地真实认证或业务数据库验收。
+- 现有普通评审账号经当前CDS开发分区真实csrf/password回调/session核对成功；未新建用户、重置密码或改变角色。账号密码只交付到仓库外的本机私密文件，ACL限制为当前Windows用户与SYSTEM，不进入工具公开输出、日志或Git。
+- 本地生产登录页为 http://127.0.0.1:3214/login ，只用于界面查看；没有本机数据库、Redis或AI服务，该账号应登录CDS开发分区。另一个8766交互预览服务和用户数据保持。
+- 第一次本地进程启动因环境白名单大小写遗漏SYSTEMROOT，Node CSPRNG初始化断言失败；保留Windows必需系统键后启动正常。此错误属于本机辅助启动方式，不归因CDS或产品登录逻辑。
+
+### 图片4追问的确定原因与本地修正
+
+- 回复原文定位于studio-conversation-intent.ts的保守规则分支；截图中的图片4已选中并在引用列表，问题不是附件丢失。原规则识别修改/调整/换成等表达，未覆盖保留构图+具体真实感/光影要求以及场景替换为，因而返回clarify，尚未进入实际改图。
+- 两句精确输入均已回归：构图保持不变、场景真实感、渲染光影、阳光洒下；以及构图保持不变、场景替换为真实感场景、渲染光影。单张可编辑目标返回modify并保留目标和原尺寸。
+- 限定自然表达扩展：场景替换和保留构图+明确光影/真实感要求；多图无目标仍澄清，明确命名区分图片4与图片40，非画布素材仍需先加入画布。新扩展按分句处理否定，单纯评价/只保留构图/不要替换/不需要光影不自动触发付费修改；正向场景变更与负向光影约束可分开处理。
+- 明确新作表达的一/1张、幅、个优先生图，quick-edit强制目标保持冻结；原legacy命令、引用权限、模型调用/计费/队列策略均保留。定向3 suites / 58 tests通过；真实模型调用0，未验收真实改图效果。
+- 当前CDS临时可明确写“修改图片4：构图保持不变，将场景换成真实场景，增强光影”，以命中已发布规则；自然表达补丁尚只在本地，不自动修改既有澄清消息或重放请求。
+
+### 最终统一验证与范围
+
+冻结最终4份代码/测试文件后重新执行：契约/服务1475、UI34（无缓存）全通过，AI487通过（1项第三方弃用警告），Web完整类型检查及low-memory生产构建退出0，最终源码SHA与冻结记录一致。构建后重启自己的本地3214服务，再执行5项实际生产页面检查通过。中途智能体收尾更新否定边界，先前门禁结果未作为最终源码证据，统一冻结后重跑记录保留。
+
+本轮仅本地修改，无提交/推送/main合并/CDS部署，没有启动本机Docker或调用真实模型。仅使用既有评审账号执行一次正常登录验证，不变更共享业务内容。机读证据见ignored login-intent-final-*.log、login-intent-frozen-20261014.json、login-polish-production-20261014/report.json及review-account-verification-20261014.json。
+
+## 当前结果：CDS 已运行新版（2026-10-14 15:19 公网复核）
+
+帅帅要求直接让本地新版在 CDS 可见。源码仍为已正常推送并通过完整云端验收的 `devUpdate1012 / d5778b6f95600be05b152c1c0ea7bb560582c0fe`，本轮没有修改产品代码或为相同内容重复触发构建。
+
+- 确认旧版滞留的具体阻点：15:13 CDS `ciImageStatus=failed`、`ciWorkflowConclusion=timed_out_no_run`、`ciWorkflowRunUrl`为空，报“16分钟无匹配构建完成”；但 GitHub run38524808011于15:03:33已success，镜像也已发布。可以确认平台未识别成功构建；仅凭这些记录不能断言究竟是webhook漏投、匹配过滤还是状态回填问题。
+- 使用现有公司项目授权和官方CLI `branch claim-prebuilt`，先以dryRun核验同一个SHA及真实workflow URL，平台确认可以把状态修正为ready；随后按官方认领+deploy流程仅更新 `brandai-platform-devupdate1012`。没有伪造CI成功、改CDS源码、切源码编译或绕过平台门禁，未修改compose、全局网络配置、main或正式环境。
+- 部署运行 `dr_2a72781b143576207885eb94` 已进入running/complete，commit为d5778b6，failure=null；新版DeploymentVersion为 `dv_9a6f62f483a789d396c4bd7d`，CDS lastReadyAt为2026-10-14 15:18:22（上海），ciImageStatus=ready，ciWorkflowConclusion=success且已记录真实run链接。
+- 官方CLI实际预览地址为 https://devupdate1012-brandai-platform.geole.me/studio 。15:19公网HTTP复核：health200、worker.commit=d5778b6f9560，Web/AI/Worker均ok；登录实际HTML包含DeepFlare名称及新Logo；完整Logo与图形SVG均200并逐字节SHA匹配本地文件。匿名Studio按正常权限流程回到/login，没有用未登录响应冒称登录后的工作台验收。
+- 前置云端源码/容器两轮真实数据库、上传和画布检查已通过；此轮公网复核只读，不登录账号、不创建项目、不调用真实模型（0次），不冒称真实模型质量或Mac/Safari已经验收。本机Docker未启动，原数据卷和发布配置保留。
+
+机读证据在ignored `.novart-build/cds-current-release-{dry-run,claim-deploy,status,preview-url}-20261014.json` 及 `.novart-build/canvas-layers-release-public-20261014.json`。这些最终回执是推送后的本地日志，随下一批正常代码提交同步；不为纯回执再推一个没有新镜像的SHA，避免再次让CDS等待不存在的构建。
+
 ## CDS 旧 Logo：源码已更新，运行镜像未更新
 
 帅帅反馈 CDS 的 devUpdate1012 仍显示旧 Logo。核对发现本次 `6205b72` 和此前 `6c8808d` 已包含 DeepFlare 的登录、导航、Studio、画布顶栏、字标及浏览器图标；保留的历史图片没有被现行产品导航引用，用户品牌自己的 coverImage 也不应替换成平台 Logo。
@@ -160,3 +209,15 @@ main 专项工作区最终 L1 契约 1014、UI 24，共 1038，强制新执行�
 本节写入时本轮尚未提交、推送、合并 main 或手动操作 CDS，未迁移公司数据库、使用业务账号或调用真实模型。昨日开发分支的完整本地测试与浏览器结果见 [10 月 13 日日志](development-log-2026-10-13.md)；main 专项最新测试和云端源码/容器结果将在本文件追加，不能互相替代。
 
 产品行为约定见 [Studio 多品牌说明](studio-multiple-brands.md)。
+
+## 图层避让修复实际推送回执（推送后本地追加）
+
+修复7个文件已正常提交/推送为 `d5778b6f95600be05b152c1c0ea7bb560582c0fe`；本机守卫通过，`6205b72..d5778b6 HEAD -> devUpdate1012`成功，随后远端ref完整SHA一致，推送后工作树原为干净。没有绕过钩子或强推。新[Branch Image 38524808011](https://github.com/nickzhang2999-dev/brandai-platform/actions/runs/38524808011)已触发，首次查询在安装依赖。
+
+14:53:40再次直读CDS公开health：HTTP200、Cache-Control=no-cache、worker.commit=163379ac83c9。此时新版运行尚未验收，不称预览已更新。机器回执在ignored `.novart-build/canvas-layers-delivery-20261014.json`。此段是推送后的本地日志追加，未为回执单独再推送/触发构建；源码与修复原因已有入库日志。
+
+## 新修复云端验收最终结果（推送后本地追加）
+
+GitHub run38524808011于2026-10-14 15:03:33（上海）completed/success，head为d5778b6。新增图片工具交互、完整门禁、源码真实登录/上传/画布、知识管理、镜像构建、存储镜像验证、构建容器真实数据库/页面及镜像发布全部通过。preview job按分支条件不适用，不能将其skipped误认本次产品CI未执行。模型质量未在本轮调用或验收。
+
+15:06:02 CDS官方只读接口显示源码/githubCommitSha/ciTargetSha均为d5778b6，但ciImageStatus仍为waiting，currentVersionId和lastDeploymentRunId仍是10月12日部署。因此新版镜像已发布与CDS新版已启动继续分开记；没有为此触发手动部署、改配置或动main。最终公开health/登录/Logo结果保存在ignored canvas-layers-runtime-20261014.json，实际CDS运行是否更新以该结果及后续取证为准。

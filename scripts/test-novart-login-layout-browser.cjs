@@ -38,7 +38,7 @@ let server,browser,stage='bundle';
   });
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const origin='http://127.0.0.1:'+server.address().port;
   browser=await chromium.launch({executablePath:process.env.NOVART_CHROMIUM_EXECUTABLE||'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true,args:['--disable-background-networking','--no-proxy-server']});
-  for(const spec of [{name:'desktop-light',width:1440,height:960,fontSize:25},{name:'desktop-dark',width:1440,height:960,fontSize:25,dark:true},{name:'mobile-390',width:390,height:844,fontSize:22}]){
+  for(const spec of [{name:'desktop-light',width:1440,height:960,fontSize:24},{name:'desktop-dark',width:1440,height:960,fontSize:24,dark:true},{name:'mobile-390',width:390,height:844,fontSize:21}]){
     stage=spec.name;const ctx=await browser.newContext({viewport:{width:spec.width,height:spec.height},locale:'zh-CN',reducedMotion:'reduce'});
     await ctx.route('**/*',route=>{if(new URL(route.request().url()).origin!==origin){report.externalRequests.push(route.request().url());return route.abort();}return route.continue();});
     const page=await ctx.newPage();page.setDefaultTimeout(10000);page.on('pageerror',error=>report.errors.push({stage,message:error.message}));
@@ -49,7 +49,10 @@ let server,browser,stage='bundle';
     assert.equal(view.text,'进入你的品牌视觉工作台');assert.equal(view.fontSize,spec.fontSize);assert.equal(view.align,'center');assert.equal(view.overflow,false);assert.ok(view.cardWidth<=436);
     assert.ok(await page.getByRole('button',{name:'登录',exact:true}).isVisible());assert.ok(await page.getByLabel('邮箱',{exact:true}).isVisible());assert.ok(await page.getByLabel('密码',{exact:true}).isVisible());
     const logo=page.locator(spec.dark?'img[src="/brand/deepflare-logo-dark.svg"]':'img[src="/brand/deepflare-logo.svg"]');assert.ok(await logo.isVisible());assert.ok(await logo.evaluate(n=>n.complete&&n.naturalWidth>0));
-    await page.getByRole('button',{name:'没有账号?去注册',exact:true}).click();await page.getByRole('heading',{name:'创建账号',exact:true}).waitFor();assert.ok(await page.getByText('用邮箱开始建立品牌视觉系统（密码至少 8 位）',{exact:true}).isVisible());await page.getByRole('button',{name:'已有账号?去登录',exact:true}).click();
+    const password=page.getByLabel('密码',{exact:true});assert.equal(await password.getAttribute('autocomplete'),'current-password');assert.equal(await page.getByLabel('邮箱',{exact:true}).getAttribute('autocomplete'),'username');
+    await password.fill('Local-visual-123!');await password.focus();await page.getByRole('button',{name:'显示密码',exact:true}).click();assert.equal(await password.getAttribute('type'),'text');assert.equal(await password.inputValue(),'Local-visual-123!');assert.equal(await page.evaluate(()=>document.activeElement.id),'login-password');assert.equal(await page.getByRole('button',{name:'隐藏密码',exact:true}).getAttribute('aria-pressed'),'true');
+    await page.getByRole('button',{name:'隐藏密码',exact:true}).focus();await page.keyboard.press('Space');assert.equal(await password.getAttribute('type'),'password');assert.equal(await password.inputValue(),'Local-visual-123!');await page.getByRole('button',{name:'显示密码',exact:true}).click();
+    await page.getByRole('button',{name:'没有账号?去注册',exact:true}).click();await page.getByRole('heading',{name:'创建账号',exact:true}).waitFor();assert.ok(await page.getByText('用邮箱开始建立品牌视觉系统（密码至少 8 位）',{exact:true}).isVisible());assert.equal(await password.getAttribute('type'),'password');assert.equal(await password.getAttribute('autocomplete'),'new-password');assert.equal(await password.inputValue(),'Local-visual-123!');await page.getByRole('button',{name:'已有账号?去登录',exact:true}).click();assert.equal(await password.getAttribute('autocomplete'),'current-password');await password.fill('');
     const screenshot=reportPath.replace(/\.json$/,'')+'-'+spec.name+'.png';await page.screenshot({path:screenshot});report.checks.push({name:spec.name,status:'PASS',viewport:spec,view,screenshot});await ctx.close();
   }
   assert.deepEqual(report.externalRequests,[]);assert.deepEqual(report.errors,[]);assert.equal(report.writeRequests,0);report.passed=true;
