@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   backend:
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/claude/novart-product-integration'
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/claude/novart-product-integration' || github.ref == 'refs/heads/claude/studio-multi-brand-rail'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     services:
@@ -84,6 +84,22 @@ jobs:
           test -f "$NOVART_CHROMIUM_EXECUTABLE"
           mkdir -p apps/web/.novart-ui-artifacts
           NOVART_OWNED_REPORT=apps/web/.novart-ui-artifacts/owned-react-fixture.json node scripts/test-novart-owned-canvas-browser.cjs
+          NOVART_STUDIO_LAYOUT_REPORT=apps/web/.novart-ui-artifacts/studio-layout-fixture.json node scripts/test-novart-studio-layout-browser.cjs
+          NOVART_BRAND_SWITCH_REPORT=apps/web/.novart-ui-artifacts/brand-switch-fixture.json node scripts/test-novart-brand-switcher-browser.cjs
+          NOVART_HOME_LEAVE_REPORT=apps/web/.novart-ui-artifacts/home-brand-leave-fixture.json node scripts/test-novart-home-brand-leave-browser.cjs
+          NOVART_BRAND_CREATION_REPORT=apps/web/.novart-ui-artifacts/brand-creation-recovery-fixture.json node scripts/test-novart-brand-creation-recovery-browser.cjs
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path('apps/web/.novart-ui-artifacts')
+          for name, expected in (('studio-layout-fixture.json', 7), ('brand-switch-fixture.json', 9), ('home-brand-leave-fixture.json', 9), ('brand-creation-recovery-fixture.json', 15)):
+              report = json.loads((root / name).read_text())
+              assert report['passed'] is True and report['isolated'] is True, name
+              assert report['realBackend'] is False and report['realProvider'] is False, name
+              assert report['providerCalls'] == 0 and not report['errors'] and not report['externalRequests'], name
+              assert len(report['checks']) == expected, name
+          print('PASS Studio brand/rail browser fixtures; real database journey remains a separate gate')
+          PY
       - name: Generate and migrate the disposable database
         run: |
           pnpm db:generate
@@ -194,6 +210,14 @@ jobs:
           done
           test "$ready" = 1
           bash "$RUNNER_TEMP/novart-parallel-tests.sh"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          report = json.loads(Path('apps/web/.novart-ui-artifacts/port-3000/acceptance.json').read_text())
+          assert report['realDatabase'] is True and report['realBrands'] is True
+          assert report['realGeneration'] is False
+          print('PASS real authenticated multi-brand UI/database journey; no provider calls made')
+          PY
       # Provider calls remain opt-in outside this core CI job. The UI report
       # explicitly records realGeneration=false and deferred first-batch UI.
       - name: Prepare and build immutable CDS images
@@ -267,6 +291,10 @@ jobs:
           WORKBENCH_TEST_URL=http://127.0.0.1:3100 bash "$RUNNER_TEMP/novart-parallel-tests.sh"
           python - <<'PY'
           import json, time, urllib.request
+          from pathlib import Path
+          report = json.loads(Path('apps/web/.novart-ui-artifacts/port-3100/acceptance.json').read_text())
+          assert report['realDatabase'] is True and report['realBrands'] is True
+          assert report['realGeneration'] is False
           for attempt in range(30):
               try:
                   with urllib.request.urlopen('http://127.0.0.1:3100/api/health', timeout=10) as response:
@@ -310,6 +338,10 @@ jobs:
           # only known test outputs; never upload raw logs or diagnostics.json.
           path: |
             apps/web/.novart-ui-artifacts/owned-react-fixture.json
+            apps/web/.novart-ui-artifacts/studio-layout-fixture.json
+            apps/web/.novart-ui-artifacts/brand-switch-fixture.json
+            apps/web/.novart-ui-artifacts/home-brand-leave-fixture.json
+            apps/web/.novart-ui-artifacts/brand-creation-recovery-fixture.json
             apps/web/.novart-ui-artifacts/garage-container.json
             apps/web/.novart-ui-artifacts/port-3000/acceptance.json
             apps/web/.novart-ui-artifacts/port-3000/failure-runtime.json

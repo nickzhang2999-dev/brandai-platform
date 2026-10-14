@@ -8,7 +8,7 @@ window.createHomeStart = function createHomeStart(host) {
   const identity = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(value);
   const types = ['image/png','image/jpeg','image/webp'];
   let items = [], submitted = null, busy = false, loaded = false, draftError = '', latestEntry = null, recoveryBlocked = false;
-  let saveQueue = Promise.resolve();
+  let saveQueue = Promise.resolve(), recoveryWrites = 0, recoveryRevision = 0, recoverySavedRevision = 0;
   const runs = new Map(), states = new Map(), waiters = new Map();
   const dbPromise = new Promise((resolve, reject) => {
     const request = indexedDB.open('novart-owned-home-start', 1);
@@ -31,8 +31,21 @@ window.createHomeStart = function createHomeStart(host) {
     // Cache only recoverable input and stable identities. Material readiness
     // and saved status are rechecked with the backend/editor on every resume.
     const value = {version:1, items:items.map(({id,file,name,taskId}) => ({id,file,name,taskId})), submitted:submitted ? {...submitted} : null};
-    saveQueue = saveQueue.catch(() => {}).then(() => dbTask('readwrite', value));
-    return saveQueue.catch(() => { draftError = '恢复记录未能保存。请保留本页和原图，恢复存储空间后继续。'; render(); throw new Error(draftError); });
+    const revision = ++recoveryRevision; recoveryWrites++;
+    saveQueue = saveQueue.catch(() => {}).then(() => dbTask('readwrite', value)).finally(() => { recoveryWrites--; });
+    return saveQueue.then(() => { recoverySavedRevision = revision; draftError = ''; render(); }, () => { draftError = '恢复记录未能保存。请保留本页和原图，恢复存储空间后继续。'; render(); throw new Error(draftError); });
+  }
+  async function confirmLeave() {
+    if (!loaded || recoveryBlocked) throw new Error('首页原图尚未确认恢复，请保留当前页面，检查恢复空间后再切换品牌。');
+    if (busy || runs.size) throw new Error('首页图片正在处理，请完成后再切换品牌。');
+    if (!items.length && !submitted && !recoveryWrites && !draftError) return;
+    // A visible thumbnail is not a persistence receipt. Retry the current value
+    // and wait for the actual IndexedDB transaction before leaving this brand.
+    let timer;
+    try {
+      await Promise.race([persist(), new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('首页原图暂存尚未确认，请保留本页并稍后重试切换品牌。')), 10000); })]);
+      if (busy || runs.size || recoveryWrites || recoverySavedRevision !== recoveryRevision || draftError) throw new Error('首页原图仍有未确认保存的变化，请保留本页并重试。');
+    } finally { clearTimeout(timer); }
   }
   function validFile(file) { return file instanceof Blob && types.includes(file.type) && file.size > 0 && file.size <= limit; }
   function materialReceipt(value) {
@@ -268,6 +281,6 @@ window.createHomeStart = function createHomeStart(host) {
   }).catch(() => { recoveryBlocked = true; draftError = '原图恢复记录暂不可用，请保留本页和原文件，检查存储空间后刷新。'; })
     .finally(() => { loaded = true; render(); if (latestEntry) void resume(latestEntry); });
   render();
-  return {create,hasDraft:() => Boolean(items.length || submitted),resume,canvasUnavailable,routeChanged() { hide(); },busy:() => busy,
-    snapshot:() => ({loaded,busy,attachmentCount:items.length,readyCount:items.filter(item=>item.material).length,submittedRequestId:submitted?.requestId || null,running:[...runs.keys()]})};
+  return {create,hasDraft:() => Boolean(items.length || submitted),resume,canvasUnavailable,confirmLeave,routeChanged() { hide(); },busy:() => busy,
+    snapshot:() => ({loaded,busy,recoveryPending:recoveryWrites > 0,recoveryError:draftError,recoveryBlocked,attachmentCount:items.length,readyCount:items.filter(item=>item.material).length,submittedRequestId:submitted?.requestId || null,running:[...runs.keys()]})};
 };

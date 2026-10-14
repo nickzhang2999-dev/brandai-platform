@@ -7,6 +7,7 @@ import { hashPassword } from "../src/lib/password";
 import { verifyStudioShellBackend } from "./verify-studio-shell-backend";
 import { verifyStudioMaterialsBackend } from "./verify-studio-materials-backend";
 import { verifyStudioGenerationBackend } from "./verify-studio-generation-backend";
+import { verifyStudioBrandsBackend } from "./verify-studio-brands-backend";
 import { ACTIVE_BRAND_COOKIE } from "../src/lib/brand-cookie";
 
 const base = process.env.WORKBENCH_TEST_URL ?? "http://127.0.0.1:3000";
@@ -166,5 +167,6 @@ try {
   await verifyStudioShellBackend({ call, check, base, ws, ownerId: owner.user.id, editorId: editor.user.id, encode });
   await verifyStudioMaterialsBackend({ call, check, base, ws });
   await verifyStudioGenerationBackend({ call, check, base, ws });
+  await verifyStudioBrandsBackend({ call, check, base, ws, ownerId: owner.user.id });
   console.log(`Workbench backend: ${passed} checks passed. No AI provider calls performed.`);
 } finally { await prisma.$disconnect(); }

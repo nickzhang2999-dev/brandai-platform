@@ -13,3 +13,30 @@
 #ns-frames.hs-transferring{pointer-events:none;opacity:.4}.hs-pick:focus-visible,.hs-remove:focus-visible,.hs-retry:focus-visible{outline:2px solid #9879b5;outline-offset:3px}
 @media(max-width:600px){.hs-attachments{grid-template-columns:1fr}.hs-handoff{left:50%;width:calc(100vw - 40px)}.hs-pick{font-size:12px}.ns-composer-footer .ns-keyboard-hint{display:none}}
 @media(prefers-reduced-motion:no-preference){.hs-attachment{animation:hs-enter .18s ease-out}@keyframes hs-enter{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}}
+
+/* A canvas uses an icon rail at every viewport width. Keep its controls inside
+   that rail rather than relying on a phone breakpoint or physical pixel size. */
+.ns-sidebar{height:100vh;height:100dvh;min-height:0;max-height:100dvh}
+.ns-sidebar .ns-wordmark,.ns-sidebar-bottom{flex-shrink:0}
+.ns-sidebar .ns-nav{min-height:0;overflow-y:auto;overscroll-behavior:contain}
+.ns-sidebar-bottom{min-width:0}
+.ns-sidebar svg{flex-shrink:0}
+.ns-sidebar .ns-nav a,.ns-profile-link{min-width:0}
+.ns-sidebar .ns-nav a>span{white-space:nowrap}
+.ns-sidebar .np-brand-switcher{min-width:0;flex-shrink:0}
+.np-brand-trigger{max-width:100%;min-width:0}
+.np-brand-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.np-brand-chevron,.np-brand-chevron svg{display:block;width:12px;height:12px;flex-shrink:0}
+body[data-page=workspace] .ns-sidebar .np-brand-label{display:none}
+body[data-page=workspace] .ns-sidebar .np-brand-initial{display:inline-flex;width:22px;height:22px;flex-shrink:0}
+body[data-page=workspace] .ns-sidebar .np-brand-trigger{justify-content:center;padding:4px;gap:2px}
+body[data-page=workspace] .ns-sidebar .np-brand-chevron,body[data-page=workspace] .ns-sidebar .np-brand-chevron svg{width:10px;height:10px}
+body[data-page=workspace] .ns-sidebar .np-brand-switcher{margin:0 0 12px}
+body[data-page=workspace] #ns-main{min-width:0}
+@media(max-width:960px){
+  .ns-sidebar .np-brand-label{display:none}
+  .ns-sidebar .np-brand-initial{display:inline-flex;width:22px;height:22px;flex-shrink:0}
+  .ns-sidebar .np-brand-trigger{justify-content:center;padding:4px;gap:2px}
+  .ns-sidebar .np-brand-chevron,.ns-sidebar .np-brand-chevron svg{width:10px;height:10px}
+  .ns-sidebar .np-brand-switcher{margin:0 0 12px}
+}

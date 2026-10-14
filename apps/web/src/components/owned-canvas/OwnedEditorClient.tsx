@@ -211,15 +211,23 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
         void openExistingTask(data.kind, data.taskId).then(opened => { if (opened) reply(true); }).catch(error => reply(false, messageOf(error))); return;
       }
       if (event.origin !== location.origin || event.source !== parent || !data || data.type !== "nv-studio" || data.projectId !== projectId) return;
-      if (["insert-material", "confirm-save"].includes(data.action)) {
+      if (["insert-material", "confirm-save", "confirm-leave"].includes(data.action)) {
         if (typeof data.requestId !== "string" || !/^[a-f0-9-]{36}$/i.test(data.requestId)) return;
-        const action = data.action === "insert-material" ? "insert-material-result" : "confirm-save-result";
+        const action = data.action === "insert-material" ? "insert-material-result" : data.action === "confirm-leave" ? "confirm-leave-result" : "confirm-save-result";
         const api = apiRef.current;
         if (!api || handoffBusy.current) { send(action, { requestId: data.requestId, status: "failed", error: "正在确认上一份保存，请稍后继续。" }); return; }
         handoffBusy.current = true;
         void (async () => {
           try {
             if (!docRef.current) throw new Error("画布还没有恢复完成，请稍后再试。");
+            if (data.action === "confirm-leave") {
+              if (uploadBusy.current || generationBusy.current || refreshBusy.current || taskFocusBusy.current) throw new Error("创作或素材操作正在处理，请完成后再切换品牌。");
+              await draft.flush();
+              const workflow = workflowRef.current;
+              if (workflow?.snapshot().dirty) await workflow.save();
+              const state = workflow?.snapshot();
+              if (!state || state.busy || state.dirty || state.status !== "ready") throw new Error("素材用途尚未确认保存，请返回工作台确认后再切换品牌。");
+            }
             if (data.action === "insert-material") {
               if (!writableRef.current) throw new Error("画布当前只读，图片和需求仍保留。");
               const material = StudioMaterial.parse(data.material); api.image(material);
@@ -238,6 +246,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
             const saved = await save();
             if (!alive.current || apiRef.current !== api) return;
             if (!saved || sequence.current !== savedSequence.current || pendingSave.current || saveBlocked.current) throw new Error("画布修改尚未确认保存，请稍后继续。");
+            if (data.action === "confirm-leave" && (!draft.confirmed() || workflowRef.current?.snapshot().dirty)) throw new Error("仍有新的需求或素材修改，请确认保存后再切换品牌。");
             send(action, { requestId: data.requestId, status: "saved", revision: saved.revision });
           } catch (error) {
             if (alive.current && apiRef.current === api) send(action, { requestId: data.requestId, status: "failed", error: error instanceof Error && error.name === "ZodError" ? "素材回执格式无法确认，原文件保留。" : messageOf(error) });
@@ -255,7 +264,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
     };
     window.addEventListener("beforeunload", preventLoss); window.addEventListener("keydown", keyboard); window.addEventListener("message", command);
     return () => { window.removeEventListener("beforeunload", preventLoss); window.removeEventListener("keydown", keyboard); window.removeEventListener("message", command); };
-  }, [workspaceId, userId, projectId, save, send, openExistingTask]);
+  }, [workspaceId, userId, projectId, save, send, openExistingTask, draft.flush, draft.confirmed]);
 
   useEffect(() => {
     if (!generations.some(activeGeneration) || pollPaused) return;
