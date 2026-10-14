@@ -1020,7 +1020,14 @@
     },
     showRequirements:entry => { entry.pendingPanel = 'requirements'; panelCommand(entry); }
   });
-  const debug = Object.freeze({snapshot() { return {homeStart:homeStart.snapshot(), route: routePath(), activeProjectId: activeId, lastProjectId: lastWorkspaceId, stateLoaded: metaLoaded, stateRevision: savedState.revision, profileDirty, brandDirty, favoritesDirty, metadataConflict: metaConflict, projectCount: projects.length, archivedCount: projects.filter(p => p.archivedAt).length, libraryScope, archiveBusy, resourcesBusy, resourcesError, frames: [...frames.values()].map(entry => { const r = entry.frame.getBoundingClientRect(); return {projectId: entry.id, ready: entry.ready, active: entry.slot.dataset.active === 'true', inert: entry.slot.inert, visibility: getComputedStyle(entry.slot).visibility, geometry: {x: r.x, y: r.y, width: r.width, height: r.height}}; })}; }});
+  const debug = Object.freeze({async confirmBrandLeave() {
+    if (homeComposing) throw new Error('请先完成首页的中文输入，再切换品牌。');
+    const brief = $('ns-home-brief').value;
+    if ((brief || storage.get(briefKey)) && (!storage.set(briefKey, brief) || storage.get(briefKey) !== brief)) throw new Error('首页需求暂存未确认，请保留当前页面，恢复存储空间后再切换品牌。');
+    if (typeof homeStart.confirmLeave !== 'function') throw new Error('首页图片保存组件尚未准备完成，请重新打开当前页面后再切换品牌。');
+    await homeStart.confirmLeave();
+    if (homeComposing || $('ns-home-brief').value !== brief) throw new Error('首页需求有新的修改，请确认输入完成后再切换品牌。');
+  }, snapshot() { return {homeStart:homeStart.snapshot(), route: routePath(), activeProjectId: activeId, lastProjectId: lastWorkspaceId, stateLoaded: metaLoaded, stateRevision: savedState.revision, profileDirty, brandDirty, favoritesDirty, metadataConflict: metaConflict || metaUncertain, metadataBusy: metaBusy || stateLoading, createBusy, projectCount: projects.length, archivedCount: projects.filter(p => p.archivedAt).length, libraryScope, archiveBusy, resourcesBusy, resourcesError, frames: [...frames.values()].map(entry => { const r = entry.frame.getBoundingClientRect(); return {projectId: entry.id, ready: entry.ready, active: entry.slot.dataset.active === 'true', inert: entry.slot.inert, visibility: getComputedStyle(entry.slot).visibility, geometry: {x: r.x, y: r.y, width: r.width, height: r.height}}; })}; }});
   Object.defineProperty(window, 'NovartStudio', {value: debug, writable: false, configurable: false});
   window.addEventListener('pagehide', () => { focusReturnIntent = null; frames.forEach(entry => entry.focusCleanup?.()); }, {once: true});
   restoreRecovery(); initializeNavigation(); metaControls(); fillMetaForms(); activateRoute(); lastActivatedPath = currentPath(); loadState();

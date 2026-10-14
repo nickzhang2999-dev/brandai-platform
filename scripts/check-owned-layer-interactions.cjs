@@ -15,11 +15,17 @@ async function runOwnedLayerChecks({page,surface,origin,fixture,png,material,lay
   const sourceNode=page.locator('[data-testid="owned-canvas-item"][data-kind="image"]');await sourceNode.waitFor();await save();
   const sourceId=sourceRecord().id;assert.equal(shapes().length,1);await sourceNode.click();await button('AI 分层').click();await page.getByTestId('owned-layer-panel').waitFor();
   assert.equal(await sourceNode.getAttribute('data-selected'),'true');assert.equal(await button('开始 AI 分层').isEnabled(),true);check('uploaded-persistent-source-selected-and-saved-before-ai-layers');
+  const options=page.getByTestId('owned-layer-options');
+  await options.getByText('按内容自动拆分，无需指定层数。',{exact:true}).waitFor();
+  assert.equal(await page.getByRole('combobox',{name:'拆分层数',exact:true}).count(),0);
+  await options.locator('summary').click();
+  await options.getByRole('radio',{name:'手动指定层数',exact:true}).check();
   await page.getByRole('combobox',{name:'拆分层数',exact:true}).selectOption('2');await page.getByRole('textbox',{name:'分层说明',exact:true}).fill('Fixture only: preserve foreground and background');
   const acceptedRevision=state().revision;setStage('layers-submit-and-poll');await button('开始 AI 分层').click();
   const task=page.getByTestId('owned-layer-task');await task.getByText('等待处理',{exact:true}).waitFor();
   assert.equal(state().decompositionPosts,1);assert.equal(state().decompositionPostInputs[0].documentRevision,acceptedRevision);assert.equal(state().decompositionPostInputs[0].sourceShapeId,sourceId);
   assert.equal(state().decompositionPostInputs[0].assetId,material.assetId);assert.equal(state().decompositionPostInputs[0].assetSha256,material.assetSha256);
+  assert.equal(state().decompositionPostInputs[0].layerMode,'MANUAL');assert.equal(state().decompositionPostInputs[0].layerCount,2);
   await page.locator('[data-testid="owned-layer-task"][data-status="RUNNING"]').waitFor();
   await page.locator('[data-testid="owned-layer-task"][data-status="SUCCEEDED"]').waitFor();
   assert.deepEqual([...new Set(state().layerTaskReads.map(value=>value.status))],['PENDING','RUNNING','SUCCEEDED']);assert.equal(shapes().length,1);assert.notEqual(sourceRecord().meta?.novartOwned?.hidden,true);

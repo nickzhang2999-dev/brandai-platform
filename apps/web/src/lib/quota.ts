@@ -117,7 +117,9 @@ export async function resolvePlan(userId: string, client: Prisma.TransactionClie
     name: starter?.name ?? "Starter",
     monthlyGenerationQuota: starter?.monthlyGenerationQuota ?? 600,
     dailyGenerationLimit: starter?.dailyGenerationLimit ?? 30,
-    maxWorkspaces: starter?.maxWorkspaces ?? 1,
+    // Brands are unlimited; image-generation quotas remain independently metered.
+    // Existing Plan rows are still authoritative and are updated by the rollout migration.
+    maxWorkspaces: starter?.maxWorkspaces ?? UNLIMITED,
     periodStart: startOfMonthUTC(),
   };
 }
@@ -409,11 +411,11 @@ export async function reserveGenerationQuotaInTransaction(tx: Prisma.Transaction
  * more would exceed the plan. Unlimited (-1, the default/owner/admin plan) is a
  * no-op, so phase-1 single-brand auto-create is untouched. No-op when QUOTA_V1=0.
  */
-export async function assertCanCreateWorkspace(userId: string): Promise<void> {
+export async function assertCanCreateWorkspace(userId: string, client: Prisma.TransactionClient = prisma): Promise<void> {
   if (!quotaEnabled()) return;
-  const plan = await resolvePlan(userId);
+  const plan = await resolvePlan(userId, client);
   if (plan.maxWorkspaces === UNLIMITED) return;
-  const current = await prisma.brandWorkspace.count({
+  const current = await client.brandWorkspace.count({
     where: { ownerId: userId },
   });
   if (!canCreateWorkspace(plan.maxWorkspaces, current)) {

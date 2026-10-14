@@ -87,12 +87,16 @@ jobs:
           NOVART_OWNED_LAYERS_ONLY=1 NOVART_OWNED_REPORT=apps/web/.novart-ui-artifacts/owned-layer-fixture.json node scripts/test-novart-owned-canvas-browser.cjs
           NOVART_KNOWLEDGE_REPORT=apps/web/.novart-ui-artifacts/brand-knowledge-fixture.json node scripts/test-novart-brand-knowledge-browser.cjs
           NOVART_LAYER_INBOX_REPORT=apps/web/.novart-ui-artifacts/layer-inbox-fixture.json node scripts/test-novart-layer-inbox.cjs
+          NOVART_STUDIO_LAYOUT_REPORT=apps/web/.novart-ui-artifacts/studio-layout-fixture.json node scripts/test-novart-studio-layout-browser.cjs
+          NOVART_BRAND_SWITCH_REPORT=apps/web/.novart-ui-artifacts/brand-switch-fixture.json node scripts/test-novart-brand-switcher-browser.cjs
+          NOVART_HOME_LEAVE_REPORT=apps/web/.novart-ui-artifacts/home-brand-leave-fixture.json node scripts/test-novart-home-brand-leave-browser.cjs
+          NOVART_BRAND_CREATION_REPORT=apps/web/.novart-ui-artifacts/brand-creation-recovery-fixture.json node scripts/test-novart-brand-creation-recovery-browser.cjs
           NOVART_AUTO_PSD_REPORT=apps/web/.novart-ui-artifacts/automatic-psd-fixture.json NOVART_AUTO_PSD_SCREENSHOT=apps/web/.novart-ui-artifacts/automatic-psd-fixture.png node scripts/test-novart-auto-psd-browser.cjs
           python - <<'PY'
           import json
           from pathlib import Path
           root = Path('apps/web/.novart-ui-artifacts')
-          for name, expected in (('owned-layer-fixture.json', 10), ('brand-knowledge-fixture.json', 14), ('layer-inbox-fixture.json', 16)):
+          for name, expected in (('owned-layer-fixture.json', 10), ('brand-knowledge-fixture.json', 14), ('layer-inbox-fixture.json', 16), ('studio-layout-fixture.json', 7), ('brand-switch-fixture.json', 9), ('home-brand-leave-fixture.json', 9), ('brand-creation-recovery-fixture.json', 15)):
               report = json.loads((root / name).read_text())
               assert report['passed'] is True and report['isolated'] is True, name
               assert report['realBackend'] is False and report['realProvider'] is False, name
@@ -229,7 +233,7 @@ jobs:
           import json
           from pathlib import Path
           report = json.loads(Path('apps/web/.novart-ui-artifacts/port-3000/acceptance.json').read_text())
-          assert report['realDatabase'] is True and report['realKnowledge'] is True
+          assert report['realDatabase'] is True and report['realKnowledge'] is True and report['realBrands'] is True
           assert len(report['knowledgeChecks']) >= 4
           assert report['realDecomposition'] is False and report['realGeneration'] is False
           print('PASS real authenticated knowledge UI/database journey; real layer-model quality is still deferred')
@@ -313,7 +317,7 @@ jobs:
           import json, time, urllib.request
           from pathlib import Path
           report = json.loads(Path('apps/web/.novart-ui-artifacts/port-3100/acceptance.json').read_text())
-          assert report['realDatabase'] is True and report['realKnowledge'] is True
+          assert report['realDatabase'] is True and report['realKnowledge'] is True and report['realBrands'] is True
           assert len(report['knowledgeChecks']) >= 4
           assert report['realDecomposition'] is False and report['realGeneration'] is False
           with urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=10) as response:
@@ -367,6 +371,10 @@ jobs:
             apps/web/.novart-ui-artifacts/owned-layer-fixture.json
             apps/web/.novart-ui-artifacts/brand-knowledge-fixture.json
             apps/web/.novart-ui-artifacts/layer-inbox-fixture.json
+            apps/web/.novart-ui-artifacts/studio-layout-fixture.json
+            apps/web/.novart-ui-artifacts/brand-switch-fixture.json
+            apps/web/.novart-ui-artifacts/home-brand-leave-fixture.json
+            apps/web/.novart-ui-artifacts/brand-creation-recovery-fixture.json
             apps/web/.novart-ui-artifacts/automatic-psd-fixture.json
             apps/web/.novart-ui-artifacts/automatic-psd-fixture.png
             apps/web/.novart-ui-artifacts/psd-file-proof/*.json

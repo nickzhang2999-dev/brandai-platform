@@ -239,3 +239,15 @@ Required before push: `pnpm test`, `pnpm test:ai`, `pnpm -F web typecheck`, `pnp
 - [complete] Full L1 1256+28, AI430, typecheck/build and existing49 canvas checks pass. Exact codef82ed27 CI38355837716 completed success: source and built containers each real backend141/UI23, plus actual PSD writer/read/recompose in the packaged Web image.
 - [complete] Normal guarded devUpdate1012 push completed; README, feature SSOT and today's log record actual results and the separate fixture/model boundary. No manual CDS operations.
 - [pending external configuration] Real successful generated-image-to-model-layers-to-PSD quality acceptance requires an available real layer provider. No model download or paid call in this increment.
+
+## Main-preview sidebar and multiple brands · 2026-10-13
+
+- [complete] User confirmed screenshot is from main, not the new local preview. Fetch verified origin/main at 2d29125; Studio bootstrap/layout source is shared with devUpdate1012.
+- [complete] Locate independent Studio 64px workspace rail: brand select padding consumes its text width; task label wraps because only a viewport breakpoint hides it.
+- [complete] Replace cramped selector with accessible current-brand popup and a real create-brand dialog, using existing workspace and server session APIs.
+- [complete] Flush canvas, draft and workflow before changing brands; use explicit URL workspace and a server-confirmed cookie. Keep projects/materials/rules scoped.
+- [complete implementation] User selected unlimited brand count: one-time Plan.maxWorkspaces=-1 policy migration, seed and fallback; generation quotas unchanged. Company database migration is not yet executed.
+- [complete local baseline] Real browser brands9/layout7/owned52/inbox16, API unit27 and local four gates passed; no actual Mac/Safari result inferred.
+- [in_progress 2026-10-14] Independent review reproduced homepage attachment loss after failed/pending recovery writes and duplicate brand creation after lost201 receipt. Apply explicit home persistence confirmation and read-only brand-list recovery; add isolated browser regressions before final export/build.
+- [in_progress] Source-only main-compatible port on claude/studio-multi-brand-rail from2d29125; independent L1 contracts1003/UI24, AI365 and typecheck pass. Source/containers real database CI required before main update. No manual CDS, local Docker or provider calls.
+- [complete log] Preserve daily evidence in docs/development-log-2026-10-13.md and docs/development-log-2026-10-14.md; guarded branch delivery and verified main update remain pending.

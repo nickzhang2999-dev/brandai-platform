@@ -11,6 +11,7 @@ export async function GET(req: Request) {
   try {
     const user = await requireUser();
     const requested = new URL(req.url).searchParams.get("workspaceId");
+    if (requested !== null) SelectWorkbenchWorkspaceInput.parse({ workspaceId: requested });
     const preferred = requested ?? (await cookies()).get(ACTIVE_BRAND_COOKIE)?.value;
     const result = await getWorkbenchSession(user, preferred, requested !== null);
     return Response.json(result, { headers: { "Cache-Control": "no-store" } });
@@ -21,6 +22,8 @@ export async function POST(req: Request) {
   try {
     const user = await requireUser();
     if (!isWorkbenchSameOrigin(req)) throw new ApiException(403, "Cross-origin write rejected");
+    const expectedUser = req.headers.get("X-Novart-User");
+    if (expectedUser && expectedUser !== user.id) throw new ApiException(409, "账号已切换，请刷新工作台后选择品牌。");
     const raw = await readWorkbenchJson(req, 1024);
     const { workspaceId } = SelectWorkbenchWorkspaceInput.parse(raw);
     const result = await getWorkbenchSession(user, workspaceId, true);

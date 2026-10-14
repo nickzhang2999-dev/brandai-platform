@@ -133,6 +133,7 @@ model User {
   memberships   Membership[]
   workbenchStates WorkbenchUserState[]
   workbenchDrafts WorkbenchChatDraft[]
+  studioBrandCreations StudioBrandCreation[]
 }
 
 // M-B — Auth.js Prisma adapter tables. Used when OAuth providers are
@@ -217,8 +218,25 @@ model BrandWorkspace {
   projects     Project[]
   workbenchBrand WorkbenchBrandDraft?
   workbenchUsers WorkbenchUserState[]
+  creationReceipts StudioBrandCreation[]
 
   @@index([ownerId])
+}
+
+// Durable receipt for one browser brand-create intent. The user scope and UUID
+// survive transport retries; deleting a brand keeps its tombstone receipt.
+model StudioBrandCreation {
+  id          String         @id @default(cuid())
+  userId      String
+  user        User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mutationId  String         @db.Uuid
+  inputDigest String         @db.Char(64)
+  workspaceId String?
+  workspace   BrandWorkspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  createdAt   DateTime       @default(now())
+
+  @@unique([userId, mutationId], map: "StudioBrandCreation_identity_key")
+  @@index([workspaceId])
 }
 
 model Asset {

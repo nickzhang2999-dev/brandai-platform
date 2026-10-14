@@ -61,5 +61,11 @@ export function useOwnedDraft(options: Options) {
     else await flush();
   }, [identity, flush]);
   const snapshot = reported.identity === identity ? reported.snapshot : initial();
-  return { ...snapshot, flush: () => flush(), retry, compositionStart: () => { composing.current = true; cancelTimer(); }, compositionEnd: () => { composing.current = false; schedule(); } };
+  const confirmed = () => {
+    const context = active.current;
+    if (!context || context.identity !== identity || !context.restored || composing.current) return false;
+    const current = context.session.snapshot();
+    return current.ready && !current.blocked && !current.dirty && JSON.stringify(current.value) === JSON.stringify(latest.current.value);
+  };
+  return { ...snapshot, flush: () => flush(), confirmed, retry, compositionStart: () => { composing.current = true; cancelTimer(); }, compositionEnd: () => { composing.current = false; schedule(); } };
 }

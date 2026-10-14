@@ -26,7 +26,7 @@ const privateValues: string[] = [], contexts: BrowserContext[] = [], fixtureUser
 const acceptedUploads: AcceptedUpload[] = [], uploadReceipts = new Map<string, ReturnType<typeof summarizeUploadReceipt>>();
 const deferred = ["Homepage attachments handoff", "Unsent creation draft autosave/pagehide recovery", "Workflow purpose and modification-target persistence", "Real EXACT-generation output frames", "Real image-modification provider acceptance", "Real AI decomposition quality, private layer storage and editable result round trip", "Per-object/nested-frame export", "Compliance UI and notification deep links"];
 const knowledgeChecks: string[] = [];
-let browser: Browser | undefined, currentPage: Page | undefined, step = "initialize", passed = 0, realHomepageHandoff = false, realDraftPersistence = false, realWorkflowPersistence = false, realKnowledge = false;
+let browser: Browser | undefined, currentPage: Page | undefined, step = "initialize", passed = 0, realHomepageHandoff = false, realDraftPersistence = false, realWorkflowPersistence = false, realKnowledge = false, realBrands = false;
 const check = (label: string) => { passed++; console.log(`PASS ${label}`); };
 const knowledgeCheck = (label: string) => { knowledgeChecks.push(label); check(label); };
 const enter = (label: string) => { step = label; console.log(`STEP ${label}`); };
@@ -125,7 +125,7 @@ async function login(page: Page, email: string, password: string, destination = 
 }
 async function studioReady(page: Page) {
   await expect(page.locator(".np-startup")).toHaveCount(0, { timeout: 45000 });
-  await page.waitForFunction(() => (window as any).NovartStudio?.snapshot().stateLoaded === true, undefined, { timeout: 30000 }); await expect(page.locator("#ns-meta-alert")).toBeHidden();
+  await page.waitForFunction(() => { const state = (window as any).NovartStudio?.snapshot(); return state?.stateLoaded === true && state.homeStart?.loaded === true; }, undefined, { timeout: 30000 }); await expect(page.locator("#ns-meta-alert")).toBeHidden();
 }
 async function editorFrame(page: Page, projectId: string) {
   const element = page.locator(`iframe[data-testid="studio-canvas-frame"][data-project-id="${projectId}"]`); await expect(element).toBeVisible({ timeout: 45000 });
@@ -282,6 +282,47 @@ try {
   const brandName = `Owned UI ${run}`; await page.getByRole("textbox", { name: "品牌名称", exact: true }).fill(brandName); await page.getByRole("button", { name: "进入工作台", exact: true }).click();
   await studioReady(page); const workspace = await prisma.brandWorkspace.findFirstOrThrow({ where: { ownerId: user.id, name: brandName } }); assert.equal(new URL(page.url()).searchParams.get("workspaceId"), workspace.id); await expect(page.locator("#ns-greeting")).toContainText(nickname);
   check("real login and first brand remain server-authoritative");
+
+  enter("create additional real brands and return through server-confirmed selection");
+  const createdBrandIds: string[] = [];
+  for (let index = 1; index <= 2; index++) {
+    await page.getByTestId("product-brand-trigger").click();
+    await page.getByTestId("product-brand-add").click();
+    const dialog = page.getByTestId("product-create-brand");
+    await expect(dialog).toBeVisible();
+    const nextName = `Owned multiple brand ${index} ${run}`;
+    await dialog.getByRole("textbox", { name: "品牌名称", exact: true }).fill(nextName);
+    const createdResponse = page.waitForResponse(response => new URL(response.url()).pathname === "/api/workspaces" && response.request().method() === "POST");
+    await dialog.getByRole("button", { name: "创建并进入", exact: true }).click();
+    const receipt = await createdResponse;
+    assert.equal(receipt.status(), 201);
+    const created = await receipt.json();
+    createdBrandIds.push(created.id);
+    await page.waitForURL(url => url.searchParams.get("workspaceId") === created.id && url.hash === "#/home");
+    await studioReady(page);
+    await expect(page.getByTestId("product-brand-trigger")).toContainText(nextName);
+    assert.equal(await prisma.project.count({ where: { workspaceId: created.id } }), 0);
+    const membership = await prisma.membership.findUniqueOrThrow({ where: { userId_workspaceId: { userId: user.id, workspaceId: created.id } } });
+    assert.equal(membership.role, "OWNER");
+  }
+  assert.equal(await prisma.brandWorkspace.count({ where: { ownerId: user.id } }), 3);
+  check("real UI creates three independent brands through authenticated API and database");
+  const lastBrandId = createdBrandIds.at(-1)!;
+  await page.reload();
+  await studioReady(page);
+  assert.equal(new URL(page.url()).searchParams.get("workspaceId"), lastBrandId);
+  const selectedBrand = await page.context().request.get(new URL("/api/workbench/session", base).href);
+  assert.equal((await selectedBrand.json()).activeWorkspaceId, lastBrandId);
+  check("whole-page refresh retains the selected brand through server session and URL");
+  await page.getByTestId("product-brand-trigger").click();
+  await page.locator(`[data-testid="product-brand-option"][data-workspace-id="${workspace.id}"]`).click();
+  await page.waitForURL(url => url.searchParams.get("workspaceId") === workspace.id && url.hash === "#/home");
+  await studioReady(page);
+  await expect(page.getByTestId("product-brand-trigger")).toContainText(brandName);
+  const originalBrand = await prisma.brandWorkspace.findUniqueOrThrow({ where: { id: workspace.id } });
+  assert.equal(originalBrand.name, brandName);
+  check("real UI returns to the original brand without replacing its data");
+  realBrands = true;
 
   const startupSource = await page.locator('script[defer][src^="/novart-product-bootstrap.js"]').getAttribute("src");
   assert.ok(startupSource, "Authenticated HTML must declare its startup script");
@@ -609,7 +650,7 @@ try {
   realKnowledge = true; knowledgeCheck("real-knowledge-viewer-read-only-page-hides-write-controls");
 
   assert.deepEqual(networkProblems, [], "Owned frame must not request captured SDK or remote business services"); assert.deepEqual(browserErrors, []); assert.equal(await prisma.generation.count({ where: { projectId } }), process.env.WORKBENCH_TEST_GENERATION === "1" ? 1 : 0);
-  await mkdir(artifacts, { recursive: true }); await writeFile(path.join(artifacts, "acceptance.json"), JSON.stringify({ editor: "novart-owned", checksPassed: passed, realDatabase: true, realUploads: process.env.WORKBENCH_TEST_MATERIAL_UPLOAD === "1", realHomepageHandoff, realDraftPersistence, realWorkflowPersistence, realKnowledge, knowledgeChecks, realGeneration: process.env.WORKBENCH_TEST_GENERATION === "1", realImageModification: false, realExactGeneration: false, realDecomposition: false, deferred }, null, 2));
+  await mkdir(artifacts, { recursive: true }); await writeFile(path.join(artifacts, "acceptance.json"), JSON.stringify({ editor: "novart-owned", checksPassed: passed, realDatabase: true, realUploads: process.env.WORKBENCH_TEST_MATERIAL_UPLOAD === "1", realHomepageHandoff, realDraftPersistence, realWorkflowPersistence, realKnowledge, knowledgeChecks, realBrands, realGeneration: process.env.WORKBENCH_TEST_GENERATION === "1", realImageModification: false, realExactGeneration: false, realDecomposition: false, deferred }, null, 2));
   console.log(`Owned studio UI: ${passed} checks passed against real app/database. Deferred UI journeys: ${deferred.join("; ")}`);
 } catch (error) {
   const uploads = await uploadFailureEvidence();

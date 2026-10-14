@@ -25,7 +25,7 @@ const report = {isolated:true, realBackend:false, realProvider:false, realAuthen
   fixtureScope:'Loopback in-memory HTTP persistence; actual production React editor and styles',
   checks:[], externalRequests:[], errors:[]};
 let stage = 'build-fixture', browser, server, contracts;
-let canvas = '', revision = 0, readOnly = false, writes = 0, failRestore = false, conflict = false, delayMaterials = 0;
+let canvas = '', revision = 0, readOnly = false, writes = 0, failRestore = false, conflict = false, delayMaterials = 0, delayDocument = 0;
 let draft = {projectId:fixture.projectId,revision:0,inputForm:null,updatedAt:null,referenceIssues:[]};
 let workflow = {projectId:fixture.projectId,revision:0,mode:'generate',target:null,references:[],updatedAt:null,issues:[]};
 let draftWrites = 0, workflowWrites = 0, generationPosts = 0;
@@ -82,6 +82,7 @@ async function handle(req,res) {
   if(url.pathname.includes('/editor-document')) {
     if(req.method==='GET') return failRestore ? json(res,{error:'合成恢复失败'},503) : json(res,documentView());
     const value=JSON.parse((await body(req)).toString());
+    if(delayDocument) await new Promise(resolve=>setTimeout(resolve,delayDocument));
     if(readOnly) return json(res,{error:'只读项目'},403);
     if(conflict || value.revision!==revision) return json(res,{error:'画布已在其他页面更新',code:'DOCUMENT_CONFLICT'},409);
     canvas=value.canvas;revision++;writes++;return json(res,documentView());
@@ -324,6 +325,31 @@ async function fixtureSettled(condition) {const deadline=Date.now()+10000;while(
   const requestId=crypto.randomUUID();await page.evaluate(({requestId,projectId,material})=>document.querySelector('iframe').contentWindow.postMessage({type:'nv-studio',action:'insert-material',projectId,requestId,material},location.origin),{requestId,projectId:fixture.projectId,material});await page.waitForFunction(id=>receipts.some(r=>r.action==='insert-material-result'&&r.requestId===id&&r.status==='saved'),requestId);assert.equal(shapes().length,baselineShapes+1);const handoff=canvas;
   await page.evaluate(({requestId,projectId,material})=>document.querySelector('iframe').contentWindow.postMessage({type:'nv-studio',action:'insert-material',projectId,requestId,material},location.origin),{requestId,projectId:fixture.projectId,material});await page.waitForFunction(id=>receipts.filter(r=>r.action==='insert-material-result'&&r.requestId===id&&r.status==='saved').length===2,requestId);assert.equal(canvas,handoff);check('parent-material-handoff-saved-idempotently');before=canvas;
   const confirmation=crypto.randomUUID();await page.evaluate(({requestId,projectId})=>document.querySelector('iframe').contentWindow.postMessage({type:'nv-studio',action:'confirm-save',projectId,requestId},location.origin),{requestId:confirmation,projectId:fixture.projectId});await page.waitForFunction(id=>receipts.some(r=>r.action==='confirm-save-result'&&r.requestId===id&&r.status==='saved'),confirmation);check('parent-confirms-save');
+  stage='brand-leave-real-editor';
+  const leaveContext=await browser.newContext({viewport:{width:1366,height:850}});
+  try {
+    await leaveContext.route('**/*',route=>{const u=new URL(route.request().url());if(['http:','https:'].includes(u.protocol)&&u.origin!==origin){report.externalRequests.push(u.hostname);return route.abort();}return route.continue();});
+    const leavePage=await leaveContext.newPage();leavePage.on('pageerror',error=>report.errors.push(error.name));await leavePage.goto(origin+'/shell');
+    await leavePage.waitForFunction(()=>document.querySelector('iframe')?.contentDocument?.querySelector('[data-testid="owned-draft-status"]')?.dataset.draftState==='saved'&&document.querySelector('iframe')?.contentDocument?.querySelector('[data-testid="owned-workflow"]')?.dataset.workflowState==='ready');
+    const editor=leavePage.frameLocator('iframe'), leavePrompt=editor.getByRole('textbox',{name:'创作需求',exact:true});
+    async function requestLeave() {
+      const requestId=crypto.randomUUID();await leavePage.evaluate(({requestId,projectId})=>document.querySelector('iframe').contentWindow.postMessage({type:'nv-studio',action:'confirm-leave',projectId,requestId},location.origin),{requestId,projectId:fixture.projectId});
+      await leavePage.waitForFunction(id=>receipts.some(r=>r.action==='confirm-leave-result'&&r.requestId===id),requestId);
+      return leavePage.evaluate(id=>receipts.find(r=>r.action==='confirm-leave-result'&&r.requestId===id),requestId);
+    }
+    const imeWrites=draftWrites;await leavePrompt.dispatchEvent('compositionstart',{data:''});await leavePrompt.fill('pinpaishuru');
+    const rejectedIme=await requestLeave();assert.equal(rejectedIme.status,'failed');assert.match(rejectedIme.error,/中文输入/);assert.equal(draftWrites,imeWrites);assert.equal(await leavePrompt.inputValue(),'pinpaishuru');check('brand-leave-refuses-unfinished-ime-and-keeps-current-composer');
+    await leavePrompt.fill('切换品牌前保留的完整中文需求');await leavePrompt.dispatchEvent('compositionend',{data:'完整中文需求'});
+    await editor.getByRole('combobox',{name:'素材用途 1',exact:true}).selectOption('REFERENCE');
+    const savedLeave=await requestLeave();assert.equal(savedLeave.status,'saved');assert.equal(draft.inputForm.text,'切换品牌前保留的完整中文需求');assert.equal(workflow.references[0].purpose,'REFERENCE');assert.equal(shapes().length,baselineShapes+1);check('brand-leave-confirms-composer-workflow-and-canvas-before-ack');
+    const item=editor.locator('[data-testid="owned-canvas-item"][data-kind="image"]').last();const box=await item.boundingBox();assert.ok(box);
+    await editor.getByRole('button',{name:'选择',exact:true}).click();delayDocument=1600;await leavePage.mouse.move(box.x+box.width/2,box.y+box.height/2);await leavePage.mouse.down();await leavePage.mouse.move(box.x+box.width/2+35,box.y+box.height/2+25,{steps:5});await leavePage.mouse.up();
+    await leavePage.waitForFunction(()=>document.querySelector('iframe')?.contentDocument?.querySelector('[data-testid="owned-editor"]')?.dataset.saveState==='saving');
+    const rejectedSaving=await requestLeave();assert.equal(rejectedSaving.status,'failed');assert.match(rejectedSaving.error,/正在保存上一份/);
+    await leavePage.waitForFunction(()=>document.querySelector('iframe')?.contentDocument?.querySelector('[data-testid="owned-editor"]')?.dataset.saveState==='saved');delayDocument=0;
+    assert.equal((await requestLeave()).status,'saved');assert.equal(shapes().length,baselineShapes+1);check('brand-leave-refuses-in-flight-document-save-and-succeeds-after-confirmed-retry');
+    before=canvas;
+  } finally {delayDocument=0;await leaveContext.close();}
   stage='handoff-turns-readonly';delayMaterials=350;const readonlyRequest=crypto.randomUUID();await page.evaluate(({requestId,projectId,material})=>{const frame=document.querySelector('iframe').contentWindow;frame.postMessage({type:'nv-studio',action:'insert-material',projectId,requestId,material},location.origin);setTimeout(()=>frame.changeFixtureReadOnly(true),100);},{requestId:readonlyRequest,projectId:fixture.projectId,material});await page.waitForFunction(id=>receipts.some(r=>r.action==='insert-material-result'&&r.requestId===id&&r.status==='failed'),readonlyRequest);assert.equal(canvas,before);assert.equal(shapes().length,baselineShapes+1);check('readonly-during-handoff-never-confirms-insertion');delayMaterials=0;
   stage='conflict';conflict=true;await page.goto(origin+'/studio-editor');await surface.waitFor();await draw('图形',180,140,120,80);await page.getByText('保存冲突',{exact:true}).waitFor();assert.equal(canvas,before);assert.equal(await page.getByRole('button',{name:'画笔',exact:true}).isDisabled(),true);check('save-conflict-preserves-server-and-local-content');conflict=false;
   stage='restore-failure';failRestore=true;const initialWrites=writes;await page.goto(origin+'/studio-editor');await page.getByText('合成恢复失败',{exact:false}).waitFor();await page.waitForTimeout(1500);assert.equal(writes,initialWrites);assert.equal(canvas,before);check('failed-restore-never-writes-empty');failRestore=false;

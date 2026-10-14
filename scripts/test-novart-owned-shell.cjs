@@ -2,7 +2,7 @@
  * Does not access a database, worker, user browser or deployed environment. */
 'use strict';
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
-const source=fs.readFileSync(path.join(__dirname,'export-novart-studio.py'),'utf8');
+const source=fs.readFileSync(path.join(__dirname,'export-novart-studio.py'),'utf8').replace(/\r\n/g,'\n');
 const start=source.indexOf("    replacement = '''  async function prepareArchive(p) {"),end=source.indexOf("'''\n    return text[:left]",start);
 assert.ok(start>=0&&end>start,'Product archive compiler boundary');
 const guard=source.slice(start+"    replacement = '''".length,end).trim();
