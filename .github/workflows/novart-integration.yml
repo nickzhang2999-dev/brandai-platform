@@ -92,11 +92,12 @@ jobs:
           NOVART_HOME_LEAVE_REPORT=apps/web/.novart-ui-artifacts/home-brand-leave-fixture.json node scripts/test-novart-home-brand-leave-browser.cjs
           NOVART_BRAND_CREATION_REPORT=apps/web/.novart-ui-artifacts/brand-creation-recovery-fixture.json node scripts/test-novart-brand-creation-recovery-browser.cjs
           NOVART_AUTO_PSD_REPORT=apps/web/.novart-ui-artifacts/automatic-psd-fixture.json NOVART_AUTO_PSD_SCREENSHOT=apps/web/.novart-ui-artifacts/automatic-psd-fixture.png node scripts/test-novart-auto-psd-browser.cjs
+          NOVART_IMAGE_CONTEXT_REPORT=apps/web/.novart-ui-artifacts/image-context-fixture.json node scripts/test-novart-image-context-browser.cjs
           python - <<'PY'
           import json
           from pathlib import Path
           root = Path('apps/web/.novart-ui-artifacts')
-          for name, expected in (('owned-layer-fixture.json', 10), ('brand-knowledge-fixture.json', 14), ('layer-inbox-fixture.json', 16), ('studio-layout-fixture.json', 8), ('brand-switch-fixture.json', 9), ('home-brand-leave-fixture.json', 9), ('brand-creation-recovery-fixture.json', 15)):
+          for name, expected in (('owned-layer-fixture.json', 10), ('brand-knowledge-fixture.json', 14), ('layer-inbox-fixture.json', 16), ('studio-layout-fixture.json', 8), ('brand-switch-fixture.json', 9), ('home-brand-leave-fixture.json', 9), ('brand-creation-recovery-fixture.json', 15), ('image-context-fixture.json', 15)):
               report = json.loads((root / name).read_text())
               assert report['passed'] is True and report['isolated'] is True, name
               assert report['realBackend'] is False and report['realProvider'] is False, name

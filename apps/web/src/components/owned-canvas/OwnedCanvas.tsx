@@ -70,8 +70,20 @@ export function OwnedCanvas({ document: incoming, onChange, readOnly = false, on
   const history = useRef<CanvasEdit[]>([]), future = useRef<CanvasEdit[]>([]), gesture = useRef<Gesture | null>(null), space = useRef(false);
   const lastTap = useRef({ id: "", time: 0, x: 0, y: 0 }), wheelTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const imageSequence = useRef(0), [viewport, setViewport] = useState({ width: 0, height: 0 });
+  const layersElement = useRef<HTMLElement | null>(null), [layersBox, setLayersBox] = useState<Bounds | null>(null);
   const [quickEdit, setQuickEdit] = useState<{ id: string; text: string } | null>(null), [quickBusy, setQuickBusy] = useState(false), quickLock = useRef(false), quickComposing = useRef(false);
   useEffect(() => { const node = root.current; if (!node) return; const observer = new ResizeObserver(() => setViewport({ width: node.clientWidth, height: node.clientHeight })); observer.observe(node); setViewport({ width: node.clientWidth, height: node.clientHeight }); return () => observer.disconnect(); }, []);
+  useEffect(() => {
+    const node = layersElement.current, canvas = root.current;
+    if (!layers || !node || !canvas) { setLayersBox(null); return; }
+    const measure = () => {
+      const panel = node.getBoundingClientRect(), parent = canvas.getBoundingClientRect();
+      const next = { x: panel.left - parent.left, y: panel.top - parent.top, w: panel.width, h: panel.height };
+      setLayersBox(previous => previous && previous.x === next.x && previous.y === next.y && previous.w === next.w && previous.h === next.h ? previous : next);
+    };
+    measure(); const observer = new ResizeObserver(measure); observer.observe(node);
+    return () => observer.disconnect();
+  }, [layers, viewport.width, viewport.height]);
   const locked = readOnly || view.warnings.length > 0, lockedRef = useRef(locked); lockedRef.current = locked;
   const updateView = useCallback((next: OwnedCanvasDocument) => { live.current = next; setView(next); }, []);
   const choose = useCallback((ids: string[]) => { const items = live.current.items, eligible = items.filter(selectable), groups = new Set(eligible.filter(item => ids.includes(item.id)).map(item => item.groupId).filter(Boolean)); const next = eligible.filter(item => ids.includes(item.id) || item.groupId && groups.has(item.groupId)).map(item => item.id); selectedRef.current = next; setSelected(next); callbacks.current.onSelectionChange?.(next); }, []);
@@ -355,9 +367,18 @@ export function OwnedCanvas({ document: incoming, onChange, readOnly = false, on
   const selectionCorners = single ? corners(single) : selectionBox ? [{ x: selectionBox.x, y: selectionBox.y }, { x: selectionBox.x + selectionBox.w, y: selectionBox.y }, { x: selectionBox.x + selectionBox.w, y: selectionBox.y + selectionBox.h }, { x: selectionBox.x, y: selectionBox.y + selectionBox.h }] : [];
   const displayPoint = (point: Point) => ({ left: point.x * view.camera.zoom + view.camera.x, top: point.y * view.camera.zoom + view.camera.y });
   const imageSelection = chosen.filter(item => item.kind === "image");
+  const layersNeedBottomSpace = imageSelection.length > 0 && layersBox && viewport.width - layersBox.x - layersBox.w - 24 < 80;
   const contextualWidth = Math.max(0, Math.min(single ? 540 : 240, viewport.width - 24));
   const contextualPosition = selectionBox ? { left: clamp(displayPoint(selectionBox).left + selectionBox.w * view.camera.zoom / 2 - contextualWidth / 2, 12, Math.max(12, viewport.width - contextualWidth - 12)),
     top: clamp(displayPoint(selectionBox).top + selectionBox.h * view.camera.zoom + 14, 64, Math.max(64, viewport.height - 144)), width: contextualWidth } : undefined;
+  if (contextualPosition && layers && layersBox && contextualPosition.left < layersBox.x + layersBox.w + 8 && contextualPosition.left + contextualPosition.width > layersBox.x - 8
+    && contextualPosition.top < layersBox.y + layersBox.h + 8 && contextualPosition.top + 50 > layersBox.y - 8) {
+    // Both controls must remain usable. Use the panel's measured size instead
+    // of competing z-indexes; narrow side space keeps the normal scroll toolbar.
+    const sideLeft = layersBox.x + layersBox.w + 12, sideWidth = viewport.width - sideLeft - 12;
+    if (sideWidth >= 80) { contextualPosition.left = sideLeft; contextualPosition.width = Math.min(contextualWidth, sideWidth); }
+    else { contextualPosition.top = Math.min(layersBox.y + layersBox.h + 12, Math.max(64, viewport.height - 144)); }
+  }
   const stop = (event: ReactPointerEvent) => event.stopPropagation();
   void historyVersion;
 
@@ -407,12 +428,12 @@ export function OwnedCanvas({ document: incoming, onChange, readOnly = false, on
         <button aria-label="下载选中图片PNG" disabled={busy || !onExport} onClick={() => void exportDocument("png", { itemIds: [single.id] })}>下载</button>
       </>}
     </div>}
-    {quickEdit && !locked && onQuickEdit && <form className="oc-image-quick-edit" role="dialog" aria-label="快捷图片编辑" data-owned-ui onPointerDown={stop} style={{ left: contextualPosition?.left ?? 12, top: Math.min((contextualPosition?.top ?? 80) + 58, Math.max(64, viewport.height - 210)), maxWidth: Math.max(0, viewport.width - 24) }} onSubmit={event => { event.preventDefault(); if (quickLock.current || quickComposing.current || !quickEdit.text.trim()) return; const target = quickEdit; quickLock.current = true; setQuickBusy(true); void onQuickEdit(target.id, target.text.trim()).then(() => setQuickEdit(null)).catch(error => setStatus(error instanceof Error ? error.message : "修改尚未确认，原图保留")).finally(() => { quickLock.current = false; setQuickBusy(false); }); }}>
+    {quickEdit && !locked && onQuickEdit && <form className="oc-image-quick-edit" role="dialog" aria-label="快捷图片编辑" data-owned-ui onPointerDown={stop} style={{ left: clamp(contextualPosition?.left ?? 12, 12, Math.max(12, viewport.width - Math.min(320, viewport.width - 24) - 12)), top: Math.min((contextualPosition?.top ?? 80) + 58, Math.max(64, viewport.height - 210)), maxWidth: Math.max(0, viewport.width - 24) }} onSubmit={event => { event.preventDefault(); if (quickLock.current || quickComposing.current || !quickEdit.text.trim()) return; const target = quickEdit; quickLock.current = true; setQuickBusy(true); void onQuickEdit(target.id, target.text.trim()).then(() => setQuickEdit(null)).catch(error => setStatus(error instanceof Error ? error.message : "修改尚未确认，原图保留")).finally(() => { quickLock.current = false; setQuickBusy(false); }); }}>
       <label>修改 {ownedImageName(view.items.find(item => item.id === quickEdit.id) ?? { kind: "image" })}<textarea aria-label="快捷编辑需求" placeholder="这张图想怎么改？" value={quickEdit.text} maxLength={4000} disabled={quickBusy} onChange={event => setQuickEdit({ ...quickEdit, text: event.target.value })} onCompositionStart={() => { quickComposing.current = true; }} onCompositionEnd={() => { quickComposing.current = false; }} /></label><div><button type="button" disabled={quickBusy} onClick={() => setQuickEdit(null)}>取消</button><button type="submit" disabled={quickBusy || !quickEdit.text.trim()}>{quickBusy ? "确认受理…" : "提交修改"}</button></div>
     </form>}
     {tool === "eraser" && eraserPoint && <div className="oc-eraser-cursor" style={{ left: eraserPoint.x, top: eraserPoint.y, width: eraserSize * 2, height: eraserSize * 2 }} />}
     <div className="oc-top-left" data-owned-ui onPointerDown={stop}><button aria-label="图层" aria-expanded={layers} onClick={() => setLayers(!layers)} className={layers ? "is-active" : ""}><Icon name="layers" /></button><button aria-label="吸附与对齐辅助线" aria-pressed={snap} title="吸附与对齐辅助线（拖动时按Alt临时关闭）" className={snap ? "oc-soft-active" : ""} onClick={() => setSnap(!snap)}><Icon name="snap" /></button>{locked && <span className="oc-readonly">只读</span>}</div>
-    {layers && <aside className="oc-layers" data-owned-ui onPointerDown={stop} aria-label="画布图层">
+    {layers && <aside ref={layersElement} className="oc-layers" data-owned-ui onPointerDown={stop} aria-label="画布图层" style={layersNeedBottomSpace ? { boxSizing: "border-box", maxHeight: Math.max(44, viewport.height - layersBox.y - 156) } : undefined}>
       <strong>图层 <small>{view.items.length}</small></strong>{!view.items.length && <p>还没有元素</p>}
       {[...view.items].reverse().map(item => <div key={item.id} data-testid="owned-layer-row" data-layer-id={item.id} data-hidden={item.hidden || undefined} data-locked={item.locked || undefined} className={`oc-layer-row ${selected.includes(item.id) ? "is-active" : ""} ${layerDrop === item.id ? "is-drop-target" : ""}`} draggable={!locked && selectable(item) && !cropDraft} onDragStart={event => { if (locked || !selectable(item)) { event.preventDefault(); return; } const ids = selectedRef.current.includes(item.id) ? selectedRef.current : [item.id]; if (!transformSelection(ids).length) { event.preventDefault(); return; } layerDrag.current = ids; event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("application/x-novart-layer", item.id); }} onDragOver={event => { if (layerDrag.current && !locked) { event.preventDefault(); event.stopPropagation(); setLayerDrop(item.id); event.dataTransfer.dropEffect = "move"; } }} onDrop={event => { if (layerDrag.current) { event.preventDefault(); event.stopPropagation(); dropLayer(item.id); } }} onDragEnd={() => { layerDrag.current = null; setLayerDrop(null); }}>
         <button className="oc-layer-select" aria-label={`选择图层 ${itemName(item)}`} disabled={!selectable(item)} onClick={event => choose(event.shiftKey ? selectedRef.current.includes(item.id) ? selectedRef.current.filter(id => id !== item.id && (!item.groupId || view.items.find(value => value.id === id)?.groupId !== item.groupId)) : [...selectedRef.current, item.id] : [item.id])}><Icon name={item.kind === "stroke" ? "stroke" : item.kind === "text" ? "text" : item.kind === "frame" ? "frame" : "shape"} /><span>{itemName(item)}{item.groupId && <small> · 组</small>}{item.frameId && <small> · 框内</small>}</span></button>

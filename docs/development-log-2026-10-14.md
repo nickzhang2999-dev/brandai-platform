@@ -1,5 +1,31 @@
 # DeepFlare 开发日志 · 2026-10-14
 
+## CDS 旧 Logo：源码已更新，运行镜像未更新
+
+帅帅反馈 CDS 的 devUpdate1012 仍显示旧 Logo。核对发现本次 `6205b72` 和此前 `6c8808d` 已包含 DeepFlare 的登录、导航、Studio、画布顶栏、字标及浏览器图标；保留的历史图片没有被现行产品导航引用，用户品牌自己的 coverImage 也不应替换成平台 Logo。
+
+- [Branch Image 38521209228](https://github.com/nickzhang2999-dev/brandai-platform/actions/runs/38521209228) 的 `product / backend` 已失败。前置编译、迁移/存储和仓库门禁成功，真实页面 `verify-studio-ui.ts:536` 点击“加入对话”时被 `.oc-layers` 拦截；后续知识旅程、镜像构建、容器验收、镜像发布未执行。此前回执中的 in_progress 是当时状态，不是最终结果。
+- 2026-10-14 14:28:58（上海）通过 CDS 官方只读接口核对：源码/ciTargetSha 已是 `6205b72`，ciImageStatus=waiting；当前部署版本 `dv_155321f94cc4edc5b1c5b59d` / `dr_48c156a531eb410538f97a81` 的提交与 Web/Worker/AI 镜像仍为 `163379ac83c9274a5950a29a7dc2912a32fd389f`。公网 /api/health 的 worker.commit 也为 163379ac83c9。不能用分支展示 SHA 冒充实际运行 SHA。
+- 修复仅处理画布布局：ResizeObserver 测量图层实框；图片工具碰撞时移到右侧可用空间，过窄时缩短可滚动图层面板并下放工具条；快捷编辑输入框独立约束水平范围。保留浮层传播阻断、按钮、引用顺序、图层状态和普通点击，没有换 z-index 继续互相遮挡，没有 force click 或测试中关闭图层绕过。
+- 旧组件6205b72通过只读 git-show / esbuild onLoad 在同回归里复现失败，未修改业务源码来回退。修复后 Chromium 15/15 通过：原11项加1280/390/326/320（最后一档高度320），全程图层保持打开，正常点击单选/多选加入、快捷编辑并回到图层。原画布52/52也通过，无页面错误/外部请求。脚本和云端工作流保留15项明确断言。
+- 此补丁重新执行 L1：1447+34（无缓存）、AI487（1项第三方弃用警告）、4包类型（无缓存）、low-memory完整生产构建，均退出0；构建仍单独跳过内置类型阶段，由已经完成的完整类型门禁覆盖。工作流 YAML 和报告数量/边界检查通过。
+- 浏览器证据保存于 ignored 本机临时目录；这些是隔离交互检查，不算真实 SQL/模型质量验收。旧CI后端脚本退出0、上传成功不等于整轮真实页面验收通过，新提交应重新完整执行云端链。
+
+本轮不合并/推送 main，不手动部署或更改 CDS 配置，不启动 Docker、不写共享数据、不调用真实模型。新修复候选的提交/推送及云端状态待实际回执记录。
+
+
+## devUpdate1012 实际推送回执
+
+本批已正常提交为 `6205b72f9fa2f0ebb5e6d5ca5591c4a7b5d8264e`，标题为 `feat(studio): integrate persistent conversations and brand image tools`，141 个文件、5267 行新增、251 行删除。推送前守卫和暂存区检查通过，未入库模拟预览服务、用户文件、虚拟环境、构建产物或真实凭据。
+
+首次普通 Git 推送因直连 GitHub 443 在约21秒后超时失败。只读核对发现 Windows 已开启本机代理而 Git 未配置代理；仅本次 Git 命令复用现有代理后推送成功，没有修改系统或仓库的持久网络设置，没有绕过 TLS、推送守卫或权限。
+
+实际回执为 `928ab0a..6205b72 HEAD -> devUpdate1012`，随后远端 ref 读回与本地完整 SHA 一致。仅更新开发分支，没有合并/推送 main、手动操作 CDS、发布正式站或调用真实模型。
+
+本次 [Branch Image run38521209228](https://github.com/nickzhang2999-dev/brandai-platform/actions/runs/38521209228) 已触发，查询时为 `in_progress`，head SHA 与本次提交一致。真实 SQL/存储/页面与镜像检查结果以此新 run 为准，目前不称已通过；CDS 服务是否自动更新到此版本尚未核对。第一次网络失败不归因 CDS。
+
+机器可读回执保存于 ignored `.novart-build/devupdate-delivery-20261014.json`。本段在推送后追加到本地日志，尚未另行提交/推送，避免仅为回执立即触发另一轮 CI；功能提交中的授权与验收记录已经入库。
+
 ## 最新授权：正常提交并推送 devUpdate1012
 
 帅帅明确要求“能推送到devupdate1012吗”。按仓库现有大小写选择 `devUpdate1012`，该授权覆盖此前仅本地限制中的开发分支提交/推送部分；main 合并、手动 CDS 部署、正式发布和真实模型调用没有因此自动授权。
