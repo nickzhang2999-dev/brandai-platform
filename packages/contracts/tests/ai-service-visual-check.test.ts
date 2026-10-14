@@ -16,6 +16,13 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 describe("product visual-check service capability gate", () => {
+  it("requires structured conversation capability before one paid text analysis dispatch", async () => {
+    f.fetch.mockImplementation(async () => Response.json(current));
+    const { resolveAiService } = await load();
+    await expect(resolveAiService({ requireStudioConversationIntent: true })).rejects.toThrow("structured conversation intent");
+    f.fetch.mockImplementation(async () => Response.json({ ...current, studioConversationIntentRevision: "structured-conversation-intent-r1" }));
+    expect(await resolveAiService({ requireStudioConversationIntent: true })).toMatchObject({ studioConversationIntentRevision: "structured-conversation-intent-r1" });
+  });
   it("requires the semantic analysis capability before an AUTO task can send a paid vision request", async () => {
     f.fetch.mockImplementation(async () => Response.json(layered));
     const { resolveAiService } = await load();

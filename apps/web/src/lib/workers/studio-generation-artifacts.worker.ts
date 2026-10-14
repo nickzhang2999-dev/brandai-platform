@@ -15,6 +15,8 @@ import { StudioExactSnapshot, loadStudioExactAsset, lockStudioExactPublicationSo
 import { compositeStudioExactImage } from "@/lib/studio-exact-image";
 import { storeStudioCleanBase } from "@/lib/studio-generation-base";
 import { StudioEditSourceSnapshot, lockStudioEditPublicationSource } from "@/lib/studio-generation-edit";
+import { sizeStudioConversationImage } from "@/lib/studio-conversation-image-size";
+import { requireStudioTransparentForeground } from "@/lib/studio-image-tool-alpha";
 
 function object(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -48,12 +50,15 @@ export async function runStudioGenerationArtifactJob(job: Job<{ outputId: string
     if (!Array.isArray(processing.watermarkOverlays)) throw new ApiException(422, "生成结果缺少品牌后处理快照，未发布未完成的图片。");
     const exact = processing.exactLayout === undefined ? null : StudioExactSnapshot.parse(processing.exactLayout);
     const editSource = processing.editSource === undefined ? null : StudioEditSourceSnapshot.parse(processing.editSource);
+    const imageTool = processing.imageTool;
+    if (imageTool !== undefined && !["remove-background", "inpaint"].includes(String(imageTool))) throw new ApiException(422, "图片工具输出记录不完整，未发布结果。");
     if (params.imageKind === "EDITED" && !editSource) throw new ApiException(422, "改图结果缺少原图来源，未发布图片。");
     // A retained EXACT marker without its private recipe must fail closed.
     if (Array.isArray(params.assetUsages) && params.assetUsages.some(value => object(value).mode === "EXACT") && !exact) throw new ApiException(422, "严格保留素材缺少生成时的布局记录，未发布图片。");
     const prior = row.versionId ? await prisma.asset.findUnique({ where: { generationVersionId: row.versionId }, select: { workspaceId: true, storageKey: true, url: true } }) : null;
     const raw = await readArtifactImageBytes({ imageUrl: row.output.imageUrl!,
       objectKey: prior?.workspaceId === row.workspaceId && prior.url === row.output.imageUrl ? prior.storageKey : artifactOwnObjectKey(row.output.imageUrl!, storage.publicUrl, row.workspaceId) }, signal);
+    if (imageTool === "remove-background") await requireStudioTransparentForeground(raw, signal);
     if (!row.output.imageUrl!.startsWith("data:")) {
       const rawMeta = await inspectArtifactImage(raw, signal);
       // A URL is not durable image retention. As soon as safe decoding succeeds,
@@ -71,18 +76,20 @@ export async function runStudioGenerationArtifactJob(job: Job<{ outputId: string
       }, { timeout: 10_000 });
     }
     if (!storage.configured) throw new ApiException(503, "对象存储未配置，生成结果已保留，可配置后重试归档。");
-    let composed = raw;
+    const conversationSize = object(processing.conversationSize);
+    const sized = conversationSize.requestedSize === undefined ? null : await sizeStudioConversationImage(raw, conversationSize.requestedSize, signal);
+    let composed = sized?.body ?? raw;
     let appliedExactAssetIds: string[] = [];
     if (editSource) {
       const targets = object(row.request.jobData).targets;
       const target = Array.isArray(targets) && targets.length === 1 ? object(targets[0]) : null;
-      const actual = await inspectArtifactImage(raw, signal);
+      const actual = await inspectArtifactImage(composed, signal);
       if (!target || actual.width !== target.width || actual.height !== target.height) throw new ApiException(422, "修改服务返回的实际尺寸与受理尺寸不符，原始结果保留，未发布图片。");
     }
     if (exact) {
-      const actual = await inspectArtifactImage(raw, signal);
+      const actual = await inspectArtifactImage(composed, signal);
       if (actual.width !== exact.target.width || actual.height !== exact.target.height) throw new ApiException(422, "生成服务返回的实际尺寸与输出画框不一致，未错位合成素材。");
-      const result = await compositeStudioExactImage(raw, exact.layers, assetId => loadStudioExactAsset(row.workspaceId, row.projectId, assetId), signal);
+      const result = await compositeStudioExactImage(composed, exact.layers, assetId => loadStudioExactAsset(row.workspaceId, row.projectId, assetId), signal);
       composed = result.body; appliedExactAssetIds = result.appliedAssetIds;
     }
     const final = await postprocessArtifactImage(composed, processing.watermarkOverlays, async assetId => {
@@ -92,6 +99,7 @@ export async function runStudioGenerationArtifactJob(job: Job<{ outputId: string
       return { imageUrl: asset.url, objectKey: asset.storageKey || artifactOwnObjectKey(asset.url, storage.publicUrl, row.workspaceId) };
     }, signal, processing.assetSha256);
     const logoId = typeof processing.automaticBrandLogoAssetId === "string" ? processing.automaticBrandLogoAssetId : null;
+    if (imageTool === "remove-background") await requireStudioTransparentForeground(final.body, signal);
     if (logoId && !final.appliedAssetIds.includes(logoId)) throw new ApiException(422, "品牌标志合成未完成，未发布图片。");
     signal.throwIfAborted();
     // Content-addressed per-output keys make a stalled older upload harmless:
@@ -99,20 +107,25 @@ export async function runStudioGenerationArtifactJob(job: Job<{ outputId: string
     const prefix = `${row.workspaceId}/studio-generated/${row.projectId}`;
     const objectKey = `${prefix}/${outputId}/${final.sha256}`;
     const stored = await artifactDeadline(uploadBuffer(final.body, final.mimeType, prefix, signal, objectKey), signal);
-    const cleanBase = exact || processing.watermarkOverlays.length ? await storeStudioCleanBase(raw, { workspaceId: row.workspaceId, projectId: row.projectId, outputId }, signal) : null;
+    const cleanBase = exact || processing.watermarkOverlays.length ? await storeStudioCleanBase(sized?.body ?? raw, { workspaceId: row.workspaceId, projectId: row.projectId, outputId }, signal) : null;
     signal.throwIfAborted();
     const check = await prisma.$transaction(async tx => {
       await requireArtifactWrite(tx, row.workspaceId, row.projectId, row.userId);
       if (exact) await lockStudioExactPublicationSources(tx, row.workspaceId, row.projectId, exact);
-      if (editSource) await lockStudioEditPublicationSource(tx, row.workspaceId, row.projectId, editSource);
+      if (editSource) {
+        if (imageTool) await lockStudioEditPublicationSource(tx, row.workspaceId, row.projectId, editSource, true);
+        else await lockStudioEditPublicationSource(tx, row.workspaceId, row.projectId, editSource);
+      }
       await tx.$queryRaw`SELECT "outputId" FROM "StudioGeneratedMaterial" WHERE "outputId" = ${outputId} FOR UPDATE`;
       const current = await tx.studioGeneratedMaterial.findUnique({ where: { outputId }, include: { output: { select: { expiresAt: true } } } });
       if (!current || current.status !== "RUNNING" || current.attemptToken !== token || current.expiresAt.getTime() <= Date.now() || current.output.expiresAt.getTime() <= Date.now()) throw new ApiException(409, "归档任务已结束或超时，迟到结果未发布。");
       signal.throwIfAborted();
       const { studioPostprocess: _privateSnapshot, studioSourceRetention: _privateRetention, ...publicParams } = params;
       const finalParams = { ...publicParams, actualSize: { actualWidth: final.width, actualHeight: final.height },
+        ...(sized ? { requestedSize: sized.requestedSize, providerSize: imageTool && params.imageToolProviderSize ? params.imageToolProviderSize : sized.providerSize, outputSize: { width: final.width, height: final.height },
+          sizeSource: conversationSize.sizeSource, outputSizeMethod: imageTool === "inpaint" ? "masked-source-pixel-composite" : imageTool === "remove-background" ? "preserve-alpha-source-size" : sized.resized ? "deterministic-contain" : "provider-native" } : {}),
         ...(editSource ? { source: { assetId: editSource.assetId, sha256: editSource.sha256,
-          ...(editSource.versionId ? { versionId: editSource.versionId, generationId: editSource.sourceGenerationId } : {}), operation: "whole-image-edit" } } : {}),
+          ...(editSource.versionId ? { versionId: editSource.versionId, generationId: editSource.sourceGenerationId } : {}), operation: imageTool ?? "whole-image-edit" } } : {}),
         ...(exact ? { appliedExactAssetIds, exactComposition: "deterministic-source-overlay" } : {}),
         appliedWatermarkAssetIds: final.appliedAssetIds,
         ...(logoId ? { appliedBrandLogoAssetId: logoId, brandLogoComposition: "deterministic-source-overlay" } : {}) } as Prisma.InputJsonValue;

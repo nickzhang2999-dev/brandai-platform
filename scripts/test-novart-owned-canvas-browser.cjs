@@ -27,6 +27,7 @@ const report = {isolated:true, realBackend:false, realProvider:false, realAuthen
 let stage = 'build-fixture', browser, server, contracts;
 let canvas = '', revision = 0, readOnly = false, writes = 0, failRestore = false, conflict = false, delayMaterials = 0, delayDocument = 0;
 let draft = {projectId:fixture.projectId,revision:0,inputForm:null,updatedAt:null,referenceIssues:[]};
+let conversationDraft = null;
 let workflow = {projectId:fixture.projectId,revision:0,mode:'generate',target:null,references:[],updatedAt:null,issues:[]};
 let draftWrites = 0, workflowWrites = 0, generationPosts = 0;
 const uploads = new Map(), generations = new Map(), taskReads = [], generationPostInputs = [];
@@ -96,6 +97,22 @@ async function handle(req,res) {
     if(readOnly) return json(res,{error:'只读项目'},403);
     if(value.data.revision!==draft.revision) return json(res,{error:'草稿已在其他页面更新'},409);
     draft=contracts.WorkbenchDraftView.parse({...value.data,revision:draft.revision+1,updatedAt:Date.now(),referenceIssues:[]});draftWrites++;return json(res,draft);
+  }
+  if(url.pathname===`/api/workspaces/${fixture.workspaceId}/projects/${fixture.projectId}/studio-conversation`) {
+    if(req.headers['x-novart-user']!==fixture.userId) return json(res,{error:'Fixture conversation identity rejected'},403);
+    if(req.method==='GET') return json(res,contracts.StudioConversationPage.parse({messages:[],nextCursor:null,draft:conversationDraft}));
+    if(req.method==='PUT') { const input=contracts.StudioConversationDraftInput.parse(JSON.parse((await body(req)).toString())); if(readOnly)return json(res,{error:'只读项目'},403); if(input.revision!==(conversationDraft?.revision??0))return json(res,{error:'对话草稿已更新'},409); conversationDraft=contracts.StudioConversationDraft.parse({...input,revision:input.revision+1});return json(res,conversationDraft); }
+    return json(res,{error:'真实模型未配置，不接受fixture生成'},503);
+  }
+  if(url.pathname===`/api/workspaces/${fixture.workspaceId}/studio-brand-materials`) return json(res,{items:uploads.size?[{assetId:material.assetId,fileName:material.fileName,mimeType:material.mimeType,sizeBytes:material.sizeBytes,libraryKind:'MATERIAL',createdAt:new Date().toISOString(),url:material.url,material}]:[],nextCursor:null});
+  if(url.pathname===`/api/workspaces/${fixture.workspaceId}/studio-brand-materials/upload`) {
+    if(req.method==='GET')return json(res,{tasks:[]});
+    return json(res,{error:'当前旧回归只使用原项目上传，品牌上传独立测试'},422);
+  }
+  if(url.pathname===`/api/workspaces/${fixture.workspaceId}/studio-brand-materials/${material.assetId}`) {
+    const input=req.method==='POST'?JSON.parse((await body(req)).toString()):{operation:'verify'};
+    if(input.operation==='verify')return json(res,{assetId:material.assetId,status:'SUCCEEDED',material},202);
+    assert.equal(input.operation,'link');assert.equal(input.projectId,fixture.projectId);assert.equal(input.assetSha256,assetSha256);return json(res,material);
   }
   if(url.pathname==='/workflow/assets') return json(res,currentWorkflowAssets());
   if(url.pathname==='/workflow') {
@@ -170,7 +187,7 @@ async function fixtureSettled(condition) {const deadline=Date.now()+10000;while(
   fs.writeFileSync(entry,`import React from '${path.join(repo,'apps/web/node_modules/react').replaceAll('\\','/')}';\nimport {createRoot} from '${path.join(repo,'apps/web/node_modules/react-dom/client').replaceAll('\\','/')}';\nimport {OwnedEditorClient} from '${path.join(repo,'apps/web/src/components/owned-canvas/OwnedEditorClient').replaceAll('\\','/')}';\nconst params=new URLSearchParams(location.search),task=params.get('taskId'),request=params.get('requestId'),layerRequest=params.get('layerRequestId');const initialTask=[task,request,layerRequest].filter(Boolean).length!==1?undefined:task?{kind:'STUDIO_UPLOAD' as const,id:task}:request?{kind:'STUDIO_GENERATION' as const,id:request}:layerRequest?{kind:'STUDIO_DECOMPOSITION' as const,id:layerRequest}:undefined;const fixtureRoot=createRoot(document.getElementById('root')!);window.changeFixtureReadOnly=(readOnly:boolean)=>fixtureRoot.render(<OwnedEditorClient {...${JSON.stringify(fixture)}} readOnly={readOnly} initialTask={initialTask} projectName="交互回归"/>);window.changeFixtureReadOnly(false);`);
   await esbuild.build({entryPoints:[entry],outfile:path.join(directory,'app.js'),bundle:true,platform:'browser',format:'iife',jsx:'automatic',tsconfig:path.join(repo,'apps/web/tsconfig.json'),nodePaths:[path.join(repo,'apps/web/node_modules')],define:{'process.env.NODE_ENV':'"development"'},logLevel:'silent'});
   const schemaEntry=path.join(directory,'schema.ts');
-  fs.writeFileSync(schemaEntry,`export {WorkbenchDraftView,WorkbenchDraftSaveInput,StudioWorkflowSaveInput,StudioWorkflowView,StudioGenerationInput,StudioGenerationView,StudioDecompositionInput,StudioDecompositionView} from '${path.join(repo,'packages/contracts/src/index').replaceAll('\\','/')}';\nexport {workflowAssets,workflowIssues,assertWorkflowSelection} from '${path.join(repo,'apps/web/src/lib/studio-workflow-codec').replaceAll('\\','/')}';`);
+  fs.writeFileSync(schemaEntry,`export {WorkbenchDraftView,WorkbenchDraftSaveInput,StudioWorkflowSaveInput,StudioWorkflowView,StudioGenerationInput,StudioGenerationView,StudioDecompositionInput,StudioDecompositionView,StudioConversationDraftInput,StudioConversationDraft,StudioConversationPage} from '${path.join(repo,'packages/contracts/src/index').replaceAll('\\','/')}';\nexport {workflowAssets,workflowIssues,assertWorkflowSelection} from '${path.join(repo,'apps/web/src/lib/studio-workflow-codec').replaceAll('\\','/')}';`);
   await esbuild.build({entryPoints:[schemaEntry],outfile:path.join(directory,'schema.cjs'),bundle:true,platform:'node',format:'cjs',tsconfig:path.join(repo,'apps/web/tsconfig.json'),nodePaths:[path.join(repo,'apps/web/node_modules')],logLevel:'silent'});contracts=require(path.join(directory,'schema.cjs'));
   const css=spawnSync(process.execPath,[path.join(repo,'apps/web/node_modules/tailwindcss/lib/cli.js'),'-i',path.join(repo,'packages/ui/src/styles.css'),'-o',path.join(directory,'tokens.css'),'-c',path.join(repo,'apps/web/tailwind.config.ts'),'--content',path.join(repo,'apps/web/src/components/owned-canvas/*.{ts,tsx}')],{cwd:repo,encoding:'utf8',env:{...process.env,TEMP:directory,TMP:directory},timeout:60000});
   assert.equal(css.status,0,'Actual product styles must compile');
@@ -218,8 +235,9 @@ async function fixtureSettled(condition) {const deadline=Date.now()+10000;while(
   await page.getByRole('button',{name:'放大',exact:true}).click();assert.match(await page.getByRole('button',{name:'恢复100%缩放'}).textContent(),/120%/);await page.getByRole('button',{name:'移动画布',exact:true}).click();const worldStyle=await page.locator('.oc-world').getAttribute('style');await page.mouse.move(bounds.x+600,bounds.y+450);await page.mouse.down();await page.mouse.move(bounds.x+650,bounds.y+480,{steps:8});await page.mouse.up();assert.notEqual(await page.locator('.oc-world').getAttribute('style'),worldStyle);check('pan-zoom');
   await page.getByRole('button',{name:'选择',exact:true}).click();if(await saveButton.isEnabled())await saveButton.click();await page.waitForFunction(()=>document.querySelector('[data-testid="owned-editor"]').dataset.saveState==='saved');before=canvas;
   stage='export';for(const label of ['导出SVG','导出PNG']) {await page.getByRole('button',{name:'导出',exact:true}).click();const event=page.waitForEvent('download');await page.getByRole('button',{name:label,exact:true}).click();const download=await event;const file=await download.path();const bytes=fs.readFileSync(file);assert.ok(bytes.length>50);if(label==='导出PNG') assert.equal(bytes.subarray(1,4).toString(),'PNG');else assert.match(bytes.toString(),/<svg/);check(label);}
-  const waitDraft=async(expectedText)=>{if(expectedText!==undefined)await fixtureSettled(()=>draft.inputForm?.text===expectedText);await page.waitForFunction(()=>document.querySelector('[data-testid="owned-draft-status"]')?.dataset.draftState==='saved');};
-  const waitWorkflow=()=>page.waitForFunction(()=>{const el=document.querySelector('[data-testid="owned-workflow"]');return el?.dataset.workflowState==='ready'&&el.dataset.workflowDirty==='false';});
+  const openAdvanced=async(scope=page)=>{const details=scope.getByTestId('owned-advanced-generation');if(!await details.count()){const more=scope.locator('summary[aria-label="工作台更多面板"]');if(await more.isVisible()){if(await more.locator('..').getAttribute('open')===null)await more.click();await scope.getByRole('button',{name:'设计对话',exact:true}).click();}else await scope.getByRole('button',{name:'创作',exact:true}).click();}if(await details.getAttribute('open')===null)await details.locator('summary').first().click();};
+  const waitDraft=async(expectedText)=>{await openAdvanced();if(expectedText!==undefined)await fixtureSettled(()=>draft.inputForm?.text===expectedText);await page.waitForFunction(()=>document.querySelector('[data-testid="owned-draft-status"]')?.dataset.draftState==='saved');};
+  const waitWorkflow=async()=>{await openAdvanced();return page.waitForFunction(()=>{const el=document.querySelector('[data-testid="owned-workflow"]');return el?.dataset.workflowState==='ready'&&el.dataset.workflowDirty==='false';});};
   const saveWorkflow=async()=>{const response=page.waitForResponse(r=>new URL(r.url()).pathname==='/workflow'&&r.request().method()==='POST');await page.getByRole('button',{name:'保存用途',exact:true}).click();assert.equal((await response).status(),200);await waitWorkflow();};
   stage='draft-save-and-refresh';await waitDraft();await waitWorkflow();
   await page.getByRole('textbox',{name:'创作需求',exact:true}).fill('合成需求：保留中文\n刷新后继续编辑');
@@ -284,6 +302,7 @@ async function fixtureSettled(condition) {const deadline=Date.now()+10000;while(
       },{scenario,key:pendingKey,record:pendingRecord});
       const isolatedPage=await isolatedContext.newPage();isolatedPage.on('pageerror',error=>report.errors.push(error.name));
       const noPost=generationPosts;await isolatedPage.goto(origin+'/studio-editor');await isolatedPage.getByTestId('owned-canvas').waitFor();
+      await openAdvanced(isolatedPage);
       await isolatedPage.waitForFunction(()=>document.querySelector('[data-testid="owned-draft-status"]')?.dataset.draftState==='saved'&&document.querySelector('[data-testid="owned-workflow"]')?.dataset.workflowState==='ready');
       if(scenario==='quota') {
         await isolatedPage.getByRole('button',{name:'生成图片',exact:true}).click();
@@ -332,6 +351,7 @@ async function fixtureSettled(condition) {const deadline=Date.now()+10000;while(
     const leavePage=await leaveContext.newPage();leavePage.on('pageerror',error=>report.errors.push(error.name));await leavePage.goto(origin+'/shell');
     await leavePage.waitForFunction(()=>document.querySelector('iframe')?.contentDocument?.querySelector('[data-testid="owned-draft-status"]')?.dataset.draftState==='saved'&&document.querySelector('iframe')?.contentDocument?.querySelector('[data-testid="owned-workflow"]')?.dataset.workflowState==='ready');
     const editor=leavePage.frameLocator('iframe'), leavePrompt=editor.getByRole('textbox',{name:'创作需求',exact:true});
+    await openAdvanced(editor);
     async function requestLeave() {
       const requestId=crypto.randomUUID();await leavePage.evaluate(({requestId,projectId})=>document.querySelector('iframe').contentWindow.postMessage({type:'nv-studio',action:'confirm-leave',projectId,requestId},location.origin),{requestId,projectId:fixture.projectId});
       await leavePage.waitForFunction(id=>receipts.some(r=>r.action==='confirm-leave-result'&&r.requestId===id),requestId);

@@ -28,6 +28,8 @@ export const AsyncTaskKind = z.enum([
   "DECOMPOSE",
   "STUDIO_UPLOAD",
   "STUDIO_COMPLIANCE",
+  "STUDIO_MATERIAL_VERIFY",
+  "STUDIO_CONVERSATION",
 ]);
 export type AsyncTaskKind = z.infer<typeof AsyncTaskKind>;
 

@@ -1,7 +1,7 @@
 import { assertOwnedDocumentWritable, type OwnedCanvasDocument, type OwnedCanvasItem } from "./owned-canvas-model";
 import { getOwnedArrowBoundsPoints, getOwnedArrowMarker, getOwnedImageLayout, getOwnedLinePoints, getOwnedTextLayout } from "./owned-canvas-style";
 
-export type OwnedExportScope = { itemIds?: string[]; frameId?: string };
+export type OwnedExportScope = { itemIds?: string[]; frameId?: string; expandGroups?: boolean };
 export type OwnedExportOptions = OwnedExportScope & { origin?: string; fetcher?: typeof fetch };
 type ExportBounds = { x: number; y: number; w: number; h: number };
 export type OwnedExportScene = { document: OwnedCanvasDocument; bounds: ExportBounds; frame?: OwnedCanvasItem };
@@ -54,7 +54,7 @@ export function selectOwnedExportScene(doc: OwnedCanvasDocument, scope: OwnedExp
     for (let index = 0; index < queue.length; index++) {
       const item = byId.get(queue[index]!)!;
       const related: OwnedCanvasItem[] = item.kind === "frame" ? [...(children.get(item.id) ?? [])] : [];
-      if (item.groupId && !expandedGroups.has(item.groupId)) { expandedGroups.add(item.groupId); related.push(...(groups.get(item.groupId) ?? [])); }
+      if (scope.expandGroups !== false && item.groupId && !expandedGroups.has(item.groupId)) { expandedGroups.add(item.groupId); related.push(...(groups.get(item.groupId) ?? [])); }
       for (const member of related) if (!selected.has(member.id)) { selected.add(member.id); queue.push(member.id); }
     }
   }

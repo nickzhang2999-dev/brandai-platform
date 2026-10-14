@@ -7,7 +7,7 @@ export function studioOwnedLayerHidden(store: Record<string, unknown>, shape: Re
   let current = shape;
   for (let depth = 0; depth < 64; depth++) {
     const props = object(current.props), meta = object(object(current.meta).novartOwned);
-    if (props.novartVersion !== 2 || meta.version !== 2) return false;
+    if (![2, 3].includes(Number(props.novartVersion)) || meta.version !== props.novartVersion) return false;
     if (meta.hidden === true) return true;
     if (meta.frameId === undefined) return false;
     if (typeof meta.frameId !== "string" || seen.has(meta.frameId)) return true;

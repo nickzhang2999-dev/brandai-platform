@@ -9,6 +9,8 @@ vi.mock("../../../apps/web/src/lib/studio-generation-artifacts", () => ({ requir
 vi.mock("../../../apps/web/src/lib/studio-project-materials", () => ({ listStudioProjectMaterials: f.materials }));
 vi.mock("../../../apps/web/src/lib/studio-generation-edit", () => ({ resolveStudioEditSource: f.edit, inspectStudioEditSource: f.inspectEdit, assertStudioEditNotModelReference: vi.fn() }));
 import { prepareStudioGeneration, studioGenerationContextHash } from "../../../apps/web/src/lib/studio-generation-policy";
+import { parseStudioConversationIntent } from "../../../apps/web/src/lib/studio-conversation-intent";
+import { StudioConversationInput } from "../src/studio-conversation";
 const sha = "a".repeat(64), url = "/api/workspaces/w/assets/a/raw";
 const input = { projectId: "p", mutationId: "831a0280-2cf1-41ba-ac94-621053c4a4c6", prompt: "tree", sizeSelection: { ratioKey: "1:1" as const, resolutionTier: "1K" as const }, workflowRevision: 1, documentRevision: 2 };
 const reference = { shapeId: "shape:image", assetSha256: sha, purpose: "ADAPTIVE", participates: true };
@@ -23,6 +25,17 @@ beforeEach(() => {
   db = { workbenchProjectState: { findUnique: f.state }, editorDocument: { findUnique: f.doc }, asset: { findMany: f.assets }, prohibitionRule: { findMany: f.proh } };
 });
 describe("saved workflow selection to company generation", () => {
+  it("uses accepted conversation refs and pixels without mutating later workflow state", async () => {
+    const conversation = StudioConversationInput.parse({ mutationId: input.mutationId, text: "生成一张海报1080×1920", documentRevision: 2, workflowRevision: 1,
+      sizeSelection: input.sizeSelection, references: [{ referenceId: "asset:a", name: "品牌素材", assetId: "a", assetSha256: sha, width: 1024, height: 1024 }] });
+    state.workflowRevision = 99; state.workflowReferences = [];
+    f.doc.mockResolvedValue({ workspaceId: "w", revision: 99, canvas: "" });
+    const result = await prepareStudioGeneration(db, "w", "u", input, { canvas, references: conversation.references, intent: parseStudioConversationIntent(conversation) });
+    expect(result.jobData.assetUsages).toEqual([{ assetId: "a", mode: "REFERENCE", order: 0 }]);
+    expect(result.jobData.targets).toEqual([{ key: "conversation", label: "对话输出", width: 1080, height: 1920 }]);
+    expect(result.jobData.studioConversationSize?.sizeSource).toBe("dialog-pixels");
+    expect(state.workflowRevision).toBe(99); expect(state.workflowReferences).toEqual([]);
+  });
   it("freezes the PSD selection but excludes mutable continuation state from the accepted provider context", async () => {
     const accepted = await prepareStudioGeneration(db, "w", "u", { ...input, psdLayerCount: 2 });
     expect(accepted.jobData.studioPsdLayerCount).toBe(2);

@@ -89,6 +89,7 @@ class StudioGenerationResult(StrictModel):
 
 class StudioGenerationView(StrictModel):
     mode: Literal["generate", "modify"] = "generate"
+    sourceShapeId: ShapeId | None = None
     psdLayerCount: int | None = Field(default=None, ge=2, le=10, strict=True)
     psdLayerMode: Literal["AUTO", "MANUAL"] | None = None
     requestId: ProjectId
@@ -106,6 +107,19 @@ class StudioGenerationView(StrictModel):
     error: str | None
     archiveError: str | None
     canRetryArchive: bool
+
+    @field_validator("sourceShapeId", mode="before")
+    @classmethod
+    def source_never_null(cls, value):
+        if value is None:
+            raise ValueError("sourceShapeId must be absent, never null")
+        return value
+
+    @model_validator(mode="after")
+    def source_only_for_modified_result(self):
+        if self.sourceShapeId is not None and self.mode != "modify":
+            raise ValueError("Only modified results have a source shape")
+        return self
 
     @field_validator("expiresAt", "archiveExpiresAt", "archiveProcessingExpiresAt")
     @classmethod

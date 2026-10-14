@@ -17,6 +17,15 @@ afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 // This isolated fixture checks transport only. No provider or DB is contacted.
 const body = {} as Parameters<typeof ai.generate>[0];
 
+it("requires structured conversation service capability and existing real VLM with one POST", async () => {
+  f.settings.mockResolvedValue({ image: {}, layer: {}, vlm: { provider: "openai", apiKey: "unit-fixture", model: "configured-model" } });
+  const request = { schemaVersion: 1, text: "poster", references: [], quickEditTargetId: null, previousResultReferenceId: null, providerRetryPolicy: "never" } as Parameters<typeof ai.studioConversationIntent>[0];
+  await ai.studioConversationIntent(request, { signal: AbortSignal.timeout(1000), maxResponseBytes: 16384 });
+  expect(f.service).toHaveBeenCalledWith({ requireSingleAttempt: true, requireStudioConversationIntent: true });
+  expect(f.fetch).toHaveBeenCalledOnce(); expect(f.fetch.mock.calls[0][0]).toBe("http://internal-ai.invalid/v1/studio/conversation-intent");
+  expect(JSON.parse(f.fetch.mock.calls[0][1].body).providerRetryPolicy).toBe("never");
+});
+
 it("requires real decomposition capability and one provider attempt before dispatch", async () => {
   const request = { imageUrl: "data:image/png;base64,YQ==", layerCount: 2 } as Parameters<typeof ai.decompose>[0];
   f.settings.mockResolvedValue({ image: {}, layer: { provider: "fal", apiKey: "fixture-layer" }, vlm: {} });

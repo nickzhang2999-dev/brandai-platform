@@ -1,3 +1,6 @@
+.ns-brand-resource-search{min-width:120px;width:210px;max-width:100%;min-height:42px;padding:0 14px;border:1px solid color-mix(in srgb,currentColor 20%,transparent);border-radius:999px;background:transparent;color:inherit;font:inherit;font-size:12px;box-sizing:border-box}
+.ns-resource-actions{display:flex;flex-wrap:wrap;gap:10px}.ns-brand-resource-search:focus-visible{outline:2px solid currentColor;outline-offset:2px}
+@media(max-width:800px){.ns-brand-resource-search{width:100%;min-width:0}}
 .hs-pick{border:0;background:none;color:#695d76;border-radius:10px;padding:7px 9px;margin-left:-7px;display:inline-flex;align-items:center;gap:6px;font:inherit;font-size:13px;cursor:pointer}
 .hs-pick:hover{background:#f2eef8}.hs-pick svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.6}.hs-pick:disabled{opacity:.45;cursor:default}
 .hs-attachments{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:0 0 16px}.hs-attachments[hidden]{display:none}
@@ -44,4 +47,46 @@ body[data-page=workspace] #ns-main{min-width:0}
   .ns-sidebar .np-brand-trigger{justify-content:center;padding:4px;gap:2px}
   .ns-sidebar .np-brand-chevron,.ns-sidebar .np-brand-chevron svg{width:10px;height:10px}
   .ns-sidebar .np-brand-switcher{margin:0 0 12px}
+}
+
+/* Handoff M1: shared navigation rhythm, faithful brand preview and scoped tools. */
+:root{--ns-sidebar:216px}
+.ns-sidebar .ns-nav{gap:8px}
+.ns-sidebar .ns-nav a{min-height:44px;box-sizing:border-box}
+.ns-sidebar .np-brand-trigger{min-height:44px}
+.ns-sidebar .ns-profile-link{min-height:44px}
+.ns-sidebar .ns-nav a>span{overflow:hidden;text-overflow:ellipsis}
+body[data-page=home] .ns-shell-top .ns-history,
+body[data-page=home] #ns-page-label,
+body[data-page=home] .ns-preview-label{display:none}
+body[data-page=home] .ns-shell-top{justify-content:flex-end}
+body[data-page=workspace]{--ns-sidebar:64px}
+#ns-frames{left:64px}
+body[data-page=workspace] .ns-sidebar{padding-left:10px;padding-right:10px}
+body[data-page=workspace] .ns-sidebar .ns-nav a{width:44px;min-height:44px;padding:0}
+body[data-page=workspace] .ns-sidebar .np-brand-trigger{width:44px;min-height:44px}
+#ns-brand-preview{background:var(--brand-2);color:var(--brand-text,var(--brand-1))}
+#ns-brand-preview>strong,#ns-brand-preview>p,#ns-brand-preview>span{color:inherit}
+#ns-brand-preview .ns-preview-line{background:var(--brand-0)}
+.ns-brand-contrast{margin-top:14px;padding:14px 16px;border:1px solid var(--ns-border);border-radius:16px;background:var(--ns-purple-soft);color:var(--ns-text);font-size:13px;line-height:1.6}
+.ns-brand-contrast[hidden]{display:none}
+.ns-brand-contrast p{margin:0 0 8px}
+.ns-brand-contrast .ns-text-button{color:var(--ns-purple)}
+#ns-rename-name{box-sizing:border-box;width:100%;height:44px;border:1px solid var(--ns-border);border-radius:12px;padding:10px 12px;background:var(--ns-surface);color:var(--ns-text);font:inherit;margin-top:8px}
+#ns-rename-status{min-height:1.5em;overflow-wrap:anywhere;color:var(--ns-muted)}
+.ns-page-heading{flex-wrap:wrap}
+.ns-page-heading>div{min-width:0}
+@media(max-width:960px){
+  :root{--ns-sidebar:64px}
+  .ns-sidebar{padding-left:10px;padding-right:10px}
+  .ns-sidebar .ns-nav a{width:44px;height:44px;min-height:44px;padding:0;flex-direction:row;gap:0}
+  .ns-sidebar .ns-nav a>span{display:none}
+  .ns-sidebar .np-brand-trigger{width:44px;min-height:44px}
+  .ns-sidebar .ns-wordmark{padding-left:0;padding-right:0}
+  .ns-page-heading #ns-brand-new{min-height:44px}
+}
+@media(max-width:650px){
+  .ns-brand-colors .ns-color-fields{gap:8px}
+  .ns-brand-colors .ns-color-field{min-width:0}
+  .ns-brand-colors .ns-color-hex{width:100%;min-width:0;font-size:11px}
 }

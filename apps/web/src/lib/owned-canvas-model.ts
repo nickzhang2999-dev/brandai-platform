@@ -12,6 +12,8 @@ export type OwnedCanvasItem = {
   /** Frame membership uses world coordinates; parentId remains the page. */
   hidden?: boolean; locked?: boolean; groupId?: string; frameId?: string;
   url?: string; assetId?: string; assetSha256?: string; versionId?: string; parentId?: string;
+  /** Project-local, persistent display identity. Never used as an asset identifier. */
+  imageNumber?: number; sourceShapeId?: string;
 };
 export type OwnedCanvasDocument = {
   items: OwnedCanvasItem[]; camera: { x: number; y: number; zoom: number };
@@ -83,10 +85,11 @@ function unsupportedEffects(value: RecordValue, props: RecordValue, ownedV2: boo
 
 function readItem(value: RecordValue): OwnedCanvasItem | null {
   const props = record(value.props), meta = record(value.meta);
-  const ownedMeta = record(meta.novartOwned), ownedV2 = props.novartVersion === 2 && ownedMeta.version === 2;
-  if ((props.novartVersion !== undefined && props.novartVersion !== 1 && props.novartVersion !== 2)
-    || (props.novartVersion === 2 && !ownedV2)
-    || (meta.novartOwned !== undefined && (!ownedV2 || Object.keys(ownedMeta).some(key => !["version", "hidden", "locked", "groupId", "frameId"].includes(key))))) return null;
+  const ownedMeta = record(meta.novartOwned), ownedV3 = props.novartVersion === 3 && ownedMeta.version === 3;
+  const ownedV2 = props.novartVersion === 2 && ownedMeta.version === 2 || ownedV3;
+  if ((props.novartVersion !== undefined && ![1, 2, 3].includes(props.novartVersion as number))
+    || ([2, 3].includes(props.novartVersion as number) && !ownedV2)
+    || (meta.novartOwned !== undefined && (!ownedV2 || Object.keys(ownedMeta).some(key => !["version", "hidden", "locked", "groupId", "frameId", ...(ownedV3 ? ["imageNumber", "sourceShapeId"] : [])].includes(key))))) return null;
   if (!shapeId(value.id) || !coordinate(value.x) || !coordinate(value.y)
     || !dimension(props.w) || !dimension(props.h) || !finite(value.rotation ?? 0)
     || typeof value.index !== "string" || !/^[A-Za-z][A-Za-z0-9]{0,255}$/.test(value.index)
@@ -101,6 +104,7 @@ function readItem(value: RecordValue): OwnedCanvasItem | null {
   else if (value.type === "geo" && ["rectangle", "ellipse", "triangle", "star"].includes(String(props.geo))) kind = "shape";
   else if ((value.type === "text" || value.type === "c-text") && typeof props.text === "string" && finite(props.fontSize)) kind = "text";
   else return null;
+  if (kind !== "image" && (ownedMeta.imageNumber !== undefined || ownedMeta.sourceShapeId !== undefined)) return null;
   if (kind !== "text" && ["fontFamily", "fontWeight", "fontStyle", "textAlign", "lineHeight"].some(key => props[key] !== undefined)) return null;
   // Native symbolic fonts/colors/fills and rich labels are not guessed. Preserve
   // their full records and block writes until an exact adapter exists.
@@ -119,6 +123,10 @@ function readItem(value: RecordValue): OwnedCanvasItem | null {
   if (kind === "image") {
     if (!safeUrl(props.url)) return null;
     item.url = props.url;
+    if (ownedV3) {
+      if (ownedMeta.imageNumber !== undefined) item.imageNumber = ownedMeta.imageNumber as number;
+      if (ownedMeta.sourceShapeId !== undefined) item.sourceShapeId = ownedMeta.sourceShapeId as string;
+    }
     if (typeof meta.novartAssetId === "string") item.assetId = meta.novartAssetId;
     if (typeof meta.novartAssetSha256 === "string") item.assetSha256 = meta.novartAssetSha256;
     if (typeof meta.novartVersionId === "string") item.versionId = meta.novartVersionId;
@@ -154,6 +162,8 @@ function validateItem(item: OwnedCanvasItem) {
   for (const value of [item.fill, item.stroke]) if (value !== undefined && !color(value)) throw fail("暂不支持这种画布颜色。");
   if (item.strokeWidth !== undefined && (!finite(item.strokeWidth) || item.strokeWidth < 0 || item.strokeWidth > 1000)) throw fail("画笔宽度无效。");
   if (item.kind === "image" && !safeUrl(item.url)) throw fail("图片尚未持久化，请等待上传成功后再保存。");
+  if (item.imageNumber !== undefined && (item.kind !== "image" || !Number.isSafeInteger(item.imageNumber) || item.imageNumber < 1 || item.imageNumber > 1_000_000_000)) throw fail("图片编号无效。");
+  if (item.sourceShapeId !== undefined && (item.kind !== "image" || !shapeId(item.sourceShapeId) || item.sourceShapeId === item.id)) throw fail("图片来源对象标识无效。");
   if (item.shape !== undefined && !["rect", "ellipse", "triangle", "star", "line", "arrow"].includes(item.shape)) throw fail("图形类型无效。");
   for (const key of ["hidden", "locked", "flipX", "flipY"] as const) if (item[key] !== undefined && typeof item[key] !== "boolean") throw fail("图层状态无效。");
   if ((item.groupId !== undefined && !groupId(item.groupId)) || (item.frameId !== undefined && !shapeId(item.frameId))) throw fail("分组或画框标识无效。");
@@ -184,9 +194,13 @@ function validateItem(item: OwnedCanvasItem) {
 export function validateOwnedCanvasItems(items: OwnedCanvasItem[], pageId?: string) {
   if (items.length > 10_000) throw fail("画布元素数量超出当前编辑器上限。");
   const byId = new Map<string, OwnedCanvasItem>(), groups = new Map<string, OwnedCanvasItem[]>();
-  let pointCount = 0, textLength = 0;
+  let pointCount = 0, textLength = 0; const imageNumbers = new Set<number>();
   for (const item of items) {
     validateItem(item);
+    if (item.imageNumber !== undefined) {
+      if (imageNumbers.has(item.imageNumber)) throw fail("项目图片编号重复，原数据已保留。");
+      imageNumbers.add(item.imageNumber);
+    }
     if (byId.has(item.id) || (pageId !== undefined && item.parentId !== undefined && item.parentId !== pageId)) throw fail("暂不能保存重复对象或嵌套容器。");
     byId.set(item.id, item);
     if (item.groupId) { const members = groups.get(item.groupId); if (members) members.push(item); else groups.set(item.groupId, [item]); }
@@ -227,7 +241,9 @@ export function parseOwnedDocument(input: unknown): OwnedCanvasDocument {
   }
   if ((session.currentPageId !== undefined && (typeof session.currentPageId !== "string" || !pages.some(page => page.id === session.currentPageId)))
     || (session.currentPageId === undefined && pages.length > 1)) warnings.push("无法可靠确定当前画布页面，当前版本仅只读保留。");
-  if (source.novartOwnedCanvas !== undefined && ![1, 2].includes(record(source.novartOwnedCanvas).version as number)) warnings.push("该画布来自更新的数据版本，当前版本仅只读保留。");
+  if (source.novartOwnedCanvas !== undefined && ![1, 2, 3].includes(record(source.novartOwnedCanvas).version as number)) warnings.push("该画布来自更新的数据版本，当前版本仅只读保留。");
+  const imageSequence = record(source.novartOwnedCanvas).imageSequence;
+  if (imageSequence !== undefined && (!Number.isSafeInteger(imageSequence) || Number(imageSequence) < 0 || Number(imageSequence) > 1_000_000_000)) warnings.push("图片编号序列无法可靠恢复，当前版本仅只读保留。");
   const entries = Object.entries(store).filter(([, value]) => isOwnedRecord(value) && value.typeName === "shape")
     .sort(([, left], [, right]) => {
       const a = String(record(left).index ?? ""), b = String(record(right).index ?? "");
@@ -252,7 +268,7 @@ export function parseOwnedDocument(input: unknown): OwnedCanvasDocument {
   if (session.pageStates !== undefined && !Array.isArray(session.pageStates)) warnings.push("旧版页面视角结构无法识别，当前版本仅只读保留。");
   const currentStates = pageStates.filter(value => isOwnedRecord(value) && value.pageId === pageId);
   if (currentStates.length > 1) warnings.push("旧版页面含有冲突的视角记录，当前版本仅只读保留。");
-  const ownedPixels = [1, 2].includes(record(source.novartOwnedCanvas).version as number) && isOwnedRecord(session.camera);
+  const ownedPixels = [1, 2, 3].includes(record(source.novartOwnedCanvas).version as number) && isOwnedRecord(session.camera);
   const cameraInput = ownedPixels ? session.camera : record(currentStates[0]).camera ?? session.camera;
   if (cameraInput !== undefined && (!isOwnedRecord(cameraInput) || !own(cameraInput, "x") || !own(cameraInput, "y")
     || (!own(cameraInput, "z") && !own(cameraInput, "zoom")))) warnings.push("画布视角暂不能可靠转换，原始视角已保留。");
@@ -283,12 +299,14 @@ export function serializeOwnedDocument(doc: OwnedCanvasDocument): RecordValue {
   doc.items.forEach((item, index) => {
     if (own(store, item.id) && !oldIds.has(item.id)) throw fail("新对象标识与保留记录冲突。");
     const previous = record(store[item.id]), props = { ...record(previous.props) }, meta = { ...record(previous.meta) };
-    const advanced = props.novartVersion === 2 || [item.hidden, item.locked, item.groupId, item.frameId, item.fontFamily, item.fontWeight, item.fontStyle,
+    const named = item.imageNumber !== undefined || item.sourceShapeId !== undefined;
+    const advanced = [2, 3].includes(props.novartVersion as number) || named || [item.hidden, item.locked, item.groupId, item.frameId, item.fontFamily, item.fontWeight, item.fontStyle,
       item.textAlign, item.lineHeight, item.crop, item.flipX, item.flipY].some(value => value !== undefined) || ["line", "arrow"].includes(item.shape ?? "");
     props.w = item.w; props.h = item.h;
     if (advanced) {
-      props.novartVersion = 2;
-      meta.novartOwned = { version: 2,
+      props.novartVersion = named ? 3 : 2;
+      meta.novartOwned = { version: named ? 3 : 2,
+        ...(item.imageNumber !== undefined ? { imageNumber: item.imageNumber } : {}), ...(item.sourceShapeId !== undefined ? { sourceShapeId: item.sourceShapeId } : {}),
         ...(item.hidden !== undefined ? { hidden: item.hidden } : {}), ...(item.locked !== undefined ? { locked: item.locked } : {}),
         ...(item.groupId !== undefined ? { groupId: item.groupId } : {}), ...(item.frameId !== undefined ? { frameId: item.frameId } : {}) };
     }
@@ -331,6 +349,26 @@ export function serializeOwnedDocument(doc: OwnedCanvasDocument): RecordValue {
     camera: { ...record(session.camera), x: doc.camera.x, y: doc.camera.y, z: doc.camera.zoom },
     pageStates: hadState ? pageStates.map(value => isOwnedRecord(value) && value.pageId === doc.pageId ? patchState(value) : value)
       : [...pageStates, patchState({})] };
-  source.novartOwnedCanvas = { ...record(source.novartOwnedCanvas), version: doc.items.some(item => record(record(store[item.id]).props).novartVersion === 2) ? 2 : 1 };
+  source.novartOwnedCanvas = { ...record(source.novartOwnedCanvas), version: doc.items.some(item => record(record(store[item.id]).props).novartVersion === 3) ? 3 : doc.items.some(item => record(record(store[item.id]).props).novartVersion === 2) ? 2 : 1 };
   return source;
+}
+
+export function ownedImageName(item: Pick<OwnedCanvasItem, "kind" | "imageNumber">): string {
+  return item.kind === "image" && item.imageNumber ? `图片${item.imageNumber}` : "图片";
+}
+
+/** Allocate once, preserve gaps and keep the high-water mark after deletion/undo. */
+export function assignOwnedImageNames(doc: OwnedCanvasDocument, minimumSequence = 0): OwnedCanvasDocument {
+  if (doc.warnings.length) return doc;
+  const header = record(doc.source.novartOwnedCanvas);
+  let sequence = Math.max(minimumSequence, Number(header.imageSequence) || 0, ...doc.items.map(item => item.imageNumber ?? 0));
+  const used = new Set<number>(); let changed = false;
+  const items = doc.items.map(item => {
+    if (item.kind !== "image") return item;
+    if (item.imageNumber && !used.has(item.imageNumber)) { used.add(item.imageNumber); return item; }
+    if (sequence >= 1_000_000_000) throw fail("项目图片编号已达安全上限。");
+    changed = true; const imageNumber = ++sequence; used.add(imageNumber); return { ...item, imageNumber };
+  });
+  if (!changed && header.imageSequence === sequence) return doc;
+  return { ...doc, items, source: { ...doc.source, novartOwnedCanvas: { ...header, imageSequence: sequence } } };
 }

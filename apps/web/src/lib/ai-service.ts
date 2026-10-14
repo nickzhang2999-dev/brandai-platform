@@ -5,8 +5,10 @@ export const REQUIRED_AI_GENERATION_REVISION = "gpt-image-2-size-quality-r1";
 export const REQUIRED_AI_VISUAL_CHECK_REVISION = "studio-visual-check-evidence-r1";
 export const REQUIRED_AI_PROVIDER_RETRY_REVISION = "single-provider-attempt-r1";
 export const REQUIRED_AI_STUDIO_EDIT_REVISION = "studio-whole-image-edit-r1";
+export const REQUIRED_AI_STUDIO_IMAGE_TOOLS_REVISION = "studio-image-tools-r1";
 export const REQUIRED_AI_STUDIO_DECOMPOSITION_REVISION = "studio-real-layer-single-attempt-r1";
 export const REQUIRED_AI_STUDIO_LAYER_PLAN_REVISION = "semantic-layer-plan-r1";
+export const REQUIRED_AI_STUDIO_CONVERSATION_INTENT_REVISION = "structured-conversation-intent-r1";
 
 const CONFIGURED_BASE =
   process.env.BRANDAI_AI_SERVICE_URL ??
@@ -23,11 +25,13 @@ export type AiServiceResolution = {
   visualCheckRevision?: string;
   providerRetryRevision?: string;
   studioEditRevision?: string;
+  studioImageToolsRevision?: string;
   studioDecompositionRevision?: string;
   studioLayerPlanRevision?: string;
+  studioConversationIntentRevision?: string;
 };
 
-export type AiServiceRequirements = { requireVisualCheck?: boolean; requireSingleAttempt?: boolean; requireStudioEdit?: boolean; requireStudioDecomposition?: boolean; requireStudioLayerPlan?: boolean };
+export type AiServiceRequirements = { requireVisualCheck?: boolean; requireSingleAttempt?: boolean; requireStudioEdit?: boolean; requireStudioDecomposition?: boolean; requireStudioLayerPlan?: boolean; requireStudioImageTools?: boolean; requireStudioConversationIntent?: boolean };
 
 let cachedResolution: { value: AiServiceResolution; expiresAt: number } | null =
   null;
@@ -51,8 +55,10 @@ async function probe(base: string): Promise<AiServiceResolution | null> {
       visualCheckRevision?: unknown;
       providerRetryRevision?: unknown;
       studioEditRevision?: unknown;
+      studioImageToolsRevision?: unknown;
       studioDecompositionRevision?: unknown;
       studioLayerPlanRevision?: unknown;
+      studioConversationIntentRevision?: unknown;
     };
     return {
       base,
@@ -71,8 +77,10 @@ async function probe(base: string): Promise<AiServiceResolution | null> {
           : undefined,
       providerRetryRevision: typeof body.providerRetryRevision === "string" ? body.providerRetryRevision : undefined,
       studioEditRevision: typeof body.studioEditRevision === "string" ? body.studioEditRevision : undefined,
+      studioImageToolsRevision: typeof body.studioImageToolsRevision === "string" ? body.studioImageToolsRevision : undefined,
       studioDecompositionRevision: typeof body.studioDecompositionRevision === "string" ? body.studioDecompositionRevision : undefined,
       studioLayerPlanRevision: typeof body.studioLayerPlanRevision === "string" ? body.studioLayerPlanRevision : undefined,
+      studioConversationIntentRevision: typeof body.studioConversationIntentRevision === "string" ? body.studioConversationIntentRevision : undefined,
     };
   } catch {
     return null;
@@ -94,13 +102,17 @@ export async function resolveAiService(requirements: AiServiceRequirements = {})
   const now = Date.now();
   const requireVisualCheck = requirements.requireVisualCheck === true;
   const requireStudioEdit = requirements.requireStudioEdit === true;
+  const requireStudioImageTools = requirements.requireStudioImageTools === true;
   const requireStudioDecomposition = requirements.requireStudioDecomposition === true;
   const requireStudioLayerPlan = requirements.requireStudioLayerPlan === true;
-  const requireSingleAttempt = requirements.requireSingleAttempt === true || requireStudioEdit || requireStudioDecomposition || requireStudioLayerPlan;
+  const requireStudioConversationIntent = requirements.requireStudioConversationIntent === true;
+  const requireSingleAttempt = requirements.requireSingleAttempt === true || requireStudioEdit || requireStudioDecomposition || requireStudioLayerPlan || requireStudioImageTools || requireStudioConversationIntent;
   if (cachedResolution && cachedResolution.expiresAt > now &&
       (!requireStudioEdit || cachedResolution.value.studioEditRevision === REQUIRED_AI_STUDIO_EDIT_REVISION) &&
+      (!requireStudioImageTools || cachedResolution.value.studioImageToolsRevision === REQUIRED_AI_STUDIO_IMAGE_TOOLS_REVISION) &&
       (!requireStudioDecomposition || cachedResolution.value.studioDecompositionRevision === REQUIRED_AI_STUDIO_DECOMPOSITION_REVISION) &&
       (!requireStudioLayerPlan || cachedResolution.value.studioLayerPlanRevision === REQUIRED_AI_STUDIO_LAYER_PLAN_REVISION) &&
+      (!requireStudioConversationIntent || cachedResolution.value.studioConversationIntentRevision === REQUIRED_AI_STUDIO_CONVERSATION_INTENT_REVISION) &&
       (!requireSingleAttempt || cachedResolution.value.providerRetryRevision === REQUIRED_AI_PROVIDER_RETRY_REVISION) &&
       (!requireVisualCheck || cachedResolution.value.visualCheckRevision === REQUIRED_AI_VISUAL_CHECK_REVISION)) {
     return cachedResolution.value;
@@ -123,12 +135,14 @@ export async function resolveAiService(requirements: AiServiceRequirements = {})
       if (requireStudioEdit && health?.studioEditRevision !== REQUIRED_AI_STUDIO_EDIT_REVISION) {
         throw new Error("Configured AI service does not support the required whole-image-edit revision");
       }
+      if (requireStudioImageTools && health?.studioImageToolsRevision !== REQUIRED_AI_STUDIO_IMAGE_TOOLS_REVISION) throw new Error("Configured AI service does not support transparent background and masked image tools");
       if (requireStudioDecomposition && health?.studioDecompositionRevision !== REQUIRED_AI_STUDIO_DECOMPOSITION_REVISION) {
         throw new Error("Configured AI service does not support the required real-layer decomposition revision");
       }
       if (requireStudioLayerPlan && health?.studioLayerPlanRevision !== REQUIRED_AI_STUDIO_LAYER_PLAN_REVISION) {
         throw new Error("Configured AI service does not support real semantic-layer planning");
       }
+      if (requireStudioConversationIntent && health?.studioConversationIntentRevision !== REQUIRED_AI_STUDIO_CONVERSATION_INTENT_REVISION) throw new Error("Configured AI service does not support structured conversation intent");
       Object.assign(value, health, { source: "configured" });
     }
     cachedResolution = { value, expiresAt: now + CACHE_MS };
@@ -146,8 +160,10 @@ export async function resolveAiService(requirements: AiServiceRequirements = {})
         result?.parserRevision === REQUIRED_AI_PARSER_REVISION &&
         result.generationRevision === REQUIRED_AI_GENERATION_REVISION &&
         (!requireStudioEdit || result.studioEditRevision === REQUIRED_AI_STUDIO_EDIT_REVISION) &&
+        (!requireStudioImageTools || result.studioImageToolsRevision === REQUIRED_AI_STUDIO_IMAGE_TOOLS_REVISION) &&
         (!requireStudioDecomposition || result.studioDecompositionRevision === REQUIRED_AI_STUDIO_DECOMPOSITION_REVISION) &&
         (!requireStudioLayerPlan || result.studioLayerPlanRevision === REQUIRED_AI_STUDIO_LAYER_PLAN_REVISION) &&
+        (!requireStudioConversationIntent || result.studioConversationIntentRevision === REQUIRED_AI_STUDIO_CONVERSATION_INTENT_REVISION) &&
         (!requireSingleAttempt || result.providerRetryRevision === REQUIRED_AI_PROVIDER_RETRY_REVISION) &&
         (!requireVisualCheck || result.visualCheckRevision === REQUIRED_AI_VISUAL_CHECK_REVISION),
     );

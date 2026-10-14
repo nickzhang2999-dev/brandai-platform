@@ -21,12 +21,15 @@ from .providers import (
 from .providers.base import ImageProvider, LayerProvider, VLMProvider
 from .providers.retry_policy import call_with_retry_policy
 from .studio_edit_schemas import StudioEditRequest, STUDIO_EDIT_REVISION
+from .studio_image_tool_schemas import STUDIO_IMAGE_TOOLS_REVISION
+from .studio_image_tools import run_studio_image_tool
 from .studio_edit import prepare_studio_edit, studio_edit_instructions, studio_edit_params
 from .providers.http_providers import (
     _DEFAULT_IMAGE_QUALITY,
     _estimate_cost_usd,
 )
 from .studio_layer_plan import LayerPlanRequest, LayerPlanResponse, LayerPlan, layer_plan_prompt, STUDIO_LAYER_PLAN_REVISION
+from .studio_conversation_model import ConversationModelRequest, ConversationModelResponse, run_conversation_model, STUDIO_CONVERSATION_MODEL_REVISION
 from .schemas import (
     ComplianceCheckRequest,
     ComplianceCheckResponse,
@@ -178,8 +181,10 @@ async def health():
         "visualCheckRevision": VISUAL_CHECK_REVISION,
         "providerRetryRevision": PROVIDER_RETRY_REVISION,
         "studioEditRevision": STUDIO_EDIT_REVISION,
+        "studioImageToolsRevision": STUDIO_IMAGE_TOOLS_REVISION,
         "studioDecompositionRevision": STUDIO_DECOMPOSITION_REVISION,
         "studioLayerPlanRevision": STUDIO_LAYER_PLAN_REVISION,
+        "studioConversationIntentRevision": STUDIO_CONVERSATION_MODEL_REVISION,
     }
 
 
@@ -380,6 +385,8 @@ async def studio_edit(
     req: StudioEditRequest,
     provider: ImageProvider = Depends(resolve_image_provider),
 ):
+    if req.imageTool:
+        return await run_studio_image_tool(req, provider)
     prepare_studio_edit(req, provider)
     return await _generate(req.generation, provider, studio_source=req.imageUrl)
 
@@ -1010,6 +1017,19 @@ async def studio_layer_plan(req: LayerPlanRequest, vlm: VLMProvider = Depends(re
         raise HTTPException(status_code=422, detail="No valid semantic layer plan within the processing budget") from None
     return LayerPlanResponse(revision=STUDIO_LAYER_PLAN_REVISION, plan=plan,
         usage={"provider": "HttpVLMProvider", "model": vlm.model, "latencyMs": int((time.perf_counter() - started) * 1000)})
+
+
+@app.post("/v1/studio/conversation-intent", response_model=ConversationModelResponse)
+async def studio_conversation_intent(req: ConversationModelRequest, vlm: VLMProvider = Depends(resolve_vlm_provider)):
+    from .providers.http_providers import HttpVLMProvider
+    if type(vlm) is not HttpVLMProvider or not vlm.api_key.strip():
+        raise HTTPException(status_code=503, detail="Real structured conversation planner unavailable")
+    try:
+        return await run_conversation_model(req, vlm)
+    except Exception:
+        # Avoid leaking keys, prompts or provider response bodies. The durable
+        # web worker considers ANY unknown result non-retryable.
+        raise HTTPException(status_code=502, detail="Structured conversation result not confirmed; do not replay provider request") from None
 
 
 @app.post(

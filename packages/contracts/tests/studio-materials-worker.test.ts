@@ -1,13 +1,14 @@
 import { createHash } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const f = vi.hoisted(() => ({ transaction: vi.fn(), gate: vi.fn(), inspect: vi.fn(), upload: vi.fn(), remove: vi.fn(), enqueue: vi.fn(), expire: vi.fn(), creates: vi.fn(), links: vi.fn(), read: vi.fn(), update: vi.fn(), many: vi.fn(), taskUpdate: vi.fn(), query: vi.fn(), workspace: vi.fn(), member: vi.fn() }));
-vi.mock("../../db/src/index", () => ({ prisma: { $transaction: f.transaction, studioMaterialUpload: { findMany: f.many, update: f.update } } }));
+const f = vi.hoisted(() => ({ transaction: vi.fn(), gate: vi.fn(), role: vi.fn(), user: vi.fn(), inspect: vi.fn(), upload: vi.fn(), remove: vi.fn(), enqueue: vi.fn(), expire: vi.fn(), creates: vi.fn(), links: vi.fn(), read: vi.fn(), update: vi.fn(), many: vi.fn(), taskUpdate: vi.fn(), query: vi.fn(), workspace: vi.fn(), member: vi.fn() }));
+vi.mock("../../db/src/index", () => ({ prisma: { $transaction: f.transaction, user: { findUnique: f.user }, studioMaterialUpload: { findMany: f.many, update: f.update } } }));
 vi.mock("@/lib/queue", () => ({ connection: {}, queuePrefix: "test" }));
 vi.mock("@/lib/api", () => ({ ApiException: class extends Error { constructor(public status: number, message: string) { super(message); } } }));
 vi.mock("@/lib/s3", () => ({ uploadBuffer: f.upload, deleteObject: f.remove }));
 vi.mock("@/lib/studio-materials-image", () => ({ inspectStudioMaterialImage: f.inspect }));
 vi.mock("@/lib/studio-materials", () => ({ expireStudioMaterials: f.expire, requireStudioMaterialProject: f.gate }));
 vi.mock("@/lib/studio-materials-queue", () => ({ enqueueStudioMaterial: f.enqueue }));
+vi.mock("../../../apps/web/src/lib/workspace", () => ({ requireWorkspaceRole: f.role }));
 import { runStudioMaterialJob, sweepStudioMaterialUploads } from "../../../apps/web/src/lib/workers/studio-materials.worker";
 import { ApiException } from "@/lib/api";
 
@@ -16,19 +17,40 @@ const job = (attemptsMade = 0) => ({ data: { taskId: "task" }, attemptsMade, opt
 beforeEach(() => {
   vi.resetAllMocks();
   const body = Buffer.from("actual staged bytes");
-  row = { taskId: "task", workspaceId: "w", userId: "u", projectId: "p", mimeType: "image/png", fileName: "photo.png", sha256: createHash("sha256").update(body).digest("hex"), body, sizeBytes: body.length, objectKey: "w/studio/p/task.png", expiresAt: new Date(Date.now() + 60000), attemptToken: null, assetId: null, task: { status: "PENDING", progress: 0 } };
-  const tx = { $queryRaw: f.query, studioMaterialUpload: { findUnique: f.read, update: f.update }, asyncTask: { update: f.taskUpdate }, brandWorkspace: { findUnique: f.workspace }, membership: { findUnique: f.member }, asset: { create: f.creates }, projectAsset: { create: f.links } };
+  row = { taskId: "task", workspaceId: "w", userId: "u", projectId: "p", mimeType: "image/png", fileName: "photo.png", sha256: createHash("sha256").update(body).digest("hex"), body, sizeBytes: body.length, objectKey: "w/studio/p/task.png", expiresAt: new Date(Date.now() + 60000), attemptToken: null, assetId: null, task: { workspaceId: "w", kind: "STUDIO_UPLOAD", status: "PENDING", progress: 0 } };
+  const tx = { $queryRaw: f.query, user: { findUnique: f.user }, studioMaterialUpload: { findUnique: f.read, update: f.update }, asyncTask: { update: f.taskUpdate }, brandWorkspace: { findUnique: f.workspace }, membership: { findUnique: f.member }, asset: { create: f.creates }, projectAsset: { create: f.links } };
   f.transaction.mockImplementation(fn => fn(tx));
   f.read.mockImplementation(async () => structuredClone(row));
   f.update.mockImplementation(async ({ data }) => { Object.assign(row, data); return row; });
   f.taskUpdate.mockImplementation(async ({ data }) => { Object.assign(row.task, data); return row.task; });
   f.query.mockResolvedValue([{ archivedAt: null }]); f.workspace.mockResolvedValue({ ownerId: "u" });
-  f.gate.mockResolvedValue(undefined); f.inspect.mockResolvedValue({ width: 7, height: 11 });
+  f.gate.mockResolvedValue(undefined); f.role.mockResolvedValue({ role: "EDITOR" }); f.user.mockResolvedValue({ isActive: true }); f.inspect.mockResolvedValue({ width: 7, height: 11 });
   f.upload.mockResolvedValue({ key: row.objectKey, url: "https://private-storage.invalid/photo.png" });
   f.creates.mockResolvedValue({ id: "asset" }); f.links.mockResolvedValue({ id: "link" });
 });
 
 describe("durable studio upload worker", () => {
+  it.each(["workspace", "kind", "projectless-link"])("fails closed before S3 for a corrupt %s upload claim", async fault => {
+    if (fault === "workspace") row.task.workspaceId = "other";
+    else if (fault === "kind") row.task.kind = "EDIT";
+    else { row.projectId = null; row.attachToProject = true; }
+    await runStudioMaterialJob(job()); expect(f.upload).not.toHaveBeenCalled(); expect(f.creates).not.toHaveBeenCalled();
+    if (fault === "projectless-link") expect(row.task.status).toBe("FAILED");
+  });
+  it("a library-first upload creates one brand Asset and no implicit ProjectAsset", async () => {
+    row.attachToProject = false; row.projectId = null; row.objectKey = "w/studio-library/task.png";
+    f.upload.mockResolvedValue({ key: row.objectKey, url: "https://private-storage.invalid/brand.png" });
+    await runStudioMaterialJob(job());
+    expect(row.task.status).toBe("SUCCEEDED"); expect(row.assetId).toBe("asset"); expect(f.creates).toHaveBeenCalledOnce();
+    expect(f.links).not.toHaveBeenCalled();
+    expect(f.gate).not.toHaveBeenCalled(); expect(f.role).toHaveBeenCalledWith("w", "u", "EDITOR");
+    expect(f.upload).toHaveBeenCalledWith(expect.any(Buffer), "image/png", "w/studio-library", expect.any(AbortSignal), "w/studio-library/task.png");
+    await runStudioMaterialJob(job(1)); expect(f.creates).toHaveBeenCalledOnce();
+  });
+  it("a disabled actor cannot complete an already accepted brand upload", async () => {
+    row.attachToProject = false; row.projectId = null; f.user.mockResolvedValue({ isActive: false });
+    await runStudioMaterialJob(job()); expect(row.task.status).toBe("FAILED"); expect(f.upload).not.toHaveBeenCalled(); expect(f.creates).not.toHaveBeenCalled();
+  });
   it("stores one authoritative Asset/link and clears staged bytes atomically", async () => {
     await runStudioMaterialJob(job());
     expect(row.task).toMatchObject({ status: "SUCCEEDED", progress: 100, refId: "asset" });

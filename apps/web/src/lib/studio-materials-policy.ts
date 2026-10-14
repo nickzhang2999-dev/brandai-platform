@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { STUDIO_MATERIAL_MAX_BYTES, StudioMaterialUploadInput } from "@brandai/contracts";
+import { StudioBrandMaterialUploadInput } from "../../../../packages/contracts/src/studio-brand-materials";
 import { ApiException } from "./api";
 
 export const STUDIO_UPLOAD_WORKSPACE_BYTES = 40 * 1024 * 1024;
@@ -8,7 +9,12 @@ export const STUDIO_UPLOAD_MAX_PIXELS = 40_000_000;
 export const STUDIO_UPLOAD_MIME = ["image/png", "image/jpeg", "image/webp"] as const;
 
 /** Bound the actual stream, including chunked requests with no Content-Length. */
-export async function readStudioMaterialForm(req: Request) {
+type FileBody = { fileName: string; mimeType: string; body: Buffer<ArrayBuffer>; sha256: string };
+type LegacyInput = { projectId: string; mutationId: string; attachToProject?: boolean };
+type BrandInput = { projectId: null; mutationId: string; attachToProject: false };
+export function readStudioMaterialForm(req: Request): Promise<LegacyInput & FileBody>;
+export function readStudioMaterialForm(req: Request, options: { brandOnly: true }): Promise<BrandInput & FileBody>;
+export async function readStudioMaterialForm(req: Request, options?: { brandOnly: true }): Promise<(LegacyInput | BrandInput) & FileBody> {
   const maxBody = STUDIO_MATERIAL_MAX_BYTES + 64 * 1024;
   const contentType = req.headers.get("content-type") ?? "";
   if (!/^multipart\/form-data\s*;/i.test(contentType)) throw new ApiException(415, "请以文件上传图片。");
@@ -32,8 +38,13 @@ export async function readStudioMaterialForm(req: Request) {
   let form: FormData;
   try { form = await new Response(Buffer.concat(chunks), { headers: { "content-type": contentType } }).formData(); }
   catch { throw new ApiException(400, "无法读取图片上传表单。"); }
-  for (const key of form.keys()) if (!["file", "projectId", "mutationId"].includes(key) || form.getAll(key).length !== 1) throw new ApiException(422, "上传表单字段无效。");
-  const input = StudioMaterialUploadInput.parse({ projectId: form.get("projectId"), mutationId: form.get("mutationId") });
+  const allowed = options?.brandOnly ? ["file", "mutationId"] : ["file", "projectId", "mutationId", "attachToProject"];
+  for (const key of form.keys()) if (!allowed.includes(key) || form.getAll(key).length !== 1) throw new ApiException(422, "上传表单字段无效。");
+  const attach = form.get("attachToProject");
+  if (attach !== null && attach !== "true" && attach !== "false") throw new ApiException(422, "素材关联设置无效。");
+  const input = options?.brandOnly ? { ...StudioBrandMaterialUploadInput.parse({ mutationId: form.get("mutationId") }), projectId: null, attachToProject: false as const }
+    : StudioMaterialUploadInput.parse({ projectId: form.get("projectId"), mutationId: form.get("mutationId"),
+      ...(attach !== null ? { attachToProject: attach === "true" } : {}) });
   const file = form.get("file");
   if (!(file instanceof File) || !file.size) throw new ApiException(400, "缺少图片文件。");
   if (file.size > STUDIO_MATERIAL_MAX_BYTES) throw new ApiException(413, "图片不能超过 10 MiB。");

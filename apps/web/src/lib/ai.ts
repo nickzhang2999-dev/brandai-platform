@@ -22,6 +22,8 @@ import type {
   SummarizeResponse,
   StudioLayerPlanRequest,
   StudioLayerPlanResponse,
+  StudioConversationModelRequest,
+  StudioConversationModelResponse,
 } from "@brandai/contracts";
 import { resolveAiService } from "@/lib/ai-service";
 import { getEffectiveAiSettings } from "@/lib/settings";
@@ -74,17 +76,21 @@ async function call<TReq, TRes>(path: string, body: TReq, options?: AiCallOption
   signal?.throwIfAborted();
   const requireVisualCheck = path === "/v1/compliance/check" && options?.requireRealVlmProvider === true;
   const requireStudioEdit = path === "/v1/studio/edit";
+  const requireStudioImageTools = requireStudioEdit && !!(body as { imageTool?: unknown }).imageTool;
   const requireStudioDecomposition = path === "/v1/decompose" && options?.requireRealLayerProvider === true;
   const requireStudioLayerPlan = path === "/v1/studio/layer-plan";
-  const requireSingleAttempt = requireStudioEdit || requireStudioDecomposition || requireStudioLayerPlan || (["/v1/generate", "/v1/compliance/check"].includes(path) && (options?.requireRealImageProvider === true || options?.requireRealVlmProvider === true));
+  const requireConversationIntent = path === "/v1/studio/conversation-intent";
+  const requireSingleAttempt = requireConversationIntent || requireStudioEdit || requireStudioDecomposition || requireStudioLayerPlan || (["/v1/generate", "/v1/compliance/check"].includes(path) && (options?.requireRealImageProvider === true || options?.requireRealVlmProvider === true));
   const setup = Promise.all([resolveAiService(requireVisualCheck || requireSingleAttempt ? {
     ...(requireVisualCheck ? { requireVisualCheck: true } : {}), ...(requireSingleAttempt ? { requireSingleAttempt: true } : {}),
     ...(requireStudioEdit ? { requireStudioEdit: true } : {}),
+    ...(requireStudioImageTools ? { requireStudioImageTools: true } : {}),
     ...(requireStudioDecomposition ? { requireStudioDecomposition: true } : {}),
     ...(requireStudioLayerPlan ? { requireStudioLayerPlan: true } : {}),
+    ...(requireConversationIntent ? { requireStudioConversationIntent: true } : {}),
   } : undefined), providerHeaders(
     requireStudioEdit || (path === "/v1/generate" && options?.requireRealImageProvider === true),
-    requireVisualCheck || requireStudioLayerPlan,
+    requireVisualCheck || requireStudioLayerPlan || requireConversationIntent,
     path === "/v1/decompose" && options?.requireRealLayerProvider === true,
   )]);
   const [service, headers] = await (signal ? withinAiDeadline(setup, signal) : setup);
@@ -111,6 +117,8 @@ async function call<TReq, TRes>(path: string, body: TReq, options?: AiCallOption
 }
 
 export const ai = {
+  studioConversationIntent: (body: StudioConversationModelRequest, options?: AiCallOptions) =>
+    call<StudioConversationModelRequest, StudioConversationModelResponse>("/v1/studio/conversation-intent", body, { ...options, requireRealVlmProvider: true }),
   studioLayerPlan: (b: StudioLayerPlanRequest, options?: AiCallOptions) =>
     call<StudioLayerPlanRequest, StudioLayerPlanResponse>("/v1/studio/layer-plan", b, { ...options, requireRealVlmProvider: true }),
   ingestWebsite: (b: IngestWebsiteRequest) =>

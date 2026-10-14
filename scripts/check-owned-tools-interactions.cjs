@@ -83,7 +83,12 @@ async function runOwnedToolChecks({page, surface, check, records, shapes, png, w
   // testing duplicate; Ctrl+D with an empty selection correctly does nothing.
   await select(imageId);await key('ControlOrMeta+d');await save();assert.equal(shapes().filter(value=>value.type==='c-image').length,3);
   const imageCopies=shapes().filter(value=>value.type==='c-image'&&value.id!==imageId);
-  for(const copy of imageCopies) {assert.equal(copy.props.url,imageBefore.props.url);assert.equal(copy.meta.novartAssetSha256,imageBefore.meta.novartAssetSha256);}
+  for(const copy of imageCopies) {
+    assert.equal(copy.props.url,imageBefore.props.url);assert.equal(copy.meta.novartAssetSha256,imageBefore.meta.novartAssetSha256);
+    assert.equal(owned(copy).sourceShapeId,imageId,'Pasted and duplicated images reference the original shape, never a temporary clipboard ID');
+    assert.ok(Number.isSafeInteger(owned(copy).imageNumber)&&owned(copy).imageNumber>owned(imageBefore).imageNumber,'Each copy receives a fresh project image number');
+  }
+  assert.equal(new Set(shapes().filter(value=>value.type==='c-image').map(value=>owned(value).imageNumber)).size,3,'Image numbers remain unique after repeated paste and duplicate');
   await button('撤销').click();await save();assert.equal(shapes().filter(value=>value.type==='c-image').length,2);
   await button('重做').click();await save();assert.equal(shapes().filter(value=>value.type==='c-image').length,3);
   check('owned-tools-keyboard-copy-paste-duplicate-keeps-material-identity');

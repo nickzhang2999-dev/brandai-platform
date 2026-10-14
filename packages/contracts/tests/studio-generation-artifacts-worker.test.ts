@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const f = vi.hoisted(() => ({ transaction: vi.fn(), query: vi.fn(), gate: vi.fn(), read: vi.fn(), update: vi.fn(), updateMany: vi.fn(), output: vi.fn(), clearOutputs: vi.fn(), pending: vi.fn(), missing: vi.fn(), ensure: vi.fn(), enqueue: vi.fn(), settings: vi.fn(), bytes: vi.fn(), inspect: vi.fn(), process: vi.fn(), upload: vi.fn(), priorAsset: vi.fn(), logo: vi.fn(), asset: vi.fn(), version: vi.fn(), existingVersion: vi.fn(), link: vi.fn(), check: vi.fn(), enqueueCheck: vi.fn(), exact: vi.fn(), base: vi.fn(), editLock: vi.fn(), psd: vi.fn() }));
+vi.mock("@/lib/studio-conversation-image-size", () => ({ sizeStudioConversationImage: vi.fn() }));
+const f = vi.hoisted(() => ({ transaction: vi.fn(), query: vi.fn(), gate: vi.fn(), read: vi.fn(), update: vi.fn(), updateMany: vi.fn(), output: vi.fn(), clearOutputs: vi.fn(), pending: vi.fn(), missing: vi.fn(), ensure: vi.fn(), enqueue: vi.fn(), settings: vi.fn(), bytes: vi.fn(), inspect: vi.fn(), process: vi.fn(), upload: vi.fn(), priorAsset: vi.fn(), logo: vi.fn(), asset: vi.fn(), version: vi.fn(), existingVersion: vi.fn(), link: vi.fn(), check: vi.fn(), enqueueCheck: vi.fn(), exact: vi.fn(), base: vi.fn(), editLock: vi.fn(), psd: vi.fn(), alpha: vi.fn() }));
 vi.mock("../../db/src/index", () => ({ Prisma: {}, prisma: { $transaction: f.transaction,
   studioGeneratedMaterial: { updateMany: f.updateMany, findMany: f.pending }, studioGenerationOutput: { updateMany: f.clearOutputs }, studioGenerationRequest: { findMany: f.missing }, asset: { findUnique: f.priorAsset, findFirst: f.logo } } }));
 vi.mock("@/lib/queue", () => ({ connection: {}, queuePrefix: "test" }));
@@ -12,6 +13,7 @@ vi.mock("@/lib/studio-generation-artifacts-image", () => ({ artifactDeadline: as
 vi.mock("@/lib/studio-generation-artifacts-queue", () => ({ enqueueStudioArtifact: f.enqueue }));
 vi.mock("@/lib/studio-generation-compliance", () => ({ registerStudioGenerationCompliance: f.check }));
 vi.mock("@/lib/studio-generation-compliance-queue", () => ({ enqueueStudioCompliance: f.enqueueCheck }));
+vi.mock("@/lib/studio-image-tool-alpha", () => ({ requireStudioTransparentForeground: f.alpha }));
 vi.mock("@/lib/studio-generated-psd", () => ({ registerStudioGeneratedPsd: f.psd }));
 vi.mock("@/lib/studio-exact-image", () => ({ compositeStudioExactImage: f.exact }));
 vi.mock("@/lib/studio-generation-base", () => ({ storeStudioCleanBase: f.base, requireStudioBaseEncryption: vi.fn() }));
@@ -63,6 +65,20 @@ function enableExact() {
 }
 
 describe("generation archive worker (unit fixtures; no provider or remote storage)", () => {
+  it("validates background alpha before padding and after final composition, before upload", async () => {
+    row.output.params.studioPostprocess.imageTool = "remove-background";
+    await runStudioGenerationArtifactJob(job());
+    expect(row.status).toBe("SUCCEEDED"); expect(f.alpha).toHaveBeenCalledTimes(2);
+    expect(f.alpha.mock.invocationCallOrder[0]).toBeLessThan(f.process.mock.invocationCallOrder[0]);
+    expect(f.alpha.mock.invocationCallOrder[1]).toBeLessThan(f.upload.mock.invocationCallOrder[0]);
+  });
+  it("retains a paid result but rejects opaque background instead of accepting padding alpha", async () => {
+    row.output.params.studioPostprocess.imageTool = "remove-background";
+    f.alpha.mockRejectedValue(new ApiException(422, "No real background alpha"));
+    await runStudioGenerationArtifactJob(job()); expect(row.status).toBe("FAILED");
+    expect(row.output.imageUrl).not.toBeNull(); expect(f.upload).not.toHaveBeenCalled(); expect(f.version).not.toHaveBeenCalled();
+  });
+
   it("starts an opted-in PSD only after a published original and isolates its failure from the image archive", async () => {
     row.request.jobData = { studioPsdLayerCount: 2 };
     f.psd.mockImplementation(async () => { expect(row.status).toBe("SUCCEEDED"); expect(row.assetId).toBeTruthy(); throw new Error("synthetic continuation outage"); });

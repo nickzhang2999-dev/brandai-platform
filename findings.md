@@ -168,3 +168,10 @@ b778553 CI38036388613 success, backend95/UI15 plus container rechecks and public
 - Official Qwen-Image-Layered `src/app.py` implements image-to-RGBA layers and PSD/ZIP/PPTX writing. Its example uses CUDA/bfloat16; no model download or live inference has been performed here.
 - Existing company layer-set exporter already writes independent RGBA layers with ag-psd. New Studio layers are separate persistent records and require a new scoped export boundary rather than passing them through the old GenerationVersion URL.
 - A product skill is orchestration: generation, durable layer preparation and PSD writing remain actual executable steps. Paid decomposition is explicit opt-in per request, server-authoritative and must not automatically retry an uncertain model call.
+## 2026-10-14 · Local handoff evidence boundaries
+
+The approved handoff baseline is devUpdate1012/928ab0a with 42 verified manifest files. The offline design is a reference, not an editor or backend implementation. All new work stays local under the latest user instruction.
+
+Actual Chromium exercises production React and Studio shell with synthetic loopback HTTP receipts; it verifies clicks, recovery and real PNG/PSD encoding, not SQL persistence, authentication, S3 or provider quality. Structured VLM intent is implemented but defaults off; unknown calls cannot be retried and old worker leases cannot reserve generation quota. Real DB/storage/provider/domain acceptance and transformed-source masks remain explicitly pending.
+
+Current implementation and per-scenario evidence: docs/deepflare-handoff-ui-2026-10-14.md and docs/development-log-2026-10-14.md. Legacy WEBSITE-only materials are rejected until uploaded/migrated; M6 is deferred by the original handoff. No new CDS issue was observed because CDS was not operated.

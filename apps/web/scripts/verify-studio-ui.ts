@@ -26,7 +26,7 @@ const privateValues: string[] = [], contexts: BrowserContext[] = [], fixtureUser
 const acceptedUploads: AcceptedUpload[] = [], uploadReceipts = new Map<string, ReturnType<typeof summarizeUploadReceipt>>();
 const deferred = ["Homepage attachments handoff", "Unsent creation draft autosave/pagehide recovery", "Workflow purpose and modification-target persistence", "Real EXACT-generation output frames", "Real image-modification provider acceptance", "Real AI decomposition quality, private layer storage and editable result round trip", "Per-object/nested-frame export", "Compliance UI and notification deep links"];
 const knowledgeChecks: string[] = [];
-let browser: Browser | undefined, currentPage: Page | undefined, step = "initialize", passed = 0, realHomepageHandoff = false, realDraftPersistence = false, realWorkflowPersistence = false, realKnowledge = false, realBrands = false;
+let browser: Browser | undefined, currentPage: Page | undefined, step = "initialize", passed = 0, realHomepageHandoff = false, realDraftPersistence = false, realWorkflowPersistence = false, realConversationPersistence = false, realOrderedConversationReferences = false, realKnowledge = false, realBrands = false;
 const check = (label: string) => { passed++; console.log(`PASS ${label}`); };
 const knowledgeCheck = (label: string) => { knowledgeChecks.push(label); check(label); };
 const enter = (label: string) => { step = label; console.log(`STEP ${label}`); };
@@ -44,7 +44,7 @@ type Shape = { id: string; typeName: string; type: string; x: number; y: number;
 function store(canvas: string): Record<string, Shape> {
   assert.ok(canvas.startsWith("SHAKKERDATA://"));
   const value = JSON.parse(gunzipSync(Buffer.from(canvas.slice("SHAKKERDATA://".length), "base64")).toString("utf8"));
-  assert.ok([1, 2].includes(value.novartOwnedCanvas?.version), "Document must use a recognized owned model version");
+  assert.ok([1, 2, 3].includes(value.novartOwnedCanvas?.version), "Document must use a recognized owned model version");
   assertOwnedDocumentWritable(parseOwnedDocument(value));
   assert.ok(value.tldrawSnapshot?.document?.store, "Compatible envelope must retain a document store"); return value.tldrawSnapshot.document.store;
 }
@@ -68,7 +68,7 @@ async function persistedDraft(userId: string, projectId: string, expected: Draft
   return row;
 }
 async function restoredDraft(frame: Frame, expected: DraftExpectation) {
-  await frame.getByRole("button", { name: "生成", exact: true }).click();
+  await openAdvancedGeneration(frame);
   await expect(frame.getByTestId("owned-draft-status")).toHaveAttribute("data-draft-state", "saved");
   await expect(frame.getByRole("textbox", { name: "创作需求", exact: true })).toHaveValue(expected.prompt);
   await expect(frame.getByRole("combobox", { name: "图片比例", exact: true })).toHaveValue(expected.ratio);
@@ -81,7 +81,7 @@ async function persistedWorkflow(projectId: string, workspaceId: string, expecte
   assert.ok(row.workflowUpdatedAt); return row;
 }
 async function restoredWorkflow(frame: Frame, expected: WorkflowExpectation) {
-  await frame.getByRole("button", { name: "生成", exact: true }).click();
+  await openAdvancedGeneration(frame);
   const panel = frame.getByTestId("owned-workflow");
   await expect(panel).toHaveAttribute("data-workflow-state", "ready"); await expect(panel).toHaveAttribute("data-workflow-dirty", "false");
   await expect(frame.getByRole("combobox", { name: "创作方式", exact: true })).toHaveValue(expected.mode);
@@ -92,6 +92,33 @@ async function restoredWorkflow(frame: Frame, expected: WorkflowExpectation) {
     await expect(frame.getByRole("checkbox", { name: `参与生成 ${index + 1}`, exact: true })).toBeChecked({ checked: ref.participates });
   }
   await expect(frame.getByRole("button", { name: "用途已保存", exact: true })).toBeVisible();
+}
+async function openConversation(frame: Frame) {
+  const toggle = frame.getByRole("button", { name: "创作", exact: true });
+  if (await toggle.getAttribute("aria-expanded") !== "true") await toggle.click();
+  await frame.getByRole("button", { name: "返回设计对话", exact: true }).click();
+  await expect(frame.getByTestId("owned-conversation")).toHaveAttribute("data-conversation-ready", "true");
+}
+async function openAdvancedGeneration(frame: Frame) {
+  await openConversation(frame);
+  const details = frame.getByTestId("owned-advanced-generation");
+  if (await details.getAttribute("open") === null) await details.locator("summary").first().click();
+  await expect(frame.getByRole("textbox", { name: "创作需求", exact: true })).toBeVisible();
+}
+async function openTasks(frame: Frame) {
+  const toggle = frame.getByRole("button", { name: "创作", exact: true });
+  if (await toggle.getAttribute("aria-expanded") !== "true") await toggle.click();
+  const menu = frame.getByRole("button", { name: "任务记录", exact: true });
+  if (!await menu.isVisible()) await frame.getByLabel("工作台更多面板", { exact: true }).click();
+  await menu.click(); await expect(frame.getByRole("button", { name: "刷新任务", exact: true })).toBeVisible();
+}
+async function conversationDraft(userId: string, workspaceId: string, projectId: string, text: string, assetIds: string[] = [], size?: { ratioKey: string; resolutionTier: string }) {
+  return eventually("real persistent conversation draft", async () => {
+    const row = await prisma.studioConversation.findUnique({ where: { workspaceId_userId_projectId: { workspaceId, userId, projectId } } });
+    const value = row?.draft as any;
+    return row && value?.text === text && JSON.stringify(value.references.map((ref: any) => ref.assetId)) === JSON.stringify(assetIds)
+      && (!size || value.sizeSelection?.ratioKey === size.ratioKey && value.sizeSelection?.resolutionTier === size.resolutionTier) ? row : null;
+  });
 }
 async function saveWorkflow(frame: Frame) {
   await expect(frame.getByTestId("owned-workflow")).toHaveAttribute("data-workflow-dirty", "true");
@@ -181,7 +208,9 @@ async function upload(page: Page, frame: Frame, name: string) {
   const rows = await prisma.studioMaterialUpload.findMany({ where: { workspaceId, projectId, userId: fixtureUsers[0], fileName: name, sha256: digest(uploadFixture), sizeBytes: uploadFixture.length },
     select: { taskId: true, projectId: true, mutationId: true, fileName: true, sha256: true, sizeBytes: true } });
   assert.equal(rows.length, 1, "This chosen file must have exactly one real durable upload");
-  const captured = rows[0]!; acceptedUploads.push({ ...captured, workspaceId });
+  const storedRow = rows[0]!;
+  if (storedRow.projectId === null || storedRow.projectId !== projectId) throw new Error("Project upload was not bound to the actual target project");
+  const captured = { ...storedRow, projectId: storedRow.projectId }; acceptedUploads.push({ ...captured, workspaceId });
   uploadReceipts.set(captured.taskId, summarizeUploadReceipt(receipt));
   assert.ok(uploadReceiptMatches(receipt, captured), "Upload receipt must match the actual file's persisted task, project and mutation");
   return receipt;
@@ -298,7 +327,7 @@ try {
     assert.equal(receipt.status(), 201);
     const created = await receipt.json();
     createdBrandIds.push(created.id);
-    await page.waitForURL(url => url.searchParams.get("workspaceId") === created.id && url.hash === "#/home");
+    await page.waitForURL(url => url.searchParams.get("workspaceId") === created.id && url.hash === "#/brand");
     await studioReady(page);
     await expect(page.getByTestId("product-brand-trigger")).toContainText(nextName);
     assert.equal(await prisma.project.count({ where: { workspaceId: created.id } }), 0);
@@ -401,9 +430,53 @@ try {
   const initial = await saved(frame, projectId, items => items.length === 3 && items.some(item => item.props.text === chinese) && items.some(item => item.props.novartKind === "stroke")); assert.ok(initial.items.find(item => item.id === rectangleId)!.props.w > 190);
   check("actual pointer editing, Chinese input and undo/redo save into the real database");
 
+  enter("real conversation draft, server clarification and idempotent message receipt without provider calls");
+  await openConversation(frame);
+  const conversationPanel = frame.getByTestId("owned-conversation");
+  const conversationInput = conversationPanel.getByRole("textbox", { name: "对话设计需求", exact: true });
+  const chatDraftText = `真实对话草稿 ${run}\n不发送、不调用模型。`;
+  await conversationInput.fill(chatDraftText);
+  await conversationPanel.getByRole("combobox", { name: "对话图片比例", exact: true }).selectOption("16:9");
+  await conversationPanel.getByRole("combobox", { name: "对话图片画质", exact: true }).selectOption("2K");
+  const chatDraftRow = await conversationDraft(user.id, workspace.id, projectId, chatDraftText, [], { ratioKey: "16:9", resolutionTier: "2K" });
+  assert.ok(chatDraftRow.draftRevision >= 1);
+  assert.deepEqual((chatDraftRow.draft as any).sizeSelection, { ratioKey: "16:9", resolutionTier: "2K" });
+  await page.reload(); await studioReady(page); frame = await editorFrame(page, projectId); await openConversation(frame);
+  await expect(frame.getByRole("textbox", { name: "对话设计需求", exact: true })).toHaveValue(chatDraftText);
+  const restoredChatDraft = await conversationDraft(user.id, workspace.id, projectId, chatDraftText, [], { ratioKey: "16:9", resolutionTier: "2K" });
+  assert.equal(restoredChatDraft.draftRevision, chatDraftRow.draftRevision, "Restoring a saved conversation draft must not rewrite it");
+  check("real SQL conversation draft and image controls restore after a whole-page refresh");
+  const chatEndpoint = `/api/workspaces/${workspace.id}/projects/${projectId}/studio-conversation`;
+  const ambiguousText = `背景改成蓝色 ${run}`;
+  const compose = frame.getByRole("textbox", { name: "对话设计需求", exact: true });
+  await compose.dispatchEvent("compositionstart"); await compose.fill(ambiguousText); await compose.press("Enter");
+  assert.equal(await prisma.studioConversationMessage.count({ where: { conversationId: chatDraftRow.id } }), 0, "IME composition Enter must not submit a message");
+  await compose.dispatchEvent("compositionend");
+  const chatAcceptedResponse = page.waitForResponse(response => new URL(response.url()).pathname === chatEndpoint && response.request().method() === "POST");
+  await frame.getByTestId("owned-conversation").getByRole("button", { name: "发送", exact: true }).click();
+  const chatAccepted = await chatAcceptedResponse; assert.equal(chatAccepted.status(), 202); const chatReceipt = await chatAccepted.json();
+  assert.equal(chatReceipt.text, ambiguousText); assert.equal(chatReceipt.projectId, projectId);
+  const verifiedConversationId: string = chatReceipt.messageId;
+  const clarified = await eventually("conversation worker must persist clarification before any provider generation", async () => {
+    const message = await prisma.studioConversationMessage.findUnique({ where: { id: verifiedConversationId }, include: { conversation: true } });
+    if (message?.status === "FAILED") throw new Error("Real conversation worker failed before clarification");
+    return message?.status === "CLARIFICATION" ? message : null;
+  });
+  assert.equal(clarified.conversation.workspaceId, workspace.id); assert.equal(clarified.conversation.userId, user.id); assert.equal(clarified.conversation.projectId, projectId);
+  assert.deepEqual(clarified.references, []); assert.equal(clarified.generationRequestId, null); assert.equal((clarified.intent as any).action, "clarify");
+  await expect(frame.getByTestId("owned-conversation")).toContainText((clarified.intent as any).clarification);
+  const originalCount = await prisma.studioConversationMessage.count({ where: { conversationId: chatDraftRow.id } });
+  const repeat = await page.context().request.post(new URL(chatEndpoint, base).href, { headers: { Origin: base.origin, "X-Novart-User": user.id }, data: clarified.input });
+  assert.equal(repeat.status(), 202); assert.equal((await repeat.json()).messageId, verifiedConversationId);
+  const conflicting = await page.context().request.post(new URL(chatEndpoint, base).href, { headers: { Origin: base.origin, "X-Novart-User": user.id }, data: { ...(clarified.input as object), text: "changed same mutation" } });
+  assert.equal(conflicting.status(), 409); assert.equal(await prisma.studioConversationMessage.count({ where: { conversationId: chatDraftRow.id } }), originalCount);
+  assert.equal(await prisma.generation.count({ where: { projectId } }), 0, "Clarification and mutation readback must never create a provider generation");
+  await conversationDraft(user.id, workspace.id, projectId, "");
+  check("real worker clarification, ordered message storage, IME and same-mutation recovery never call a generation provider");
+
   enter("unsent composer autosave and actual page-unload recovery");
   let expectedDraft: DraftExpectation = { prompt: `草稿自动保存 ${run}\n中文第二行，不提交生成。`, ratio: "4:3", quality: "2K" };
-  await frame.getByRole("button", { name: "生成", exact: true }).click();
+  await openAdvancedGeneration(frame);
   await expect(frame.getByRole("textbox", { name: "创作需求", exact: true })).toBeEnabled();
   enter("real product automatic PSD controls do not submit a model task");
   const psdChoice = frame.getByRole("checkbox", { name: "同时准备可编辑PSD", exact: true });
@@ -449,10 +522,39 @@ try {
     enter("accepted upload survives page unload and restores from server receipt"); const detachedName = `owned-detached-${run}.png`, detached = await upload(page, frame, detachedName); await page.goto("about:blank", { waitUntil: "domcontentloaded" });
     const detachedReceipt = await materialReceipt(page, workspace.id, projectId, detached.taskId); await assertMaterial(page, workspace.id, projectId, detachedReceipt.material, uploadFixture);
     await page.goto(new URL(`/studio?workspaceId=${workspace.id}#/workspace/${projectId}`, base).href); await studioReady(page); frame = await editorFrame(page, projectId);
-    await frame.getByRole("button", { name: "任务", exact: true }).click(); await frame.getByRole("button", { name: "刷新任务", exact: true }).click(); const row = frame.locator(`section[data-task-id="${detached.taskId}"]`); await expect(row).toContainText("已存入素材库");
+    await openTasks(frame); await frame.getByRole("button", { name: "刷新任务", exact: true }).click(); const row = frame.locator(`section[data-task-id="${detached.taskId}"]`); await expect(row).toContainText("已存入素材库");
     // The worker may finish before unload: do not intentionally insert a second copy.
     const existing = frame.locator('[data-kind="image"]').filter({ has: frame.locator(`svg image[href="${detachedReceipt.material.url}"]`) }); if (await existing.count() === 0) await row.getByRole("button", { name: "加入画布", exact: true }).click();
     await expect(existing).toHaveCount(1); await assertRenderedImage(existing, detachedReceipt.material.url, { width: 48, height: 32 }); await saved(frame, projectId, items => items.some(item => item.props.url === detachedReceipt.material.url)); check("accepted upload completes without a live page and inserts without reupload");
+
+    enter("real uploaded assets become explicit ordered conversation references and clarify without fees");
+    await openConversation(frame);
+    const layerToggle = frame.getByRole("button", { name: "图层", exact: true });
+    if (await layerToggle.getAttribute("aria-expanded") !== "true") await layerToggle.click();
+    const detachedId = await existing.getAttribute("data-owned-id"); assert.ok(detachedId);
+    await frame.locator(`[data-testid="owned-layer-row"][data-layer-id="${uploadedId}"] .oc-layer-select`).click();
+    await frame.getByRole("button", { name: "加入对话", exact: true }).click();
+    await frame.locator(`[data-testid="owned-layer-row"][data-layer-id="${detachedId}"] .oc-layer-select`).click();
+    await frame.getByRole("button", { name: "加入对话", exact: true }).click();
+    const orderedIds = [receipt.material.assetId, detachedReceipt.material.assetId];
+    const withReferences = await conversationDraft(user.id, workspace.id, projectId, "", orderedIds);
+    assert.deepEqual((withReferences.draft as any).references.map((ref: any) => ref.shapeId), [uploadedId, detachedId]);
+    const multiPrompt = `背景改成蓝色，多图目标待确认 ${run}`;
+    await frame.getByRole("textbox", { name: "对话设计需求", exact: true }).fill(multiPrompt);
+    const multiAcceptedResponse = page.waitForResponse(response => new URL(response.url()).pathname === chatEndpoint && response.request().method() === "POST");
+    await frame.getByTestId("owned-conversation").getByRole("button", { name: "发送", exact: true }).click();
+    const multiAccepted = await multiAcceptedResponse; assert.equal(multiAccepted.status(), 202); const multiReceipt = await multiAccepted.json();
+    const multiMessage = await eventually("real multi-image clarification", async () => {
+      const row = await prisma.studioConversationMessage.findUnique({ where: { id: multiReceipt.messageId } });
+      if (row?.status === "FAILED") throw new Error("Real multi-image conversation worker rejected its trusted references");
+      return row?.status === "CLARIFICATION" ? row : null;
+    });
+    assert.deepEqual((multiMessage.references as any[]).map(ref => ref.assetId), orderedIds);
+    assert.equal(multiMessage.generationRequestId, null); assert.equal((multiMessage.intent as any).action, "clarify");
+    assert.equal(await prisma.generation.count({ where: { projectId } }), 0);
+    await conversationDraft(user.id, workspace.id, projectId, "", orderedIds);
+    realOrderedConversationReferences = true;
+    check("actual worker-uploaded references preserve asset/shape identity and order while ambiguous target selection creates no paid task");
 
     enter("real uploaded-image purposes and explicit modification target persist");
     assert.ok(uploadedId);
@@ -494,7 +596,7 @@ try {
   } else console.log("SKIP real upload acceptance: enable WORKBENCH_TEST_MATERIAL_UPLOAD with disposable storage/worker.");
 
   if (process.env.WORKBENCH_TEST_GENERATION === "1") {
-    enter("real provider, lost-202 confirmation and manual insertion"); await frame.getByRole("button", { name: "生成", exact: true }).click(); const prompt = `Create one violet geometric poster on white with no text. Acceptance ${run}`;
+    enter("real provider, lost-202 confirmation and manual insertion"); await openAdvancedGeneration(frame); const prompt = `Create one violet geometric poster on white with no text. Acceptance ${run}`;
     expectedDraft = { prompt, ratio: "1:1", quality: "1K" };
     await frame.getByRole("textbox", { name: "创作需求", exact: true }).fill(prompt); await frame.getByRole("combobox", { name: "图片比例", exact: true }).selectOption("1:1"); await frame.getByRole("combobox", { name: "图片画质", exact: true }).selectOption("1K");
     let lost = false; const mutations: string[] = []; const fault = async (route: Route) => { if (route.request().method() !== "POST") return route.continue(); mutations.push(String(route.request().postDataJSON().mutationId));
@@ -509,7 +611,7 @@ try {
     assert.equal(complete.results.length, 1); const result = complete.results[0], bytes = await assertMaterial(page, workspace.id, projectId, result);
     const version = await prisma.generationVersion.findUniqueOrThrow({ where: { id: result.versionId } }); assert.equal(version.generationId, accepted.generationId); const gen = await prisma.generation.findUniqueOrThrow({ where: { id: accepted.generationId } }); assert.equal(gen.workspaceId, workspace.id); assert.equal(gen.projectId, projectId); assert.equal(gen.status, "SUCCEEDED");
     assert.equal(await prisma.generation.count({ where: { projectId } }), 1, "Lost response must not create a second paid generation"); const dimensions = await sharp(bytes).metadata(); assert.deepEqual([dimensions.width, dimensions.height], [result.width, result.height]);
-    const image = frame.locator('[data-kind="image"]').filter({ has: frame.locator(`svg image[href="${result.url}"]`) }); await expect(image).toHaveCount(0); await frame.getByRole("button", { name: "刷新任务", exact: true }).click(); const row = frame.locator(`section[data-task-id="${accepted.requestId}"]`);
+    const image = frame.locator('[data-kind="image"]').filter({ has: frame.locator(`svg image[href="${result.url}"]`) }); await expect(image).toHaveCount(0); await openTasks(frame); await frame.getByRole("button", { name: "刷新任务", exact: true }).click(); const row = frame.locator(`section[data-task-id="${accepted.requestId}"]`);
     await expect(row).toContainText("图片已生成并保存"); await row.getByRole("button", { name: "加入画布", exact: true }).click(); await expect(image).toHaveCount(1); await assertRenderedImage(image, result.url); await frame.getByRole("button", { name: "撤销", exact: true }).click(); await expect(image).toHaveCount(0); await frame.getByRole("button", { name: "重做", exact: true }).click(); await expect(image).toHaveCount(1);
     await saved(frame, projectId, items => items.some(item => item.props.url === result.url)); check("real provider, idempotent receipt, persisted bytes and manually inserted undoable result");
   } else console.log("SKIP real generation acceptance: no provider result is claimed by this run.");
@@ -534,6 +636,13 @@ try {
   check("same-origin homepage and existing owned canvas open with service workers blocked");
   for (const item of finalShapes) { const node = frame.locator(`[data-owned-id="${item.id}"]`); await expect(node).toHaveCount(1); if (item.type === "c-image") await assertRenderedImage(node, item.props.url); }
   await restoredDraft(frame, expectedDraft); assert.equal((await persistedDraft(user.id, projectId, expectedDraft)).revision, finalDraft.revision);
+  await openConversation(frame);
+  await expect(frame.getByTestId("owned-conversation").locator(`[data-message-id="${verifiedConversationId}"]`)).toContainText(ambiguousText);
+  const conversationRead = await fresh.context().request.get(new URL(`${chatEndpoint}?messageId=${verifiedConversationId}`, base).href);
+  assert.equal(conversationRead.status(), 200); const serverMessage = await conversationRead.json();
+  assert.equal(serverMessage.status, "CLARIFICATION"); assert.equal(serverMessage.generation, null);
+  realConversationPersistence = true;
+  check("fresh authenticated browser restores persistent conversation history without local storage or model calls");
   realDraftPersistence = true; deferred.splice(deferred.indexOf("Unsent creation draft autosave/pagehide recovery"), 1);
   check("fresh browser restores the exact server draft without browser storage or a revision rewrite");
   if (expectedWorkflow && finalWorkflowRevision !== undefined) {
@@ -545,9 +654,17 @@ try {
 
   enter("direct route membership and archived-project protection"); const outsiderEmail = `owned-outsider-${run}@example.invalid`; privateValues.push(outsiderEmail); const outsider = await prisma.user.create({ data: { email: outsiderEmail, passwordHash: await hashPassword(password) } }); fixtureUsers.push(outsider.id);
   const unauthorized = await newPage(); await login(unauthorized, outsiderEmail, password, `/studio-editor?workspaceId=${workspace.id}&projectId=${projectId}`); await expect(unauthorized.getByTestId("owned-editor")).toHaveCount(0); await expect(unauthorized.getByTestId("owned-editor-access-error")).toBeVisible(); const denied = await unauthorized.context().request.get(new URL(`/api/workspaces/${workspace.id}/projects/${projectId}/editor-document`, base).href); assert.equal(denied.status(), 404);
+  const deniedConversation = await unauthorized.context().request.get(new URL(`${chatEndpoint}?messageId=${verifiedConversationId}`, base).href);
+  assert.ok([403, 404].includes(deniedConversation.status()), "An outsider cannot read another brand's conversation messages");
+  const crossBrandConversation = await fresh.context().request.get(new URL(`/api/workspaces/${createdBrandIds[0]}/projects/${projectId}/studio-conversation?messageId=${verifiedConversationId}`, base).href);
+  assert.equal(crossBrandConversation.status(), 404, "Owned brands cannot resolve another brand's project/conversation by ID");
   const archived = await fresh.context().request.patch(new URL(`/api/workspaces/${workspace.id}/projects/${projectId}`, base).href, { headers: { Origin: base.origin }, data: { archive: true } }); assert.equal(archived.status(), 200);
   await fresh.goto(new URL(`/studio-editor?workspaceId=${workspace.id}&projectId=${projectId}`, base).href); await expect(fresh.getByTestId("owned-canvas")).toBeVisible(); await expect(fresh.getByRole("button", { name: "画笔", exact: true })).toBeDisabled(); await expect(fresh.getByRole("button", { name: "上传图片", exact: true }).first()).toBeDisabled();
   const refused = await fresh.context().request.put(new URL(`/api/workspaces/${workspace.id}/projects/${projectId}/editor-document`, base).href, { headers: { Origin: base.origin }, data: { format: "novart-native-v1", canvas: finalRow.canvas, revision: finalRow.revision, mutationId: randomUUID() } }); assert.equal(refused.status(), 409); assert.equal((await prisma.editorDocument.findUniqueOrThrow({ where: { projectId } })).checksum, finalRow.checksum); check("direct route membership and archived read-only protections remain enforced");
+  const refusedChat = await fresh.context().request.post(new URL(chatEndpoint, base).href, { headers: { Origin: base.origin, "X-Novart-User": user.id }, data: { ...(clarified.input as object), mutationId: randomUUID() } });
+  assert.equal(refusedChat.status(), 409, "Archived projects cannot accept conversation generation intents");
+  assert.equal(await prisma.generation.count({ where: { projectId } }), process.env.WORKBENCH_TEST_GENERATION === "1" ? 1 : 0);
+  check("real conversation API enforces outsider, cross-brand project and archived-write isolation");
 
   // Use this browser suite's own real brand/accounts, never the parallel HTTP
   // runner's fixtures. These journeys run after generation so confirming a
@@ -650,7 +767,7 @@ try {
   realKnowledge = true; knowledgeCheck("real-knowledge-viewer-read-only-page-hides-write-controls");
 
   assert.deepEqual(networkProblems, [], "Owned frame must not request captured SDK or remote business services"); assert.deepEqual(browserErrors, []); assert.equal(await prisma.generation.count({ where: { projectId } }), process.env.WORKBENCH_TEST_GENERATION === "1" ? 1 : 0);
-  await mkdir(artifacts, { recursive: true }); await writeFile(path.join(artifacts, "acceptance.json"), JSON.stringify({ editor: "novart-owned", checksPassed: passed, realDatabase: true, realUploads: process.env.WORKBENCH_TEST_MATERIAL_UPLOAD === "1", realHomepageHandoff, realDraftPersistence, realWorkflowPersistence, realKnowledge, knowledgeChecks, realBrands, realGeneration: process.env.WORKBENCH_TEST_GENERATION === "1", realImageModification: false, realExactGeneration: false, realDecomposition: false, deferred }, null, 2));
+  await mkdir(artifacts, { recursive: true }); await writeFile(path.join(artifacts, "acceptance.json"), JSON.stringify({ editor: "novart-owned", checksPassed: passed, realDatabase: true, realUploads: process.env.WORKBENCH_TEST_MATERIAL_UPLOAD === "1", realHomepageHandoff, realDraftPersistence, realWorkflowPersistence, realConversationPersistence, realOrderedConversationReferences, realConversationParser: "safe-rules-v1", realConversationGeneration: false, realKnowledge, knowledgeChecks, realBrands, realGeneration: process.env.WORKBENCH_TEST_GENERATION === "1", realImageModification: false, realExactGeneration: false, realDecomposition: false, deferred }, null, 2));
   console.log(`Owned studio UI: ${passed} checks passed against real app/database. Deferred UI journeys: ${deferred.join("; ")}`);
 } catch (error) {
   const uploads = await uploadFailureEvidence();

@@ -12,6 +12,11 @@ import { requireArtifactWrite } from "./studio-generation-artifacts";
 import { deriveStudioExactLayout } from "./studio-exact-geometry";
 import { resolveStudioEditSource, inspectStudioEditSource, assertStudioEditNotModelReference, type StudioEditSourceSnapshot } from "./studio-generation-edit";
 import { generatedPsdIntent } from "./studio-generated-psd-state";
+import type { StudioConversationReference, StudioConversationIntent, StudioImageToolSpec } from "@brandai/contracts";
+
+/** Only a server-persisted conversation may supply this snapshot. It is never
+ * accepted as part of StudioGenerationInput or from browser JSON. */
+export type StudioConversationAcceptance = { canvas: string; references: StudioConversationReference[]; intent: StudioConversationIntent; imageTool?: StudioImageToolSpec; imageToolInputHash?: string };
 
 function canonical(value: unknown): unknown {
   if (value instanceof Date) return value.toISOString();
@@ -29,15 +34,21 @@ export async function requireStudioGenerationServices() {
 
 /** Read authoritative saved workflow and native shapes under the same Project
  * lock as document saves. SHA is only a consistency check, never an owner ID. */
-export async function prepareStudioGeneration(db: Prisma.TransactionClient, ws: string, user: string, input: StudioGenerationInput) {
+export async function prepareStudioGeneration(db: Prisma.TransactionClient, ws: string, user: string, input: StudioGenerationInput, accepted?: StudioConversationAcceptance) {
   await requireArtifactWrite(db, ws, input.projectId, user);
-  const [state, document] = await Promise.all([
+  const [state, currentDocument] = await Promise.all([
     db.workbenchProjectState.findUnique({ where: { projectId: input.projectId } }),
     db.editorDocument.findUnique({ where: { projectId: input.projectId } }),
   ]);
-  if ((state && state.workspaceId !== ws) || (document && document.workspaceId !== ws)) throw new ApiException(404, "项目内容不存在。");
-  if ((state?.workflowRevision ?? 0) !== input.workflowRevision || (document?.revision ?? 0) !== input.documentRevision) throw new ApiException(409, "画布或素材用途已变更，请保存最新内容后重新提交。");
-  const workflow = StudioWorkflowSaveInput.parse({ projectId: input.projectId, revision: state?.workflowRevision ?? 0,
+  if ((state && state.workspaceId !== ws) || (currentDocument && currentDocument.workspaceId !== ws)) throw new ApiException(404, "项目内容不存在。");
+  if (!accepted && ((state?.workflowRevision ?? 0) !== input.workflowRevision || (currentDocument?.revision ?? 0) !== input.documentRevision)) throw new ApiException(409, "画布或素材用途已变更，请保存最新内容后重新提交。");
+  const document = accepted ? { canvas: accepted.canvas } : currentDocument;
+  const selectedTarget = accepted?.references.find(ref => ref.referenceId === accepted.intent.targetReferenceId);
+  const workflow = StudioWorkflowSaveInput.parse(accepted ? { projectId: input.projectId, revision: input.workflowRevision,
+    mode: accepted.intent.action === "modify" ? "modify" : "generate",
+    target: selectedTarget?.shapeId ? { shapeId: selectedTarget.shapeId, assetSha256: selectedTarget.assetSha256 } : null,
+    references: accepted.references.filter(ref => accepted.intent.referenceIds.includes(ref.referenceId)).map(ref => ({ shapeId: ref.shapeId ?? null, assetSha256: ref.assetSha256, purpose: ref.purpose, participates: true }))
+  } : { projectId: input.projectId, revision: state?.workflowRevision ?? 0,
     mode: state?.workflowMode ?? "generate", target: state?.workflowTarget ?? null, references: state?.workflowReferences ?? [] });
   const modifying = workflow.mode === "modify";
   if (modifying && !workflow.target) throw new ApiException(422, "请明确选择并保存一张要修改的图片。");
@@ -46,18 +57,22 @@ export async function prepareStudioGeneration(db: Prisma.TransactionClient, ws: 
   const hasExact = active.some(ref => ref.purpose === "EXACT");
   if (!modifying && hasExact && !input.outputFrameId) throw new ApiException(422, "严格保留素材需要明确选择输出画框，请选择后重试。");
   if ((modifying || !hasExact) && input.outputFrameId) throw new ApiException(422, "当前操作不使用输出画框，请清除选框后提交。");
-  if (input.sizeSelection.ratioKey === "custom" || input.sizeSelection.customRatio) throw new ApiException(422, "当前生成仅支持预设比例，请选择预设比例后重试。");
+  if (!accepted && (input.sizeSelection.ratioKey === "custom" || input.sizeSelection.customRatio)) throw new ApiException(422, "当前生成仅支持预设比例，请选择预设比例后重试。");
   const materials = active.length || modifying ? await listStudioProjectMaterials(db, ws, input.projectId) : [];
   const view = workflowAssets(input.projectId, document?.canvas ?? "", materials);
-  if (workflowIssues(workflow, view.assets).some(issue => issue.blocking)) throw new ApiException(422, "参与生成的素材已删除、替换或不可用，请重新选择。");
+  if (workflowIssues({ ...workflow, references: workflow.references.filter(ref => !accepted || ref.shapeId !== null) }, view.assets).some(issue => issue.blocking)) throw new ApiException(422, "参与生成的素材已删除、替换或不可用，请重新选择。");
   const store = document?.canvas && (active.length || modifying) ? JSON.parse(gunzipSync(Buffer.from(document.canvas.slice(EDITOR_DOCUMENT_PREFIX.length), "base64"), { maxOutputLength: EDITOR_DOCUMENT_MAX_DECODED_BYTES }).toString("utf8")).tldrawSnapshot.document.store : {};
-  const edit = modifying ? await resolveStudioEditSource(db, ws, input.projectId, workflow.target!, document?.canvas ?? "") : null;
+  if (accepted?.imageTool && (!modifying || active.length)) throw new ApiException(422, "图片工具只能操作明确的一张原图，不能携带其他参考。");
+  const edit = modifying ? accepted?.imageTool
+    ? await resolveStudioEditSource(db, ws, input.projectId, workflow.target!, document?.canvas ?? "", true)
+    : await resolveStudioEditSource(db, ws, input.projectId, workflow.target!, document?.canvas ?? "") : null;
   const expectedDigests: Array<[string, string]> = [];
   const exactReferences: Array<{ shapeId: string; assetId: string; sha256: string; width: number; height: number }> = [];
   const selected = active.map((ref, order) => {
     const shape = ref.shapeId ? view.assets.find(item => item.shapeId === ref.shapeId) : view.assets.find(item => item.assetSha256 === ref.assetSha256);
     const url = shape ? store[shape.shapeId]?.props?.url : null;
-    const candidates = [...new Map(materials.filter(item => item.url === url && item.sha256 === ref.assetSha256).map(item => [item.assetId, item])).values()];
+    const acceptedRef = accepted?.references.find(item => item.shapeId === (ref.shapeId ?? undefined) && item.assetSha256 === ref.assetSha256);
+    const candidates = [...new Map(materials.filter(item => item.sha256 === ref.assetSha256 && (acceptedRef ? item.assetId === acceptedRef.assetId && (!ref.shapeId || item.url === url) : item.url === url)).map(item => [item.assetId, item])).values()];
     if (candidates.length !== 1) throw new ApiException(422, "素材关联不明确，请重新选择画布图片。");
     // Freeze the persistent material's digest, not a browser-supplied SHA.
     expectedDigests.push([candidates[0]!.assetId, candidates[0]!.sha256]);
@@ -71,8 +86,8 @@ export async function prepareStudioGeneration(db: Prisma.TransactionClient, ws: 
     return { assetId: candidates[0]!.assetId, mode: ref.purpose, order };
   });
   if (new Set(selected.map(item => item.assetId)).size !== selected.length) throw new ApiException(422, "同一素材被重复选择，请明确保留一个用途。");
-  const size = resolveGenerationSize(input.sizeSelection);
-  const inherited = edit?.postprocess?.exactLayout;
+  const size = accepted?.intent.requestedSize ?? resolveGenerationSize(input.sizeSelection);
+  const inherited = accepted?.imageTool ? undefined : edit?.postprocess?.exactLayout;
   if (edit) assertStudioEditNotModelReference(edit.snapshot, inherited, selected.filter(item => item.mode !== "EXACT").map(item => ({
     assetId: item.assetId, sha256: expectedDigests.find(([assetId]) => assetId === item.assetId)?.[1],
   })));
@@ -93,18 +108,23 @@ export async function prepareStudioGeneration(db: Prisma.TransactionClient, ws: 
   if (usages.length > 8 || new Set(usages.map(item => item.assetId)).size !== usages.length) throw new ApiException(422, "改图参考与继承的严格保留素材重复或合计超过8张，请调整素材用途。");
   const prepared = await prepareGeneration(ws, { ...CreateGenerationInput.parse({ projectId: input.projectId, sceneType: "SOCIAL_POSTER", sellingPoint: input.prompt,
     scene: "", chatDisplayText: "", versionCount: 1, textMode: "direct", sizeSelection: input.sizeSelection, assetUsages: usages }), chatDisplayText: input.prompt }, { client: db, persistHardBlock: false });
-  const jobData = { ...prepared.jobData, ...generatedPsdIntent(input.psdLayerCount, input.psdLayerMode), studioExpectedAssetSha256: Object.fromEntries(expectedDigests), ...(exactLayout ? { studioExactLayout: exactLayout } : {}), ...(edit ? { studioEdit: edit.snapshot } : {}) };
+  const jobData = { ...prepared.jobData, ...(accepted ? { targets: [{ key: "conversation", label: "对话输出", width: size.width, height: size.height }],
+    studioConversationSize: { requestedSize: { width: size.width, height: size.height }, sizeSource: accepted.intent.sizeSource, method: "deterministic-contain" } } : {}),
+    ...generatedPsdIntent(input.psdLayerCount, input.psdLayerMode), ...(accepted?.imageTool ? { studioImageTool: accepted.imageTool, studioImageToolInputHash: accepted.imageToolInputHash } : {}), studioExpectedAssetSha256: Object.fromEntries(expectedDigests), ...(exactLayout ? { studioExactLayout: exactLayout } : {}), ...(edit ? { studioEdit: edit.snapshot } : {}) };
   return { ...prepared, jobData, contextHash: await studioGenerationContextHash(db, ws, input.projectId, jobData) };
 }
 
 /** A queued intent keeps its accepted selection while the user keeps editing.
  * Revalidate the authoritative sources and brand policy, not later canvas revisions. */
-export async function studioGenerationContextHash(db: Prisma.TransactionClient, ws: string, projectId: string, job: { assetUsages?: {assetId: string}[]; generationId?: string; studioExpectedAssetSha256?: Record<string, string>; studioEdit?: StudioEditSourceSnapshot; studioGeneratedPsd?: unknown }) {
+export async function studioGenerationContextHash(db: Prisma.TransactionClient, ws: string, projectId: string, job: { assetUsages?: {assetId: string}[]; generationId?: string; studioExpectedAssetSha256?: Record<string, string>; studioEdit?: StudioEditSourceSnapshot; studioGeneratedPsd?: unknown; studioImageTool?: StudioImageToolSpec }) {
   // The PSD choice is immutable and remains in the context hash. Its terminal
   // continuation journal is operational state, never an accepted AI input.
   const { generationId: _generationId, studioGeneratedPsd: _continuationJournal, ...snapshot } = job;
   const usages = job.assetUsages ?? [];
-  if (job.studioEdit) await inspectStudioEditSource(db, ws, projectId, job.studioEdit);
+  if (job.studioEdit) {
+    if (job.studioImageTool) await inspectStudioEditSource(db, ws, projectId, job.studioEdit, true);
+    else await inspectStudioEditSource(db, ws, projectId, job.studioEdit);
+  }
   const [rules, prohibitions, assets] = await Promise.all([
     getConfirmedRules(ws, { order: "recency", respectKitAvailability: true, client: db }),
     db.prohibitionRule.findMany({ where: { workspaceId: ws, status: "ACTIVE", affectsGeneration: true }, orderBy: { id: "asc" } }),

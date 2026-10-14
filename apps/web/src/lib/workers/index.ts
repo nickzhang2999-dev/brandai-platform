@@ -23,9 +23,11 @@ import { createSummarizeWorker } from "./summarize.worker";
 import { createDecomposeWorker } from "./decompose.worker";
 import { createImagePreviewWorker } from "./image-preview.worker";
 import { createStudioMaterialWorker } from "./studio-materials.worker";
+import { createStudioBrandMaterialWorker } from "./studio-brand-materials.worker";
 import { createStudioGenerationArtifactWorker } from "./studio-generation-artifacts.worker";
 import { createStudioGenerationComplianceWorker } from "./studio-generation-compliance.worker";
 import { createStudioDecompositionWorker } from "./studio-decomposition.worker";
+import { createStudioConversationWorker, dispatchStudioConversations } from "./studio-conversation.worker";
 import { sweepStaleGenerations } from "@/lib/generations";
 import { dispatchStudioGenerations } from "@/lib/studio-generation";
 import { dispatchStudioGeneratedPsds } from "@/lib/studio-generated-psd";
@@ -87,9 +89,11 @@ try {
     createDecomposeWorker(),
     createImagePreviewWorker(),
     createStudioMaterialWorker(),
+    createStudioBrandMaterialWorker(),
     createStudioGenerationArtifactWorker(),
     createStudioGenerationComplianceWorker(),
     createStudioDecompositionWorker(),
+    createStudioConversationWorker(),
   );
   workersReady = true;
   console.log(`[workers] started: ${workers.length} worker(s)`);
@@ -126,7 +130,7 @@ try {
   const dispatchStudio = async () => {
     if (dispatchingStudio) return;
     dispatchingStudio = true;
-    try { await dispatchStudioGenerations(); await dispatchStudioGeneratedPsds(); }
+    try { await dispatchStudioConversations(); await dispatchStudioGenerations(); await dispatchStudioGeneratedPsds(); }
     catch { console.error("[studio-generation] outbox recovery unavailable"); }
     finally { dispatchingStudio = false; }
   };

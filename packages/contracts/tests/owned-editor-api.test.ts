@@ -12,6 +12,22 @@ const setup = (fetcher: typeof fetch, signal?: AbortSignal) => createOwnedEditor
 afterEach(() => vi.useRealTimers());
 
 describe("owned editor product API", () => {
+  it.each(["project", "image", "mutation"])("preserves a paid image-tool journal after accepted %s receipt corruption", async mismatch => {
+    const task = { mode: "modify", requestId: "tool-a", projectId: identity.projectId, mutationId, generationId: "g-a", status: "SUCCEEDED", progress: null,
+      expiresAt: "2099-01-01T00:00:00.000Z", archiveExpiresAt: "2099-01-01T00:00:00.000Z", archiveProcessingExpiresAt: null, displayText: "tool request", resultState: "READY",
+      results: [{ versionId: "version-a", assetId: material.assetId, assetSha256: material.assetSha256, width: 10, height: 20, mimeType: "image/png", url: material.url }], error: null, archiveError: null, canRetryArchive: false };
+    if (mismatch === "project") task.projectId = "foreign";
+    if (mismatch === "image") task.results[0]!.url = "/api/workspaces/foreign/assets/asset-a/raw";
+    if (mismatch === "mutation") task.mutationId = "4b106a7f-d393-49c2-a396-511d8f010102";
+    const fetcher = vi.fn().mockResolvedValue(response(task, 202));
+    await expect(setup(fetcher).submitImageTool({ projectId: identity.projectId, mutationId, documentRevision: 0, workflowRevision: 0, operation: "remove-background", target: { shapeId: "shape:source", assetSha256: "a".repeat(64) } })).rejects.toMatchObject({ uncertain: true, status: null, code: "INVALID_RECEIPT" });
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
+  it("retains the original upload identity after an accepted foreign-project receipt", async () => {
+    const fetcher = vi.fn().mockResolvedValue(response({ ...upload, projectId: "foreign" }, 202));
+    await expect(setup(fetcher).uploadFile(new File([new Uint8Array([1])], "fixture.png", { type: "image/png" }), mutationId)).rejects.toMatchObject({ uncertain: true, code: "INVALID_RECEIPT" });
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
   it("pins document requests to the server page identity with cookie authentication", async () => {
     const fetcher = vi.fn().mockResolvedValue(response(document));
     await setup(fetcher).session.load();

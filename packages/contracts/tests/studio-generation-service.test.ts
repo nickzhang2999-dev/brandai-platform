@@ -19,6 +19,24 @@ beforeEach(() => {
   f.tx.mockImplementation(fn => fn(tx)); f.results.mockResolvedValue({ resultState: "NOT_REQUESTED", results: [], archiveError: null, archiveExpiresAt: null, archiveProcessingExpiresAt: null, canRetryArchive: false });
 });
 describe("generation acceptance and DB outbox (transaction fixtures)", () => {
+  it("refuses a lost conversation lease before quota or generation creation", async () => {
+    f.query.mockResolvedValue([]);
+    await expect(submitStudioGeneration("w", "u", input, undefined, { messageId: "message", attemptToken: "expired-token" })).rejects.toMatchObject({ status: 409 });
+    expect(f.quota).not.toHaveBeenCalled(); expect(f.create).not.toHaveBeenCalled(); expect(f.enqueue).not.toHaveBeenCalled();
+  });
+  it("rechecks conversation TTL inside the intake transaction immediately before quota", async () => {
+    let checks = 0;
+    f.query.mockImplementation(async (sql: TemplateStringsArray) => sql.join("").includes('"StudioConversationMessage"') ? ++checks === 1 ? [{ id: "message" }] : [] : []);
+    await expect(submitStudioGeneration("w", "u", input, undefined, { messageId: "message", attemptToken: "lease" })).rejects.toMatchObject({ status: 409 });
+    expect(checks).toBe(2); expect(f.prepare).toHaveBeenCalledOnce(); expect(f.quota).not.toHaveBeenCalled(); expect(f.create).not.toHaveBeenCalled();
+  });
+  it("returns only a schema-validated source shape from durable edited job data", async () => {
+    f.prepare.mockResolvedValue({contextHash:"context",generationData:{projectId:"p",workspaceId:"w"},jobData:{workspaceId:"w",versionCount:1,studioEdit:{shapeId:"shape:source"}}});
+    const view=await submitStudioGeneration("w","u",input);
+    expect(view).toMatchObject({mode:"modify",sourceShapeId:"shape:source"});
+    row.jobData.studioEdit.shapeId="invalid source";f.many.mockImplementation(async({where})=>where.userId?[row]:[]);
+    const history:any=await readStudioGeneration("w","u",{projectId:"p"});expect(history.requests[0]).not.toHaveProperty("sourceShapeId");
+  });
   it("accepts once with quota and receipt in the exact same SERIALIZABLE transaction even when Redis is down", async () => {
     const first = await submitStudioGeneration("w", "u", input);
     expect(first).toMatchObject({ status: "PENDING", projectId: "p", generationId: "g" });

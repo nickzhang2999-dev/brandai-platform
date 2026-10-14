@@ -84,7 +84,7 @@ describe("shared knowledge UI (local interaction only, no provider)", () => {
     fireEvent.click(screen.getByRole("button", { name: "重试原导入请求" }));
     await waitFor(() => expect(onImported).toHaveBeenCalledOnce());
     const requests = api.mock.calls.filter(([, init]) => init?.method === "POST");
-    expect(requests).toHaveLength(2); expect(requests[1][1]?.body).toBe(requests[0][1]?.body);
-    expect(JSON.parse(String(requests[1][1]?.body)).expectedDraftRevision).toBe(7);
+    expect(requests).toHaveLength(2); expect(requests[1]![1]?.body).toBe(requests[0]![1]?.body);
+    expect(JSON.parse(String(requests[1]![1]?.body)).expectedDraftRevision).toBe(7);
   });
 });

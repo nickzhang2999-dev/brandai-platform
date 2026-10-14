@@ -29,6 +29,7 @@ export const StudioGenerationRetryInput = StudioGenerationQuery.required();
 export const StudioGenerationArchiveRetryInput = StudioGenerationRetryInput;
 export const StudioGenerationView = z.object({
   mode: z.enum(["generate", "modify"]).default("generate"),
+  sourceShapeId: StudioWorkflowTarget.shape.shapeId.optional(),
   psdLayerCount: z.number().int().min(2).max(10).nullable().default(null),
   psdLayerMode: z.enum(["AUTO", "MANUAL"]).nullable().default(null),
   requestId: NativeProjectQueryInput.shape.projectId, mutationId: z.string().uuid(),
@@ -43,5 +44,7 @@ export const StudioGenerationView = z.object({
     mimeType: z.enum(["image/png", "image/jpeg", "image/webp"]),
     url: z.string().regex(/^\/api\/workspaces\/[a-zA-Z0-9_-]+\/assets\/[a-zA-Z0-9_-]+\/raw$/).refine(v => !v.includes("\n")),
   }).strict()), error: z.string().nullable(), archiveError: z.string().nullable(), canRetryArchive: z.boolean(),
-}).strict();
+}).strict().superRefine((value, context) => {
+  if (value.sourceShapeId !== undefined && value.mode !== "modify") context.addIssue({ code: "custom", path: ["sourceShapeId"], message: "Only modified results have a source shape" });
+});
 export type StudioGenerationInput = z.infer<typeof StudioGenerationInput>;

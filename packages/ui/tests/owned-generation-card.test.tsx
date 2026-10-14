@@ -42,7 +42,7 @@ describe("owned generation card explicit actions", () => {
     const f = fixture(task({ psdLayerMode: "AUTO" }), true, () => response({ projectId: "fixture-project", requestId: "fixture-request", requested: true, status: "PENDING", error: null, decomposition: null, downloadUrl: null }));
     await settle(); expect(screen.getByTestId("owned-generated-psd").textContent).toContain("按内容自动分层");
     expect(screen.getByTestId("owned-generated-psd").textContent).not.toContain("2 层");
-    expect(f.fetcher).toHaveBeenCalledTimes(1); expect(f.fetcher.mock.calls[0]![1].method).not.toBe("POST");
+    expect(f.fetcher).toHaveBeenCalledTimes(1); expect(f.fetcher.mock.calls[0]![1]!.method).not.toBe("POST");
     expect(f.submit).not.toHaveBeenCalled(); expect(f.onInsert).not.toHaveBeenCalled();
   });
   it("shows automatic-analysis failure while retaining the usable original image action", async () => {

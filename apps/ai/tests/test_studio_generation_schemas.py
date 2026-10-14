@@ -33,5 +33,8 @@ def test_history_and_explicit_archive_retry():
 def test_receipt_does_not_imply_public_image_before_archive():
     receipt = dict(requestId="r",mutationId=body()["mutationId"],projectId="p",generationId="g",status="SUCCEEDED",progress=None,expiresAt="2026-10-09T00:06:00Z",archiveExpiresAt="2026-10-10T00:06:00Z",archiveProcessingExpiresAt=None,displayText="tree",resultState="FAILED",results=[],error=None,archiveError="retry archive",canRetryArchive=True)
     assert StudioGenerationView.model_validate(receipt).canRetryArchive
+    assert StudioGenerationView.model_validate(receipt | dict(mode="modify", sourceShapeId="shape:original")).sourceShapeId == "shape:original"
+    with pytest.raises(ValidationError): StudioGenerationView.model_validate(receipt | dict(sourceShapeId="shape:original"))
+    with pytest.raises(ValidationError): StudioGenerationView.model_validate(receipt | dict(mode="modify", sourceShapeId=None))
     with pytest.raises(ValidationError): StudioGenerationView.model_validate(receipt | dict(progress=99))
     with pytest.raises(ValidationError): StudioGenerationView.model_validate(receipt | dict(results=[dict(versionId="v",assetId="a",assetSha256="a"*64,width=10,height=20,mimeType="image/png",url="blob:local")]))

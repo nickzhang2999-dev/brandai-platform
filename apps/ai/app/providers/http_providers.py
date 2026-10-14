@@ -259,6 +259,7 @@ _EDIT_OP_PROMPTS = {
     "REMOVE_ELEMENT": "Remove an element from the image",
     "OUTPAINT": "Extend the image outward (outpaint)",
     "INPAINT": "Inpaint and refine the masked region",
+    "REMOVE_BACKGROUND": "Remove only the background, preserve the foreground and output a transparent PNG",
     "RESIZE": "Re-render the image at the requested size",
 }
 
@@ -664,14 +665,15 @@ class HttpImageProvider(ImageProvider):
         error: str | None = None
         try:
             async with self._client() as c:
-                if self.kind == "openai":
+                if self.kind == "openai" or (payload.get("studioImageTool") and _is_gpt_image_2_model(self.model)):
                     # OpenAI /images/edits 是 multipart form-data:image 文件字节 +
                     # 自然语言 prompt(JSON 体会 400)。把 op + payload 指令拼成 prompt,
                     # 源图取字节作为文件上传;gpt-image-1 返回 b64。
                     img_bytes = await self._load_image_bytes(image_url)
-                    size = _snap_openai_size(
+                    size = (_resolve_openai_size if payload.get("studioImageTool") else lambda w, h, _model: _snap_openai_size(w, h))(
                         int(payload.get("width", 1024) or 1024),
                         int(payload.get("height", 1024) or 1024),
+                        self.model,
                     )
                     files: dict[str, Any] = {
                         "image": ("image.png", img_bytes, "image/png"),
@@ -694,6 +696,8 @@ class HttpImageProvider(ImageProvider):
                             "model": self.model or "gpt-image-2",
                             "size": size,
                             "n": "1",
+                            **({"output_format": "png"} if payload.get("studioImageTool") else {}),
+                            **({"background": "transparent"} if payload.get("studioImageTool") == "remove-background" else {}),
                         },
                     )
                 else:

@@ -23,6 +23,12 @@ beforeEach(() => vi.stubGlobal("createImageBitmap", vi.fn(async (blob: Blob) => 
 afterEach(() => vi.unstubAllGlobals());
 
 describe("owned tools self-contained export", () => {
+  it("lets a single-image raster tool omit group siblings without changing normal group export", () => {
+    const document = scene([item("image", { kind: "image", url: "/image.png", groupId: "group:one" }), item("text", { kind: "text", text: "sibling", groupId: "group:one" })]);
+    expect(selectOwnedExportScene(document, { itemIds: ["shape:image"] }).document.items).toHaveLength(2);
+    expect(selectOwnedExportScene(document, { itemIds: ["shape:image"], expandGroups: false }).document.items.map(value => value.id)).toEqual(["shape:image"]);
+    expect(document.items).toHaveLength(2);
+  });
   it("round-trips font, line, memberships and hidden state before exporting the same scene", async () => {
     const document = scene([
       item("frame", { kind: "frame", w: 300, h: 200 }),

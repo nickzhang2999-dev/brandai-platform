@@ -10,6 +10,7 @@ import { listStudioProjectMaterials } from "./studio-project-materials";
 import { StudioExactSnapshot, studioExactIntent } from "./studio-generation-exact";
 import { readStudioCleanBase, type StudioCleanBase } from "./studio-generation-base";
 import { artifactDeadline, inspectArtifactImage, readArtifactImageBytes } from "./studio-generation-artifacts-image";
+import { studioBrandMaterialSourceDigest } from "./studio-brand-materials-trust";
 
 const id = z.string().regex(/^[a-zA-Z0-9_-]{1,128}$/);
 const sha = z.string().regex(/^[a-f0-9]{64}$/);
@@ -44,7 +45,7 @@ function noEffects(shape: Record<string, unknown>, image: boolean) {
   const props = object(shape.props);
   const meta = object(shape.meta);
   const owned = object(meta.novartOwned);
-  if (props.novartVersion === 2 && owned.version === 2 && owned.hidden === true) throw fail("整图修改不接受隐藏图层，请先显示图片或画框。");
+  if ([2, 3].includes(Number(props.novartVersion)) && owned.version === props.novartVersion && owned.hidden === true) throw fail("整图修改不接受隐藏图层，请先显示图片或画框。");
   const no = (value: unknown, expected: number) => value === undefined || typeof value === "number" && Number.isFinite(value) && Math.abs(value - expected) <= 1e-6;
   if (!no(shape.rotation, 0) || !no(shape.opacity, 1) || !no(props.opacity, 1) || !no(props.radius, 0)) throw fail("整图修改目前读取完整原文件，请先重置旋转、透明度或圆角效果。");
   if ((props.flipX !== undefined && props.flipX !== false) || (props.flipY !== undefined && props.flipY !== false)) throw fail(image ? "整图修改目前读取完整原文件，请先重置图片翻转。" : "整图修改暂不支持父级容器翻转，请先重置容器翻转。");
@@ -102,10 +103,10 @@ function wholeImageTarget(store: Record<string, unknown>, shapeId: string, width
   }
 }
 
-async function sourceRecord(db: Db, workspaceId: string, projectId: string, assetId: string, shapeId: string) {
+async function sourceRecord(db: Db, workspaceId: string, projectId: string, assetId: string, shapeId: string, displayedFile = false) {
   const asset = await db.asset.findFirst({ where: { id: assetId, workspaceId, availableForGeneration: true, deprecatedAt: null,
     projectLinks: { some: { projectId, project: { workspaceId } } }, mimeType: { in: ["image/png", "image/jpeg", "image/webp"] } },
-    select: { id: true, workspaceId: true, url: true, storageKey: true, generationVersionId: true, mimeType: true, availableForGeneration: true, deprecatedAt: true } });
+    select: { id: true, workspaceId: true, url: true, storageKey: true, generationVersionId: true, mimeType: true, sizeBytes: true, availableForGeneration: true, deprecatedAt: true } });
   if (!asset || asset.workspaceId !== workspaceId || asset.id !== assetId || !asset.availableForGeneration || asset.deprecatedAt) throw fail();
   const generated = await db.studioGeneratedMaterial.findUnique({ where: { assetId }, select: {
     outputId: true, requestId: true, workspaceId: true, projectId: true, userId: true, status: true, assetId: true, versionId: true,
@@ -116,11 +117,11 @@ async function sourceRecord(db: Db, workspaceId: string, projectId: string, asse
   } });
   if (generated || asset.generationVersionId) {
     const row = generated;
-    if (!row || row.status !== "SUCCEEDED" || row.workspaceId !== workspaceId || row.projectId !== projectId || row.assetId !== assetId || !row.versionId || !row.version
+    if (!row || row.status !== "SUCCEEDED" || row.workspaceId !== workspaceId || row.assetId !== assetId || !row.versionId || !row.version
       || row.version.id !== row.versionId || asset.generationVersionId !== row.versionId || row.version.generationId !== row.request.generationId
-      || row.version.generation.id !== row.request.generationId || row.version.generation.workspaceId !== workspaceId || row.version.generation.projectId !== projectId
-      || row.request.id !== row.requestId || row.request.workspaceId !== workspaceId || row.request.projectId !== projectId || row.request.userId !== row.userId || row.request.status !== "SUCCEEDED"
-      || row.output.id !== row.outputId || row.output.requestId !== row.requestId || row.output.workspaceId !== workspaceId || row.output.projectId !== projectId
+      || row.version.generation.id !== row.request.generationId || row.version.generation.workspaceId !== workspaceId || row.version.generation.projectId !== row.projectId
+      || row.request.id !== row.requestId || row.request.workspaceId !== workspaceId || row.request.projectId !== row.projectId || row.request.userId !== row.userId || row.request.status !== "SUCCEEDED"
+      || row.output.id !== row.outputId || row.output.requestId !== row.requestId || row.output.workspaceId !== workspaceId || row.output.projectId !== row.projectId
       || row.objectKey !== asset.storageKey || row.version.imageUrl !== asset.url || row.mimeType !== asset.mimeType || row.width !== row.version.width || row.height !== row.version.height) throw fail();
     const params = object(row.output.params), processing = object(params.studioPostprocess), publicParams = object(row.version.params);
     const overlays = WatermarkOverlayInput.array().max(32).safeParse(processing.watermarkOverlays);
@@ -142,7 +143,7 @@ async function sourceRecord(db: Db, workspaceId: string, projectId: string, asse
       cleanBase = parsed.data;
       if (cleanBase.width !== row.width || cleanBase.height !== row.height) throw fail("修改目标与受保护底图的尺寸不一致。");
     }
-    if (needsBase && !cleanBase) throw fail("这张历史图片已有主体或水印合成，但没有可恢复的干净底图，暂不能继续改图。");
+    if (needsBase && !cleanBase && !displayedFile) throw fail("这张历史图片已有主体或水印合成，但没有可恢复的干净底图，暂不能继续改图。");
     if (exactLayout && (exactLayout.target.width !== row.width || exactLayout.target.height !== row.height)) throw fail("修改目标与严格保留布局的尺寸不一致。");
     const snapshot = StudioEditSourceSnapshot.parse({ assetId, shapeId, sha256: row.sha256, width: row.width, height: row.height,
       versionId: row.versionId, outputId: row.outputId, sourceGenerationId: row.request.generationId,
@@ -150,19 +151,29 @@ async function sourceRecord(db: Db, workspaceId: string, projectId: string, asse
         publicRecipe: { assetUsages: publicParams.assetUsages, watermarkOverlays: publicParams.watermarkOverlays,
           appliedExactAssetIds: publicParams.appliedExactAssetIds, exactComposition: publicParams.exactComposition,
           appliedWatermarkAssetIds: publicParams.appliedWatermarkAssetIds, appliedBrandLogoAssetId: publicParams.appliedBrandLogoAssetId } }) });
-    return { snapshot, postprocess: { ...(exactLayout ? { exactLayout } : {}) } as Postprocess, cleanBase, asset };
+    return { snapshot, postprocess: { ...(exactLayout ? { exactLayout } : {}) } as Postprocess, cleanBase, sourceProjectId: row.projectId, asset };
   }
   const upload = await db.studioMaterialUpload.findUnique({ where: { assetId }, select: { workspaceId: true, projectId: true, assetId: true, sha256: true,
     width: true, height: true, mimeType: true, objectKey: true, taskId: true, task: { select: { workspaceId: true, kind: true, status: true } } } });
-  if (!upload || upload.workspaceId !== workspaceId || upload.projectId !== projectId || upload.assetId !== assetId || upload.objectKey !== asset.storageKey || upload.mimeType !== asset.mimeType
+  if (!upload) {
+    const receipt = await db.studioBrandMaterialReceipt.findUnique({ where: { assetId }, include: { task: true } });
+    if (!receipt || receipt.assetId !== assetId || receipt.workspaceId !== workspaceId || receipt.task.workspaceId !== workspaceId
+      || receipt.task.kind !== "STUDIO_MATERIAL_VERIFY" || receipt.task.status !== "SUCCEEDED" || receipt.mimeType !== asset.mimeType
+      || receipt.sourceDigest !== studioBrandMaterialSourceDigest(asset)) throw fail();
+    const snapshot = StudioEditSourceSnapshot.parse({ assetId, shapeId, sha256: receipt.sha256, width: receipt.width, height: receipt.height,
+      recipeHash: hash({ asset, taskId: receipt.taskId, sourceDigest: receipt.sourceDigest, sha256: receipt.sha256,
+        width: receipt.width, height: receipt.height, mimeType: receipt.mimeType }) });
+    return { snapshot, postprocess: null, cleanBase: null, sourceProjectId: projectId, asset };
+  }
+  if (upload.workspaceId !== workspaceId || upload.assetId !== assetId || upload.objectKey !== asset.storageKey || upload.mimeType !== asset.mimeType
     || upload.task.workspaceId !== workspaceId || upload.task.kind !== "STUDIO_UPLOAD" || upload.task.status !== "SUCCEEDED") throw fail();
   const snapshot = StudioEditSourceSnapshot.parse({ assetId, shapeId, sha256: upload.sha256, width: upload.width, height: upload.height,
     recipeHash: hash({ asset, taskId: upload.taskId, sha256: upload.sha256, width: upload.width, height: upload.height, mimeType: upload.mimeType }) });
-  return { snapshot, postprocess: null, cleanBase: null, asset };
+  return { snapshot, postprocess: null, cleanBase: null, sourceProjectId: upload.projectId, asset };
 }
 
 /** Caller holds the project lock and has authorized the current editor. */
-export async function resolveStudioEditSource(db: Db, workspaceId: string, projectId: string, rawTarget: unknown, canvas: string) {
+export async function resolveStudioEditSource(db: Db, workspaceId: string, projectId: string, rawTarget: unknown, canvas: string, displayedFile = false) {
   const target = StudioWorkflowTarget.parse(rawTarget);
   const materials = await listStudioProjectMaterials(db, workspaceId, projectId);
   const view = workflowAssets(projectId, canvas, materials);
@@ -171,29 +182,30 @@ export async function resolveStudioEditSource(db: Db, workspaceId: string, proje
   const url = object(object(store[target.shapeId]).props).url;
   const candidates = [...new Set(materials.filter(material => material.url === url && material.sha256 === target.assetSha256).map(material => material.assetId))];
   if (candidates.length !== 1) throw fail("修改目标关联到多个素材，请重新插入目标图片。");
-  const source = await sourceRecord(db, workspaceId, projectId, candidates[0]!, target.shapeId);
+  const source = await sourceRecord(db, workspaceId, projectId, candidates[0]!, target.shapeId, displayedFile);
   if (source.snapshot.sha256 !== target.assetSha256) throw fail();
   wholeImageTarget(store, target.shapeId, source.snapshot.width, source.snapshot.height);
   return { snapshot: source.snapshot, postprocess: source.postprocess };
 }
 
-export async function inspectStudioEditSource(db: Db, workspaceId: string, projectId: string, rawSnapshot: StudioEditSourceSnapshot) {
-  const snapshot = StudioEditSourceSnapshot.parse(rawSnapshot), source = await sourceRecord(db, workspaceId, projectId, snapshot.assetId, snapshot.shapeId);
+export async function inspectStudioEditSource(db: Db, workspaceId: string, projectId: string, rawSnapshot: StudioEditSourceSnapshot, displayedFile = false) {
+  const snapshot = StudioEditSourceSnapshot.parse(rawSnapshot), source = await sourceRecord(db, workspaceId, projectId, snapshot.assetId, snapshot.shapeId, displayedFile);
   if (!equal(source.snapshot, snapshot)) throw fail();
   return { snapshot: source.snapshot, postprocess: source.postprocess };
 }
 
-export async function loadStudioEditSource(workspaceId: string, projectId: string, rawSnapshot: StudioEditSourceSnapshot, signal: AbortSignal) {
+export async function loadStudioEditSource(workspaceId: string, projectId: string, rawSnapshot: StudioEditSourceSnapshot, signal: AbortSignal, displayedFile = false) {
   signal.throwIfAborted();
   const snapshot = StudioEditSourceSnapshot.parse(rawSnapshot);
-  const source = await artifactDeadline(sourceRecord(prisma, workspaceId, projectId, snapshot.assetId, snapshot.shapeId), signal);
+  const source = await artifactDeadline(sourceRecord(prisma, workspaceId, projectId, snapshot.assetId, snapshot.shapeId, displayedFile), signal);
   if (!equal(source.snapshot, snapshot)) throw fail();
   const key = source.asset.storageKey;
   if (key && ((!key.startsWith(`${workspaceId}/`) && !key.startsWith(`generations/${workspaceId}/`)) || /[\\?#%]/.test(key) || key.split("/").some(part => !part || part === "." || part === ".."))) throw fail("修改目标的存储归属不正确。");
   const target = await readArtifactImageBytes({ imageUrl: source.asset.url, objectKey: key || null }, signal);
   const targetMeta = await inspectArtifactImage(target, signal);
   if (targetMeta.sha256 !== snapshot.sha256 || targetMeta.width !== snapshot.width || targetMeta.height !== snapshot.height || targetMeta.mimeType !== source.asset.mimeType) throw fail("修改目标的实际图片内容发生变化，未调用改图服务。");
-  const body = source.cleanBase ? await readStudioCleanBase(source.cleanBase, { workspaceId, projectId, outputId: snapshot.outputId! }, signal) : target;
+  if (source.cleanBase && !displayedFile && !source.sourceProjectId) throw fail("生成图片的原项目身份缺失，未读取受保护底图。");
+  const body = source.cleanBase && !displayedFile ? await readStudioCleanBase(source.cleanBase, { workspaceId, projectId: source.sourceProjectId!, outputId: snapshot.outputId! }, signal) : target;
   const actual = await inspectArtifactImage(body, signal);
   signal.throwIfAborted();
   return { imageUrl: `data:${actual.mimeType};base64,${body.toString("base64")}`, ...actual, postprocess: source.postprocess };
@@ -214,7 +226,7 @@ export function assertStudioEditNotModelReference(
 
 /** Root must call inside the final publish transaction, after its project lock.
  * Legacy disable/remove routes do not take that lock, so lock their actual rows. */
-export async function lockStudioEditPublicationSource(db: Db, workspaceId: string, projectId: string, rawSnapshot: StudioEditSourceSnapshot) {
+export async function lockStudioEditPublicationSource(db: Db, workspaceId: string, projectId: string, rawSnapshot: StudioEditSourceSnapshot, displayedFile = false) {
   const snapshot = StudioEditSourceSnapshot.parse(rawSnapshot);
   const rows = await db.$queryRaw<Array<{ id: string }>>`SELECT a."id" FROM "Asset" a JOIN "ProjectAsset" p ON p."assetId" = a."id"
     WHERE a."id" = ${snapshot.assetId} AND a."workspaceId" = ${workspaceId} AND p."projectId" = ${projectId}
@@ -224,14 +236,22 @@ export async function lockStudioEditPublicationSource(db: Db, workspaceId: strin
     const source = await db.$queryRaw<Array<{ id: string }>>`SELECT v."id" FROM "GenerationVersion" v
       JOIN "Generation" g ON g."id" = v."generationId" JOIN "StudioGeneratedMaterial" m ON m."versionId" = v."id"
       JOIN "StudioGenerationOutput" o ON o."id" = m."outputId" JOIN "StudioGenerationRequest" r ON r."id" = o."requestId"
-      WHERE v."id" = ${snapshot.versionId} AND g."workspaceId" = ${workspaceId} AND g."projectId" = ${projectId}
+      WHERE v."id" = ${snapshot.versionId} AND g."workspaceId" = ${workspaceId} AND g."projectId" = m."projectId"
+        AND m."workspaceId" = ${workspaceId} AND r."workspaceId" = ${workspaceId} AND o."workspaceId" = ${workspaceId}
+        AND r."projectId" = m."projectId" AND o."projectId" = m."projectId"
         AND m."assetId" = ${snapshot.assetId} AND o."id" = ${snapshot.outputId} FOR SHARE OF v, g, m, o, r`;
     if (!source.length) throw fail();
   } else {
     const source = await db.$queryRaw<Array<{ taskId: string }>>`SELECT u."taskId" FROM "StudioMaterialUpload" u JOIN "AsyncTask" t ON t."id" = u."taskId"
-      WHERE u."assetId" = ${snapshot.assetId} AND u."workspaceId" = ${workspaceId} AND u."projectId" = ${projectId}
-        AND t."status" = 'SUCCEEDED' AND t."kind" = 'STUDIO_UPLOAD' FOR SHARE OF u, t`;
-    if (!source.length) throw fail();
+      WHERE u."assetId" = ${snapshot.assetId} AND u."workspaceId" = ${workspaceId}
+        AND t."workspaceId" = ${workspaceId} AND t."status" = 'SUCCEEDED' AND t."kind" = 'STUDIO_UPLOAD' FOR SHARE OF u, t`;
+    if (!source.length) {
+      const verified = await db.$queryRaw<Array<{ assetId: string }>>`SELECT v."assetId" FROM "StudioBrandMaterialReceipt" v JOIN "AsyncTask" t ON t."id" = v."taskId"
+        WHERE v."assetId" = ${snapshot.assetId} AND v."workspaceId" = ${workspaceId} AND t."workspaceId" = ${workspaceId}
+          AND t."status" = 'SUCCEEDED' AND t."kind" = 'STUDIO_MATERIAL_VERIFY' FOR SHARE OF v, t`;
+      if (!verified.length) throw fail();
+    }
   }
-  await inspectStudioEditSource(db, workspaceId, projectId, snapshot);
+  if (displayedFile) await inspectStudioEditSource(db, workspaceId, projectId, snapshot, true);
+  else await inspectStudioEditSource(db, workspaceId, projectId, snapshot);
 }

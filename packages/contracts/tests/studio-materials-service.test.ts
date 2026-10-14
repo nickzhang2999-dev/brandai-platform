@@ -1,24 +1,42 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const f = vi.hoisted(() => ({ transaction: vi.fn(), gate: vi.fn(), project: vi.fn(), read: vi.fn(), many: vi.fn(), update: vi.fn(), taskUpdate: vi.fn(), create: vi.fn(), taskCreate: vi.fn(), aggregate: vi.fn(), query: vi.fn(), config: vi.fn(), enqueue: vi.fn() }));
-vi.mock("../../db/src/index", () => ({ prisma: { $transaction: f.transaction, studioMaterialUpload: { findUnique: f.read, findMany: f.many }, project: { findFirst: f.project } } }));
+const f = vi.hoisted(() => ({ transaction: vi.fn(), gate: vi.fn(), project: vi.fn(), read: vi.fn(), brandRead: vi.fn(), many: vi.fn(), assets: vi.fn(), update: vi.fn(), taskUpdate: vi.fn(), create: vi.fn(), taskCreate: vi.fn(), aggregate: vi.fn(), query: vi.fn(), config: vi.fn(), enqueue: vi.fn() }));
+vi.mock("../../db/src/index", () => ({ prisma: { $transaction: f.transaction, asset: { findMany: f.assets }, studioMaterialUpload: { findUnique: f.read, findFirst: f.brandRead, findMany: f.many }, project: { findFirst: f.project } } }));
 vi.mock("../../../apps/web/src/lib/api", () => ({ ApiException: class extends Error { constructor(public status: number, message: string) { super(message); } } }));
 vi.mock("../../../apps/web/src/lib/workspace", () => ({ requireWorkspaceRole: f.gate }));
 vi.mock("../../../apps/web/src/lib/settings", () => ({ getEffectiveStorage: f.config }));
 vi.mock("../../../apps/web/src/lib/studio-materials-queue", () => ({ enqueueStudioMaterial: f.enqueue }));
-import { submitStudioMaterial, readStudioMaterialUpload, listStudioMaterials, expireStudioMaterials } from "../../../apps/web/src/lib/studio-materials";
+import { submitStudioMaterial, submitStudioBrandMaterialUpload, readStudioBrandMaterialUploads, readStudioMaterialUpload, listStudioMaterials, expireStudioMaterials } from "../../../apps/web/src/lib/studio-materials";
 
 const mutationId = "831a0280-2cf1-41ba-ac94-621053c4a4c6";
 const receiptRow = { taskId: "task", projectId: "p", workspaceId: "w", userId: "u", mutationId, expiresAt: new Date(Date.now() + 60000), task: { status: "PENDING", progress: 0, error: null } };
 const request = () => { const form = new FormData(); form.append("file", new Blob(["stored image"], { type: "image/png" }), "photo.png"); form.append("projectId", "p"); form.append("mutationId", mutationId); return new Request("http://127.0.0.1/studio/material-upload", { method: "POST", body: form }); };
+const brandRequest = () => { const form = new FormData(); form.append("file", new Blob(["stored image"], { type: "image/png" }), "photo.png"); form.append("mutationId", mutationId); return new Request("http://127.0.0.1/api/workspaces/w/studio-brand-materials/upload", { method: "POST", body: form }); };
 beforeEach(() => {
   vi.resetAllMocks();
   f.gate.mockResolvedValue({ role: "OWNER" }); f.project.mockResolvedValue({ archivedAt: null }); f.config.mockResolvedValue({ configured: true });
-  f.read.mockResolvedValue(null); f.many.mockResolvedValue([]); f.query.mockResolvedValue([{ archivedAt: null }]); f.aggregate.mockResolvedValue({ _sum: { sizeBytes: 0 }, _count: 0 });
-  f.transaction.mockImplementation(fn => fn({ $queryRaw: f.query, studioMaterialUpload: { findUnique: f.read, findMany: f.many, update: f.update, create: f.create, aggregate: f.aggregate }, asyncTask: { updateMany: f.taskUpdate, create: f.taskCreate } }));
+  f.read.mockResolvedValue(null); f.brandRead.mockResolvedValue(null); f.many.mockResolvedValue([]); f.assets.mockResolvedValue([]); f.query.mockResolvedValue([{ archivedAt: null }]); f.aggregate.mockResolvedValue({ _sum: { sizeBytes: 0 }, _count: 0 });
+  f.transaction.mockImplementation(fn => fn({ $queryRaw: f.query, studioMaterialUpload: { findUnique: f.read, findFirst: f.brandRead, findMany: f.many, update: f.update, create: f.create, aggregate: f.aggregate }, asyncTask: { updateMany: f.taskUpdate, create: f.taskCreate } }));
   f.create.mockImplementation(async ({ data }) => ({ ...receiptRow, ...data, task: receiptRow.task })); f.enqueue.mockResolvedValue(false);
 });
 
 describe("studio upload authority and durable intake", () => {
+  it("a projectless brand upload creates a null context, bounded durable body and no fake Project", async () => {
+    const first = await submitStudioBrandMaterialUpload("w", "u", brandRequest());
+    expect(first).toMatchObject({ context: "brand-library", workspaceId: "w", mutationId, status: "PENDING" });
+    expect(first).not.toHaveProperty("projectId");
+    const data = f.create.mock.calls[0][0].data;
+    expect(data).toMatchObject({ projectId: null, attachToProject: false, body: Buffer.from("stored image") });
+    expect(data.objectKey).toMatch(/^w\/studio-library\/smu_[a-f0-9]+\.png$/);
+    expect(f.project).not.toHaveBeenCalled(); expect(f.query.mock.calls.some(([strings]) => strings.join("").includes('FROM "Project"'))).toBe(false);
+    f.brandRead.mockResolvedValue({ ...receiptRow, ...data, task: receiptRow.task });
+    const replay = await submitStudioBrandMaterialUpload("w", "u", brandRequest()); expect(replay.taskId).toBe(first.taskId); expect(f.create).toHaveBeenCalledOnce();
+  });
+  it("projectless status is scoped to authenticated user and brand, not a guessed project ID", async () => {
+    f.many.mockImplementation(async ({ where }) => where.userId ? [{ ...receiptRow, projectId: null, attachToProject: false }] : []);
+    expect(await readStudioBrandMaterialUploads("w", "u", "task")).toMatchObject({ context: "brand-library", taskId: "task", workspaceId: "w" });
+    expect(f.many).toHaveBeenLastCalledWith(expect.objectContaining({ where: { workspaceId: "w", userId: "u", projectId: null, attachToProject: false, taskId: "task" }, take: 1 }));
+    expect(f.project).not.toHaveBeenCalled();
+  });
   it("persists a bounded outbox and PENDING task even if Redis enqueue is unavailable", async () => {
     const result = await submitStudioMaterial("w", "u", request());
     expect(result).toMatchObject({ projectId: "p", status: "PENDING", mutationId });
@@ -53,7 +71,8 @@ describe("studio upload authority and durable intake", () => {
   it("lists only real project-linked, nondeprecated assets and never returns storage credentials", async () => {
     await listStudioMaterials("w", "u", { projectId: "p" });
     expect(f.gate).toHaveBeenCalledWith("w", "u", "VIEWER");
-    expect(f.many).toHaveBeenLastCalledWith(expect.objectContaining({ where: { workspaceId: "w", projectId: "p", task: { status: "SUCCEEDED" }, asset: { workspaceId: "w", deprecatedAt: null, projectLinks: { some: { projectId: "p", project: { workspaceId: "w" } } } } } }));
+    expect(f.assets).toHaveBeenLastCalledWith(expect.objectContaining({ where: { workspaceId: "w", deprecatedAt: null, availableForGeneration: true,
+      mimeType: { in: ["image/png", "image/jpeg", "image/webp"] }, projectLinks: { some: { projectId: "p", project: { workspaceId: "w" } } } }, take: 1000 }));
   });
   it("a missing worker still has bounded expiry with an irreversible failure and cleared bytes", async () => {
     f.many.mockResolvedValue([{ taskId: "orphan-task" }]); f.taskUpdate.mockResolvedValue({ count: 1 });

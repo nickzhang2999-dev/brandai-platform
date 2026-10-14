@@ -8,6 +8,7 @@ export const STUDIO_MATERIAL_MAX_BYTES = 10 * 1024 * 1024;
 export const STUDIO_MATERIAL_TTL_MS = 6 * 60_000;
 export const StudioMaterialUploadInput = NativeProjectReference.extend({
   mutationId: z.string().uuid(),
+  attachToProject: z.boolean().optional(),
 }).strict();
 export const StudioMaterialUploadQuery = NativeProjectReference.extend({
   taskId: NativeProjectId.optional(),
@@ -15,6 +16,7 @@ export const StudioMaterialUploadQuery = NativeProjectReference.extend({
 export const StudioMaterial = z.object({
   id: NativeProjectId,
   assetId: NativeProjectId,
+  versionId: NativeProjectId.optional(),
   assetSha256: z.string().length(64).regex(/^[a-f0-9]{64}$/),
   fileName: z.string().min(1).max(255),
   mimeType: z.enum(["image/png", "image/jpeg", "image/webp"]),
@@ -28,6 +30,7 @@ export const StudioMaterialUploadView = z.object({
   taskId: NativeProjectId,
   projectId: NativeProjectId,
   mutationId: z.string().uuid(),
+  attachToProject: z.boolean().optional(),
   status: z.enum(["PENDING", "RUNNING", "SUCCEEDED", "FAILED"]),
   progress: z.number().int().min(0).max(100),
   expiresAt: z.string().datetime(),

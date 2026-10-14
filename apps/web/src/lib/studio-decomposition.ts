@@ -23,6 +23,7 @@ import { generatedPsdLayerMode } from "./studio-generated-psd-state";
 import { StudioLayerPlanResponse } from "@brandai/contracts";
 import { newStudioLayerPlanning, readStudioLayerPlanning, studioLayerMaxCount, semanticDecompositionIntent } from "./studio-decomposition-planning";
 import { assertStudioPsdBudget, StudioPsdEncodingError } from "./studio-psd-codec";
+import { studioBrandMaterialSourceDigest, studioBrandObjectKey } from "./studio-brand-materials-trust";
 
 type Row = Prisma.StudioDecompositionRequestGetPayload<object>;
 type Layer = z.infer<typeof StudioDecompositionLayer>;
@@ -84,14 +85,22 @@ function receipt(row: ReceiptRow) {
 async function sourceAsset(workspaceId: string, projectId: string, assetId: string, expectedHash: string, ancestors = new Set<string>()) {
   if (ancestors.has(assetId) || ancestors.size >= 8) throw new ApiException(422, "图层来源循环或继续分层深度已达到安全上限，请保留当前图层。");
   ancestors.add(assetId);
-  const asset = await prisma.asset.findFirst({ where: { id: assetId, workspaceId, deprecatedAt: null,
+  const asset = await prisma.asset.findFirst({ where: { id: assetId, workspaceId, deprecatedAt: null, availableForGeneration: true,
     projectLinks: { some: { projectId, project: { workspaceId } } } } });
   if (!asset) throw new ApiException(404, "原图片不属于当前品牌与项目。");
   const [upload, generated] = await Promise.all([
-    prisma.studioMaterialUpload.findFirst({ where: { workspaceId, projectId, assetId, sha256: expectedHash, task: { status: "SUCCEEDED" } } }),
-    prisma.studioGeneratedMaterial.findFirst({ where: { workspaceId, projectId, assetId, sha256: expectedHash, status: "SUCCEEDED" }, include: { request: { select: { jobData: true } } } }),
+    prisma.studioMaterialUpload.findFirst({ where: { workspaceId, assetId, sha256: expectedHash, task: { workspaceId, kind: "STUDIO_UPLOAD", status: "SUCCEEDED" } } }),
+    prisma.studioGeneratedMaterial.findFirst({ where: { workspaceId, assetId, sha256: expectedHash, status: "SUCCEEDED",
+      request: { workspaceId, status: "SUCCEEDED" }, output: { workspaceId }, version: { generation: { workspaceId } } },
+      include: { request: { select: { jobData: true } } } }),
   ]);
   let row: { objectKey: string | null; width: number | null; height: number | null; mimeType: string | null; sizeBytes: number | null } | null = upload ?? generated;
+  if (!row && !asset.generationVersionId && !asset.storageKey?.startsWith(`${workspaceId}/studio-layer-assets/`)) {
+    const verified = await prisma.studioBrandMaterialReceipt.findUnique({ where: { assetId }, include: { task: true } });
+    if (verified && verified.workspaceId === workspaceId && verified.assetId === assetId && verified.sha256 === expectedHash
+      && verified.task.workspaceId === workspaceId && verified.task.kind === "STUDIO_MATERIAL_VERIFY" && verified.task.status === "SUCCEEDED"
+      && verified.sourceDigest === studioBrandMaterialSourceDigest(asset)) row = { ...verified, objectKey: asset.storageKey };
+  }
   if (!row && asset.storageKey?.startsWith(`${workspaceId}/studio-layer-assets/`)) {
     const parts = asset.storageKey.split("/");
     if (parts.length !== 6 || parts[2] !== projectId || !/^\d\.bin$/.test(parts[5]!)) throw new ApiException(422, "图层存储来源与项目不一致。");
@@ -109,7 +118,7 @@ async function sourceAsset(workspaceId: string, projectId: string, assetId: stri
     const usages = Array.isArray(job.assetUsages) ? job.assetUsages : [];
     if (job.studioExactLayout !== undefined || usages.some(value => value && typeof value === "object" && (value as Record<string, unknown>).mode === "EXACT")) throw new ApiException(409, "这张图片包含严格保留素材。分层模型可能重画主体，当前先保留原图保护。");
   }
-  if (!row.objectKey.startsWith(workspaceId + "/") || /[\\?#%]/.test(row.objectKey) || row.objectKey.split("/").some(part => !part || part === "." || part === "..")) throw new ApiException(422, "原图片存储位置不属于当前品牌。");
+  if (!studioBrandObjectKey(row.objectKey, workspaceId)) throw new ApiException(422, "原图片存储位置不属于当前品牌。");
   return { sourceWidth: row.width, sourceHeight: row.height, sourceMimeType: row.mimeType, sourceSizeBytes: row.sizeBytes, sourceObjectKey: row.objectKey };
 }
 

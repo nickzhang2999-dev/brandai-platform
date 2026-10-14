@@ -4,13 +4,20 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { StudioMaterial, GenerationAspectRatioKey, resolveGenerationSize, type EditorDocumentView } from "@brandai/contracts";
 import { NovartApiError } from "../../lib/novart-api-client";
 import { decodeOwnedCanvas, encodeOwnedCanvas } from "../../lib/owned-canvas-codec";
-import { serializeOwnedDocument, type OwnedCanvasDocument, type OwnedCanvasItem } from "../../lib/owned-canvas-model";
+import { assignOwnedImageNames, serializeOwnedDocument, type OwnedCanvasDocument, type OwnedCanvasItem } from "../../lib/owned-canvas-model";
 import { exportOwnedPng, exportOwnedSvg, getOwnedBounds, type OwnedExportOptions } from "../../lib/owned-canvas-export";
 import { OwnedCanvas } from "./OwnedCanvas";
 import { OwnedWorkflowPanel } from "./OwnedWorkflowPanel";
 import { OwnedGenerationCard } from "./OwnedGenerationCard";
 import { OwnedLayerPanel } from "./OwnedLayerPanel";
 import { OwnedLayerOptions } from "./OwnedLayerOptions";
+import { OwnedConversationPanel, type OwnedConversationHandle } from "./OwnedConversationPanel";
+import { selectedOwnedConversationReferences } from "./owned-conversation-references";
+import { OwnedBrandMaterialsDrawer } from "./OwnedBrandMaterialsDrawer";
+import { OwnedImageResize } from "./OwnedImageResize";
+import { OwnedImageMask } from "./OwnedImageMask";
+import { StudioImageToolInput, type StudioImageToolCapabilities } from "@brandai/contracts";
+import type { z } from "zod";
 import { matchesOwnedPsdSelection, ownedPsdSelection, type OwnedLayerMode } from "./owned-layer-options";
 import { generatedOwnedSourceShapeId, placeGeneratedOwnedLayers } from "./owned-generated-layer-placement";
 import { createOwnedWorkflowSession, type OwnedWorkflowSession, type WorkflowSessionState } from "./owned-workflow-session";
@@ -34,6 +41,16 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
   const [saveState, setSaveState] = useState<SaveState>("loading");
   const [saveError, setSaveError] = useState("");
   const [notice, setNotice] = useState("");
+  const [visibleName, setVisibleName] = useState(projectName);
+  useEffect(() => setVisibleName(projectName), [projectName, projectId]);
+  useEffect(() => { window.document.title = `${visibleName} · DeepFlare`; }, [visibleName]);
+  const conversationRef = useRef<OwnedConversationHandle | null>(null);
+  const [resizingImage, setResizingImage] = useState<OwnedCanvasItem | null>(null);
+  const [maskingImage, setMaskingImage] = useState<{ item: OwnedCanvasItem; material: PersistentImage } | null>(null);
+  const [imageTools, setImageTools] = useState<z.infer<typeof StudioImageToolCapabilities> | undefined>();
+  const imageToolOperation = useRef<z.infer<typeof StudioImageToolInput> | null>(null), imageToolBusy = useRef(false);
+  const [pendingImageTool, setPendingImageTool] = useState(false);
+  const imageToolJournal = `deepflare:image-tool-pending:${JSON.stringify([userId, workspaceId, projectId])}`;
   const [panel, setPanel] = useState<"generate" | "materials" | "tasks" | "layers" | null>("generate");
   const [materials, setMaterials] = useState<Material[]>([]);
   const [uploads, setUploads] = useState<UploadTask[]>([]);
@@ -57,7 +74,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
   const viewRef = useRef<EditorDocumentView | null>(null), writableRef = useRef(false), savedSequence = useRef(0), sequence = useRef(0);
   const saveBusy = useRef(false), saveBlocked = useRef(false), pendingSave = useRef<{ canvas: string; sequence: number } | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null), uploadInput = useRef<HTMLInputElement>(null);
-  const generationOperation = useRef<GenerationInput | null>(null), uploadOperation = useRef<{ file: File; mutationId: string; point?: { x: number; y: number } } | null>(null);
+  const generationOperation = useRef<GenerationInput | null>(null), uploadOperation = useRef<{ file: File; mutationId: string; point?: { x: number; y: number }; sourceShapeId?: string } | null>(null);
   const refreshBusy = useRef(false), generationBusy = useRef(false), uploadBusy = useRef(false), pollStarted = useRef(0);
   const handoffBusy = useRef(false);
   const replacementOperation = useRef<{ api: ProductApi; itemId: string; file: File; mutationId: string } | null>(null);
@@ -115,7 +132,9 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
 
   const changeDocument = useCallback((next: OwnedCanvasDocument) => {
     if (!writableRef.current) return;
-    docRef.current = next; sequence.current++; setDocument(next);
+    const previousSequence = Number((docRef.current?.source.novartOwnedCanvas as { imageSequence?: number })?.imageSequence) || 0;
+    const named = assignOwnedImageNames(next, previousSequence);
+    docRef.current = named; sequence.current++; setDocument(named);
     if (!saveBusy.current && !pendingSave.current) setSaveState("dirty");
   }, []);
 
@@ -172,6 +191,10 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
     psdSelectionRestored.current = false; setPreparePsd(false); setPsdLayerMode("AUTO"); setPsdLayerCount(4);
     uploadOperation.current = null; generationOperation.current = null; setPendingUpload(false); setPendingGeneration(false);
     recoveryRef.current = null; setGenerationRecoveryBlocked(false);
+    imageToolOperation.current = null; imageToolBusy.current = false; setPendingImageTool(false); setMaskingImage(null); setResizingImage(null); setImageTools(undefined);
+    try { const stored = localStorage.getItem(imageToolJournal); if (stored) { imageToolOperation.current = StudioImageToolInput.parse(JSON.parse(stored)); setPendingImageTool(true); } }
+    catch { setPendingImageTool(true); setNotice("图片工具受理记录暂不可读，请先查看服务器任务，不会自动重复提交。"); }
+    void api.getImageToolCapabilities().then(value => { if (alive.current && apiRef.current === api) setImageTools(value); }).catch(() => undefined);
     try {
       const recovery = createOwnedGenerationRecovery({ workspaceId, projectId, userId }); recoveryRef.current = recovery;
       const pending = recovery.load();
@@ -183,9 +206,11 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
       }
     } catch (error) { setGenerationRecoveryBlocked(true); setNotice(messageOf(error)); }
     void api.session.load().then(async result => {
-      const loaded = await decodeOwnedCanvas(result.canvas);
+      const decoded = await decodeOwnedCanvas(result.canvas);
+      const loaded = !readOnly && !result.readOnly ? assignOwnedImageNames(decoded) : decoded;
       if (!alive.current || apiRef.current !== api) return;
-      docRef.current = loaded; viewRef.current = result; setView(result); setDocument(loaded); setSaveState("saved");
+      docRef.current = loaded; viewRef.current = result; setView(result); setDocument(loaded);
+      if (loaded !== decoded) { sequence.current++; setSaveState("dirty"); } else setSaveState("saved");
       pollStarted.current = Date.now(); void refresh(); void workflowSession.load();
       if (initialTask) void openExistingTask(initialTask.kind, initialTask.id).catch(error => { if (alive.current && apiRef.current === api) setNotice(messageOf(error)); });
     }).catch(error => {
@@ -226,6 +251,9 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
         void openExistingTask(data.kind, data.taskId).then(opened => { if (opened) reply(true); }).catch(error => reply(false, messageOf(error))); return;
       }
       if (event.origin !== location.origin || event.source !== parent || !data || data.type !== "nv-studio" || data.projectId !== projectId) return;
+      if (data.action === "project-renamed" && typeof data.projectName === "string" && data.projectName.trim().length >= 1 && data.projectName.trim().length <= 200) {
+        setVisibleName(data.projectName.trim()); return;
+      }
       if (["insert-material", "confirm-save", "confirm-leave"].includes(data.action)) {
         if (typeof data.requestId !== "string" || !/^[a-f0-9-]{36}$/i.test(data.requestId)) return;
         const action = data.action === "insert-material" ? "insert-material-result" : data.action === "confirm-leave" ? "confirm-leave-result" : "confirm-save-result";
@@ -238,6 +266,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
             if (data.action === "confirm-leave") {
               if (uploadBusy.current || generationBusy.current || refreshBusy.current || taskFocusBusy.current) throw new Error("创作或素材操作正在处理，请完成后再切换品牌。");
               await draft.flush();
+              await conversationRef.current?.flush();
               const workflow = workflowRef.current;
               if (workflow?.snapshot().dirty) await workflow.save();
               const state = workflow?.snapshot();
@@ -261,7 +290,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
             const saved = await save();
             if (!alive.current || apiRef.current !== api) return;
             if (!saved || sequence.current !== savedSequence.current || pendingSave.current || saveBlocked.current) throw new Error("画布修改尚未确认保存，请稍后继续。");
-            if (data.action === "confirm-leave" && (!draft.confirmed() || workflowRef.current?.snapshot().dirty)) throw new Error("仍有新的需求或素材修改，请确认保存后再切换品牌。");
+            if (data.action === "confirm-leave" && (!draft.confirmed() || conversationRef.current && !conversationRef.current.confirmed() || workflowRef.current?.snapshot().dirty)) throw new Error("仍有新的需求或素材修改，请确认保存后再切换品牌。");
             send(action, { requestId: data.requestId, status: "saved", revision: saved.revision });
           } catch (error) {
             if (alive.current && apiRef.current === api) send(action, { requestId: data.requestId, status: "failed", error: error instanceof Error && error.name === "ZodError" ? "素材回执格式无法确认，原文件保留。" : messageOf(error) });
@@ -290,7 +319,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
     return () => clearTimeout(timer);
   }, [generations, pollPaused, refresh]);
 
-  async function insertImage(material: PersistentImage, point?: { x: number; y: number }, identity?: string) {
+  async function insertImage(material: PersistentImage, point?: { x: number; y: number }, identity?: string, sourceShapeId?: string) {
     if (!writableRef.current || !docRef.current || !apiRef.current) throw new Error("当前画布只读，无法加入图片。");
     const api = apiRef.current; api.image(material);
     await new Promise<void>((resolve, reject) => {
@@ -303,7 +332,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
     const current = docRef.current, longest = Math.max(material.width, material.height), scale = Math.min(900 / longest, Math.max(1, 100 / longest));
     const w = material.width * scale, h = material.height * scale;
     const center = point ?? { x: (360 - current.camera.x) / current.camera.zoom, y: (260 - current.camera.y) / current.camera.zoom };
-    changeDocument({ ...current, items: [...current.items, { id: identity ?? "shape:" + crypto.randomUUID(), kind: "image", x: center.x - w / 2, y: center.y - h / 2, w, h, rotation: 0, opacity: 1, parentId: current.pageId, url: material.url, assetId: material.assetId, assetSha256: material.assetSha256, ...(material.versionId ? { versionId: material.versionId } : {}) }] });
+    changeDocument({ ...current, items: [...current.items, { id: identity ?? "shape:" + crypto.randomUUID(), kind: "image", x: center.x - w / 2, y: center.y - h / 2, w, h, rotation: 0, opacity: 1, parentId: current.pageId, url: material.url, assetId: material.assetId, assetSha256: material.assetSha256, ...(material.versionId ? { versionId: material.versionId } : {}), ...(sourceShapeId ? { sourceShapeId } : {}) }] });
     setNotice("图片已加入画布，保存状态见顶部。");
   }
 
@@ -312,6 +341,64 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
     if (!alive.current || !writableRef.current || !docRef.current || !saved || sequence.current !== savedSequence.current
       || pendingSave.current || saveBlocked.current) throw new Error("画布保存尚未确认，请先保存后再提交分层。");
     return { document: docRef.current, revision: saved.revision };
+  }
+  async function prepareConversation() {
+    const saved = await prepareLayers(), workflow = workflowRef.current;
+    if (!workflow) throw new Error("素材设置尚未读取，请稍后再试。");
+    if (workflow.snapshot().dirty) await workflow.save();
+    else await workflow.load();
+    const state = workflow.snapshot();
+    if (!writableRef.current || state.dirty || state.busy || state.status !== "ready" || !state.server) throw new Error("素材设置尚未确认，请读取最新设置。");
+    return { documentRevision: saved.revision, workflowRevision: state.server.revision, ...(outputFrameId ? { outputFrameId } : {}) };
+  }
+  async function imageAction(action: "quick-edit" | "add-reference" | "layers" | "resize" | "remove-background" | "inpaint", ids: string[]) {
+    if (action === "layers") { setSelectedIds(ids); setPanel("layers"); return; }
+    if (action === "resize") { const item = docRef.current?.items.find(value => value.id === ids[0]); if (writableRef.current && item?.kind === "image") setResizingImage({ ...item }); return; }
+    try {
+      const saved = await prepareLayers(), api = apiRef.current;
+      if (!api) throw new Error("素材服务尚未准备完成。");
+      const references = selectedOwnedConversationReferences(saved.document, ids, await api.listMaterials());
+      if (action === "inpaint") {
+        const item = saved.document.items.find(value => value.id === ids[0]), material = (await api.listMaterials()).find(value => value.assetId === item?.assetId && value.assetSha256 === item?.assetSha256);
+        if (!item || !material) throw new Error("原图片还未确认持久化。");
+        if (item.crop || item.flipX || item.flipY || Math.abs(item.rotation) > 1e-6) throw new Error("请先重置这张图片的裁切、翻转和旋转，再涂抹原图。");
+        setMaskingImage({ item: { ...item }, material }); return;
+      }
+      if (action === "remove-background") { await submitImageTool("remove-background", ids[0]!); return; }
+      if (!conversationRef.current) throw new Error("对话还未恢复，请稍后再试。");
+      conversationRef.current.addReferences(references, action === "quick-edit" ? references[0]?.referenceId : undefined);
+      setPanel("generate"); setNotice(action === "quick-edit" ? "编辑目标已固定，请描述这张图片要如何修改。" : "图片已加入对话；改变画布选择不会替换这些引用。");
+    } catch (error) { setNotice(messageOf(error)); }
+  }
+  async function submitImageTool(operation: "remove-background" | "inpaint", itemId: string, mask?: string, instruction?: string) {
+    const api = apiRef.current;
+    if (!api || !writableRef.current || imageToolBusy.current) throw new Error("图片工具暂不可用，请稍后再试。");
+    imageToolBusy.current = true;
+    try {
+      let input = imageToolOperation.current;
+      if (!input) {
+        if (pendingImageTool) throw new Error("请先确认上一份图片工具请求。");
+        const prepared = await prepareConversation(), item = docRef.current?.items.find(value => value.id === itemId);
+        if (!item?.assetSha256 || item.kind !== "image") throw new Error("原图片已变化，请重新选择。");
+        input = StudioImageToolInput.parse({ projectId, mutationId: crypto.randomUUID(), documentRevision: prepared.documentRevision, workflowRevision: prepared.workflowRevision,
+          target: { shapeId: itemId, assetSha256: item.assetSha256 }, operation, ...(mask ? { mask } : {}), ...(instruction?.trim() ? { instruction: instruction.trim() } : {}) });
+        localStorage.setItem(imageToolJournal, JSON.stringify(input)); imageToolOperation.current = input; setPendingImageTool(true);
+      } else if (input.operation !== operation || input.target.shapeId !== itemId || mask && input.mask !== mask) throw new Error("上一份图片工具请求尚未确认，请先在任务中读取原回执。");
+      const task = await api.submitImageTool(input);
+      if (!alive.current || apiRef.current !== api) return;
+      setGenerations(current => mergeTask(current, task, value => value.requestId)); localStorage.removeItem(imageToolJournal); imageToolOperation.current = null; setPendingImageTool(false);
+      pollStarted.current = Date.now(); setPollPaused(false); setPanel("tasks"); setNotice("图片工具已受理，原图保留。结果会在任务中显示，关闭页面后仍会继续处理。");
+    } catch (error) {
+      if (error instanceof NovartApiError && !error.uncertain && error.status !== null && error.status >= 400 && error.status < 500) { localStorage.removeItem(imageToolJournal); imageToolOperation.current = null; setPendingImageTool(false); }
+      if (alive.current && apiRef.current === api) setNotice(messageOf(error)); throw error;
+    } finally { if (apiRef.current === api) imageToolBusy.current = false; }
+  }
+  async function quickEditImage(itemId: string, instruction: string) {
+    const saved = await prepareLayers(), api = apiRef.current;
+    if (!api || !conversationRef.current) throw new Error("对话尚未恢复，请稍后再试。");
+    const reference = selectedOwnedConversationReferences(saved.document, [itemId], await api.listMaterials())[0];
+    if (!reference) throw new Error("快捷编辑目标尚未确认。");
+    setPanel("generate"); await conversationRef.current.quickEdit(reference, instruction);
   }
   async function insertLayers(task: DecompositionTask, suppliedSource?: PersistentImage) {
     const api = apiRef.current;
@@ -358,7 +445,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
       const result = await api.pollUpload(task, accept);
       if (!alive.current || apiRef.current !== api) return;
       if (result.status === "FAILED") throw new Error(result.error || "图片保存失败，请重新选择。");
-      if (result.status === "SUCCEEDED" && result.material) { await insertImage(result.material, operation.point); void refresh(); }
+      if (result.status === "SUCCEEDED" && result.material) { await insertImage(result.material, operation.point, undefined, operation.sourceShapeId); void refresh(); return true; }
       else setNotice("图片还在处理中，自动等待已结束。请刷新任务，完成后可加入画布。");
     } catch (error) {
       if (apiRef.current !== api) return;
@@ -502,6 +589,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
   async function back() {
     try {
       if (draft.dirty || draft.ready && !draft.blocked) await draft.flush();
+      await conversationRef.current?.flush();
       if (workflowRef.current?.snapshot().dirty) await workflowRef.current.save();
       if (sequence.current !== savedSequence.current || pendingSave.current) {
         await save();
@@ -518,7 +606,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img src="/brand/deepflare-mark.svg" alt="DeepFlare · 曜影深蓝" className="h-6 w-6 shrink-0 object-contain sm:h-7 sm:w-7" />
       <button type="button" className={headerButton} onClick={() => void back()} aria-label="返回项目库">←<span className="hidden sm:inline"> 项目</span></button>
-      <strong className="min-w-0 flex-1 truncate text-sm">{projectName}</strong>
+      <strong className="min-w-0 flex-1 truncate text-sm">{visibleName}</strong>
       <span className="max-w-24 shrink-0 truncate text-xs text-muted-fg sm:max-w-none" title={saveLabel} role="status" data-testid="owned-save-status">{saveLabel}</span>
       {canEdit && <button type="button" className={headerButton} disabled={saveState === "saving" || saveState === "saved"} onClick={() => void save().catch(() => undefined)}>{saveState === "error" ? "确认保存" : "保存"}</button>}
       <button type="button" className={headerButton} onClick={() => setPanel(current => current ? null : "generate")} aria-expanded={!!panel}>创作</button>
@@ -529,14 +617,17 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
     {(readOnly || view?.readOnly) && <div className="border-b border-border px-4 py-2 text-xs text-muted-fg">当前项目为只读，可查看与导出。</div>}
     <div className="relative flex min-h-0 flex-1">
       <main className="relative min-h-0 min-w-0 flex-1">
-        {document ? <OwnedCanvas key={projectId} document={document} clipboardScope={`${userId}:${workspaceId}:${projectId}`} onChange={changeDocument} readOnly={!canEdit} onUploadFiles={uploadFiles} onReplaceImage={replaceImage} onExport={(format, scope) => exportDocument(format, scope)} onSelectionChange={setSelectedIds} /> : <div className="grid h-full place-content-center text-sm text-muted-fg">{saveError ? "画布未能打开，原数据没有被修改。" : "正在读取项目…"}</div>}
+        {document ? <OwnedCanvas key={projectId} document={document} clipboardScope={`${userId}:${workspaceId}:${projectId}`} onChange={changeDocument} readOnly={!canEdit} onUploadFiles={uploadFiles} onReplaceImage={replaceImage} onExport={(format, scope) => exportDocument(format, scope)} onSelectionChange={setSelectedIds} onImageAction={(action, ids) => void imageAction(action, ids)} onQuickEdit={quickEditImage} imageTools={imageTools} /> : <div className="grid h-full place-content-center text-sm text-muted-fg">{saveError ? "画布未能打开，原数据没有被修改。" : "正在读取项目…"}</div>}
+        {resizingImage && document && <OwnedImageResize document={document} item={resizingImage} readOnly={!canEdit} onClose={() => setResizingImage(null)} onStore={async (file, sourceShapeId) => { if (!writableRef.current || uploadOperation.current || uploadBusy.current) throw new Error("请先确认正在上传的图片。"); uploadOperation.current = { file, sourceShapeId, mutationId: crypto.randomUUID() }; setPendingUpload(true); const completed = await runUpload(); if (!completed) throw new Error("上传结果尚未确认，图片文件仍保留，请在任务中继续读取。"); }} />}
+        {maskingImage && <OwnedImageMask key={maskingImage.item.id} source={maskingImage.material} name={`图片${maskingImage.item.imageNumber ?? ""}`} readOnly={!canEdit} onClose={() => setMaskingImage(null)} onSubmit={(mask, instruction) => submitImageTool("inpaint", maskingImage.item.id, mask, instruction)} />}
       </main>
-      {panel && <aside aria-label="创作面板" className="absolute inset-y-0 right-0 z-20 flex w-[min(340px,92vw)] flex-col border-l border-border bg-card shadow-lg sm:relative sm:w-80 sm:shrink-0 sm:shadow-none">
-        <div className="flex gap-1 border-b border-border p-3">{([['generate', '生成'], ['materials', '素材'], ['tasks', '任务'], ['layers', '分层']] as const).map(([id, label]) => <button key={id} type="button" className={button + (panel === id ? " !border-primary !bg-accent-soft !text-primary" : "")} onClick={() => setPanel(id)}>{label}</button>)}<button className="ml-auto px-2 text-muted-fg" aria-label="收起面板" onClick={() => setPanel(null)}>×</button></div>
+      <aside aria-label="创作面板" hidden={!panel} className={(panel ? "flex " : "hidden ") + "absolute inset-y-0 right-0 z-20 w-[min(380px,92vw)] flex-col border-l border-border bg-card shadow-lg md:relative md:w-[360px] md:shrink-0 md:shadow-none"}>
+        <div className="flex items-center gap-2 border-b border-border px-4 py-3"><button className="mr-auto text-sm font-semibold" onClick={() => setPanel("generate")} aria-label="返回设计对话">{panel === "materials" ? "品牌素材" : panel === "tasks" ? "任务记录" : panel === "layers" ? "图片分层" : "新对话"}</button><details className="relative"><summary aria-label="工作台更多面板" className={button + " cursor-pointer list-none"}>···</summary><div className="absolute right-0 top-full z-30 mt-2 w-36 space-y-1 rounded-2xl border border-border bg-card p-2 shadow-lg">{([['generate', '设计对话'], ['materials', '品牌素材'], ['tasks', '任务记录'], ['layers', 'AI 分层']] as const).map(([id, label]) => <button key={id} className={button + " w-full"} onClick={event => { setPanel(id); event.currentTarget.closest("details")?.removeAttribute("open"); }}>{label}</button>)}</div></details><button className="px-2 text-muted-fg" aria-label="收起面板" onClick={() => setPanel(null)}>×</button></div>
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
           {!!notice && <p role="status" className="rounded-xl bg-accent-soft p-3 text-xs leading-6" data-testid="owned-notice">{notice}</p>}
+          <div hidden={panel !== "generate"}><OwnedConversationPanel ref={conversationRef} workspaceId={workspaceId} projectId={projectId} userId={userId} readOnly={!canEdit} api={apiRef.current} prepare={prepareConversation} onNotice={setNotice} onGeneration={task => { setGenerations(current => mergeTask(current, task, value => value.requestId)); pollStarted.current = Date.now(); setPollPaused(false); }} onInsert={(image, sourceShapeId) => insertImage(image, undefined, undefined, sourceShapeId)} onInsertLayers={insertLayers} /></div>
           {panel === "layers" && <OwnedLayerPanel key={projectId} api={apiRef.current} workspaceId={workspaceId} projectId={projectId} userId={userId} document={document} selectedIds={selectedIds} readOnly={!canEdit} onPrepare={prepareLayers} onPlace={insertLayers} />}
-          {panel === "generate" && <>
+          {panel === "generate" && <details data-testid="owned-advanced-generation"><summary className="cursor-pointer text-xs text-muted-fg">高级创作与素材设置</summary><div className="mt-4 space-y-4">
             <div><h2 className="text-sm font-semibold">{workflow?.mode === "modify" ? "修改整张图片" : "生成新图片"}</h2><p className="mt-1 text-xs leading-5 text-muted-fg">描述想法，结果单独保留，由你决定是否加入画布。</p></div>
             <textarea aria-label="创作需求" className="min-h-40 w-full resize-y rounded-2xl border border-border bg-bg p-3 text-sm outline-none focus:border-primary" placeholder="想创作什么？" maxLength={4000} value={prompt} onChange={event => setPrompt(event.target.value)} onCompositionStart={draft.compositionStart} onCompositionEnd={draft.compositionEnd} disabled={!canEdit || pendingGeneration || submitting || generationRecoveryBlocked || !draft.ready || draft.blocked} />
             <div className="flex gap-2"><select aria-label="图片比例" className={button} value={ratio} disabled={!canEdit || pendingGeneration || submitting || generationRecoveryBlocked || !draft.ready || draft.blocked} onChange={event => setRatio(event.target.value as typeof ratio)}>{GenerationAspectRatioKey.options.filter(value => value !== "custom").map(value => <option key={value}>{value}</option>)}</select><select aria-label="图片画质" className={button} value={quality} disabled={!canEdit || pendingGeneration || submitting || generationRecoveryBlocked || !draft.ready || draft.blocked} onChange={event => setQuality(event.target.value as typeof quality)}><option>1K</option><option>2K</option></select></div>
@@ -549,13 +640,10 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
             <OwnedWorkflowPanel key={projectId} state={workflowState} document={document} selectedIds={selectedIds} readOnly={!canEdit} frozen={pendingGeneration || submitting || generationRecoveryBlocked || !draft.ready || draft.blocked} outputFrameId={outputFrameId} onOutputFrameChange={setOutputFrameId} onCreateOutputFrame={createOutputFrame} onChange={changeWorkflow} onSave={() => void workflowRef.current?.save().catch(error => setNotice(messageOf(error)))} onRefresh={() => void refreshWorkflow()} onResolveConflict={choice => { try { workflowRef.current?.resolveConflict(choice); } catch (error) { setNotice(messageOf(error)); } }} />
             <button type="button" className="w-full rounded-full bg-primary py-3 text-sm text-primary-fg disabled:opacity-40" disabled={!canEdit || submitting || generationRecoveryBlocked || !workflow || !pendingGeneration && (!prompt.trim() || !draft.ready || draft.blocked || !!workflowState?.dirty || !!workflowState?.busy || workflowState?.status !== "ready" || workflow.mode === "generate" && workflow.references.some(value => value.participates && value.purpose === "EXACT") && !outputFrameId)} onClick={() => void submitGeneration()}>{submitting ? "正在确认受理…" : pendingGeneration ? "确认上一份生成回执" : workflow?.mode === "modify" ? "提交整图修改" : "生成图片"}</button>
             <p className="text-xs text-muted-fg">品牌规则和素材权限由服务器核验；配置缺失或布局不支持时会说明原因。</p>
-          </>}
-          {panel === "materials" && <>
-            <div className="flex gap-2"><button className={button} disabled={!canEdit || uploading || pendingUpload} onClick={() => uploadInput.current?.click()}>上传图片</button><button className={button} disabled={refreshing} onClick={() => void refresh()}>刷新素材</button></div>
-            {!materials.length && <p className="py-8 text-center text-xs text-muted-fg">上传后的图片会保留在这里。</p>}
-            <div className="grid grid-cols-2 gap-3">{materials.map(value => <div key={value.assetId} className="overflow-hidden rounded-2xl border border-border p-2"><img src={value.url} alt={value.fileName} className="aspect-square w-full rounded-xl object-contain" loading="lazy" /><p className="my-2 truncate text-xs">{value.fileName}</p><button className={button + " w-full"} disabled={!canEdit} onClick={() => void insertImage(value).catch(error => setNotice(messageOf(error)))}>加入画布</button></div>)}</div>
-          </>}
+          </div></details>}
+          {panel === "materials" && <OwnedBrandMaterialsDrawer workspaceId={workspaceId} projectId={projectId} userId={userId} readOnly={!canEdit} onClose={() => setPanel("generate")} onInsert={material => insertImage(material)} onReference={material => { if (!conversationRef.current) throw new Error("对话尚未恢复。"); conversationRef.current.addReferences([{ referenceId: "brand:" + material.assetId, name: material.fileName, assetId: material.assetId, assetSha256: material.assetSha256, width: material.width, height: material.height, purpose: "REFERENCE" }]); setPanel("generate"); }} />}
           {panel === "tasks" && <>
+            {pendingImageTool && <button className={button} disabled={!canEdit || !imageToolOperation.current} onClick={() => { const input = imageToolOperation.current; if (input) void submitImageTool(input.operation, input.target.shapeId, input.mask, input.instruction).catch(() => undefined); }}>确认图片工具回执</button>}
             <button className={button} disabled={refreshing} onClick={() => void refresh()}>{refreshing ? "正在读取…" : "刷新任务"}</button>
             {pendingUpload && <button className={button + " ml-2"} disabled={uploading || !canEdit} onClick={() => void runUpload()}>确认上传回执</button>}
             {pendingGeneration && <button className={button} disabled={submitting || !canEdit} onClick={() => void submitGeneration()}>确认生成回执</button>}
@@ -563,11 +651,11 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
             {uploads.map(task => <section className="space-y-2 rounded-2xl border border-border p-3" key={task.taskId} data-task-id={task.taskId}><h3 className="truncate text-xs font-semibold">{task.material?.fileName || "图片上传"}</h3><p className="text-xs text-muted-fg">{task.status === "SUCCEEDED" ? "已存入素材库" : task.status === "FAILED" ? task.error : Date.now() > Date.parse(task.expiresAt) ? "处理时间较长，请刷新确认结果" : `保存中 · ${task.progress}%`}</p>{task.material && <button className={button} disabled={!canEdit} onClick={() => void insertImage(task.material!).catch(error => setNotice(messageOf(error)))}>加入画布</button>}</section>)}
             {generations.map(task => <OwnedGenerationCard key={projectId + ":" + task.requestId} task={task} api={apiRef.current} canEdit={canEdit} onNotice={setNotice}
               onTask={updated => { setGenerations(current => mergeTask(current, updated, value => value.requestId)); pollStarted.current = Date.now(); setPollPaused(false); }}
-              onInsert={image => insertImage(image)} onInsertLayers={insertLayers} />)}
+              onInsert={image => insertImage(image, undefined, undefined, task.sourceShapeId)} onInsertLayers={insertLayers} />)}
           </>}
         </div>
         <div className="flex items-center gap-2 border-t border-border p-3"><span className="mr-auto text-xs text-muted-fg">导出</span>{(["png", "svg", "json"] as const).map(format => <button key={format} className={button} disabled={!document || !!document.warnings.length} onClick={() => void exportDocument(format).catch(() => undefined)}>{format.toUpperCase()}</button>)}</div>
-      </aside>}
+      </aside>
     </div>
     <input ref={uploadInput} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" aria-label="选择图片" onChange={event => { const files = Array.from(event.target.files || []); event.target.value = ""; if (files.length) void uploadFiles(files); }} />
   </div>;

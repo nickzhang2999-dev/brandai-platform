@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { GenerateRequest, GenerateResponse, SizeSpec } from "./ai";
+import { StudioImageToolSpec } from "./studio-image-tools";
 
 export const STUDIO_EDIT_REVISION = "studio-whole-image-edit-r1";
 export const STUDIO_EDIT_MAX_BYTES = 32 * 1024 * 1024;
@@ -24,8 +25,9 @@ const generation = GenerateRequest.extend({
 }).strict();
 
 /** Internal-only request; web resolves source ownership/SHA before transport. */
-export const StudioEditRequest = z.object({ imageUrl: source, generation }).strict().superRefine((input, ctx) => {
+export const StudioEditRequest = z.object({ imageUrl: source, generation, imageTool: StudioImageToolSpec.optional() }).strict().superRefine((input, ctx) => {
   const refs = input.generation.aiConstraints?.referenceImages ?? [];
+  if (input.imageTool && refs.length) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["generation", "aiConstraints", "referenceImages"], message: "Image tools operate on one frozen source without secondary references" });
   if (refs.length + 1 > STUDIO_EDIT_MAX_IMAGES) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["generation", "aiConstraints", "referenceImages"], message: "Source plus references exceed the image limit" });
   let total = dataBytes(input.imageUrl) ?? 0;
   refs.forEach((ref, index) => {

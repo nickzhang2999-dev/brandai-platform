@@ -615,6 +615,14 @@ class ComplianceCheckResponse(BaseModel):
 # Workbench uploads are a BFF contract; these mirrors do not add public AI APIs.
 class StudioMaterialUploadInput(NativeProjectReference):
     mutationId: str = Field(strict=True, pattern=r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", min_length=36, max_length=36)
+    attachToProject: bool | None = Field(default=None, strict=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def no_explicit_null_attachment(cls, value):
+        if isinstance(value, dict) and "attachToProject" in value and value["attachToProject"] is None:
+            raise ValueError("attachToProject may be omitted, not null")
+        return value
 
     @field_validator("projectId")
     @classmethod
@@ -646,6 +654,7 @@ class StudioMaterial(BaseModel):
     model_config = {"extra": "forbid", "strict": True}
     id: NativeProjectId
     assetId: NativeProjectId
+    versionId: NativeProjectId | None = None
     assetSha256: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
     fileName: str = Field(min_length=1, max_length=255)
     mimeType: Literal["image/png", "image/jpeg", "image/webp"]
@@ -655,10 +664,17 @@ class StudioMaterial(BaseModel):
     url: str = Field(pattern=r"^/api/workspaces/[a-zA-Z0-9_-]+/assets/[a-zA-Z0-9_-]+/raw$")
     kind: Literal["image"]
 
-    @field_validator("url", "id", "assetId")
+    @model_validator(mode="before")
+    @classmethod
+    def no_null_material_version(cls, value):
+        if isinstance(value, dict) and "versionId" in value and value["versionId"] is None:
+            raise ValueError("versionId may be omitted, not null")
+        return value
+
+    @field_validator("url", "id", "assetId", "versionId")
     @classmethod
     def no_newlines(cls, value):
-        if "\n" in value:
+        if value is not None and "\n" in value:
             raise ValueError("Invalid resource identity")
         return value
 
@@ -707,8 +723,8 @@ class StudioMaterialUploadView(StudioMaterialUploadInput):
 from .studio_workflow_schemas import StudioWorkflowSaveInput, StudioWorkflowView, StudioWorkflowAssets
 
 # Mirrored BFF notification kind; upload events remain scoped to the initiator.
-NotificationKind = Literal["GENERATE", "EDIT", "RECOGNIZE", "PARSE_MANUAL", "DESCRIBE", "INGEST", "SUMMARIZE", "DECOMPOSE", "STUDIO_UPLOAD", "STUDIO_GENERATION", "STUDIO_DECOMPOSITION"]
-AsyncTaskKind = Literal["RECOGNIZE", "PARSE_MANUAL", "EDIT", "DESCRIBE", "INGEST", "SUMMARIZE", "DECOMPOSE", "STUDIO_UPLOAD", "STUDIO_COMPLIANCE"]
+NotificationKind = Literal["GENERATE", "EDIT", "RECOGNIZE", "PARSE_MANUAL", "DESCRIBE", "INGEST", "SUMMARIZE", "DECOMPOSE", "STUDIO_UPLOAD", "STUDIO_GENERATION", "STUDIO_DECOMPOSITION", "STUDIO_MATERIAL_VERIFY", "STUDIO_CONVERSATION"]
+AsyncTaskKind = Literal["RECOGNIZE", "PARSE_MANUAL", "EDIT", "DESCRIBE", "INGEST", "SUMMARIZE", "DECOMPOSE", "STUDIO_UPLOAD", "STUDIO_COMPLIANCE", "STUDIO_MATERIAL_VERIFY", "STUDIO_CONVERSATION"]
 
 from .studio_generation_schemas import StudioGenerationInput, StudioGenerationQuery, StudioGenerationRetryInput, StudioGenerationArchiveRetryInput, StudioGenerationView
 from .studio_generated_psd_schemas import StudioGeneratedPsdQuery, StudioGeneratedPsdView

@@ -31,6 +31,9 @@ describe("product generation strict intent and boundaries", () => {
   it("has independent generation/archive deadlines and authenticated result URLs", () => {
     const view = { requestId: "r", mutationId: body.mutationId, projectId: "p", generationId: "g", status: "SUCCEEDED", progress: null, expiresAt: "2026-10-09T00:06:00Z", archiveExpiresAt: "2026-10-10T00:06:00Z", archiveProcessingExpiresAt: null, displayText: "tree", resultState: "FAILED", results: [], error: null, archiveError: "archive unavailable", canRetryArchive: true };
     expect(StudioGenerationView.safeParse(view).success).toBe(true);
+    expect(StudioGenerationView.safeParse({ ...view, mode: "modify", sourceShapeId: "shape:original" }).success).toBe(true);
+    expect(StudioGenerationView.safeParse({ ...view, sourceShapeId: "shape:original" }).success).toBe(false);
+    expect(StudioGenerationView.safeParse({ ...view, mode: "modify", sourceShapeId: null }).success).toBe(false);
     expect(StudioGenerationView.safeParse({ ...view, progress: 99 }).success).toBe(false);
     expect(StudioGenerationView.safeParse({ ...view, results: [{ versionId: "v", assetId: "a", assetSha256: "a".repeat(64), width: 1, height: 1, mimeType: "image/png", url: "blob:temporary" }] }).success).toBe(false);
   });

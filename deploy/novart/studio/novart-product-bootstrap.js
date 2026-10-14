@@ -125,7 +125,7 @@
     const state = window.NovartStudio?.snapshot();
     if (!state || state.stateLoaded !== true) throw new Error('当前品牌尚未读取完成，请确认内容已恢复后再切换品牌。');
     if (state.profileDirty || state.brandDirty || state.favoritesDirty || state.metadataConflict) throw new Error('请先保存当前品牌规范、偏好或收藏，再切换品牌。');
-    if (state.createBusy || state.metadataBusy || state.archiveBusy || state.homeStart?.busy || state.homeStart?.running?.length || state.homeStart?.uploading) throw new Error('项目或图片正在保存，请完成后再切换品牌。');
+    if (state.createBusy || state.metadataBusy || state.archiveBusy || state.renameBusy || state.homeStart?.busy || state.homeStart?.running?.length || state.homeStart?.uploading) throw new Error('项目或图片正在保存，请完成后再切换品牌。');
     if (typeof window.NovartStudio.confirmBrandLeave !== 'function') throw new Error('首页保存组件尚未准备完成，请重新打开当前页面后再切换品牌。');
     await window.NovartStudio.confirmBrandLeave();
     const frames = [...document.querySelectorAll('#ns-frames iframe')];
@@ -143,12 +143,12 @@
       frame.contentWindow.postMessage({type:'nv-studio',action:'confirm-leave',projectId,requestId},location.origin);
     })));
   }
-  async function selectBrand(workspaceId) {
+  async function selectBrand(workspaceId, destination = 'home') {
     if (context.workspaceId) await prepareBrandSwitch();
     const selected = await brandRequest('/api/workbench/session', {workspaceId});
     if (selected.user?.id !== context.user.id || selected.activeWorkspaceId !== workspaceId || !selected.workspaces?.some(workspace => workspace.id === workspaceId)) throw new Error('品牌切换回执无法确认，当前页面仍保留，请重试。');
     // Full navigation drops the old project route and recreates workspace-scoped storage.
-    location.assign('/studio?workspaceId=' + encodeURIComponent(workspaceId) + '#/home');
+    location.assign('/studio?workspaceId=' + encodeURIComponent(workspaceId) + (destination === 'brand' ? '#/brand' : '#/home'));
   }
   let nativeLicenseRejected = false, licenseObserver = null, licenseTimer = null;
   function checkNativeLicense() {
@@ -193,7 +193,7 @@
       }
       if (!created) created = await brandRequest('/api/workspaces', {name:input.value.trim()});
       if (!created.id) throw new Error('品牌创建回执无法确认，请刷新品牌列表后重试。');
-      input.disabled = true; await selectBrand(created.id);
+      input.disabled = true; await selectBrand(created.id, 'brand');
     } catch(error) { creationUncertain ||= Boolean(error.creationUncertain);status.textContent=(created ? '品牌已创建，尚未切换。' : '') + error.message;submit.textContent=created?'进入已创建的品牌':creationUncertain?'检查品牌列表':'进入工作台'; }
     finally {saving=false;submit.disabled=false;} }; input.focus();
   }
@@ -225,28 +225,42 @@
       if(!menu.open)return;const rect=trigger.getBoundingClientRect(), width=menu.offsetWidth, height=menu.offsetHeight;
       menu.style.left=Math.max(12,Math.min(innerWidth-width-12,rect.right+8))+'px';menu.style.top=Math.max(12,Math.min(innerHeight-height-12,rect.top))+'px';
     }
-    trigger.onclick=()=>{if(busy)return;if(menu.open){menu.close();return;}status.textContent='';render();menu.showModal();trigger.setAttribute('aria-expanded','true');position();};
+    const menuButtons=()=>[...menu.querySelectorAll('button:not(:disabled)')];
+    function openMenu(focusLast = false) {
+      if(busy)return;if(menu.open){menu.close();return;}status.textContent='';render();menu.showModal();trigger.setAttribute('aria-expanded','true');position();
+      const buttons=menuButtons();(focusLast ? buttons.at(-1) : menu.querySelector('.np-brand-option[aria-current=true]') || buttons[0])?.focus();
+    }
+    trigger.onclick=()=>openMenu();
+    trigger.addEventListener('keydown',event=>{if(['ArrowDown','ArrowUp'].includes(event.key)){event.preventDefault();openMenu(event.key==='ArrowUp');}});
+    menu.addEventListener('keydown',event=>{
+      if(!['ArrowDown','ArrowUp','Home','End'].includes(event.key)||busy)return;event.preventDefault();
+      const buttons=menuButtons(),current=buttons.indexOf(document.activeElement);
+      const next=event.key==='Home'?0:event.key==='End'?buttons.length-1:(current+(event.key==='ArrowDown'?1:-1)+buttons.length)%buttons.length;
+      buttons[next]?.focus();
+    });
     menu.addEventListener('close',()=>{trigger.setAttribute('aria-expanded','false');trigger.focus();});menu.addEventListener('cancel',event=>{if(busy)event.preventDefault();});
     menu.addEventListener('click',event=>{if(!busy&&event.target===menu){const rect=menu.getBoundingClientRect();if(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom)menu.close();}});
     window.addEventListener('resize',position);window.addEventListener('scroll',position,true);
-    add.onclick=()=>{
-      if(busy)return;menu.close();
+    const openCreateBrand=()=>{
+      if(busy||document.querySelector('.np-create-brand[open]'))return;const returnTarget=document.activeElement;menu.close();
       const dialog=document.createElement('dialog'), form=document.createElement('form'), title=document.createElement('h2'), note=document.createElement('p'), field=document.createElement('label'), input=document.createElement('input'), footer=document.createElement('footer'), cancel=document.createElement('button'), submit=document.createElement('button'), feedback=document.createElement('p');
-      dialog.className='np-create-brand';dialog.dataset.testid='product-create-brand';dialog.setAttribute('aria-label','新增品牌');title.textContent='新增品牌';note.textContent='品牌拥有各自的项目、素材和视觉规范，创建后进入新品牌。';field.textContent='品牌名称';input.name='name';input.required=true;input.maxLength=60;input.autocomplete='off';input.placeholder='例如：海风咖啡';input.setAttribute('aria-label','品牌名称');field.append(input);cancel.type='button';cancel.textContent='取消';submit.type='submit';submit.textContent='创建并进入';feedback.className='np-brand-status';feedback.setAttribute('role','status');footer.append(cancel,submit);form.append(title,note,field,feedback,footer);dialog.append(form);document.body.append(dialog);
+      dialog.className='np-create-brand';dialog.dataset.testid='product-create-brand';dialog.setAttribute('aria-label','新增品牌');title.textContent='新增品牌';note.textContent='品牌拥有各自的项目、素材和视觉规范，创建后先完善新品牌的规范。';field.textContent='品牌名称';input.name='name';input.required=true;input.maxLength=60;input.autocomplete='off';input.placeholder='例如：海风咖啡';input.setAttribute('aria-label','品牌名称');field.append(input);cancel.type='button';cancel.textContent='取消';submit.type='submit';submit.textContent='创建并进入';feedback.className='np-brand-status';feedback.setAttribute('role','status');footer.append(cancel,submit);form.append(title,note,field,feedback,footer);dialog.append(form);document.body.append(dialog);
       let created=null, saving=false, creationUncertain=false;
       const close=()=>{if(saving)return;dialog.close();};cancel.onclick=close;
-      dialog.addEventListener('close',()=>{dialog.remove();trigger.focus();});dialog.addEventListener('cancel',event=>{if(saving)event.preventDefault();});
+      dialog.addEventListener('close',()=>{dialog.remove();(returnTarget?.isConnected && !returnTarget.closest('dialog:not([open])') ? returnTarget : trigger).focus();});dialog.addEventListener('cancel',event=>{if(saving)event.preventDefault();});
       form.onsubmit=async event=>{
         event.preventDefault();if(saving||!input.value.trim())return;saving=true;submit.disabled=true;cancel.disabled=true;input.disabled=true;feedback.textContent='正在确认当前内容已保存…';
         try {
           if(creationUncertain){feedback.textContent='正在检查已有品牌，不会再次创建…';await refreshKnownBrands();render();dialog.close();status.textContent='创建结果尚未确认。请检查已有品牌并选择继续；若未看到新品牌，请稍后重新打开列表检查。';menu.showModal();trigger.setAttribute('aria-expanded','true');position();return;}
           if(!created){await prepareBrandSwitch();created=await brandRequest('/api/workspaces',{name:input.value.trim()});if(!created.id)throw new Error('品牌创建回执无法确认，请刷新品牌列表后检查。');knownWorkspaces.unshift({id:created.id,name:created.name,role:'OWNER'});render();}
-          feedback.textContent='品牌已创建，正在切换…';await selectBrand(created.id);
+          feedback.textContent='品牌已创建，正在打开规范…';await selectBrand(created.id, 'brand');
         } catch(error) {creationUncertain ||= Boolean(error.creationUncertain);feedback.textContent=(created?'品牌已创建，尚未切换。':'')+error.message;submit.textContent=created?'进入已创建的品牌':creationUncertain?'检查品牌列表':'重试创建';}
         finally {saving=false;submit.disabled=false;cancel.disabled=false;input.disabled=Boolean(created);}
       };
       dialog.showModal();input.focus();
     };
+    add.onclick=openCreateBrand;
+    document.getElementById('ns-brand-new')?.addEventListener('click',openCreateBrand);
   }
   async function start() {
     if (!context.workspaceId) { await createBrand(); return; }

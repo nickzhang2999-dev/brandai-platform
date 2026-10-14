@@ -1,11 +1,11 @@
 import { gzipSync } from "node:zlib";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const f = vi.hoisted(() => ({ gate: vi.fn(), project: vi.fn(), document: vi.fn(), materials: vi.fn(), generated: vi.fn(), state: vi.fn(), save: vi.fn(), lock: vi.fn(), transaction: vi.fn() }));
+const f = vi.hoisted(() => ({ gate: vi.fn(), project: vi.fn(), document: vi.fn(), materials: vi.fn(), generated: vi.fn(), verified: vi.fn(), state: vi.fn(), save: vi.fn(), lock: vi.fn(), transaction: vi.fn() }));
 vi.mock("../../../apps/web/src/lib/workspace", () => ({ requireWorkspaceRole: f.gate }));
 vi.mock("../../../apps/web/src/lib/api", () => ({ ApiException: class extends Error { constructor(public status: number, message: string) { super(message); } } }));
 vi.mock("../../db/src/index", () => ({
   Prisma: { DbNull: "database-null", TransactionIsolationLevel: { ReadCommitted: "ReadCommitted", RepeatableRead: "RepeatableRead" } },
-  prisma: { project: { findFirst: f.project }, studioMaterialUpload: { findMany: f.materials }, studioGeneratedMaterial: { findMany: f.generated }, $transaction: f.transaction },
+  prisma: { project: { findFirst: f.project }, studioMaterialUpload: { findMany: f.materials }, studioGeneratedMaterial: { findMany: f.generated }, studioBrandMaterialReceipt: { findMany: f.verified }, $transaction: f.transaction },
 }));
 import { readStudioWorkflow, readStudioWorkflowAssets, saveStudioWorkflow, studioWorkflowImage } from "../../../apps/web/src/lib/studio-workflow";
 
@@ -24,9 +24,9 @@ beforeEach(() => {
   f.document.mockResolvedValue({ workspaceId: "w", format: "novart-native-v1", canvas });
   f.state.mockResolvedValue(null);
   f.materials.mockResolvedValue([{ sha256: sha, mimeType: "image/png", asset: { id: "a", url: "https://private.invalid/bucket/image.png" } }]);
-  f.generated.mockResolvedValue([]);
+  f.generated.mockResolvedValue([]); f.verified.mockResolvedValue([]);
   f.save.mockImplementation(async ({ update }) => ({ ...emptyState, ...update, workflowTarget: update.workflowTarget === "database-null" ? null : update.workflowTarget, workflowUpdatedAt: savedAt }));
-  f.transaction.mockImplementation(fn => fn({ $queryRaw: f.lock, project: { findFirst: f.project }, editorDocument: { findUnique: f.document }, studioMaterialUpload: { findMany: f.materials }, studioGeneratedMaterial: { findMany: f.generated }, workbenchProjectState: { findUnique: f.state, upsert: f.save } }));
+  f.transaction.mockImplementation(fn => fn({ $queryRaw: f.lock, project: { findFirst: f.project }, editorDocument: { findUnique: f.document }, studioMaterialUpload: { findMany: f.materials }, studioGeneratedMaterial: { findMany: f.generated }, studioBrandMaterialReceipt: { findMany: f.verified }, workbenchProjectState: { findUnique: f.state, upsert: f.save } }));
 });
 
 describe("project-scoped durable workflow service", () => {
@@ -36,7 +36,7 @@ describe("project-scoped durable workflow service", () => {
     const result = await readStudioWorkflowAssets("w", "u", { projectId: "p" });
     expect(result.assets[0]).toMatchObject({ shapeId: ref.shapeId, assetSha256: sha });
     expect(f.project).toHaveBeenCalledWith({ where: { id: "p", workspaceId: "w" }, select: { id: true } });
-    expect(f.materials.mock.calls[0][0].where).toMatchObject({ workspaceId: "w", projectId: "p", task: { status: "SUCCEEDED" }, asset: { workspaceId: "w", deprecatedAt: null, projectLinks: { some: { projectId: "p", project: { workspaceId: "w" } } }, OR: [{ id: { in: ["a"] } }, { url: { in: [url] } }] } });
+    expect(f.materials.mock.calls[0][0].where).toMatchObject({ workspaceId: "w", task: { workspaceId: "w", kind: "STUDIO_UPLOAD", status: "SUCCEEDED" }, asset: { workspaceId: "w", deprecatedAt: null, projectLinks: { some: { projectId: "p", project: { workspaceId: "w" } } }, OR: [{ id: { in: ["a"] } }, { url: { in: [url] } }] } });
   });
   it("checks membership and project scope before reading workflow, canvas or upload records", async () => {
     f.gate.mockRejectedValueOnce({ status: 404 });
@@ -103,7 +103,7 @@ describe("project-scoped durable workflow service", () => {
   it("only resolves thumbnails through a project-scoped material to the canonical same-origin proxy", async () => {
     expect(await studioWorkflowImage("w", "viewer", { projectId: "p" }, sha)).toBe(url);
     expect(f.gate).toHaveBeenCalledWith("w", "viewer", "VIEWER");
-    expect(f.materials.mock.calls[0][0].where).toMatchObject({ workspaceId: "w", projectId: "p", sha256: sha, task: { status: "SUCCEEDED" }, asset: { workspaceId: "w", deprecatedAt: null, projectLinks: { some: { projectId: "p", project: { workspaceId: "w" } } } } });
+    expect(f.materials.mock.calls[0][0].where).toMatchObject({ workspaceId: "w", sha256: sha, task: { workspaceId: "w", kind: "STUDIO_UPLOAD", status: "SUCCEEDED" }, asset: { workspaceId: "w", deprecatedAt: null, projectLinks: { some: { projectId: "p", project: { workspaceId: "w" } } } } });
     f.materials.mockResolvedValue([]);
     await expect(studioWorkflowImage("w", "u", { projectId: "p" }, sha)).rejects.toMatchObject({ status: 404 });
     await expect(studioWorkflowImage("w", "u", { projectId: "p" }, "../../secret")).rejects.toThrow();
@@ -113,7 +113,8 @@ describe("project-scoped durable workflow service", () => {
     f.generated.mockResolvedValue([{ sha256: sha, mimeType: "image/png", versionId: "v", asset: { id: "a", url: "https://object.invalid/generated", generationVersionId: "v" } }]);
     expect((await readStudioWorkflowAssets("w", "u", { projectId: "p" })).assets[0]).toMatchObject({ shapeId: ref.shapeId, assetSha256: sha });
     expect(await studioWorkflowImage("w", "u", { projectId: "p" }, sha)).toBe(url);
-    expect(f.generated.mock.calls[0][0].where).toMatchObject({ workspaceId: "w", projectId: "p", status: "SUCCEEDED", version: { generation: { workspaceId: "w", projectId: "p" } }, asset: { availableForGeneration: true, deprecatedAt: null } });
+    expect(f.generated.mock.calls[0][0].where).toMatchObject({ workspaceId: "w", status: "SUCCEEDED", version: { generation: { workspaceId: "w" } }, asset: { availableForGeneration: true, deprecatedAt: null,
+      projectLinks: { some: { projectId: "p", project: { workspaceId: "w" } } } } });
     f.generated.mockResolvedValue([{ sha256: sha, mimeType: "image/png", versionId: "v", asset: { id: "a", url, generationVersionId: "different-version" } }]);
     expect((await readStudioWorkflowAssets("w", "u", { projectId: "p" })).assets).toEqual([]);
     await expect(studioWorkflowImage("w", "u", { projectId: "p" }, sha)).rejects.toMatchObject({ status: 404 });

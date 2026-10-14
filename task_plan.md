@@ -249,5 +249,20 @@ Required before push: `pnpm test`, `pnpm test:ai`, `pnpm -F web typecheck`, `pnp
 - [complete implementation] User selected unlimited brand count: one-time Plan.maxWorkspaces=-1 policy migration, seed and fallback; generation quotas unchanged. Company database migration is not yet executed.
 - [complete local baseline] Real browser brands9/layout7/owned52/inbox16, API unit27 and local four gates passed; no actual Mac/Safari result inferred.
 - [in_progress 2026-10-14] Independent review reproduced homepage attachment loss after failed/pending recovery writes and duplicate brand creation after lost201 receipt. Apply explicit home persistence confirmation and read-only brand-list recovery; add isolated browser regressions before final export/build.
-- [in_progress] Source-only main-compatible port on claude/studio-multi-brand-rail from2d29125; independent L1 contracts1003/UI24, AI365 and typecheck pass. Source/containers real database CI required before main update. No manual CDS, local Docker or provider calls.
+- [complete validation, merge deferred by user] Main-compatible port9ca3dfb on claude/studio-multi-brand-rail from2d29125; final local contracts1014/UI24, AI365, typecheck/build pass. Exact CI38503283504 succeeded, source and built containers each backend109/UI20. User explicitly said not to merge main and to modify locally; first fetch failed before any main switch/merge/push. No further remote mutation or deployment.
 - [complete log] Preserve daily evidence in docs/development-log-2026-10-13.md and docs/development-log-2026-10-14.md; guarded branch delivery and verified main update remain pending.
+- [current scope 2026-10-14] Continue local development only in devUpdate1012; leave branch code and QA evidence intact. Do not automatically push, merge main or deploy. Write follow-up log locally.
+# Local handoff implementation · 2026-10-14
+
+Latest user authorization: normally commit and push this candidate to existing devUpdate1012. This overrides the earlier local-only publication limit for this branch only. Keep main unmerged; no manual CDS/production deployment or model calls. Exact push and new CI outcomes remain separately recorded.
+
+User authorized `交接包_devUpdate1012_2026-10-14.zip` implementation with parallel agents, local changes only. Baseline: devUpdate1012 / 928ab0a. Do not commit, push, merge main, deploy, start Docker, operate CDS, or mutate shared data in this increment. Existing local documents are retained.
+
+- [complete local implementation/interaction checks] M1: login, shared brand/menu flow, accurate color previews, project rename, responsive shell. Real account/SQL/Mac checks remain pending.
+- [complete local implementation/interaction checks] M2: brand assets, true projectless uploads, trusted project reuse, persistent image numbering and explicit ordered references. Real S3/DB and legacy external-asset migration remain pending.
+- [complete local implementation/interaction checks] M3: persisted conversation, async orchestration, structured-model adapter with single-call/lease/TTL protection, safe-rule fallback, output sizes, chat UI and recovery. Model gate is off by default; actual SQL/provider validation remains pending.
+- [supported local subset complete] M4: contextual tools, pinned quick edit, crop/flip/rotate/export, bounded pixel resize, true-alpha/mask capability integration and preserved layers/PSD. Transformed-source masks and real AI quality remain pending; no enabled fake tools.
+- [local tests/build/documents complete] M5: full L1 1447+34, AI487, typecheck, final production build, 125 exported asset integrity checks and actual isolated browser regressions pass. SQL/provider/domain/publication acceptance has not run.
+- [deferred per handoff] M6: advanced image tools (outpaint, object move, mockup/image adjustments, OCR, vector, multi-angle, animation, customizable toolbar).
+
+Acceptance distinguishes local UI/unit checks, actual disposable database tests and real provider quality. Missing local runtime/configuration stays explicit; external deployments and domain verification are out of scope under the latest local-only instruction.

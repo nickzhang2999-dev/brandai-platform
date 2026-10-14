@@ -4,7 +4,7 @@ import { ensureStudioGenerationArtifacts } from "@/lib/studio-generation-artifac
 import { studioExactIntent, preflightStudioExactSources, assertStudioExactNotModelInput, type StudioExactSnapshot } from "@/lib/studio-generation-exact";
 import { loadStudioEditSource, assertStudioEditNotModelReference, type StudioEditSourceSnapshot } from "@/lib/studio-generation-edit";
 import { requireStudioBaseEncryption } from "@/lib/studio-generation-base";
-import { StudioEditRequest, StudioEditResponse } from "@brandai/contracts";
+import { StudioEditRequest, StudioEditResponse, type StudioImageToolSpec } from "@brandai/contracts";
 import { Worker, type Job } from "bullmq";
 import { prisma, Prisma } from "@brandai/db";
 import {
@@ -162,6 +162,9 @@ export interface GenerateJobData {
   studioExpectedAssetSha256?: Record<string, string>;
   studioExactLayout?: StudioExactSnapshot;
   studioEdit?: StudioEditSourceSnapshot;
+  studioImageTool?: StudioImageToolSpec;
+  studioImageToolInputHash?: string;
+  studioConversationSize?: { requestedSize: { width: number; height: number }; sizeSource: string; method: "deterministic-contain" };
   /**
    * M3 — text rendering strategy threaded into the AI GenerateRequest.
    * "direct" (default) keeps the model rendering any text; "layered" steers it
@@ -439,7 +442,9 @@ export async function runGenerateJob(
   async function runGenerationInner(): Promise<GenerateJobResult> {
     const studioExact = studio ? studioExactIntent(job.data) : null;
     if (studioExact) await preflightStudioExactSources(workspaceId, generation.projectId, studioExact.layout, controller!.signal);
-    const studioEdit = studio && job.data.studioEdit ? await loadStudioEditSource(workspaceId, generation.projectId, job.data.studioEdit, controller!.signal) : null;
+    const studioEdit = studio && job.data.studioEdit ? job.data.studioImageTool
+      ? await loadStudioEditSource(workspaceId, generation.projectId, job.data.studioEdit, controller!.signal, true)
+      : await loadStudioEditSource(workspaceId, generation.projectId, job.data.studioEdit, controller!.signal) : null;
     if (studioEdit && targets?.length !== 1) throw new Error("Product edits require exactly one output size");
     // §V0.02 #6 — latest-first ONLY for the generation prompt: newly created /
     // just re-enabled rules take precedence in the constraint. Snapshots and the
@@ -1063,7 +1068,7 @@ export async function runGenerateJob(
     // 审计留痕与实际发给 AI 的规则同源（Codex P2）：chat-origin/direct 分支
     // 刻意不发品牌规则（baseFields.brandRules = []），若仍把全量 confirmed
     // 规则 id 盖进版本 params，导出/审计会声称这些规则塑造了图——与事实相反。
-    const appliedRuleIds = baseFields.brandRules.map((r) => r.id);
+    const appliedRuleIds = job.data.studioImageTool ? [] : baseFields.brandRules.map((r) => r.id);
 
     async function persist(
       v: GenerateResponse["versions"][number],
@@ -1072,15 +1077,21 @@ export async function runGenerateJob(
       if (studio) {
         return stageStudioGenerationOutput(studio, { imageUrl: v.imageUrl, width: v.width, height: v.height,
           params: { ...studioProviderParams(v.params), appliedRuleIds, appliedBrandRuleCount: appliedRuleIds.length,
-            brandConstraintMode: brandRules.length ? "BRANDED" : "FREE", sceneType, ...constraintEcho,
+            brandConstraintMode: !job.data.studioImageTool && brandRules.length ? "BRANDED" : "FREE", sceneType, ...constraintEcho,
+            ...(job.data.studioImageTool ? { imageTool: job.data.studioImageTool.operation } : {}),
+            ...(job.data.studioImageTool && Number.isSafeInteger(v.params.providerWidth) && Number.isSafeInteger(v.params.providerHeight)
+              && Number(v.params.providerWidth) > 0 && Number(v.params.providerHeight) > 0 && Number(v.params.providerWidth) <= 8192 && Number(v.params.providerHeight) <= 8192
+              ? { imageToolProviderSize: { width: v.params.providerWidth, height: v.params.providerHeight } } : {}),
             textMode: job.data.textMode ?? "direct", imageKind: studioEdit ? "EDITED" : "GENERATED",
             ...(styleKeywords.length ? { styleKeywords } : {}),
             ...(templateReferenceAssetIds.length ? { templateReferenceAssetIds } : {}),
             ...(imageInputs.length ? { imageInputs } : {}), ...(assetUsages.length ? { assetUsages } : {}),
-            ...(watermarkOverlays.length ? { watermarkOverlays } : {}),
+            ...(watermarkOverlays.length && !job.data.studioImageTool ? { watermarkOverlays } : {}),
             ...(legacyReferenceItems.length ? { referenceAssets: legacyReferenceItems } : {}),
-            studioPostprocess: { watermarkOverlays: resolvedOutputOverlays,
-              automaticBrandLogoAssetId: automaticBrandLogoAsset?.id ?? null, brandRules,
+            studioPostprocess: { watermarkOverlays: job.data.studioImageTool ? [] : resolvedOutputOverlays,
+              ...(job.data.studioImageTool ? { imageTool: job.data.studioImageTool.operation } : {}),
+              ...(job.data.studioConversationSize ? { conversationSize: job.data.studioConversationSize } : {}),
+              automaticBrandLogoAssetId: job.data.studioImageTool ? null : automaticBrandLogoAsset?.id ?? null, brandRules: job.data.studioImageTool ? [] : brandRules,
               ...(studioExact?.layout ? { exactLayout: studioExact.layout } : {}),
               ...(studioEdit ? { editSource: job.data.studioEdit } : {}),
               assetSha256: Object.fromEntries((studioReferences?.audit ?? []).map(item => [String(item.assetId), String(item.sha256)])) },
@@ -1236,11 +1247,12 @@ export async function runGenerateJob(
         try {
           const request = GenerateRequest.parse({
             ...baseFields,
+            ...(job.data.studioImageTool ? { brandRules: [], aiConstraints: { ...baseFields.aiConstraints, referenceImages: [] } } : {}),
             versionCount: 1,
             targets: [t],
           });
           const result = studioEdit
-            ? StudioEditResponse.parse(await ai.studioEdit(StudioEditRequest.parse({ imageUrl: studioEdit.imageUrl, generation: request }), transport))
+            ? StudioEditResponse.parse(await ai.studioEdit(StudioEditRequest.parse({ imageUrl: studioEdit.imageUrl, generation: request, ...(job.data.studioImageTool ? { imageTool: job.data.studioImageTool } : {}) }), transport))
             : GenerateResponse.parse(await ai.generate(request, transport));
           if (settled) {
             console.warn(

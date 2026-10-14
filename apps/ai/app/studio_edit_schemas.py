@@ -6,6 +6,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .schemas import GenerateRequest, SizeSpec
+from .studio_image_tool_schemas import StudioImageToolSpec
 
 STUDIO_EDIT_REVISION = "studio-whole-image-edit-r1"
 STUDIO_EDIT_MAX_BYTES = 32 * 1024 * 1024
@@ -51,10 +52,20 @@ class StudioEditRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     imageUrl: str = Field(max_length=_MAX_DATA_LENGTH)
     generation: StudioEditGeneration
+    imageTool: StudioImageToolSpec | None = None
+
+    @field_validator("imageTool", mode="before")
+    @classmethod
+    def non_null_tool(cls, value):
+        if value is None:
+            raise ValueError("imageTool must be absent, never null")
+        return value
 
     @model_validator(mode="after")
     def private_images_only(self):
         refs = self.generation.aiConstraints.referenceImages if self.generation.aiConstraints else []
+        if self.imageTool and refs:
+            raise ValueError("Image tools accept one frozen source without secondary references")
         if len(refs) + 1 > STUDIO_EDIT_MAX_IMAGES:
             raise ValueError("Source plus references exceed the image limit")
         total = len(studio_data_bytes(self.imageUrl))

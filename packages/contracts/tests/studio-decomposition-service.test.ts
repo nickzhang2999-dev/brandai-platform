@@ -175,8 +175,8 @@ describe("Studio decomposition intake: simulated DB, never a provider call", () 
     const received = await submitStudioDecomposition("w", "u", input);
     expect(received.status).toBe("PENDING"); expect(received.layers).toEqual([]);
     expect(f.create).toHaveBeenCalledTimes(1); expect(f.queue).toHaveBeenCalledWith("request"); expect(f.paid).not.toHaveBeenCalled();
-    expect(f.asset).toHaveBeenCalledWith({ where: { id: "source", workspaceId: "w", deprecatedAt: null, projectLinks: { some: { projectId: "p", project: { workspaceId: "w" } } } } });
-    expect(f.uploadReceipt.mock.calls[0]![0].where).toMatchObject({ workspaceId: "w", projectId: "p", assetId: "source", sha256: input.assetSha256 });
+    expect(f.asset).toHaveBeenCalledWith({ where: { id: "source", workspaceId: "w", deprecatedAt: null, availableForGeneration: true, projectLinks: { some: { projectId: "p", project: { workspaceId: "w" } } } } });
+    expect(f.uploadReceipt.mock.calls[0]![0].where).toMatchObject({ workspaceId: "w", assetId: "source", sha256: input.assetSha256, task: { workspaceId: "w", kind: "STUDIO_UPLOAD", status: "SUCCEEDED" } });
   });
   it.each([401, 403, 404])("retains authentication/role/scope denial %i before intake", async status => {
     f.role.mockRejectedValue(Object.assign(new Error("denied"), { status }));

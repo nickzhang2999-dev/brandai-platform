@@ -60,7 +60,7 @@ export default function LoginPage() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-6 py-12">
-      <CreamCard className="w-full max-w-sm p-8">
+      <CreamCard className="w-full max-w-[436px] rounded-[28px] p-6 sm:p-8">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src="/brand/deepflare-logo.svg"
@@ -69,14 +69,14 @@ export default function LoginPage() {
         />
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src="/brand/deepflare-logo-dark.svg" alt="DeepFlare · 曜影深蓝" className="hidden h-20 w-full object-contain dark:block" />
-        <h1 className="mt-3 font-serif text-3xl leading-tight text-foreground">
-          {mode === "login" ? "登录 DeepFlare" : "创建账号"}
+        <h1 className="mt-6 text-center text-[22px] font-semibold leading-snug text-foreground sm:text-[25px]">
+          {mode === "login" ? "进入你的品牌视觉工作台" : "创建账号"}
         </h1>
-        <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-          {mode === "login"
-            ? "进入你的品牌视觉工作台。"
-            : "用邮箱开始建立品牌视觉系统(密码至少 8 位)。"}
-        </p>
+        {mode === "register" && (
+          <p className="mt-2 text-center text-sm leading-relaxed text-muted-foreground">
+            用邮箱开始建立品牌视觉系统（密码至少 8 位）
+          </p>
+        )}
 
         {(providers.includes("github") || providers.includes("google")) && (
           <div className="mt-6 flex flex-col gap-2">
@@ -107,15 +107,17 @@ export default function LoginPage() {
         )}
 
         <form className="mt-6 flex flex-col gap-3" onSubmit={submit}>
-          <Label>邮箱</Label>
+          <Label htmlFor="login-email">邮箱</Label>
           <Input
+            id="login-email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             type="email"
             required
           />
-          <Label>密码</Label>
+          <Label htmlFor="login-password">密码</Label>
           <Input
+            id="login-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             type="password"

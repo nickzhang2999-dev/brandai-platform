@@ -11,6 +11,12 @@ const receipt = { taskId: "task", projectId: "project", mutationId, status: "PEN
 function request(file: Blob, extra?: (form: FormData) => void) { const form = new FormData(); form.append("projectId", "project"); form.append("mutationId", mutationId); form.append("file", file, "photo.png"); extra?.(form); return new Request("http://127.0.0.1/studio/material-upload", { method: "POST", body: form }); }
 
 describe("studio material wire contracts", () => {
+  it("keeps legacy uploads and additively carries brand-first and generated-version identity", () => {
+    expect(StudioMaterialUploadInput.parse({ projectId: "p", mutationId, attachToProject: false }).attachToProject).toBe(false);
+    expect(StudioMaterialUploadInput.safeParse({ projectId: "p", mutationId, attachToProject: null }).success).toBe(false);
+    expect(StudioMaterialUploadView.safeParse({ ...receipt, status: "SUCCEEDED", attachToProject: false, material: { ...material, versionId: "version" } }).success).toBe(true);
+    expect(StudioMaterialUploadView.safeParse({ ...receipt, status: "SUCCEEDED", material: { ...material, versionId: null } }).success).toBe(false);
+  });
   it("keeps server identity outside the client form and rejects null IDs", () => {
     expect(StudioMaterialUploadInput.parse({ projectId: "p", mutationId })).toEqual({ projectId: "p", mutationId });
     for (const input of [{ projectId: "p", mutationId, userId: "other" }, { projectId: "p", mutationId, objectKey: "foreign" }, { projectId: "p", mutationId: "same" }]) expect(StudioMaterialUploadInput.safeParse(input).success).toBe(false);
@@ -28,6 +34,18 @@ describe("studio material wire contracts", () => {
 });
 
 describe("bounded image intake", () => {
+  it("persists an explicit library-first upload and refuses ambiguous attachment settings", async () => {
+    const file = new Blob(["image bytes"], { type: "image/png" });
+    expect((await readStudioMaterialForm(request(file, form => form.append("attachToProject", "false")))).attachToProject).toBe(false);
+    await expect(readStudioMaterialForm(request(file, form => form.append("attachToProject", "yes")))).rejects.toMatchObject({ status: 422 });
+  });
+  it("brand-only intake refuses any client-supplied project context", async () => {
+    const file = new Blob(["image bytes"], { type: "image/png" });
+    await expect(readStudioMaterialForm(request(file), { brandOnly: true })).rejects.toMatchObject({ status: 422 });
+    const form = new FormData(); form.append("mutationId", mutationId); form.append("file", file, "brand.png");
+    const result = await readStudioMaterialForm(new Request("http://127.0.0.1/upload", { method: "POST", body: form }), { brandOnly: true });
+    expect(result.projectId).toBeNull(); expect(result.attachToProject).toBe(false);
+  });
   it("hashes actual multipart bytes and ignores filename as a storage path", async () => {
     const result = await readStudioMaterialForm(request(new Blob(["image bytes"], { type: "image/png" })));
     expect(result.body.toString()).toBe("image bytes"); expect(result.sha256).toHaveLength(64); expect(result.projectId).toBe("project");

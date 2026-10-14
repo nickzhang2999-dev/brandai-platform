@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { prisma, Prisma } from "@brandai/db";
-import { StudioGenerationInput, StudioGenerationQuery, StudioGenerationView, STUDIO_GENERATION_TTL_MS } from "@brandai/contracts";
+import { StudioGenerationInput, StudioGenerationQuery, StudioGenerationView, StudioWorkflowTarget, STUDIO_GENERATION_TTL_MS } from "@brandai/contracts";
 import { ApiException } from "./api";
 import { requireWorkspaceRole } from "./workspace";
 import { requireStudioMaterialProject } from "./studio-materials";
@@ -9,13 +9,26 @@ import { reserveGenerationQuotaInTransaction } from "./quota";
 import { enqueueStudioGeneration } from "./studio-generation-queue";
 import { readStudioGenerationResults } from "./studio-generation-artifacts";
 import type { GenerateJobData } from "./workers/generate.worker";
+import type { StudioConversationAcceptance } from "./studio-generation-policy";
 import { lockStudioIntake } from "./studio-intake-lock";
 import { generatedPsdLayerCount, generatedPsdLayerMode } from "./studio-generated-psd-state";
 type Receipt = Prisma.StudioGenerationRequestGetPayload<Record<string, never>>;
+export type StudioGenerationLease = { messageId: string; attemptToken: string };
+async function requireConversationLease(tx: Prisma.TransactionClient, workspaceId: string, userId: string, projectId: string, lease: StudioGenerationLease) {
+  const rows = await tx.$queryRaw<Array<{ id: string }>>`SELECT m."id" FROM "StudioConversationMessage" m
+    JOIN "StudioConversation" c ON c."id" = m."conversationId"
+    WHERE m."id" = ${lease.messageId} AND m."attemptToken" = ${lease.attemptToken} AND m."status" = 'RUNNING'
+      AND m."expiresAt" > clock_timestamp() AND c."workspaceId" = ${workspaceId} AND c."userId" = ${userId} AND c."projectId" = ${projectId}
+    FOR UPDATE OF m`;
+  if (!rows.length) throw new ApiException(409, "消息处理租约已结束，未受理新的付费生成，请读取原任务确认。");
+}
 
 async function receipt(row: Receipt, canWrite = true) {
   const results = await readStudioGenerationResults(row);
+  const edited = (row.jobData as {studioEdit?: {shapeId?: unknown}})?.studioEdit;
+  const sourceShape = StudioWorkflowTarget.shape.shapeId.safeParse(edited?.shapeId);
   return StudioGenerationView.parse({ mode: (row.jobData as {studioEdit?: unknown})?.studioEdit ? "modify" : "generate", psdLayerCount: generatedPsdLayerCount(row.jobData), psdLayerMode: generatedPsdLayerMode(row.jobData), requestId: row.id, mutationId: row.mutationId, projectId: row.projectId, generationId: row.generationId,
+    ...(edited && sourceShape.success ? { sourceShapeId: sourceShape.data } : {}),
     status: row.status, progress: null, expiresAt: row.expiresAt.toISOString(), displayText: row.prompt, error: row.error,
     ...results, canRetryArchive: canWrite && results.canRetryArchive });
 }
@@ -34,12 +47,12 @@ export async function expireStudioGenerations() {
   });
 }
 
-export async function submitStudioGeneration(workspaceId: string, userId: string, raw: unknown) {
+export async function submitStudioGeneration(workspaceId: string, userId: string, raw: unknown, accepted?: StudioConversationAcceptance, lease?: StudioGenerationLease) {
   await requireWorkspaceRole(workspaceId, userId, "EDITOR");
   const input = StudioGenerationInput.parse(raw);
   await requireStudioMaterialProject(workspaceId, userId, input.projectId, true);
   const identity = { workspaceId, userId, projectId: input.projectId, mutationId: input.mutationId };
-  const payloadHash = hashStudioPayload(input);
+  const payloadHash = hashStudioPayload(accepted ? { input, accepted } : input);
   const replay = await prisma.studioGenerationRequest.findUnique({ where: { workspaceId_userId_projectId_mutationId: identity } });
   if (replay) {
     if (replay.payloadHash !== payloadHash) throw new ApiException(409, "同一次生成请求不能改成其他内容，请重新提交。");
@@ -52,6 +65,7 @@ export async function submitStudioGeneration(workspaceId: string, userId: string
     try {
       row = await prisma.$transaction(async tx => {
         await lockStudioIntake(tx, 2);
+        if (lease) await requireConversationLease(tx, workspaceId, userId, input.projectId, lease);
         const duplicate = await tx.studioGenerationRequest.findUnique({ where: { workspaceId_userId_projectId_mutationId: identity } });
         if (duplicate) {
           if (duplicate.payloadHash !== payloadHash) throw new ApiException(409, "生成请求标识已用于其他内容。");
@@ -60,7 +74,8 @@ export async function submitStudioGeneration(workspaceId: string, userId: string
         const unfinished: Prisma.StudioGenerationRequestWhereInput = { OR: [{ status: { in: ["PENDING", "RUNNING"] } }, { outputs: { some: { imageUrl: { not: null } } } }] };
         const [local, global] = await Promise.all([tx.studioGenerationRequest.count({ where: { ...unfinished, workspaceId } }), tx.studioGenerationRequest.count({ where: unfinished })]);
         assertStudioGenerationCapacity(local, global);
-        const prepared = await prepareStudioGeneration(tx, workspaceId, userId, input);
+        const prepared = await prepareStudioGeneration(tx, workspaceId, userId, input, accepted);
+        if (lease) await requireConversationLease(tx, workspaceId, userId, input.projectId, lease);
         const generation = await reserveGenerationQuotaInTransaction(tx, { workspaceId, make: () => prepared.generationData });
         const id = "sgr_" + randomUUID().replace(/-/g, "");
         return tx.studioGenerationRequest.create({ data: { id, ...identity, payloadHash, prompt: input.prompt,

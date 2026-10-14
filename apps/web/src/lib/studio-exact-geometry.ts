@@ -80,7 +80,7 @@ function visibleUnscaled(record: ObjectValue, props: ObjectValue) {
   if (props.opacity !== undefined && props.opacity !== 1) fail("严格保留暂不支持额外透明度。");
   const meta = object(record.meta) ? record.meta : {};
   const owned = object(meta.novartOwned) ? meta.novartOwned : {};
-  if (props.novartVersion === 2 && owned.version === 2 && owned.hidden === true) fail("严格保留不接受隐藏图层，请先显示图片或画框。");
+  if ([2, 3].includes(Number(props.novartVersion)) && owned.version === props.novartVersion && owned.hidden === true) fail("严格保留不接受隐藏图层，请先显示图片或画框。");
   if (meta.agentHiddenUntilFit === true || meta.isUploading === true) fail("图片或容器尚未完成加载，请等待完成后重新保存画布。");
   for (const value of [record, props, meta]) {
     if ((value.hidden !== undefined && value.hidden !== false) || (value.isHidden !== undefined && value.isHidden !== false) ||

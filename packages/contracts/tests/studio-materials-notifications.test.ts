@@ -4,10 +4,19 @@ vi.mock("../../db/src/index", () => ({ prisma: { generation: { findMany: f.gener
 vi.mock("../../../apps/web/src/lib/brand-preview", () => ({ BRAND_PREVIEW_PROJECT_NAME: "hidden-preview" }));
 vi.mock("../../../apps/web/src/lib/studio-notifications", () => ({ listStudioGenerationNotifications: f.studio }));
 vi.mock("../../../apps/web/src/lib/studio-layer-notifications", () => ({ listStudioLayerNotifications: f.layers }));
+vi.mock("../../../apps/web/src/lib/studio-workflow-notifications", () => ({ listStudioWorkflowNotifications: async () => [] }));
 import { listWorkspaceNotifications } from "../../../apps/web/src/lib/notifications";
 const upload = { taskId: "upload-task", projectId: "p", fileName: "my image.png", task: { status: "SUCCEEDED", error: null, updatedAt: new Date("2026-10-09T00:00:00Z") } };
 beforeEach(() => { vi.resetAllMocks(); f.generations.mockResolvedValue([]); f.tasks.mockResolvedValue([]); f.uploads.mockResolvedValue([upload]); f.projects.mockResolvedValue([{ id: "p" }]); f.studio.mockResolvedValue([]); f.layers.mockResolvedValue([]); });
 describe("private upload terminal notifications", () => {
+  it("links projectless brand-library uploads to the real brand library without a phantom project", async () => {
+    f.uploads.mockResolvedValue([{ ...upload, projectId: null, attachToProject: false }]);
+    const items = await listWorkspaceNotifications("w", 30, "u", "studio");
+    expect(items[0]).toMatchObject({ href: "/studio?workspaceId=w#/resources", status: "SUCCEEDED" });
+    expect(f.projects).not.toHaveBeenCalled();
+    f.uploads.mockResolvedValue([{ ...upload, projectId: null, attachToProject: true }]);
+    expect(await listWorkspaceNotifications("w", 30, "u", "studio")).toEqual([]);
+  });
   it("queries uploads by authenticated user plus workspace and never puts them in the shared task query", async () => {
     const items = await listWorkspaceNotifications("w", 30, "u");
     expect(f.uploads).toHaveBeenCalledWith(expect.objectContaining({ where: { workspaceId: "w", userId: "u", task: { workspaceId: "w", kind: "STUDIO_UPLOAD", status: { in: ["SUCCEEDED", "FAILED"] } } } }));

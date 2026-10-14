@@ -17,6 +17,7 @@
   let projects = [], projectsLoaded = false, projectsBusy = false, projectsError = '', projectsRequest = null;
   let createBusy = false, homeComposing = false, recoveryRecord = null, recoveryWarning = '', activeId = '', lastWorkspaceId = '', route = {page: 'home'}, previousRoute = '/home', settingsOrigin = '/home', brandOrigin = '/resources';
   let favoriteFilter = false, resourceTab = 'images', resourceProject = '', resourceGeneration = 0, resourcesBusy = false, resourcesError = '', previewSource = '', toastTimer = 0;
+  let brandResourceCursor = null, brandResourceItems = [], brandSearchTimer = 0, brandUploadOperation = null, brandUploadBusy = false, brandUploadPoll = 0, brandUploadWatch = 0;
   const frames = new Map(), assetCache = new Map(), pageScroll = new Map();
   const resourceRows = new Map(), workspaceOrigins = new Map();
   let previewFocus = null, libraryReturnFocus = null, pendingResourceScroll = null;
@@ -243,16 +244,55 @@
     if (panel) { const cached = frames.get(id); if (cached) cached.pendingPanel = panel; else pendingPanels.set(id, panel); }
     go('/workspace/' + encodeURIComponent(id));
   }
-  let libraryScope = 'active', archiveBusy = false, archiveTarget = null;
+  let libraryScope = 'active', archiveBusy = false, archiveTarget = null, renameBusy = false, renameTarget = null, renameComposing = false, renameReturn = null;
+  const readOnlyBrand = () => window.__NOVART_PRODUCT__?.readOnly === true || window.__NOVART_PRODUCT__?.workspaces?.find(value => value.id === window.__NOVART_PRODUCT__?.workspaceId)?.role === 'VIEWER';
   const projectEvent = typeof BroadcastChannel === 'function' ? new BroadcastChannel('novart-project-library') : null;
   function addProjectActions(card, p) {
     const details = node('details', 'pl-more'), summary = node('summary', '', '···');
-    summary.setAttribute('aria-label', '更多操作：' + (p.projectName || '未命名项目'));
+    summary.dataset.action = 'more-project'; summary.setAttribute('aria-label', '更多操作：' + (p.projectName || '未命名项目'));
     details.addEventListener('toggle', () => { if (details.open) document.querySelectorAll('.pl-more[open]').forEach(other => { if (other !== details) other.open = false; }); });
     const menu = node('div', 'pl-more-menu'), action = button(p.archivedAt ? '恢复项目' : '归档项目', '', () => { details.open = false; p.archivedAt ? changeArchive(p, false) : confirmArchive(p); });
     action.dataset.action = p.archivedAt ? 'restore-project' : 'archive-project'; action.disabled = archiveBusy;
+    if (!p.archivedAt) {
+      const rename = button('修改名称', '', () => { details.open = false; openRename(p, summary); });
+      rename.dataset.action = 'rename-project'; rename.disabled = renameBusy || archiveBusy || readOnlyBrand(); menu.append(rename);
+    }
+    action.disabled ||= readOnlyBrand() || renameBusy;
     menu.append(action); details.append(summary, menu); card.append(details);
   }
+  function openRename(p, source) {
+    if (renameBusy || archiveBusy || p.archivedAt || readOnlyBrand()) return;
+    renameTarget = p.projectId; renameReturn = source; $('ns-rename-name').value = p.projectName || ''; $('ns-rename-status').textContent = '';
+    $('ns-rename-dialog').showModal(); requestAnimationFrame(() => { $('ns-rename-name').focus(); $('ns-rename-name').select(); });
+  }
+  function renamedProject(p) {
+    if (lastWorkspaceId === p.projectId) updateWorkspaceNav(p.projectId);
+    const entry = frames.get(p.projectId);
+    if (entry?.ready) entry.frame.contentWindow.postMessage({type:'nv-studio',action:'project-renamed',projectId:p.projectId,projectName:p.projectName},location.origin);
+    if (route.page === 'workspace' && route.projectId === p.projectId) document.title = p.projectName + ' · DeepFlare';
+  }
+  $('ns-rename-name').addEventListener('compositionstart', () => { renameComposing = true; });
+  $('ns-rename-name').addEventListener('compositionend', () => { renameComposing = false; });
+  $('ns-rename-name').addEventListener('keydown', event => { if (event.key === 'Enter' && (event.isComposing || renameComposing || event.keyCode === 229)) event.preventDefault(); });
+  $('ns-rename-form').addEventListener('submit', async event => {
+    event.preventDefault(); if (renameBusy || renameComposing || !renameTarget || readOnlyBrand()) return;
+    const name = $('ns-rename-name').value.trim(), current = project(renameTarget);
+    if (!name || name.length > 200) { $('ns-rename-status').textContent = '请填写 1–200 字的项目名称。'; $('ns-rename-name').focus(); return; }
+    if (!current || current.archivedAt) { $('ns-rename-status').textContent = '项目不存在或已归档，未修改名称。'; return; }
+    if (name === current.projectName) { $('ns-rename-dialog').close(); return; }
+    renameBusy = true; $('ns-rename-status').textContent = '正在保存名称…';
+    ['ns-rename-name','ns-rename-close','ns-rename-cancel','ns-rename-submit'].forEach(id => { $(id).disabled = true; });
+    try {
+      const result = await api('/api/canva/project/updateProjectName', {projectId:current.projectId,projectName:name});
+      if (result.code !== 0 || result.data?.projectId !== current.projectId || result.data?.projectName !== name) throw new Error(result.msg || '修改名称的回执尚未确认，请读取项目库检查。');
+      current.projectName = result.data.projectName; renamedProject(current); $('ns-rename-dialog').close(); renderProjects();
+      projectEvent?.postMessage({projectId:current.projectId}); notify('项目名称已保存。');
+    } catch (error) { $('ns-rename-status').textContent = error.message + (error.uncertain ? ' 当前输入仍保留，请先刷新项目库核对名称。' : ''); }
+    finally { renameBusy = false; ['ns-rename-name','ns-rename-close','ns-rename-cancel','ns-rename-submit'].forEach(id => { $(id).disabled = false; }); }
+  });
+  ['ns-rename-close','ns-rename-cancel'].forEach(id => $(id).addEventListener('click', () => { if (!renameBusy) $('ns-rename-dialog').close(); }));
+  $('ns-rename-dialog').addEventListener('cancel', event => { if (renameBusy || renameComposing) event.preventDefault(); });
+  $('ns-rename-dialog').addEventListener('close', () => { renameTarget = null; renameComposing = false; if (renameReturn?.isConnected) renameReturn.focus({preventScroll:true}); });
   function showArchivedProject(id) {
     const p = project(id); if (!p) return;
     frames.forEach(entry => { entry.slot.dataset.active = 'false'; entry.slot.style.visibility = 'hidden'; entry.slot.inert = true; entry.frame.setAttribute('aria-hidden', 'true'); });
@@ -330,8 +370,9 @@
   document.addEventListener('click', event => { document.querySelectorAll('.pl-more[open]').forEach(menu => { if (!menu.contains(event.target)) menu.open = false; }); });
   document.addEventListener('keydown', event => { if (event.key === 'Escape') document.querySelectorAll('.pl-more[open]').forEach(menu => { menu.open = false; menu.querySelector('summary').focus(); }); });
   async function refreshProjectLifecycle() {
-    if (archiveBusy) return;
+    if (archiveBusy || renameBusy) return;
     await loadProjects(true);
+    projects.forEach(renamedProject);
     if (route.page === 'workspace' && project(route.projectId)?.archivedAt) showArchivedProject(route.projectId);
   }
   projectEvent?.addEventListener('message', refreshProjectLifecycle);
@@ -474,7 +515,7 @@
     route = next; document.body.dataset.page = route.page;
     document.querySelectorAll('section[data-page]').forEach(section => { section.hidden = section.dataset.page !== route.page; });
     document.querySelectorAll('[data-route]').forEach(link => { if (link.dataset.route === route.page) link.setAttribute('aria-current', 'page'); else link.removeAttribute('aria-current'); });
-    const labels = {home: '首页', projects: '项目库', resources: '素材库', brand: '品牌规范', settings: '个人偏好', workspace: '工作台'}; $('ns-page-label').textContent = labels[route.page]; document.title = (route.page === 'workspace' ? project(route.projectId)?.projectName || '工作台' : labels[route.page]) + ' · Novart';
+    const labels = {home: '首页', projects: '项目库', resources: '素材库', brand: '品牌规范', settings: '个人偏好', workspace: '工作台'}; $('ns-page-label').textContent = labels[route.page]; document.title = (route.page === 'workspace' ? project(route.projectId)?.projectName || '工作台' : labels[route.page]) + ' · DeepFlare';
     $('ns-settings-return').querySelector('span').textContent = settingsOrigin.startsWith('/workspace/') ? '返回来源工作台' : '返回来源页面';
     $('ns-brand-return').textContent = brandOrigin.startsWith('/workspace/') ? '‹ 返回来源工作台' : brandOrigin === '/resources' ? '‹ 返回素材库' : '‹ 返回来源页面';
     frames.forEach(entry => { entry.slot.dataset.active = 'false'; entry.slot.style.visibility = 'hidden'; entry.slot.inert = true; entry.frame.setAttribute('aria-hidden', 'true'); });
@@ -637,12 +678,17 @@
     };
     const background = preview.style.getPropertyValue('--brand-2') || defaults.brand.colors[2], candidate = preview.style.getPropertyValue('--brand-1') || defaults.brand.colors[1];
     const backgroundLuminance = luminance(background), contrast = color => { const textLuminance = luminance(color); return (Math.max(backgroundLuminance, textLuminance) + .05) / (Math.min(backgroundLuminance, textLuminance) + .05); };
-    let textColor = contrast(candidate) >= 4.5 ? candidate : contrast('#171717') >= contrast('#FFFFFF') ? '#171717' : '#FFFFFF';
-    if (contrast(textColor) < 4.5) textColor = contrast('#000000') >= contrast('#FFFFFF') ? '#000000' : '#FFFFFF';
-    preview.style.setProperty('--brand-text', textColor);
+    // Preview is a faithful view of the draft, including low-contrast choices.
+    // Accessibility suggestions are optional changes, never silent rewrites.
+    preview.style.setProperty('--brand-text', candidate);
+    const ratio = contrast(candidate), suggestion = contrast('#171717') >= contrast('#FFFFFF') ? '#171717' : '#FFFFFF';
+    $('ns-brand-contrast').hidden = ratio >= 4.5;
+    $('ns-brand-contrast-message').textContent = '当前文字与背景对比度 ' + ratio.toFixed(2) + ':1，可能不易阅读。原始颜色保留；建议文字色 ' + suggestion + '。';
+    $('ns-brand-contrast-apply').dataset.color = suggestion;
     $('ns-brand-preview-name').textContent = brandDraft.name || '你的品牌'; $('ns-brand-preview-notes').textContent = brandDraft.notes || '一些颜色，一点留白，和你自己的表达。';
     const fonts = {system: '', sans: 'Arial, "Microsoft YaHei", sans-serif', serif: 'Georgia, "Songti SC", "SimSun", serif', mono: 'Consolas, "Courier New", monospace'}; preview.style.fontFamily = fonts[brandDraft.font] || '';
   }
+  $('ns-brand-contrast-apply').addEventListener('click', () => { const suggestion = $('ns-brand-contrast-apply').dataset.color; if (!/^#[0-9a-fA-F]{6}$/.test(suggestion || '')) return; $('ns-brand-color-1').value = suggestion; changeBrand(); });
   [0, 1, 2].forEach(i => $('ns-brand-picker-' + i).addEventListener('input', event => {
     $('ns-brand-color-' + i).value = event.target.value.toUpperCase(); changeBrand();
   }));
@@ -926,12 +972,111 @@
   document.querySelectorAll('[data-prompt]').forEach(chip => chip.addEventListener('click', () => setPrompt(chip.dataset.prompt)));
   starters.forEach(starter => { const card = node('article', 'ns-starter-card'); card.append(node('h3', '', starter.name), node('p', '', starter.description), button('使用这个需求起点 ↗', '', () => setPrompt(starter.prompt))); $('ns-starters').append(card); });
 
-  function updateUploadLabel() { const target = resourceTab === 'images' && resourceProject ? project(resourceProject) : null; const label = target ? '上传到 ' + (target.projectName || '未命名项目') : '上传到项目'; const control = $('ns-resource-upload'); control.replaceChildren(icon('upload'), node('span', 'ns-upload-label', label)); control.title = label; control.setAttribute('aria-label', label); }
-  function updateResourceOptions() { const select = $('ns-resource-project'); const value = resourceProject; select.replaceChildren(new Option('全部项目', '')); projects.forEach(p => select.append(new Option(p.projectName || '未命名项目', p.projectId))); if (projects.some(p => p.projectId === value)) select.value = value; else { select.value = ''; resourceProject = ''; } updateUploadLabel(); }
+  function updateUploadLabel() { const target = resourceTab === 'images' && resourceProject ? project(resourceProject) : null; const label = target ? '上传到 ' + (target.projectName || '未命名项目') : '上传品牌素材'; const control = $('ns-resource-upload'); control.replaceChildren(icon('upload'), node('span', 'ns-upload-label', label)); control.title = label; control.setAttribute('aria-label', label); }
+  function updateResourceOptions() { const select = $('ns-resource-project'); const value = resourceProject; select.replaceChildren(new Option('整个品牌', '')); projects.forEach(p => select.append(new Option(p.projectName || '未命名项目', p.projectId))); if (projects.some(p => p.projectId === value)) select.value = value; else { select.value = ''; resourceProject = ''; } updateUploadLabel(); }
   function selectResourceTab(tab) { cancelResourceReturn(); rememberPageScroll(); resourceTab = tab; pendingResourceScroll = {key: resourceViewKey(), top: pageScroll.get(resourceViewKey()) || 0}; const images = tab === 'images'; $('ns-tab-images').setAttribute('aria-selected', String(images)); $('ns-tab-starters').setAttribute('aria-selected', String(!images)); $('ns-tab-images').tabIndex = images ? 0 : -1; $('ns-tab-starters').tabIndex = images ? -1 : 0; $('ns-resource-images').hidden = !images; $('ns-resource-starters').hidden = images; $('ns-resource-scope').hidden = !images; updateUploadLabel(); if (images) loadResources(); else document.querySelector('section[data-page="resources"]').scrollTop = pageScroll.get(resourceViewKey()) || 0; }
   $('ns-tab-images').addEventListener('click', () => selectResourceTab('images')); $('ns-tab-starters').addEventListener('click', () => selectResourceTab('starters'));
   [$('ns-tab-images'), $('ns-tab-starters')].forEach(tab => tab.addEventListener('keydown', event => { if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) { event.preventDefault(); selectResourceTab(event.key === 'Home' ? 'images' : event.key === 'End' ? 'starters' : resourceTab === 'images' ? 'starters' : 'images'); $(resourceTab === 'images' ? 'ns-tab-images' : 'ns-tab-starters').focus(); } }));
   $('ns-resource-project').addEventListener('change', () => { cancelResourceReturn(); rememberPageScroll(); resourceProject = $('ns-resource-project').value; pendingResourceScroll = {key: resourceViewKey(), top: pageScroll.get(resourceViewKey()) || 0}; updateUploadLabel(); loadResources(true); });
+  $('ns-brand-resource-search').addEventListener('input', () => { clearTimeout(brandSearchTimer); brandSearchTimer = setTimeout(() => loadResources(true), 250); });
+  $('ns-brand-resource-more').addEventListener('click', () => { if (brandResourceCursor && !resourcesBusy) loadResources(true, brandResourceCursor); });
+  const brandLibraryScope = () => {
+    const context = window.__NOVART_PRODUCT__;
+    if (!context?.workspaceId || !/^[a-zA-Z0-9_-]{1,128}$/.test(context.workspaceId)) throw new Error('请先创建或选择品牌。');
+    return {workspaceId: context.workspaceId, userId: context.user?.id, path: '/api/workspaces/' + encodeURIComponent(context.workspaceId) + '/studio-brand-materials'};
+  };
+  async function brandLibraryRequest(path, init = {}) {
+    const context = brandLibraryScope(), controller = new AbortController(), timer = setTimeout(() => controller.abort(), 20000), writing = init.method === 'POST';
+    try {
+      const response = await fetch(path, {...init, signal: controller.signal, credentials: 'same-origin', cache: 'no-store', headers: {...init.headers, ...(context.userId ? {'X-Novart-User': context.userId} : {})}});
+      const value = await response.json();
+      if (!response.ok) { const error = new Error(value.error || '品牌素材暂不可读。'); error.status = response.status; error.uncertain = writing && response.status >= 500; throw error; }
+      return value;
+    } catch (error) { if (writing && !Number.isInteger(error.status)) error.uncertain = true; throw error; }
+    finally { clearTimeout(timer); }
+  }
+  function validBrandMaterial(material) {
+    const context = brandLibraryScope();
+    return material && /^[a-zA-Z0-9_-]{1,128}$/.test(material.assetId) && /^[a-f0-9]{64}$/.test(material.assetSha256)
+      && material.url === '/api/workspaces/' + encodeURIComponent(context.workspaceId) + '/assets/' + encodeURIComponent(material.assetId) + '/raw'
+      && Number.isInteger(material.width) && material.width > 0 && material.width <= 16384 && Number.isInteger(material.height) && material.height > 0 && material.height <= 16384;
+  }
+  function brandAssetCard(asset) {
+    const context = brandLibraryScope(), expected = '/api/workspaces/' + encodeURIComponent(context.workspaceId) + '/assets/' + encodeURIComponent(asset.assetId) + '/raw';
+    if (!/^[a-zA-Z0-9_-]{1,128}$/.test(asset.assetId) || asset.url !== expected || asset.material && !validBrandMaterial(asset.material)) throw new Error('素材回执不属于当前品牌。');
+    const card = node('article', 'ns-asset-card'); card.dataset.projectId = ''; card.dataset.assetSha256 = asset.material?.assetSha256 || ''; card.dataset.shapeId = 'brand:' + asset.assetId; card.dataset.assetId = asset.assetId;
+    const preview = button('', 'ns-asset-image', () => {
+      previewFocus = {container: 'ns-assets', project: '', sha: card.dataset.assetSha256, shape: card.dataset.shapeId, action: 'preview'};
+      previewSource = ''; $('ns-preview-title').textContent = asset.fileName; $('ns-preview-origin').textContent = '当前品牌素材 · 可在项目工作台中选择复用'; $('ns-preview-image').alt = asset.fileName;
+      $('ns-preview-source').hidden = true; $('ns-preview-dialog').dataset.source = asset.url; $('ns-preview-dialog').showModal(); loadPreview(asset.url);
+    }); preview.dataset.action = 'preview'; preview.setAttribute('aria-label', '预览 ' + asset.fileName);
+    const image = node('img'); image.alt = asset.fileName; image.loading = 'lazy'; image.src = asset.url; image.addEventListener('error', () => preview.replaceChildren(node('span', 'ns-panel-note', '图片暂不可读'))); preview.append(image);
+    const info = node('div', 'ns-asset-info'); info.append(node('strong', '', asset.fileName), node('small', '', asset.material ? asset.material.width + ' × ' + asset.material.height + ' · 原图' : '使用前由服务器校验原图'), node('small', '', '品牌共享素材')); card.append(preview, info); return card;
+  }
+  async function loadBrandResources(generation, nextCursor) {
+    try {
+      const scope = brandLibraryScope(), search = $('ns-brand-resource-search').value.trim(), query = new URLSearchParams({limit: '24', ...(search ? {search} : {}), ...(nextCursor ? {cursor: nextCursor} : {})});
+      const value = await brandLibraryRequest(scope.path + '?' + query);
+      if (generation !== resourceGeneration || resourceProject) return;
+      if (!Array.isArray(value.items) || value.items.length > 60 || value.nextCursor !== null && (typeof value.nextCursor !== 'string' || value.nextCursor.length > 512)) throw new Error('品牌素材分页回执不完整。');
+      value.items.forEach(brandAssetCard);
+      brandResourceItems = nextCursor ? [...brandResourceItems, ...value.items.filter(asset => !brandResourceItems.some(item => item.assetId === asset.assetId))] : value.items;
+      brandResourceCursor = value.nextCursor; $('ns-assets').replaceChildren(...brandResourceItems.map(brandAssetCard));
+      if (!brandResourceItems.length) empty($('ns-assets'), search ? '没有匹配的品牌素材。' : '上传第一张品牌素材，不需要先创建项目。', search ? undefined : openUploadDialog, '上传品牌素材');
+      $('ns-brand-resource-more').hidden = !brandResourceCursor; $('ns-brand-resource-more').disabled = false;
+      feedback('ns-resource-status', brandResourceItems.length + ' 张品牌素材' + (brandResourceCursor ? ' · 可继续加载' : ''));
+      resourcesBusy = false; resourcesError = ''; $('ns-assets').setAttribute('aria-busy', 'false'); restoreResourceScroll('');
+      void recoverBrandUploads().catch(error => feedback('ns-brand-upload-status', error.message || '上传状态暂不可读，请稍后刷新确认。', 'error'));
+    } catch (error) {
+      if (generation !== resourceGeneration) return;
+      resourcesBusy = false; resourcesError = error.message || '品牌素材暂不可读。'; $('ns-assets').setAttribute('aria-busy', 'false'); $('ns-brand-resource-more').disabled = false;
+      feedback('ns-resource-status', resourcesError + ' 原素材仍保留。', 'error');
+      if (!brandResourceItems.length) empty($('ns-assets'), '品牌素材暂不可读，原图片未删除。', () => loadResources(true), '重新读取素材');
+    }
+  }
+  function brandUploadReceipt(value) {
+    const scope = brandLibraryScope();
+    if (value?.context !== 'brand-library' || value.workspaceId !== scope.workspaceId || !/^[a-zA-Z0-9_-]{1,128}$/.test(value.taskId)
+      || !['PENDING', 'RUNNING', 'SUCCEEDED', 'FAILED'].includes(value.status) || (value.status === 'SUCCEEDED') !== !!value.material
+      || value.material && !validBrandMaterial(value.material) || value.status === 'FAILED' && !value.error) throw new Error('品牌上传回执不完整，请刷新确认；原文件仍保留。');
+    return value;
+  }
+  async function recoverBrandUploads() {
+    if (route.page !== 'resources' || resourceTab !== 'images') return;
+    const scope = brandLibraryScope(), value = await brandLibraryRequest(scope.path + '/upload');
+    if (!Array.isArray(value.tasks) || value.tasks.length > 50) throw new Error('品牌上传任务回执不完整。');
+    const tasks = value.tasks.map(brandUploadReceipt), active = tasks.filter(task => ['PENDING', 'RUNNING'].includes(task.status));
+    clearTimeout(brandUploadPoll);
+    if (brandUploadOperation && tasks.some(task => task.mutationId === brandUploadOperation.mutationId)) { brandUploadOperation = null; $('ns-brand-upload-retry').hidden = true; }
+    if (active.length) {
+      brandUploadWatch ||= Date.now(); feedback('ns-brand-upload-status', active.length + ' 张图片正在保存到品牌素材库…');
+      if (Date.now() - brandUploadWatch < 6 * 60000) brandUploadPoll = setTimeout(() => { void recoverBrandUploads().then(() => { if (!resourceProject) loadResources(true); }).catch(error => feedback('ns-brand-upload-status', error.message, 'error')); }, 3000);
+      else feedback('ns-brand-upload-status', '图片保存仍待确认，请刷新任务；原文件不会因关闭页面而删除。', 'error');
+    } else brandUploadWatch = 0;
+  }
+  async function uploadBrandFile(file) {
+    if (brandUploadBusy) return;
+    if (!file || !file.size || file.size > 10 * 1024 * 1024 || !['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) { feedback('ns-brand-upload-status', '请选择 10 MiB 以内的 PNG、JPEG 或 WebP 图片。', 'error'); return; }
+    if (brandUploadOperation && brandUploadOperation.file !== file) { feedback('ns-brand-upload-status', '请先确认上一张图片的上传结果，避免重复上传。', 'error'); return; }
+    brandUploadOperation ||= {file, mutationId: crypto.randomUUID()}; brandUploadBusy = true; $('ns-resource-upload').disabled = true;
+    feedback('ns-brand-upload-status', '正在保存到品牌素材库…', 'loading');
+    try {
+      const scope = brandLibraryScope(), form = new FormData(); form.set('file', brandUploadOperation.file); form.set('mutationId', brandUploadOperation.mutationId);
+      const task = brandUploadReceipt(await brandLibraryRequest(scope.path + '/upload', {method: 'POST', body: form}));
+      if (task.mutationId !== brandUploadOperation.mutationId) { const error = new Error('上传受理标识不一致，请刷新确认原任务。'); error.uncertain = true; throw error; }
+      brandUploadOperation = null; $('ns-brand-upload-retry').hidden = true;
+      feedback('ns-brand-upload-status', task.status === 'SUCCEEDED' ? '图片已保存到品牌素材库，可在任意项目中选择复用。' : task.error || '图片上传已受理，关闭页面后仍会继续保存。', task.status === 'FAILED' ? 'error' : 'idle');
+      brandUploadWatch = Date.now(); if (!resourceProject) await loadResources(true); await recoverBrandUploads();
+    } catch (error) {
+      if (!error.uncertain) brandUploadOperation = null; $('ns-brand-upload-retry').hidden = !brandUploadOperation;
+      feedback('ns-brand-upload-status', (error.message || '上传结果待确认。') + ' 原文件保留，请刷新任务确认。', 'error');
+    } finally { brandUploadBusy = false; $('ns-resource-upload').disabled = false; }
+  }
+  $('ns-brand-upload-file').addEventListener('change', event => { const file = event.target.files[0]; event.target.value = ''; if (file) uploadBrandFile(file); });
+  $('ns-brand-upload-retry').addEventListener('click', () => { if (brandUploadOperation) uploadBrandFile(brandUploadOperation.file); });
+  resourcePage.addEventListener('dragover', event => { if (event.dataTransfer?.types.includes('Files') && !resourceProject) event.preventDefault(); });
+  resourcePage.addEventListener('drop', event => { if (!resourceProject && event.dataTransfer?.files.length) { event.preventDefault(); uploadBrandFile(event.dataTransfer.files[0]); } });
+  resourcePage.addEventListener('paste', event => { if (!resourceProject && event.clipboardData?.files.length) { event.preventDefault(); uploadBrandFile(event.clipboardData.files[0]); } });
   function assetCard(p, asset) {
     const card = node('article', 'ns-asset-card'); card.dataset.projectId = p.projectId; card.dataset.assetSha256 = asset.assetSha256; card.dataset.shapeId = asset.shapeId || '';
     const preview = button('', 'ns-asset-image', () => showPreview(p, asset)); preview.dataset.action = 'preview'; preview.setAttribute('aria-label', '预览 ' + (asset.name || '画布图片'));
@@ -939,12 +1084,14 @@
     const info = node('div', 'ns-asset-info'); info.title = asset.name || '画布图片'; info.append(node('strong', '', asset.name || '画布图片'), node('small', '', typeof asset.width === 'number' && typeof asset.height === 'number' ? Math.round(asset.width) + ' × ' + Math.round(asset.height) + ' · 画布尺寸' : '本地画布图片'));
     const source = button('来自 ' + (p.projectName || '未命名项目') + ' ↗', 'ns-source-link', () => openProject(p.projectId, 'materials')); source.dataset.action = 'source'; source.title = '返回来源项目：' + (p.projectName || '未命名项目'); info.append(source); card.append(preview, info); return card;
   }
-  async function loadResources(force = true) {
+  async function loadResources(force = true, nextCursor) {
     const generation = ++resourceGeneration, scope = resourceProject;
     resourcesBusy = true; resourcesError = '';
+    $('ns-brand-resource-more').hidden = true;
     $('ns-assets').setAttribute('aria-busy', 'true');
-    feedback('ns-resource-status', '正在读取画布图片…', 'loading');
+    feedback('ns-resource-status', scope ? '正在读取项目画布图片…' : '正在读取品牌素材…', 'loading');
     if (resourceViewScope !== scope) { resourceViewScope = scope; empty($('ns-assets'), '正在读取这个范围的图片…'); }
+    if (!scope) { if (!projectsLoaded || projectsError) void loadProjects(true); return loadBrandResources(generation, nextCursor); }
     if (!projectsLoaded || projectsError) await loadProjects(true); if (generation !== resourceGeneration) return;
     if (!projectsLoaded) {
       resourcesBusy = false; resourcesError = projectsError; $('ns-assets').setAttribute('aria-busy', 'false');
@@ -956,7 +1103,8 @@
         const p = selected[cursor++];
         try {
           const value = await getAssets(p.projectId, force); if (generation !== resourceGeneration) return;
-          const rows = value.assets.filter(asset => asset.valid !== false && /^[a-f0-9]{64}$/.test(asset.assetSha256)).map(asset => ({p, asset}));
+          const search = $('ns-brand-resource-search').value.trim().toLocaleLowerCase();
+          const rows = value.assets.filter(asset => asset.valid !== false && /^[a-f0-9]{64}$/.test(asset.assetSha256) && (!search || (asset.name || '').toLocaleLowerCase().includes(search))).map(asset => ({p, asset}));
           resourceRows.set(p.projectId, rows); cards.push(...rows); if (value.issues?.length) issues.push(p.projectName || '未命名项目');
         } catch (error) {
           if (generation !== resourceGeneration) return;
@@ -996,6 +1144,7 @@
     image.src = url;
   }
   function showPreview(p, asset) {
+    $('ns-preview-source').hidden = false;
     previewFocus = {container: 'ns-assets', project: p.projectId, sha: asset.assetSha256, shape: asset.shapeId || '', action: 'preview'};
     previewSource = p.projectId; $('ns-preview-title').textContent = asset.name || '画布图片'; $('ns-preview-origin').textContent = '来源项目：' + (p.projectName || '未命名项目'); $('ns-preview-image').alt = asset.name || '画布图片预览';
     $('ns-preview-dialog').dataset.source = assetURL(p.projectId, asset.assetSha256); $('ns-preview-dialog').showModal(); loadPreview($('ns-preview-dialog').dataset.source);
@@ -1003,7 +1152,7 @@
   $('ns-preview-retry').addEventListener('click', () => loadPreview($('ns-preview-dialog').dataset.source));
   $('ns-preview-dialog').addEventListener('close', () => { previewRequest += 1; $('ns-preview-image').onload = null; $('ns-preview-image').onerror = null; if (route.page === 'resources') restoreCardFocus(previewFocus); });
   $('ns-preview-close').addEventListener('click', () => $('ns-preview-dialog').close()); $('ns-preview-source').addEventListener('click', () => { $('ns-preview-dialog').close(); openProject(previewSource, 'materials'); });
-  function openUploadDialog() { const target = resourceTab === 'images' ? resourceProject : ''; if (target && project(target) && !project(target).archivedAt) { openProject(target, 'upload'); return; } const select = $('ns-upload-target'); select.replaceChildren(...projects.filter(p => !p.archivedAt).map(p => new Option(p.projectName || '未命名项目', p.projectId))); if (project(lastWorkspaceId) && !project(lastWorkspaceId).archivedAt) select.value = lastWorkspaceId; $('ns-upload-confirm').disabled = !projects.some(p => !p.archivedAt); $('ns-upload-dialog').showModal(); }
+  function openUploadDialog() { const target = resourceTab === 'images' ? resourceProject : ''; if (target && project(target) && !project(target).archivedAt) { openProject(target, 'upload'); return; } if (resourceTab !== 'images') selectResourceTab('images'); $('ns-brand-upload-file').click(); }
   $('ns-resource-upload').addEventListener('click', openUploadDialog); $('ns-upload-close').addEventListener('click', () => $('ns-upload-dialog').close()); $('ns-upload-form').addEventListener('submit', event => { event.preventDefault(); const id = $('ns-upload-target').value; if (!project(id)) return; $('ns-upload-dialog').close(); openProject(id, 'upload'); }); $('ns-upload-new').addEventListener('click', () => { $('ns-upload-dialog').close(); createProject(true, 'upload'); });
   document.querySelector('.ns-skip').addEventListener('click', event => { event.preventDefault(); $('ns-main').focus({preventScroll: true}); });
   $('ns-back').addEventListener('click', () => { if (navigationIndex > 0) history.back(); }); $('ns-forward').addEventListener('click', () => { if (navigationIndex < navigationMax) history.forward(); });
@@ -1027,7 +1176,7 @@
     if (typeof homeStart.confirmLeave !== 'function') throw new Error('首页图片保存组件尚未准备完成，请重新打开当前页面后再切换品牌。');
     await homeStart.confirmLeave();
     if (homeComposing || $('ns-home-brief').value !== brief) throw new Error('首页需求有新的修改，请确认输入完成后再切换品牌。');
-  }, snapshot() { return {homeStart:homeStart.snapshot(), route: routePath(), activeProjectId: activeId, lastProjectId: lastWorkspaceId, stateLoaded: metaLoaded, stateRevision: savedState.revision, profileDirty, brandDirty, favoritesDirty, metadataConflict: metaConflict || metaUncertain, metadataBusy: metaBusy || stateLoading, createBusy, projectCount: projects.length, archivedCount: projects.filter(p => p.archivedAt).length, libraryScope, archiveBusy, resourcesBusy, resourcesError, frames: [...frames.values()].map(entry => { const r = entry.frame.getBoundingClientRect(); return {projectId: entry.id, ready: entry.ready, active: entry.slot.dataset.active === 'true', inert: entry.slot.inert, visibility: getComputedStyle(entry.slot).visibility, geometry: {x: r.x, y: r.y, width: r.width, height: r.height}}; })}; }});
+  }, snapshot() { return {homeStart:homeStart.snapshot(), route: routePath(), activeProjectId: activeId, lastProjectId: lastWorkspaceId, stateLoaded: metaLoaded, stateRevision: savedState.revision, profileDirty, brandDirty, favoritesDirty, metadataConflict: metaConflict || metaUncertain, metadataBusy: metaBusy || stateLoading, createBusy, projectCount: projects.length, archivedCount: projects.filter(p => p.archivedAt).length, libraryScope, archiveBusy, renameBusy, resourcesBusy, resourcesError, frames: [...frames.values()].map(entry => { const r = entry.frame.getBoundingClientRect(); return {projectId: entry.id, ready: entry.ready, active: entry.slot.dataset.active === 'true', inert: entry.slot.inert, visibility: getComputedStyle(entry.slot).visibility, geometry: {x: r.x, y: r.y, width: r.width, height: r.height}}; })}; }});
   Object.defineProperty(window, 'NovartStudio', {value: debug, writable: false, configurable: false});
   window.addEventListener('pagehide', () => { focusReturnIntent = null; frames.forEach(entry => entry.focusCleanup?.()); }, {once: true});
   restoreRecovery(); initializeNavigation(); metaControls(); fillMetaForms(); activateRoute(); lastActivatedPath = currentPath(); loadState();

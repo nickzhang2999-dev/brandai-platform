@@ -78,6 +78,7 @@ export function duplicateItems(items: OwnedCanvasItem[], ids: readonly string[],
   const idMap = new Map(source.map(item => [item.id, mint("shape", item.id, takenIds)])), groupMap = new Map<string, string>();
   for (const item of source) if (item.groupId && !groupMap.has(item.groupId)) groupMap.set(item.groupId, mint("group", item.groupId, takenGroups));
   const copies = source.map(item => ({ ...item, id: idMap.get(item.id)!, x: item.x + offset.x, y: item.y + offset.y,
+    ...(item.kind === "image" ? { imageNumber: undefined, sourceShapeId: item.id } : {}),
     ...(item.points ? { points: item.points.map(point => ({ ...point })) } : {}), ...(item.crop ? { crop: { ...item.crop } } : {}),
     ...(item.locked !== undefined ? { locked: false } : {}),
     ...(item.groupId ? { groupId: groupMap.get(item.groupId)! } : {}),

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import type { OwnedCanvasDocument, OwnedCanvasItem } from "@/lib/owned-canvas-model";
+import { assignOwnedImageNames, ownedImageName } from "@/lib/owned-canvas-model";
 import { alignItems, attachItemsToFrame, deleteItems, distributeItems, duplicateItems, expandSelection, getMoveSnap, getSceneFlags, groupItems, reorderItems, ungroupItems } from "@/lib/owned-canvas-operations";
 import { getOwnedArrowMarker, getOwnedImageLayout, getOwnedLinePoints, getOwnedTextLayout } from "@/lib/owned-canvas-style";
 import { applyEdit, bounds, boxBetween, center, clamp, corners, createEdit, intersects, itemCenter, resize, resizeMany, rotate, type Bounds, type CanvasEdit, type Corner, type Point } from "./geometry";
@@ -16,6 +17,9 @@ export type OwnedCanvasProps = {
   onReplaceImage?: (itemId: string, files: File[]) => Promise<Pick<OwnedCanvasItem, "url" | "assetId" | "assetSha256" | "versionId"> | null>;
   clipboardScope?: string;
   onSelectionChange?: (ids: string[]) => void;
+  onImageAction?: (action: "quick-edit" | "add-reference" | "layers" | "resize" | "remove-background" | "inpaint", ids: string[]) => void;
+  onQuickEdit?: (itemId: string, instruction: string) => Promise<void>;
+  imageTools?: { removeBackground: { available: boolean; reason: string | null }; inpaint: { available: boolean; reason: string | null } };
 };
 type Tool = "select" | "hand" | "text" | "stroke" | "shape" | "frame" | "eraser";
 type Gesture = { type: "move" | "resize" | "rotate" | "pan" | "marquee" | "draw" | "erase"; pointerId: number; start: Point; screen: Point; before: OwnedCanvasDocument; originals: OwnedCanvasItem[]; corner?: Corner; box?: Bounds; pivot?: Point; angle?: number; id?: string; points?: Point[]; additive?: string[]; moved?: boolean; line?: boolean; erased?: string[] };
@@ -39,7 +43,7 @@ function Shape({ item }: { item: OwnedCanvasItem }) {
   const [start, end] = getOwnedLinePoints(item), marker = getOwnedArrowMarker(), markerId = `oc-arrow-${item.id.replace(/[^a-z0-9_-]/gi, "_")}`;
   return <svg width="100%" height="100%" viewBox={`0 0 ${item.w} ${item.h}`} overflow="visible" aria-hidden="true">{item.kind === "stroke" ? item.points?.length === 1 ? <circle cx={item.points[0]!.x} cy={item.points[0]!.y} r={strokeWidth / 2} fill={item.stroke ?? "#7c5cff"} /> : <polyline points={(item.points ?? []).map(p => `${p.x},${p.y}`).join(" ")} fill="none" stroke={item.stroke ?? "#7c5cff"} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" /> : item.shape === "line" || item.shape === "arrow" ? <><defs><marker id={markerId} viewBox={marker.viewBox} markerWidth={marker.markerWidth} markerHeight={marker.markerHeight} refX={marker.refX} refY={marker.refY} orient={marker.orient} markerUnits={marker.markerUnits}><path d={marker.path} fill={item.stroke ?? "#7c5cff"} /></marker></defs><line x1={start.x} y1={start.y} x2={end.x} y2={end.y} stroke={item.stroke ?? "#7c5cff"} strokeWidth={strokeWidth} strokeLinecap="round" markerEnd={item.shape === "arrow" ? `url(#${markerId})` : undefined} /></> : item.shape === "ellipse" ? <ellipse cx={item.w / 2} cy={item.h / 2} rx={item.w / 2} ry={item.h / 2} {...common} /> : item.shape === "triangle" ? <polygon points={`${item.w / 2},0 ${item.w},${item.h} 0,${item.h}`} {...common} /> : item.shape === "star" ? <polygon points={starPoints(item.w, item.h)} {...common} /> : <rect width={item.w} height={item.h} {...common} />}</svg>;
 }
-const itemName = (item: OwnedCanvasItem) => item.kind === "text" ? item.text?.split("\n")[0]?.slice(0, 30) || "文字" : item.shape === "line" ? "直线" : item.shape === "arrow" ? "箭头" : ({ image: "图片", shape: "图形", stroke: "笔迹", frame: "画框" }[item.kind]);
+const itemName = (item: OwnedCanvasItem) => item.kind === "image" ? ownedImageName(item) : item.kind === "text" ? item.text?.split("\n")[0]?.slice(0, 30) || "文字" : item.shape === "line" ? "直线" : item.shape === "arrow" ? "箭头" : ({ shape: "图形", stroke: "笔迹", frame: "画框" }[item.kind]);
 const inputTarget = (target: EventTarget | null) => target instanceof HTMLElement && Boolean(target.closest("input,textarea,select,[contenteditable=true]"));
 function pointSegmentDistance(point: Point, a: Point, b: Point) { const length = (b.x - a.x) ** 2 + (b.y - a.y) ** 2, t = length ? clamp(((point.x - a.x) * (b.x - a.x) + (point.y - a.y) * (b.y - a.y)) / length, 0, 1) : 0; return Math.hypot(point.x - a.x - t * (b.x - a.x), point.y - a.y - t * (b.y - a.y)); }
 function withinFrame(item: OwnedCanvasItem, frame: OwnedCanvasItem) { return corners(item).every(p => { const local = rotate({ x: p.x - frame.x, y: p.y - frame.y }, -frame.rotation); return local.x >= -0.01 && local.y >= -0.01 && local.x <= frame.w + 0.01 && local.y <= frame.h + 0.01; }); }
@@ -47,12 +51,12 @@ function CanvasImage({ item }: { item: OwnedCanvasItem }) { const image = getOwn
 function CanvasText({ item }: { item: OwnedCanvasItem }) { const layout = getOwnedTextLayout(item); return <svg width="100%" height="100%" viewBox={`0 0 ${item.w} ${item.h}`} aria-hidden="true"><text fontFamily={layout.fontFamily} fontSize={layout.fontSize} fontWeight={layout.fontWeight} fontStyle={layout.fontStyle} textAnchor={layout.anchor} fill={item.fill ?? "#202027"} xmlSpace="preserve">{layout.lines.map((line, index) => <tspan key={index} x={line.x} y={line.y}>{line.text}</tspan>)}</text></svg>; }
 function textStyle(item: OwnedCanvasItem) { const layout = getOwnedTextLayout(item); return { color: item.fill ?? "#202027", fontFamily: layout.fontFamily, fontSize: layout.fontSize, fontWeight: layout.fontWeight, fontStyle: layout.fontStyle, textAlign: layout.textAlign, lineHeight: layout.lineHeight }; }
 
-export function OwnedCanvas({ document: incoming, onChange, readOnly = false, onUploadFiles, onExport, onReplaceImage, onSelectionChange, clipboardScope }: OwnedCanvasProps) {
+export function OwnedCanvas({ document: incoming, onChange, readOnly = false, onUploadFiles, onExport, onReplaceImage, onSelectionChange, onImageAction, onQuickEdit, imageTools, clipboardScope }: OwnedCanvasProps) {
   const [view, setView] = useState(incoming), live = useRef(incoming), emitted = useRef<OwnedCanvasDocument | null>(null);
   const flagCache = useRef<{ items: OwnedCanvasItem[]; flags: ReturnType<typeof getSceneFlags> } | null>(null);
   function flagsFor(items: OwnedCanvasItem[] = live.current.items) { if (flagCache.current?.items !== items) flagCache.current = { items, flags: getSceneFlags(items) }; return flagCache.current.flags; }
   function selectable(item: OwnedCanvasItem) { const flags = flagsFor().get(item.id); return !flags?.hidden && !flags?.locked; }
-  const callbacks = useRef({ onChange, onUploadFiles, onExport, onReplaceImage, onSelectionChange }); callbacks.current = { onChange, onUploadFiles, onExport, onReplaceImage, onSelectionChange };
+  const callbacks = useRef({ onChange, onUploadFiles, onExport, onReplaceImage, onSelectionChange, onImageAction }); callbacks.current = { onChange, onUploadFiles, onExport, onReplaceImage, onSelectionChange, onImageAction };
   const root = useRef<HTMLDivElement>(null), uploader = useRef<HTMLInputElement>(null), replacement = useRef<HTMLInputElement>(null), replacingId = useRef<string | null>(null), editor = useRef<HTMLTextAreaElement>(null);
   const [selected, setSelected] = useState<string[]>([]), selectedRef = useRef<string[]>([]);
   const [tool, setTool] = useState<Tool>("select"), [shape, setShape] = useState<NonNullable<OwnedCanvasItem["shape"]>>("rect"), [color, setColor] = useState("#7c5cff"), [lineWidth, setLineWidth] = useState(3);
@@ -65,20 +69,26 @@ export function OwnedCanvas({ document: incoming, onChange, readOnly = false, on
   const [busy, setBusy] = useState(false), [historyVersion, setHistoryVersion] = useState(0), [spaceDown, setSpaceDown] = useState(false);
   const history = useRef<CanvasEdit[]>([]), future = useRef<CanvasEdit[]>([]), gesture = useRef<Gesture | null>(null), space = useRef(false);
   const lastTap = useRef({ id: "", time: 0, x: 0, y: 0 }), wheelTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const imageSequence = useRef(0), [viewport, setViewport] = useState({ width: 0, height: 0 });
+  const [quickEdit, setQuickEdit] = useState<{ id: string; text: string } | null>(null), [quickBusy, setQuickBusy] = useState(false), quickLock = useRef(false), quickComposing = useRef(false);
+  useEffect(() => { const node = root.current; if (!node) return; const observer = new ResizeObserver(() => setViewport({ width: node.clientWidth, height: node.clientHeight })); observer.observe(node); setViewport({ width: node.clientWidth, height: node.clientHeight }); return () => observer.disconnect(); }, []);
   const locked = readOnly || view.warnings.length > 0, lockedRef = useRef(locked); lockedRef.current = locked;
   const updateView = useCallback((next: OwnedCanvasDocument) => { live.current = next; setView(next); }, []);
   const choose = useCallback((ids: string[]) => { const items = live.current.items, eligible = items.filter(selectable), groups = new Set(eligible.filter(item => ids.includes(item.id)).map(item => item.groupId).filter(Boolean)); const next = eligible.filter(item => ids.includes(item.id) || item.groupId && groups.has(item.groupId)).map(item => item.id); selectedRef.current = next; setSelected(next); callbacks.current.onSelectionChange?.(next); }, []);
-  const emit = useCallback((next: OwnedCanvasDocument) => { updateView(next); emitted.current = next; callbacks.current.onChange(next); }, [updateView]);
+  const emit = useCallback((next: OwnedCanvasDocument) => { const named = assignOwnedImageNames(next, imageSequence.current); imageSequence.current = Number((named.source.novartOwnedCanvas as { imageSequence?: number })?.imageSequence) || imageSequence.current; updateView(named); emitted.current = named; callbacks.current.onChange(named); }, [updateView]);
   const complete = useCallback((before: OwnedCanvasDocument, next: OwnedCanvasDocument) => {
     if (lockedRef.current) return;
-    const edit = createEdit(before, next);
-    if (edit) { history.current = [...history.current.slice(-(HISTORY_LIMIT - 1)), edit]; future.current = []; setHistoryVersion(v => v + 1); emit(next); }
-    else updateView(next);
+    // Undo/redo records must capture allocated names, not unnamed duplicates.
+    const named = assignOwnedImageNames(next, imageSequence.current);
+    const edit = createEdit(before, named);
+    if (edit) { history.current = [...history.current.slice(-(HISTORY_LIMIT - 1)), edit]; future.current = []; setHistoryVersion(v => v + 1); emit(named); }
+    else updateView(named);
   }, [emit, updateView]);
 
   useEffect(() => {
     if (incoming === emitted.current && scopeRef.current === clipboardScope) return;
     const samePage = scopeRef.current === clipboardScope && incoming.pageId === live.current.pageId;
+    imageSequence.current = Math.max(samePage ? imageSequence.current : 0, Number((incoming.source.novartOwnedCanvas as { imageSequence?: number })?.imageSequence) || 0, ...incoming.items.map(item => item.imageNumber ?? 0));
     if (!samePage) { gesture.current = null; history.current = []; future.current = []; clipboard.current = null; choose([]); setEditing(null); editingRef.current = null; setCropDraft(null); setMenu(null); setHistoryVersion(v => v + 1); }
     if (samePage && !lockedRef.current) {
       const previousIds = new Set(live.current.items.map(item => item.id)), added = incoming.items.filter(item => !previousIds.has(item.id));
@@ -294,8 +304,12 @@ export function OwnedCanvas({ document: incoming, onChange, readOnly = false, on
     // temporary source IDs against the CURRENT scene so clone IDs never collide.
     const idMap = new Map(saved.items.map(item => [item.id, `shape:clipboard_${crypto.randomUUID()}`])), groupMap = new Map<string, string>();
     for (const item of saved.items) if (item.groupId && !groupMap.has(item.groupId)) groupMap.set(item.groupId, `group:clipboard_${crypto.randomUUID()}`);
-    const source = saved.items.map(item => ({ ...item, id: idMap.get(item.id)!, ...(item.groupId ? { groupId: groupMap.get(item.groupId) } : {}), ...(item.frameId ? { frameId: idMap.get(item.frameId) ?? (before.items.some(frame => frame.id === item.frameId && frame.kind === "frame") ? item.frameId : undefined) } : {}) }));
-    const result = duplicateItems([...before.items, ...source], source.map(item => item.id), offset), cloneIds = new Set(result.selectedIds), copies = result.items.filter(item => cloneIds.has(item.id));
+    // Temporary clipboard sources are not new project image identities. Keep
+    // their numbers unset until complete() assigns numbers to the final copies.
+    const source = saved.items.map(item => ({ ...item, id: idMap.get(item.id)!, ...(item.kind === "image" ? { imageNumber: undefined } : {}), ...(item.groupId ? { groupId: groupMap.get(item.groupId) } : {}), ...(item.frameId ? { frameId: idMap.get(item.frameId) ?? (before.items.some(frame => frame.id === item.frameId && frame.kind === "frame") ? item.frameId : undefined) } : {}) }));
+    const originalIds = new Map([...idMap].map(([original, temporary]) => [temporary, original]));
+    const result = duplicateItems([...before.items, ...source], source.map(item => item.id), offset), cloneIds = new Set(result.selectedIds);
+    const copies = result.items.filter(item => cloneIds.has(item.id)).map(item => item.kind === "image" ? { ...item, sourceShapeId: originalIds.get(item.sourceShapeId!)! } : item);
     complete(before, { ...before, items: frameAttachments([...before.items, ...copies], result.selectedIds) }); choose(result.selectedIds); setTool("select"); setMenu(null); setStatus(`已粘贴 ${copies.filter(item => !item.hidden).length} 个元素`);
   }
   function duplicate() { if (lockedRef.current || cropDraft || !transformSelection().length) return; const before = live.current, result = duplicateItems(before.items, selectedRef.current); complete(before, { ...before, items: frameAttachments(result.items, result.selectedIds) }); choose(result.selectedIds); setMenu(null); }
@@ -340,6 +354,10 @@ export function OwnedCanvas({ document: incoming, onChange, readOnly = false, on
   const canMutate = !locked && !blockedSelection && chosen.length > 0 && !cropDraft && !editing;
   const selectionCorners = single ? corners(single) : selectionBox ? [{ x: selectionBox.x, y: selectionBox.y }, { x: selectionBox.x + selectionBox.w, y: selectionBox.y }, { x: selectionBox.x + selectionBox.w, y: selectionBox.y + selectionBox.h }, { x: selectionBox.x, y: selectionBox.y + selectionBox.h }] : [];
   const displayPoint = (point: Point) => ({ left: point.x * view.camera.zoom + view.camera.x, top: point.y * view.camera.zoom + view.camera.y });
+  const imageSelection = chosen.filter(item => item.kind === "image");
+  const contextualWidth = Math.max(0, Math.min(single ? 540 : 240, viewport.width - 24));
+  const contextualPosition = selectionBox ? { left: clamp(displayPoint(selectionBox).left + selectionBox.w * view.camera.zoom / 2 - contextualWidth / 2, 12, Math.max(12, viewport.width - contextualWidth - 12)),
+    top: clamp(displayPoint(selectionBox).top + selectionBox.h * view.camera.zoom + 14, 64, Math.max(64, viewport.height - 144)), width: contextualWidth } : undefined;
   const stop = (event: ReactPointerEvent) => event.stopPropagation();
   void historyVersion;
 
@@ -376,6 +394,22 @@ export function OwnedCanvas({ document: incoming, onChange, readOnly = false, on
     {selectionBox && !editing && !cropDraft && <div className="oc-selection"><svg className="oc-selection-lines" aria-hidden="true"><polygon points={selectionCorners.map(point => { const p = displayPoint(point); return `${p.left},${p.top}`; }).join(" ")} /></svg>{canMutate && <>{selectionCorners.map((point, index) => <button key={index} tabIndex={-1} aria-label={`调整${["左上", "右上", "右下", "左下"][index]}尺寸`} className={`oc-handle oc-handle-${["nw", "ne", "se", "sw"][index]}`} style={displayPoint(point)} onPointerDown={event => startTransform(event, "resize", ["nw", "ne", "se", "sw"][index] as Corner)} />)}<button tabIndex={-1} aria-label="旋转选中元素" className="oc-rotation" style={{ ...displayPoint({ x: (selectionCorners[0]!.x + selectionCorners[1]!.x) / 2, y: (selectionCorners[0]!.y + selectionCorners[1]!.y) / 2 }), marginTop: -32 }} onPointerDown={event => startTransform(event, "rotate")}><Icon name="rotate" /></button></>}</div>}
     {marquee && <div className="oc-marquee" style={{ ...displayPoint(marquee), width: marquee.w * view.camera.zoom, height: marquee.h * view.camera.zoom }} />}
     {guides.map((guide, index) => <div key={index} data-testid="owned-snap-guide" className={`oc-snap-guide oc-snap-${guide.axis}`} style={guide.axis === "x" ? { left: displayPoint({ x: guide.value, y: 0 }).left } : { top: displayPoint({ x: 0, y: guide.value }).top }} />)}
+    {view.items.filter(item => item.kind === "image" && !viewFlags.get(item.id)?.hidden).map(item => <div key={"label:" + item.id} className="oc-image-name" data-testid="owned-image-name" style={{ ...displayPoint(bounds([item])!), marginTop: -22 }} aria-hidden="true">{ownedImageName(item)}</div>)}
+    {imageSelection.length > 0 && !locked && !editing && !cropDraft && !gesture.current && contextualWidth > 0 && <div className="oc-image-toolbar" data-testid="owned-image-toolbar" role="toolbar" aria-label="图片快捷操作" data-owned-ui onPointerDown={stop} style={contextualPosition}>
+      {onImageAction && <button aria-label="加入对话" disabled={!canMutate || imageSelection.length > 8} onClick={() => callbacks.current.onImageAction?.("add-reference", imageSelection.map(item => item.id))}>加入对话{imageSelection.length > 1 ? ` (${imageSelection.length})` : ""}</button>}
+      {single?.kind === "image" && <>
+        {onImageAction && <button aria-label="快捷编辑图片" disabled={!canMutate} onClick={() => { if (onQuickEdit) setQuickEdit({ id: single.id, text: "" }); else callbacks.current.onImageAction?.("quick-edit", [single.id]); }}>快捷编辑</button>}
+        <button aria-label="快捷裁切图片" disabled={!canMutate} onClick={() => beginCrop(single)}>裁切</button>
+        <button aria-label="快捷水平翻转" disabled={!canMutate} onClick={() => modify({ flipX: !single.flipX })}>翻转</button>
+        <button aria-label="快捷旋转90度" disabled={!canMutate} onClick={() => modify({ rotation: single.rotation + Math.PI / 2 })}>旋转</button>
+        {onImageAction && <><button aria-label="调整图片像素尺寸" disabled={!canMutate} onClick={() => callbacks.current.onImageAction?.("resize", [single.id])}>尺寸</button><button aria-label="选图AI分层" disabled={!canMutate} onClick={() => callbacks.current.onImageAction?.("layers", [single.id])}>分层</button></>}
+        {onImageAction && imageTools && <><button aria-label="图片去背景" title={imageTools.removeBackground.reason ?? undefined} disabled={!canMutate || !imageTools.removeBackground.available} onClick={() => callbacks.current.onImageAction?.("remove-background", [single.id])}>去背景</button><button aria-label="图片蒙版擦除" title={imageTools.inpaint.reason ?? undefined} disabled={!canMutate || !imageTools.inpaint.available || !!single.crop || single.flipX || single.flipY || Math.abs(single.rotation) > 1e-6} onClick={() => callbacks.current.onImageAction?.("inpaint", [single.id])}>擦除</button></>}
+        <button aria-label="下载选中图片PNG" disabled={busy || !onExport} onClick={() => void exportDocument("png", { itemIds: [single.id] })}>下载</button>
+      </>}
+    </div>}
+    {quickEdit && !locked && onQuickEdit && <form className="oc-image-quick-edit" role="dialog" aria-label="快捷图片编辑" data-owned-ui onPointerDown={stop} style={{ left: contextualPosition?.left ?? 12, top: Math.min((contextualPosition?.top ?? 80) + 58, Math.max(64, viewport.height - 210)), maxWidth: Math.max(0, viewport.width - 24) }} onSubmit={event => { event.preventDefault(); if (quickLock.current || quickComposing.current || !quickEdit.text.trim()) return; const target = quickEdit; quickLock.current = true; setQuickBusy(true); void onQuickEdit(target.id, target.text.trim()).then(() => setQuickEdit(null)).catch(error => setStatus(error instanceof Error ? error.message : "修改尚未确认，原图保留")).finally(() => { quickLock.current = false; setQuickBusy(false); }); }}>
+      <label>修改 {ownedImageName(view.items.find(item => item.id === quickEdit.id) ?? { kind: "image" })}<textarea aria-label="快捷编辑需求" placeholder="这张图想怎么改？" value={quickEdit.text} maxLength={4000} disabled={quickBusy} onChange={event => setQuickEdit({ ...quickEdit, text: event.target.value })} onCompositionStart={() => { quickComposing.current = true; }} onCompositionEnd={() => { quickComposing.current = false; }} /></label><div><button type="button" disabled={quickBusy} onClick={() => setQuickEdit(null)}>取消</button><button type="submit" disabled={quickBusy || !quickEdit.text.trim()}>{quickBusy ? "确认受理…" : "提交修改"}</button></div>
+    </form>}
     {tool === "eraser" && eraserPoint && <div className="oc-eraser-cursor" style={{ left: eraserPoint.x, top: eraserPoint.y, width: eraserSize * 2, height: eraserSize * 2 }} />}
     <div className="oc-top-left" data-owned-ui onPointerDown={stop}><button aria-label="图层" aria-expanded={layers} onClick={() => setLayers(!layers)} className={layers ? "is-active" : ""}><Icon name="layers" /></button><button aria-label="吸附与对齐辅助线" aria-pressed={snap} title="吸附与对齐辅助线（拖动时按Alt临时关闭）" className={snap ? "oc-soft-active" : ""} onClick={() => setSnap(!snap)}><Icon name="snap" /></button>{locked && <span className="oc-readonly">只读</span>}</div>
     {layers && <aside className="oc-layers" data-owned-ui onPointerDown={stop} aria-label="画布图层">

@@ -134,6 +134,7 @@ model User {
   workbenchStates WorkbenchUserState[]
   workbenchDrafts WorkbenchChatDraft[]
   studioBrandCreations StudioBrandCreation[]
+  studioConversations StudioConversation[]
 }
 
 // M-B — Auth.js Prisma adapter tables. Used when OAuth providers are
@@ -219,6 +220,7 @@ model BrandWorkspace {
   workbenchBrand WorkbenchBrandDraft?
   workbenchUsers WorkbenchUserState[]
   creationReceipts StudioBrandCreation[]
+  studioConversations StudioConversation[]
 
   @@index([ownerId])
 }
@@ -242,6 +244,7 @@ model StudioBrandCreation {
 model Asset {
   studioGeneratedMaterial StudioGeneratedMaterial?
   studioUploads          StudioMaterialUpload[]
+  studioBrandMaterialReceipt StudioBrandMaterialReceipt?
   id                     String            @id @default(cuid())
   workspaceId            String
   workspace              BrandWorkspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -454,6 +457,7 @@ model Project {
   editorDocument EditorDocument?
   workbenchState WorkbenchProjectState?
   workbenchDrafts WorkbenchChatDraft[]
+  studioConversations StudioConversation[]
 
   @@index([workspaceId])
   @@index([workspaceId, status])
@@ -554,6 +558,49 @@ model WorkbenchChatDraft {
   @@unique([userId, projectId])
 }
 
+// M3 one durable conversation per user/project; message attachments are an
+// ordered immutable JSON snapshot, never derived from later canvas selection.
+model StudioConversation {
+  id String @id @default(cuid())
+  workspaceId String
+  workspace BrandWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  projectId String
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  draft Json?
+  draftRevision Int @default(0)
+  messages StudioConversationMessage[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@unique([workspaceId, userId, projectId])
+}
+
+model StudioConversationMessage {
+  id String @id @default(cuid())
+  conversationId String
+  conversation StudioConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  mutationId String @db.Uuid
+  payloadHash String @db.Char(64)
+  text String @db.Text
+  references Json
+  input Json
+  acceptedCanvas String @db.Text
+  intent Json?
+  status String @default("PENDING")
+  generationRequestId String? @unique
+  attemptToken String?
+  startedAt DateTime?
+  intentModelStartedAt DateTime?
+  expiresAt DateTime
+  error String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@unique([conversationId, mutationId])
+  @@index([conversationId, createdAt, id])
+  @@index([status, expiresAt])
+}
+
 model Generation {
   studioRequest StudioGenerationRequest?
   id           String              @id @default(cuid())
@@ -617,6 +664,7 @@ model GenerationVersion {
 // recognize/parse-manual record a rule count in `refCount`.
 model AsyncTask {
   studioUpload StudioMaterialUpload?
+  studioBrandMaterialReceipt StudioBrandMaterialReceipt?
   id          String    @id @default(cuid())
   workspaceId String
   kind        String // "RECOGNIZE" | "PARSE_MANUAL" | "EDIT"
@@ -642,7 +690,8 @@ model StudioMaterialUpload {
   task         AsyncTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
   workspaceId  String
   userId       String
-  projectId    String
+  projectId    String?
+  attachToProject Boolean @default(true)
   // Soft project reference retains cleanup keys if a project is deleted while
   // an upload is in flight. Every public read/write checks the real Project.
   mutationId   String
@@ -663,6 +712,27 @@ model StudioMaterialUpload {
 
   @@unique([workspaceId, userId, projectId, mutationId])
   @@index([workspaceId, projectId, createdAt])
+  @@index([expiresAt])
+}
+
+model StudioBrandMaterialReceipt {
+  assetId String @id
+  asset Asset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  workspaceId String
+  userId String
+  taskId String @unique
+  task AsyncTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  sha256 String?
+  mimeType String
+  sizeBytes Int
+  width Int?
+  height Int?
+  sourceDigest String
+  expiresAt DateTime
+  attemptToken String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([workspaceId])
   @@index([expiresAt])
 }
 

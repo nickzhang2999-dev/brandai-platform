@@ -30,6 +30,9 @@ export function workflowAssets(projectId: string, canvas: string, materials: Wor
       continue;
     }
     const props = shape.props;
+    const owned = shape.meta?.novartOwned;
+    const imageNumber = owned && typeof owned === "object" && !Array.isArray(owned) ? (owned as Record<string, unknown>).imageNumber : undefined;
+    const imageName = props.novartVersion === 3 && Number.isSafeInteger(imageNumber) && Number(imageNumber) > 0 ? `图片${imageNumber}` : null;
     const hidden = studioOwnedLayerHidden(document.tldrawSnapshot.document.store, shape);
     const material = typeof props.url === "string" ? byUrl.get(props.url) : undefined;
     if (!material) {
@@ -38,7 +41,7 @@ export function workflowAssets(projectId: string, canvas: string, materials: Wor
       continue;
     }
     assets.push({ shapeId: id, assetSha256: material.sha256,
-      name: typeof props.name === "string" && props.name ? props.name.slice(0, 255) : "画布图片",
+      name: imageName ?? (typeof props.name === "string" && props.name ? props.name.slice(0, 255) : "画布图片"),
       width: dimension(props.w), height: dimension(props.h), valid: !hidden, mime: material.mimeType });
   }
   return StudioWorkflowAssets.parse({ projectId, assets, issues });

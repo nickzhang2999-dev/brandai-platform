@@ -6,6 +6,7 @@ import type {
 import { BRAND_PREVIEW_PROJECT_NAME } from "./brand-preview";
 import { listStudioGenerationNotifications } from "./studio-notifications";
 import { listStudioLayerNotifications } from "./studio-layer-notifications";
+import { listStudioWorkflowNotifications } from "./studio-workflow-notifications";
 
 /**
  * A3 / L3 — derive the in-app notification inbox from REAL server state. There
@@ -62,7 +63,7 @@ export async function listWorkspaceNotifications(
   userId?: string,
   scope: "all" | "studio" = "all",
 ): Promise<NotificationItem[]> {
-  const [gens, tasks, uploads, studioGenerations, studioLayers] = await Promise.all([
+  const [gens, tasks, uploads, studioGenerations, studioLayers, studioWorkflow] = await Promise.all([
     scope === "studio" ? Promise.resolve([]) : prisma.generation.findMany({
       where: {
         workspaceId,
@@ -111,13 +112,14 @@ export async function listWorkspaceNotifications(
     userId ? prisma.studioMaterialUpload.findMany({
       where: { workspaceId, userId, task: { workspaceId, kind: "STUDIO_UPLOAD", status: { in: ["SUCCEEDED", "FAILED"] } } },
       orderBy: { task: { updatedAt: "desc" } }, take: limit,
-      select: { taskId: true, projectId: true, fileName: true, task: { select: { status: true, error: true, updatedAt: true } } },
+      select: { taskId: true, projectId: true, attachToProject: true, fileName: true, task: { select: { status: true, error: true, updatedAt: true } } },
     }) : Promise.resolve([]),
     userId ? listStudioGenerationNotifications(workspaceId, userId, limit) : Promise.resolve([]),
     userId ? listStudioLayerNotifications(workspaceId, userId, limit) : Promise.resolve([]),
+    userId ? listStudioWorkflowNotifications(workspaceId, userId, limit) : Promise.resolve([]),
   ]);
 
-  const items: NotificationItem[] = [...studioGenerations, ...studioLayers];
+  const items: NotificationItem[] = [...studioGenerations, ...studioLayers, ...studioWorkflow];
 
   for (const g of gens) {
     const succeeded = g.status === "SUCCEEDED";
@@ -164,18 +166,21 @@ export async function listWorkspaceNotifications(
 
   // The staging record keeps a soft Project id for eventual object cleanup.
   // Deleted/foreign projects must not produce a misleading or unscoped link.
-  const projects = uploads.length ? await prisma.project.findMany({
-    where: { workspaceId, id: { in: uploads.map(upload => upload.projectId) } }, select: { id: true },
+  const projectIds = uploads.flatMap(upload => upload.projectId ? [upload.projectId] : []);
+  const projects = projectIds.length ? await prisma.project.findMany({
+    where: { workspaceId, id: { in: projectIds } }, select: { id: true },
   }) : [];
   const visibleProjects = new Set(projects.map(project => project.id));
   for (const upload of uploads) {
-    if (!visibleProjects.has(upload.projectId)) continue;
+    const libraryUpload = upload.projectId === null && upload.attachToProject === false;
+    if (!libraryUpload && (!upload.projectId || !visibleProjects.has(upload.projectId))) continue;
     const succeeded = upload.task.status === "SUCCEEDED";
     items.push({
       id: `task:${upload.taskId}`, kind: "STUDIO_UPLOAD", status: succeeded ? "SUCCEEDED" : "FAILED",
       title: succeeded ? "图片上传完成" : "图片上传失败",
-      detail: succeeded ? `${upload.fileName} 已保存，可返回画布查看或加入图片。` : (upload.task.error ?? "请返回画布重新选择图片上传。"),
-      href: `/canvas?workspaceId=${encodeURIComponent(workspaceId)}&projectId=${encodeURIComponent(upload.projectId)}&taskId=${encodeURIComponent(upload.taskId)}`,
+      detail: succeeded ? `${upload.fileName} 已保存，可返回${libraryUpload ? "品牌素材库" : "画布"}查看或加入图片。` : (upload.task.error ?? "请重新选择图片上传。"),
+      href: libraryUpload ? `/studio?workspaceId=${encodeURIComponent(workspaceId)}#/resources`
+        : `/canvas?workspaceId=${encodeURIComponent(workspaceId)}&projectId=${encodeURIComponent(upload.projectId!)}&taskId=${encodeURIComponent(upload.taskId)}`,
       createdAt: upload.task.updatedAt.toISOString(),
     });
   }

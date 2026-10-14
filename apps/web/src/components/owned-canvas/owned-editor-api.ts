@@ -3,6 +3,7 @@ import { StudioGenerationInput, StudioGenerationView, StudioGenerationCompliance
 import { createDocumentSession, createNovartApiClient, NovartApiError } from "../../lib/novart-api-client";
 import { StudioDecompositionInput, StudioDecompositionView } from "../../../../../packages/contracts/src/studio-decomposition";
 import { matchesOwnedDecomposition, matchesOwnedPsdSelection } from "./owned-layer-options";
+import { StudioImageToolCapabilities, StudioImageToolInput } from "@brandai/contracts";
 
 export type Material = z.infer<typeof StudioMaterial>;
 export type UploadTask = z.infer<typeof StudioMaterialUploadView>;
@@ -105,6 +106,18 @@ export function createOwnedEditorApi(workspaceId: string, projectId: string, use
     return value;
   };
   return {
+    getImageToolCapabilities: () => request(`/api/workspaces/${encodeURIComponent(workspaceId)}/projects/${encodeURIComponent(projectId)}/studio-image-tools`, StudioImageToolCapabilities),
+    async submitImageTool(input: z.infer<typeof StudioImageToolInput>) {
+      const payload = StudioImageToolInput.parse(input);
+      if (payload.projectId !== projectId) throw new NovartApiError("图片工具不属于当前项目。", 422);
+      const receipt = await request(`/api/workspaces/${encodeURIComponent(workspaceId)}/projects/${encodeURIComponent(projectId)}/studio-image-tools`, StudioGenerationView,
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      try {
+        const value = generation(receipt);
+        if (value.mutationId !== payload.mutationId || value.mode !== "modify" || value.sourceShapeId && value.sourceShapeId !== payload.target.shapeId) throw new Error("图片工具回执与原请求不一致。");
+        return value;
+      } catch (error) { throw new NovartApiError(error instanceof Error ? error.message : "图片工具回执尚未核对。", null, "INVALID_RECEIPT", true); }
+    },
     api, session, image, readWorkflow, decompositionExportUrl,
     async getGeneratedPsd(requestId: string, timeoutMs = 20000) {
       return generatedPsd(await request(endpoint(`/api/workspaces/${encodeURIComponent(workspaceId)}/studio/generated-psd`, { requestId }), StudioGeneratedPsdView, {}, timeoutMs), requestId);
@@ -211,9 +224,12 @@ export function createOwnedEditorApi(workspaceId: string, projectId: string, use
     async uploadFile(file: File, mutationId: string) {
       if (!["image/png", "image/jpeg", "image/webp"].includes(file.type) || !file.size || file.size > 10 * 1024 * 1024) throw new NovartApiError("请选择 10 MB 以内的 PNG、JPEG 或 WebP 图片。", 400);
       const form = new FormData(); form.set("projectId", projectId); form.set("mutationId", mutationId); form.set("file", file, file.name || "image.png");
-      const value = upload(await request(endpoint("/studio/material-upload"), StudioMaterialUploadView, { method: "POST", body: form }));
-      if (value.mutationId !== mutationId) throw new NovartApiError("上传回执与本次请求不一致，请刷新任务确认。", 409);
-      return value;
+      const receipt = await request(endpoint("/studio/material-upload"), StudioMaterialUploadView, { method: "POST", body: form });
+      try {
+        const value = upload(receipt);
+        if (value.mutationId !== mutationId) throw new Error("上传回执与本次请求不一致，请读取原任务确认。");
+        return value;
+      } catch (error) { throw new NovartApiError(error instanceof Error ? error.message : "上传回执尚未核对。", null, "INVALID_RECEIPT", true); }
     },
     async pollUpload(initial: UploadTask, onProgress: (value: UploadTask) => void, maxMs = 120000) {
       let task = upload(initial), failures = 0;

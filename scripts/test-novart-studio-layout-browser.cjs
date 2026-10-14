@@ -114,7 +114,7 @@ async function verifyViewport(browser,spec,origin) {
   server=http.createServer((req,res)=>{try{handle(req,res);}catch(e){report.errors.push({kind:'fixture',message:e.message});json(res,{error:'Fixture failed'},500);}});
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const origin='http://127.0.0.1:'+server.address().port;
   browser=await chromium.launch({executablePath:process.env.NOVART_CHROMIUM_EXECUTABLE || 'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true,args:['--disable-background-networking','--no-proxy-server']});
-  const specs=[{name:'desktop-1440',width:1440,height:900},{name:'retina-1280',width:1280,height:800,dpr:2},{name:'compact-1024',width:1024,height:768},{name:'tablet-768',width:768,height:1024},{name:'phone-390',width:390,height:844},{name:'effective-zoom-125',width:1152,height:720,dpr:2,equivalentDesktopZoom:1.25},{name:'short-viewport',width:1024,height:420}];
+  const specs=[{name:'desktop-1440',width:1440,height:900},{name:'retina-1280',width:1280,height:800,dpr:2},{name:'compact-1024',width:1024,height:768},{name:'tablet-768',width:768,height:1024},{name:'phone-390',width:390,height:844},{name:'effective-zoom-125',width:1152,height:720,dpr:2,equivalentDesktopZoom:1.25},{name:'effective-zoom-150',width:960,height:600,dpr:1.5,equivalentDesktopZoom:1.5},{name:'short-viewport',width:1024,height:420}];
   for (const spec of specs) await verifyViewport(browser,spec,origin);
   assert.deepEqual(report.externalRequests,[]);assert.deepEqual(report.errors,[]);assert.equal(report.writeRequests,0);report.passed=true;
 })().catch(e=>{report.fatal={stage,message:e.message,stack:e.stack};process.exitCode=1;}).finally(async()=>{

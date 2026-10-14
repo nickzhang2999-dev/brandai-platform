@@ -51,6 +51,18 @@ beforeEach(() => {
 });
 
 describe("real generation worker pre-provider ordering (isolated dependencies)", () => {
+  it("image tools alone read the displayed source, preserve one paid request and omit added overlays", async () => {
+    row.jobData.studioEdit = { assetId:"source",sha256:"a".repeat(64),shapeId:"shape:source",width:48,height:32,recipeHash:"b".repeat(64) };
+    row.jobData.studioImageTool = { operation:"remove-background" };
+    f.editSource.mockResolvedValue({imageUrl:"data:image/png;base64,YQ=="});
+    f.edit.mockResolvedValue({versions:[{imageUrl:"data:image/png;base64,Yg==",width:1024,height:1024,params:{}}]});
+    await runGenerateJob(job());
+    expect(f.editSource).toHaveBeenCalledWith("w","p",row.jobData.studioEdit,expect.any(AbortSignal),true);
+    expect(f.edit).toHaveBeenCalledOnce();expect(f.generate).not.toHaveBeenCalled();
+    expect(f.edit.mock.calls[0][0]).toMatchObject({imageTool:{operation:"remove-background"},generation:{providerRetryPolicy:"never",brandRules:[],aiConstraints:{referenceImages:[]}}});
+    expect(f.stage.mock.calls[0][1].params.studioPostprocess).toMatchObject({imageTool:"remove-background",watermarkOverlays:[],automaticBrandLogoAssetId:null,brandRules:[]});
+  });
+
   it("dispatches a saved edit through the image-edit service once, preserves its source recipe privately and never calls text generation", async () => {
     row.jobData.studioEdit = { assetId: "source", sha256: "a".repeat(64), shapeId: "shape:source", width: 48, height: 32, recipeHash: "b".repeat(64) };
     f.editSource.mockResolvedValue({ imageUrl: "data:image/png;base64,YQ==" });
