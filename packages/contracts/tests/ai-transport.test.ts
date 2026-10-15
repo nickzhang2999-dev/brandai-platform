@@ -5,6 +5,7 @@ vi.mock("@/lib/ai-service", () => ({ resolveAiService: f.service }));
 vi.mock("@/lib/settings", () => ({ getEffectiveAiSettings: f.settings }));
 vi.mock("@/lib/ai-response", async () => import("../../../apps/web/src/lib/ai-response"));
 import { ai } from "../../../apps/web/src/lib/ai";
+import { AiServiceFailure } from "../../../apps/web/src/lib/ai-failure";
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -16,6 +17,22 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 // This isolated fixture checks transport only. No provider or DB is contacted.
 const body = {} as Parameters<typeof ai.generate>[0];
+
+it("keeps a model 429 distinct from its internal 502 and never retries or forwards task IDs into the model payload", async () => {
+  const requestId = "sgr_" + "c".repeat(32);
+  f.settings.mockResolvedValue({ image: { provider:"openai", apiKey:"fixture" }, layer:{}, vlm:{} });
+  f.fetch.mockImplementation(async () => Response.json({schemaVersion:1,error:{code:"PROVIDER_RATE_LIMITED",stage:"provider",upstreamStatus:429}}, {status:502}));
+  const request = { imageUrl:"data:image/png;base64,YQ==", generation:{providerRetryPolicy:"never"} } as Parameters<typeof ai.studioEdit>[0];
+  const error = await ai.studioEdit(request, {requestId}).catch(error => error);
+  expect(error).toBeInstanceOf(AiServiceFailure); expect(error.info.upstreamStatus).toBe(429);
+  expect(f.fetch).toHaveBeenCalledOnce();
+  expect(f.fetch.mock.calls[0][1].headers["X-Novart-Request-Id"]).toBe(requestId);
+  expect(JSON.parse(f.fetch.mock.calls[0][1].body)).toEqual(request);
+});
+it("does not send malformed diagnostic identities", async () => {
+  await ai.generate(body, {requestId:"private-url-or-token"});
+  expect(f.fetch.mock.calls[0][1].headers).not.toHaveProperty("X-Novart-Request-Id");
+});
 
 it("requires structured conversation service capability and existing real VLM with one POST", async () => {
   f.settings.mockResolvedValue({ image: {}, layer: {}, vlm: { provider: "openai", apiKey: "unit-fixture", model: "configured-model" } });

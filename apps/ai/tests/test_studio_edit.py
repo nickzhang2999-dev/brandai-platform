@@ -113,8 +113,44 @@ async def test_paid_failure_is_one_edit_post_without_retry_or_text_fallback(fail
         return httpx.Response(200, json={"data": [] if failure == "empty" else [{"url": data()}, {"url": data()}]})
 
     provider = HttpImageProvider("https://api.openai.com/v1", "fixture-key", model="gpt-image-2", transport=httpx.MockTransport(upstream))
-    assert (await post(payload(), provider)).status_code >= 400
+    response = await post(payload(), provider)
+    assert response.status_code >= 400
+    assert response.json()["error"]["code"] == {
+        "disconnect": "PROVIDER_NETWORK", "timeout": "PROVIDER_TIMEOUT",
+        "invalid_json": "PROVIDER_INVALID_RESPONSE", "empty": "PROVIDER_INVALID_RESPONSE",
+        "multiple": "PROVIDER_INVALID_RESPONSE",
+    }[failure]
     assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status,code", [(400,"PROVIDER_REQUEST_REJECTED"), (401,"PROVIDER_AUTH"), (403,"PROVIDER_AUTH"), (413,"PROVIDER_REQUEST_REJECTED"), (429,"PROVIDER_RATE_LIMITED"), (502,"PROVIDER_UNAVAILABLE"), (503,"PROVIDER_UNAVAILABLE")])
+async def test_upstream_status_survives_internal_502_without_body_or_retry(status, code, caplog):
+    calls = []
+    def upstream(request):
+        calls.append(request)
+        assert "X-Novart-Request-Id" not in request.headers
+        return httpx.Response(status, text="private-key private-prompt https://private.invalid/secret")
+    provider = HttpImageProvider("https://gateway.invalid/v1", "fixture-key", model="gpt-image-2", transport=httpx.MockTransport(upstream))
+    response = await post(payload(), provider)
+    assert response.status_code == 502
+    assert response.json() == {"schemaVersion":1,"error":{"code":code,"stage":"provider","upstreamStatus":status}}
+    assert len(calls) == 1
+    assert "private-" not in response.text + caplog.text
+
+
+@pytest.mark.asyncio
+async def test_reference_read_failure_is_not_provider_throttling_and_makes_no_paid_post(monkeypatch):
+    calls=[]
+    provider=HttpImageProvider("https://gateway.invalid/v1", "fixture-key", model="gpt-image-2", transport=httpx.MockTransport(lambda request: calls.append(request) or httpx.Response(200)))
+    async def failed_source(*args, **kwargs):
+        request=httpx.Request("GET", "https://private.invalid/source")
+        raise httpx.HTTPStatusError("private-body", request=request, response=httpx.Response(429,request=request))
+    monkeypatch.setattr(provider, "_load_image_bytes", failed_source)
+    response=await post(payload(), provider)
+    assert response.status_code == 502
+    assert response.json()["error"] == {"code":"SOURCE_UNAVAILABLE", "stage":"source", "upstreamStatus":429}
+    assert calls == []
 
 
 @pytest.mark.asyncio

@@ -12,7 +12,7 @@
 - [x] 对已知、安全的内部 HTTP 错误消息分类（502/503/504、429、401/403），未知仍说明原因未确认；不落原始错误体/密钥。
 - [x] 实际 Chromium 对话40项、完整画布52项、契约1560、UI34、AI487、Web类型通过；生产构建及PSD实际浏览器19项也通过。
 - [x] 生产构建与 PSD 浏览器检查完成，审查差异及CI精确断言。
-- [ ] 受保护提交推送，核对远端构建及运行版本。
+- [x] 受保护提交推送，核对远端构建及运行版本。
 
 ## 证据与边界
 
@@ -25,3 +25,11 @@
 证据：ignored `.novart-build/conversation-minimal-ui-styled-20261015.json`、`owned-canvas-minimal-ui-20261015.json`、`minimal-ui-contracts.log`、`minimal-ui-ai.log`；后续部署回执另记。
 
 首批推送e0d3dc6的云端CI因真实后端UI脚本仍直接访问已折叠尺寸控件而失败（38684683597）。已同步打开设置和刷新后设置值验证，保留真实SQL验证；未部署该失败镜像。新回执待更新。
+
+## 最终发布回执 · 2026-10-15 13:34
+
+开发分支ffc61985613823bf8d24e0d6e9c58e7bac78bab6；Branch Image38685884784 completed/success（含源码与构建后容器的真实数据库/登录/画布/持久上传验收）。CDS当时仍waiting且未关联工作流，官方claim-prebuilt dry-run核对成功镜像后认领部署；dr_8268f39b7d257f3b3aad01fc phase=complete、failure=null。只记录未关联成功回执的事实，不推断webhook具体根因。
+
+公网Web/AI/Worker均ok，worker.commit=ffc619856138；已有账号认证/session、Studio和真实项目编辑器HTTP200。读取该编辑器HTML实际引用的JS，确认包含本批独有的未发送需求保护文案、conversation-settings、正在修改和重新编辑，未仅用健康检查代替前端版本验证。HTTP检查仅读取已有项目，无业务写入和模型调用。初次检查错误假定路由JS固定目录，调整为实际HTML脚本清单后通过，未修改产品来迎合检查。
+
+已请求在Codex打开开发预览链接，工具返回queued；不据此断言用户已看到页面。main/正式环境未修改。原失败任务的502上游根因未在本批修复或真实重试，不以UI改动冒称模型恢复。部署后回执本地补记，随下一批提交同步，避免纯日志新SHA与运行版本反复不一致。

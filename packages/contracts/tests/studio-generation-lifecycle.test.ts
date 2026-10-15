@@ -8,6 +8,7 @@ vi.mock("../../../apps/web/src/lib/studio-generation-edit", () => ({ studioEditS
 import { claimStudioGeneration, assertStudioGenerationReady, stageStudioGenerationOutput, finishStudioGeneration } from "../../../apps/web/src/lib/studio-generation-lifecycle";
 import { ApiException } from "../../../apps/web/src/lib/api";
 import { Prisma } from "../../db/src/index";
+import { AiServiceFailure } from "../../../apps/web/src/lib/ai-failure";
 let row: any, tx: any;
 beforeEach(() => {
   vi.resetAllMocks(); row = { id: "sgr_1", workspaceId: "w", projectId: "p", userId: "u", generationId: "g", contextHash: "same", status: "PENDING", providerStartedAt: null, expiresAt: new Date(Date.now() + 60000), jobData: { generationId: "g", assetUsages: [] } };
@@ -20,6 +21,19 @@ beforeEach(() => {
   f.tx.mockImplementation(async fn => { const prior = { ...row }; try { return await fn(tx); } catch (error) { row = prior; throw error; } });
 });
 describe("safe public generation failures", () => {
+  it("persists safe provider classification and correlates only the failing task", async () => {
+    row.id = "sgr_" + "b".repeat(32);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const claim = await claimStudioGeneration(row);
+      const error = new AiServiceFailure({code:"PROVIDER_RATE_LIMITED",stage:"provider",upstreamStatus:429});
+      error.message = "private-provider-body";
+      await finishStudioGeneration(claim!, "FAILED", error);
+      expect(row.error).toContain("限制请求"); expect(row.error).not.toContain("private");
+      expect(warn).toHaveBeenCalledWith("[studio-generation] AI request failed", {requestId:row.id,code:"PROVIDER_RATE_LIMITED",stage:"provider",upstreamStatus:429});
+      expect(f.output).not.toHaveBeenCalled();
+    } finally { warn.mockRestore(); }
+  });
   it.each([[502, "暂时异常"], [503, "暂时异常"], [504, "暂时异常"], [429, "限制请求"], [401, "授权异常"], [403, "授权异常"]])("classifies only the guarded HTTP %i failure", async (status, expected) => {
     const claim = await claimStudioGeneration(row);
     await finishStudioGeneration(claim!, "FAILED", new Error(`图片服务请求失败（HTTP ${status}），请稍后重试或联系管理员。`));

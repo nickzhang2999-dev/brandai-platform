@@ -1,11 +1,13 @@
 import { prisma, Prisma } from "@brandai/db";
 import { STUDIO_GENERATION_OUTPUT_TTL_MS } from "@brandai/contracts";
 import { ApiException } from "./api";
+import { AiServiceFailure } from "./ai-failure";
 import { studioGenerationContextHash, requireStudioGenerationServices, validateStudioOutputSource } from "./studio-generation-policy";
 import { requireArtifactWrite } from "./studio-generation-artifacts";
 import { studioEditSourceFailureReason } from "./studio-generation-edit";
 export type StudioRequest = Prisma.StudioGenerationRequestGetPayload<Record<string, never>>;
 function publicFailure(error: unknown): string {
+  if (error instanceof AiServiceFailure) return new AiServiceFailure(error.info).message;
   if (error instanceof ApiException) return error.message;
   // Only recognize our own guarded transport message. Never persist provider
   // response bodies, request URLs, tokens, stack traces, or arbitrary errors.
@@ -106,7 +108,13 @@ export async function finishStudioGeneration(request: StudioRequest, status: "FA
     await tx.studioGenerationOutput.updateMany({ where: { requestId: request.id }, data: { imageUrl: null } });
     return true;
   });
-  if (finished && status === "FAILED") recordEditSourceFailure(request.id, "finish", error);
+  if (finished && status === "FAILED") {
+    recordEditSourceFailure(request.id, "finish", error);
+    if (error instanceof AiServiceFailure) console.warn("[studio-generation] AI request failed", {
+      requestId: /^sgr_[a-f0-9]{32}$/.test(request.id) ? request.id : "unavailable",
+      code: error.info.code, stage: error.info.stage, upstreamStatus: error.info.upstreamStatus,
+    });
+  }
   return finished;
 }
 

@@ -350,7 +350,7 @@ export async function runGenerateJob(
     job.updateProgress = async value => { try { await updateProgress(value); } catch { /* receipt is authoritative */ } };
   }
   const controller = studio ? new AbortController() : null;
-  const transport = controller ? { signal: controller.signal, maxResponseBytes: 48 * 1024 * 1024, requireRealImageProvider: true } : undefined;
+  const transport = controller ? { signal: controller.signal, maxResponseBytes: 48 * 1024 * 1024, requireRealImageProvider: true, requestId: studio!.id } : undefined;
   const { workspaceId, generationId, versionCount } = job.data;
   const targets =
     (studio || multiSizeEnabled()) && job.data.targets && job.data.targets.length > 0

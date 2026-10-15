@@ -30,6 +30,7 @@ from bs4 import BeautifulSoup
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from ..config import settings
+from ..ai_failure import ImageResponseError
 from ..ssrf import SSRFError, safe_get
 from .retry_policy import should_retry_provider
 from .base import (
@@ -596,6 +597,7 @@ class HttpImageProvider(ImageProvider):
         effective_model = model or self.model or "gpt-image-2"
         size = _resolve_openai_size(width, height, effective_model)
         started = time.perf_counter()
+        failure_stage = "source"
         status = 0
         error: str | None = None
         self.last_total_tokens = None
@@ -613,6 +615,7 @@ class HttpImageProvider(ImageProvider):
                 img_files.append(_edit_image_part(b, i))
             if not img_files:
                 raise ValueError("no loadable reference images for img2img")
+            failure_stage = "provider"
             async with self._client() as c:
                 r = await c.post(
                     f"{self.base_url}/images/edits",
@@ -628,6 +631,7 @@ class HttpImageProvider(ImageProvider):
                 )
                 status = r.status_code
                 r.raise_for_status()
+                failure_stage = "response"
                 data = r.json()
                 try:
                     tok = (data.get("usage") or {}).get("total_tokens")
@@ -640,6 +644,12 @@ class HttpImageProvider(ImageProvider):
                 return out
         except Exception as exc:  # noqa: BLE001 — logged then re-raised
             error = type(exc).__name__
+            if isinstance(exc, httpx.HTTPError):
+                # Preserve the original exception/retry semantics, but label
+                # its operation locally (never infer a stage from a URL).
+                exc._novart_failure_stage = failure_stage
+            elif failure_stage == "response":
+                raise ImageResponseError("Invalid image provider response") from None
             raise
         finally:
             logger.info(

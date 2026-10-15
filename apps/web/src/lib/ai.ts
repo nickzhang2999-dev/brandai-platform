@@ -28,6 +28,7 @@ import type {
 import { resolveAiService } from "@/lib/ai-service";
 import { getEffectiveAiSettings } from "@/lib/settings";
 import { readBoundedAiJson, withinAiDeadline, type AiCallOptions } from "@/lib/ai-response";
+import { readAiFailure } from "./ai-failure";
 
 /**
  * Forward the admin-configured provider to the (stateless) AI service as
@@ -97,7 +98,9 @@ async function call<TReq, TRes>(path: string, body: TReq, options?: AiCallOption
   signal?.throwIfAborted();
   const res = await fetch(`${service.base}${path}`, {
     method: "POST",
-    headers: { "content-type": "application/json", ...headers },
+    headers: { "content-type": "application/json", ...headers,
+      ...(options?.requestId && /^sgr_[a-f0-9]{32}$/.test(options.requestId) ? { "X-Novart-Request-Id": options.requestId } : {}),
+    },
     // The product's task claim is insufficient if a lower client layer retries
     // the paid POST. Enforce this also for its optional text precheck.
     body: JSON.stringify(requireSingleAttempt && !requireStudioEdit ? { ...body, providerRetryPolicy: "never" } : body),
@@ -106,9 +109,7 @@ async function call<TReq, TRes>(path: string, body: TReq, options?: AiCallOption
   });
   if (!res.ok) {
     if (options) {
-      // Provider error bodies may contain URLs, keys or user prompts.
-      void res.body?.cancel().catch(() => undefined);
-      throw new Error(`图片服务请求失败（HTTP ${res.status}），请稍后重试或联系管理员。`);
+      throw await readAiFailure(res, signal);
     }
     throw new Error(`AI ${path} failed: ${res.status} ${await res.text()}`);
   }

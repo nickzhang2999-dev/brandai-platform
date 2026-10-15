@@ -1,5 +1,7 @@
 /** Product generation transport limits share the worker's authoritative deadline. */
 export interface AiCallOptions {
+  /** Server-owned task identity; forwarded only if its shape is valid. */
+  requestId?: string;
   signal?: AbortSignal;
   maxResponseBytes?: number;
   /** Server-only product boundary; never accepted from browser job payloads. */

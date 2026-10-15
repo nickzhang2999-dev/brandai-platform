@@ -10,6 +10,7 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 
 from .config import settings
+from .ai_failure import ImageResponseError, failure_response
 from .ssrf import SSRFError, safe_get
 
 logger = logging.getLogger("brandai.ai")
@@ -114,33 +115,14 @@ app = FastAPI(title="OpenVisual AI Service", version="0.1.0")
 
 
 @app.exception_handler(httpx.HTTPError)
+@app.exception_handler(ImageResponseError)
 async def _provider_http_error(_request, exc: httpx.HTTPError):
     """Translate any upstream provider failure into a clean, readable error
     instead of an opaque 500 — this is what surfaces as the generation's failure
     reason in the UI. Covers HTTP status errors (e.g. OpenAI 401 bad key) AND
     transport errors like ReadTimeout (slow image model)."""
-    resp = getattr(exc, "response", None)
-    if resp is not None:
-        body = (resp.text or "")[:300]
-        return JSONResponse(
-            status_code=502,
-            content={"detail": f"AI provider returned {resp.status_code}: {body}"},
-        )
-    if isinstance(exc, httpx.TimeoutException):
-        return JSONResponse(
-            status_code=504,
-            content={
-                "detail": (
-                    f"AI provider timed out after {settings.http_timeout:.0f}s "
-                    f"({type(exc).__name__}). The image model may be slow — "
-                    "retry, or raise AI_HTTP_TIMEOUT_SECONDS."
-                )
-            },
-        )
-    return JSONResponse(
-        status_code=502,
-        content={"detail": f"AI provider request failed: {type(exc).__name__}: {exc}"},
-    )
+    status, body = failure_response(exc, _request.headers.get("X-Novart-Request-Id"))
+    return JSONResponse(status_code=status, content=body)
 
 _SCENE_SIZES = {
     "ECOM_MAIN": (1024, 1024),
@@ -713,6 +695,8 @@ async def _generate(req: GenerateRequest, provider: ImageProvider, *, studio_sou
                 model=(provider_extra or {}).get("model"),
             )
             if not urls or (studio_source is not None and len(urls) != 1):
+                if studio_source is not None:
+                    raise ImageResponseError("Expected exactly one edited image")
                 raise HTTPException(
                     status_code=502,
                     detail="AI provider returned no image for STRICT reference",

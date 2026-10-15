@@ -34,3 +34,4 @@ export * from "./studio-conversation";
 export * from "./studio-conversation-model";
 export * from "./studio-brand-materials";
 export * from "./studio-image-tools";
+export * from "./ai-failure";
