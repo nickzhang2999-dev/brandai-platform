@@ -23,3 +23,5 @@
 首轮全量并行 Vitest 因本机内存不足退出；改为单 worker 完整跑完，未删除或跳过用例。截图仅用于本地样式自查，包含合成图片，不作为业务成果截图。
 
 证据：ignored `.novart-build/conversation-minimal-ui-styled-20261015.json`、`owned-canvas-minimal-ui-20261015.json`、`minimal-ui-contracts.log`、`minimal-ui-ai.log`；后续部署回执另记。
+
+首批推送e0d3dc6的云端CI因真实后端UI脚本仍直接访问已折叠尺寸控件而失败（38684683597）。已同步打开设置和刷新后设置值验证，保留真实SQL验证；未部署该失败镜像。新回执待更新。
