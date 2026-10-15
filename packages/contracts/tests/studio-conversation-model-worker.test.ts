@@ -32,6 +32,23 @@ beforeEach(() => {
         || where.expiresAt?.gt && f.row.expiresAt <= where.expiresAt.gt) return {count:0}; Object.assign(f.row,data); return {count:1}; }) } });
 });
 describe("durable structured intent claim, no real model or image calls", () => {
+  it("uses an explicitly selected target without re-deciding it through a model", async () => {
+    const ref = { referenceId: "shape:one", shapeId: "shape:one", assetId: "a1", assetSha256: "a".repeat(64), name: "图片1", width: 1024, height: 1024 };
+    f.row.input = StudioConversationInput.parse({ ...input, text: "光影自然一点，阳光洒下", references: [ref], quickEditTargetId: ref.referenceId });
+    await runStudioConversationJob({ data: { messageId: "m" } } as any);
+    expect(f.validate).toHaveBeenCalledOnce(); expect(f.gate).toHaveBeenCalledOnce();
+    expect(f.available).not.toHaveBeenCalled(); expect(f.resolve).not.toHaveBeenCalled();
+    expect(f.submit).toHaveBeenCalledOnce(); expect(f.row.intent.targetReferenceId).toBe(ref.referenceId);
+    expect(f.row.intent.action).toBe("modify"); expect(f.row.intentModelStartedAt).toBeNull();
+  });
+  it("does not bypass a previously uncertain intent call even with a pinned target", async () => {
+    const ref = { referenceId: "shape:one", shapeId: "shape:one", assetId: "a1", assetSha256: "a".repeat(64), name: "图片1", width: 1024, height: 1024 };
+    f.row.input = StudioConversationInput.parse({ ...input, text: "光影自然一点", references: [ref], quickEditTargetId: ref.referenceId });
+    f.row.intentModelStartedAt = new Date();
+    await runStudioConversationJob({ data: { messageId: "m" } } as any);
+    expect(f.available).not.toHaveBeenCalled(); expect(f.submit).not.toHaveBeenCalled();
+    expect(f.row.status).toBe("CLARIFICATION"); expect(f.row.intent.modelStatus).toBe("UNKNOWN");
+  });
   it.each([
     "修改目标已失效、归属不符或原始配方发生变化，请重新选择图片。",
     "这张历史生成图片缺少可验证的原始合成记录，暂不能继续改图。请选用新工作台生成的图片。",

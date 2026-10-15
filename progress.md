@@ -2,6 +2,8 @@
 
 ## 2026-10-15 — final local bug batch verified
 
+- Final delivery: normal push09fdf18, exact-SHA Branch Image38671917506 success through source/container validation and checked-image publication. CDS official dry-run/claim/deploy completed dr_a957bf6b5ec83514ab26a498; public health/current commit and real existing-account Studio access passed. Post-release logs remain local until the next code batch. No paid model, main or production operation.
+
 - Three scoped agents completed source, conversation and canvas audits; independent cross-reviews found no blocking regression. Root integrated yesterday's uncommitted changes and today's fixes.
 - Final forced contracts1528/UI34, AI487, complete types and production build passed; actual canvas52/image-context19/conversation27 passed. Exact new workflow assertions were executed against local reports. No local Docker, model calls or shared-data writes.
 - Added real uploaded single-image notice clarification acceptance to both source/container CI flows; it is pending remote execution and is not counted as locally passed SQL acceptance.
@@ -366,3 +368,8 @@ Approved handoff package matches HEAD 928ab0a and all 42 manifest entries verifi
 - Repository gates are separate from real runtime acceptance. New Prisma migrations/client generated but no real migration; no local disposable DB/Redis/S3 was available. Real SQL/auth/storage/worker restarts, model quality, domains and Mac/Safari stay pending. Images with crop/flip/rotation require reset before masks; external-only materials require migration/upload.
 - Model intent and AI image-tool flags remain disabled by default. M6 remains later. No commit/push/main merge/CDS/deploy/Docker/shared data operation in this increment. Current branch/HEAD stays devUpdate1012/928ab0a with local edits.
 - Implementation/acceptance differences: docs/deepflare-handoff-ui-2026-10-14.md. Detailed current evidence and earlier failures retained in docs/development-log-2026-10-14.md.
+
+2026-10-15: User approved plan-and-execute for reproduced natural edit-intent misclassification. Plan recorded; investigation step in progress.
+
+
+Conversation intent targeted tests82 and actual Chromium interactions34 passed. Added quote-spanning and comparative-commentary negatives after review; rerunning affected tests before final gates. Initial gate invocations had an unsupported pnpm argument and wrong relative Python path; corrected to turbo run test --force and local .venv/Scripts/python.exe.

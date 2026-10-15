@@ -1,5 +1,19 @@
 # DeepFlare 开发日志 · 2026-10-15
 
+## 追加批次：自然改图意图与显式目标
+
+用户先要求用REA解释固定澄清文案，随后要求列完整计划并执行。[本批计划](conversation-intent-repair-plan-2026-10-15.md)，基线09fdf18。
+
+- 复现：单图＋“光影自然一点，阳光洒下”被规则澄清；固定目标则正确改图。REA静态分析有覆盖限制，Windows进程录制不可用；运行证据来自本地Node实际解析器，不冒充原截图历史请求取证。
+- UI：引用区可选择修改对象，复用quickEditTargetId和服务器草稿；其他图片继续参考。支持取消、移除目标清空、刷新恢复、只读禁用、换项目清理。
+- worker：来源/成员校验后，新请求已有显式目标时跳过意图模型分类。旧持久化意图与已启动未知调用仍优先恢复/澄清，不重复收费。
+- 规则：支持已测光影、色调和真实感比较式调整；多图不猜目标、数字图片名不串号。新规则排除否定、提问、引号内文案及评价。保守规则不等于通用语义理解，仍可直接选择目标。
+- 最终门禁：定向解析/worker/model91；无缓存契约/服务1550、UI34；AI487（既有Starlette弃用警告1）；Web完整类型和低内存生产构建退出0；真实Chromium会话34（新增7），精确CI断言通过。本机缺服务导致构建连接警告，不算真实业务栈验收。
+- 证据：ignored `.novart-build/intent-{targeted,l1,ai,types,build}-20261015.log`、`conversation-intent-browser-20261015.json`、`rea-intent-20261015/`。模型调用0；未写共享数据、未合main、未发布正式站。
+- 交付问题：初次门禁参数/路径错误已纠正；直连GitHub443两次超时，单次git使用系统已配置代理后fetch正常，未改全局网络配置，不归因为CDS故障。
+
+本节是提交前本地结果。远端SHA、CI和预览运行状态获得真实回执后另记，不能沿用旧版成功结论。
+
 ## 本轮目标与边界
 
 帅帅要求按昨天日志继续排查画布相关 bug，修复验证后统一推送远端。工作区为 `D:/coding/公司/brandai-devUpdate1012`，分支 `devUpdate1012`，起点 `87145250aac35764cd5ec8110e78e4057d62757d`。昨天未提交的代码、测试和日志完整保留，今天统一交付。
@@ -43,3 +57,19 @@
 - 已 fetch：本地与 origin/devUpdate1012 均为起点8714525；普通推送守卫已确认安装。
 
 当前完成的是本地修复与发布前验证。随后正常提交/推送开发分支，远端SHA、云端源码/容器验收与运行版本各自读回；不提前写成已部署。
+
+## 10:37 推送读回
+
+已正常提交并推送 `09fdf1809fc450dc07e5c2970e3c7094d076b38f`（`fix(studio): preserve canvas history and conversation task state`），远端 `refs/heads/devUpdate1012` 读回完整SHA一致；推送守卫正常执行，无强推或历史重写。该批26个文件包含昨天修复/日志与今天新增修复；main未改。
+
+[Branch Image 38671917506](https://github.com/nickzhang2999-dev/brandai-platform/actions/runs/38671917506) 已自动启动，head_sha与新提交完全一致，当前仍in_progress。CDS已识别源码/ciTargetSha为09fdf18，镜像状态waiting；运行版本仍为昨天的dv_c147eb7310aad04f906ea3e7，不能认为新补丁已经在预览运行。此处为当时快照，后续结果另记。
+
+## 10:53 最终收尾：云端验收通过、开发预览已更新
+
+- 同一提交的Branch Image整轮completed/success；产品任务完成本轮实际浏览器回归、PSD文件检查、隔离数据库迁移与对象存储、仓库门禁、真实登录/画布/数据库/持久上传及知识库验收、镜像构建、构建后容器验收和已验镜像发布。新增单图错误全文澄清检查随源码/容器流程通过。另一preview任务按分支条件skipped，不是产品验收跳过。
+- 10:50 CDS已识别新源码，但仍waiting且没有workflow链接，运行旧镜像。只确认这个时点成功回执尚未回填，不据此推断webhook根因或已超时。官方claim-prebuilt dry-run校验相同SHA与真实success工作流后，使用官方认领及部署更新该开发分区；未改CDS源码/compose/env，未绕过强制审批。
+- 部署运行 `dr_a957bf6b5ec83514ab26a498` 于10:52:29完成，running/complete、failure=null、commitSha完整匹配；当前版本 `dv_5d39edb6b80d089a5381013c`，ciImageStatus=ready、ciWorkflowConclusion=success。
+- 官方CLI返回[开发预览入口](https://devupdate1012-brandai-platform.geole.me/studio)。公网健康200，Web/AI/Worker均ok、worker.commit=09fdf1809fc4；登录页200且含DeepFlare，已有评审账号真实密码认证/session匹配，Studio200。凭据仅在内存中使用，没有公开输出、入日志或修改账号。部署后检查没有创建项目、上传或调用模型；业务修改验收来自隔离CI，不冒称在公司业务数据上做了全部操作。
+- 本轮保留main和正式环境、共享业务内容及现有数据卷；未启动本机Docker，真实模型调用0。剩余边界仍为历史生成图缺完整原始配方的兼容设计，以及历史首次偶发来源拒绝需新诊断才能追因。
+
+最终机读证据：ignored `.novart-build/canvas-audit-final-20261015/verification.json`、`push.json`、`cds-canvas-audit-release-{dry-run,claim-deploy,status,preview-url,ledger}-20261015.json`、`canvas-release-public-20261015.json`；GitHub原始安全元数据在仓库外任务临时目录。推送时日志已入09fdf18；本节及README的发布后回执仅在本地补记，随下一批代码提交同步，不再为回执推一个未验新SHA。

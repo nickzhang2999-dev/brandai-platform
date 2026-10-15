@@ -7,8 +7,8 @@ Latest user instruction authorizes continuing yesterday's bug log and one final 
 - [complete] Read yesterday's findings, preserve all uncommitted fixes, fetch the development branch and dispatch three scoped audits.
 - [complete] Audit source-validation consistency, conversation task races, and canvas edit/save/reopen behavior; reproduce confirmed defects and retain security checks.
 - [complete] Integrate fixes, review diffs and run relevant actual-browser regressions plus full contracts/UI, AI, Web types and production build gates: 1528+34/487/types/build and core52/image19/conversation27.
-- [in progress] Update developer log, attribution, README and evidence boundaries; normal guarded commit/push once to devUpdate1012.
-- [pending] Verify the remote SHA and its actual CI result; report preview runtime separately from source delivery.
+- [complete] Update developer log, attribution, README and evidence boundaries; normal guarded commit/push 09fdf1809fc450dc07e5c2970e3c7094d076b38f to devUpdate1012, remote readback matches.
+- [complete] Exact-SHA Branch Image38671917506 completed/success including real source/container acceptance. Official CDS claim/deploy dr_a957bf6b5ec83514ab26a498 complete; public health worker09fdf1809fc4, existing-account authentication and Studio200 verified. Post-release receipts are local docs for the next normal code batch.
 
 ## Content-aware layering and recursive refinement · 2026-10-13
 
@@ -286,3 +286,6 @@ User authorized `交接包_devUpdate1012_2026-10-14.zip` implementation with par
 - [deferred per handoff] M6: advanced image tools (outpaint, object move, mockup/image adjustments, OCR, vector, multi-angle, animation, customizable toolbar).
 
 Acceptance distinguishes local UI/unit checks, actual disposable database tests and real provider quality. Missing local runtime/configuration stays explicit; external deployments and domain verification are out of scope under the latest local-only instruction.
+
+## 2026-10-15 · Conversation intent repair
+Active plan: docs/conversation-intent-repair-plan-2026-10-15.md. Inspect target binding, explicit UI, safe intent resolution, regression/browser gates, then normal devUpdate1012 delivery. No main changes.

@@ -53,6 +53,9 @@ export async function runStudioConversationJob(job: Job<{ messageId: string }>) 
     }
     else if (row.intent) intent = StudioConversationIntent.parse(row.intent);
     else if (row.intentModelStartedAt) intent = unknownStudioConversationIntent(input);
+    // The user already chose an editable target. Preserve uncertain prior calls
+    // above, but do not spend a new semantic-model call re-deciding this choice.
+    else if (input.quickEditTargetId) intent = parseStudioConversationIntent(input, previous);
     else if (await studioConversationModelAvailable()) {
       const claimed = await prisma.studioConversationMessage.updateMany({ where: { id: row.id, attemptToken: token, status: "RUNNING", intentModelStartedAt: null, intent: { equals: Prisma.DbNull }, expiresAt: { gt: new Date() } },
         data: { intentModelStartedAt: new Date() } });

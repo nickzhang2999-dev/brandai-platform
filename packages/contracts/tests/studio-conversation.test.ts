@@ -12,6 +12,38 @@ const parse = (text: string, references: unknown[] = [], extra = {}) => parseStu
 
 describe("durable conversation contract and conservative action/size routing", () => {
   it.each([
+    "光影自然一点，阳光洒下", "构图保持不变，场景真实一点，阳光洒下来",
+    "画面更真实", "背景再明亮一些", "色调温暖一点", "让阳光洒进窗户",
+  ])("understands a concrete natural adjustment with one editable reference: %s", text => {
+    const intent = parse(text, [four]);
+    expect(intent.action).toBe("modify"); expect(intent.targetReferenceId).toBe(four.referenceId);
+    expect(intent.prompt).toBe(text); expect(intent.sizeSource).toBe("target");
+    expect(parse(text, [one, four]).action).toBe("clarify");
+    expect(parse(`生成一张海报，${text}`, [one, four]).action).toBe("generate");
+  });
+  it.each([
+    "光影很自然，阳光洒下", "阳光洒下", "光影自然一点吗？", "光影是不是更自然",
+    "参考这个光影更自然的效果", "不要让光影更自然", "别让阳光洒下", "光影不用更自然",
+    "构图保持不变，场景不要真实一点", "文案为“光影自然一点”",
+    "文案为“欢迎回来，光影自然一点，春天到了”", "背景更明亮的照片很好看",
+  ])("does not charge for visual commentary, questions, quotes or negation: %s", text => {
+    expect(parse(text, [four]).action).toBe("clarify");
+  });
+  it("uses named natural targets without confusing image 4 with image 40", () => {
+    expect(parse("图片40的光影自然一点", [four, forty]).targetReferenceId).toBe(forty.referenceId);
+    expect(parse("图片4的场景真实一点，图片40作为参考", [four, forty]).targetReferenceId).toBe(four.referenceId);
+    expect(parse("图片4光影自然一点，图片40场景真实一点", [four, forty]).action).toBe("clarify");
+    expect(parse("场景真实一点", [{ ...four, shapeId: undefined }]).action).toBe("clarify");
+  });
+  it("preserves explicit target and size guards for natural editing", () => {
+    expect(parse("光影自然一点", [one, four], { quickEditTargetId: four.referenceId }).targetReferenceId).toBe(four.referenceId);
+    expect(parse("光影自然一点，1080×1920", [four]).requestedSize).toEqual({ width: 1080, height: 1920 });
+    expect(parse("光影自然一点，20厘米", [four]).action).toBe("clarify");
+    expect(parse("生成一张海报，光影自然一点", [{ ...four, purpose: "EXACT" }]).action).toBe("clarify");
+    const input = StudioConversationInput.parse({ ...base, text: "光影自然一点", references: [four] });
+    expect(parseStudioConversationIntent(input, undefined, { action: "modify", targetReferenceId: "missing" }).action).toBe("clarify");
+  });
+  it.each([
     "修改目标已失效、归属不符或原始配方发生变化，请重新选择图片。",
     "  修改目标已失效、归属不符或原始配方发生变化,\n请重新选择图片.  ",
     "这张历史生成图片缺少可验证的原始合成记录，暂不能继续改图。请选用新工作台生成的图片。",

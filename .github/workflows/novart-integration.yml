@@ -120,7 +120,13 @@ jobs:
           report = json.loads((root / 'conversation-fixture.json').read_text())
           assert report['passed'] is True and report['isolated'] is True
           assert report['realBackend'] is False and report['realProvider'] is False and report['realAuthentication'] is False
-          assert report['providerCalls'] == 0 and len(report['checks']) >= 27
+          assert report['providerCalls'] == 0 and len(report['checks']) >= 34
+          assert {'explicit-composer-target-restores-from-server-draft-after-refresh',
+                  'natural-language-with-explicit-target-modifies-one-image-and-retains-other-references',
+                  'removing-the-selected-reference-clears-the-persisted-edit-target',
+                  'single-image-natural-adjustment-no-longer-produces-generic-clarification',
+                  'cancel-target-allows-new-generation-without-reusing-old-edit-target',
+                  'persisted-target-selector-is-disabled-for-read-only-projects'} <= set(report['checks'])
           assert report['directGenerationPosts'] == 0 and report['archiveRetries'] == 3
           assert len(report['terminalStateEvidence']) >= 6
           assert all(item['before'] == item['after'] for scenario in report['terminalStateEvidence'] for item in scenario['messagePolls'])

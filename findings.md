@@ -188,3 +188,6 @@ The approved handoff baseline is devUpdate1012/928ab0a with 42 verified manifest
 Actual Chromium exercises production React and Studio shell with synthetic loopback HTTP receipts; it verifies clicks, recovery and real PNG/PSD encoding, not SQL persistence, authentication, S3 or provider quality. Structured VLM intent is implemented but defaults off; unknown calls cannot be retried and old worker leases cannot reserve generation quota. Real DB/storage/provider/domain acceptance and transformed-source masks remain explicitly pending.
 
 Current implementation and per-scenario evidence: docs/deepflare-handoff-ui-2026-10-14.md and docs/development-log-2026-10-14.md. Legacy WEBSITE-only materials are rejected until uploaded/migrated; M6 is deferred by the original handoff. No new CDS issue was observed because CDS was not operated.
+
+## 2026-10-15 · Explicit conversation edit target
+References and edit targets are different states. Existing quickEditTargetId already persists in authoritative drafts; the UI now exposes it as a selector. Fresh pinned requests skip semantic reclassification after all source checks; previously unknown model calls remain clarification. Natural visual adjustment rules exclude negative, quoted and commentary clauses. No real provider calls.
