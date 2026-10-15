@@ -13,3 +13,6 @@
 结果：运行dr_a957bf6b5ec83514ab26a498于10:52:29完成，phase=complete、failure=null，currentVersionId=dv_5d39edb6b80d089a5381013c。公网Web/AI/Worker均ok，Worker提交09fdf1809fc4；已有账号实际登录与Studio入口核验通过。此记录为发布后本地回执，下一批正常提交归档。
 
 链接：[成功工作流](https://github.com/nickzhang2999-dev/brandai-platform/actions/runs/38671917506) · [开发预览](https://devupdate1012-brandai-platform.geole.me/studio) · [完整开发日志](development-log-2026-10-15.md)。
+
+## 11:42–11:45 · 新修复镜像再次未关联
+GitHub38676285703为5d75d50完成success，但CDS将同一目标标为timed_out_no_run；当前Git5141d25仅日志，按工作流paths不产生镜像。官方认领并部署成功镜像后，运行健康版本核对为5d75d50e195a。可以确认成功回执未关联，无法仅凭这些状态确认底层事件丢失原因。未修改CDS、伪造CI结论或绕过审批。

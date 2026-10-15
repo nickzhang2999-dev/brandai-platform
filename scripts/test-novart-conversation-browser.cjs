@@ -7,6 +7,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const http = require('node:http');
 const crypto = require('node:crypto');
+const {spawnSync} = require('node:child_process');
 const {chromium} = require('playwright-core');
 const repo = path.resolve(__dirname, '..');
 const root = path.join(repo, '.novart-build', 'temporary'); fs.mkdirSync(root, {recursive: true});
@@ -31,8 +32,9 @@ async function body(req) {const chunks = []; for await (const chunk of req) chun
 async function handle(req, res) {
   const url = new URL(req.url, 'http://127.0.0.1');
   if (url.pathname === '/app.js') {res.setHeader('Content-Type', 'application/javascript'); return res.end(fs.readFileSync(path.join(directory, 'app.js')));}
-  if (url.pathname === '/') {res.setHeader('Content-Type', 'text/html'); return res.end('<!doctype html><html><head><meta charset="utf-8"><style>body{font:15px system-ui;margin:20px}button{padding:8px;margin:4px}textarea{display:block;width:430px;height:130px}section{width:500px}article{margin:14px 0}fieldset{margin-bottom:12px}</style></head><body><div id="root"></div><script src="/app.js"></script></body></html>');}
-  if (url.pathname === `/api/workspaces/${fixture.workspaceId}/assets/fixture-result/raw` && req.method === 'GET') {res.setHeader('Content-Type', 'image/png'); return res.end(png);}
+  if (url.pathname === '/app.css') {res.setHeader('Content-Type','text/css');return res.end(fs.readFileSync(path.join(directory,'tokens.css')));}
+  if (url.pathname === '/') {res.setHeader('Content-Type', 'text/html'); return res.end('<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/app.css"><style>body{margin:12px}fieldset{font-size:12px;max-width:800px}fieldset button{padding:4px;margin:2px;border:1px solid var(--border);border-radius:8px}.fixture-panel{width:min(360px,100%);height:calc(100dvh - 200px);padding:16px;border:1px solid var(--border);border-radius:24px;min-height:320px}</style></head><body><div id="root"></div><script src="/app.js"></script></body></html>');}
+  if (new RegExp(`^/api/workspaces/${fixture.workspaceId}/assets/(fixture-result|asset[12])/raw$`).test(url.pathname) && req.method === 'GET') {res.setHeader('Content-Type', 'image/png'); return res.end(png);}
   if (url.pathname === '/studio/generation/retry-archive' && req.method === 'POST') {
     assert.equal(req.headers['x-novart-user'], fixture.userId); assert.equal(url.searchParams.get('workspaceId'), fixture.workspaceId);
     const input = contracts.StudioGenerationArchiveRetryInput.parse(await body(req)); assert.equal(input.projectId, fixture.projectId);
@@ -91,11 +93,13 @@ function Fixture(){const panel=useRef<any>(null),[selected,setSelected]=useState
  const run=(fn:any)=>{try{Promise.resolve(fn()).catch(e=>setNotice(e.message))}catch(e:any){setNotice(e.message)}};
  return <><fieldset><legend>交互测试夹具 · 非业务验收</legend><button onClick={()=>setSelected([refs[0]])}>选择图片1</button><button onClick={()=>setSelected([refs[1],refs[0]])}>选择图片2和1</button><button onClick={()=>run(()=>panel.current.addReferences(selected))}>加入当前选择</button><button onClick={()=>run(()=>panel.current.addReferences([refs[1]],refs[1].referenceId))}>固定快捷目标图片2</button><button onClick={()=>run(async()=>{await panel.current.flush();setNotice('离页草稿已确认')} )}>模拟品牌离页保存</button><p role="status">{notice}</p></fieldset>
  <button onClick={()=>setProjectId('fixture-other-project')}>切换另一个项目</button><button onClick={()=>run(()=>panel.current.quickEdit(refs[0],'后来的快捷编辑不应篡改原请求'))}>直接快捷修改图片1</button>
- <OwnedConversationPanel ref={panel} {...${JSON.stringify(fixture)}} projectId={projectId} readOnly={readOnly} api={ownedApi} prepare={async()=>({documentRevision:1,workflowRevision:0})} onNotice={setNotice} onGeneration={()=>{}} onInsert={async()=>{}} onInsertLayers={async()=>{}} /></>}
+ <div className="fixture-panel"><OwnedConversationPanel ref={panel} {...${JSON.stringify(fixture)}} projectId={projectId} readOnly={readOnly} api={ownedApi} prepare={async()=>({documentRevision:1,workflowRevision:0})} onNotice={setNotice} onGeneration={()=>{}} onInsert={async()=>{}} onInsertLayers={async()=>{}} /></div></>}
 createRoot(document.getElementById('root')!).render(<Fixture/>);`);
   await esbuild.build({entryPoints:[entry],outfile:path.join(directory,'app.js'),bundle:true,platform:'browser',format:'iife',jsx:'automatic',tsconfig:path.join(repo,'apps/web/tsconfig.json'),nodePaths:[path.join(repo,'apps/web/node_modules')],define:{'process.env.NODE_ENV':'"development"'},logLevel:'silent'});
   fs.writeFileSync(path.join(directory, 'schemas.ts'), `export {StudioConversationInput,StudioConversationDraftInput,StudioConversationMessage} from '${absolute('packages/contracts/src/studio-conversation')}';export {StudioGenerationView,StudioGenerationArchiveRetryInput} from '${absolute('packages/contracts/src/studio-generation')}';export {parseStudioConversationIntent} from '${absolute('apps/web/src/lib/studio-conversation-intent')}';`);
   await esbuild.build({entryPoints:[path.join(directory,'schemas.ts')],outfile:path.join(directory,'schemas.cjs'),bundle:true,platform:'node',format:'cjs',tsconfig:path.join(repo,'apps/web/tsconfig.json'),nodePaths:[path.join(repo,'apps/web/node_modules')],logLevel:'silent'}); contracts = require(path.join(directory, 'schemas.cjs'));
+  const css=spawnSync(process.execPath,[path.join(repo,'apps/web/node_modules/tailwindcss/lib/cli.js'),'-i',path.join(repo,'packages/ui/src/styles.css'),'-o',path.join(directory,'tokens.css'),'-c',path.join(repo,'apps/web/tailwind.config.ts'),'--content',path.join(repo,'apps/web/src/components/owned-canvas/*.{ts,tsx}')],{cwd:repo,encoding:'utf8',timeout:60000});
+  assert.equal(css.status,0,'Actual product styles must compile');
   server = http.createServer((req,res)=>handle(req,res).catch(error=>{report.errors.push('fixture:' + error.message);json(res,{error:'Fixture handler error'},500);}));
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve)); const origin = 'http://127.0.0.1:' + server.address().port;
   browser = await chromium.launch({headless:true,...(process.env.NOVART_CHROMIUM_EXECUTABLE ? {executablePath:process.env.NOVART_CHROMIUM_EXECUTABLE}:{}),args:['--disable-background-networking']});
@@ -104,7 +108,7 @@ createRoot(document.getElementById('root')!).render(<Fixture/>);`);
   page = await context.newPage(); page.on('pageerror',error=>report.errors.push(error.message));
   const button = name => page.getByRole('button',{name,exact:true}); const input = () => page.getByRole('textbox',{name:'对话设计需求',exact:true});
   const ready = () => page.waitForFunction(()=>document.querySelector('[data-testid="owned-conversation"]')?.dataset.conversationReady==='true');
-  const saved = () => page.waitForFunction(()=>document.querySelector('[data-testid="owned-conversation"]')?.textContent?.includes('对话草稿已保存'));
+  const saved = () => page.waitForFunction(()=>document.querySelector('[data-testid="conversation-draft-status"]')?.dataset.saved==='true');
   stage = 'explicit-ordered-refs'; await page.goto(origin); await ready(); await button('选择图片2和1').click();
   assert.equal(await page.getByRole('button',{name:/移除对话引用/}).count(),0); check('selection-alone-does-not-change-conversation-references');
   await button('加入当前选择').click(); await saved(); assert.deepEqual(draft.references.map(ref=>ref.assetId),['asset2','asset1']);
@@ -147,14 +151,14 @@ createRoot(document.getElementById('root')!).render(<Fixture/>);`);
   const result = {versionId:'fixture-version',assetId:'fixture-result',assetSha256:crypto.createHash('sha256').update(png).digest('hex'),
     width:1,height:1,mimeType:'image/png',url:`/api/workspaces/${fixture.workspaceId}/assets/fixture-result/raw`};
   const show = async rows => {messages=rows;draft=null;messageReads.clear();await page.goto(origin);await ready();};
-  const activity = () => page.getByText('正在创作…',{exact:true});
+  const activity = () => page.getByText(/^(正在创作…|生成完成，正在保存图片)$/);
   const pollCount = id => messageReads.get(id)??0;
   const until = async condition => {const end=Date.now()+7000;while(!condition()){assert.ok(Date.now()<end,'Expected conversation poll did not arrive');await new Promise(resolve=>setTimeout(resolve,50));}};
   const quiet = async (scenario, ids) => {const before=ids.map(pollCount);await page.waitForTimeout(4100);assert.deepEqual(ids.map(pollCount),before);report.terminalStateEvidence.push({scenario,messagePolls:ids.map((id,index)=>({messageId:id,before:before[index],after:pollCount(id)}))});};
 
   stage = 'failed-terminal';const failed=task({status:'FAILED',error:'夹具模型失败，未生成图片'});
   await show([row(failed,{status:'FAILED',error:'夹具模型失败，未生成图片'}),row(task({...failed,requestId:'stale-request',generationId:'stale-generation'}),{messageId:'stale-running-message',status:'RUNNING',text:'过时顶层状态仍然运行'})]);
-  assert.equal(await activity().count(),0);assert.equal(await input().isDisabled(),false);assert.equal(await page.getByRole('alert').filter({hasText:'夹具模型失败，未生成图片'}).count(),1);
+  assert.equal(await activity().count(),0);assert.equal(await input().isDisabled(),false);assert.equal(await page.getByRole('alert').filter({hasText:'本次生成未完成'}).count(),2);
   await quiet('FAILED / NOT_REQUESTED wins over failed and stale RUNNING messages',['terminal-message','stale-running-message']);
   check('generation-failure-with-not-requested-archive-stops-progress-and-all-repeat-polls');
 
@@ -225,34 +229,68 @@ createRoot(document.getElementById('root')!).render(<Fixture/>);`);
   check('quick-edit-during-inflight-send-cannot-replace-frozen-user-prompt-or-target');
 
   stage = 'composer-target-choice';await show([]);await button('选择图片2和1').click();await button('加入当前选择').click();await saved();
-  const targetChoice=()=>page.getByRole('combobox',{name:'对话修改对象',exact:true});
-  assert.equal(await targetChoice().inputValue(),'');assert.equal(draft.quickEditTargetId,null);
+  const targetChoice=(number=1)=>page.getByRole('button',{name:`修改对象 图片${number}`,exact:true});
+  assert.equal(await targetChoice().getAttribute('aria-pressed'),'false');assert.equal(draft.quickEditTargetId,null);
   check('adding-references-does-not-silently-pin-an-edit-target');
-  await targetChoice().selectOption(references[0].referenceId);await input().fill('光影自然一点，阳光洒下');await saved();
-  await page.reload();await ready();assert.equal(await targetChoice().inputValue(),references[0].referenceId);
+  await targetChoice().click();await input().fill('光影自然一点，阳光洒下');await saved();
+  await page.reload();await ready();assert.equal(await targetChoice().getAttribute('aria-pressed'),'true');
   assert.equal(await input().getAttribute('placeholder'),'描述这张图片要怎么修改');
   check('explicit-composer-target-restores-from-server-draft-after-refresh');
   const targetPosts=postInputs.length;await button('发送').click();await until(()=>postInputs.length>targetPosts);await saved();
   assert.equal(messages.at(-1).intent.action,'modify');assert.equal(messages.at(-1).intent.targetReferenceId,references[0].referenceId);
   assert.deepEqual(messages.at(-1).intent.referenceIds,[references[1].referenceId]);
   check('natural-language-with-explicit-target-modifies-one-image-and-retains-other-references');
-  await targetChoice().selectOption(references[1].referenceId);await saved();await button('移除对话引用 图片2').click();await saved();
-  assert.equal(await targetChoice().inputValue(),'');assert.equal(draft.quickEditTargetId,null);
+  await targetChoice(2).click();await saved();await button('移除对话引用 图片2').click();await saved();
+  assert.equal(await targetChoice().getAttribute('aria-pressed'),'false');assert.equal(draft.quickEditTargetId,null);
   check('removing-the-selected-reference-clears-the-persisted-edit-target');
   await input().fill('构图保持不变，场景真实一点，阳光洒下来');const naturalPosts=postInputs.length;
   await button('发送').click();await until(()=>postInputs.length>naturalPosts);await saved();
   assert.equal(messages.at(-1).intent.action,'modify');assert.equal(messages.at(-1).intent.targetReferenceId,references[0].referenceId);
   check('single-image-natural-adjustment-no-longer-produces-generic-clarification');
-  await targetChoice().selectOption(references[0].referenceId);await saved();await button('取消固定编辑目标').click();await saved();
+  await targetChoice().click();await saved();await targetChoice().click();await saved();
   assert.equal(draft.quickEditTargetId,null);await input().fill('参考图片1，生成一张海报');const newPosts=postInputs.length;
   await button('发送').click();await until(()=>postInputs.length>newPosts);await saved();assert.equal(messages.at(-1).intent.action,'generate');
   check('cancel-target-allows-new-generation-without-reusing-old-edit-target');
-  await targetChoice().selectOption(references[0].referenceId);await saved();await page.goto(origin+'/?readonly=1');await ready();
+  await targetChoice().click();await saved();await page.goto(origin+'/?readonly=1');await ready();
   assert.equal(await targetChoice().isDisabled(),true);await page.goto(origin);await ready();
   check('persisted-target-selector-is-disabled-for-read-only-projects');
 
+  stage = 'minimal-controls';await show([]);
+  assert.equal(await page.getByRole('combobox',{name:'对话图片比例'}).isVisible(),false);
+  await page.getByLabel('生成设置',{exact:true}).click();await page.getByRole('combobox',{name:'对话图片比例'}).selectOption('16:9');await saved();
+  await page.getByLabel('生成设置',{exact:true}).click();await page.reload();await ready();
+  await page.getByLabel('生成设置',{exact:true}).click();assert.equal(await page.getByRole('combobox',{name:'对话图片比例'}).inputValue(),'16:9');
+  check('collapsed-settings-remain-editable-and-persist-after-refresh');
+  stage = 'failure-reedit';
+  const recoverIntent=contracts.parseStudioConversationIntent({text:'加一个角色在最前面',references,quickEditTargetId:references[1].referenceId,sizeSelection:{ratioKey:'3:4',resolutionTier:'2K'}});
+  const recoverRow=row(task({status:'FAILED',mode:'modify',error:'生成服务暂时异常，本次请求未完成。系统不会自动重新生成；请稍后检查任务结果。'}),{status:'FAILED',text:'加一个角色在最前面',references,intent:recoverIntent});
+  await show([recoverRow]);const recoverPosts=postInputs.length;
+  assert.equal(await page.locator('[data-task-id] h3').count(),0);
+  await button('重新编辑').click();await saved();assert.equal(postInputs.length,recoverPosts);assert.equal(await input().inputValue(),recoverRow.text);
+  assert.deepEqual(draft.references,references);assert.equal(draft.quickEditTargetId,references[1].referenceId);assert.equal(draft.sizeSelection.resolutionTier,'2K');
+  check('failure-reedit-restores-prompt-references-target-and-size-without-submitting');
+  await input().fill('新需求不能覆盖');await saved();await button('重新编辑').click();assert.equal(await input().inputValue(),'新需求不能覆盖');assert.equal(postInputs.length,recoverPosts);
+  check('failure-reedit-preserves-an-unsent-draft');
+  await page.goto(origin+'/?readonly=1');await ready();assert.equal(await button('重新编辑').isDisabled(),true);assert.equal(postInputs.length,recoverPosts);
+  check('read-only-failure-cannot-restore-or-submit-a-request');
+  await show([row(task({status:'SUCCEEDED',resultState:'READY',results:[result]}),{status:'SUCCEEDED'})]);
+  assert.equal(await button('加入画布').isVisible(),true);assert.equal(await button('读取品牌检查').isVisible(),false);
+  await page.getByText('品牌检查',{exact:true}).click();assert.equal(await button('读取品牌检查').isVisible(),true);
+  check('compact-result-hides-secondary-controls-without-removing-them');
+
+  stage='responsive-composer';await show([recoverRow]);await button('重新编辑').click();await saved();
+  for (const viewport of [{width:1100,height:900},{width:390,height:740},{width:1100,height:600}]) {
+    await page.setViewportSize(viewport);
+    const metrics=await page.evaluate(()=>{const panel=document.querySelector('[data-testid="owned-conversation"]'),field=panel.querySelector('textarea'),history=panel.querySelector('[aria-label="项目对话记录"]');return {panel:panel.getBoundingClientRect().toJSON(),field:field.getBoundingClientRect().toJSON(),scrollWidth:panel.scrollWidth,width:panel.clientWidth,historyOverflow:getComputedStyle(history).overflowY};});
+    assert.ok(metrics.scrollWidth<=metrics.width+1,'Panel must not overflow horizontally');assert.ok(metrics.field.bottom<=metrics.panel.bottom+1,'Composer must stay inside panel');assert.equal(metrics.historyOverflow,'auto');
+    await page.getByLabel('生成设置',{exact:true}).click();const settings=await page.getByRole('combobox',{name:'对话图片比例'}).boundingBox();assert.ok(settings.x>=0 && settings.x+settings.width<=viewport.width,'Settings stay within viewport');await page.getByLabel('生成设置',{exact:true}).click();
+  }
+  await page.setViewportSize({width:1100,height:900});
+  if(process.env.NOVART_CONVERSATION_SCREENSHOT) await page.locator('.fixture-panel').screenshot({path:process.env.NOVART_CONVERSATION_SCREENSHOT});
+  check('composer-and-settings-fit-desktop-mobile-and-short-window');
+
   stage = 'switch-project-with-poll';delayedMessageRead='terminal-message';await show([row(task())]);
-  await button('固定快捷目标图片2').click();await saved();assert.equal(await targetChoice().inputValue(),references[1].referenceId);
+  await button('固定快捷目标图片2').click();await saved();assert.equal(await targetChoice(2).getAttribute('aria-pressed'),'true');
   await input().fill('旧项目草稿不能出现在新项目');await saved();await until(()=>!!messageReadRelease);await button('切换另一个项目').click();
   await page.waitForFunction(()=>document.querySelector('[data-testid="owned-conversation"]')?.dataset.conversationReady==='false');
   await page.waitForTimeout(250);assert.equal(await input().inputValue(),'');assert.equal(await page.getByRole('alert').count(),0);

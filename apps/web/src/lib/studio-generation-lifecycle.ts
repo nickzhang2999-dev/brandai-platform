@@ -5,7 +5,16 @@ import { studioGenerationContextHash, requireStudioGenerationServices, validateS
 import { requireArtifactWrite } from "./studio-generation-artifacts";
 import { studioEditSourceFailureReason } from "./studio-generation-edit";
 export type StudioRequest = Prisma.StudioGenerationRequestGetPayload<Record<string, never>>;
-const genericFailure = "生成未完成，系统不会自动再次调用生成服务。请确认需求后再发起新请求。";
+function publicFailure(error: unknown): string {
+  if (error instanceof ApiException) return error.message;
+  // Only recognize our own guarded transport message. Never persist provider
+  // response bodies, request URLs, tokens, stack traces, or arbitrary errors.
+  const code = error instanceof Error ? /^图片服务请求失败（HTTP (\d{3})），请稍后重试或联系管理员。$/.exec(error.message)?.[1] : undefined;
+  if (code && ["502", "503", "504"].includes(code)) return "生成服务暂时异常，本次请求未完成。系统不会自动重新生成；请稍后检查任务结果。";
+  if (code === "429") return "生成服务暂时限制请求，本次请求未完成。系统不会自动重新生成；请稍后再试。";
+  if (code === "401" || code === "403") return "生成服务授权异常，本次请求未完成。请联系管理员检查配置。";
+  return "本次生成未完成，具体原因尚未确认。需求仍保留，系统不会自动重新生成。";
+}
 function recordEditSourceFailure(requestId: string, stage: "claim" | "preflight" | "finish", error: unknown) {
   const reasonCode = studioEditSourceFailureReason(error);
   if (reasonCode) console.warn("[studio-generation] edit source validation rejected", {
@@ -35,7 +44,7 @@ export async function claimStudioGeneration(request: StudioRequest): Promise<Stu
     // PENDING for the DB outbox rather than converting contention to failure.
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034") throw error;
     recordEditSourceFailure(request.id, "claim", error);
-    const message = error instanceof ApiException ? error.message : genericFailure;
+    const message = publicFailure(error);
     await prisma.$transaction(async tx => {
       const changed = await tx.studioGenerationRequest.updateMany({ where: { id: request.id, status: "PENDING", providerStartedAt: null }, data: { status: "FAILED", error: message } });
       if (changed.count) await tx.generation.updateMany({ where: { id: request.generationId }, data: { status: "FAILED", error: message, finishedAt: new Date() } });
@@ -90,7 +99,7 @@ export async function finishStudioGeneration(request: StudioRequest, status: "FA
     // Success can only be committed with a private result in stage(), never by
     // a worker that got no output. A late or duplicate worker cannot resurrect.
     if (status === "SUCCEEDED") return false;
-    const message = error instanceof ApiException ? error.message : genericFailure;
+    const message = publicFailure(error);
     const changed = await tx.studioGenerationRequest.updateMany({ where: { id: request.id, status: "RUNNING", providerStartedAt: request.providerStartedAt }, data: { status: "FAILED", error: message } });
     if (!changed.count) return false;
     await tx.generation.updateMany({ where: { id: request.generationId }, data: { status: "FAILED", error: message, finishedAt: now, durationMs: now.getTime() - (request.providerStartedAt?.getTime() ?? now.getTime()) } });

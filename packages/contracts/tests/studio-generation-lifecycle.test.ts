@@ -19,6 +19,19 @@ beforeEach(() => {
   tx = { $queryRaw: f.query, studioGenerationRequest: { findUnique: f.read, updateMany: f.update }, generation: { update: f.generation, updateMany: f.generation }, studioGenerationOutput: { create: f.output, updateMany: f.clear } };
   f.tx.mockImplementation(async fn => { const prior = { ...row }; try { return await fn(tx); } catch (error) { row = prior; throw error; } });
 });
+describe("safe public generation failures", () => {
+  it.each([[502, "暂时异常"], [503, "暂时异常"], [504, "暂时异常"], [429, "限制请求"], [401, "授权异常"], [403, "授权异常"]])("classifies only the guarded HTTP %i failure", async (status, expected) => {
+    const claim = await claimStudioGeneration(row);
+    await finishStudioGeneration(claim!, "FAILED", new Error(`图片服务请求失败（HTTP ${status}），请稍后重试或联系管理员。`));
+    expect(row.error).toContain(expected); expect(row.status).toBe("FAILED");
+    expect(f.clear).toHaveBeenCalledWith({ where: { requestId: row.id }, data: { imageUrl: null } });
+  });
+  it.each(["HTTP 429 private-token", "AI /v1/generate failed: 502 secret-response", "图片服务请求失败（HTTP 502），请稍后重试或联系管理员。token=secret", "timeout /private/path"])('does not expose or classify arbitrary exception %s', async message => {
+    const claim = await claimStudioGeneration(row); await finishStudioGeneration(claim!, "FAILED", new Error(message));
+    expect(row.error).toContain("具体原因尚未确认");expect(row.error).not.toContain("secret");expect(row.error).not.toContain("private");expect(row.error).not.toContain("限制请求");
+  });
+});
+
 describe("product single execution and private output atomicity", () => {
   it("logs only the fixed source reason and safe request identity before failing an unclaimed request", async () => {
     row.id = "sgr_" + "a".repeat(32);

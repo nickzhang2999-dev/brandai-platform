@@ -75,3 +75,16 @@
 - 本轮保留main和正式环境、共享业务内容及现有数据卷；未启动本机Docker，真实模型调用0。剩余边界仍为历史生成图缺完整原始配方的兼容设计，以及历史首次偶发来源拒绝需新诊断才能追因。
 
 最终机读证据：ignored `.novart-build/canvas-audit-final-20261015/verification.json`、`push.json`、`cds-canvas-audit-release-{dry-run,claim-deploy,status,preview-url,ledger}-20261015.json`、`canvas-release-public-20261015.json`；GitHub原始安全元数据在仓库外任务临时目录。推送时日志已入09fdf18；本节及README的发布后回执仅在本地补记，随下一批代码提交同步，不再为回执推一个未验新SHA。
+
+## 新版预览上线 · 2026-10-15 11:45
+用户要求预览新版。Branch Image38676285703已completed/success，修复代码5d75d50e195ac81b9ef2701e5e0d91ac1574fb79；最新Git提交5141d25仅三份日志文件，工作流paths规则未触发额外镜像。CDS却显示ciImageStatus=failed、timed_out_no_run，仍运行09fdf18；只确认平台未关联成功回执，不推断webhook根因。
+通过官方claim-prebuilt dry-run核对同一成功工作流，再认领并部署经过验证的5d75d50镜像。dr_87e80bcd6f8d649375379e4f完成，phase=complete、failure=null。公网Web/AI/Worker均ok，worker.commit=5d75d50e195a；已有评审账号登录/session和Studio200核验通过。已在Codex打开带build=5d75d50的开发预览。业务代码与远端最新日志提交相同；未回退Git分支，未合main或正式发布，模型调用0。
+证据在ignored .novart-build/cds-intent-preview-release-*.json及intent-preview-public-20261015.json。上线回执暂留本地，避免为纯回执再次触发版本追逐。
+
+## 设计助手精简与失败恢复
+
+用户确认极简对话＋明确修改对象。本地实现引用缩略图目标切换、设置折叠、单历史滚动/固定输入、紧凑结果卡、失败详情及重新编辑。保留PSD/图层/品牌检查能力，重新编辑只恢复草稿，未发送内容不覆盖。最新反馈的同一任务只读确认HTTP502；UI改动不能证明上游服务恢复，未重放真实任务或调用模型。
+
+完整L1首次并行执行因本机内存不足失败，改为单worker全量通过：契约1560、UI34；AI487、Web类型通过；实际生产样式下Chromium对话40项及画布52项通过。模型调用0、外部请求0；截图仅交互夹具自查，不作为业务图片成果。生产构建与PSD回归、推送/预览结果继续补记，不能提前宣称上线。[本批计划](conversation-minimal-ui-plan-2026-10-15.md)。
+
+补充：生产构建 build:low-memory 退出0，PSD实际浏览器19项通过（包括真实浏览器下载并解析合成PSD，非真实模型质量验收）。40项对话报告通过CI精确检查；单独任务面板仍显示完整信息。修改了UI契约检查要求，不改变构建或审批规则。本批准备受保护推送devUpdate1012；未宣称远端已运行。
