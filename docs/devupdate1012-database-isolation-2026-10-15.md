@@ -45,3 +45,14 @@
 - 未覆盖共享库原有记录、停止/部署main、绕过平台审批或修改CDS源码。
 
 证据保存在ignored `.novart-build/`：task-queue-scope、database-clone-preflight、cds-db-effective-readonly、database-clone-target-check、database-runtime-identity、database-worker-identity、isolated-task-queue-scope、edit-size-preflight-diagnostic，均带20261015日期。不提交私密连接上下文及账号文件。
+
+
+## 15:26 · 发布及单张真实改图验收通过
+
+产品提交9fde897420de700faa3c729012f6770b0f1ff765已推送devUpdate1012。[Branch Image38696804512](https://github.com/nickzhang2999-dev/brandai-platform/actions/runs/38696804512) completed/success，源码真实UI/SQL/上传和构建后容器验收通过。CDS仍未自动关联工作流，官方dry-run校验成功镜像后认领并部署，dr_8574104b3deda2aabbe794d8 complete/failure=null；公网worker.commit=9fde897420de，Web/AI/worker健康，已有账号及编辑器可访问。
+
+重启后Web/worker实际SQL均为brandai_devupdate1012。新请求sgr_e87d9d13bda246c2bf36f27121dd4e0e的Redis队列为brandai-devupdate1012:generate，已完成无失败。真实产品API结果：message/generation SUCCEEDED、resultState READY、mode modify、结果1张；重新认证读取存储图片SHA一致，实际1024×576、1476944字节。原图仍按原SHA读取，未重放旧失败请求。
+
+本次小规模真实验收通过的是单张整图修改和结果持久读取；不把此前04:33旧502具体原因写成已查明。独立库是时间点副本，不与main自动同步；共享存储、模型账号边界仍见隔离报告。main没有合并或部署。
+
+发布后回执证据：ignored .novart-build/size-fixed-preview-public-20261015.json、ai-edit-size-fixed-real-poll-20261015.json、successful-task-queue-scope-20261015.json，以及cds-size-fix-release-claim-deploy-20261015.json。该段为发布后的本地日志补记，未产生新产品代码。

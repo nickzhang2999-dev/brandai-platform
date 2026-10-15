@@ -29,3 +29,6 @@ ffc6198的Branch Image38685884784已success，但CDS仍waiting且ciWorkflowRunUr
 ## 14:11–14:50 · 队列与数据库隔离不一致
 
 新分支任务出现在main旧队列已有Redis证据。产品outbox扫描共享DB是串任务机制；CDS的db-isolation/db-probe只按服务声明判断，漏掉项目级DATABASE_URL实际使用，是第二层配置可观测性问题。增加POSTGRES_DB后可原生克隆，但模板连接串的库路径没有跟随per-branch库名改写；实际SQL发现后明确指定副本路径。Web/worker已读回独立库，main未重启。39张表克隆校验一致。不能归因“服务器慢”，也不能仅凭部署成功断言数据库切换成功。[具体证据与配置](devupdate1012-database-isolation-2026-10-15.md)。
+
+
+15:22–15:26：9fde897成功工作流38696804512仍未自动关联CDS，官方dry-run及claim/deploy后完成。运行版本与独立库连接均读回正确，随后真实改图成功；不是仅配置界面显示成功。发布后回执本地补记。

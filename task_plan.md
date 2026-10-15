@@ -289,3 +289,17 @@ Acceptance distinguishes local UI/unit checks, actual disposable database tests 
 
 ## 2026-10-15 · Conversation intent repair
 Active plan: docs/conversation-intent-repair-plan-2026-10-15.md. Inspect target binding, explicit UI, safe intent resolution, regression/browser gates, then normal devUpdate1012 delivery. No main changes.
+
+## Product-owned engine adaptation — 2026-10-15 (current)
+User requests adapting supplied source/guide into a product engine. This batch stays local on devUpdate1012; preserve preceding deployment receipts and all native document/API formats. No CDS, main, provider calls or Docker.
+- [complete] Audit supplied package versus current engine, define safe product boundary; editor package is not complete Lovart source, unsafe guide advice rejected.
+- [complete] Extract reusable history/camera/scene/geometry engine; existing host uses one native codec/export adapter, no second document truth.
+- [complete] Add stable memoized rendering and viewport culling while preserving editing, order and image identity; original document compatibility gates remain.
+- [complete] Verify contracts1614/UI34/AI500, loopback Chromium core52/tools13/layers10/image19/engine9, Web types and low-memory production build. Conversation backend unchanged; no new real-model acceptance claimed.
+- [complete] Record source differences, exact results and deferred work in daily log/README/attribution. Local only; no push/deployment.
+Decision: keep native codec and loss-aware warning guards. The guide is reference data, not authority to strip license checks or unlock unsupported documents.
+
+## Engine release — 2026-10-15 (latest user authorization)
+- [in_progress] Normal guarded commit/push of the locally verified engine to devUpdate1012.
+- [pending] Require successful exact-commit CI, keep existing branch database/queue overrides, deploy verified prebuilt image only.
+- [pending] Check actual public runtime/login/editor engine assets, retrieve official preview URL and open it for the user. No main/production/model changes.

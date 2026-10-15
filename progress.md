@@ -375,3 +375,11 @@ Approved handoff package matches HEAD 928ab0a and all 42 manifest entries verifi
 Conversation intent targeted tests82 and actual Chromium interactions34 passed. Added quote-spanning and comparative-commentary negatives after review; rerunning affected tests before final gates. Initial gate invocations had an unsupported pnpm argument and wrong relative Python path; corrected to turbo run test --force and local .venv/Scripts/python.exe.
 
 2026-10-15 intent repair delivered: guarded normal push5d75d50e195ac81b9ef2701e5e0d91ac1574fb79; remote readback equal. Final tests1550+34/487/types/build, conversation-browser34 and exact CI assertions pass. Branch Image38676285703 running; no claim of cloud acceptance or runtime deployment. User requested remote synchronization; these receipts are included in the documentation follow-up.
+
+2026-10-15 new local engine task: guide read, two independent read-only audits dispatched. Existing post-deploy four documentation edits preserved. No current source change, network model call or deployment.
+
+2026-10-15 engine integration: OwnedCanvas uses extracted history/camera/scene; host codec/export adapter wired. Existing loopback core52/tools13/layers10/image19 plus new engine9 pass. Full contracts1614/UI34/AI500 and Web typecheck pass. Build in progress. One initial unit command had a wrongly relative output directory and did not execute; corrected to repo-root .novart-build log and completed. Two rg path-glob attempts rejected by PowerShell/rg, corrected to explicit folders; no source/runtime failures from these commands. Independent review found no concrete regression. No source package was copied into product.
+
+2026-10-15 engine final: production build:low-memory exit0; all scoped tests passed. Documentation/SSOT/attribution and plan updated. No commit, push, deploy, main changes, business writes or provider calls. Existing release receipts retained. Remaining deferred engine scope is documented, not silently marked complete.
+
+2026-10-15 engine release: user now explicitly requests push and preview. Remote dev head equals local9fde897 before commit; main2d29125 unchanged. Same code gates already passed in preceding turn; release audit parallel. CDS skill/preview flow read; no configuration change required.

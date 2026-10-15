@@ -191,3 +191,7 @@ Current implementation and per-scenario evidence: docs/deepflare-handoff-ui-2026
 
 ## 2026-10-15 · Explicit conversation edit target
 References and edit targets are different states. Existing quickEditTargetId already persists in authoritative drafts; the UI now exposes it as a selector. Fresh pinned requests skip semantic reclassification after all source checks; previously unknown model calls remain clarification. Natural visual adjustment rules exclude negative, quoted and commentary clauses. No real provider calls.
+
+2026-10-15 engine audit: supplied package is identified as @tldraw/editor 5.5.2; guide is not a complete product integration. Current editor uses its own scene and native codec. warnings include unsupported records, page ambiguity and bindings; serializeOwnedDocument rejects them, so removing only UI lock would produce unsavable edits. Existing resize already handles rotated fixed corners; current UI already uses crypto.randomUUID. Need implement from current facts rather than blindly apply guide line references.
+
+Engine final evidence: engine/browser9 + core52/tools13/layers10/image19 all pass; culling is transient only and full-document export/reopen verified. CPU queries remain O(n), DOM retention does not claim lower image decode memory. Memo/WeakMap assume immutable input item updates, matching current operations. Default60 history preserved with changed-item snapshot isolation. Attachment licensing/pricing assertions were not used as authorization.

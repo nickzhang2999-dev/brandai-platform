@@ -3,9 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { StudioMaterial, GenerationAspectRatioKey, resolveGenerationSize, type EditorDocumentView } from "@brandai/contracts";
 import { NovartApiError } from "../../lib/novart-api-client";
-import { decodeOwnedCanvas, encodeOwnedCanvas } from "../../lib/owned-canvas-codec";
-import { assignOwnedImageNames, serializeOwnedDocument, type OwnedCanvasDocument, type OwnedCanvasItem } from "../../lib/owned-canvas-model";
-import { exportOwnedPng, exportOwnedSvg, getOwnedBounds, type OwnedExportOptions } from "../../lib/owned-canvas-export";
+import { ownedCanvasEngine } from "../../lib/owned-canvas-engine";
+import { assignOwnedImageNames, type OwnedCanvasDocument, type OwnedCanvasItem } from "../../lib/owned-canvas-model";
+import type { OwnedExportOptions } from "../../lib/owned-canvas-export";
 import { OwnedCanvas } from "./OwnedCanvas";
 import { OwnedWorkflowPanel } from "./OwnedWorkflowPanel";
 import { OwnedGenerationCard } from "./OwnedGenerationCard";
@@ -28,6 +28,8 @@ import { createOwnedEditorApi, type Material, type UploadTask, type GenerationTa
 type InitialTask = { kind: "STUDIO_UPLOAD" | "STUDIO_GENERATION" | "STUDIO_DECOMPOSITION"; id: string };
 export type OwnedEditorClientProps = { workspaceId: string; projectId: string; userId: string; readOnly?: boolean; projectName?: string; initialTask?: InitialTask };
 type ProductApi = ReturnType<typeof createOwnedEditorApi>;
+const { decodeDocument: decodeOwnedCanvas, encodeDocument: encodeOwnedCanvas, serializeDocument: serializeOwnedDocument,
+  exportPng: exportOwnedPng, exportSvg: exportOwnedSvg, getBounds: getOwnedBounds } = ownedCanvasEngine;
 type SaveState = "loading" | "saved" | "dirty" | "saving" | "error" | "conflict";
 const messageOf = (error: unknown) => error instanceof Error ? error.message : "操作未完成，请稍后重试。";
 const activeGeneration = (task: GenerationTask) => ["PENDING", "RUNNING"].includes(task.status) || task.status === "SUCCEEDED" && ["NOT_REQUESTED", "PENDING", "RUNNING"].includes(task.resultState);
@@ -80,7 +82,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
   const replacementOperation = useRef<{ api: ProductApi; itemId: string; file: File; mutationId: string } | null>(null);
   const workflowRef = useRef<OwnedWorkflowSession | null>(null), generationMode = useRef<"generate" | "modify" | null>(null), taskFocusBusy = useRef(false);
   const recoveryRef = useRef<ReturnType<typeof createOwnedGenerationRecovery> | null>(null);
-  const canEdit = !!document && !readOnly && !view?.readOnly && !document.warnings.length && saveState !== "conflict";
+  const canEdit = !!document && ownedCanvasEngine.canEdit(document, readOnly || !!view?.readOnly) && saveState !== "conflict";
   writableRef.current = canEdit;
   const workflow = workflowState?.draft;
   const draft = useOwnedDraft({ workspaceId, projectId, userId, value: { prompt, ratio, quality, ...(outputFrameId ? { outputFrameId } : {}) },

@@ -115,3 +115,32 @@
 隔离后新测试在AI前检收到422：1024×576低于模型尺寸限制。新增worker传输尺寸适配，保留用户最终像素和现有归档/素材合成逻辑；本地模型端点复现不合法尺寸0次POST、合法尺寸1次POST。当前补丁正在跑全量门禁，不把本地测试说成真实改图成功；旧04:33的502仍无充分上游证据。
 
 15:08 本地全量通过：契约/服务1588、UI34、AI500、Web类型检查与生产低内存构建。新增worker分派断言验证生成/改图均只发一次合法尺寸请求，受理记录及最终PNG尺寸不变。未改页面交互；本轮待远端同SHA构建与真实验收。
+
+
+## 15:26 · 发布及单张真实改图验收通过
+
+产品提交9fde897420de700faa3c729012f6770b0f1ff765已推送devUpdate1012。[Branch Image38696804512](https://github.com/nickzhang2999-dev/brandai-platform/actions/runs/38696804512) completed/success，源码真实UI/SQL/上传和构建后容器验收通过。CDS仍未自动关联工作流，官方dry-run校验成功镜像后认领并部署，dr_8574104b3deda2aabbe794d8 complete/failure=null；公网worker.commit=9fde897420de，Web/AI/worker健康，已有账号及编辑器可访问。
+
+重启后Web/worker实际SQL均为brandai_devupdate1012。新请求sgr_e87d9d13bda246c2bf36f27121dd4e0e的Redis队列为brandai-devupdate1012:generate，已完成无失败。真实产品API结果：message/generation SUCCEEDED、resultState READY、mode modify、结果1张；重新认证读取存储图片SHA一致，实际1024×576、1476944字节。原图仍按原SHA读取，未重放旧失败请求。
+
+本次小规模真实验收通过的是单张整图修改和结果持久读取；不把此前04:33旧502具体原因写成已查明。独立库是时间点副本，不与main自动同步；共享存储、模型账号边界仍见隔离报告。main没有合并或部署。
+
+发布后回执证据：ignored .novart-build/size-fixed-preview-public-20261015.json、ai-edit-size-fixed-real-poll-20261015.json、successful-task-queue-scope-20261015.json，以及cds-size-fix-release-claim-deploy-20261015.json。该段为发布后的本地日志补记，未产生新产品代码。
+
+## 自研产品引擎适配 · 本地完成
+
+用户提供《自研改造指南》并要求做产品引擎。三个子智能体分别核对现有架构/浏览器回归、附件/场景测试和历史核心/独立审查，小克负责集成与全仓验证。来源是@tldraw/editor包而非完整Lovart产品；本批独立实现引擎层，没有复制SDK实现或修改授权检查。
+
+新增owned-canvas-engine入口与camera/scene/history/geometry，现有OwnedEditorClient经统一文档/导出适配入口运行；OwnedCanvas实际使用抽离模块。相机先更新逻辑与DOM，React按动画帧刷新；元素memo、保留DOM的离屏隐藏及ID稳定排序＋zIndex落地。默认60步delta历史只复制变化元素，语义相同克隆不产生假撤销。旧组件geometry导入保留转发。
+
+保留服务端revision/权限、持久素材身份、异步入画与手势delta、所有warnings只读及原稿保护。未照搬指南的解除只读、仅引用比较、500步历史或不必要的resize重写。视口剔除不修改文档hidden，保存/导出仍覆盖完整文档。
+
+验证：契约/服务1614、UI34、AI500（既有弃用提醒1）、Web类型和生产build:low-memory退出0。实际本地Chromium：原画布52、扩展工具13、分层10、图片操作19、新引擎9。224合成元素场景验证平移前后同图片节点、缩放命中、zIndex改层序但DOM零重排；新增中文文字和笔迹后226条，实际gzip保存并卸载重建恢复一致，离屏图片仍导出。真实模型调用0、外网请求0。新测试已接入原CI配置，远端尚未跑该批。
+
+首次契约命令日志路径错误导致未执行，修正后完整通过；两次rg路径通配符错误已改明确目录检索，不是产品故障。没有为此启动Docker或调用外部模型。旧/workspace交互harness不用于冒充新OwnedCanvas验收，当前专用生产组件loopback脚本通过。独立审查未发现明确新缺陷。
+
+当前仅本地修改，无commit/push/CDS部署/main合并；此前9fde897发布回执保留。空间索引、绑定箭头、协作、复杂旧对象转换、10k压力与Mac/Safari仍未宣称完成。[引擎说明](deepflare-canvas-engine-2026-10-15.md)。证据在ignored .novart-build/engine-*-20261015.log/json和owned-engine-*-20261015.log/json。
+
+## 当前发布批次 · 用户授权推送与预览
+
+用户在本地引擎验收后要求“先推送远端，预览一下”。本批将引擎实现、回归测试、CI接线和已记录的发布回执统一提交到devUpdate1012，保持main/正式环境与现有隔离配置不变。推送前已有同一份业务源码的契约1614/UI34/AI500、类型、生产构建及103项浏览器检查全绿；新增发布核查仅检查远端构建与实际运行，不重复付费模型调用。具体提交、CI和CDS结果在取得后补记。
