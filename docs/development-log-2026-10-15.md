@@ -14,6 +14,8 @@
 
 本节是提交前本地结果。远端SHA、CI和预览运行状态获得真实回执后另记，不能沿用旧版成功结论。
 
+推送后核验：5d75d50e195ac81b9ef2701e5e0d91ac1574fb79已通过正常Git推送和CDS提交钩子，远端读回一致。[Branch Image38676285703](https://github.com/nickzhang2999-dev/brandai-platform/actions/runs/38676285703)已启动，当前in_progress，不代表云端验收完成或CDS已切换。原始复现矩阵已重跑：两条自然表达由clarify变为modify；仅“图片4，阳光洒下”继续澄清，显式新图继续generate。用户随后要求推送，本回执随文档提交同步远端。
+
 ## 本轮目标与边界
 
 帅帅要求按昨天日志继续排查画布相关 bug，修复验证后统一推送远端。工作区为 `D:/coding/公司/brandai-devUpdate1012`，分支 `devUpdate1012`，起点 `87145250aac35764cd5ec8110e78e4057d62757d`。昨天未提交的代码、测试和日志完整保留，今天统一交付。

@@ -373,3 +373,5 @@ Approved handoff package matches HEAD 928ab0a and all 42 manifest entries verifi
 
 
 Conversation intent targeted tests82 and actual Chromium interactions34 passed. Added quote-spanning and comparative-commentary negatives after review; rerunning affected tests before final gates. Initial gate invocations had an unsupported pnpm argument and wrong relative Python path; corrected to turbo run test --force and local .venv/Scripts/python.exe.
+
+2026-10-15 intent repair delivered: guarded normal push5d75d50e195ac81b9ef2701e5e0d91ac1574fb79; remote readback equal. Final tests1550+34/487/types/build, conversation-browser34 and exact CI assertions pass. Branch Image38676285703 running; no claim of cloud acceptance or runtime deployment. User requested remote synchronization; these receipts are included in the documentation follow-up.
