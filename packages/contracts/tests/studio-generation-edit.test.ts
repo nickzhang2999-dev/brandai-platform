@@ -3,16 +3,17 @@ import { gzipSync } from "node:zlib";
 import { Readable } from "node:stream";
 import sharp from "sharp";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const f = vi.hoisted(() => ({ asset: vi.fn(), generated: vi.fn(), upload: vi.fn(), materials: vi.fn(), query: vi.fn(), get: vi.fn(), base: vi.fn() }));
-vi.mock("../../db/src/index", () => ({ prisma: { asset: { findFirst: f.asset }, studioGeneratedMaterial: { findUnique: f.generated }, studioMaterialUpload: { findUnique: f.upload } } }));
+const f = vi.hoisted(() => ({ asset: vi.fn(), generated: vi.fn(), upload: vi.fn(), receipt: vi.fn(), materials: vi.fn(), query: vi.fn(), get: vi.fn(), base: vi.fn() }));
+vi.mock("../../db/src/index", () => ({ prisma: { asset: { findFirst: f.asset }, studioGeneratedMaterial: { findUnique: f.generated }, studioMaterialUpload: { findUnique: f.upload }, studioBrandMaterialReceipt: { findUnique: f.receipt } } }));
 vi.mock("../../../apps/web/src/lib/api", () => ({ ApiException: class extends Error { constructor(public status: number, message: string) { super(message); } } }));
 vi.mock("../../../apps/web/src/lib/studio-project-materials", () => ({ listStudioProjectMaterials: f.materials }));
 vi.mock("../../../apps/web/src/lib/studio-generation-base", () => ({ readStudioCleanBase: f.base, requireStudioBaseEncryption: vi.fn() }));
 vi.mock("../../../apps/web/src/lib/s3", () => ({ getObjectStream: f.get }));
 vi.mock("../../../apps/web/src/lib/ssrf", () => ({ safeFetch: vi.fn() }));
 vi.mock("../../../apps/web/src/lib/watermark", () => ({ applyWatermarksToImage: vi.fn() }));
-import { StudioEditSourceSnapshot, resolveStudioEditSource, inspectStudioEditSource, loadStudioEditSource, lockStudioEditPublicationSource, assertStudioEditNotModelReference } from "../../../apps/web/src/lib/studio-generation-edit";
+import { StudioEditSourceSnapshot, resolveStudioEditSource, inspectStudioEditSource, loadStudioEditSource, lockStudioEditPublicationSource, assertStudioEditNotModelReference, studioEditSourceFailureReason } from "../../../apps/web/src/lib/studio-generation-edit";
 import { ExactAssetTransform } from "../src/resource-usage";
+import { studioBrandMaterialSourceDigest } from "../../../apps/web/src/lib/studio-brand-materials-trust";
 
 const url = "/api/workspaces/w/assets/a/raw", shapeId = "shape:image";
 const digest = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
@@ -44,17 +45,105 @@ function exactLayout() {
 
 beforeEach(async () => {
   vi.resetAllMocks(); raw = await png("#874edd"); base = await png("#ff0000"); generated = null;
-  asset = { id: "a", workspaceId: "w", url: "http://storage.invalid/w/a", storageKey: "w/a", generationVersionId: null, mimeType: "image/png", availableForGeneration: true, deprecatedAt: null };
+  asset = { id: "a", workspaceId: "w", url: "http://storage.invalid/w/a", storageKey: "w/a", generationVersionId: null, mimeType: "image/png", sizeBytes: raw.length, availableForGeneration: true, deprecatedAt: null };
   upload = { workspaceId: "w", projectId: "p", assetId: "a", sha256: digest(raw), width: 3, height: 2, mimeType: "image/png", objectKey: "w/a", taskId: "upload-task",
     task: { workspaceId: "w", kind: "STUDIO_UPLOAD", status: "SUCCEEDED" } };
   f.asset.mockImplementation(async () => structuredClone(asset)); f.generated.mockImplementation(async () => structuredClone(generated)); f.upload.mockImplementation(async () => structuredClone(upload));
   f.materials.mockImplementation(async () => [{ assetId: "a", sha256: digest(raw), mimeType: "image/png", width: 3, height: 2, url }]);
   f.get.mockImplementation(async () => ({ body: Readable.from(raw), contentLength: raw.length })); f.base.mockImplementation(async () => base);
   f.query.mockResolvedValue([{ id: "a", taskId: "upload-task" }]);
-  db = { asset: { findFirst: f.asset }, studioGeneratedMaterial: { findUnique: f.generated }, studioMaterialUpload: { findUnique: f.upload }, $queryRaw: f.query };
+  db = { asset: { findFirst: f.asset }, studioGeneratedMaterial: { findUnique: f.generated }, studioMaterialUpload: { findUnique: f.upload }, studioBrandMaterialReceipt: { findUnique: f.receipt }, $queryRaw: f.query };
 });
 
 describe("authorized whole-image modification source", () => {
+  it("classifies unavailable assets internally without changing the safe public error", async () => {
+    f.asset.mockResolvedValueOnce(null);
+    const error = await resolve().catch(failure => failure);
+    expect(error).toMatchObject({ status: 422, message: "修改目标已失效、归属不符或原始配方发生变化，请重新选择图片。" });
+    expect(studioEditSourceFailureReason(error)).toBe("SOURCE_ASSET_UNAVAILABLE");
+    expect(error.details).toBeUndefined();
+    expect(Object.keys(error)).not.toContain("reasonCode");
+    expect(JSON.stringify(error)).not.toMatch(/reasonCode|SOURCE_ASSET_UNAVAILABLE|http:|storageKey|objectKey|imageUrl|recipeHash/);
+  });
+
+  it("distinguishes a missing generated source from an inconsistent generated identity chain", async () => {
+    generatedSource(); generated = null;
+    expect(studioEditSourceFailureReason(await resolve().catch(failure => failure))).toBe("GENERATED_SOURCE_MISSING");
+    generatedSource(); generated.request.generationId = "another-generation";
+    expect(studioEditSourceFailureReason(await resolve().catch(failure => failure))).toBe("GENERATED_SOURCE_CHAIN_MISMATCH");
+    expect(f.get).not.toHaveBeenCalled(); expect(f.base).not.toHaveBeenCalled();
+  });
+
+  it("distinguishes later source snapshot changes while retaining a valid immutable source", async () => {
+    generatedSource({ cleanBase: cleanBase() });
+    const { snapshot } = await resolve();
+    await expect(inspectStudioEditSource(db, "w", "p", snapshot)).resolves.toHaveProperty("snapshot", snapshot);
+    generated.output.params.studioPostprocess.cleanBase.keyRevision = "d".repeat(24);
+    const error = await inspectStudioEditSource(db, "w", "p", snapshot).catch(failure => failure);
+    expect(error).toMatchObject({ status: 422 });
+    expect(studioEditSourceFailureReason(error)).toBe("SOURCE_SNAPSHOT_CHANGED");
+    expect(error.details).toBeUndefined(); expect(f.get).not.toHaveBeenCalled();
+  });
+
+  it("does not trust diagnostic-looking fields on unrelated exceptions or objects", () => {
+    for (const error of [null, new Error("SOURCE_SNAPSHOT_CHANGED"), { reasonCode: "SOURCE_SNAPSHOT_CHANGED" },
+      Object.assign(new Error("untrusted"), { status: 422, reasonCode: "SOURCE_SNAPSHOT_CHANGED" })]) {
+      expect(studioEditSourceFailureReason(error)).toBeNull();
+    }
+  });
+
+  it("keeps legacy verified generated images visible but refuses to treat their flattened pixels as an unprocessed base", async () => {
+    asset.generationVersionId = "legacy-version"; upload = null;
+    const proof = { assetId: "a", workspaceId: "w", taskId: "verify-task", sourceDigest: studioBrandMaterialSourceDigest(asset),
+      sha256: digest(raw), mimeType: "image/png", width: 3, height: 2,
+      task: { workspaceId: "w", kind: "STUDIO_MATERIAL_VERIFY", status: "SUCCEEDED" } };
+    f.receipt.mockResolvedValue(proof);
+    const { listStudioProjectMaterials } = await vi.importActual<typeof import("../../../apps/web/src/lib/studio-project-materials")>("../../../apps/web/src/lib/studio-project-materials");
+    const verified = vi.fn().mockResolvedValue([{ ...proof, asset }]);
+    const materials = await listStudioProjectMaterials({
+      studioMaterialUpload: { findMany: vi.fn().mockResolvedValue([]) },
+      studioGeneratedMaterial: { findMany: vi.fn().mockResolvedValue([]) },
+      studioBrandMaterialReceipt: { findMany: verified },
+    } as any, "w", "p");
+    expect(materials).toContainEqual(expect.objectContaining({ assetId: "a", sha256: digest(raw), url }));
+    expect(verified).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ workspaceId: "w",
+      asset: expect.objectContaining({ projectLinks: { some: { projectId: "p", project: { workspaceId: "w" } } } }) }) }));
+    f.materials.mockResolvedValue(materials);
+    const error = await resolve().catch(failure => failure);
+    expect(error).toMatchObject({ status: 422, message: "这张历史生成图片缺少可验证的原始合成记录，暂不能继续改图。请选用新工作台生成的图片。" });
+    expect(studioEditSourceFailureReason(error)).toBe("GENERATED_SOURCE_MISSING");
+    expect(f.receipt).not.toHaveBeenCalled(); expect(f.get).not.toHaveBeenCalled(); expect(f.base).not.toHaveBeenCalled();
+  });
+
+  it("still accepts a verified ordinary brand original and binds its verified identity at inspection and publication", async () => {
+    upload = null;
+    const proof = { assetId: "a", workspaceId: "w", taskId: "verify-task", sourceDigest: studioBrandMaterialSourceDigest(asset),
+      sha256: digest(raw), mimeType: "image/png", width: 3, height: 2,
+      task: { workspaceId: "w", kind: "STUDIO_MATERIAL_VERIFY", status: "SUCCEEDED" } };
+    f.receipt.mockImplementation(async () => structuredClone(proof));
+    const { snapshot } = await resolve();
+    await expect(loadStudioEditSource("w", "p", snapshot, deadline())).resolves.toHaveProperty("sha256", digest(raw));
+    f.query.mockResolvedValueOnce([{ id: "a" }]).mockResolvedValueOnce([]).mockResolvedValueOnce([{ assetId: "a" }]);
+    await expect(lockStudioEditPublicationSource(db, "w", "p", snapshot)).resolves.toBeUndefined();
+    expect(f.query.mock.calls[2]![0].join(" ")).toContain("FOR SHARE OF v, t");
+    proof.task.workspaceId = "foreign";
+    const error = await inspectStudioEditSource(db, "w", "p", snapshot).catch(failure => failure);
+    expect(studioEditSourceFailureReason(error)).toBe("SOURCE_RECEIPT_MISMATCH");
+  });
+
+  it("keeps generated source hashes stable across nested JSON key order and non-recipe metadata updates", async () => {
+    generatedSource({ cleanBase: cleanBase(), watermarkOverlays: [{ text: "Brand", enabled: true }] });
+    const { snapshot } = await resolve();
+    const reversed = (value: any): any => Array.isArray(value) ? value.map(reversed) : value && typeof value === "object"
+      ? Object.fromEntries(Object.entries(value).reverse().map(([key, item]) => [key, reversed(item)])) : value;
+    asset = reversed(asset); generated = reversed(generated);
+    generated.version.params.studioCompliance = { taskId: "later", state: "SUCCEEDED" };
+    generated.version.params.actualSize = { actualHeight: 2, actualWidth: 3 };
+    await expect(inspectStudioEditSource(db, "w", "p", snapshot)).resolves.toHaveProperty("snapshot", snapshot);
+    generated.output.params.studioPostprocess.watermarkOverlays[0].text = "Changed brand";
+    expect(studioEditSourceFailureReason(await inspectStudioEditSource(db, "w", "p", snapshot).catch(failure => failure))).toBe("SOURCE_SNAPSHOT_CHANGED");
+  });
+
   it("resolves the saved shape URL plus digest to an uploaded original without exposing URLs or keys", async () => {
     const value = await resolve();
     expect(value.snapshot).toMatchObject({ assetId: "a", shapeId, sha256: digest(raw), width: 3, height: 2 });

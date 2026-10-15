@@ -1,5 +1,13 @@
 # Integration findings
 
+## 2026-10-15 — reproducible canvas and conversation races
+
+- Actual Chromium reproduced asynchronous insertion recording transient drag/stroke state in undo history, and restoring erased strokes while the eraser pointer remained down. Minimal committed-scene history/deletion merge fixes pass image-context19 and core52.
+- Actual conversation browser reproduced an older RUNNING poll overwriting a newer READY read. Per-message request order preserves newer receipts while allowing later authoritative revocation. Phase-specific processing deadlines, sendBusy quick-edit protection and API-context guards cover retry/project-change races; conversation27 passes.
+- Complete known application notices clarify before any new model call; existing accepted tasks are recovered first. Added real disposable SQL/worker/upload journey to CI without provider generation.
+- Legacy generated assets with a verified file receipt still lack sufficient original composition evidence if StudioGeneratedMaterial is absent. This remains explicitly unsupported, with better text. Source hash canonicalization and unrelated metadata tests pass; original historical rejection remains unproven. Fixed diagnostics cover claim/preflight/finish and expose no source contents.
+- Current full forced gates: contracts1528/UI34, AI487, full Web types, low-memory production build exit0. Normal branch push/CI readback remains the next step; runtime must not be inferred from Git SHA.
+
 ## 2026-10-13 — automatic layer semantics
 
 - Official Fal Qwen Image Layered API exposes num_layers (default4); Qwen model card supports variable and recursive decomposition. These establish count-controlled semantic decomposition, not an existing automatic object-count feature. Sources: https://fal.ai/models/fal-ai/qwen-image-layered/api and https://huggingface.co/Qwen/Qwen-Image-Layered.
@@ -169,6 +177,11 @@ b778553 CI38036388613 success, backend95/UI15 plus container rechecks and public
 - Existing company layer-set exporter already writes independent RGBA layers with ag-psd. New Studio layers are separate persistent records and require a new scoped export boundary rather than passing them through the old GenerationVersion URL.
 - A product skill is orchestration: generation, durable layer preparation and PSD writing remain actual executable steps. Paid decomposition is explicit opt-in per request, server-authoritative and must not automatically retry an uncertain model call.
 ## 2026-10-14 · Local handoff evidence boundaries
+
+### Edit-target investigation
+
+Read-only scoped records distinguish an earlier pre-provider FAILED request from a later successful request whose prompt equals the generic source error. No evidence proves who or what inserted that text. The current source snapshot validates, so the historical fine-grained rejection cannot be recovered from the generic error. Independently reproduced UI defect: FAILED generation plus NOT_REQUESTED archive makes OwnedConversationPanel.active return true. Preserve validation strength and add internal reason codes, not speculative source-check bypasses.
+
 
 The approved handoff baseline is devUpdate1012/928ab0a with 42 verified manifest files. The offline design is a reference, not an editor or backend implementation. All new work stays local under the latest user instruction.
 

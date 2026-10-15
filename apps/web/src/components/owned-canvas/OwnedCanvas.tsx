@@ -109,7 +109,10 @@ export function OwnedCanvas({ document: incoming, onChange, readOnly = false, on
         // IDs as one reversible insertion without replaying onChange on receipt.
         // A full-scene insertion may also hide its retained source (AI layers).
         // Capture both changes so one undo restores the original image too.
-        const edit = createEdit(live.current, incoming);
+        // A pending drag/stroke is not part of the arriving upload. Compare
+        // against the committed scene, so undoing this insertion cannot revive
+        // a gesture that was subsequently undone or cancelled.
+        const edit = createEdit(gesture.current ? restoreGesture(gesture.current) : live.current, incoming);
         if (edit) { history.current = [...history.current.slice(-(HISTORY_LIMIT - 1)), edit]; future.current = []; setHistoryVersion(v => v + 1); }
       }
     }
@@ -117,8 +120,10 @@ export function OwnedCanvas({ document: incoming, onChange, readOnly = false, on
     if (active && incoming.pageId === live.current.pageId) {
       const touched = new Set([...active.originals.map(item => item.id), ...(active.id ? [active.id] : [])]);
       const drafts = new Map(live.current.items.filter(item => touched.has(item.id)).map(item => [item.id, item]));
-      const existingIds = new Set(incoming.items.map(item => item.id));
-      updateView({ ...incoming, items: [...incoming.items.map(item => drafts.get(item.id) ?? item), ...[...drafts.values()].filter(item => !existingIds.has(item.id))], camera: live.current.camera });
+      // Erasure is also an in-flight draft: it is represented by absence, not
+      // an item in drafts. An arriving image must not bring those strokes back.
+      const erased = new Set(active.erased ?? []), existingIds = new Set(incoming.items.map(item => item.id));
+      updateView({ ...incoming, items: [...incoming.items.filter(item => !erased.has(item.id)).map(item => drafts.get(item.id) ?? item), ...[...drafts.values()].filter(item => !existingIds.has(item.id))], camera: live.current.camera });
     } else updateView(incoming);
     const existing = new Set(live.current.items.filter(selectable).map(item => item.id));
     if (selectedRef.current.some(id => !existing.has(id))) choose(selectedRef.current.filter(id => existing.has(id)));

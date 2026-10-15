@@ -1,5 +1,12 @@
 # Integration progress
 
+## 2026-10-15 — final local bug batch verified
+
+- Three scoped agents completed source, conversation and canvas audits; independent cross-reviews found no blocking regression. Root integrated yesterday's uncommitted changes and today's fixes.
+- Final forced contracts1528/UI34, AI487, complete types and production build passed; actual canvas52/image-context19/conversation27 passed. Exact new workflow assertions were executed against local reports. No local Docker, model calls or shared-data writes.
+- Added real uploaded single-image notice clarification acceptance to both source/container CI flows; it is pending remote execution and is not counted as locally passed SQL acceptance.
+- User authorized one normal guarded push to devUpdate1012 after validation. No main merge or production publication. Git and exact-SHA cloud results will be appended after execution.
+
 ## 2026-10-13 — content-aware layering started
 
 - Final frozen batch: contracts1294/UI34, AI441, independent complete types and production build pass. Actual core49/semantic19 browser journeys pass with zero external/model calls. PSD original5/native2K8-layer4 file checks pass, full RGBA/positions/faint alpha preserved. All earlier incomplete/helper/snapshot/TS errors resolved; bounded pixel diagnostics remove test OOM.
@@ -337,6 +344,15 @@ Final actual acceptance: code5d2f51c, run38346622593/job115129442648 completed s
 - Main-compatible code9ca3dfb pushed normally; Branch Image run38503283504/job115654922123 is executing real integration. Main remains2d29125 until exact QA passes. No manual CDS action or company database/model operation performed.
 - Latest user steering: do not merge main; continue local modification. Main QA38503283504 succeeded (source/container each real backend109/UI20, images published), but the attempted main command exited128 at the FIRST fetch due connection reset and did not execute switch/merge/push. Verified current branch stillclaude/studio-multi-brand-rail/9ca3dfb; localmain e99919a and remote-trackingorigin/main2d29125 unchanged. All further remote mutation/deployment stopped; follow-up docs are local only. Dev code928ab0a was pushed before this instruction; cloud checks already triggered are historical background work, not new authorization.
 # 2026-10-14 local handoff execution
+
+## 2026-10-14 local canvas repair started
+
+- Deployed and local baseline verified at 8714525 on devUpdate1012. Existing deployment/investigation document edits retained.
+- UI terminal-state and browser-regression work assigned separately from source-error diagnostics. A third agent reviews request/draft text flow read-only.
+- This repair does not publish changes, merge main, start Docker, mutate shared data or call providers. Historical source rejection remains a diagnosis limitation until classified runtime evidence exists.
+- Final local repair gates: contracts1512/UI34, AI487, full Web typecheck and production build pass. Owned52 and conversation21 real Chromium interactions pass; five terminal scenarios each remain quiet beyond the3.5s poll cycle. CI now includes the conversation fixture; its exact report assertions passed locally. No new remote CI/deployment is claimed.
+- Independent review caught accepted-generation/unlinked-receipt recovery before changing a legacy notice intent; implementation now recovers that task first, with a crash-boundary regression. No automatic error-to-draft assignment was found. Build emitted unavailable-local-service connection warnings without failing; no infrastructure startup was attempted.
+
 
 Approved handoff package matches HEAD 928ab0a and all 42 manifest entries verified. Dispatched three owners for M1 page/brand work, M2 brand-material persistence/reuse, M3 conversation/contracts/async orchestration. Root owns canvas naming/context tools and integration. No push, merge, deployment or shared business writes. Plan implementation has started; the offline reference is design material, not accepted product functionality.
 

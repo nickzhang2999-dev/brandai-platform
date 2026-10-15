@@ -3,8 +3,16 @@ import { STUDIO_GENERATION_OUTPUT_TTL_MS } from "@brandai/contracts";
 import { ApiException } from "./api";
 import { studioGenerationContextHash, requireStudioGenerationServices, validateStudioOutputSource } from "./studio-generation-policy";
 import { requireArtifactWrite } from "./studio-generation-artifacts";
+import { studioEditSourceFailureReason } from "./studio-generation-edit";
 export type StudioRequest = Prisma.StudioGenerationRequestGetPayload<Record<string, never>>;
 const genericFailure = "生成未完成，系统不会自动再次调用生成服务。请确认需求后再发起新请求。";
+function recordEditSourceFailure(requestId: string, stage: "claim" | "preflight" | "finish", error: unknown) {
+  const reasonCode = studioEditSourceFailureReason(error);
+  if (reasonCode) console.warn("[studio-generation] edit source validation rejected", {
+    requestId: /^sgr_[a-f0-9]{32}$/.test(requestId) ? requestId : "unavailable", stage, reasonCode,
+  });
+  return reasonCode;
+}
 
 export async function claimStudioGeneration(request: StudioRequest): Promise<StudioRequest | null> {
   try {
@@ -26,6 +34,7 @@ export async function claimStudioGeneration(request: StudioRequest): Promise<Stu
     // A transaction conflict before claim has not invoked a provider. Keep it
     // PENDING for the DB outbox rather than converting contention to failure.
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034") throw error;
+    recordEditSourceFailure(request.id, "claim", error);
     const message = error instanceof ApiException ? error.message : genericFailure;
     await prisma.$transaction(async tx => {
       const changed = await tx.studioGenerationRequest.updateMany({ where: { id: request.id, status: "PENDING", providerStartedAt: null }, data: { status: "FAILED", error: message } });
@@ -56,8 +65,11 @@ export async function assertStudioGenerationReady(request: StudioRequest, signal
       contextHash = await studioGenerationContextHash(tx, current.workspaceId, current.projectId,
         current.jobData as { assetUsages?: {assetId: string}[]; generationId?: string });
     } catch (error) {
+      const sourceReason = recordEditSourceFailure(current.id, "preflight", error);
       if (error instanceof ApiException && error.status === 422) {
-        throw new ApiException(409, "参与素材在准备期间已删除、停用或移出项目，未调用生成服务。请确认后重新提交。");
+        throw new ApiException(409, sourceReason
+          ? "修改目标在准备期间无法通过来源校验，未调用生成服务。请重新选择图片后提交。"
+          : "参与素材在准备期间已删除、停用或移出项目，未调用生成服务。请确认后重新提交。");
       }
       throw error;
     }
@@ -71,7 +83,7 @@ export async function assertStudioGenerationReady(request: StudioRequest, signal
 }
 
 export async function finishStudioGeneration(request: StudioRequest, status: "FAILED" | "SUCCEEDED", error?: unknown): Promise<boolean> {
-  return prisma.$transaction(async tx => {
+  const finished = await prisma.$transaction(async tx => {
     const now = new Date();
     const current = await tx.studioGenerationRequest.findUnique({ where: { id: request.id } });
     if (current?.status === "SUCCEEDED" && current.providerStartedAt?.getTime() === request.providerStartedAt?.getTime()) return status === "SUCCEEDED";
@@ -85,6 +97,8 @@ export async function finishStudioGeneration(request: StudioRequest, status: "FA
     await tx.studioGenerationOutput.updateMany({ where: { requestId: request.id }, data: { imageUrl: null } });
     return true;
   });
+  if (finished && status === "FAILED") recordEditSourceFailure(request.id, "finish", error);
+  return finished;
 }
 
 /** Commit paid output and its terminal receipt atomically. A crash immediately

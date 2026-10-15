@@ -6,6 +6,7 @@ import type { z } from "zod";
 import { NovartApiError } from "../../lib/novart-api-client";
 import { createOwnedConversationApi } from "./owned-conversation-api";
 import { mergeOwnedConversationReferences, ownedConversationDraftEqual } from "./owned-conversation-references";
+import { ownedConversationActive as active, ownedConversationDeadline as deadline, ownedConversationGeneration } from "./owned-conversation-state";
 import { OwnedGenerationCard } from "./OwnedGenerationCard";
 import type { createOwnedEditorApi, DecompositionTask, GenerationTask, PersistentImage } from "./owned-editor-api";
 
@@ -21,7 +22,6 @@ const button = "rounded-full border border-border px-3 py-2 text-xs disabled:opa
 const empty = (): Draft => ({ text: "", references: [], quickEditTargetId: null, sizeSelection: { ratioKey: "1:1", resolutionTier: "1K" } });
 const draftValue = (value: StudioConversationDraftInput): Draft => ({ text: value.text, references: value.references, quickEditTargetId: value.quickEditTargetId, sizeSelection: value.sizeSelection });
 const same = ownedConversationDraftEqual;
-const active = (message: Message) => ["PENDING", "RUNNING"].includes(message.status) || !!message.generation && ["NOT_REQUESTED", "PENDING", "RUNNING"].includes(message.generation.resultState);
 const explain = (error: unknown) => error instanceof Error ? error.message : "对话暂未确认，原需求仍保留。";
 
 /** A persistent conversation UI, separate from the technical workflow controls.
@@ -36,21 +36,33 @@ export const OwnedConversationPanel = forwardRef<OwnedConversationHandle, Props>
   const pending = useRef<Input | null>(null), saveSnapshot = useRef<StudioConversationDraftInput | null>(null), timer = useRef<ReturnType<typeof setTimeout> | null>(null), history = useRef<HTMLDivElement>(null), follow = useRef(true);
   const journalKey = `deepflare:conversation-pending:${JSON.stringify([props.userId, props.workspaceId, props.projectId])}`;
   const keyRef = useRef(journalKey); keyRef.current = journalKey;
+  const requestOrder = useRef(0), acceptedOrder = useRef(new Map<string, number>()), cursorOrder = useRef(0);
   const updateDraft = useCallback((value: Draft) => { draftRef.current = value; setDraft(value); }, []);
   const edit = (value: Partial<Draft>) => updateDraft({ ...draftRef.current, ...value });
-  const accept = useCallback((message: Message) => {
+  const accept = useCallback((message: Message, order = ++requestOrder.current) => {
     if (message.projectId !== latest.current.projectId) throw new Error("对话回执不属于当前项目。");
+    // A poll/list started before a newer read or explicit retry cannot undo it.
+    // Do not freeze READY forever: a later authoritative read can revoke assets.
+    if (order < (acceptedOrder.current.get(message.messageId) ?? 0)) return;
+    acceptedOrder.current.set(message.messageId, order);
     const current = [...messagesRef.current.filter(value => value.messageId !== message.messageId), message].sort((a, b) => a.createdAt.localeCompare(b.createdAt)).slice(-200);
     messagesRef.current = current; setMessages(current);
     if (message.generation) latest.current.onGeneration(message.generation);
   }, []);
+  const acceptGeneration = useCallback((messageId: string, generation: GenerationTask) => {
+    const current = messagesRef.current.find(message => message.messageId === messageId);
+    if (!current) return;
+    const updated = ownedConversationGeneration(current, generation);
+    if (updated !== current) accept(updated);
+  }, [accept]);
   const read = useCallback(async () => {
     const context = api.current; if (!context || pollBusy.current) return;
-    pollBusy.current = true;
+    pollBusy.current = true; const order = ++requestOrder.current;
     try {
       const page = await context.list(); if (!mounted.current || api.current !== context) return;
-      for (const message of page.messages) accept(message);
-      setNextCursor(page.nextCursor); setError("");
+      for (const message of page.messages) accept(message, order);
+      if (order >= cursorOrder.current) { cursorOrder.current = order; setNextCursor(page.nextCursor); }
+      setError("");
       if (!readyRef.current) { revision.current = page.draft?.revision ?? 0; const restored = page.draft ? draftValue(page.draft) : empty(); confirmedDraft.current = restored; updateDraft(restored); readyRef.current = true; setReady(true); }
     } catch (failure) { if (mounted.current && api.current === context) setError(explain(failure)); }
     finally { if (api.current === context) pollBusy.current = false; }
@@ -95,16 +107,19 @@ export const OwnedConversationPanel = forwardRef<OwnedConversationHandle, Props>
     try {
       let operation = pending.current;
       if (!operation) {
-        await flush(); const prepared = await latest.current.prepare();
+        await flush();
+        if (!mounted.current || api.current !== context) return;
+        const prepared = await latest.current.prepare();
         if (!mounted.current || api.current !== context) return;
         operation = StudioConversationInput.parse({ ...structuredClone(draftRef.current), ...prepared, mutationId: crypto.randomUUID() });
         // Persist before sending. A storage error must not lead to an untracked paid request.
         localStorage.setItem(keyRef.current, JSON.stringify(operation)); pending.current = operation; setUnknown(true);
       }
+      const order = ++requestOrder.current;
       const message = StudioConversationMessage.parse(await context.send(operation));
       if (!mounted.current || api.current !== context) return;
       if (message.mutationId !== operation.mutationId || message.text !== operation.text) throw new Error("对话受理回执与原请求不一致，原请求仍保留。");
-      accept(message); localStorage.removeItem(keyRef.current); pending.current = null; setUnknown(false); setPaused(false); setError("");
+      accept(message, order); localStorage.removeItem(keyRef.current); pending.current = null; setUnknown(false); setPaused(false); setError("");
       updateDraft({ ...draftRef.current, text: "" });
     } catch (failure) {
       if (mounted.current && api.current === context) {
@@ -125,24 +140,37 @@ export const OwnedConversationPanel = forwardRef<OwnedConversationHandle, Props>
       if (quickEditTargetId && !target) throw new Error("快捷编辑目标不在当前引用中。");
       updateDraft({ ...draftRef.current, references: merged, ...(target ? { quickEditTargetId: target.referenceId } : {}) });
       requestAnimationFrame(() => input.current?.focus()); },
-    async quickEdit(reference, text) { if (!readyRef.current || pending.current || latest.current.readOnly) throw new Error("请先确认对话已恢复和上一份请求。");
+    async quickEdit(reference, text) { if (!readyRef.current || pending.current || sendBusy.current || latest.current.readOnly) throw new Error("请先确认对话已恢复和上一份请求。");
       updateDraft({ ...draftRef.current, references: mergeOwnedConversationReferences(draftRef.current.references.filter(value => value.assetId !== reference.assetId), [reference]), quickEditTargetId: reference.referenceId, text }); await send(); },
   }), [flush, updateDraft, send]);
   useEffect(() => {
     mounted.current = true; const controller = new AbortController(); const context = createOwnedConversationApi(props.workspaceId, props.projectId, props.userId, controller.signal); api.current = context;
     readyRef.current = false; setReady(false); confirmedDraft.current = null; revision.current = 0; pending.current = null; saveSnapshot.current = null; messagesRef.current = []; setMessages([]); setUnknown(false); setError("");
+    updateDraft(empty()); setNextCursor(null); acceptedOrder.current.clear(); requestOrder.current = 0; cursorOrder.current = 0;
     saveBusy.current = false; sendBusy.current = false; pollBusy.current = false; composing.current = false; setSaving(false); setSending(false); setPaused(false);
     try { const stored = localStorage.getItem(journalKey); if (stored) { pending.current = StudioConversationInput.parse(JSON.parse(stored)); setUnknown(true); } }
     catch { setError("上一份请求记录暂不可读，请先查看服务器任务；不会自动再次发送。"); setUnknown(true); }
     void read();
     return () => { mounted.current = false; controller.abort(); if (timer.current) clearTimeout(timer.current); api.current = null; };
-  }, [props.workspaceId, props.projectId, props.userId, journalKey, read]);
+  }, [props.workspaceId, props.projectId, props.userId, journalKey, read, updateDraft]);
   useEffect(() => { if (!ready || props.readOnly || error || composing.current || same(draft, confirmedDraft.current!)) return; if (timer.current) clearTimeout(timer.current); timer.current = setTimeout(() => { void flush().catch(() => undefined); }, 700); return () => { if (timer.current) clearTimeout(timer.current); }; }, [draft, ready, props.readOnly, error, flush, saving]);
   useEffect(() => {
-    if (!ready || paused || !messages.some(active)) return;
-    const expired = messages.filter(active).every(value => Date.now() > Date.parse(value.expiresAt));
-    if (expired) { setPaused(true); return; }
-    const interval = setTimeout(() => { void (async () => { const context = api.current; if (!context) return; try { for (const message of messagesRef.current.filter(active).slice(-8)) { const receipt = await context.read(message.messageId); if (mounted.current && api.current === context) accept(receipt); } } catch (failure) { if (mounted.current) setError(explain(failure)); } })(); }, 3500);
+    if (!ready || !messages.some(active)) return;
+    const pending = messages.filter(value => active(value) && Date.now() < deadline(value));
+    if (!pending.length) { if (!paused) setPaused(true); return; }
+    if (paused) setPaused(false);
+    const delay = Math.min(3500, Math.max(1, Math.min(...pending.map(deadline)) - Date.now() + 1));
+    const interval = setTimeout(() => { void (async () => {
+      const context = api.current; if (!context) return;
+      if (messagesRef.current.some(active) && !messagesRef.current.some(value => active(value) && Date.now() < deadline(value))) { setPaused(true); return; }
+      try {
+        for (const message of messagesRef.current.filter(value => active(value) && Date.now() < deadline(value)).slice(-8)) {
+          if (!mounted.current || api.current !== context) return;
+          const order = ++requestOrder.current, receipt = await context.read(message.messageId);
+          if (mounted.current && api.current === context) accept(receipt, order);
+        }
+      } catch (failure) { if (mounted.current && api.current === context) setError(explain(failure)); }
+    })(); }, delay);
     return () => clearTimeout(interval);
   }, [messages, ready, paused, accept]);
   useEffect(() => { if (follow.current) history.current?.scrollTo({ top: history.current.scrollHeight, behavior: "auto" }); }, [messages]);
@@ -151,7 +179,7 @@ export const OwnedConversationPanel = forwardRef<OwnedConversationHandle, Props>
   return <section className="flex min-h-[400px] flex-col gap-3" data-testid="owned-conversation" data-conversation-ready={ready}>
     <div className="flex items-center gap-2"><h2 className="mr-auto text-sm font-semibold">设计对话</h2><button className={button} disabled={sending || saving} onClick={() => { setPaused(false); void read(); }}>读取最新</button></div>
     <div ref={history} className="max-h-[48dvh] min-h-32 space-y-4 overflow-y-auto" onScroll={event => { const node = event.currentTarget; follow.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80; }} aria-label="项目对话记录">
-      {nextCursor && <button className={button + " w-full"} onClick={() => { const context = api.current; if (context) void context.list(nextCursor).then(page => { if (api.current !== context) return; page.messages.forEach(accept); setNextCursor(page.nextCursor); }).catch(failure => setError(explain(failure))); }}>读取更早对话</button>}
+      {nextCursor && <button className={button + " w-full"} onClick={() => { const context = api.current, order = ++requestOrder.current; if (context) void context.list(nextCursor).then(page => { if (!mounted.current || api.current !== context) return; page.messages.forEach(message => accept(message, order)); if (order >= cursorOrder.current) { cursorOrder.current = order; setNextCursor(page.nextCursor); } }).catch(failure => { if (mounted.current && api.current === context) setError(explain(failure)); }); }}>读取更早对话</button>}
       {!messages.length && <p className="py-6 text-center text-xs leading-6 text-muted-fg">描述想法开始创作。<br />选中图片后，点击「加入对话」再发送修改或参考需求。</p>}
       {messages.map(message => <article key={message.messageId} className="space-y-2" data-message-id={message.messageId}>
         <div className="ml-5 rounded-2xl rounded-tr-md bg-accent-soft p-3 text-sm leading-6"><p className="whitespace-pre-wrap break-words">{message.text}</p>{message.references.length > 0 && <p className="mt-2 text-xs text-muted-fg">{message.references.map(value => value.name).join("、")}</p>}</div>
@@ -159,8 +187,8 @@ export const OwnedConversationPanel = forwardRef<OwnedConversationHandle, Props>
         {message.intent?.modelStatus === "UNAVAILABLE" && <p className="p-2 text-xs leading-6 text-muted-fg">智能意图识别暂不可用，已按明确指令判断需求。</p>}
         {message.intent?.modelStatus === "UNKNOWN" && <p className="p-2 text-xs leading-6 text-muted-fg">智能意图识别结果尚未确认，请补充明确目标；不会重复调用。</p>}
         {message.error && <p role="alert" className="p-2 text-xs leading-6">{message.error}</p>}
-        {active(message) && <p className="p-2 text-xs text-muted-fg">{Date.now() > Date.parse(message.expiresAt) ? "等待较久，请读取任务确认；不会重复调用模型。" : message.generation ? message.generation.progress === null ? '正在创作…' : `正在创作 · ${message.generation.progress}%` : "需求已受理，正在核对图片和尺寸…"}</p>}
-        {message.generation && <OwnedGenerationCard task={message.generation} api={props.api} canEdit={!props.readOnly} onTask={task => accept({ ...message, generation: task })} onNotice={props.onNotice} onInsert={image => props.onInsert(image, message.intent?.action === "modify" ? message.references.find(ref => ref.referenceId === message.intent?.targetReferenceId)?.shapeId : undefined)} onInsertLayers={props.onInsertLayers} />}
+        {active(message) && <p className="p-2 text-xs text-muted-fg">{Date.now() >= deadline(message) ? "等待较久，请读取任务确认；不会重复调用模型。" : message.generation ? message.generation.progress === null ? '正在创作…' : `正在创作 · ${message.generation.progress}%` : "需求已受理，正在核对图片和尺寸…"}</p>}
+        {message.generation && <OwnedGenerationCard task={message.generation} api={props.api} canEdit={!props.readOnly} onTask={task => acceptGeneration(message.messageId, task)} onNotice={props.onNotice} onInsert={image => props.onInsert(image, message.intent?.action === "modify" ? message.references.find(ref => ref.referenceId === message.intent?.targetReferenceId)?.shapeId : undefined)} onInsertLayers={props.onInsertLayers} />}
       </article>)}
     </div>
     {error && <div role="alert" className="rounded-xl bg-accent-soft p-3 text-xs leading-6">{error}{ready && !unknown && <button className="ml-2 underline" onClick={() => { setError(""); void flush().catch(() => undefined); }}>确认草稿</button>}</div>}

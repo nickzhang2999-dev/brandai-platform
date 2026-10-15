@@ -1,4 +1,5 @@
 import { StudioConversationIntent, StudioConversationPixels, type StudioConversationInput, type StudioConversationReference, resolveGenerationSize } from "@brandai/contracts";
+import { studioConversationFeedback } from "./studio-conversation-feedback";
 
 /** Deliberately conservative. Unseen or ambiguous language asks a question;
  * this parser never infers a chargeable edit solely from having attachments. */
@@ -9,6 +10,8 @@ export function parseStudioConversationIntent(input: StudioConversationInput, pr
   const forced = forcedId ? refs.find(ref => ref.referenceId === forcedId) : undefined;
   const clarify = (message: string) => StudioConversationIntent.parse({ action: "clarify", targetReferenceId: null, referenceIds: refs.map(ref => ref.referenceId), prompt: text,
     clarification: message, requestedSize: null, sizeSource: "default", sizeSelection: input.sizeSelection, parser: "safe-rules-v1" });
+  const feedback = studioConversationFeedback(input);
+  if (feedback) return clarify(feedback);
   const explicitNew = decision?.action === "generate" || /(?:重新(?:生成|设计|制作)|新建|新做|全新|另做|另外|再生成|(?:生成|设计|制作)\s*(?:一|1)\s*(?:张|幅|个)|合成|融合|组合|结合|new\s+(?:image|design)|combine|compose)/i.test(text);
   const compositionPattern = "(?:构图\\s*(?:保持|维持)(?:不变|原样)|(?:保持|维持|保留)\\s*(?:原有|原|当前)?构图(?:不变|原样)?|不(?:改|改变|修改|调整)\\s*(?:原有|原|当前)?构图)";
   // Negation applies only to these new natural-language rules, not the legacy

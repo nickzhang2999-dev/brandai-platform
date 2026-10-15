@@ -1,16 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { StudioConversationInput } from "../src/studio-conversation";
 import { parseStudioConversationIntent } from "../../../apps/web/src/lib/studio-conversation-intent";
-const f = vi.hoisted(() => ({ db: {} as any, row: null as any, available: vi.fn(), resolve: vi.fn(), submit: vi.fn(), validate: vi.fn(), gate: vi.fn() }));
+import { studioConversationFeedback } from "../../../apps/web/src/lib/studio-conversation-feedback";
+const f = vi.hoisted(() => ({ db: {} as any, row: null as any, available: vi.fn(), resolve: vi.fn(), submit: vi.fn(), validate: vi.fn(), gate: vi.fn(), recover: vi.fn() }));
 vi.mock("../../db/src/index", () => ({ prisma: f.db, Prisma: { DbNull: "DbNull" } }));
 vi.mock("@/lib/queue", () => ({ connection: {}, queuePrefix: "test" }));
 vi.mock("@/lib/api", () => ({ ApiException: class extends Error { constructor(public status: number, message: string) { super(message); } } }));
 vi.mock("@/lib/studio-generation", () => ({ submitStudioGeneration: f.submit }));
 vi.mock("@/lib/studio-generation-artifacts", () => ({ requireArtifactWrite: f.gate }));
 vi.mock("@/lib/studio-conversation", () => ({ validateConversationReferences: f.validate,
-  conversationGenerationInput: (projectId: string, input: any, intent: any) => ({ projectId, mutationId: input.mutationId, prompt: intent.prompt }), recoverStudioConversationGeneration: vi.fn() }));
+  conversationGenerationInput: (projectId: string, input: any, intent: any) => ({ projectId, mutationId: input.mutationId, prompt: intent.prompt }), recoverStudioConversationGeneration: f.recover }));
 vi.mock("@/lib/studio-conversation-queue", () => ({ enqueueStudioConversation: vi.fn() }));
 vi.mock("@/lib/studio-conversation-intent", () => ({ parseStudioConversationIntent }));
+vi.mock("@/lib/studio-conversation-feedback", () => ({ studioConversationFeedback }));
 vi.mock("@/lib/studio-conversation-model", () => ({ studioConversationModelAvailable: f.available, resolveStudioConversationModel: f.resolve,
   unknownStudioConversationIntent: (input: any) => ({ ...parseStudioConversationIntent(input), action: "clarify", targetReferenceId: null, clarification: "Unknown model result", parser: "structured-model-v1", modelStatus: "UNKNOWN" }) }));
 import { runStudioConversationJob } from "../../../apps/web/src/lib/workers/studio-conversation.worker";
@@ -18,6 +20,7 @@ const input = StudioConversationInput.parse({ mutationId: "831a0280-2cf1-41ba-ac
   sizeSelection: { ratioKey: "1:1", resolutionTier: "1K" } });
 beforeEach(() => {
   vi.clearAllMocks(); delete process.env.STUDIO_CONVERSATION_INTENT_ENABLED;
+  f.recover.mockImplementation(async row => row);
   f.row = { id: "m", conversationId: "c", input, references: [], intent: null, intentModelStartedAt: null, acceptedCanvas: "", status: "PENDING",
     generationRequestId: null, startedAt: null, attemptToken: null, expiresAt: new Date(Date.now() + 300000), createdAt: new Date(), conversation: { workspaceId: "w", projectId: "p", userId: "u" } };
   f.available.mockResolvedValue(true); f.resolve.mockResolvedValue({ ...parseStudioConversationIntent(input), parser: "structured-model-v1", modelStatus: "SUCCEEDED" }); f.submit.mockResolvedValue({ requestId: "generation-original" });
@@ -29,6 +32,36 @@ beforeEach(() => {
         || where.expiresAt?.gt && f.row.expiresAt <= where.expiresAt.gt) return {count:0}; Object.assign(f.row,data); return {count:1}; }) } });
 });
 describe("durable structured intent claim, no real model or image calls", () => {
+  it.each([
+    "修改目标已失效、归属不符或原始配方发生变化，请重新选择图片。",
+    "这张历史生成图片缺少可验证的原始合成记录，暂不能继续改图。请选用新工作台生成的图片。",
+    "修改目标在准备期间无法通过来源校验，未调用生成服务。请重新选择图片后提交。",
+  ].flatMap(notice => ["fresh", "saved-intent", "unknown-intent"].map(state => [notice, state])))
+  ("does not call any model for an echoed system error (%s, %s)", async (notice, state) => {
+    const ref = { referenceId: "shape:one", shapeId: "shape:one", assetId: "a1", assetSha256: "a".repeat(64), name: "图片1", width: 1024, height: 1024 };
+    f.row.input = StudioConversationInput.parse({ ...input, text: notice, references: [ref], quickEditTargetId: ref.referenceId });
+    if (state === "saved-intent") f.row.intent = { ...parseStudioConversationIntent(input), action: "modify", targetReferenceId: ref.referenceId, prompt: notice };
+    if (state === "unknown-intent") f.row.intentModelStartedAt = new Date();
+    await runStudioConversationJob({ data: { messageId: "m" } } as any);
+    expect(f.available).not.toHaveBeenCalled(); expect(f.resolve).not.toHaveBeenCalled(); expect(f.submit).not.toHaveBeenCalled();
+    expect(f.row.status).toBe("CLARIFICATION"); expect(f.row.intent.targetReferenceId).toBeNull();
+    expect(f.row.intent.clarification).toContain("不会据此发起新的模型调用"); expect(f.row.generationRequestId).toBeNull();
+  });
+  it("recovers an already accepted legacy request before classifying its notice as feedback", async () => {
+    const notice = "修改目标已失效、归属不符或原始配方发生变化，请重新选择图片。";
+    f.row.input = StudioConversationInput.parse({ ...input, text: notice });
+    const acceptedIntent = { ...parseStudioConversationIntent(input), prompt: notice };
+    f.row.intent = acceptedIntent;
+    f.recover.mockImplementation(async row => {
+      expect(row.intent).toEqual(acceptedIntent);
+      Object.assign(f.row, { generationRequestId: "existing-accepted-generation", attemptToken: null });
+      return { ...row, generationRequestId: "existing-accepted-generation" };
+    });
+    await runStudioConversationJob({ data: { messageId: "m" } } as any);
+    expect(f.recover).toHaveBeenCalledOnce(); expect(f.row.intent).toEqual(acceptedIntent);
+    expect(f.row.status).toBe("RUNNING"); expect(f.row.generationRequestId).toBe("existing-accepted-generation");
+    expect(f.available).not.toHaveBeenCalled(); expect(f.resolve).not.toHaveBeenCalled(); expect(f.submit).not.toHaveBeenCalled();
+  });
   it("stamps the durable model claim before the one model call and reuses generation intake", async () => {
     f.resolve.mockImplementation(async () => { expect(f.row.intentModelStartedAt).toBeInstanceOf(Date); return { ...parseStudioConversationIntent(input), parser: "structured-model-v1", modelStatus: "SUCCEEDED" }; });
     await runStudioConversationJob({ data: { messageId: "m" } } as any);

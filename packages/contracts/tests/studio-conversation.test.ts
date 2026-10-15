@@ -11,6 +11,32 @@ const base = { mutationId: "831a0280-2cf1-41ba-ac94-621053c4a4c6", documentRevis
 const parse = (text: string, references: unknown[] = [], extra = {}) => parseStudioConversationIntent(StudioConversationInput.parse({ ...base, text, references, ...extra }));
 
 describe("durable conversation contract and conservative action/size routing", () => {
+  it.each([
+    "修改目标已失效、归属不符或原始配方发生变化，请重新选择图片。",
+    "  修改目标已失效、归属不符或原始配方发生变化,\n请重新选择图片.  ",
+    "这张历史生成图片缺少可验证的原始合成记录，暂不能继续改图。请选用新工作台生成的图片。",
+    "修改目标在准备期间无法通过来源校验，未调用生成服务。请重新选择图片后提交。",
+  ])("clarifies an echoed source notice instead of charging for its edit keyword: %s", text => {
+    for (const references of [[], [four], [one, four]]) {
+      const intent = parse(text, references);
+      expect(intent.action).toBe("clarify"); expect(intent.targetReferenceId).toBeNull();
+      expect(intent.clarification).toContain("不会据此发起新的模型调用");
+    }
+    const input = StudioConversationInput.parse({ ...base, text, references: [four], quickEditTargetId: four.referenceId });
+    for (const decision of [undefined, { action: "modify" as const, targetReferenceId: four.referenceId }, { action: "generate" as const, targetReferenceId: null }])
+      expect(parseStudioConversationIntent(input, undefined, decision).action).toBe("clarify");
+  });
+  it("allows a real request to quote the notice as image copy and preserves ordinary edits", () => {
+    for (const notice of [
+      "修改目标已失效、归属不符或原始配方发生变化，请重新选择图片。",
+      "这张历史生成图片缺少可验证的原始合成记录，暂不能继续改图。请选用新工作台生成的图片。",
+      "修改目标在准备期间无法通过来源校验，未调用生成服务。请重新选择图片后提交。",
+    ]) {
+      const text = `生成一张海报，文案为“${notice}”`;
+      expect(parse(text, [four]).action).toBe("generate"); expect(parse(text, [four]).prompt).toBe(text);
+    }
+    expect(parse("把错误提示文字修改为欢迎回来", [four]).action).toBe("modify");
+  });
   it("keeps old 1K/2K controls and strips no ownership fields", () => {
     expect(StudioConversationInput.parse(base).quickEditTargetId).toBeNull();
     for (const extra of [{ workspaceId: "foreign" }, { userId: "foreign" }, { imageUrl: "https://arbitrary" }, { acceptedCanvas: "x" }, { references: [{ ...one, url: "https://arbitrary" }] }]) expect(StudioConversationInput.safeParse({ ...base, ...extra }).success).toBe(false);

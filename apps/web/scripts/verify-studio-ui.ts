@@ -556,6 +556,28 @@ try {
     realOrderedConversationReferences = true;
     check("actual worker-uploaded references preserve asset/shape identity and order while ambiguous target selection creates no paid task");
 
+    enter("echoed source error with a real editable image never starts a paid generation");
+    const feedbackInput = { ...(multiMessage.input as object), mutationId: randomUUID(),
+      text: "修改目标已失效、归属不符或原始配方发生变化，请重新选择图片。",
+      references: [(multiMessage.references as any[])[0]], quickEditTargetId: (multiMessage.references as any[])[0].referenceId };
+    const feedbackResponse = await page.context().request.post(new URL(chatEndpoint, base).href,
+      { headers: { Origin: base.origin, "X-Novart-User": user.id }, data: feedbackInput });
+    assert.equal(feedbackResponse.status(), 202);
+    const feedbackReceipt = await feedbackResponse.json();
+    const feedbackMessage = await eventually("real worker identifies a complete source notice before model calls", async () => {
+      const message = await prisma.studioConversationMessage.findUnique({ where: { id: feedbackReceipt.messageId } });
+      if (message?.status === "FAILED") throw new Error("Echoed source notice failed instead of clarifying");
+      return message?.status === "CLARIFICATION" ? message : null;
+    });
+    assert.equal(feedbackMessage.generationRequestId, null);
+    assert.equal(feedbackMessage.intentModelStartedAt, null);
+    assert.equal((feedbackMessage.intent as any).action, "clarify");
+    assert.match((feedbackMessage.intent as any).clarification, /不会据此发起新的模型调用/);
+    assert.equal(await prisma.generation.count({ where: { projectId } }), 0);
+    await frame.getByTestId("owned-conversation").getByRole("button", { name: "读取最新", exact: true }).click();
+    await expect(frame.getByTestId("owned-conversation")).toContainText((feedbackMessage.intent as any).clarification);
+    check("real uploaded single-image source notice is stored as clarification without intent-model or generation calls");
+
     enter("real uploaded-image purposes and explicit modification target persist");
     assert.ok(uploadedId);
     const target = { shapeId: uploadedId, assetSha256: receipt.material.assetSha256 }, selected = JSON.stringify([target.shapeId, target.assetSha256]);

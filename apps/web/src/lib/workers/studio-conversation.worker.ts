@@ -4,6 +4,7 @@ import { prisma, Prisma } from "@brandai/db";
 import { StudioConversationInput, StudioConversationIntent, type StudioConversationReference } from "@brandai/contracts";
 import { connection, queuePrefix } from "@/lib/queue";
 import { parseStudioConversationIntent } from "@/lib/studio-conversation-intent";
+import { studioConversationFeedback } from "@/lib/studio-conversation-feedback";
 import { submitStudioGeneration } from "@/lib/studio-generation";
 import { requireArtifactWrite } from "@/lib/studio-generation-artifacts";
 import { validateConversationReferences, conversationGenerationInput, recoverStudioConversationGeneration } from "@/lib/studio-conversation";
@@ -41,7 +42,16 @@ export async function runStudioConversationJob(job: Job<{ messageId: string }>) 
       if (outputs.length === 1) previous = input.references.find(ref => ref.assetId === outputs[0]!.assetId);
     }
     let intent: StudioConversationIntent;
-    if (row.intent) intent = StudioConversationIntent.parse(row.intent);
+    // An echoed system notice must never start either paid intent parsing or
+    // image generation, including an unsubmitted intent left by an old worker.
+    if (studioConversationFeedback(input)) {
+      // An old worker may have accepted a generation but crashed before linking
+      // its receipt. Recover that same request before changing its saved intent.
+      const recovered = await recoverStudioConversationGeneration(row);
+      if (recovered.generationRequestId) return;
+      intent = parseStudioConversationIntent(input, previous);
+    }
+    else if (row.intent) intent = StudioConversationIntent.parse(row.intent);
     else if (row.intentModelStartedAt) intent = unknownStudioConversationIntent(input);
     else if (await studioConversationModelAvailable()) {
       const claimed = await prisma.studioConversationMessage.updateMany({ where: { id: row.id, attemptToken: token, status: "RUNNING", intentModelStartedAt: null, intent: { equals: Prisma.DbNull }, expiresAt: { gt: new Date() } },

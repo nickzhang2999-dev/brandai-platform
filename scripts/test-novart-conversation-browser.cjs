@@ -15,9 +15,13 @@ const packageName = fs.readdirSync(path.join(repo, 'node_modules/.pnpm')).find(n
 const esbuild = require(path.join(repo, 'node_modules/.pnpm', packageName, 'node_modules/esbuild'));
 const reportPath = process.env.NOVART_CONVERSATION_REPORT || path.join(repo, '.novart-build', 'conversation-browser-report.json');
 const report = {isolated: true, realBackend: false, realProvider: false, realAuthentication: false, providerCalls: 0,
-  fixtureScope: 'Actual React conversation and HTTP adapter; synthetic loopback receipts', checks: [], externalRequests: [], errors: []};
+  fixtureScope: 'Actual React conversation and HTTP adapter; synthetic loopback receipts', checks: [], terminalStateEvidence: [], externalRequests: [], errors: []};
 let browser, server, contracts, page, stage = 'compile', reject = false, loseResponse = false, delayPut = 0;
 let draft = null, postInputs = [], putInputs = [], messages = [], receipts = new Map();
+let archiveRetries = [], generationPosts = 0, retryRelease = null, delayRetry = false;
+let delayedMessageRead = null, messageReadRelease = null;
+const messageReads = new Map();
+const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jf6EAAAAASUVORK5CYII=', 'base64');
 const references = [1, 2].map(number => ({referenceId: `shape:image${number}`, shapeId: `shape:image${number}`, name: `图片${number}`, assetId: `asset${number}`,
   assetSha256: String(number).repeat(64), width: 1080, height: 1920, purpose: 'REFERENCE'}));
 const fixture = {workspaceId: 'fixture-workspace', projectId: 'fixture-project', userId: 'fixture-user'};
@@ -28,9 +32,26 @@ async function handle(req, res) {
   const url = new URL(req.url, 'http://127.0.0.1');
   if (url.pathname === '/app.js') {res.setHeader('Content-Type', 'application/javascript'); return res.end(fs.readFileSync(path.join(directory, 'app.js')));}
   if (url.pathname === '/') {res.setHeader('Content-Type', 'text/html'); return res.end('<!doctype html><html><head><meta charset="utf-8"><style>body{font:15px system-ui;margin:20px}button{padding:8px;margin:4px}textarea{display:block;width:430px;height:130px}section{width:500px}article{margin:14px 0}fieldset{margin-bottom:12px}</style></head><body><div id="root"></div><script src="/app.js"></script></body></html>');}
+  if (url.pathname === `/api/workspaces/${fixture.workspaceId}/assets/fixture-result/raw` && req.method === 'GET') {res.setHeader('Content-Type', 'image/png'); return res.end(png);}
+  if (url.pathname === '/studio/generation/retry-archive' && req.method === 'POST') {
+    assert.equal(req.headers['x-novart-user'], fixture.userId); assert.equal(url.searchParams.get('workspaceId'), fixture.workspaceId);
+    const input = contracts.StudioGenerationArchiveRetryInput.parse(await body(req)); assert.equal(input.projectId, fixture.projectId);
+    const row = messages.find(value => value.generation?.requestId === input.requestId); assert.ok(row); assert.equal(row.generation.canRetryArchive, true);
+    archiveRetries.push(input);
+    const task = contracts.StudioGenerationView.parse({...row.generation, resultState: 'PENDING', archiveError: null, canRetryArchive: false, archiveProcessingExpiresAt:new Date(Date.now()+360000).toISOString()});
+    if (delayRetry) await new Promise(resolve => {retryRelease = resolve;});
+    return json(res, task, 202);
+  }
+  if (url.pathname === '/studio/generation' && req.method === 'POST') {generationPosts++; return json(res, {error: 'No provider is configured in this interaction fixture'}, 424);}
   if (url.pathname.endsWith('/studio-conversation')) {
     assert.equal(req.headers['x-novart-user'], fixture.userId);
-    if (req.method === 'GET') {const id = url.searchParams.get('messageId'); return json(res, id ? messages.find(row => row.messageId === id) : {messages: [...messages].reverse(), nextCursor: null, draft});}
+    if (url.pathname.includes('/projects/fixture-other-project/')) {assert.equal(req.method,'GET');await new Promise(resolve=>setTimeout(resolve,600));return json(res,{messages:[],nextCursor:null,draft:null});}
+    if (req.method === 'GET') {
+      const id = url.searchParams.get('messageId'); if (id) messageReads.set(id, (messageReads.get(id) ?? 0) + 1);
+      const snapshot = structuredClone(id ? messages.find(row => row.messageId === id) : {messages: [...messages].reverse(), nextCursor: null, draft});
+      if (id && id === delayedMessageRead) {delayedMessageRead = null; await new Promise(resolve => {messageReadRelease = resolve;});}
+      return json(res, snapshot);
+    }
     const input = await body(req);
     if (req.method === 'PUT') {
       contracts.StudioConversationDraftInput.parse(input); putInputs.push(input);
@@ -60,17 +81,20 @@ async function handle(req, res) {
 (async () => {
   const absolute = file => path.join(repo, file).replaceAll('\\', '/');
   const entry = path.join(directory, 'entry.tsx');
-  fs.writeFileSync(entry, `import React,{useRef,useState} from '${absolute('apps/web/node_modules/react')}';
+  fs.writeFileSync(entry, `import React,{useRef,useState,useMemo} from '${absolute('apps/web/node_modules/react')}';
 import {createRoot} from '${absolute('apps/web/node_modules/react-dom/client')}';
 import {OwnedConversationPanel} from '${absolute('apps/web/src/components/owned-canvas/OwnedConversationPanel')}';
+import {createOwnedEditorApi} from '${absolute('apps/web/src/components/owned-canvas/owned-editor-api')}';
 const refs=${JSON.stringify(references)};const readOnly=new URL(location.href).searchParams.has('readonly');
-function Fixture(){const panel=useRef<any>(null),[selected,setSelected]=useState<any[]>([]),[notice,setNotice]=useState('');
+function Fixture(){const panel=useRef<any>(null),[selected,setSelected]=useState<any[]>([]),[notice,setNotice]=useState(''),[projectId,setProjectId]=useState('${fixture.projectId}');
+ const ownedApi=useMemo(()=>createOwnedEditorApi('${fixture.workspaceId}',projectId,'${fixture.userId}'),[projectId]);
  const run=(fn:any)=>{try{Promise.resolve(fn()).catch(e=>setNotice(e.message))}catch(e:any){setNotice(e.message)}};
  return <><fieldset><legend>交互测试夹具 · 非业务验收</legend><button onClick={()=>setSelected([refs[0]])}>选择图片1</button><button onClick={()=>setSelected([refs[1],refs[0]])}>选择图片2和1</button><button onClick={()=>run(()=>panel.current.addReferences(selected))}>加入当前选择</button><button onClick={()=>run(()=>panel.current.addReferences([refs[1]],refs[1].referenceId))}>固定快捷目标图片2</button><button onClick={()=>run(async()=>{await panel.current.flush();setNotice('离页草稿已确认')} )}>模拟品牌离页保存</button><p role="status">{notice}</p></fieldset>
- <OwnedConversationPanel ref={panel} {...${JSON.stringify(fixture)}} readOnly={readOnly} api={null} prepare={async()=>({documentRevision:1,workflowRevision:0})} onNotice={setNotice} onGeneration={()=>{}} onInsert={async()=>{}} onInsertLayers={async()=>{}} /></>}
+ <button onClick={()=>setProjectId('fixture-other-project')}>切换另一个项目</button><button onClick={()=>run(()=>panel.current.quickEdit(refs[0],'后来的快捷编辑不应篡改原请求'))}>直接快捷修改图片1</button>
+ <OwnedConversationPanel ref={panel} {...${JSON.stringify(fixture)}} projectId={projectId} readOnly={readOnly} api={ownedApi} prepare={async()=>({documentRevision:1,workflowRevision:0})} onNotice={setNotice} onGeneration={()=>{}} onInsert={async()=>{}} onInsertLayers={async()=>{}} /></>}
 createRoot(document.getElementById('root')!).render(<Fixture/>);`);
   await esbuild.build({entryPoints:[entry],outfile:path.join(directory,'app.js'),bundle:true,platform:'browser',format:'iife',jsx:'automatic',tsconfig:path.join(repo,'apps/web/tsconfig.json'),nodePaths:[path.join(repo,'apps/web/node_modules')],define:{'process.env.NODE_ENV':'"development"'},logLevel:'silent'});
-  fs.writeFileSync(path.join(directory, 'schemas.ts'), `export {StudioConversationInput,StudioConversationDraftInput} from '${absolute('packages/contracts/src/studio-conversation')}';export {parseStudioConversationIntent} from '${absolute('apps/web/src/lib/studio-conversation-intent')}';`);
+  fs.writeFileSync(path.join(directory, 'schemas.ts'), `export {StudioConversationInput,StudioConversationDraftInput,StudioConversationMessage} from '${absolute('packages/contracts/src/studio-conversation')}';export {StudioGenerationView,StudioGenerationArchiveRetryInput} from '${absolute('packages/contracts/src/studio-generation')}';export {parseStudioConversationIntent} from '${absolute('apps/web/src/lib/studio-conversation-intent')}';`);
   await esbuild.build({entryPoints:[path.join(directory,'schemas.ts')],outfile:path.join(directory,'schemas.cjs'),bundle:true,platform:'node',format:'cjs',tsconfig:path.join(repo,'apps/web/tsconfig.json'),nodePaths:[path.join(repo,'apps/web/node_modules')],logLevel:'silent'}); contracts = require(path.join(directory, 'schemas.cjs'));
   server = http.createServer((req,res)=>handle(req,res).catch(error=>{report.errors.push('fixture:' + error.message);json(res,{error:'Fixture handler error'},500);}));
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve)); const origin = 'http://127.0.0.1:' + server.address().port;
@@ -103,7 +127,112 @@ createRoot(document.getElementById('root')!).render(<Fixture/>);`);
   await input().fill('这份本地需求必须保留');await button('发送').click();await page.getByRole('alert').filter({hasText:/草稿/}).waitFor();assert.equal(postInputs.length,beforeConflict);assert.equal(await input().inputValue(),'这份本地需求必须保留');check('draft-revision-conflict-preserves-input-and-prevents-send');
   stage = 'leave-flush'; await page.reload();await ready();await input().fill('离开品牌前保存');await button('模拟品牌离页保存').click();await page.getByRole('status').filter({hasText:'离页草稿已确认'}).waitFor();assert.equal(draft.text,'离开品牌前保存');check('brand-leave-flush-waits-for-server-draft-acknowledgement');
   stage = 'readonly'; await page.goto(origin+'/?readonly=1');await ready();const beforeReadonly=postInputs.length;assert.equal(await input().isDisabled(),true);assert.equal(await button('发送').isDisabled(),true);await button('固定快捷目标图片2').click();assert.equal(postInputs.length,beforeReadonly);check('read-only-conversation-cannot-submit-or-retarget');
-  assert.deepEqual(report.externalRequests,[]);assert.deepEqual(report.errors,[]);report.passed=true;report.messagePosts=postInputs.length;report.uniqueAcceptedMessages=messages.length;report.draftWrites=putInputs.length;
+  report.uniqueAcceptedMessages=messages.length;
+  stage = 'error-notice-not-paid'; await page.goto(origin);await ready();await button('固定快捷目标图片2').click();
+  const errorNotice='修改目标已失效、归属不符或原始配方发生变化，请重新选择图片。';await input().fill(errorNotice);await button('发送').click();
+  await page.getByText(/不会据此发起新的模型调用/).waitFor();assert.equal(messages.at(-1).status,'CLARIFICATION');assert.equal(messages.at(-1).generation,null);
+  assert.equal(await input().isDisabled(),false);const beforeNextEdit=messages.length;await input().fill('把背景改成蓝色');await button('发送').click();
+  await page.waitForFunction(count=>document.querySelectorAll('[data-message-id]').length===count,beforeNextEdit+1);
+  assert.equal(messages.at(-1).intent.action,'modify');assert.equal(messages.at(-1).intent.targetReferenceId,references[1].referenceId);
+  check('pasted-error-notice-clarifies-without-generation-and-next-explicit-edit-still-works');
+
+  const expiry = () => new Date(Date.now()+360000).toISOString();
+  const task = (overrides = {}) => contracts.StudioGenerationView.parse({mode:'generate',psdLayerCount:null,psdLayerMode:null,
+    requestId:'terminal-request',mutationId:'4b4d8b34-4c61-4561-8abf-2b2746f07177',projectId:fixture.projectId,generationId:'terminal-generation',
+    status:'RUNNING',progress:null,expiresAt:expiry(),archiveExpiresAt:null,archiveProcessingExpiresAt:null,displayText:'终态回归夹具',
+    resultState:'NOT_REQUESTED',results:[],error:null,archiveError:null,canRetryArchive:false,...overrides});
+  const row = (generation, overrides = {}) => contracts.StudioConversationMessage.parse({messageId:'terminal-message',
+    mutationId:'4b4d8b34-4c61-4561-8abf-2b2746f07177',projectId:fixture.projectId,text:'明确生成请求',references:[],status:'RUNNING',
+    intent:null,generation,error:null,clarification:null,createdAt:new Date().toISOString(),expiresAt:expiry(),...overrides});
+  const result = {versionId:'fixture-version',assetId:'fixture-result',assetSha256:crypto.createHash('sha256').update(png).digest('hex'),
+    width:1,height:1,mimeType:'image/png',url:`/api/workspaces/${fixture.workspaceId}/assets/fixture-result/raw`};
+  const show = async rows => {messages=rows;draft=null;messageReads.clear();await page.goto(origin);await ready();};
+  const activity = () => page.getByText('正在创作…',{exact:true});
+  const pollCount = id => messageReads.get(id)??0;
+  const until = async condition => {const end=Date.now()+7000;while(!condition()){assert.ok(Date.now()<end,'Expected conversation poll did not arrive');await new Promise(resolve=>setTimeout(resolve,50));}};
+  const quiet = async (scenario, ids) => {const before=ids.map(pollCount);await page.waitForTimeout(4100);assert.deepEqual(ids.map(pollCount),before);report.terminalStateEvidence.push({scenario,messagePolls:ids.map((id,index)=>({messageId:id,before:before[index],after:pollCount(id)}))});};
+
+  stage = 'failed-terminal';const failed=task({status:'FAILED',error:'夹具模型失败，未生成图片'});
+  await show([row(failed,{status:'FAILED',error:'夹具模型失败，未生成图片'}),row(task({...failed,requestId:'stale-request',generationId:'stale-generation'}),{messageId:'stale-running-message',status:'RUNNING',text:'过时顶层状态仍然运行'})]);
+  assert.equal(await activity().count(),0);assert.equal(await input().isDisabled(),false);assert.equal(await page.getByRole('alert').filter({hasText:'夹具模型失败，未生成图片'}).count(),1);
+  await quiet('FAILED / NOT_REQUESTED wins over failed and stale RUNNING messages',['terminal-message','stale-running-message']);
+  check('generation-failure-with-not-requested-archive-stops-progress-and-all-repeat-polls');
+
+  stage = 'running-polls';await show([row(task())]);await activity().waitFor();await until(()=>pollCount('terminal-message')>=1);
+  check('normal-running-generation-renders-progress-and-continues-read-only-poll');
+  stage = 'success-archive-pending';messages=[row(task({status:'SUCCEEDED',resultState:'PENDING'}),{status:'SUCCEEDED'})];
+  const beforeArchive=pollCount('terminal-message');await until(()=>pollCount('terminal-message')>beforeArchive);await activity().waitFor();
+  check('successful-generation-with-pending-archive-remains-active');
+  stage = 'ready-stops';messages=[row(task({status:'SUCCEEDED',resultState:'READY',results:[result]}),{status:'SUCCEEDED'})];
+  await page.getByText('图片已生成并保存',{exact:true}).waitFor({timeout:7000});assert.equal(await activity().count(),0);
+  await quiet('RUNNING -> SUCCEEDED / PENDING -> READY stops subsequent polls',['terminal-message']);
+  check('poll-transition-to-ready-stops-progress-and-further-polling');
+
+  stage = 'explicit-archive-retry';const archiveFailed=task({status:'SUCCEEDED',resultState:'FAILED',archiveError:'夹具保存失败',canRetryArchive:true});
+  await show([row(archiveFailed,{status:'FAILED',error:'夹具保存失败'})]);assert.equal(await activity().count(),0);
+  const retriesBefore=archiveRetries.length;await button('重试保存结果').click();await activity().waitFor();
+  assert.equal(archiveRetries.length,retriesBefore+1);assert.equal(await page.getByRole('alert').filter({hasText:'夹具保存失败'}).count(),0);assert.equal(generationPosts,0);
+  messages=[row(task({status:'SUCCEEDED',resultState:'READY',results:[result]}),{status:'SUCCEEDED'})];
+  await page.getByText('图片已生成并保存',{exact:true}).waitFor({timeout:7000});await quiet('Explicit archive retry clears stale failure and stops after READY',['terminal-message']);
+  check('explicit-archive-retry-clears-stale-message-error-and-never-resubmits-generation');
+
+  stage = 'stale-retry-response';await show([row(archiveFailed,{status:'FAILED',error:'夹具保存失败'})]);delayRetry=true;
+  await button('重试保存结果').click();await until(()=>!!retryRelease);
+  messages=[row(task({status:'SUCCEEDED',resultState:'READY',results:[result]}),{status:'SUCCEEDED',text:'最新会话内容必须保留'})];
+  await button('读取最新').click();await page.getByText('最新会话内容必须保留',{exact:true}).waitFor();await page.getByText('图片已生成并保存',{exact:true}).waitFor();
+  const release=retryRelease;retryRelease=null;delayRetry=false;release();await button('重试保存结果').waitFor({state:'hidden'});
+  await page.getByRole('status').filter({hasText:'已重新保存生成结果，不会再次生成图片。'}).waitFor();
+  assert.equal(await page.getByText('最新会话内容必须保留',{exact:true}).count(),1);assert.equal(await activity().count(),0);assert.equal(await page.getByRole('alert').filter({hasText:'夹具保存失败'}).count(),0);
+  await quiet('Late retry PENDING uses latest message and cannot regress READY',['terminal-message']);
+  check('late-archive-retry-response-preserves-latest-message-metadata-and-ready-state');
+
+  stage = 'ready-stale-top-level';await show([row(task({status:'SUCCEEDED',resultState:'READY',results:[result]}),{status:'RUNNING'})]);
+  await page.getByText('图片已生成并保存',{exact:true}).waitFor();assert.equal(await activity().count(),0);
+  await quiet('READY wins over stale RUNNING top-level status',['terminal-message']);
+  check('ready-result-overrides-stale-running-message-without-progress-or-repeat-polls');
+
+  stage = 'stale-poll-after-list';delayedMessageRead='terminal-message';await show([row(task())]);await until(()=>!!messageReadRelease);
+  messages=[row(task({status:'SUCCEEDED',resultState:'READY',results:[result]}),{status:'SUCCEEDED',text:'最新读取已经保存'})];
+  await button('读取最新').click();await page.getByText('图片已生成并保存',{exact:true}).waitFor();
+  const releaseRead=messageReadRelease;messageReadRelease=null;releaseRead();await page.waitForTimeout(250);
+  assert.equal(await activity().count(),0);assert.equal(await page.getByText('最新读取已经保存',{exact:true}).count(),1);
+  await quiet('Earlier poll cannot replace newer list READY receipt',['terminal-message']);
+  check('late-poll-does-not-regress-newer-manual-read-or-message-metadata');
+
+  stage='new-authoritative-revocation';messages=[row(task({status:'SUCCEEDED',resultState:'FAILED',archiveError:'图片已由服务端撤销',results:[]}),{status:'FAILED',error:'图片已由服务端撤销'})];
+  await button('读取最新').click();await page.getByRole('alert').filter({hasText:'图片已由服务端撤销'}).waitFor();
+  assert.equal(await page.getByText('图片已生成并保存',{exact:true}).count(),0);
+  check('later-authoritative-read-can-revoke-ready-results-without-permanent-client-freeze');
+
+  stage = 'expired-message-active-archive';const past=new Date(Date.now()-1000).toISOString();
+  await show([row(task({status:'SUCCEEDED',resultState:'PENDING',expiresAt:past,archiveExpiresAt:expiry(),archiveProcessingExpiresAt:expiry()}),{status:'SUCCEEDED',expiresAt:past})]);
+  await activity().waitFor();await until(()=>pollCount('terminal-message')>=1);
+  messages=[row(task({status:'SUCCEEDED',resultState:'READY',results:[result]}),{status:'SUCCEEDED',expiresAt:past})];
+  await page.getByText('图片已生成并保存',{exact:true}).waitFor({timeout:7000});
+  check('archive-processing-deadline-keeps-polling-after-original-message-expired');
+
+  stage = 'expired-archive-explicit-retry';await show([row(task({...archiveFailed,expiresAt:past}),{status:'FAILED',error:'夹具保存失败',expiresAt:past})]);
+  await button('重试保存结果').click();await activity().waitFor();await until(()=>pollCount('terminal-message')>=1);
+  messages=[row(task({status:'SUCCEEDED',resultState:'READY',results:[result]}),{status:'SUCCEEDED',expiresAt:past})];await button('读取最新').click();
+  await page.getByText('图片已生成并保存',{exact:true}).waitFor();
+  check('explicit-archive-retry-resumes-polling-with-new-lease-after-message-expiry');
+
+  stage = 'quick-edit-during-send';await show([]);const postsBeforeQuick=postInputs.length,putsBeforeQuick=putInputs.length;delayPut=800;
+  await input().fill('生成一张需要保留的原始海报需求');await button('发送').click();await until(()=>putInputs.length>putsBeforeQuick);
+  await button('直接快捷修改图片1').click();await page.getByRole('status').filter({hasText:'请先确认对话已恢复和上一份请求。'}).waitFor();
+  await until(()=>postInputs.length>postsBeforeQuick);delayPut=0;assert.equal(postInputs.length,postsBeforeQuick+1);
+  assert.equal(postInputs.at(-1).text,'生成一张需要保留的原始海报需求');assert.equal(postInputs.at(-1).quickEditTargetId,null);
+  check('quick-edit-during-inflight-send-cannot-replace-frozen-user-prompt-or-target');
+
+  stage = 'switch-project-with-poll';delayedMessageRead='terminal-message';await show([row(task())]);
+  await input().fill('旧项目草稿不能出现在新项目');await saved();await until(()=>!!messageReadRelease);await button('切换另一个项目').click();
+  await page.waitForFunction(()=>document.querySelector('[data-testid="owned-conversation"]')?.dataset.conversationReady==='false');
+  await page.waitForTimeout(250);assert.equal(await input().inputValue(),'');assert.equal(await page.getByRole('alert').count(),0);
+  const releaseOldProject=messageReadRelease;messageReadRelease=null;releaseOldProject();await ready();await page.waitForTimeout(250);
+  assert.equal(await page.locator('[data-message-id]').count(),0);assert.equal(await page.getByRole('alert').count(),0);
+  check('project-switch-clears-old-draft-and-ignores-aborted-poll-errors-and-receipts');
+  assert.equal(generationPosts,0);assert.deepEqual(report.externalRequests,[]);assert.deepEqual(report.errors,[]);
+  report.passed=true;report.messagePosts=postInputs.length;report.draftWrites=putInputs.length;report.archiveRetries=archiveRetries.length;report.directGenerationPosts=generationPosts;
 })().catch(async error=>{report.fatal={stage,message:error.message,stack:error.stack};report.diagnostics={draft,postCount:postInputs.length,putCount:putInputs.length,body:await page?.locator('body').innerText().catch(()=>null)};process.exitCode=1;}).finally(async()=>{
   await browser?.close();if(server)await new Promise(resolve=>server.close(resolve));fs.writeFileSync(reportPath,JSON.stringify(report,null,2));
   assert.equal(path.dirname(path.resolve(directory)),path.resolve(root));fs.rmSync(directory,{recursive:true,force:true});console.log(JSON.stringify({passed:report.passed,checks:report.checks.length,reportPath,fatal:report.fatal,errors:report.errors}));

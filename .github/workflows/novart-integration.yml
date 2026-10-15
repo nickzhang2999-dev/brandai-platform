@@ -93,11 +93,12 @@ jobs:
           NOVART_BRAND_CREATION_REPORT=apps/web/.novart-ui-artifacts/brand-creation-recovery-fixture.json node scripts/test-novart-brand-creation-recovery-browser.cjs
           NOVART_AUTO_PSD_REPORT=apps/web/.novart-ui-artifacts/automatic-psd-fixture.json NOVART_AUTO_PSD_SCREENSHOT=apps/web/.novart-ui-artifacts/automatic-psd-fixture.png node scripts/test-novart-auto-psd-browser.cjs
           NOVART_IMAGE_CONTEXT_REPORT=apps/web/.novart-ui-artifacts/image-context-fixture.json node scripts/test-novart-image-context-browser.cjs
+          NOVART_CONVERSATION_REPORT=apps/web/.novart-ui-artifacts/conversation-fixture.json node scripts/test-novart-conversation-browser.cjs
           python - <<'PY'
           import json
           from pathlib import Path
           root = Path('apps/web/.novart-ui-artifacts')
-          for name, expected in (('owned-layer-fixture.json', 10), ('brand-knowledge-fixture.json', 14), ('layer-inbox-fixture.json', 16), ('studio-layout-fixture.json', 8), ('brand-switch-fixture.json', 9), ('home-brand-leave-fixture.json', 9), ('brand-creation-recovery-fixture.json', 15), ('image-context-fixture.json', 15)):
+          for name, expected in (('owned-layer-fixture.json', 10), ('brand-knowledge-fixture.json', 14), ('layer-inbox-fixture.json', 16), ('studio-layout-fixture.json', 8), ('brand-switch-fixture.json', 9), ('home-brand-leave-fixture.json', 9), ('brand-creation-recovery-fixture.json', 15), ('image-context-fixture.json', 19)):
               report = json.loads((root / name).read_text())
               assert report['passed'] is True and report['isolated'] is True, name
               assert report['realBackend'] is False and report['realProvider'] is False, name
@@ -106,6 +107,9 @@ jobs:
               assert len(report['checks']) == expected, name
               assert all(isinstance(check, str) or check['status'] == 'PASS' for check in report['checks']), name
               print(f'PASS {name}: {expected} isolated interaction checks; no real provider or database acceptance claimed')
+          report = json.loads((root / 'image-context-fixture.json').read_text())
+          assert {'async-insertion-history-move', 'async-insertion-history-draw',
+                  'async-insertion-history-cancel-move', 'async-insertion-during-erase'} <= set(report['checks'])
           report = json.loads((root / 'automatic-psd-fixture.json').read_text())
           assert report['passed'] is True and report['isolated'] is True
           assert report['realBackend'] is False and report['realProvider'] is False
@@ -113,6 +117,26 @@ jobs:
           assert not report['externalRequests'] and not report['errors']
           assert all(isinstance(check, str) or check['status'] == 'PASS' for check in report['checks'])
           print('PASS automatic PSD selection, recovery and file-download interaction; isolated fixtures only')
+          report = json.loads((root / 'conversation-fixture.json').read_text())
+          assert report['passed'] is True and report['isolated'] is True
+          assert report['realBackend'] is False and report['realProvider'] is False and report['realAuthentication'] is False
+          assert report['providerCalls'] == 0 and len(report['checks']) >= 27
+          assert report['directGenerationPosts'] == 0 and report['archiveRetries'] == 3
+          assert len(report['terminalStateEvidence']) >= 6
+          assert all(item['before'] == item['after'] for scenario in report['terminalStateEvidence'] for item in scenario['messagePolls'])
+          assert {'generation-failure-with-not-requested-archive-stops-progress-and-all-repeat-polls',
+                  'pasted-error-notice-clarifies-without-generation-and-next-explicit-edit-still-works',
+                  'explicit-archive-retry-clears-stale-message-error-and-never-resubmits-generation',
+                  'late-archive-retry-response-preserves-latest-message-metadata-and-ready-state',
+                  'late-poll-does-not-regress-newer-manual-read-or-message-metadata',
+                  'later-authoritative-read-can-revoke-ready-results-without-permanent-client-freeze',
+                  'archive-processing-deadline-keeps-polling-after-original-message-expired',
+                  'explicit-archive-retry-resumes-polling-with-new-lease-after-message-expiry',
+                  'quick-edit-during-inflight-send-cannot-replace-frozen-user-prompt-or-target',
+                  'project-switch-clears-old-draft-and-ignores-aborted-poll-errors-and-receipts'} <= set(report['checks'])
+          assert not report['externalRequests'] and not report['errors']
+          assert all(isinstance(check, str) or check['status'] == 'PASS' for check in report['checks'])
+          print('PASS conversation recovery and terminal-state interaction; isolated fixtures only')
           PY
       - name: Write and read actual layered PSD format proof
         run: |

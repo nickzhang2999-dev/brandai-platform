@@ -1,15 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const f = vi.hoisted(() => ({ tx: vi.fn(), query: vi.fn(), read: vi.fn(), update: vi.fn(), generation: vi.fn(), output: vi.fn(), clear: vi.fn(), gate: vi.fn(), config: vi.fn(), context: vi.fn() }));
+const f = vi.hoisted(() => ({ tx: vi.fn(), query: vi.fn(), read: vi.fn(), update: vi.fn(), generation: vi.fn(), output: vi.fn(), clear: vi.fn(), gate: vi.fn(), config: vi.fn(), context: vi.fn(), reason: vi.fn() }));
 vi.mock("../../db/src/index", () => ({ prisma: { $transaction: f.tx }, Prisma: { TransactionIsolationLevel: { Serializable: "Serializable" }, PrismaClientKnownRequestError: class extends Error {} } }));
 vi.mock("../../../apps/web/src/lib/api", () => ({ ApiException: class extends Error { constructor(public status: number, message: string) { super(message); } } }));
 vi.mock("../../../apps/web/src/lib/studio-generation-policy", () => ({ requireStudioGenerationServices: f.config, studioGenerationContextHash: f.context, validateStudioOutputSource: () => "bytes" }));
 vi.mock("../../../apps/web/src/lib/studio-generation-artifacts", () => ({ requireArtifactWrite: f.gate }));
+vi.mock("../../../apps/web/src/lib/studio-generation-edit", () => ({ studioEditSourceFailureReason: f.reason }));
 import { claimStudioGeneration, assertStudioGenerationReady, stageStudioGenerationOutput, finishStudioGeneration } from "../../../apps/web/src/lib/studio-generation-lifecycle";
 import { ApiException } from "../../../apps/web/src/lib/api";
+import { Prisma } from "../../db/src/index";
 let row: any, tx: any;
 beforeEach(() => {
   vi.resetAllMocks(); row = { id: "sgr_1", workspaceId: "w", projectId: "p", userId: "u", generationId: "g", contextHash: "same", status: "PENDING", providerStartedAt: null, expiresAt: new Date(Date.now() + 60000), jobData: { generationId: "g", assetUsages: [] } };
-  f.context.mockResolvedValue("same"); f.read.mockImplementation(async () => ({ ...row }));
+  f.context.mockResolvedValue("same"); f.reason.mockReturnValue(null); f.read.mockImplementation(async () => ({ ...row }));
   f.update.mockImplementation(async ({ where, data }) => {
     if (row.status !== where.status || ("providerStartedAt" in where && row.providerStartedAt?.getTime() !== where.providerStartedAt?.getTime()) || (where.expiresAt?.gt && row.expiresAt <= where.expiresAt.gt)) return { count: 0 };
     Object.assign(row, data); return { count: 1 };
@@ -18,6 +20,87 @@ beforeEach(() => {
   f.tx.mockImplementation(async fn => { const prior = { ...row }; try { return await fn(tx); } catch (error) { row = prior; throw error; } });
 });
 describe("product single execution and private output atomicity", () => {
+  it("logs only the fixed source reason and safe request identity before failing an unclaimed request", async () => {
+    row.id = "sgr_" + "a".repeat(32);
+    const failure = Object.assign(new ApiException(422, "修改目标已失效、归属不符或原始配方发生变化，请重新选择图片。"), {
+      prompt: "private-prompt", url: "https://private.invalid/secret", storageKey: "private-key", token: "private-token",
+    });
+    f.context.mockRejectedValue(failure); f.reason.mockReturnValue("SOURCE_SNAPSHOT_CHANGED");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(await claimStudioGeneration(row)).toBeNull();
+      expect(row).toMatchObject({ status: "FAILED", providerStartedAt: null, error: failure.message });
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith("[studio-generation] edit source validation rejected", {
+        requestId: row.id, stage: "claim", reasonCode: "SOURCE_SNAPSHOT_CHANGED",
+      });
+      expect(JSON.stringify(warn.mock.calls)).not.toMatch(/private-prompt|private\.invalid|private-key|private-token|imageUrl/);
+      expect(f.output).not.toHaveBeenCalled();
+      expect(f.generation).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "FAILED" }) }));
+    } finally { warn.mockRestore(); }
+  });
+
+  it("redacts malformed request identities and does not log unrelated failures as source diagnoses", async () => {
+    row.id = "https://private.invalid/request?token=private-token";
+    f.context.mockRejectedValue(new ApiException(422, "Safe source failure")); f.reason.mockReturnValue("SOURCE_ASSET_UNAVAILABLE");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await claimStudioGeneration(row);
+      expect(warn.mock.calls[0]?.[1]).toEqual({ requestId: "unavailable", stage: "claim", reasonCode: "SOURCE_ASSET_UNAVAILABLE" });
+      expect(JSON.stringify(warn.mock.calls)).not.toMatch(/private\.invalid|private-token/);
+      warn.mockClear(); row.status = "PENDING"; f.reason.mockReturnValue(null);
+      f.context.mockRejectedValue(new Error("private-provider-token"));
+      await claimStudioGeneration(row);
+      expect(warn).not.toHaveBeenCalled(); expect(row.status).toBe("FAILED"); expect(row.error).not.toContain("private-provider-token");
+    } finally { warn.mockRestore(); }
+  });
+
+  it("preserves a preparation-stage source diagnosis without claiming that its asset was deleted", async () => {
+    row.id = "sgr_" + "b".repeat(32);
+    const claim = await claimStudioGeneration(row);
+    f.context.mockRejectedValue(Object.assign(new ApiException(422, "Safe source failure"), {
+      url: "https://private.invalid/source", storageKey: "private-key", prompt: "private-prompt",
+    }));
+    f.reason.mockReturnValue("SOURCE_SNAPSHOT_CHANGED");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await expect(assertStudioGenerationReady(claim!)).rejects.toMatchObject({ status: 409,
+        message: "修改目标在准备期间无法通过来源校验，未调用生成服务。请重新选择图片后提交。" });
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith("[studio-generation] edit source validation rejected", {
+        requestId: row.id, stage: "preflight", reasonCode: "SOURCE_SNAPSHOT_CHANGED",
+      });
+      expect(JSON.stringify(warn.mock.calls)).not.toMatch(/private\.invalid|private-key|private-prompt/);
+      expect(f.output).not.toHaveBeenCalled();
+    } finally { warn.mockRestore(); }
+  });
+
+  it("records a post-claim byte mismatch only when it commits a new terminal failure", async () => {
+    row.id = "sgr_" + "c".repeat(32);
+    const claim = await claimStudioGeneration(row);
+    f.reason.mockReturnValue("SOURCE_BYTES_CHANGED");
+    const error = new ApiException(422, "修改目标的实际图片内容发生变化，未调用改图服务。");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(await finishStudioGeneration(claim!, "FAILED", error)).toBe(true);
+      expect(await finishStudioGeneration(claim!, "FAILED", error)).toBe(false);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith("[studio-generation] edit source validation rejected", {
+        requestId: row.id, stage: "finish", reasonCode: "SOURCE_BYTES_CHANGED",
+      });
+      expect(row).toMatchObject({ status: "FAILED", error: error.message });
+      expect(f.output).not.toHaveBeenCalled();
+    } finally { warn.mockRestore(); }
+  });
+
+  it("leaves serialization contention pending for the outbox without failing or claiming the provider", async () => {
+    const conflict = Object.assign(new Prisma.PrismaClientKnownRequestError("transaction conflict", { code: "P2034", clientVersion: "test" }), { code: "P2034" });
+    f.context.mockRejectedValue(conflict);
+    await expect(claimStudioGeneration(row)).rejects.toBe(conflict);
+    expect(row).toMatchObject({ status: "PENDING", providerStartedAt: null });
+    expect(f.update).not.toHaveBeenCalled(); expect(f.generation).not.toHaveBeenCalled(); expect(f.output).not.toHaveBeenCalled();
+  });
+
   it("revalidates accepted context and the same live claim after source I/O without re-claiming", async () => {
     const claim = await claimStudioGeneration(row); f.update.mockClear(); f.context.mockClear(); f.gate.mockClear();
     await assertStudioGenerationReady(claim!);

@@ -1,5 +1,15 @@
 # Novart product integration
 
+## Current task — canvas bug audit and one verified branch push · 2026-10-15
+
+Latest user instruction authorizes continuing yesterday's bug log and one final normal push to `devUpdate1012`. Earlier local-only entries below are historical. Keep main, production, shared data and deployment configuration unchanged; do not start Docker or make paid model calls for these regressions.
+
+- [complete] Read yesterday's findings, preserve all uncommitted fixes, fetch the development branch and dispatch three scoped audits.
+- [complete] Audit source-validation consistency, conversation task races, and canvas edit/save/reopen behavior; reproduce confirmed defects and retain security checks.
+- [complete] Integrate fixes, review diffs and run relevant actual-browser regressions plus full contracts/UI, AI, Web types and production build gates: 1528+34/487/types/build and core52/image19/conversation27.
+- [in progress] Update developer log, attribution, README and evidence boundaries; normal guarded commit/push once to devUpdate1012.
+- [pending] Verify the remote SHA and its actual CI result; report preview runtime separately from source delivery.
+
 ## Content-aware layering and recursive refinement · 2026-10-13
 
 - [complete] Explicit AUTO/MANUAL intent, old-task compatibility, worker semantic analysis and persistent once-only plan/decomposition claims.
@@ -253,6 +263,16 @@ Required before push: `pnpm test`, `pnpm test:ai`, `pnpm -F web typecheck`, `pnp
 - [complete log] Preserve daily evidence in docs/development-log-2026-10-13.md and docs/development-log-2026-10-14.md; guarded branch delivery and verified main update remain pending.
 - [current scope 2026-10-14] Continue local development only in devUpdate1012; leave branch code and QA evidence intact. Do not automatically push, merge main or deploy. Write follow-up log locally.
 # Local handoff implementation · 2026-10-14
+
+## Current local repair · edit-target conversation state
+
+User requested repair after the read-only investigation of deployed 8714525. This increment stays local in devUpdate1012; no main merge, deployment, Docker startup or model call.
+
+- [complete] UI owner: terminal failure stops conversation polling/spinners; running, archive-pending and explicit recovery retained. State24 and actual browser21 pass, including5 timed no-repeat-poll cases.
+- [complete] Source owner: fixed internal reason codes and sanitized claim diagnostics preserve all original checks and public errors. Source/policy/lifecycle68 pass; original historical rejection remains unknown.
+- [complete] Independent reviewer: no automatic error-to-draft path found; precise notice-input guard implemented before model calls, with old accepted receipt recovery preserved.
+- [complete] Root: integrated review, L1 1512+34, AI487, typecheck/build, owned52/conversation21 actual browser regressions, exact CI report assertions, and final logs. All changes remain local; no new provider calls or deployment.
+
 
 Latest user authorization: normally commit and push this candidate to existing devUpdate1012. This overrides the earlier local-only publication limit for this branch only. Keep main unmerged; no manual CDS/production deployment or model calls. Exact push and new CI outcomes remain separately recorded.
 
