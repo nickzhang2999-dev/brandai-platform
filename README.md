@@ -1,5 +1,7 @@
 # DeepFlare — 品牌项目视觉 AI 生成平台
 
+> **2026-10-15 分支串任务已定位并隔离**：dev请求曾被main旧worker处理；现已克隆并核对39张表，dev Web/worker真实连库均为独立库，新任务进入dev队列。另修复对话自定义像素不符合模型输入限制的问题，模型尺寸与最终交付尺寸分开；后续发布/真实改图结论以日志为准。[根因、配置与边界](docs/devupdate1012-database-isolation-2026-10-15.md)。
+
 > **2026-10-15 图片修改错误链路修复**：保留模型错误分类和失败阶段，源图读取与模型POST分开；错误体有界读取、任务关联日志脱敏，不自动重试。历史502具体上游原因仍待新证据。[调查与验证](docs/ai-edit-failure-diagnosis-2026-10-15.md)。
 
 > **精简设计助手已上线开发预览 · 2026-10-15 13:34**：`devUpdate1012 / ffc6198`，[云端源码与容器验收38685884784](https://github.com/nickzhang2999-dev/brandai-platform/actions/runs/38685884784)成功。CDS运行版本、真实登录/编辑器HTTP和实际前端JS新功能标记已核对。main/正式环境未动；原HTTP502的上游根因不属于本次已解决项。[验收及发布记录](docs/conversation-minimal-ui-plan-2026-10-15.md)。

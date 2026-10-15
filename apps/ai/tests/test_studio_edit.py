@@ -100,6 +100,31 @@ async def test_actual_edit_keeps_source_first_all_reference_roles_and_literal_si
 
 
 @pytest.mark.asyncio
+async def test_small_dialog_pixels_require_legal_model_size_before_single_post():
+    body = payload()
+    calls = []
+
+    def upstream(request):
+        calls.append(request)
+        fields, _ = multipart(request)
+        assert fields["size"] == "1280x720"
+        assert fields["n"] == "1"
+        return httpx.Response(200, json={"data": [{"url": data(size=(1280, 720))}]})
+
+    provider = HttpImageProvider("https://gateway.invalid/v1", "fixture-key", model="gpt-image-2", transport=httpx.MockTransport(upstream))
+    body["generation"]["targets"][0].update(width=1024, height=576)
+    rejected = await post(body, provider)
+    assert rejected.status_code == 422
+    assert "Edit size or image inputs" in rejected.json()["detail"]
+    assert calls == []
+    body["generation"]["targets"][0].update(width=1280, height=720)
+    accepted = await post(body, provider)
+    assert accepted.status_code == 200
+    assert len(calls) == 1
+    assert accepted.json()["versions"][0]["actualWidth"] == 1280
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["disconnect", "timeout", "invalid_json", "empty", "multiple"])
 async def test_paid_failure_is_one_edit_post_without_retry_or_text_fallback(failure):
     calls = []

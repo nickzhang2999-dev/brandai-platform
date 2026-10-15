@@ -24,3 +24,8 @@ GitHub38676285703为5d75d50完成success，但CDS将同一目标标为timed_out_
 ## 精简对话发布观察 · 13:30–13:34
 
 ffc6198的Branch Image38685884784已success，但CDS仍waiting且ciWorkflowRunUrl为空；官方dry-run校验了相同SHA的成功工作流，经官方认领/部署运行新版，公网版本和前端JS均核验。仅此状态差异有证据，不能推断具体webhook故障。此前e0d3dc6的验收失败由本仓库UI测试未打开设置菜单引起，已修正，不归因CDS。
+
+
+## 14:11–14:50 · 队列与数据库隔离不一致
+
+新分支任务出现在main旧队列已有Redis证据。产品outbox扫描共享DB是串任务机制；CDS的db-isolation/db-probe只按服务声明判断，漏掉项目级DATABASE_URL实际使用，是第二层配置可观测性问题。增加POSTGRES_DB后可原生克隆，但模板连接串的库路径没有跟随per-branch库名改写；实际SQL发现后明确指定副本路径。Web/worker已读回独立库，main未重启。39张表克隆校验一致。不能归因“服务器慢”，也不能仅凭部署成功断言数据库切换成功。[具体证据与配置](devupdate1012-database-isolation-2026-10-15.md)。

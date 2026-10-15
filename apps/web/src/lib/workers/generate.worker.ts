@@ -38,6 +38,7 @@ import { compileAIConstraints, constraintsEnabled } from "@/lib/ai-constraints";
 import { recordUsage, fromGenerateUsage } from "@/lib/usage";
 import { getEffectiveAiSettings } from "@/lib/settings";
 import { resolveChatBrandPolicy } from "@/lib/chat-brand-policy";
+import { studioConversationProviderSize } from "../studio-conversation-provider-size";
 import {
   applyExactAssetLayers,
   type ResolvedExactAssetLayer,
@@ -1249,7 +1250,12 @@ export async function runGenerateJob(
             ...baseFields,
             ...(job.data.studioImageTool ? { brandRules: [], aiConstraints: { ...baseFields.aiConstraints, referenceImages: [] } } : {}),
             versionCount: 1,
-            targets: [t],
+            // Custom dialog pixels (e.g. 1080×1920 or 1024×576) can be valid
+            // deliverables but invalid model inputs. Only adapt the transport;
+            // jobData retains the exact output size for archival/composition.
+            // Pixel mask tools already adapt their source size in the AI layer.
+            targets: [studio && job.data.studioConversationSize && !job.data.studioImageTool
+              ? { ...t, ...studioConversationProviderSize(t) } : t],
           });
           const result = studioEdit
             ? StudioEditResponse.parse(await ai.studioEdit(StudioEditRequest.parse({ imageUrl: studioEdit.imageUrl, generation: request, ...(job.data.studioImageTool ? { imageTool: job.data.studioImageTool } : {}) }), transport))

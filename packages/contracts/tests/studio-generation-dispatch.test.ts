@@ -51,6 +51,23 @@ beforeEach(() => {
 });
 
 describe("real generation worker pre-provider ordering (isolated dependencies)", () => {
+  it.each([true, false])("adapts custom dialog model pixels while preserving archival pixels, edit=%s", async editing => {
+    row.jobData.targets = [{ key: "conversation", label: "Dialog", width: 1024, height: 576 }];
+    row.jobData.studioConversationSize = { requestedSize: { width: 1024, height: 576 }, sizeSource: "dialog-pixels", method: "deterministic-contain" };
+    if (editing) {
+      row.jobData.studioEdit = { assetId: "source", sha256: "a".repeat(64), shapeId: "shape:source", width: 1280, height: 720, recipeHash: "b".repeat(64) };
+      f.editSource.mockResolvedValue({ imageUrl: "data:image/png;base64,YQ==" });
+      f.edit.mockResolvedValue({ versions: [{ imageUrl: "data:image/png;base64,Yg==", width: 1280, height: 720, params: {} }] });
+    }
+    await runGenerateJob(job());
+    const transport = editing ? f.edit.mock.calls[0][0].generation : f.generate.mock.calls[0][0];
+    expect(transport.targets).toEqual([{ key: "conversation", label: "Dialog", width: 1280, height: 720 }]);
+    expect(transport.providerRetryPolicy).toBe("never");
+    expect(editing ? f.edit : f.generate).toHaveBeenCalledOnce();
+    expect(editing ? f.generate : f.edit).not.toHaveBeenCalled();
+    expect(row.jobData.targets[0]).toMatchObject({ width: 1024, height: 576 });
+    expect(f.stage.mock.calls[0][1].params.studioPostprocess.conversationSize.requestedSize).toEqual({ width: 1024, height: 576 });
+  });
   it("image tools alone read the displayed source, preserve one paid request and omit added overlays", async () => {
     row.jobData.studioEdit = { assetId:"source",sha256:"a".repeat(64),shapeId:"shape:source",width:48,height:32,recipeHash:"b".repeat(64) };
     row.jobData.studioImageTool = { operation:"remove-background" };
