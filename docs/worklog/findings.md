@@ -197,3 +197,7 @@ References and edit targets are different states. Existing quickEditTargetId alr
 Engine final evidence: engine/browser9 + core52/tools13/layers10/image19 all pass; culling is transient only and full-document export/reopen verified. CPU queries remain O(n), DOM retention does not claim lower image decode memory. Memo/WeakMap assume immutable input item updates, matching current operations. Default60 history preserved with changed-item snapshot isolation. Attachment licensing/pricing assertions were not used as authorization.
 
 2026-10-15 engine deployment evidence: GitHub success alone did not immediately populate CDS ciImageStatus. Official same-commit claim succeeded and new actual editor JS contains both deepflare-owned-v1 and data-owned-culled. Public worker commit and Web/worker actual database identity verified after deploy; branch metadata alone was not used as runtime proof.
+
+## 2026-10-16 P5调查
+
+上传和分层任务必须留下删除品牌后的对象清理依据，直接cascade新增FK会破坏这条生命周期；仅补安全的6表FK，例外明确记录。测试迁移后alias/relative双mock解析同一模块，vi.importMock自引用会死等，已按真实同模块工厂去重处理。

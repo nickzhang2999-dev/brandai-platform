@@ -385,3 +385,9 @@ Conversation intent targeted tests82 and actual Chromium interactions34 passed. 
 2026-10-15 engine release: user now explicitly requests push and preview. Remote dev head equals local9fde897 before commit; main2d29125 unchanged. Same code gates already passed in preceding turn; release audit parallel. CDS skill/preview flow read; no configuration change required.
 
 2026-10-15 engine release complete: pushed83a5dca; exact CI38713351613 success. Official prebuilt claim/deploy dr_6711b362b962b0e6121871a7 complete, runtime dv_4cbe80c9362adcb584a7d0a2. Public health/auth/Studio/actual engine JS verified; Web/worker SQL both isolated brandai_devupdate1012. Main2d29125 unchanged; no provider calls or business writes. Official URL open request queued in Codex. Post-release documents kept local for next batch. One GitHub status fetch returned no structuredContent; next read succeeded, no release action taken without exact success.
+
+## 2026-10-16 P5本地工程整理
+
+使用独立worktree和分支，从同一dev基线改造；不是产品重写。29项Python请求契约/58项SQL验证通过，真实库不动。完整范围与验证见 ../development-log-2026-10-16-p5.md。
+
+最终门禁：Web1327/contracts287/UI34、AI529通过；typecheck/build通过；lint 0错误12警告。Web测试迁移109文件保留全部测试体，实际Chromium画布前后各52项。完成本地工程检查；真实库审计及五阶段集成未验收，未推送。

@@ -36,14 +36,14 @@
 
 原生实测默认属性为：c-image 的 `w/h/url/originalUrl/radius:0/name`，以及顶层 `opacity:1/isLocked:false`；frame 的 `w/h/name/color:"white"/isAutoLayout:false`。原生允许该普通 group 保留单个图片子对象。测试没有为迁就服务端删掉默认字段。
 
-`packages/contracts/tests/studio-exact-native.test.ts` 已将真实原生 store 和 PNG 固化为两项回归，本地执行均通过：
+`apps/web/tests/studio-exact-native.test.ts` 已将真实原生 store 和 PNG 固化为两项回归，本地执行均通过：
 
 | 对照场景 | 原生行为 | 服务端对照结果与可作出的结论 |
 | --- | --- | --- |
 | 两图完全框内、128×128、整数位置、90° 旋转/翻转、叠放 | 首次与新 context 重开导出的全部 65,536 个 RGBA 字节一致 | 同一 store 经 `deriveStudioExactLayout` 和 `compositeStudioExactImage` 处理，与两份原生 PNG 全部 RGBA 相等 |
 | 子图向左、向下各越出 12px | 128×128 frame 的原生 PNG 扩大为 140×140，包含越界子图 | 产品固定输出 128×128，与原生 140×140 中 `x=12,y=0,width=128,height=128` 的选框区域逐 RGBA 相等；**不宣称两张完整导出相同** |
 
-仓库证据在 `packages/contracts/tests/fixtures/studio-exact-native/`，越界原件在其 `overflow/` 子目录。本机完整诊断产物位于 `D:/coding/.novart-tmp/studio-exact-native-comparison/`，包含原始图片、下载 PNG、原生 snapshot/store、保存文档及 `derive-input.json`；越界原件另存在 `overflow-native-evidence/`，未被框内样本覆盖。
+仓库证据在 `apps/web/tests/fixtures/studio-exact-native/`，越界原件在其 `overflow/` 子目录。本机完整诊断产物位于 `D:/coding/.novart-tmp/studio-exact-native-comparison/`，包含原始图片、下载 PNG、原生 snapshot/store、保存文档及 `derive-input.json`；越界原件另存在 `overflow-native-evidence/`，未被框内样本覆盖。
 
 这两项回归使用固定透明底图与本地图片字节，不调用模型，也不验证真实数据库或 S3。它们证明指定场景下原生保存数据、服务端几何和最终合成的像素关系，不能扩展为任意角度、任意缩放或所有原生工具都已一比一。
 

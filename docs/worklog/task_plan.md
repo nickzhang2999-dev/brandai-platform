@@ -303,3 +303,10 @@ Decision: keep native codec and loss-aware warning guards. The guide is referenc
 - [complete] Normal guarded commit/push83a5dcac58bec45e6051d7e2ab1cf952678f3e7d to devUpdate1012; remote readback equal and main2d29125 unchanged.
 - [complete] Exact-commit Branch Image38713351613 success; official prebuilt dry-run/claim/deploy, run dr_6711b362b962b0e6121871a7 complete/failure=null. Existing database/queue overrides preserved.
 - [complete] Public health/authentication/Studio/editor actual engine JS pass; Web/worker SQL both brandai_devupdate1012. Official preview URL retrieved; open_in_codex requested and queued. No production changes or model calls. Post-release receipts stay local until next normal batch.
+
+## 2026-10-16 P5工程阶段（仅本地）
+
+- [x] Lint/CI配置、Pydantic契约、只读孤儿审计、安全FK与索引候选迁移、历史日志归档。
+- [x] PGlite SQL反例验证58项。
+- [x] 109 个 Web 测试迁移完成；L1 1327+287+34、AI529、types/build/lint 全通过。
+- [ ] 目标真实DB孤儿统计/nativePG迁移验收（不连共享库，本轮未验证）。

@@ -174,13 +174,13 @@ BrandAI 终态 = **多租户 SaaS 品牌视觉 AI 平台**：多客户 / 多用�
   **未经用户明确指示不得发布正式版。**
 
 4. **push 后必给 CDS 预览地址（binding，用户每次都要）** —— 跑 `python3 .claude/skills/preview-url/preview_url.py` 取根域，按本次改动的真实路由拼功能页路径，回复里贴一行 `【预览】<url>{路径}`；顺手 `curl .../api/health` 期望 `{"web":"ok","ai":"ok",...}`。**禁止自己 slugify / 手拼 `.geole.me`**（唯一入口是该脚本，见 `preview-url` 技能）。交付回复里漏这一行 = 没交付完。
-5. **更新 `README.md` 顶部「进度表」对应行的状态/日期**（本仓库最重要的文档·单一事实源），并同步对应 SSOT 文档（`docs/` 下产品/UI/字段文档）。
+5. **更新 `docs/worklog/progress.md` 对应任务的状态/日期**（本仓库最重要的文档·单一事实源），并同步对应 SSOT 文档（`docs/` 下产品/UI/字段文档）。
 6. **提需求调整须自带归因代号** —— 凡建议改/加/补需求，标一个代号 + 一句根因，记入 `docs/10_需求调整归因表.md`：**N** 新增需求 · **S** 需求没想清楚 · **I** 没按需求做 · **O** 可见性·验收缺口（做了但页面上看不到/没法确认） · **R** 优化·重构提议 · **E** 环境·部署·运行时（代码对但线上跑旧 commit/缓存/测错环境——判 E 前须 `cds-deploy-verify` 运行时取证，别冤枉 AI）。归因不裁决，聚合后看分布定基础设施投向（O/S 多→CDS 预览+视觉测试+DoD 前置；I 多→CI 回归；E 多→上线判据自动化）。用户侧入口是 **`/prd` 技能**（`.claude/skills/prd/`）：抛一句感受 → 闸门追问到三要素具体 → 落 `docs/prd-intake/` + 回填 docs/10。
 
 ## §5 · 接着读
 | 想知道 | 读 |
 |---|---|
-| **进度表（最重要·产品×实现超集·做完一项就勾）** | **`README.md` 顶部 §A–§L** |
+| **进度表（最重要·产品×实现超集·做完一项就勾）** | **`docs/worklog/progress.md`（历史 A–L 见同目录 README-history-through-2026-10-15.md）** |
 | 产品定位与一期范围 | `docs/01_产品定位与一期范围说明.md` |
 | 页面功能 | `docs/02_页面功能详细说明表.md` / `docs/03_PRD产品需求文档.md` |
 | 视觉规范（紫色 SSOT） | `docs/04_UI视觉规范文档.md` |
@@ -189,3 +189,7 @@ BrandAI 终态 = **多租户 SaaS 品牌视觉 AI 平台**：多客户 / 多用�
 | **画布/交互类 UI 改动前必读（四类反模式 + 本地真测 playbook，编译绿≠能用）** | `docs/11_前端画布交互经验与本地真测.md` + [`AGENTS.md` G-INTERACT](./AGENTS.md) + `tests/interaction/` |
 | wire 格式真相（别造字段） | `packages/contracts/src/*.ts` + `apps/ai/app/schemas.py` |
 | 旧 HTML 原型（参考） | `docs/legacy/prototype-html/` |
+
+## 工作日志位置（2026-10-16 工程整理）
+
+计划、进展、调查分别维护在 `docs/worklog/task_plan.md`、`docs/worklog/progress.md`、`docs/worklog/findings.md`。根 README 仅维护使用说明；不要重新把历史进度堆回首页。
