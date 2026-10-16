@@ -611,6 +611,9 @@ model Generation {
   sellingPoint String
   scene        String
   status       JobStatus           @default(PENDING)
+  // Legacy queue attempt identity; replaced on every explicit retry.
+  // Studio keeps its independent StudioGenerationRequest identity.
+  attemptToken String?
   error        String?
   createdAt    DateTime            @default(now())
   // Wall-clock timing set by the worker. Used by the queue widget and the

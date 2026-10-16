@@ -1,4 +1,5 @@
 import { prisma } from "@brandai/db";
+import { MAX_GENERATION_RUN_MS } from "./worker-deadline";
 import {
   ComplianceReport,
   type ComplianceReport as ComplianceReportType,
@@ -450,18 +451,25 @@ export async function listWorkspaceQueue(
  * `maxAgeMs`. These are orphans: a worker crash or a Redis flush drops the
  * BullMQ job while the row stays PENDING forever, so it would spin in the
  * queue widget with no one to finish it. The generate watchdog already FAILs
- * a genuinely-running job at 5 min, so anything still PENDING/RUNNING past
- * 10 min has definitely lost its job. Called on worker boot + on an interval
+ * a single legacy job at 5 min, but 12 serial sizes can use 37 min. Pending
+ * uses a separate queue budget; RUNNING is measured from startedAt, never
+ * createdAt. Studio requests keep their own authoritative expiry/claim policy.
+ * Called on worker boot + on an interval
  * (see workers/index.ts). Best-effort, idempotent, returns the count swept.
  */
 export async function sweepStaleGenerations(
   maxAgeMs = 10 * 60_000,
 ): Promise<number> {
   const cutoff = new Date(Date.now() - maxAgeMs);
+  const runningCutoff = new Date(Date.now() - Math.max(maxAgeMs, MAX_GENERATION_RUN_MS + 60_000));
   const res = await prisma.generation.updateMany({
     where: {
-      status: { in: ["PENDING", "RUNNING"] },
-      createdAt: { lt: cutoff },
+      studioRequest: { is: null },
+      OR: [
+        { status: "PENDING", createdAt: { lt: cutoff } },
+        { status: "RUNNING", startedAt: { lt: runningCutoff } },
+        { status: "RUNNING", startedAt: null, createdAt: { lt: runningCutoff } },
+      ],
     },
     data: {
       status: "FAILED",
