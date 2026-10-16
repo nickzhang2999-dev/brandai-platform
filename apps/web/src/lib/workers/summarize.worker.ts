@@ -1,3 +1,4 @@
+import { runLegacyTask } from "../legacy-task-runtime";
 import { Worker, type Job } from "bullmq";
 import { prisma } from "@brandai/db";
 import { SummarizeRequest, SummarizeResponse } from "@brandai/contracts";
@@ -5,10 +6,7 @@ import { connection, queuePrefix } from "@/lib/queue";
 import { ai } from "@/lib/ai";
 import { recordUsage } from "@/lib/usage";
 import {
-  markRunning,
   setProgress,
-  markSucceeded,
-  markFailed,
 } from "@/lib/async-tasks";
 
 /**
@@ -61,9 +59,9 @@ export async function runSummarizeJob(
 ): Promise<SummarizeJobResult> {
   const data = job.data;
   const taskId = data.taskId;
-  try {
+  return runLegacyTask({ taskId, workspaceId: data.workspaceId, kind: "SUMMARIZE" }, async ctx => {
     await job.updateProgress(10);
-    await markRunning(taskId, 10);
+    ctx.check();
 
     const request = SummarizeRequest.parse({
       mode: data.mode,
@@ -74,7 +72,8 @@ export async function runSummarizeJob(
     const _t0 = Date.now();
     let raw: unknown;
     try {
-      raw = await ai.summarize(request);
+      raw = await ai.summarize(request, { signal: ctx.signal });
+      ctx.check();
     } catch (aiErr) {
       await recordUsage({
         workspaceId: data.workspaceId,
@@ -100,10 +99,10 @@ export async function runSummarizeJob(
       // Persist onto the targeted Campaign — re-scope the write to the
       // workspace so a stale/foreign job can't touch another tenant's project.
       if (projectId && result.summary) {
-        await prisma.project.updateMany({
+        await ctx.write(tx => tx.project.updateMany({
           where: { id: projectId, workspaceId: data.workspaceId },
           data: { aiSummary: result.summary },
-        });
+        }));
       }
     } else {
       // brief_decompose — 立项 a draft Campaign seeded with the decomposed
@@ -115,7 +114,7 @@ export async function runSummarizeJob(
           0,
           24,
         ) || "新 Campaign";
-      const project = await prisma.project.create({
+      const project = await ctx.write(tx => tx.project.create({
         data: {
           workspaceId: data.workspaceId,
           name,
@@ -124,12 +123,12 @@ export async function runSummarizeJob(
           ...(result.summary ? { aiSummary: result.summary } : {}),
         },
         select: { id: true },
-      });
+      }));
       projectId = project.id;
     }
 
     await job.updateProgress(100);
-    await markSucceeded(taskId, { refId: projectId });
+    await ctx.succeed({ refId: projectId });
     return {
       mode: data.mode,
       ...(projectId ? { projectId } : {}),
@@ -140,10 +139,7 @@ export async function runSummarizeJob(
       ...(result.summary ? { summary: result.summary } : {}),
       highlights: result.highlights,
     };
-  } catch (err) {
-    await markFailed(taskId, String(err));
-    throw err;
-  }
+  });
 }
 
 export function createSummarizeWorker() {

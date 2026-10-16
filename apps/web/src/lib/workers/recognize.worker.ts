@@ -1,3 +1,4 @@
+import { runLegacyTask } from "../legacy-task-runtime";
 import { Worker, type Job } from "bullmq";
 import { prisma, Prisma } from "@brandai/db";
 import {
@@ -8,10 +9,7 @@ import { connection, queuePrefix } from "@/lib/queue";
 import { ai } from "@/lib/ai";
 import { recordUsage } from "@/lib/usage";
 import {
-  markRunning,
   setProgress,
-  markSucceeded,
-  markFailed,
 } from "@/lib/async-tasks";
 
 /**
@@ -42,16 +40,17 @@ export async function runRecognizeJob(
 ): Promise<RecognizeJobResult> {
   const data = job.data;
   const taskId = data.taskId;
-  try {
+  return runLegacyTask({ taskId, workspaceId: data.workspaceId, kind: "RECOGNIZE" }, async ctx => {
   await job.updateProgress(10);
-  await markRunning(taskId, 10);
+  ctx.check();
 
   const request = RecognizeRequest.parse({ assets: data.assets });
   // §2.3 — log every AI call's wall-clock latency for the activity log.
   const _t0 = Date.now();
   let raw: unknown;
   try {
-    raw = await ai.recognize(request);
+    raw = await ai.recognize(request, { signal: ctx.signal });
+      ctx.check();
   } catch (aiErr) {
     await recordUsage({
       workspaceId: data.workspaceId,
@@ -83,7 +82,7 @@ export async function runRecognizeJob(
       value.colorSystem = result.colorSystem;
       colorSystemAttached = true;
     }
-    const created = await prisma.brandRule.create({
+    const created = await ctx.write(tx => tx.brandRule.create({
       data: {
         workspaceId: data.workspaceId,
         type: rule.type,
@@ -93,20 +92,17 @@ export async function runRecognizeJob(
         value: value as Prisma.InputJsonValue,
         evidence: (rule.evidence ?? []) as unknown as Prisma.InputJsonValue,
       },
-    });
+    }));
     ruleIds.push(created.id);
   }
 
   await job.updateProgress(100);
-  await markSucceeded(taskId, {
+  await ctx.succeed({
     refCount: ruleIds.length,
     ...(ruleIds[0] ? { refId: ruleIds[0] } : {}),
   });
   return { ruleIds, colorSystem: result.colorSystem };
-  } catch (err) {
-    await markFailed(taskId, String(err));
-    throw err;
-  }
+  });
 }
 
 export function createRecognizeWorker() {

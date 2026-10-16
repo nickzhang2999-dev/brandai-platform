@@ -1,3 +1,4 @@
+import { runLegacyTask } from "../legacy-task-runtime";
 import { Worker, type Job } from "bullmq";
 import { prisma, Prisma } from "@brandai/db";
 import { ParseManualRequest, ParseManualResponse } from "@brandai/contracts";
@@ -5,10 +6,7 @@ import { connection, queuePrefix } from "@/lib/queue";
 import { ai } from "@/lib/ai";
 import { recordUsage } from "@/lib/usage";
 import {
-  markRunning,
   setProgress,
-  markSucceeded,
-  markFailed,
 } from "@/lib/async-tasks";
 import { uploadDataUrlImage } from "@/lib/s3";
 import { decodeImageResolution } from "@/lib/assets";
@@ -67,16 +65,17 @@ export async function runParseManualJob(
 ): Promise<ParseManualJobResult> {
   const data = job.data;
   const taskId = data.taskId;
-  try {
+  return runLegacyTask({ taskId, workspaceId: data.workspaceId, kind: "PARSE_MANUAL" }, async ctx => {
     await job.updateProgress(10);
-    await markRunning(taskId, 10);
+    ctx.check();
 
     const request = ParseManualRequest.parse({ url: data.url });
     // §2.3 — log every AI call's wall-clock latency for the activity log.
     const _t0 = Date.now();
     let raw: unknown;
     try {
-      raw = await ai.parseManual(request);
+      raw = await ai.parseManual(request, { signal: ctx.signal });
+      ctx.check();
     } catch (aiErr) {
       await recordUsage({
         workspaceId: data.workspaceId,
@@ -105,14 +104,16 @@ export async function runParseManualJob(
     const assetIdByRef = new Map<string, string>();
     const refsByType = new Map<string, string[]>();
     for (const extracted of result.extractedAssets) {
+      ctx.check();
       const { bytes, mimeType } = decodeDataUrl(extracted.dataUrl);
       const url = await uploadDataUrlImage(
         extracted.dataUrl,
         `${data.workspaceId}/brand-kit`,
+        ctx.signal,
       );
       const safeRef = extracted.ref.replace(/[^a-zA-Z0-9._-]+/g, "-");
       const resolution = decodeImageResolution(bytes);
-      const created = await prisma.asset.create({
+      const created = await ctx.write(tx => tx.asset.create({
         data: {
           workspaceId: data.workspaceId,
           category: ASSET_CATEGORY_BY_RULE[extracted.type],
@@ -127,7 +128,7 @@ export async function runParseManualJob(
           aiDescription: `从品牌手册第 ${extracted.page} 页自动提取：${extracted.label}`,
           ...(resolution ? { resolution } : {}),
         },
-      });
+      }));
       extractedAssetIds.push(created.id);
       assetIdByRef.set(extracted.ref, created.id);
       const refs = refsByType.get(extracted.type) ?? [];
@@ -170,7 +171,7 @@ export async function runParseManualJob(
             (ev.page ? `品牌手册第 ${ev.page} 页` : "来自 VI 手册解析"),
         };
       });
-      const created = await prisma.brandRule.create({
+      const created = await ctx.write(tx => tx.brandRule.create({
         data: {
           workspaceId: data.workspaceId,
           type: rule.type,
@@ -180,12 +181,12 @@ export async function runParseManualJob(
           value: value as Prisma.InputJsonValue,
           evidence: evidence as unknown as Prisma.InputJsonValue,
         },
-      });
+      }));
       ruleIds.push(created.id);
     }
 
     await job.updateProgress(100);
-    await markSucceeded(taskId, {
+    await ctx.succeed({
       refCount: ruleIds.length,
       ...(ruleIds[0] ? { refId: ruleIds[0] } : {}),
     });
@@ -195,10 +196,7 @@ export async function runParseManualJob(
       colorSystem: result.colorSystem,
       warnings: result.warnings,
     };
-  } catch (err) {
-    await markFailed(taskId, String(err));
-    throw err;
-  }
+  });
 }
 
 export function createParseManualWorker() {

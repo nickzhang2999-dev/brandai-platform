@@ -1,3 +1,4 @@
+import { runLegacyTask } from "../legacy-task-runtime";
 import { Worker, type Job } from "bullmq";
 import { prisma } from "@brandai/db";
 import { DescribeRequest, DescribeResponse } from "@brandai/contracts";
@@ -5,10 +6,7 @@ import { connection, queuePrefix } from "@/lib/queue";
 import { ai } from "@/lib/ai";
 import { recordUsage } from "@/lib/usage";
 import {
-  markRunning,
   setProgress,
-  markSucceeded,
-  markFailed,
 } from "@/lib/async-tasks";
 
 /**
@@ -44,9 +42,9 @@ export async function runDescribeJob(
 ): Promise<DescribeJobResult> {
   const data = job.data;
   const taskId = data.taskId;
-  try {
+  return runLegacyTask({ taskId, workspaceId: data.workspaceId, kind: "DESCRIBE" }, async ctx => {
     await job.updateProgress(10);
-    await markRunning(taskId, 10);
+    ctx.check();
 
     const request = DescribeRequest.parse({
       url: data.url,
@@ -58,7 +56,8 @@ export async function runDescribeJob(
     const _t0 = Date.now();
     let raw: unknown;
     try {
-      raw = await ai.describe(request);
+      raw = await ai.describe(request, { signal: ctx.signal });
+      ctx.check();
     } catch (aiErr) {
       await recordUsage({
         workspaceId: data.workspaceId,
@@ -81,24 +80,21 @@ export async function runDescribeJob(
 
     // Re-scope the write to the workspace so a stale/foreign job can't touch
     // another tenant's asset (multi-tenant isolation §1).
-    await prisma.asset.updateMany({
+    await ctx.write(tx => tx.asset.updateMany({
       where: { id: data.assetId, workspaceId: data.workspaceId },
       data: {
         aiTags: result.aiTags,
         aiDescription: result.aiDescription || null,
       },
-    });
+    }));
 
     await job.updateProgress(100);
-    await markSucceeded(taskId, {
+    await ctx.succeed({
       refId: data.assetId,
       refCount: result.aiTags.length,
     });
     return { assetId: data.assetId, tagCount: result.aiTags.length };
-  } catch (err) {
-    await markFailed(taskId, String(err));
-    throw err;
-  }
+  });
 }
 
 export function createDescribeWorker() {

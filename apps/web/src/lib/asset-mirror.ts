@@ -1,4 +1,4 @@
-import { prisma } from "@brandai/db";
+import { prisma, type Prisma } from "@brandai/db";
 import { getEffectiveStorage } from "@/lib/settings";
 import { enqueueImagePreview } from "@/lib/queue";
 
@@ -60,9 +60,13 @@ export async function mirrorGenerationVersionToAsset(opts: {
   aiDescription?: string;
   /** Worker 自己补镜像时关闭二次入队，避免同一个 job 自我唤醒。 */
   enqueuePreview?: boolean;
+  /** Optional worker lease: a timed-out job must not publish a late mirror. */
+  signal?: AbortSignal;
+  persist?: <T>(work: (tx: Prisma.TransactionClient) => Promise<T>) => Promise<T>;
   /** @returns 是否实际新建了镜像 Asset（true=已回流；false=跳过/失败）。回填端点据此计数。 */
 }): Promise<boolean> {
   try {
+    opts.signal?.throwIfAborted();
     // 仅当图已上传到对象存储（公网 http(s) URL）才回流：未配存储时是内联 data: URL，
     // 推不出 storageKey，/raw 代理取不到原图 —— 跳过而非建一条取不到图的坏素材。
     if (!/^https?:\/\//i.test(opts.imageUrl)) return false;
@@ -86,7 +90,8 @@ export async function mirrorGenerationVersionToAsset(opts: {
       return Math.max(0, Math.floor((b64.length * 3) / 4) - pad);
     })();
 
-    const asset = await prisma.asset.create({
+    opts.signal?.throwIfAborted();
+    const create = (db: Pick<Prisma.TransactionClient, "asset">) => db.asset.create({
       data: {
         workspaceId: opts.workspaceId,
         category: assetCategoryForScene(opts.sceneType),
@@ -106,6 +111,8 @@ export async function mirrorGenerationVersionToAsset(opts: {
         ...(opts.aiDescription ? { aiDescription: opts.aiDescription } : {}),
       },
     });
+    const asset = opts.persist ? await opts.persist(create) : await create(prisma);
+    opts.signal?.throwIfAborted();
     if (opts.enqueuePreview !== false) {
       try {
         await enqueueImagePreview({
