@@ -5,6 +5,7 @@ import { z } from "zod";
 import { StudioMaterial } from "@brandai/contracts";
 import { StudioBrandMaterialsPage, StudioBrandMaterialVerification, StudioBrandMaterialUploadView, type StudioBrandMaterialEntry } from "../../../../../packages/contracts/src/studio-brand-materials";
 import { NovartApiError } from "../../lib/novart-api-client";
+import { useBoundedTaskPoll, TASK_POLL_PAUSED_MESSAGE } from "../../lib/use-bounded-task-poll";
 
 export type OwnedBrandMaterialsDrawerProps = {
   workspaceId: string; projectId: string; userId: string; readOnly?: boolean;
@@ -23,7 +24,8 @@ export function OwnedBrandMaterialsDrawer({ workspaceId, projectId, userId, read
   const [busy, setBusy] = useState(false), [loading, setLoading] = useState(false), [error, setError] = useState(""), [notice, setNotice] = useState("");
   const [tasks, setTasks] = useState<z.infer<typeof StudioBrandMaterialUploadView>[]>([]);
   const lifetime = useRef<AbortController | null>(null), root = useRef<HTMLElement | null>(null), searchInput = useRef<HTMLInputElement | null>(null), fileInput = useRef<HTMLInputElement | null>(null);
-  const lock = useRef(false), sequence = useRef(0), pollStarted = useRef(0);
+  const lock = useRef(false), sequence = useRef(0);
+  const uploadPoll = useBoundedTaskPoll({ taskKey: JSON.stringify([workspaceId, userId]), active: tasks.some(task => pending(task.status)) });
   const uploadAttempt = useRef<{ file: File; mutationId: string } | null>(null);
   const prefix = `/api/workspaces/${encodeURIComponent(workspaceId)}/studio-brand-materials`;
 
@@ -67,7 +69,6 @@ export function OwnedBrandMaterialsDrawer({ workspaceId, projectId, userId, read
     const data = await request(uploadUrl(), z.object({ tasks: StudioBrandMaterialUploadView.array() }).strict());
     data.tasks.forEach(task => { if (task.workspaceId !== workspaceId) throw new Error("上传回执不属于当前品牌。"); if (task.material) materialScope(task.material); });
     setTasks(data.tasks);
-    if (data.tasks.some(task => pending(task.status)) && !pollStarted.current) pollStarted.current = Date.now();
   }, [materialScope, workspaceId, request, uploadUrl]);
 
   useEffect(() => {
@@ -79,10 +80,10 @@ export function OwnedBrandMaterialsDrawer({ workspaceId, projectId, userId, read
   }, [recoverUploads]);
   useEffect(() => { const timer = setTimeout(() => void refresh(), 200); return () => clearTimeout(timer); }, [refresh]);
   useEffect(() => {
-    if (!tasks.some(task => pending(task.status)) || !pollStarted.current || Date.now() - pollStarted.current > 6 * 60_000) return;
-    const timer = setTimeout(() => { void recoverUploads().then(() => refresh()).catch(error => setError(error instanceof Error ? error.message : "请刷新任务确认。")); }, 2500);
+    if (!tasks.some(task => pending(task.status)) || uploadPoll.timedOut) return;
+    const timer = setTimeout(() => { if (!uploadPoll.expired()) void recoverUploads().then(() => refresh()).catch(error => setError(error instanceof Error ? error.message : "请刷新任务确认。")); }, Math.min(2500, uploadPoll.remaining()));
     return () => clearTimeout(timer);
-  }, [recoverUploads, refresh, tasks]);
+  }, [recoverUploads, refresh, tasks, uploadPoll.timedOut, uploadPoll.expired, uploadPoll.remaining]);
 
   const upload = useCallback(async (file: File) => {
     if (readOnly || lock.current) return;
@@ -95,7 +96,7 @@ export function OwnedBrandMaterialsDrawer({ workspaceId, projectId, userId, read
       form.set("mutationId", uploadAttempt.current.mutationId);
       const task = await request(uploadUrl(), StudioBrandMaterialUploadView, { method: "POST", body: form });
       if (task.workspaceId !== workspaceId || task.mutationId !== uploadAttempt.current.mutationId) throw new NovartApiError("上传回执与当前操作不一致，请刷新确认。", 422, "INVALID_RECEIPT", true);
-      uploadAttempt.current = null; pollStarted.current = Date.now();
+      uploadAttempt.current = null; uploadPoll.resume();
       setTasks(old => [task, ...old.filter(value => value.taskId !== task.taskId)]);
       if (task.material) { materialScope(task.material); setChosen(task.material.assetId); await refresh(); }
       setNotice(task.status === "SUCCEEDED" ? "图片已保存到品牌素材库，可以选择加入画布或对话。" : "上传已受理，图片会保留在品牌素材库；可以关闭抽屉。" );
@@ -103,7 +104,7 @@ export function OwnedBrandMaterialsDrawer({ workspaceId, projectId, userId, read
       if (error instanceof NovartApiError && !error.uncertain) uploadAttempt.current = null;
       setError(error instanceof Error ? error.message : "上传未完成。");
     } finally { lock.current = false; setBusy(false); }
-  }, [materialScope, workspaceId, readOnly, refresh, request, uploadUrl]);
+  }, [materialScope, workspaceId, readOnly, refresh, request, uploadUrl, uploadPoll.resume]);
 
   const choose = async (kind: "canvas" | "conversation") => {
     if (readOnly || lock.current || !chosen) return;
@@ -152,6 +153,7 @@ export function OwnedBrandMaterialsDrawer({ workspaceId, projectId, userId, read
     <div className="mt-4 flex gap-2"><input ref={searchInput} aria-label="搜索品牌素材" type="search" placeholder="搜索名称或标签" value={search} maxLength={200} onChange={event => { setSearch(event.target.value); setChosen(""); }} className="min-w-0 flex-1 rounded-full border border-border bg-bg px-3 py-2 text-xs outline-none focus:border-primary" /><button type="button" className={button} disabled={readOnly || busy} onClick={() => fileInput.current?.click()}>上传</button></div>
     <input ref={fileInput} type="file" hidden accept="image/png,image/jpeg,image/webp" onChange={event => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; if (file) void upload(file); }} />
     <div className="mt-3 text-xs leading-5" aria-live="polite">{notice && <p>{notice}</p>}{error && <p role="alert" className="text-danger">{error}</p>}
+      {uploadPoll.timedOut && <p role="status">{TASK_POLL_PAUSED_MESSAGE} 点击下方“刷新”继续读取原上传。</p>}
       {uploadAttempt.current && <button type="button" className="underline" disabled={busy} onClick={() => { const operation = uploadAttempt.current; if (operation) void upload(operation.file); }}>确认原上传回执</button>}
       {tasks.filter(task => task.status !== "SUCCEEDED").map(task => <p key={task.taskId}>{pending(task.status) ? `图片保存中 · ${task.progress}%` : task.error ?? "上传未完成"}</p>)}</div>
     <div className="mt-3 max-h-[55vh] min-h-0 overflow-y-auto" data-testid="owned-brand-material-list"><div className="grid grid-cols-2 gap-3">
@@ -162,7 +164,7 @@ export function OwnedBrandMaterialsDrawer({ workspaceId, projectId, userId, read
       </button>)}
     </div>{!items.length && !loading && <p className="py-8 text-center text-xs text-muted-fg">{search ? "没有匹配素材" : "上传第一张品牌素材，多个项目都能复用。"}</p>}
       {loading && <p className="py-4 text-center text-xs text-muted-fg">正在读取素材…</p>}{cursor && <button type="button" className={`${button} mt-4 w-full`} disabled={loading} onClick={() => void refresh(cursor)}>加载更多</button>}</div>
-    <div className="mt-4 flex flex-wrap gap-2 border-t border-border pt-4"><button type="button" className={button} disabled={readOnly || busy || !chosen} onClick={() => void choose("canvas")}>加入画布</button><button type="button" className={button} disabled={readOnly || busy || !chosen} onClick={() => void choose("conversation")}>加入对话</button><button type="button" className={button} disabled={loading} onClick={() => { pollStarted.current = Date.now(); void recoverUploads().then(() => refresh()).catch(error => setError(error instanceof Error ? error.message : "任务暂不可读。")); }}>刷新</button></div>
+    <div className="mt-4 flex flex-wrap gap-2 border-t border-border pt-4"><button type="button" className={button} disabled={readOnly || busy || !chosen} onClick={() => void choose("canvas")}>加入画布</button><button type="button" className={button} disabled={readOnly || busy || !chosen} onClick={() => void choose("conversation")}>加入对话</button><button type="button" className={button} disabled={loading} onClick={() => { uploadPoll.resume(); void recoverUploads().then(() => refresh()).catch(error => setError(error instanceof Error ? error.message : "任务暂不可读。")); }}>刷新</button></div>
     {readOnly && <p className="mt-2 text-xs text-muted-fg">当前项目只读，可以浏览品牌素材。</p>}
   </section>;
 }

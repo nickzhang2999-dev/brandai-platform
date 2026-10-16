@@ -1,8 +1,8 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
-import type { EditOp, GenerationVersion } from "@brandai/contracts";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useMutation } from "@tanstack/react-query";
+import type { EditOp, GenerationVersion, TaskState } from "@brandai/contracts";
 import {
   Button,
   Badge,
@@ -15,14 +15,8 @@ import {
   FieldLabel,
 } from "@brandai/ui";
 import { apiFetch } from "@/lib/client";
+import { useAsyncTaskResult, useBoundedTaskQuery, type AsyncTaskReceipt, TASK_POLL_PAUSED_MESSAGE } from "@/lib/use-bounded-task-poll";
 import { ComplianceReportView } from "@/components/compliance-report";
-
-interface JobState {
-  jobId: string;
-  status: "PENDING" | "RUNNING" | "SUCCEEDED" | "FAILED";
-  progress: number;
-  failedReason?: string;
-}
 
 interface Lineage {
   generationId: string;
@@ -169,34 +163,34 @@ export function VersionEditor({
   const [element, setElement] = useState("");
   const [region, setRegion] = useState<Region | null>(null);
   const [sizeIdx, setSizeIdx] = useState<string | null>(null);
-  const [jobId, setJobId] = useState<string | null>(null);
+  const [taskId, setTaskId] = useState<string | null>(null);
 
   const opMeta = useMemo(
     () => OPS.find((o) => o.value === op)!,
     [op],
   );
 
-  // Poll the edit job + refreshed lineage until it terminates.
-  const { data: poll } = useQuery({
-    queryKey: ["version-edit", wsId, genId, sourceVersion.id, jobId],
-    enabled: !!jobId,
-    refetchInterval: (q) => {
-      const s = q.state.data?.job?.status;
-      if (s === "SUCCEEDED" || s === "FAILED") return false;
-      return 1500;
+  const context = JSON.stringify([wsId, genId, sourceVersion.id]);
+  const contextRef = useRef(context); contextRef.current = context;
+  useEffect(() => setTaskId(null), [context]);
+  // AsyncTask in Postgres is authoritative; an evicted BullMQ job cannot
+  // turn a completed edit back into an endless pending state.
+  const { data: poll, timedOut, resume: resumeEdit, error: pollError } = useBoundedTaskQuery<{ lineage: Lineage; task: TaskState }>({
+    queryKey: ["version-edit", wsId, genId, sourceVersion.id, taskId],
+    taskKey: taskId ? JSON.stringify([context, taskId]) : null,
+    intervalMs: 1500,
+    getStatus: data => data?.task.status,
+    queryFn: async signal => {
+      const task = await apiFetch<TaskState>(`/api/workspaces/${wsId}/tasks/${taskId}`, { signal });
+      const lineage = task.status === "SUCCEEDED"
+        ? (await apiFetch<{ lineage: Lineage }>(`/api/workspaces/${wsId}/generations/${genId}/versions/${sourceVersion.id}/edit`, { signal })).lineage
+        : initialLineage;
+      return { task, lineage };
     },
-    queryFn: () =>
-      apiFetch<{ lineage: Lineage; job?: JobState }>(
-        `/api/workspaces/${wsId}/generations/${genId}/versions/${sourceVersion.id}/edit${
-          jobId ? `?jobId=${jobId}` : ""
-        }`,
-      ),
   });
-
   const lineage = poll?.lineage ?? initialLineage;
-  const job = poll?.job ?? null;
-  const running =
-    !!jobId && job?.status !== "SUCCEEDED" && job?.status !== "FAILED";
+  const job = poll?.task ?? null;
+  const running = !!taskId && job?.status !== "SUCCEEDED" && job?.status !== "FAILED";
 
   // Newest child created since this editor opened (highest index, not the
   // source). Shown as the edit result.
@@ -256,19 +250,15 @@ export function VersionEditor({
   }, [op, region, sizeIdx, prompt, opMeta, running]);
 
   const submit = useMutation({
-    mutationFn: () =>
-      apiFetch<{ jobId: string; lineage: Lineage }>(
-        `/api/workspaces/${wsId}/generations/${genId}/versions/${sourceVersion.id}/edit`,
-        {
-          method: "POST",
-          body: JSON.stringify({ op, payload: buildPayload() }),
-        },
-      ),
-    onSuccess: (r) => setJobId(r.jobId),
+    mutationFn: async () => ({ context, receipt: await apiFetch<{ taskId: string; lineage: Lineage }>(
+      `/api/workspaces/${wsId}/generations/${genId}/versions/${sourceVersion.id}/edit`,
+      { method: "POST", body: JSON.stringify({ op, payload: buildPayload() }) },
+    ) }),
+    onSuccess: result => { if (contextRef.current === result.context) setTaskId(result.receipt.taskId); },
   });
 
   function resetForm() {
-    setJobId(null);
+    setTaskId(null);
     setPrompt("");
     setColor("");
     setElement("");
@@ -312,21 +302,22 @@ export function VersionEditor({
         {(running || newest || submit.isError) && (
           <Panel className="flex flex-col gap-4 p-6 md:p-7">
             <SectionHeading eyebrow="RESULT · 新版本" title="编辑结果" />
-            {running ? (
+            {running && !timedOut && !pollError ? (
               <div className="rounded-2xl border border-foreground/10 bg-muted px-5 py-4 text-sm text-muted-foreground">
                 编辑中… {job?.status ?? "PENDING"} ·{" "}
                 {job?.progress ?? 0}%
               </div>
             ) : null}
+            {running && (timedOut || pollError) ? <p role="status" className="text-sm text-muted-foreground">{TASK_POLL_PAUSED_MESSAGE} <button type="button" className="underline" onClick={resumeEdit}>继续查询原编辑任务</button></p> : null}
             {job?.status === "FAILED" ? (
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-destructive/30 bg-destructive/10 px-5 py-4 text-sm text-destructive">
-                <span>编辑失败：{job?.failedReason ?? "未知错误"}</span>
+                <span>编辑失败：{job?.error ?? "未知错误"}</span>
                 <Button
                   size="sm"
                   variant="outline"
                   disabled={!canSubmit || submit.isPending}
                   onClick={() => {
-                    setJobId(null);
+                    setTaskId(null);
                     submit.mutate();
                   }}
                 >
@@ -585,15 +576,17 @@ function RecheckPanel({
   genId: string;
   version: GenerationVersion;
 }) {
+  const [receipt, setReceipt] = useState<{ context: string; taskId: string } | null>(null);
+  const context = JSON.stringify([wsId, genId, version.id]);
+  const task = useAsyncTaskResult<GenerationVersion>(wsId, receipt?.context === context ? receipt.taskId : null);
+  const pending = receipt?.context === context && !["SUCCEEDED", "FAILED"].includes(task.data?.status ?? "");
   const recheck = useMutation({
-    mutationFn: () =>
-      apiFetch<GenerationVersion>(
-        `/api/workspaces/${wsId}/generations/${genId}/versions/${version.id}/recheck`,
-        { method: "POST" },
-      ),
+    mutationFn: async () => ({ context, ...await apiFetch<AsyncTaskReceipt>(
+      `/api/workspaces/${wsId}/generations/${genId}/versions/${version.id}/recheck`, { method: "POST" },
+    ) }),
+    onSuccess: setReceipt,
   });
-
-  const report = recheck.data?.complianceReport ?? version.complianceReport;
+  const report = task.data?.status === "SUCCEEDED" ? task.data.result?.complianceReport ?? version.complianceReport : version.complianceReport;
 
   return (
     <Panel className="flex flex-col gap-4 p-6 md:p-7">
@@ -603,10 +596,10 @@ function RecheckPanel({
         action={
           <Button
             size="sm"
-            disabled={recheck.isPending}
+            disabled={recheck.isPending || pending}
             onClick={() => recheck.mutate()}
           >
-            {recheck.isPending ? <Spinner /> : null}
+            {recheck.isPending || pending && !task.timedOut && !task.error ? <Spinner /> : null}
             复检版本 {version.index + 1}
           </Button>
         }
@@ -615,6 +608,8 @@ function RecheckPanel({
         对该版本图文重新执行文案 + 图片层校验（Logo / 主色 / 禁用元素 /
         产品变形），结果写入版本的 complianceReport。
       </p>
+      {pending && (task.timedOut || task.error) ? <p role="status">{TASK_POLL_PAUSED_MESSAGE} <button type="button" className="underline" onClick={task.resume}>继续查询原复检任务</button></p> : null}
+      {task.data?.status === "FAILED" ? <p role="alert" className="text-sm text-destructive">{task.data.error || "复检失败"}</p> : null}
       {recheck.error ? (
         <p className="text-sm text-destructive">
           {recheck.error instanceof Error

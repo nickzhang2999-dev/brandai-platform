@@ -33,6 +33,7 @@ import {
   type ReferenceSource,
 } from "@brandai/ui";
 import { apiFetch } from "@/lib/client";
+import { useAsyncTaskResult, useBoundedTaskQuery, type AsyncTaskReceipt, TASK_POLL_PAUSED_MESSAGE } from "@/lib/use-bounded-task-poll";
 import { formatElapsed } from "../../../queue-widget";
 import { TextLayerEditor } from "./text-layer-editor";
 
@@ -126,7 +127,6 @@ export function GenerateWizard({
   // the user never stares at an infinite spinner.
   const [submittedAt, setSubmittedAt] = useState<number | null>(null);
   const [nowTs, setNowTs] = useState(() => Date.now());
-  const GENERATION_CAP_MS = 6 * 60_000;
   // P2.0 — multi-size batch. When `multiSize` is on, `targets` drives a
   // 1→N fan-out (one image per size); otherwise the legacy versionCount path.
   const [multiSize, setMultiSize] = useState(false);
@@ -149,55 +149,43 @@ export function GenerateWizard({
   });
 
   // Poll the generate job + generation until it terminates.
-  const { data: poll } = useQuery({
+  const { data: poll, timedOut, resume: resumeGeneration } = useBoundedTaskQuery<{ generation: Generation; job?: JobState }>({
     queryKey: ["generation", wsId, genId, jobId],
-    enabled: !!genId,
-    refetchInterval: (q) => {
-      const s = q.state.data?.job?.status;
-      const gs = q.state.data?.generation?.status;
-      if (s === "FAILED" || gs === "FAILED") return false;
-      if (gs === "SUCCEEDED") return false;
-      // §2.4 — stop polling at the 6-min cap so the wizard doesn't hammer
-      // the server while showing a timeout-exit panel. Reads submittedAt
-      // via the latest value at refetch time.
-      if (
-        submittedAt != null &&
-        Date.now() - submittedAt > GENERATION_CAP_MS
-      ) {
-        return false;
-      }
-      return 1500;
-    },
-    queryFn: () =>
+    taskKey: genId ? JSON.stringify([wsId, genId, jobId]) : null,
+    intervalMs: 1500,
+    getStatus: data => data?.job?.status === "FAILED" ? "FAILED" : data?.generation?.status,
+    queryFn: (signal) =>
       apiFetch<{ generation: Generation; job?: JobState }>(
         `/api/workspaces/${wsId}/generations/${genId}${
           jobId ? `?jobId=${jobId}` : ""
-        }`,
+        }`, { signal },
       ),
   });
 
   const generation = poll?.generation ?? null;
   const job = poll?.job ?? null;
   const elapsedMs = submittedAt != null ? nowTs - submittedAt : 0;
-  const timedOut =
-    submittedAt != null &&
-    elapsedMs > GENERATION_CAP_MS &&
-    generation?.status !== "SUCCEEDED" &&
-    generation?.status !== "FAILED";
   // `running` represents "the wizard is waiting on the server". Once the
   // 6-min cap fires, treat the local UI as no longer running so the result
   // panel can switch to the timeout-exit view (§2.4: never an infinite
   // spinner). The server keeps going independently — its result will land
   // in the activity log + queue widget.
-  const running =
+  const generationPending =
     !!genId &&
     generation?.status !== "SUCCEEDED" &&
-    generation?.status !== "FAILED" &&
-    !timedOut;
+    generation?.status !== "FAILED" && job?.status !== "FAILED";
+  const running = generationPending && !timedOut;
 
+  const precheckContext = JSON.stringify([wsId, projectId, sceneType, sellingPoint, scene]);
+  const [precheckReceipt, setPrecheckReceipt] = useState<{ context: string; taskId: string } | null>(null);
+  const precheckTask = useAsyncTaskResult<PrecheckResult>(wsId, precheckReceipt?.context === precheckContext ? precheckReceipt.taskId : null);
+  const precheckPending = precheckReceipt?.context === precheckContext && !["SUCCEEDED", "FAILED"].includes(precheckTask.data?.status ?? "");
+  useEffect(() => {
+    if (precheckTask.data?.status === "SUCCEEDED" && precheckTask.data.result) setPrecheck(precheckTask.data.result);
+  }, [precheckTask.data]);
+  useEffect(() => setPrecheck(null), [precheckContext]);
   const runPrecheck = useMutation({
-    mutationFn: () =>
-      apiFetch<PrecheckResult>(
+    mutationFn: async () => ({ context: precheckContext, ...await apiFetch<AsyncTaskReceipt>(
         `/api/workspaces/${wsId}/generations/precheck`,
         {
           method: "POST",
@@ -208,8 +196,8 @@ export function GenerateWizard({
             scene,
           }),
         },
-      ),
-    onSuccess: (r) => setPrecheck(r),
+      ) }),
+    onSuccess: setPrecheckReceipt,
   });
 
   const submit = useMutation({
@@ -515,14 +503,16 @@ export function GenerateWizard({
             <Button
               size="sm"
               variant="ghost"
-              disabled={runPrecheck.isPending}
+              disabled={runPrecheck.isPending || precheckPending}
               onClick={() => runPrecheck.mutate()}
             >
-              {runPrecheck.isPending ? <Spinner /> : null}
+              {runPrecheck.isPending || precheckPending && !precheckTask.timedOut && !precheckTask.error ? <Spinner /> : null}
               运行合规预检
             </Button>
           </div>
 
+          {precheckPending ? <p role="status" className="text-sm text-muted-foreground">{precheckTask.timedOut ? TASK_POLL_PAUSED_MESSAGE : precheckTask.error ? "暂时无法读取预检状态，原任务仍保留。" : "预检已受理，正在后台检查。"} {(precheckTask.timedOut || precheckTask.error) && <button type="button" className="underline" onClick={precheckTask.resume}>继续查询原预检</button>}</p> : null}
+          {runPrecheck.error || precheckTask.data?.status === "FAILED" ? <p role="alert" className="text-sm text-destructive">{runPrecheck.error?.message || precheckTask.data?.error || "预检失败"}</p> : null}
           {precheck ? (
             <PrecheckPanel precheck={precheck} />
           ) : (
@@ -609,10 +599,12 @@ export function GenerateWizard({
           generation={generation}
           job={job}
           running={running}
+          pending={generationPending}
           elapsedMs={elapsedMs}
           timedOut={timedOut}
+          onResume={resumeGeneration}
           onRegenerate={() => regenerate.mutate()}
-          regenerating={regenerate.isPending || running}
+          regenerating={regenerate.isPending}
           onKeep={(vid) => keep.mutate(vid)}
           keepingId={keep.isPending ? keep.variables ?? null : null}
           onReset={reset}
@@ -961,8 +953,10 @@ function ResultPanel({
   generation,
   job,
   running,
+  pending,
   elapsedMs,
   timedOut,
+  onResume,
   onRegenerate,
   regenerating,
   onKeep,
@@ -979,8 +973,10 @@ function ResultPanel({
   generation: Generation | null;
   job: JobState | null;
   running: boolean;
+  pending: boolean;
   elapsedMs: number;
   timedOut: boolean;
+  onResume: () => void;
   onRegenerate: () => void;
   regenerating: boolean;
   onKeep: (versionId: string) => void;
@@ -1018,13 +1014,13 @@ function ResultPanel({
             <Button
               size="sm"
               variant="ghost"
-              disabled={regenerating}
+              disabled={regenerating || pending}
               onClick={onRegenerate}
             >
               {regenerating ? <Spinner /> : null}
               重新生成
             </Button>
-            <Button size="sm" variant="ghost" onClick={onReset}>
+            <Button size="sm" variant="ghost" disabled={pending} onClick={onReset}>
               新建一次生成
             </Button>
           </div>
@@ -1048,17 +1044,14 @@ function ResultPanel({
       {timedOut ? (
         <div className="flex flex-col gap-2 rounded-2xl border border-warning/40 bg-warning/10 px-5 py-4 text-sm text-warning">
           <div className="flex items-center justify-between font-mono text-xs uppercase tracking-[0.25em]">
-            <span>等待超时 · &gt; 6 分钟</span>
+            <span>自动查询已暂停 · 6 分钟</span>
             <span className="tabular-nums">{formatElapsed(elapsedMs)}</span>
           </div>
           <p className="leading-relaxed text-foreground/80">
-            服务器仍可能在后台完成任务,可刷新本页或到右下角队列 / 运行日志查看结果。
+            {TASK_POLL_PAUSED_MESSAGE}
           </p>
           <div className="flex gap-2">
-            <Button size="sm" onClick={onReset}>新建一次生成</Button>
-            <Button size="sm" variant="outline" onClick={onRegenerate}>
-              重试本次
-            </Button>
+            <Button size="sm" onClick={onResume}>继续查询原任务</Button>
           </div>
         </div>
       ) : null}
@@ -1090,7 +1083,7 @@ function ResultPanel({
                   </span>
                   {v ? (
                     <Badge tone="pass">已出图</Badge>
-                  ) : !running ? (
+                  ) : !pending ? (
                     <Badge tone="danger">失败</Badge>
                   ) : (
                     <Badge tone="neutral">生成中</Badge>
@@ -1102,14 +1095,14 @@ function ResultPanel({
                       wsId={wsId}
                       genId={genId}
                       v={v}
-                      running={running}
+                      running={pending}
                       keepingId={keepingId}
                       onKeep={onKeep}
                       myRole={myRole}
                       confirmedRules={confirmedRules}
                     />
                   </div>
-                ) : !running ? (
+                ) : !pending ? (
                   <div className="flex items-center gap-3">
                     <span className="text-sm text-destructive">
                       该尺寸生成失败。
@@ -1117,7 +1110,7 @@ function ResultPanel({
                     <Button
                       size="sm"
                       variant="ghost"
-                      disabled={retryingKey === t.key || running}
+                      disabled={retryingKey === t.key || pending}
                       onClick={() => onRetrySize(t)}
                     >
                       {retryingKey === t.key ? <Spinner /> : null}
@@ -1137,7 +1130,7 @@ function ResultPanel({
               wsId={wsId}
               genId={genId}
               v={v}
-              running={running}
+              running={pending}
               keepingId={keepingId}
               onKeep={onKeep}
               myRole={myRole}
@@ -1145,7 +1138,7 @@ function ResultPanel({
             />
           ))}
         </div>
-      ) : !running ? (
+      ) : !pending ? (
         <p className="text-sm text-muted-foreground">
           暂无版本。可点击「重新生成」再次出图。
         </p>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import {
   AssetCategory,
@@ -18,6 +18,7 @@ import {
   ColorSwatch,
 } from "@brandai/ui";
 import { apiFetch, CATEGORY_LABELS, CATEGORY_ORDER } from "@/lib/client";
+import { useBoundedTaskQuery, TASK_POLL_PAUSED_MESSAGE } from "@/lib/use-bounded-task-poll";
 
 export function WebsiteIngest({
   wsId,
@@ -34,9 +35,22 @@ export function WebsiteIngest({
   const [category, setCategory] = useState<AssetCategory>("OTHER");
   const [error, setError] = useState<string | null>(null);
 
-  // K3 / §2 — ingest is now server-authoritative: POST returns 202 + jobId, we
-  // poll GET ?jobId=... until SUCCEEDED/FAILED and then read the candidate
-  // result. Bounded at ~6 min (§2.2) so the spinner can't hang forever.
+  const [receipt, setReceipt] = useState<{ workspaceId: string; jobId: string } | null>(null);
+  const jobId = receipt?.workspaceId === wsId ? receipt.jobId : null;
+  const task = useBoundedTaskQuery<{ status: "PENDING" | "RUNNING" | "SUCCEEDED" | "FAILED"; result?: IngestWebsiteResponse; failedReason?: string }>({
+    queryKey: ["website-ingest", wsId, jobId], taskKey: jobId ? JSON.stringify([wsId, jobId]) : null,
+    // A completed job whose result is not readable yet is still observed within
+    // the same six-minute window. No second POST is needed for that read race.
+    getStatus: data => data?.status === "SUCCEEDED" && !data.result ? "RUNNING" : data?.status,
+    queryFn: signal => apiFetch(`/api/workspaces/${wsId}/ingest?jobId=${jobId}`, { signal }),
+    intervalMs: 2000,
+  });
+  const pending = !!jobId && !(task.data?.status === "FAILED" || task.data?.status === "SUCCEEDED" && task.data.result);
+  useEffect(() => { setResult(null); setSelected(new Set()); setError(null); }, [wsId]);
+  useEffect(() => {
+    if (task.data?.status === "SUCCEEDED" && task.data.result) { setResult(task.data.result); setSelected(new Set()); }
+  }, [task.data]);
+  // K3 / §2 — receipt and result are separate; pausing only stops GET reads.
   const ingest = useMutation({
     mutationFn: async () => {
       const start = await apiFetch<{ jobId: string; status: string }>(
@@ -46,43 +60,9 @@ export function WebsiteIngest({
           body: JSON.stringify({ workspaceId: wsId, url }),
         },
       );
-      const deadline = Date.now() + 6 * 60_000;
-      // eslint-disable-next-line no-constant-condition
-      while (true) {
-        if (Date.now() > deadline) {
-          throw new Error("读取超时,请重试或更换页面地址");
-        }
-        await new Promise((r) => setTimeout(r, 2000));
-        const poll = await apiFetch<{
-          status: "PENDING" | "RUNNING" | "SUCCEEDED" | "FAILED";
-          result?: IngestWebsiteResponse;
-          failedReason?: string;
-        }>(`/api/workspaces/${wsId}/ingest?jobId=${start.jobId}`);
-        if (poll.status === "SUCCEEDED") {
-          if (poll.result) return poll.result;
-          // BullMQ flips a job to `completed` a beat before its returnvalue is
-          // persisted/readable — same race the homepage brief flow retries for.
-          // Re-poll a few times (≈4s) before treating an empty result as an
-          // error, instead of failing the whole ingest on a transient gap.
-          for (let i = 0; i < 8; i++) {
-            await new Promise((r) => setTimeout(r, 500));
-            const again = await apiFetch<{
-              status: "PENDING" | "RUNNING" | "SUCCEEDED" | "FAILED";
-              result?: IngestWebsiteResponse;
-            }>(`/api/workspaces/${wsId}/ingest?jobId=${start.jobId}`);
-            if (again.result) return again.result;
-          }
-          throw new Error("读取完成但结果为空,请重试");
-        }
-        if (poll.status === "FAILED") {
-          throw new Error(poll.failedReason || "读取失败");
-        }
-      }
+      return { workspaceId: wsId, jobId: start.jobId };
     },
-    onSuccess: (r) => {
-      setResult(r);
-      setSelected(new Set());
-    },
+    onSuccess: setReceipt,
     onError: (e: unknown) =>
       setError(e instanceof Error ? e.message : "读取失败"),
   });
@@ -132,16 +112,18 @@ export function WebsiteIngest({
             placeholder="https://品牌官网.com"
             onChange={(e) => setUrl(e.target.value)}
           />
-          <Button type="submit" disabled={ingest.isPending || !url}>
-            {ingest.isPending ? <Spinner /> : null}
+          <Button type="submit" disabled={ingest.isPending || pending || !url}>
+            {ingest.isPending || pending && !task.timedOut && !task.error ? <Spinner /> : null}
             读取
           </Button>
         </form>
       </div>
 
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
+      {pending && (task.timedOut || task.error) ? <p role="status" className="text-sm text-muted-foreground">{task.timedOut ? TASK_POLL_PAUSED_MESSAGE : "暂时无法读取状态，原抓取任务仍保留。"} <button type="button" className="underline" onClick={task.resume}>继续查询原任务</button></p> : null}
+      {task.data?.status === "FAILED" ? <p role="alert" className="text-sm text-destructive">{task.data.failedReason || "读取失败"}</p> : null}
 
-      {ingest.isPending ? (
+      {ingest.isPending || pending && !task.timedOut && !task.error ? (
         <div className="flex flex-col items-center gap-4 rounded-3xl border border-dashed border-foreground/15 bg-muted/40 px-6 py-16 text-center">
           <Spinner />
           <p className="font-serif text-lg text-foreground/80">

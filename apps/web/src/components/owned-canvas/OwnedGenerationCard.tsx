@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { createOwnedEditorApi, GenerationTask, GenerationCompliance, PersistentImage, GeneratedPsdTask, DecompositionTask } from "./owned-editor-api";
 import { downloadOwnedPsd } from "./owned-psd-download";
 import { ownedPsdSelection, ownedLayerTaskStatus, ownedLayerTaskTitle } from "./owned-layer-options";
+import { useBoundedTaskPoll } from "../../lib/use-bounded-task-poll";
 
 type Props = { task: GenerationTask; api: ReturnType<typeof createOwnedEditorApi> | null; canEdit: boolean;
   compact?: boolean; activityNotice?: string; recoveryDisabled?: boolean; onReedit?(): void;
@@ -20,8 +21,11 @@ export function OwnedGenerationCard({ task, api, canEdit, onTask, onNotice, onIn
   const alive = useRef(false), running = useRef(false), latest = useRef({ task, api, canEdit });
   latest.current = { task, api, canEdit };
   const [busy, setBusy] = useState(false), [checks, setChecks] = useState<Record<string, GenerationCompliance>>({});
-  const [psd, setPsd] = useState<GeneratedPsdTask | null>(null), [psdError, setPsdError] = useState(""), [psdReading, setPsdReading] = useState(false), [psdPaused, setPsdPaused] = useState(false);
-  const psdDeadline = useRef(0), psdReadBusy = useRef(false);
+  const [psd, setPsd] = useState<GeneratedPsdTask | null>(null), [psdError, setPsdError] = useState(""), [psdReading, setPsdReading] = useState(false);
+  const psdReadBusy = useRef(false);
+  const psdBudget = useBoundedTaskPoll({ taskKey: selection.requested && api ? JSON.stringify([task.requestId, task.psdLayerCount, task.psdLayerMode]) : null,
+    active: !psd || ["PENDING", "RUNNING"].includes(psd.status) });
+  const psdPaused = psdBudget.timedOut;
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const readPsd = useCallback(async () => {
     const context = latest.current;
@@ -29,7 +33,7 @@ export function OwnedGenerationCard({ task, api, canEdit, onTask, onNotice, onIn
     if (!context.api || !chosen.requested || psdReadBusy.current) return;
     psdReadBusy.current = true; setPsdReading(true);
     try {
-      const receipt = await context.api.getGeneratedPsd(context.task.requestId, Math.max(1, Math.min(20000, psdDeadline.current - Date.now())));
+      const receipt = await context.api.getGeneratedPsd(context.task.requestId, Math.max(1, Math.min(20000, psdBudget.remaining())));
       if (!alive.current || latest.current.api !== context.api || latest.current.task.requestId !== context.task.requestId) return;
       if (receipt.decomposition && ((receipt.decomposition.layerMode ?? "MANUAL") !== chosen.mode
         || chosen.mode === "MANUAL" && receipt.decomposition.layerCount !== chosen.count)) throw new Error("PSD 拆分方式与本次创作不一致，请刷新确认。");
@@ -39,19 +43,19 @@ export function OwnedGenerationCard({ task, api, canEdit, onTask, onNotice, onIn
     } finally {
       if (latest.current.api === context.api && latest.current.task.requestId === context.task.requestId) { psdReadBusy.current = false; if (alive.current) setPsdReading(false); }
     }
-  }, []);
+  }, [psdBudget.remaining]);
   useEffect(() => {
-    psdDeadline.current = Date.now() + 360000; psdReadBusy.current = false; setPsd(null); setPsdError(""); setPsdPaused(false);
+    psdReadBusy.current = false; setPsd(null); setPsdError("");
     if (selection.requested && api) void readPsd();
   }, [task.requestId, task.psdLayerCount, task.psdLayerMode, selection.requested, api, readPsd]);
   useEffect(() => {
     if (!selection.requested || !api || !psd || !["PENDING", "RUNNING"].includes(psd.status) || psdError || psdPaused || psdReading) return;
-    const remaining = psdDeadline.current - Date.now();
-    if (remaining <= 0) { setPsdPaused(true); return; }
-    const timer = setTimeout(() => { if (Date.now() >= psdDeadline.current) setPsdPaused(true); else void readPsd(); }, Math.min(2500, remaining));
+    const remaining = psdBudget.remaining();
+    if (remaining <= 0) return;
+    const timer = setTimeout(() => { if (!psdBudget.expired()) void readPsd(); }, Math.min(2500, remaining));
     return () => clearTimeout(timer);
-  }, [selection.requested, api, psd, psdError, psdPaused, psdReading, readPsd]);
-  async function refreshPsd() { psdDeadline.current = Date.now() + 360000; setPsdPaused(false); await readPsd(); }
+  }, [selection.requested, api, psd, psdError, psdPaused, psdReading, readPsd, psdBudget.remaining, psdBudget.expired]);
+  async function refreshPsd() { psdBudget.resume(); await readPsd(); }
   async function expandPsd() {
     const context = latest.current, decomposition = psd?.decomposition;
     if (!context.canEdit || !decomposition || psd?.status !== "READY" || !onInsertLayers) return;

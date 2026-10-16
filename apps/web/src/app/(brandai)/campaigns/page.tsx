@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { BrandRule, Project, TaskState } from "@brandai/contracts";
 import { Button } from "@brandai/ui";
 import { apiFetch } from "@/lib/client";
+import { useBoundedTaskQuery, TASK_POLL_PAUSED_MESSAGE } from "@/lib/use-bounded-task-poll";
 import { useBrand } from "../brand-context";
 import {
   Chip,
@@ -387,7 +388,6 @@ export default function CampaignsPage() {
 }
 
 const POLL_INTERVAL_MS = 2500;
-const POLL_CAP_MS = 6 * 60 * 1000; // §2.2 有界中间态
 type StartResponse = { jobId: string; taskId: string; status: string };
 
 /**
@@ -405,7 +405,6 @@ function AutoSummaryButton({
   onDone: () => void;
 }) {
   const [taskId, setTaskId] = useState<string | null>(null);
-  const [timedOut, setTimedOut] = useState(false);
   const startedAt = useRef(0);
 
   // Reset any in-flight poll when the targeted campaign changes.
@@ -426,30 +425,21 @@ function AutoSummaryButton({
     onSuccess: (res) => setTaskId(res.taskId),
   });
 
-  const { data: task } = useQuery<TaskState>({
+  const { data: task, timedOut, setTimedOut, resume: resumePoll } = useBoundedTaskQuery<TaskState>({
     queryKey: ["brandai-task", wsId, taskId],
-    queryFn: () =>
-      apiFetch<TaskState>(`/api/workspaces/${wsId}/tasks/${taskId}`),
+    queryFn: (signal) =>
+      apiFetch<TaskState>(`/api/workspaces/${wsId}/tasks/${taskId}`, { signal }),
     enabled: !!taskId,
-    refetchInterval: (q) => {
-      const s = q.state.data?.status;
-      if (s === "SUCCEEDED" || s === "FAILED") return false;
-      if (Date.now() - startedAt.current > POLL_CAP_MS) return false;
-      return POLL_INTERVAL_MS;
-    },
+    taskKey: taskId ? JSON.stringify([wsId, taskId]) : null,
+    startedAt,
+    getStatus: task => task?.status,
   });
 
-  useEffect(() => {
-    if (!taskId) return;
-    const t = setInterval(() => {
-      if (Date.now() - startedAt.current > POLL_CAP_MS) setTimedOut(true);
-    }, 3000);
-    return () => clearInterval(t);
-  }, [taskId]);
+
 
   const status = task?.status ?? (taskId ? "PENDING" : null);
-  const running =
-    !!taskId && status !== "SUCCEEDED" && status !== "FAILED" && !timedOut;
+  const pending = !!taskId && status !== "SUCCEEDED" && status !== "FAILED";
+  const running = pending && !timedOut;
 
   // Refetch the project once on success so the freshly-written aiSummary shows.
   const firedForRef = useRef<string | null>(null);
@@ -465,20 +455,20 @@ function AutoSummaryButton({
   // §2.4 — a SUCCEEDED that lands right around the 6-min cap must not be hidden
   // by the timedOut flag (the cap-interval can flip it on the same tick the poll
   // observes success), so let an observed success win over the timeout copy.
-  const failed = status === "FAILED" || (timedOut && status !== "SUCCEEDED");
+  const failed = status === "FAILED";
 
   return (
     <div className="mt-2">
       <Button
         variant="outline"
         className="w-full justify-center"
-        disabled={running || start.isPending}
+        disabled={pending || start.isPending}
         onClick={() => {
-          if (running || start.isPending) return;
+          if (pending || start.isPending) return;
           start.mutate();
         }}
       >
-        {running
+        {timedOut ? "查询已暂停" : running
           ? status === "RUNNING"
             ? "AI 生成摘要中…"
             : "正在受理…"
@@ -494,9 +484,10 @@ function AutoSummaryButton({
           {(start.error as Error).message}
         </p>
       ) : null}
+      {timedOut ? <p role="status" className="text-sm text-muted-foreground">{TASK_POLL_PAUSED_MESSAGE} <button type="button" className="underline" onClick={resumePoll}>继续查询原任务</button></p> : null}
       {failed && !start.isError ? (
         <p className="mt-1.5 text-[11px] text-destructive">
-          摘要生成未完成（可能超时或失败），请重试。
+          摘要生成失败，请重试。
         </p>
       ) : null}
     </div>
