@@ -10,7 +10,6 @@
 **/.git
 **/.env*
 **/*.log
-previews
 docs
 .agents
 .claude
