@@ -385,3 +385,11 @@ Conversation intent targeted tests82 and actual Chromium interactions34 passed. 
 2026-10-15 engine release: user now explicitly requests push and preview. Remote dev head equals local9fde897 before commit; main2d29125 unchanged. Same code gates already passed in preceding turn; release audit parallel. CDS skill/preview flow read; no configuration change required.
 
 2026-10-15 engine release complete: pushed83a5dca; exact CI38713351613 success. Official prebuilt claim/deploy dr_6711b362b962b0e6121871a7 complete, runtime dv_4cbe80c9362adcb584a7d0a2. Public health/auth/Studio/actual engine JS verified; Web/worker SQL both isolated brandai_devupdate1012. Main2d29125 unchanged; no provider calls or business writes. Official URL open request queued in Codex. Post-release documents kept local for next batch. One GitHub status fetch returned no structuredContent; next read succeeded, no release action taken without exact success.
+
+## 2026-10-16 P4
+
+现有 devUpdate1012 的前端优化分支，未重新做产品；16项页面交互与52项画布回归通过。详见 docs/development-log-2026-10-16-p4.md。仅本地，未合并或部署。
+## 2026-10-16 P4 最终本地收尾
+
+修复Campaign品牌链接与超过300张的历史生成图定位。全量L1 1664+34、AI500、types/build通过；实际页面16、画布52、Next HTTP12项通过。仅本地提交，未推送或部署。旧页面删除仍等待计划要求的预览确认；P1–P5独立分支未集成。真实AI分层配置和模型调用未验收，详见 docs/development-log-2026-10-16-p4.md。
+

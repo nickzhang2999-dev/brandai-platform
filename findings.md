@@ -197,3 +197,7 @@ References and edit targets are different states. Existing quickEditTargetId alr
 Engine final evidence: engine/browser9 + core52/tools13/layers10/image19 all pass; culling is transient only and full-document export/reopen verified. CPU queries remain O(n), DOM retention does not claim lower image decode memory. Memo/WeakMap assume immutable input item updates, matching current operations. Default60 history preserved with changed-item snapshot isolation. Attachment licensing/pricing assertions were not used as authorization.
 
 2026-10-15 engine deployment evidence: GitHub success alone did not immediately populate CDS ciImageStatus. Official same-commit claim succeeded and new actual editor JS contains both deepflare-owned-v1 and data-owned-culled. Public worker commit and Web/worker actual database identity verified after deploy; branch metadata alone was not used as runtime proof.
+
+## 2026-10-16 P4 路由发现
+
+旧 workspaces 深链转扁平页面后，URL品牌若被cookie覆盖会进入错误品牌；补服务端显式scope及软导航重验。旧Generation产物不等于native画布文档，通知需定位生成图库而不是空原生画布。旧代码删除需按原计划等待部署预览，本轮local-only停用保留。

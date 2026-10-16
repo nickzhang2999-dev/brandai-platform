@@ -303,3 +303,10 @@ Decision: keep native codec and loss-aware warning guards. The guide is referenc
 - [complete] Normal guarded commit/push83a5dcac58bec45e6051d7e2ab1cf952678f3e7d to devUpdate1012; remote readback equal and main2d29125 unchanged.
 - [complete] Exact-commit Branch Image38713351613 success; official prebuilt dry-run/claim/deploy, run dr_6711b362b962b0e6121871a7 complete/failure=null. Existing database/queue overrides preserved.
 - [complete] Public health/authentication/Studio/editor actual engine JS pass; Web/worker SQL both brandai_devupdate1012. Official preview URL retrieved; open_in_codex requested and queued. No production changes or model calls. Post-release receipts stay local until next normal batch.
+
+## 2026-10-16 P4 本地前端阶段
+
+- [x] 语义样式、可见失败、品牌确认与统一导航。
+- [x] URL品牌隔离、旧路由跳转、account归位、formatElapsed解耦。
+- [x] 最终 L1 1664+34、AI500、types/build通过；页面Chromium16、画布52、实际Next路由12通过。
+- [ ] 部署预览后删除停用旧页面（用户仅本地，本轮不执行）。
