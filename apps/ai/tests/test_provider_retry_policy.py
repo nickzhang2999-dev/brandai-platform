@@ -224,4 +224,4 @@ def test_contract_omission_preserves_legacy_and_health_advertises_policy(client)
     assert "providerRetryPolicy" not in ComplianceCheckRequest().model_dump(exclude_none=True)
     assert GenerateRequest.model_validate(generation_payload()).providerRetryPolicy == "never"
     assert ComplianceCheckRequest(providerRetryPolicy="never").providerRetryPolicy == "never"
-    assert client.get("/health").json()["providerRetryRevision"] == "single-provider-attempt-r1"
+    assert client.get("/health").json()["providerRetryRevision"] == "single-provider-attempt-r2"

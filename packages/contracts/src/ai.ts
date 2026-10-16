@@ -14,7 +14,10 @@ import {
  */
 
 // POST /v1/ingest/website
-export const IngestWebsiteRequest = z.object({ url: z.string().url() });
+export const IngestWebsiteRequest = z.object({
+  providerRetryPolicy: z.literal("never").optional(),
+  url: z.string().url(),
+});
 export type IngestWebsiteRequest = z.infer<typeof IngestWebsiteRequest>;
 
 export const IngestWebsiteResponse = z.object({
@@ -57,6 +60,7 @@ export type AssetSourceHint = z.infer<typeof AssetSourceHint>;
 
 // POST /v1/recognize
 export const RecognizeRequest = z.object({
+  providerRetryPolicy: z.literal("never").optional(),
   assets: z
     .array(
       z.object({
@@ -98,6 +102,7 @@ export type RecognizeResponse = z.infer<typeof RecognizeResponse>;
 // the VLM and gets back concise tags + a one-paragraph description, persisted
 // onto Asset.aiTags / Asset.aiDescription by the describe worker.
 export const DescribeRequest = z.object({
+  providerRetryPolicy: z.literal("never").optional(),
   /** Image asset URL (inlined server-side by the AI service, like recognize). */
   url: z.string(),
   /** Optional asset category hint (e.g. "PRODUCT" / "LOGO") to steer tagging. */
@@ -135,6 +140,7 @@ export const SummarizeMode = z.enum(["brief_decompose", "campaign_summary"]);
 export type SummarizeMode = z.infer<typeof SummarizeMode>;
 
 export const SummarizeRequest = z.object({
+  providerRetryPolicy: z.literal("never").optional(),
   mode: SummarizeMode,
   /** The text to work on: the raw brief (decompose) or the campaign context (summary). */
   text: z.string(),
@@ -164,7 +170,10 @@ export type SummarizeResponse = z.infer<typeof SummarizeResponse>;
 
 // POST /v1/parse-manual — parse a brand/VI manual PDF (by asset URL) into the
 // same DRAFT rule shape as /v1/recognize, so the confirm workbench is reused.
-export const ParseManualRequest = z.object({ url: z.string() });
+export const ParseManualRequest = z.object({
+  providerRetryPolicy: z.literal("never").optional(),
+  url: z.string(),
+});
 export type ParseManualRequest = z.infer<typeof ParseManualRequest>;
 
 export const ManualExtractedAsset = z.object({
@@ -458,6 +467,7 @@ export type GenerateResponse = z.infer<typeof GenerateResponse>;
 
 // POST /v1/edit
 export const EditRequest = z.object({
+  providerRetryPolicy: z.literal("never").optional(),
   imageUrl: z.string(),
   op: EditOp,
   payload: z.record(z.unknown()).default({}),

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const f = vi.hoisted(() => ({ dns: vi.fn(), fetch: vi.fn() }));
 vi.mock("node:dns/promises", () => ({ resolve4: f.dns }));
-const current = { parserRevision: "grounded-six-slot-r6", generationRevision: "gpt-image-2-size-quality-r1", visualCheckRevision: "studio-visual-check-evidence-r1", providerRetryRevision: "single-provider-attempt-r1" };
+const current = { parserRevision: "grounded-six-slot-r6", generationRevision: "gpt-image-2-size-quality-r1", visualCheckRevision: "studio-visual-check-evidence-r1", providerRetryRevision: "single-provider-attempt-r2" };
 const older = { parserRevision: current.parserRevision, generationRevision: current.generationRevision };
 const editable = { ...current, studioEditRevision: "studio-whole-image-edit-r1" };
 const layered = { ...current, studioDecompositionRevision: "studio-real-layer-single-attempt-r1" };
@@ -172,4 +172,11 @@ describe("product visual-check service capability gate", () => {
     f.fetch.mockResolvedValueOnce(new Response("unavailable", { status: 503 })).mockRejectedValueOnce(new Error("offline"));
     const { resolveAiService } = await load(); await expect(resolveAiService({ requireVisualCheck: true })).rejects.toThrow(); await expect(resolveAiService({ requireVisualCheck: true })).rejects.toThrow();
   });
+});
+
+
+it("rejects r1 service that only enforces single attempt on product endpoints", async () => {
+  f.fetch.mockImplementation(async () => Response.json({ ...current, providerRetryRevision: "single-provider-attempt-r1" }));
+  const { resolveAiService } = await load();
+  await expect(resolveAiService({ requireSingleAttempt: true })).rejects.toThrow("single-provider-attempt revision");
 });
