@@ -32,3 +32,26 @@ it("upload failures propagate so a worker cannot report successful archival", as
   f.settings.mockResolvedValue({ configured: true }); f.send.mockRejectedValue(new Error("storage down"));
   await expect(uploadDataUrlImage("data:image/png;base64,YQ==", "test")).rejects.toThrow("storage down");
 });
+
+it("encoded SVG cannot bypass production missing-storage validation", async () => {
+  vi.stubEnv("NODE_ENV", "production");
+  await expect(uploadDataUrlImage("data:image/svg+xml,%3Csvg%3E", "test")).rejects.toThrow("未配置对象存储");
+});
+it("aborted workers never start a storage lookup or upload", async () => {
+  const controller = new AbortController(); controller.abort(new Error("expired"));
+  await expect(uploadDataUrlImage("data:image/png;base64,YQ==", "test", controller.signal)).rejects.toThrow("expired");
+  expect(f.settings).not.toHaveBeenCalled(); expect(f.send).not.toHaveBeenCalled();
+});
+it.each(["settings", "upload"])("cancellation bounds stalled %s and preserves the signal", async stage => {
+  vi.stubEnv("NODE_ENV", "production");
+  const controller = new AbortController();
+  f.settings.mockResolvedValue({ configured: true, publicUrl: "https://storage.invalid" });
+  if (stage === "settings") f.settings.mockImplementation(() => new Promise(() => {}));
+  else f.send.mockImplementation(() => new Promise(() => {}));
+  const pending = uploadDataUrlImage("data:image/png;base64,YQ==", "test", controller.signal);
+  const checked = expect(pending).rejects.toThrow("expired");
+  await new Promise(resolve => setTimeout(resolve, 0));
+  controller.abort(new Error("expired")); await checked;
+  if (stage === "settings") expect(f.send).not.toHaveBeenCalled();
+  else expect(f.send.mock.calls[0][1].abortSignal).toBe(controller.signal);
+});

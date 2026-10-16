@@ -7,6 +7,7 @@ import {
 import { randomUUID } from "node:crypto";
 import type { Readable } from "node:stream";
 import { getEffectiveStorage } from "@/lib/settings";
+import { withinAiDeadline } from "./ai-response";
 
 // 2026-05-28 — module-level S3Client and S3_*-env-based helpers removed.
 // Per docs/PRINCIPLES.md §1 + INFRA-AUDIT.md, the platform's storage truth
@@ -44,9 +45,18 @@ const EXT_BY_TYPE: Record<string, string> = {
 export async function uploadDataUrlImage(
   dataUrl: string,
   keyPrefix: string,
+  signal?: AbortSignal,
 ): Promise<string> {
+  signal?.throwIfAborted();
   const match = /^data:([^;,]+)(;base64)?,(.*)$/s.exec(dataUrl);
   if (!match || !match[2]) {
+    if (/^data:/i.test(dataUrl) && process.env.NODE_ENV === "production") {
+      const config = getEffectiveStorage();
+      const cfg = await (signal ? withinAiDeadline(config, signal) : config);
+      signal?.throwIfAborted();
+      if (!cfg.configured) throw new Error("未配置对象存储，请在 /admin/settings 配置");
+      throw new Error("生成结果不是受支持的 base64 图片，未写入数据库");
+    }
     // Not a base64 data: URL — already a hosted URL (or non-data scheme).
     return dataUrl;
   }
@@ -54,7 +64,9 @@ export async function uploadDataUrlImage(
   if (isSvgPlaceholder && process.env.NODE_ENV !== "production") return dataUrl;
   // Production may never silently fall back to inline images when storage is
   // missing (including the SVG mock-provider path). Development keeps demos usable.
-  const cfg = await getEffectiveStorage();
+  const config = getEffectiveStorage();
+  const cfg = await (signal ? withinAiDeadline(config, signal) : config);
+  signal?.throwIfAborted();
   if (!cfg.configured && process.env.NODE_ENV === "production") {
     throw new Error("未配置对象存储，请在 /admin/settings 配置");
   }
@@ -89,14 +101,18 @@ export async function uploadDataUrlImage(
   });
 
   const key = `${keyPrefix}/${randomUUID()}.${ext}`;
-  await client.send(
+  signal?.throwIfAborted();
+  const upload = client.send(
     new PutObjectCommand({
       Bucket: cfg.bucket,
       Key: key,
       Body: body,
       ContentType: contentType,
     }),
+    { abortSignal: signal },
   );
+  await (signal ? withinAiDeadline(upload, signal) : upload);
+  signal?.throwIfAborted();
 
   const base = cfg.publicUrl.replace(/\/+$/, "");
   return `${base}/${key}`;
