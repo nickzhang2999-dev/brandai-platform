@@ -6,30 +6,9 @@ import {
   type ComplianceResult,
 } from "@brandai/contracts";
 import { ai } from "@/lib/ai";
-import { readBoundedAiJson, withinAiDeadline, type AiCallOptions } from "./ai-response";
+import { withinAiDeadline, type AiCallOptions } from "./ai-response";
 
-/**
- * Pre-generation compliance precheck adapter (M3 calls this before enqueuing
- * a generation; M5 will later own the real endpoint).
- *
- * ## Stable contract M5 must honor
- *
- * M3 only ever calls `runPrecheck({ workspaceId, text })` and consumes the
- * returned `PrecheckResult`. The adapter resolves the check in this order:
- *
- *  1. If `POST /api/workspaces/{workspaceId}/compliance/precheck` exists
- *     (M5 will own it), POST `{ workspaceId, text }` (the frozen
- *     `PrecheckInput` body) and expect a `ComplianceCheckResponse`
- *     (`{ results, report }`, frozen contract).
- *  2. Otherwise fall back to calling the AI service directly via
- *     `ai.complianceCheck({ text, termLib: <ComplianceTerm rows>, brandRules: [] })`.
- *
- * **Invariant for M5:** keep the route at that path accepting `PrecheckInput`
- * and returning `ComplianceCheckResponse`. As long as that holds, M5 can take
- * over the endpoint without any change to this file or the wizard. The
- * `PrecheckResult` shape below (`{ ok, blocking, report, results }`) is what
- * the wizard renders — keep it stable for any future consumers.
- */
+/** Worker-only precheck adapter. Calls the internal AI service once; never self-HTTPs a BFF route. */
 export interface PrecheckResult {
   /** false when there is at least one FORBIDDEN finding (must block submit). */
   ok: boolean;
@@ -37,8 +16,7 @@ export interface PrecheckResult {
   blocking: boolean;
   report: ComplianceReport;
   results: ComplianceResult[];
-  /** Wall-clock latency of resolving the precheck (either via the M5 route or
-   *  the direct AI call). Used by the worker to write a UsageLog row with
+  /** Wall-clock latency of resolving the precheck through the internal AI service. Used by the worker to write a UsageLog row with
    *  kind=COMPLIANCE so the activity log shows AI-side time for prechecks too.
    *  Optional so existing callers (the standalone advisory route) can ignore
    *  it without ceremony. */
@@ -71,6 +49,7 @@ async function buildDirectRequest(
   });
   return ComplianceCheckRequest.parse({
     text,
+    providerRetryPolicy: "never",
     brandRules: [],
     termLib: terms.map((t) => ({
       type: t.type,
@@ -89,51 +68,16 @@ async function buildDirectRequest(
 export async function runPrecheck(input: {
   workspaceId: string;
   text: string;
-  /** Absolute base url, so the server can self-call the (M5) route. */
-  baseUrl?: string;
 }, options?: AiCallOptions): Promise<PrecheckResult> {
   const { workspaceId, text } = input;
   const t0 = Date.now();
-  const signal = options ? options.signal ?? AbortSignal.timeout(5 * 60_000) : undefined;
-  const transport = signal ? { ...options, signal, maxResponseBytes: Math.min(options?.maxResponseBytes ?? 4 * 1024 * 1024, 4 * 1024 * 1024) } : undefined;
-  signal?.throwIfAborted();
-
-  // 1. Prefer the M5-owned endpoint if it is wired up.
-  if (input.baseUrl) {
-    try {
-      const res = await fetch(
-        `${input.baseUrl}/api/workspaces/${workspaceId}/compliance/precheck`,
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ workspaceId, text }),
-          cache: "no-store",
-          ...(signal ? { signal } : {}),
-        },
-      );
-      if (res.ok) {
-        const parsed = ComplianceCheckResponse.parse(signal
-          ? await readBoundedAiJson(res, signal, transport!.maxResponseBytes)
-          : await res.json());
-        return {
-          ...summarize(parsed.report, parsed.results),
-          latencyMs: Date.now() - t0,
-        };
-      }
-      if (signal) void res.body?.cancel().catch(() => undefined);
-      // 404/501 -> M5 not built yet, fall through to the direct AI call.
-    } catch {
-      signal?.throwIfAborted();
-      /* network/route error -> fall through to direct AI call */
-    }
-  }
-
-  // 2. Fallback: call the AI compliance check directly through the adapter.
-  signal?.throwIfAborted();
+  const signal = options?.signal ?? AbortSignal.timeout(5 * 60_000);
+  const transport = { ...options, signal, maxResponseBytes: Math.min(options?.maxResponseBytes ?? 4 * 1024 * 1024, 4 * 1024 * 1024) };
+  signal.throwIfAborted();
   const setup = buildDirectRequest(workspaceId, text);
-  const request = await (signal ? withinAiDeadline(setup, signal) : setup);
-  signal?.throwIfAborted();
-  const raw = await (transport ? ai.complianceCheck(request, transport) : ai.complianceCheck(request));
+  const request = await withinAiDeadline(setup, signal);
+  signal.throwIfAborted();
+  const raw = await withinAiDeadline(ai.complianceCheck(request, transport), signal);
   const parsed = ComplianceCheckResponse.parse(raw);
   return {
     ...summarize(parsed.report, parsed.results),

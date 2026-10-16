@@ -28,14 +28,19 @@ describe("product precheck shares generation deadline", () => {
     await expect(runPrecheck(input, { signal: c.signal, maxResponseBytes: 48 * 1024 * 1024 })).rejects.toThrow("fixture end");
     expect(f.ai).toHaveBeenCalledWith(expect.objectContaining({ text: "test" }), { signal: c.signal, maxResponseBytes: 4 * 1024 * 1024 });
   });
-  it("does not fall through to another AI call after self-route abort", async () => {
+  it("never self-HTTPs the BFF even if an old caller supplies baseUrl", async () => {
     const c = new AbortController();
-    f.fetch.mockImplementation(async () => { c.abort(new Error("expired")); throw c.signal.reason; });
-    await expect(runPrecheck({ ...input, baseUrl: "http://127.0.0.1" }, { signal: c.signal })).rejects.toThrow("expired");
-    expect(f.terms).not.toHaveBeenCalled(); expect(f.ai).not.toHaveBeenCalled();
+    await expect(runPrecheck({ ...input, baseUrl: "http://127.0.0.1" } as typeof input, { signal: c.signal })).rejects.toThrow("fixture end");
+    expect(f.fetch).not.toHaveBeenCalled(); expect(f.ai).toHaveBeenCalledTimes(1);
   });
-  it("keeps legacy one-argument calls unchanged", async () => {
+  it("bounds legacy calls and prohibits automatic paid retries", async () => {
     await expect(runPrecheck(input)).rejects.toThrow("fixture end");
-    expect(f.ai.mock.calls[0]).toHaveLength(1);
+    expect(f.ai).toHaveBeenCalledWith(expect.objectContaining({ providerRetryPolicy: "never" }),
+      { signal: expect.any(AbortSignal), maxResponseBytes: 4 * 1024 * 1024 });
+  });
+  it("retains forbidden finding semantics in the async result", async () => {
+    const report = { overall: "FORBIDDEN", textResults: [], visualResults: [], checkedAt: new Date().toISOString() };
+    f.ai.mockResolvedValue({ report, results: [] });
+    await expect(runPrecheck(input)).resolves.toMatchObject({ ok: false, blocking: true, report, results: [] });
   });
 });

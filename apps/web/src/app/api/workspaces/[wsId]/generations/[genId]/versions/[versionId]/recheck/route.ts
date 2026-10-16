@@ -1,5 +1,4 @@
 import { prisma } from "@brandai/db";
-import { ComplianceReport } from "@brandai/contracts";
 import {
   ApiException,
   handleError,
@@ -7,21 +6,9 @@ import {
   requireUser,
 } from "@/lib/api";
 import { requireWorkspaceRole } from "@/lib/workspace";
-import { runComplianceCheck } from "@/lib/compliance";
-import { setVersionComplianceReport } from "@/lib/generations";
+import { createComplianceTask } from "@/lib/compliance-tasks";
 
-/**
- * M5 · 生成后复检 (post-generation recheck).
- *
- * POST /api/workspaces/[wsId]/generations/[genId]/versions/[versionId]/recheck
- *
- * Re-runs compliance on a finalized GenerationVersion: text recheck on the
- * owning generation's selling point + scene AND a visual check on the
- * version's image (imageUrl is passed to the AI compliance check, which
- * returns `visualResults` from the VLM mock — Logo 存在 / 主色 / 禁用元素 /
- * 产品变形). The resulting `ComplianceReport` is persisted into
- * `GenerationVersion.complianceReport` (Json) and returned.
- */
+/** Legacy version recheck is durable and async; Studio keeps its existing single-claim flow. */
 export async function POST(
   _req: Request,
   {
@@ -48,7 +35,7 @@ export async function POST(
       throw new ApiException(404, "Version not found in this generation");
     }
     // Product versions use a durable, single-claim check and private-S3 byte
-    // transport. The synchronous legacy route must not bypass that boundary.
+    // transport. The legacy task route must not bypass that boundary.
     const studio = await prisma.studioGenerationRequest.findUnique({ where: { generationId: genId }, select: { id: true } });
     if (studio) throw new ApiException(409, "请在工作台使用“重试检查”，产品图片的视觉检查需要异步执行。");
 
@@ -56,17 +43,11 @@ export async function POST(
       .filter(Boolean)
       .join("。");
 
-    const { report } = await runComplianceCheck({
-      workspaceId: wsId,
-      text,
-      imageUrl: version.imageUrl,
+    const accepted = await createComplianceTask(wsId, "COMPLIANCE_RECHECK", {
+      userId: user.id, projectId: generation.projectId, generationId: genId,
+      versionId, imageUrl: version.imageUrl, text,
     });
-
-    const saved = await setVersionComplianceReport(
-      versionId,
-      ComplianceReport.parse(report),
-    );
-    return ok(saved);
+    return ok(accepted, { status: 202 });
   } catch (err) {
     return handleError(err);
   }

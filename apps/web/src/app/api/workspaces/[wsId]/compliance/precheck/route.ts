@@ -6,23 +6,10 @@ import {
   parse,
   requireUser,
 } from "@/lib/api";
-import { requireOwnedWorkspace } from "@/lib/workspace";
-import { runComplianceCheck } from "@/lib/compliance";
+import { requireWorkspaceRole } from "@/lib/workspace";
+import { createComplianceTask } from "@/lib/compliance-tasks";
 
-/**
- * M5 · 生成前合规预检 (the integration M3 depends on).
- *
- * POST /api/workspaces/[wsId]/compliance/precheck
- *   - body: frozen `PrecheckInput` ({ workspaceId, text })
- *   - returns: frozen `ComplianceCheckResponse` ({ results, report })
- *
- * `lib/precheck.ts` (M3, do-not-touch) self-calls this route:
- *   fetch(`${baseUrl}/api/workspaces/${workspaceId}/compliance/precheck`,
- *     { method: "POST", body: JSON.stringify({ workspaceId, text }) })
- *   then `ComplianceCheckResponse.parse(await res.json())`.
- * Keep this request/response contract exactly so the M3 wizard uses the
- * real endpoint instead of the direct-AI fallback.
- */
+/** Accept a durable text check; the worker publishes the result on TaskState. */
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ wsId: string }> },
@@ -30,7 +17,7 @@ export async function POST(
   try {
     const user = await requireUser();
     const { wsId } = await params;
-    await requireOwnedWorkspace(wsId, user.id);
+    await requireWorkspaceRole(wsId, user.id, "EDITOR");
 
     const input = parse(PrecheckInput, {
       ...(await req.json()),
@@ -40,11 +27,8 @@ export async function POST(
       throw new ApiException(400, "workspaceId mismatch");
     }
 
-    const response = await runComplianceCheck({
-      workspaceId: wsId,
-      text: input.text,
-    });
-    return ok(response);
+    const response = await createComplianceTask(wsId, "COMPLIANCE_PRECHECK", { userId: user.id, text: input.text });
+    return ok(response, { status: 202 });
   } catch (err) {
     return handleError(err);
   }

@@ -674,6 +674,10 @@ model AsyncTask {
   refId       String?
   refCount    Int       @default(0)
   error       String?
+  // Durable request/result for legacy compliance tasks; never stored in errors
+  // or Redis return values. Existing kinds leave these nullable columns empty.
+  inputJson   Json?
+  resultJson  Json?
   // Product compliance attempts have a server-issued deadline. Legacy tasks
   // leave this null and retain their existing lifecycle.
   expiresAt   DateTime?
