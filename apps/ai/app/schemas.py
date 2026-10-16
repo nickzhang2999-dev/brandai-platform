@@ -207,7 +207,19 @@ class WorkbenchSession(BaseModel):
     activeWorkspaceId: str | None
 
 
-class IngestWebsiteRequest(BaseModel):
+class SingleAttemptRequest(BaseModel):
+    # Omission supports old internal clients; the BFF always sends never.
+    providerRetryPolicy: Optional[Literal["never"]] = None
+
+    @field_validator("providerRetryPolicy", mode="before")
+    @classmethod
+    def reject_null_retry_policy(cls, value):
+        if value is None:
+            raise ValueError("providerRetryPolicy must be omitted or never")
+        return value
+
+
+class IngestWebsiteRequest(SingleAttemptRequest):
     url: str
 
 
@@ -243,11 +255,11 @@ class AssetRef(BaseModel):
     source: Optional[str] = None
 
 
-class RecognizeRequest(BaseModel):
+class RecognizeRequest(SingleAttemptRequest):
     assets: list[AssetRef]
 
 
-class DescribeRequest(BaseModel):
+class DescribeRequest(SingleAttemptRequest):
     """POST /v1/describe — E9/E10 asset auto-tagging by image URL."""
 
     url: str
@@ -269,7 +281,7 @@ class SummarizeContext(BaseModel):
     ruleSummaries: list[str] = Field(default_factory=list)
 
 
-class SummarizeRequest(BaseModel):
+class SummarizeRequest(SingleAttemptRequest):
     """POST /v1/summarize — B2/C8 text-only VLM endpoint, two modes."""
 
     mode: str  # "brief_decompose" | "campaign_summary"
@@ -292,7 +304,7 @@ class SummarizeResponse(BaseModel):
     highlights: list[str] = Field(default_factory=list)
 
 
-class ParseManualRequest(BaseModel):
+class ParseManualRequest(SingleAttemptRequest):
     """POST /v1/parse-manual — a brand/VI manual PDF asset URL to parse."""
 
     url: str
@@ -494,7 +506,7 @@ class GenerateResponse(BaseModel):
     usage: Optional[GenerateUsage] = None
 
 
-class EditRequest(BaseModel):
+class EditRequest(SingleAttemptRequest):
     imageUrl: str
     op: str
     payload: dict[str, Any] = {}
