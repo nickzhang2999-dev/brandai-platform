@@ -414,6 +414,8 @@ function AutoSummaryButton({
   useEffect(() => {
     setTaskId(null);
     setTimedOut(false);
+    // setTimedOut is a stable callback declared further down; listing it here would read it before initialization.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
 
   const start = useMutation({

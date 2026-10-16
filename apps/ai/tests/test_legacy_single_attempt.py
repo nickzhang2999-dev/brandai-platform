@@ -11,11 +11,11 @@ from app import schemas
 
 CASES = [
     ("/v1/ingest/website", schemas.IngestWebsiteRequest, {"url": "https://example.invalid"}),
-    ("/v1/recognize", schemas.RecognizeRequest, {"assets": []}),
+    ("/v1/recognize", schemas.RecognizeRequest, {"assets": [{"id": "asset-1", "url": "https://example.invalid/image.png"}]}),
     ("/v1/describe", schemas.DescribeRequest, {"url": "https://example.invalid/image.png"}),
     ("/v1/parse-manual", schemas.ParseManualRequest, {"url": "https://example.invalid/manual.pdf"}),
     ("/v1/summarize", schemas.SummarizeRequest, {"mode": "brief_decompose", "text": "poster"}),
-    ("/v1/edit", schemas.EditRequest, {"imageUrl": "https://example.invalid/image.png", "op": "resize", "payload": {}}),
+    ("/v1/edit", schemas.EditRequest, {"imageUrl": "https://example.invalid/image.png", "op": "RESIZE", "payload": {}}),
 ]
 
 

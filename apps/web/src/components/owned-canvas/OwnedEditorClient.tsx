@@ -77,6 +77,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
   const [pendingUpload, setPendingUpload] = useState(false);
   const [pollPaused, setPollPaused] = useState(false);
   const generationPoll = useBoundedTaskPoll({ taskKey: JSON.stringify([workspaceId, userId, projectId]), active: generations.some(activeGeneration) });
+  const { timedOut: generationPollTimedOut, expired: generationPollExpired, remaining: generationPollRemaining, resume: resumeGenerationPoll } = generationPoll;
   const apiRef = useRef<ProductApi | null>(null), alive = useRef(false), docRef = useRef<OwnedCanvasDocument | null>(null);
   const viewRef = useRef<EditorDocumentView | null>(null), writableRef = useRef(false), savedSequence = useRef(0), sequence = useRef(0);
   const saveBusy = useRef(false), saveBlocked = useRef(false), pendingSave = useRef<{ canvas: string; sequence: number } | null>(null);
@@ -166,7 +167,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
   const refresh = useCallback(async (quiet = false) => {
     const api = apiRef.current;
     if (!api || refreshBusy.current) return;
-    refreshBusy.current = true; if (!quiet) { setRefreshing(true); generationPoll.resume(); setPollPaused(false); }
+    refreshBusy.current = true; if (!quiet) { setRefreshing(true); resumeGenerationPoll(); setPollPaused(false); }
     try {
       const values = await Promise.allSettled([api.listMaterials(), api.listUploads(), api.listGenerations()]);
       if (!alive.current || apiRef.current !== api) return;
@@ -186,7 +187,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
       const failure = values.find(value => value.status === "rejected");
       if (failure?.status === "rejected") { setNotice(messageOf(failure.reason)); if (quiet) setPollPaused(true); }
     } finally { if (apiRef.current === api) { refreshBusy.current = false; if (alive.current) setRefreshing(false); } }
-  }, [clearGenerationIntent, generationPoll.resume]);
+  }, [clearGenerationIntent, resumeGenerationPoll]);
 
   const openExistingTask = useCallback(async (kind: InitialTask["kind"], id: string) => {
     const api = apiRef.current;
@@ -336,10 +337,10 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
   }, [workspaceId, userId, projectId, save, send, openExistingTask, flushDraft, draftConfirmed, insertImage]);
 
   useEffect(() => {
-    if (!generations.some(activeGeneration) || pollPaused || generationPoll.timedOut) return;
-    const timer = setTimeout(() => { if (!generationPoll.expired()) void refresh(true); }, Math.min(3500, generationPoll.remaining()));
+    if (!generations.some(activeGeneration) || pollPaused || generationPollTimedOut) return;
+    const timer = setTimeout(() => { if (!generationPollExpired()) void refresh(true); }, Math.min(3500, generationPollRemaining()));
     return () => clearTimeout(timer);
-  }, [generations, pollPaused, refresh, generationPoll.timedOut, generationPoll.expired, generationPoll.remaining]);
+  }, [generations, pollPaused, refresh, generationPollTimedOut, generationPollExpired, generationPollRemaining]);
   useEffect(() => {
     if (generationPoll.timedOut) setNotice(TASK_POLL_PAUSED_MESSAGE);
   }, [generationPoll.timedOut]);

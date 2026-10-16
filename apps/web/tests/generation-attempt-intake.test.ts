@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const f = vi.hoisted(() => ({ prepare: vi.fn(), reserve: vi.fn(), quota: vi.fn(), add: vi.fn(), getJob: vi.fn(), generation: vi.fn(), update: vi.fn(), roots: vi.fn(), studio: vi.fn(), project: vi.fn(), brand: vi.fn(), shaped: vi.fn(), rules: vi.fn(), preview: vi.fn() }));
-vi.mock("../../db/src/index", () => ({ prisma: { generation: { findUnique: f.generation, updateMany: f.update }, generationVersion: { findMany: f.roots }, studioGenerationRequest: { findUnique: f.studio }, project: { findUnique: f.project }, brandWorkspace: { findUnique: f.brand } } }));
+vi.mock("../../../packages/db/src/index", () => ({ prisma: { generation: { findUnique: f.generation, updateMany: f.update }, generationVersion: { findMany: f.roots }, studioGenerationRequest: { findUnique: f.studio }, project: { findUnique: f.project }, brandWorkspace: { findUnique: f.brand } } }));
 vi.mock("@/lib/api", () => ({ ApiException: class extends Error { constructor(public status: number, message: string) { super(message); } },
   requireUser: async () => ({ id: "u" }), parse: (schema: any, value: unknown) => schema.parse(value),
   handleError: (error: any) => Response.json({ error: error.message }, { status: error.status ?? 500 }), ok: (value: unknown, init?: ResponseInit) => Response.json(value, init) }));
@@ -13,10 +13,10 @@ vi.mock("@/lib/rules", () => ({ getConfirmedRules: f.rules }));
 vi.mock("@/lib/prohibitions", () => ({ serializeProhibition: vi.fn() }));
 vi.mock("@/lib/ai-constraints", () => ({ compileAIConstraints: vi.fn(), constraintsEnabled: () => false }));
 vi.mock("@/lib/brand-preview", () => ({ composeBrandBrief: () => "Brand brief", getOrCreatePreviewProject: f.preview }));
-import { POST as generate } from "../../../apps/web/src/app/api/workspaces/[wsId]/generations/route";
-import { POST as campaign } from "../../../apps/web/src/app/api/workspaces/[wsId]/campaigns/route";
-import { POST as preview } from "../../../apps/web/src/app/api/workspaces/[wsId]/brand-preview/route";
-import { POST as regenerate, GET as readGeneration } from "../../../apps/web/src/app/api/workspaces/[wsId]/generations/[genId]/route";
+import { POST as generate } from "../src/app/api/workspaces/[wsId]/generations/route";
+import { POST as campaign } from "../src/app/api/workspaces/[wsId]/campaigns/route";
+import { POST as preview } from "../src/app/api/workspaces/[wsId]/brand-preview/route";
+import { POST as regenerate, GET as readGeneration } from "../src/app/api/workspaces/[wsId]/generations/[genId]/route";
 let reserved: any[], row: any;
 const targets = [{ key: "square", label: "Square", width: 1024, height: 1024 }];
 const run = (post: typeof generate, body: unknown = {}) => post(new Request("http://local/generate", { method: "POST", body: JSON.stringify(body) }), { params: Promise.resolve({ wsId: "w" }) });

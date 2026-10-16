@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ZodError } from "zod";
-import { GeneratedAssetTargetQueryInput } from "../src/api";
+import { GeneratedAssetTargetQueryInput } from "../../../packages/contracts/src/api";
 
 const f = vi.hoisted(() => ({ user: vi.fn(), access: vi.fn(), findMany: vi.fn() }));
-vi.mock("../../db/src/index", () => ({ prisma: { asset: { findMany: f.findMany } } }));
+vi.mock("../../../packages/db/src/index", () => ({ prisma: { asset: { findMany: f.findMany } } }));
 vi.mock("@/lib/api", () => ({
   requireUser: f.user,
   parse: (schema: { parse(value: unknown): unknown }, value: unknown) => schema.parse(value),
@@ -13,8 +13,8 @@ vi.mock("@/lib/api", () => ({
   }),
 }));
 vi.mock("@/lib/workspace", () => ({ requireOwnedWorkspace: f.access }));
-vi.mock("@/lib/assets", () => import("../../../apps/web/src/lib/assets"));
-import { GET } from "../../../apps/web/src/app/api/workspaces/[wsId]/generated-assets/route";
+vi.mock("@/lib/assets", () => import("../src/lib/assets"));
+import { GET } from "../src/app/api/workspaces/[wsId]/generated-assets/route";
 
 const ctx = { params: Promise.resolve({ wsId: "workspace-a" }) };
 const read = (query = "") => GET(new Request(`https://fixture.invalid/api/workspaces/workspace-a/generated-assets${query}`), ctx);

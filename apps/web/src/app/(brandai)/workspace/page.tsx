@@ -335,6 +335,8 @@ function Workspace() {
       setJobId(null);
       setTimedOut(false);
     }
+    // setTimedOut is a stable callback declared further down; listing it here would read it before initialization.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projects, projectsFetched, projectId]);
 
   const [sellingPoint, setSellingPoint] = useState(
@@ -833,7 +835,7 @@ function Workspace() {
     setJobId(null);
     setTimedOut(false);
     setActiveVariant(0);
-  }, [projectId, presetProject, presetGen]);
+  }, [projectId, presetProject, presetGen, setTimedOut]);
 
   // E · 客户端导航到 ?gen=(已在工作台时点通知/队列) → 切到那次出图。整页加载走
   // genId 初始值;这里只接 URL 变化(soft nav)。
@@ -911,7 +913,7 @@ function Workspace() {
     };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
-  }, []);
+  }, [, setTimedOut]);
 
   // 进入工作台默认展示该项目最近一次出图（history newest-first）。仅当本会话
   // 还没有选中/提交任何出图时播种 —— 不覆盖用户的实时提交，也不覆盖手动切换的历史。
@@ -923,7 +925,7 @@ function Workspace() {
       setTimedOut(false);
       setActiveVariant(0);
     }
-  }, [history, genId]);
+  }, [history, genId, setTimedOut]);
 
   // 点击历史缩略图回看某次出图：复用整套机制（轮询无 jobId → 回退 SUCCEEDED，
   // 改图/终选/导出/审阅全部对该历史出图生效）。
@@ -940,7 +942,7 @@ function Workspace() {
       : -1;
     setActiveVariant(idx >= 0 ? idx : 0);
     setSubmitErr(null);
-  }, [genId, history]);
+  }, [genId, history, setTimedOut]);
 
   // 对话面板提交成功 → 新出图立即成为当前选中（带 jobId 走完整 job 轮询），
   // 画布无需用户手点「查看」即渲染新图（Codex P2）。
@@ -1109,6 +1111,7 @@ function Workspace() {
   const decomposeRunningAt = useRef(0);
   const decomposePollBudget = useBoundedTaskPoll({ taskKey: decomposeTaskId ? JSON.stringify([wsId, decomposeTaskId]) : null, startedAt: decomposeStartedAt });
   const decomposeWatchExpired = decomposePollBudget.expired;
+  const resumeDecomposePoll = decomposePollBudget.resume;
   /**
    * 发起这次分解时**当时**的 generation / campaign。
    *
@@ -1153,8 +1156,8 @@ function Workspace() {
     if (decomposePoll?.status !== "RUNNING") return;
     if (decomposeRunningAt.current > 0) return;
     decomposeRunningAt.current = Date.now();
-    decomposePollBudget.resume(); // First RUNNING receives its own observation window.
-  }, [decomposePoll?.status, decomposePollBudget.resume]);
+    resumeDecomposePoll(); // First RUNNING receives its own observation window.
+  }, [decomposePoll?.status, resumeDecomposePoll]);
 
   useEffect(() => {
     const s = decomposePoll?.status;

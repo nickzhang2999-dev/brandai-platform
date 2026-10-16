@@ -4,14 +4,14 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { assertProductionAuthSecret } from "../../../apps/web/src/lib/runtime-security";
-import { register } from "../../../apps/web/src/instrumentation";
-import configureNext from "../../../apps/web/next.config.mjs";
+import { assertProductionAuthSecret } from "../src/lib/runtime-security";
+import { register } from "../src/instrumentation";
+import configureNext from "../next.config.mjs";
 
 afterEach(() => vi.unstubAllEnvs());
 const valid = "synthetic-runtime-validation-secret-only";
-const webRoot = fileURLToPath(new URL("../../../apps/web", import.meta.url));
-const requireWeb = createRequire(new URL("../../../apps/web/next.config.mjs", import.meta.url));
+const webRoot = fileURLToPath(new URL("..", import.meta.url));
+const requireWeb = createRequire(new URL("../next.config.mjs", import.meta.url));
 const { PHASE_PRODUCTION_BUILD, PHASE_PRODUCTION_SERVER, PHASE_DEVELOPMENT_SERVER } = requireWeb("next/constants");
 
 describe("production runtime AUTH_SECRET gate", () => {
@@ -82,7 +82,7 @@ describe("production runtime AUTH_SECRET gate", () => {
     try {
       // The fixture has no .env or build artifacts. It re-exports the real
       // application config, so the installed CLI must reject before BUILD_ID.
-      const configUrl = new URL("../../../apps/web/next.config.mjs", import.meta.url).href;
+      const configUrl = new URL("../next.config.mjs", import.meta.url).href;
       writeFileSync(path.join(fixture, "next.config.mjs"), `export { default } from ${JSON.stringify(configUrl)};\n`);
       const env = childEnv(); env.AUTH_SECRET = secret;
       const child = spawnSync(process.execPath, [requireWeb.resolve("next/dist/bin/next"), "start", fixture, "--hostname", "127.0.0.1", "--port", "0"], {

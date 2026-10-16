@@ -1753,7 +1753,7 @@ function AICoCreate({
     setAttachErr(null);
     setLastUpload(null);
     setUploadType(null);
-  }, [wsId, taskStorageKey]);
+  }, [wsId, taskStorageKey, setTimedOut]);
 
   const status = task?.status ?? (taskId ? "PENDING" : null);
   const running =

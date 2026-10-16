@@ -48,15 +48,17 @@ export function useBoundedTaskQuery<T>({ queryKey, taskKey, enabled = true, quer
     refetchInterval: q => budget.interval(getStatus(q.state.data)),
   });
   const terminal = isTaskTerminal(getStatus(query.data));
+  const { timedOut: budgetTimedOut, resume: resumeBudget } = budget;
+  const { refetch } = query;
   const resume = useCallback(() => {
     if (!taskKey || terminal) return;
-    const wasPaused = budget.timedOut;
-    budget.resume();
+    const wasPaused = budgetTimedOut;
+    resumeBudget();
     // A failed GET can happen before the budget expires. In that case enabled
     // stays true, so explicitly read now rather than waiting for an interval.
     // An expired observer refetches once through its false -> true transition.
-    if (!wasPaused) void query.refetch();
-  }, [taskKey, terminal, budget.timedOut, budget.resume, query.refetch]);
+    if (!wasPaused) void refetch();
+  }, [taskKey, terminal, budgetTimedOut, resumeBudget, refetch]);
   return { ...query, timedOut: !terminal && budget.timedOut, resume, setTimedOut: budget.setTimedOut };
 }
 

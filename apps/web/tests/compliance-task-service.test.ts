@@ -1,14 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const f = vi.hoisted(() => ({ create: vi.fn(), expire: vi.fn(), pending: vi.fn(), enqueue: vi.fn(), user: vi.fn(), role: vi.fn(), project: vi.fn(), generation: vi.fn(), version: vi.fn(), studio: vi.fn() }));
-vi.mock("../../db/src/index", () => ({ Prisma: {}, prisma: {
+vi.mock("../../../packages/db/src/index", () => ({ Prisma: {}, prisma: {
   asyncTask: { create: f.create, updateMany: f.expire, findMany: f.pending }, user: { findUnique: f.user }, project: { findFirst: f.project },
   generation: { findUnique: f.generation }, generationVersion: { findUnique: f.version }, studioGenerationRequest: { findUnique: f.studio },
 } }));
 vi.mock("@/auth", () => ({ auth: vi.fn() }));
-vi.mock("../../../apps/web/src/lib/workspace", () => ({ requireWorkspaceRole: f.role }));
-vi.mock("../../../apps/web/src/lib/compliance-task-queue", () => ({ enqueueComplianceTask: f.enqueue }));
-import { ApiException } from "../../../apps/web/src/lib/api";
-import { createComplianceTask, dispatchComplianceTasks, validateComplianceTaskSource, COMPLIANCE_TASK_TTL_MS, COMPLIANCE_TASK_KINDS } from "../../../apps/web/src/lib/compliance-tasks";
+vi.mock("../src/lib/workspace", () => ({ requireWorkspaceRole: f.role }));
+vi.mock("../src/lib/compliance-task-queue", () => ({ enqueueComplianceTask: f.enqueue }));
+import { ApiException } from "../src/lib/api";
+import { createComplianceTask, dispatchComplianceTasks, validateComplianceTaskSource, COMPLIANCE_TASK_TTL_MS, COMPLIANCE_TASK_KINDS } from "../src/lib/compliance-tasks";
 const input = { userId: "u", projectId: "p", generationId: "g", versionId: "v", imageUrl: "https://test/image.png", text: "brief。scene" };
 beforeEach(() => {
   vi.resetAllMocks(); f.create.mockImplementation(async ({ data }) => ({ id: "t", ...data })); f.enqueue.mockResolvedValue(false);

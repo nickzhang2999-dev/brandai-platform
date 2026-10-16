@@ -7,20 +7,20 @@ const f = vi.hoisted(() => ({
   session: vi.fn(), user: vi.fn(), workspace: vi.fn(), membership: vi.fn(),
   create: vi.fn(), storage: vi.fn(),
 }));
-vi.mock("../../db/src/index", () => ({ prisma: {
+vi.mock("../../../packages/db/src/index", () => ({ prisma: {
   user: { findUnique: f.user },
   brandWorkspace: { findUnique: f.workspace },
   membership: { findUnique: f.membership },
   asset: { create: f.create },
 } }));
-vi.mock("../../../apps/web/src/auth", () => ({ auth: f.session }));
-vi.mock("@/lib/api", async () => import("../../../apps/web/src/lib/api"));
-vi.mock("@/lib/workspace", async () => import("../../../apps/web/src/lib/workspace"));
-vi.mock("@/lib/assets", async () => import("../../../apps/web/src/lib/assets"));
-vi.mock("@/lib/asset-storage-key", async () => import("../../../apps/web/src/lib/asset-storage-key"));
+vi.mock("../src/auth", () => ({ auth: f.session }));
+vi.mock("@/lib/api", async () => import("../src/lib/api"));
+vi.mock("@/lib/workspace", async () => import("../src/lib/workspace"));
+vi.mock("@/lib/assets", async () => import("../src/lib/assets"));
+vi.mock("@/lib/asset-storage-key", async () => import("../src/lib/asset-storage-key"));
 vi.mock("@/lib/settings", () => ({ getEffectiveStorage: f.storage }));
 
-import { POST as createAsset } from "../../../apps/web/src/app/api/workspaces/[wsId]/assets/route";
+import { POST as createAsset } from "../src/app/api/workspaces/[wsId]/assets/route";
 
 const params = { params: Promise.resolve({ wsId: "brand-a" }) };
 function request(body: unknown, path = "assets") {

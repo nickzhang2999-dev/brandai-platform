@@ -1,15 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const f = vi.hoisted(() => ({ update: vi.fn(), tx: vi.fn(), asset: vi.fn(), describe: vi.fn(), progress: vi.fn(), find: vi.fn(), sweep: vi.fn() }));
-vi.mock("../../db/src/index", () => ({ prisma: { asyncTask: { updateMany: f.update, findUnique: f.find }, $transaction: f.tx, generation: { updateMany: f.sweep } } }));
+vi.mock("../../../packages/db/src/index", () => ({ prisma: { asyncTask: { updateMany: f.update, findUnique: f.find }, $transaction: f.tx, generation: { updateMany: f.sweep } } }));
 vi.mock("@/lib/queue", () => ({ connection: {}, queuePrefix: "synthetic-worker" }));
 vi.mock("@/lib/ai", () => ({ ai: { describe: f.describe } }));
 vi.mock("@/lib/usage", () => ({ recordUsage: vi.fn() }));
 vi.mock("@/lib/async-tasks", () => ({ setProgress: f.progress }));
-import { runLegacyTask, sweepStaleLegacyTasks, LEGACY_TASK_KINDS } from "../../../apps/web/src/lib/legacy-task-runtime";
-import { createWorkerDeadline, LEGACY_TASK_RUN_MS, LEGACY_TASK_QUEUE_MS, generationRunBudgetMs, MAX_GENERATION_RUN_MS } from "../../../apps/web/src/lib/worker-deadline";
-import { runDescribeJob } from "../../../apps/web/src/lib/workers/describe.worker";
-import { sweepStaleGenerations } from "../../../apps/web/src/lib/generations";
-import { getTask, setProgress } from "../../../apps/web/src/lib/async-tasks";
+import { runLegacyTask, sweepStaleLegacyTasks, LEGACY_TASK_KINDS } from "../src/lib/legacy-task-runtime";
+import { createWorkerDeadline, LEGACY_TASK_RUN_MS, LEGACY_TASK_QUEUE_MS, generationRunBudgetMs, MAX_GENERATION_RUN_MS } from "../src/lib/worker-deadline";
+import { runDescribeJob } from "../src/lib/workers/describe.worker";
+import { sweepStaleGenerations } from "../src/lib/generations";
+// Workers above see the mocked "@/lib/async-tasks"; these tests need the real
+// module, which the web "@" alias would otherwise resolve to the same mock.
+const { getTask, setProgress } = await vi.importActual<typeof import("../src/lib/async-tasks")>("../src/lib/async-tasks");
 
 let rows: any[], assets: unknown[];
 function matches(row: any, where: any): boolean {

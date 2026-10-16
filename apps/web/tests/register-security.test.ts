@@ -1,18 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const f = vi.hoisted(() => ({ count: vi.fn(), find: vi.fn(), create: vi.fn(), tx: vi.fn(), txCount: vi.fn(), promote: vi.fn(), hash: vi.fn(), open: vi.fn() }));
-vi.mock("../../db/src/index", () => ({ prisma: { user: { count: f.count, findUnique: f.find, create: f.create }, $transaction: f.tx }, Prisma: { TransactionIsolationLevel: { Serializable: "Serializable" }, PrismaClientKnownRequestError: class extends Error {} } }));
+vi.mock("../../../packages/db/src/index", () => ({ prisma: { user: { count: f.count, findUnique: f.find, create: f.create }, $transaction: f.tx }, Prisma: { TransactionIsolationLevel: { Serializable: "Serializable" }, PrismaClientKnownRequestError: class extends Error {} } }));
 vi.mock("@/lib/api", () => ({
   ApiException: class extends Error { constructor(public status: number, message: string) { super(message); } },
   parse: (schema: { parse(value: unknown): unknown }, value: unknown) => schema.parse(value),
   ok: (value: unknown, init?: ResponseInit) => Response.json(value, init),
   handleError: (error: any) => Response.json({ error: error.message }, { status: error.status ?? (error.issues ? 422 : 500) }),
 }));
-vi.mock("@/lib/admin", async () => await import("../../../apps/web/src/lib/admin"));
+vi.mock("@/lib/admin", async () => await import("../src/lib/admin"));
 vi.mock("@/lib/password", () => ({ hashPassword: f.hash }));
 vi.mock("@/lib/settings", () => ({ isRegistrationOpen: f.open }));
-import { POST } from "../../../apps/web/src/app/api/auth/register/route";
-import { isAdminUser } from "../../../apps/web/src/lib/admin";
+import { POST } from "../src/app/api/auth/register/route";
+import { isAdminUser } from "../src/lib/admin";
 
 const email = "synthetic-user@example.invalid";
 const request = (body: unknown = { email, password: "synthetic-local-password" }) => new Request("http://127.0.0.1/api/auth/register", {

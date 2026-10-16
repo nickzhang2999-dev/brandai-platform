@@ -1,17 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createRequire } from "node:module";
-const React = createRequire(new URL("../../../apps/web/package.json", import.meta.url))("react");
+const React = createRequire(new URL("../package.json", import.meta.url))("react");
 const f = vi.hoisted(() => ({ auth: vi.fn(), user: vi.fn(), workspace: vi.fn(), membership: vi.fn(), fallback: vi.fn(), header: vi.fn() }));
 vi.mock("@/auth", () => ({ auth: f.auth }));
-vi.mock("../../db/src/index", () => ({ prisma: { user: { findUnique: f.user }, brandWorkspace: { findFirst: f.workspace }, membership: { findUnique: f.membership } } }));
-vi.mock("../../../apps/web/node_modules/next/headers.js", () => ({ cookies: async () => ({ get: () => ({ value: "cookie-brand" }) }), headers: async () => ({ get: f.header }) }));
-vi.mock("../../../apps/web/node_modules/next/navigation.js", () => ({ redirect: () => { throw new Error("LOGIN"); }, notFound: () => { throw new Error("NOT_FOUND"); } }));
+vi.mock("../../../packages/db/src/index", () => ({ prisma: { user: { findUnique: f.user }, brandWorkspace: { findFirst: f.workspace }, membership: { findUnique: f.membership } } }));
+vi.mock("../node_modules/next/headers.js", () => ({ cookies: async () => ({ get: () => ({ value: "cookie-brand" }) }), headers: async () => ({ get: f.header }) }));
+vi.mock("../node_modules/next/navigation.js", () => ({ redirect: () => { throw new Error("LOGIN"); }, notFound: () => { throw new Error("NOT_FOUND"); } }));
 vi.mock("@/lib/admin", () => ({ isAdminUser: async () => false }));
 vi.mock("@/lib/brandai", () => ({ getOrCreateActiveBrand: f.fallback }));
 vi.mock("@/lib/brand-cookie", () => ({ ACTIVE_BRAND_COOKIE: "brandai-active-brand" }));
-vi.mock("../../../apps/web/src/app/(brandai)/brand-context", () => ({ BrandProvider: () => null }));
-vi.mock("../../../apps/web/src/app/(brandai)/brand-sidebar", () => ({ BrandSidebar: () => null }));
-import Layout from "../../../apps/web/src/app/(brandai)/layout";
+vi.mock("../src/app/(brandai)/brand-context", () => ({ BrandProvider: () => null }));
+vi.mock("../src/app/(brandai)/brand-sidebar", () => ({ BrandSidebar: () => null }));
+import Layout from "../src/app/(brandai)/layout";
 
 beforeEach(() => {
   vi.resetAllMocks();

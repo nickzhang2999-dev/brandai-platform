@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { configuredUpgradeContact } from "../../../apps/web/src/lib/brandai-nav";
+import { configuredUpgradeContact } from "../src/lib/brandai-nav";
 
 const f = vi.hoisted(() => ({ open: vi.fn() }));
 vi.mock("@/lib/settings", () => ({ isRegistrationOpen: f.open }));
-import { GET } from "../../../apps/web/src/app/api/auth/registration/route";
+import { GET } from "../src/app/api/auth/registration/route";
 
 describe("public registration display flag", () => {
   beforeEach(() => { f.open.mockReset(); });

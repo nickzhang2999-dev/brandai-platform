@@ -26,6 +26,7 @@ export function OwnedBrandMaterialsDrawer({ workspaceId, projectId, userId, read
   const lifetime = useRef<AbortController | null>(null), root = useRef<HTMLElement | null>(null), searchInput = useRef<HTMLInputElement | null>(null), fileInput = useRef<HTMLInputElement | null>(null);
   const lock = useRef(false), sequence = useRef(0);
   const uploadPoll = useBoundedTaskPoll({ taskKey: JSON.stringify([workspaceId, userId]), active: tasks.some(task => pending(task.status)) });
+  const { timedOut: uploadPollTimedOut, expired: uploadPollExpired, remaining: uploadPollRemaining, resume: resumeUploadPoll } = uploadPoll;
   const uploadAttempt = useRef<{ file: File; mutationId: string } | null>(null);
   const prefix = `/api/workspaces/${encodeURIComponent(workspaceId)}/studio-brand-materials`;
 
@@ -80,10 +81,10 @@ export function OwnedBrandMaterialsDrawer({ workspaceId, projectId, userId, read
   }, [recoverUploads]);
   useEffect(() => { const timer = setTimeout(() => void refresh(), 200); return () => clearTimeout(timer); }, [refresh]);
   useEffect(() => {
-    if (!tasks.some(task => pending(task.status)) || uploadPoll.timedOut) return;
-    const timer = setTimeout(() => { if (!uploadPoll.expired()) void recoverUploads().then(() => refresh()).catch(error => setError(error instanceof Error ? error.message : "请刷新任务确认。")); }, Math.min(2500, uploadPoll.remaining()));
+    if (!tasks.some(task => pending(task.status)) || uploadPollTimedOut) return;
+    const timer = setTimeout(() => { if (!uploadPollExpired()) void recoverUploads().then(() => refresh()).catch(error => setError(error instanceof Error ? error.message : "请刷新任务确认。")); }, Math.min(2500, uploadPollRemaining()));
     return () => clearTimeout(timer);
-  }, [recoverUploads, refresh, tasks, uploadPoll.timedOut, uploadPoll.expired, uploadPoll.remaining]);
+  }, [recoverUploads, refresh, tasks, uploadPollTimedOut, uploadPollExpired, uploadPollRemaining]);
 
   const upload = useCallback(async (file: File) => {
     if (readOnly || lock.current) return;
@@ -96,7 +97,7 @@ export function OwnedBrandMaterialsDrawer({ workspaceId, projectId, userId, read
       form.set("mutationId", uploadAttempt.current.mutationId);
       const task = await request(uploadUrl(), StudioBrandMaterialUploadView, { method: "POST", body: form });
       if (task.workspaceId !== workspaceId || task.mutationId !== uploadAttempt.current.mutationId) throw new NovartApiError("上传回执与当前操作不一致，请刷新确认。", 422, "INVALID_RECEIPT", true);
-      uploadAttempt.current = null; uploadPoll.resume();
+      uploadAttempt.current = null; resumeUploadPoll();
       setTasks(old => [task, ...old.filter(value => value.taskId !== task.taskId)]);
       if (task.material) { materialScope(task.material); setChosen(task.material.assetId); await refresh(); }
       setNotice(task.status === "SUCCEEDED" ? "图片已保存到品牌素材库，可以选择加入画布或对话。" : "上传已受理，图片会保留在品牌素材库；可以关闭抽屉。" );
@@ -104,7 +105,7 @@ export function OwnedBrandMaterialsDrawer({ workspaceId, projectId, userId, read
       if (error instanceof NovartApiError && !error.uncertain) uploadAttempt.current = null;
       setError(error instanceof Error ? error.message : "上传未完成。");
     } finally { lock.current = false; setBusy(false); }
-  }, [materialScope, workspaceId, readOnly, refresh, request, uploadUrl, uploadPoll.resume]);
+  }, [materialScope, workspaceId, readOnly, refresh, request, uploadUrl, resumeUploadPoll]);
 
   const choose = async (kind: "canvas" | "conversation") => {
     if (readOnly || lock.current || !chosen) return;

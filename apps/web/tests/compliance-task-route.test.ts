@@ -1,13 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const f = vi.hoisted(() => ({ auth: vi.fn(), user: vi.fn(), role: vi.fn(), task: vi.fn(), project: vi.fn(), brand: vi.fn() }));
-vi.mock("../../db/src/index", () => ({ prisma: { user: { findUnique: f.user }, project: { findUnique: f.project }, brandWorkspace: { findUnique: f.brand } } }));
+vi.mock("../../../packages/db/src/index", () => ({ prisma: { user: { findUnique: f.user }, project: { findUnique: f.project }, brandWorkspace: { findUnique: f.brand } } }));
 vi.mock("@/auth", () => ({ auth: f.auth }));
-vi.mock("@/lib/api", async () => import("../../../apps/web/src/lib/api"));
+vi.mock("@/lib/api", async () => import("../src/lib/api"));
 vi.mock("@/lib/workspace", () => ({ requireWorkspaceRole: f.role }));
 vi.mock("@/lib/compliance-tasks", () => ({ createComplianceTask: f.task }));
-import { ApiException } from "../../../apps/web/src/lib/api";
-import { POST as textCheck } from "../../../apps/web/src/app/api/workspaces/[wsId]/compliance/precheck/route";
-import { POST as generationCheck } from "../../../apps/web/src/app/api/workspaces/[wsId]/generations/precheck/route";
+import { ApiException } from "../src/lib/api";
+import { POST as textCheck } from "../src/app/api/workspaces/[wsId]/compliance/precheck/route";
+import { POST as generationCheck } from "../src/app/api/workspaces/[wsId]/generations/precheck/route";
 const invoke = (post: typeof textCheck, body: unknown) => post(new Request("http://local/precheck", { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" } }), { params: Promise.resolve({ wsId: "w" }) });
 const brief = { projectId: "p", sceneType: "SOCIAL_POSTER", sellingPoint: "Brief" };
 beforeEach(() => {

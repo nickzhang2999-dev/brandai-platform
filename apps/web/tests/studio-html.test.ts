@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { studioHtml } from "../../../apps/web/src/lib/studio-assets";
+import { studioHtml } from "../src/lib/studio-assets";
 
 describe("owned Studio authenticated HTML bootstrap", () => {
   it("keeps untrusted project text inside escaped JSON before deferred owned scripts", () => {

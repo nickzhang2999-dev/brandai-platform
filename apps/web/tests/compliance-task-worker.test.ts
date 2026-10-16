@@ -1,22 +1,22 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const f = vi.hoisted(() => ({ find: vi.fn(), updateMany: vi.fn(), update: vi.fn(), transaction: vi.fn(), latest: vi.fn(), versionUpdate: vi.fn(), versionGet: vi.fn(),
   validate: vi.fn(), dispatch: vi.fn(), compliance: vi.fn(), precheck: vi.fn(), serialize: vi.fn() }));
-vi.mock("../../db/src/index", () => ({ Prisma: {}, prisma: { asyncTask: { findUnique: f.find, updateMany: f.updateMany, update: f.update, findFirst: f.latest },
+vi.mock("../../../packages/db/src/index", () => ({ Prisma: {}, prisma: { asyncTask: { findUnique: f.find, updateMany: f.updateMany, update: f.update, findFirst: f.latest },
   generationVersion: { updateMany: f.versionUpdate, findUniqueOrThrow: f.versionGet }, $transaction: f.transaction } }));
 vi.mock("@/auth", () => ({ auth: vi.fn() }));
 vi.mock("@/lib/queue", () => ({ connection: {}, queuePrefix: "test" }));
-vi.mock("../../../apps/web/src/lib/workspace", () => ({ requireWorkspaceRole: vi.fn() }));
-vi.mock("../../../apps/web/src/lib/compliance-task-queue", () => ({ enqueueComplianceTask: vi.fn() }));
-vi.mock("../../../apps/web/src/lib/compliance-tasks", async () => ({
-  ...await vi.importActual<any>("../../../apps/web/src/lib/compliance-tasks"), validateComplianceTaskSource: f.validate, dispatchComplianceTasks: f.dispatch,
+vi.mock("../src/lib/workspace", () => ({ requireWorkspaceRole: vi.fn() }));
+vi.mock("../src/lib/compliance-task-queue", () => ({ enqueueComplianceTask: vi.fn() }));
+vi.mock("../src/lib/compliance-tasks", async () => ({
+  ...await vi.importActual<any>("../src/lib/compliance-tasks"), validateComplianceTaskSource: f.validate, dispatchComplianceTasks: f.dispatch,
 }));
-vi.mock("../../../apps/web/src/lib/precheck", () => ({ runPrecheck: f.precheck }));
-vi.mock("../../../apps/web/src/lib/compliance", () => ({ runComplianceCheck: f.compliance }));
-vi.mock("../../../apps/web/src/lib/generations", () => ({ serializeVersion: f.serialize }));
-import { ApiException } from "../../../apps/web/src/lib/api";
-import { runComplianceTaskJob } from "../../../apps/web/src/lib/workers/compliance-task.worker";
-import { COMPLIANCE_TASK_ERROR, COMPLIANCE_TASK_EXPIRED } from "../../../apps/web/src/lib/compliance-tasks";
-import { parseAsyncTaskResult, TaskState } from "../src/async-task";
+vi.mock("../src/lib/precheck", () => ({ runPrecheck: f.precheck }));
+vi.mock("../src/lib/compliance", () => ({ runComplianceCheck: f.compliance }));
+vi.mock("../src/lib/generations", () => ({ serializeVersion: f.serialize }));
+import { ApiException } from "../src/lib/api";
+import { runComplianceTaskJob } from "../src/lib/workers/compliance-task.worker";
+import { COMPLIANCE_TASK_ERROR, COMPLIANCE_TASK_EXPIRED } from "../src/lib/compliance-tasks";
+import { parseAsyncTaskResult, TaskState } from "../../../packages/contracts/src/async-task";
 let row: any, version: any;
 const report = { overall: "PASS", textResults: [], visualResults: [], checkedAt: "2026-10-16T00:00:00.000Z" };
 const output = { results: [], report };

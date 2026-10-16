@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 const f = vi.hoisted(() => ({ settings: vi.fn(), send: vi.fn() }));
 vi.mock("@/lib/settings", () => ({ getEffectiveStorage: f.settings }));
-vi.mock("../../../apps/web/node_modules/@aws-sdk/client-s3", () => ({
+vi.mock("../node_modules/@aws-sdk/client-s3", () => ({
   S3Client: class { send = f.send; },
   PutObjectCommand: class { constructor(public input: unknown) {} },
   GetObjectCommand: class {}, DeleteObjectCommand: class {},
 }));
-import { uploadDataUrlImage } from "../../../apps/web/src/lib/s3";
+import { uploadDataUrlImage } from "../src/lib/s3";
 beforeEach(() => { vi.resetAllMocks(); f.settings.mockResolvedValue({ configured: false }); });
 afterEach(() => { vi.unstubAllEnvs(); });
 

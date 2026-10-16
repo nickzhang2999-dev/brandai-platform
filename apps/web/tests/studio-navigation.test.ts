@@ -1,10 +1,10 @@
 import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
-import { legacyStudioLocation, studioEditorHref } from "../../../apps/web/src/lib/studio-navigation";
-import { middleware } from "../../../apps/web/src/middleware";
-import { formatElapsed } from "../../../apps/web/src/lib/format-elapsed";
+import { legacyStudioLocation, studioEditorHref } from "../src/lib/studio-navigation";
+import { middleware } from "../src/middleware";
+import { formatElapsed } from "../src/lib/format-elapsed";
 
-const requireWeb = createRequire(new URL("../../../apps/web/next.config.mjs", import.meta.url));
+const requireWeb = createRequire(new URL("../next.config.mjs", import.meta.url));
 const { NextRequest } = requireWeb("next/server");
 const base = "https://local-test.invalid";
 const redirect = (path: string) => {

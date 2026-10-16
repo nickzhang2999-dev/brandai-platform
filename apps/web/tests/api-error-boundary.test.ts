@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
-vi.mock("../../db/src/index", () => ({ prisma: {} }));
-vi.mock("../../../apps/web/src/auth", () => ({ auth: vi.fn() }));
-import { ApiException, handleError } from "../../../apps/web/src/lib/api";
+vi.mock("../../../packages/db/src/index", () => ({ prisma: {} }));
+vi.mock("../src/auth", () => ({ auth: vi.fn() }));
+import { ApiException, handleError } from "../src/lib/api";
 
 afterEach(() => vi.restoreAllMocks());
 

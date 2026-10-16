@@ -4,23 +4,22 @@ import sharp from "sharp";
 const f = vi.hoisted(() => ({ user: vi.fn(), role: vi.fn(), owned: vi.fn(), create: vi.fn(), folder: vi.fn(), asset: vi.fn(), upload: vi.fn(), read: vi.fn(),
   ApiException: class extends Error { constructor(public status: number, message: string) { super(message); } },
 }));
-vi.mock("../../db/src/index", () => ({ prisma: { asset: { create: f.create, findUnique: f.asset }, assetFolder: { findUnique: f.folder } } }));
+vi.mock("../../../packages/db/src/index", () => ({ prisma: { asset: { create: f.create, findUnique: f.asset }, assetFolder: { findUnique: f.folder } } }));
 vi.mock("@/lib/api", () => ({ ApiException: f.ApiException, requireUser: f.user,
   ok: (body: unknown, init?: ResponseInit) => Response.json(body, init),
   handleError: (error: Error & { status?: number }) => Response.json({ error: error.message }, { status: error.status ?? 500 }),
 }));
-vi.mock("../../../apps/web/src/lib/api", () => ({ ApiException: f.ApiException }));
 vi.mock("@/lib/workspace", () => ({ requireWorkspaceRole: f.role, requireOwnedWorkspace: f.owned }));
 vi.mock("@/lib/s3", () => ({ uploadBuffer: f.upload, getObjectStream: f.read }));
 vi.mock("@/lib/assets", () => ({ serializeAsset: (asset: unknown) => asset, decodeImageResolution: () => undefined }));
-vi.mock("@/lib/asset-upload-policy", () => import("../../../apps/web/src/lib/asset-upload-policy"));
+vi.mock("@/lib/asset-upload-policy", () => import("../src/lib/asset-upload-policy"));
 vi.mock("@/lib/settings", () => ({ getEffectiveStorage: vi.fn() }));
 vi.mock("@/lib/ssrf", () => ({ safeFetch: vi.fn() }));
 vi.mock("@/lib/queue", () => ({ enqueueImagePreview: vi.fn() }));
 vi.mock("@/lib/studio-decomposition", () => ({ readStudioLayerAsset: vi.fn() }));
 vi.mock("@/lib/image-preview", () => ({ IMAGE_PREVIEW_WIDTH: 512, parseImagePreviewWidth: () => null, imagePreviewEtag: vi.fn(), imagePreviewHeaders: vi.fn(), nodeStreamToBuffer: vi.fn() }));
-import { POST } from "../../../apps/web/src/app/api/workspaces/[wsId]/assets/upload/route";
-import { GET } from "../../../apps/web/src/app/api/workspaces/[wsId]/assets/[assetId]/raw/route";
+import { POST } from "../src/app/api/workspaces/[wsId]/assets/upload/route";
+import { GET } from "../src/app/api/workspaces/[wsId]/assets/[assetId]/raw/route";
 
 const params = Promise.resolve({ wsId: "workspace-a", assetId: "asset-a" });
 function request(body: Buffer | string, type = "image/png", extra?: (form: FormData) => void) {

@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import sharp from "sharp";
-vi.mock("../../../apps/web/src/lib/api", () => ({ ApiException: class extends Error { constructor(public status: number, message: string) { super(message); } } }));
-import { ASSET_UPLOAD_TIMEOUT_MS, detectAssetUploadMime, readAssetUploadForm, validateAssetUpload } from "../../../apps/web/src/lib/asset-upload-policy";
-import { imageUploadLimitError, MAX_ASSET_UPLOAD_BODY_BYTES, MAX_ASSET_UPLOAD_BYTES, MAX_IMAGE_UPLOAD_BYTES } from "../../../apps/web/src/lib/upload-limits";
+vi.mock("../src/lib/api", () => ({ ApiException: class extends Error { constructor(public status: number, message: string) { super(message); } } }));
+import { ASSET_UPLOAD_TIMEOUT_MS, detectAssetUploadMime, readAssetUploadForm, validateAssetUpload } from "../src/lib/asset-upload-policy";
+import { imageUploadLimitError, MAX_ASSET_UPLOAD_BODY_BYTES, MAX_ASSET_UPLOAD_BYTES, MAX_IMAGE_UPLOAD_BYTES } from "../src/lib/upload-limits";
 
 function request(file: Blob, extra?: (form: FormData) => void) {
   const form = new FormData(); form.append("category", "OTHER"); form.append("file", file, "untrusted.html"); extra?.(form);
