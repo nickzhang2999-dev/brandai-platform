@@ -303,3 +303,11 @@ Decision: keep native codec and loss-aware warning guards. The guide is referenc
 - [complete] Normal guarded commit/push83a5dcac58bec45e6051d7e2ab1cf952678f3e7d to devUpdate1012; remote readback equal and main2d29125 unchanged.
 - [complete] Exact-commit Branch Image38713351613 success; official prebuilt dry-run/claim/deploy, run dr_6711b362b962b0e6121871a7 complete/failure=null. Existing database/queue overrides preserved.
 - [complete] Public health/authentication/Studio/editor actual engine JS pass; Web/worker SQL both brandai_devupdate1012. Official preview URL retrieved; open_in_codex requested and queued. No production changes or model calls. Post-release receipts stay local until next normal batch.
+
+
+## 2026-10-16 · P3 AI可靠性（当前授权：仅本地）
+
+从 devUpdate1012@2cf3932 新建 fix/p3-ai-reliability。P1@97ed7fb、P2@940e0fd 分别保留，没有合入本分支；不推送、部署、运行真实模型或迁移数据库。
+
+- [complete locally] P3 3.1–3.7 已实现，最终源码8bc050a。contracts1718/UI34/AI518、typecheck/build及浏览器72项通过，按任务本地提交。迁移/真实联调/集成/发布未执行。
+- [deferred] 真实数据库迁移与队列/模型验收、P1/P2/P3 跨分支集成、云端发布。必须保留平台审批和用户当前本地限制。

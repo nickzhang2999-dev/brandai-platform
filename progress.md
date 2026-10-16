@@ -385,3 +385,12 @@ Conversation intent targeted tests82 and actual Chromium interactions34 passed. 
 2026-10-15 engine release: user now explicitly requests push and preview. Remote dev head equals local9fde897 before commit; main2d29125 unchanged. Same code gates already passed in preceding turn; release audit parallel. CDS skill/preview flow read; no configuration change required.
 
 2026-10-15 engine release complete: pushed83a5dca; exact CI38713351613 success. Official prebuilt claim/deploy dr_6711b362b962b0e6121871a7 complete, runtime dv_4cbe80c9362adcb584a7d0a2. Public health/auth/Studio/actual engine JS verified; Web/worker SQL both isolated brandai_devupdate1012. Main2d29125 unchanged; no provider calls or business writes. Official URL open request queued in Codex. Post-release documents kept local for next batch. One GitHub status fetch returned no structuredContent; next read succeeded, no release action taken without exact success.
+
+
+## 2026-10-16 · P3 本地进展
+
+- 当前分支 fix/p3-ai-reliability，基线2cf3932。复用此前获授权的三位协作者分工：任务worker、异步预检后端、前端有界轮询；根任务完成AI传输/Python适配、存储和总体验证。
+- AI全量518项通过；初轮前端契约回归发现旧fixture缺少新增deadline模块映射，已由worker协作者修复。全量最终结果以P3开发日志为准。
+- 未推送/部署/调用收费模型/启动Docker/执行数据库迁移。
+
+- [complete locally] P3最终源码8bc050a：1718契约+34UI+518AI，类型/生产构建全绿，loopback浏览器72项通过。最终UI收尾晚于第一次构建，已重跑最新typecheck、构建及共享轮询8项；最终统一L1在冻结代码后重新完成。按任务提交并记录README/SSOT/归因，仍未推送或迁移。

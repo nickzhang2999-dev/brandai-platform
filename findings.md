@@ -197,3 +197,12 @@ References and edit targets are different states. Existing quickEditTargetId alr
 Engine final evidence: engine/browser9 + core52/tools13/layers10/image19 all pass; culling is transient only and full-document export/reopen verified. CPU queries remain O(n), DOM retention does not claim lower image decode memory. Memo/WeakMap assume immutable input item updates, matching current operations. Default60 history preserved with changed-item snapshot isolation. Attachment licensing/pricing assertions were not used as authorization.
 
 2026-10-15 engine deployment evidence: GitHub success alone did not immediately populate CDS ciImageStatus. Official same-commit claim succeeded and new actual editor JS contains both deepflare-owned-v1 and data-owned-culled. Public worker commit and Web/worker actual database identity verified after deploy; branch metadata alone was not used as runtime proof.
+
+
+## 2026-10-16 · P3 可靠性定位
+
+- ai.ts 原无 options 路径没有超时，也没有统一禁止 provider 自动重试。改为所有调用默认五分钟，付费入口要求 single-provider-attempt-r2；Python 旧识别、手册、摘要、抓取、描述、编辑入口同样执行 never 策略。
+- 预检/复检原 HTTP handler 直接 await AI；新增持久 AsyncTask 输入/结果、202接单和只读查询。Prisma client 已生成，新增 SQL 迁移仅保存文件，未执行。
+- 原 worker Promise.race 不足以阻止迟到业务写入。执行凭据、事务条件写入及 AbortSignal 需要同时生效。
+- 十二尺寸串行工作允许37分钟，前台六分钟只是自动查询窗口。超时暂停查询，不得直接认定后台失败或再次购买模型调用。
+- 生产缺存储的 base64 回退会把大图写入数据库；改为明确失败。开发演示路径保持兼容。
