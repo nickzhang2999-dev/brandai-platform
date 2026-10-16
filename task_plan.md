@@ -303,3 +303,15 @@ Decision: keep native codec and loss-aware warning guards. The guide is referenc
 - [complete] Normal guarded commit/push83a5dcac58bec45e6051d7e2ab1cf952678f3e7d to devUpdate1012; remote readback equal and main2d29125 unchanged.
 - [complete] Exact-commit Branch Image38713351613 success; official prebuilt dry-run/claim/deploy, run dr_6711b362b962b0e6121871a7 complete/failure=null. Existing database/queue overrides preserved.
 - [complete] Public health/authentication/Studio/editor actual engine JS pass; Web/worker SQL both brandai_devupdate1012. Official preview URL retrieved; open_in_codex requested and queued. No production changes or model calls. Post-release receipts stay local until next normal batch.
+
+## 2026-10-16 P2 local security
+User requests continuation and batch reporting, with prior local-only boundary retained. Created fix/p2-security from devUpdate1012@2cf3932. P1 remains separate at97ed7fb; no implicit merge. Active plan docs/optimization-security-2026-10-16.md. Parallel uploads/auth/access, root API error boundary+review+full gates. No push/CDS/provider/Docker/private-account access. P3-P5 remain later stages.
+
+- [complete] P2.1 workspace-scoped client storage keys, with historical reads preserved.
+- [complete] P2.2 internal500 redaction and server-generated diagnostic ID.
+- [complete] P2.3 production registration bootstrap privilege removed.
+- [complete] P2.4 EDITOR minimum for both prechecks.
+- [complete] P2.5 bounded multipart/file signatures, document50MiB, unchanged8MiB/10MiB image paths.
+- [complete] P2.6 production phase and startup preflight, including actual Next/worker rejection.
+- [complete] Final source5de6ffc: contracts1737/UI34/AI500, types/build exit0; compiled-runtime3/3 pass after initial3/3 failure was fixed. Independent reviews complete.
+- [complete] Daily log, security report, README, page SSOT and attribution updated. Local commits only; P1/P2 remain separate, no deploy or integration merge.
