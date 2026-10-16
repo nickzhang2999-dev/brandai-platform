@@ -3,7 +3,7 @@ import { createServer, type IncomingMessage } from "node:http";
 import { createRequire } from "node:module";
 import { Readable } from "node:stream";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import nextConfig from "../../../apps/web/next.config.mjs";
+import configureNext from "../../../apps/web/next.config.mjs";
 import { STUDIO_MATERIAL_MAX_BYTES } from "../src/studio-materials";
 
 vi.mock("../../../apps/web/src/lib/api", () => ({ ApiException: class extends Error { constructor(public status: number, message: string) { super(message); } } }));
@@ -14,6 +14,8 @@ import { MAX_ASSET_UPLOAD_BYTES } from "../../../apps/web/src/lib/upload-limits"
 // Exercise the installed Next implementation on a real IncomingMessage, not a
 // simulated truncation. Both streams use the same bounded middleware buffer.
 const requireWeb = createRequire(new URL("../../../apps/web/next.config.mjs", import.meta.url));
+const { PHASE_PRODUCTION_BUILD } = requireWeb("next/constants");
+const nextConfig = configureNext(PHASE_PRODUCTION_BUILD);
 const { getCloneableBody, requestToBodyStream } = requireWeb("next/dist/server/body-streams") as {
   getCloneableBody(req: IncomingMessage, limit?: number): { cloneBodyStream(): Readable; finalize(): Promise<void> };
   requestToBodyStream(context: typeof globalThis, bytes: typeof Uint8Array, stream: Readable): ReadableStream<Uint8Array>;
