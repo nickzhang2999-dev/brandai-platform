@@ -36,14 +36,14 @@ export function OwnedImageResize({ document, item, readOnly, onStore, onClose }:
     } catch (failure) { setError(failure instanceof Error ? failure.message : "尺寸调整未完成，原图保留。"); }
     finally { lock.current = false; setBusy(false); }
   }
-  return <div className="absolute inset-0 z-40 grid place-items-center bg-fg/15 p-4" onPointerDown={event => event.stopPropagation()}>
+  return <div className="absolute inset-0 z-40 grid place-items-center bg-foreground/15 p-4" onPointerDown={event => event.stopPropagation()}>
     <div ref={root} role="dialog" aria-modal="true" aria-label="图片像素尺寸" className="w-full max-w-sm space-y-4 rounded-3xl border border-border bg-card p-6 shadow-lg" onKeyDown={event => { event.stopPropagation(); if (event.key === "Escape" && !busy) onClose(); }}>
       <div className="flex items-center gap-2"><h2 className="mr-auto font-semibold">{ownedImageName(item)} · 调整尺寸</h2><button aria-label="关闭尺寸工具" disabled={busy} onClick={onClose}>×</button></div>
-      <p className="text-xs leading-6 text-muted-fg">按当前裁切、翻转和旋转生成一份新图片，原图保留。尺寸调整使用像素缩放。</p>
-      <div className="flex gap-3">{([['width', '宽度', width, setWidth], ['height', '高度', height, setHeight]] as const).map(([key, label, value, change]) => <label key={key} className="min-w-0 flex-1 space-y-2 text-xs">{label}<input aria-label={`图片像素${label}`} type="number" className="w-full rounded-xl border border-border bg-bg p-3" min={32} max={8192} step={1} value={value} disabled={busy || readOnly} onChange={event => change(Number(event.target.value))} /></label>)}</div>
-      <label className="block space-y-2 text-xs">画面适配<select aria-label="图片尺寸适配" className="w-full rounded-xl border border-border bg-bg p-3" value={fit} disabled={busy} onChange={event => setFit(event.target.value as typeof fit)}><option value="contain">保留完整画面，空余处透明</option><option value="cover">填满画面，裁去超出部分</option></select></label>
+      <p className="text-xs leading-6 text-muted-foreground">按当前裁切、翻转和旋转生成一份新图片，原图保留。尺寸调整使用像素缩放。</p>
+      <div className="flex gap-3">{([['width', '宽度', width, setWidth], ['height', '高度', height, setHeight]] as const).map(([key, label, value, change]) => <label key={key} className="min-w-0 flex-1 space-y-2 text-xs">{label}<input aria-label={`图片像素${label}`} type="number" className="w-full rounded-xl border border-border bg-background p-3" min={32} max={8192} step={1} value={value} disabled={busy || readOnly} onChange={event => change(Number(event.target.value))} /></label>)}</div>
+      <label className="block space-y-2 text-xs">画面适配<select aria-label="图片尺寸适配" className="w-full rounded-xl border border-border bg-background p-3" value={fit} disabled={busy} onChange={event => setFit(event.target.value as typeof fit)}><option value="contain">保留完整画面，空余处透明</option><option value="cover">填满画面，裁去超出部分</option></select></label>
       {error && <p role="alert" className="text-xs leading-6">{error}</p>}
-      <div className="flex gap-2"><button className="rounded-full border border-border px-4 py-2 text-sm disabled:opacity-40" disabled={busy || readOnly} onClick={() => void run(false)}>下载 PNG</button><button className="ml-auto rounded-full bg-primary px-4 py-2 text-sm text-primary-fg disabled:opacity-40" disabled={busy || readOnly} onClick={() => void run(true)}>{busy ? "正在处理…" : "保存并加入画布"}</button></div>
+      <div className="flex gap-2"><button className="rounded-full border border-border px-4 py-2 text-sm disabled:opacity-40" disabled={busy || readOnly} onClick={() => void run(false)}>下载 PNG</button><button className="ml-auto rounded-full bg-primary px-4 py-2 text-sm text-primary-foreground disabled:opacity-40" disabled={busy || readOnly} onClick={() => void run(true)}>{busy ? "正在处理…" : "保存并加入画布"}</button></div>
     </div>
   </div>;
 }

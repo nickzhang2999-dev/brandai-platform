@@ -1,5 +1,5 @@
-import type { CampaignStatusKey } from "@/lib/brandai-mock";
-import { statusMeta } from "@/lib/brandai-mock";
+import type { CampaignStatusKey } from "@/lib/brandai-nav";
+import { statusMeta } from "@/lib/brandai-nav";
 
 /**
  * 真实实体没有"封面渐变"，按 id/名称确定性地生成一个紫系渐变，让卡片缩略图保持

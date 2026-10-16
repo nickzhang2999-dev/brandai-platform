@@ -1,4 +1,5 @@
 import { prisma } from "@brandai/db";
+import { generatedImageHref, studioEditorHref } from "./studio-navigation";
 import type {
   NotificationItem,
   NotificationKind,
@@ -33,7 +34,7 @@ const TASK_KIND_META: Record<
   string,
   { kind: NotificationKind; label: string; href: string }
 > = {
-  EDIT: { kind: "EDIT", label: "改图", href: "/workspace" },
+  EDIT: { kind: "EDIT", label: "改图", href: "/studio#/projects" },
   RECOGNIZE: { kind: "RECOGNIZE", label: "素材识别", href: "/brand-knowledge" },
   PARSE_MANUAL: {
     kind: "PARSE_MANUAL",
@@ -48,7 +49,7 @@ const TASK_KIND_META: Record<
   // 图层分解跑 12–110 秒，用户完全可能中途离开这一页。漏登记这一条的话，它的
   // 终态会被下面那句 `kind: { in: Object.keys(TASK_KIND_META) }` 直接滤掉——任务
   // 在服务端跑完了，收件箱里却什么都没有（§2.3 要求终态必须有通知）。
-  DECOMPOSE: { kind: "DECOMPOSE", label: "图层分解", href: "/workspace" },
+  DECOMPOSE: { kind: "DECOMPOSE", label: "图层分解", href: "/studio#/projects" },
   STUDIO_UPLOAD: { kind: "STUDIO_UPLOAD", label: "图片上传", href: "/studio" },
 };
 
@@ -136,9 +137,11 @@ export async function listWorkspaceNotifications(
           ? `生成 ${g._count.versions} 个变体`
           : null
         : (g.error ?? "AI 出图失败"),
-      // E · 深链到具体那张出图 —— 点通知直接落到工作台对应 Campaign + 这次出图
-      // (workspace 读 ?gen= 回填查看态),不再只停在空白工作台。
-      href: `/workspace?gen=${g.id}&project=${g.projectId}`,
+      // Legacy generated images remain in their library. A generation does not
+      // imply a native canvas has been saved, so do not open an empty document.
+      href: succeeded && g._count.versions > 0
+        ? generatedImageHref(workspaceId, g.id)
+        : studioEditorHref({ workspaceId, projectId: g.projectId }),
       createdAt: (g.finishedAt ?? g.createdAt).toISOString(),
     });
   }
@@ -159,7 +162,7 @@ export async function listWorkspaceNotifications(
       status: succeeded ? "SUCCEEDED" : "FAILED",
       title: succeeded ? `${meta.label}完成` : `${meta.label}失败`,
       detail: succeeded ? countNote : (t.error ?? `${meta.label}失败`),
-      href: meta.href,
+      href: meta.href.startsWith("/studio#") ? studioEditorHref({ workspaceId }) : `${meta.href}?${new URLSearchParams({ workspaceId })}`,
       createdAt: t.updatedAt.toISOString(),
     });
   }

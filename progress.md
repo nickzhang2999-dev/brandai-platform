@@ -405,3 +405,11 @@ CDS read-only preflight: CLI0.16.6/latest; project push automatic deploy true, d
 - 未推送/部署/调用收费模型/启动Docker/执行数据库迁移。
 
 - [complete locally] P3最终源码8bc050a：1718契约+34UI+518AI，类型/生产构建全绿，loopback浏览器72项通过。最终UI收尾晚于第一次构建，已重跑最新typecheck、构建及共享轮询8项；最终统一L1在冻结代码后重新完成。按任务提交并记录README/SSOT/归因，仍未推送或迁移。
+
+## 2026-10-16 P4
+
+现有 devUpdate1012 的前端优化分支，未重新做产品；16项页面交互与52项画布回归通过。详见 docs/development-log-2026-10-16-p4.md。仅本地，未合并或部署。
+## 2026-10-16 P4 最终本地收尾
+
+修复Campaign品牌链接与超过300张的历史生成图定位。全量L1 1664+34、AI500、types/build通过；实际页面16、画布52、Next HTTP12项通过。仅本地提交，未推送或部署。旧页面删除仍等待计划要求的预览确认；P1–P5独立分支未集成。真实AI分层配置和模型调用未验收，详见 docs/development-log-2026-10-16-p4.md。
+

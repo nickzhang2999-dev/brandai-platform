@@ -39,7 +39,7 @@ import {
 } from "@brandai/contracts";
 import type { TaskState } from "@brandai/contracts";
 import { ApiFetchError, apiFetch, assetThumbUrl } from "@/lib/client";
-import { planTiers, upgradeContactEmail } from "@/lib/brandai-mock";
+import { planTiers, upgradeContactEmail } from "@/lib/brandai-nav";
 import { validateImageUploadFile } from "@/lib/upload-limits";
 import {
   addReference,
@@ -3151,7 +3151,7 @@ function UpgradeDialog({
           })}
         </div>
 
-        <div className="mt-5 rounded-2xl bg-accent-soft/60 p-3.5 text-xs leading-relaxed text-foreground/80">
+        {upgradeContactEmail ? <div className="mt-5 rounded-2xl bg-accent-soft/60 p-3.5 text-xs leading-relaxed text-foreground/80">
           一期为内部专属部署，套餐升级请联系{" "}
           <a
             href={`mailto:${upgradeContactEmail}`}
@@ -3160,7 +3160,7 @@ function UpgradeDialog({
             {upgradeContactEmail}
           </a>
           。在线自助计费将在后续多租户版本提供。
-        </div>
+        </div> : <p className="mt-5 text-xs text-muted-foreground">在线自助计费暂未开放。</p>}
 
         <div className="mt-6 flex justify-end gap-2">
           <button
@@ -3170,7 +3170,7 @@ function UpgradeDialog({
           >
             知道了
           </button>
-          <a
+          {upgradeContactEmail && <a
             href={`mailto:${upgradeContactEmail}?subject=DeepFlare 套餐升级咨询`}
           >
             <button
@@ -3179,7 +3179,7 @@ function UpgradeDialog({
             >
               联系升级
             </button>
-          </a>
+          </a>}
         </div>
       </div>
     </div>

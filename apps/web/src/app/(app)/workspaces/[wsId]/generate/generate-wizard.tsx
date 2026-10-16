@@ -34,7 +34,7 @@ import {
 } from "@brandai/ui";
 import { apiFetch } from "@/lib/client";
 import { useAsyncTaskResult, useBoundedTaskQuery, type AsyncTaskReceipt, TASK_POLL_PAUSED_MESSAGE } from "@/lib/use-bounded-task-poll";
-import { formatElapsed } from "../../../queue-widget";
+import { formatElapsed } from "@/lib/format-elapsed";
 import { TextLayerEditor } from "./text-layer-editor";
 
 /** PrecheckResult shape from lib/precheck.ts (stable for the wizard). */

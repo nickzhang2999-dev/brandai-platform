@@ -219,3 +219,7 @@ CDS preflight directly confirms push automatic deployment and default shared bra
 - 原 worker Promise.race 不足以阻止迟到业务写入。执行凭据、事务条件写入及 AbortSignal 需要同时生效。
 - 十二尺寸串行工作允许37分钟，前台六分钟只是自动查询窗口。超时暂停查询，不得直接认定后台失败或再次购买模型调用。
 - 生产缺存储的 base64 回退会把大图写入数据库；改为明确失败。开发演示路径保持兼容。
+
+## 2026-10-16 P4 路由发现
+
+旧 workspaces 深链转扁平页面后，URL品牌若被cookie覆盖会进入错误品牌；补服务端显式scope及软导航重验。旧Generation产物不等于native画布文档，通知需定位生成图库而不是空原生画布。旧代码删除需按原计划等待部署预览，本轮local-only停用保留。

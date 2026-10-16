@@ -8,6 +8,7 @@ import { Button } from "@brandai/ui";
 import { startNavigationProgress } from "@/app/navigation-progress";
 import { apiFetch, assetThumbUrl } from "@/lib/client";
 import { useBoundedTaskQuery, TASK_POLL_PAUSED_MESSAGE } from "@/lib/use-bounded-task-poll";
+import { studioEditorHref } from "@/lib/studio-navigation";
 import {
   MAX_BATCH_IMAGE_UPLOAD_FILES,
   imageUploadLimitError,
@@ -526,7 +527,7 @@ export default function AssetsPage() {
       return r.result;
     }
     startNavigationProgress();
-    router.push(`/workspace?project=${r.project.id}`);
+    router.push(studioEditorHref({ workspaceId: wsId, projectId: r.project.id }));
     return r.result;
   }
 
@@ -936,7 +937,7 @@ export default function AssetsPage() {
                       {usage.map((u) => (
                         <li key={u.generationId}>
                           <a
-                            href={`/workspace?project=${u.projectId}`}
+                            href={studioEditorHref({ workspaceId: wsId, projectId: u.projectId })}
                             className="block rounded-2xl border border-border bg-background px-3 py-2 text-xs transition-colors hover:border-primary/25"
                           >
                             <div className="truncate font-medium text-foreground">
@@ -1081,7 +1082,7 @@ export default function AssetsPage() {
                               : `已设为「${stagedNote.projectName}」的参考素材。`}{" "}
                             <a
                               className="font-medium underline underline-offset-2"
-                              href={`/workspace?project=${stagedNote.projectId}`}
+                              href={studioEditorHref({ workspaceId: wsId, projectId: stagedNote.projectId })}
                             >
                               去工作台查看
                             </a>

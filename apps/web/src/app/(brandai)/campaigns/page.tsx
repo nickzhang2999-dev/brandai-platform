@@ -2,10 +2,12 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { QueryFailure } from "@/components/query-failure";
 import type { BrandRule, Project, TaskState } from "@brandai/contracts";
 import { Button } from "@brandai/ui";
 import { apiFetch } from "@/lib/client";
 import { useBoundedTaskQuery, TASK_POLL_PAUSED_MESSAGE } from "@/lib/use-bounded-task-poll";
+import { studioEditorHref } from "@/lib/studio-navigation";
 import { useBrand } from "../brand-context";
 import {
   Chip,
@@ -72,7 +74,7 @@ export default function CampaignsPage() {
     qc.invalidateQueries({ queryKey: ["brandai-projects", wsId] });
   };
 
-  const { data: projects = [], isLoading } = useQuery({
+  const { data: projects = [], isLoading, isError, refetch, isFetching } = useQuery({
     queryKey: ["brandai-projects", wsId],
     queryFn: () => apiFetch<Project[]>(`/api/workspaces/${wsId}/projects`),
   });
@@ -184,7 +186,7 @@ export default function CampaignsPage() {
         <div className="rounded-3xl border border-border bg-card p-16 text-center text-sm text-muted-foreground">
           加载中…
         </div>
-      ) : projects.length === 0 ? (
+      ) : isError ? <QueryFailure label="项目" retry={refetch} retrying={isFetching} /> : projects.length === 0 ? (
         <EmptyState onCreate={() => setCreating(true)} />
       ) : (
         <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
@@ -283,7 +285,7 @@ export default function CampaignsPage() {
             ) : null}
             <div className="mt-5 flex flex-col gap-2">
               <a
-                href={active ? `/workspace?project=${active.id}` : "/workspace"}
+                href={studioEditorHref({ workspaceId: wsId, projectId: active?.id })}
               >
                 <Button variant="primary" className="w-full justify-center">
                   进入工作台出图
@@ -592,7 +594,7 @@ function RulesPanel({
                   ? "去「品牌套件」沉淀并确认 Logo、字体、颜色、设计指南和图像，确认后会在这里展示并约束出图。"
                   : "请先在品牌套件中开启「应用到项目」，项目才能调用其中的规则。"}
               </p>
-              <a href="/brand-knowledge">
+              <a href={`/brand-knowledge?${new URLSearchParams({ workspaceId: wsId })}`}>
                 <Button variant="outline" className="mt-4">
                   前往品牌套件
                 </Button>
@@ -644,7 +646,7 @@ function RulesPanel({
         </div>
 
         <div className="border-t border-border p-4">
-          <a href="/brand-knowledge">
+          <a href={`/brand-knowledge?${new URLSearchParams({ workspaceId: wsId })}`}>
             <Button variant="outline" className="w-full justify-center">
               管理品牌套件
             </Button>

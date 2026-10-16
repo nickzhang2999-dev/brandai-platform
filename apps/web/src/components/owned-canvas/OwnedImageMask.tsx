@@ -42,18 +42,18 @@ export function OwnedImageMask({ source, name, readOnly, onSubmit, onClose }: Pr
     } catch (failure) { if (mounted.current) setError(failure instanceof Error ? failure.message : "局部修改未完成，原图和蒙版保留。"); }
     finally { mask.width = 0; mask.height = 0; lock.current = false; if (mounted.current) setBusy(false); }
   }
-  return <div className="absolute inset-0 z-40 grid place-items-center bg-fg/15 p-3" onPointerDown={event => event.stopPropagation()}>
+  return <div className="absolute inset-0 z-40 grid place-items-center bg-foreground/15 p-3" onPointerDown={event => event.stopPropagation()}>
     <section role="dialog" aria-modal="true" aria-label="图片蒙版擦除" className="max-h-[calc(100%-24px)] w-full max-w-lg space-y-3 overflow-y-auto rounded-3xl border border-border bg-card p-5 shadow-lg" onKeyDown={event => { event.stopPropagation(); if (event.key === "Escape" && !busy) onClose(); }}>
       <div className="flex items-center gap-2"><h2 className="mr-auto font-semibold">{name} · 擦除并补全</h2><button aria-label="关闭蒙版工具" disabled={busy} onClick={onClose}>×</button></div>
-      <p className="text-xs leading-6 text-muted-fg">涂抹需要修改的区域，结果保存为新图片，原图保留。</p>
+      <p className="text-xs leading-6 text-muted-foreground">涂抹需要修改的区域，结果保存为新图片，原图保留。</p>
       <div className="relative overflow-hidden rounded-2xl bg-muted" style={{ aspectRatio: `${source.width}/${source.height}`, width: `min(100%, calc(45dvh * ${source.width / source.height}))`, marginInline: "auto" }}>
         <img src={source.url} alt="待擦除原图" draggable={false} className="absolute inset-0 h-full w-full object-fill" />
         <canvas ref={canvas} data-testid="owned-inpaint-mask" width={source.width} height={source.height} className="absolute inset-0 h-full w-full touch-none" onPointerDown={event => { event.preventDefault(); if (!ready || busy || readOnly || active.current) return; if (strokes.current.length >= 200) { setError("涂抹笔迹较多，请撤销或清空后继续。"); return; } const stroke: Stroke = { points: [point(event)], radius: brush / event.currentTarget.getBoundingClientRect().width * source.width / 2 }; strokes.current.push(stroke); active.current = { id: event.pointerId, stroke }; event.currentTarget.setPointerCapture(event.pointerId); render(); }} onPointerMove={event => { const current = active.current; if (!current || current.id !== event.pointerId || current.stroke.points.length >= 2000) return; const value = point(event), previous = current.stroke.points.at(-1)!; if (Math.hypot(value.x - previous.x, value.y - previous.y) > .5) { current.stroke.points.push(value); render(); } }} onPointerUp={finish} onPointerCancel={event => { if (active.current?.id === event.pointerId) { strokes.current.pop(); finish(event); render(); } }} />
       </div>
       <div className="flex flex-wrap items-center gap-2"><label className="mr-auto text-xs">画笔范围 <input aria-label="蒙版画笔范围" type="range" min={4} max={80} value={brush} disabled={busy} onChange={event => setBrush(Number(event.target.value))} /></label><button className="text-xs underline" disabled={busy || !count} onClick={() => { strokes.current.pop(); render(); setCount(strokes.current.length); }}>撤销涂抹</button><button className="text-xs underline" disabled={busy || !count} onClick={() => { strokes.current = []; render(); setCount(0); }}>清空</button></div>
-      <textarea aria-label="蒙版修改说明" className="min-h-20 w-full rounded-2xl border border-border bg-bg p-3 text-sm" maxLength={4000} value={instruction} disabled={busy} onChange={event => setInstruction(event.target.value)} />
+      <textarea aria-label="蒙版修改说明" className="min-h-20 w-full rounded-2xl border border-border bg-background p-3 text-sm" maxLength={4000} value={instruction} disabled={busy} onChange={event => setInstruction(event.target.value)} />
       {error && <p role="alert" className="text-xs leading-6">{error}</p>}
-      <button className="w-full rounded-full bg-primary py-3 text-sm text-primary-fg disabled:opacity-40" disabled={!ready || readOnly || busy || !count || !instruction.trim()} onClick={() => void submit()}>{busy ? "确认受理…" : "擦除并补全"}</button>
+      <button className="w-full rounded-full bg-primary py-3 text-sm text-primary-foreground disabled:opacity-40" disabled={!ready || readOnly || busy || !count || !instruction.trim()} onClick={() => void submit()}>{busy ? "确认受理…" : "擦除并补全"}</button>
     </section>
   </div>;
 }

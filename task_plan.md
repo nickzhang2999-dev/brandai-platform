@@ -328,3 +328,10 @@ P1 local gates complete: e0725bd owned shell/export;6ce5de0 routes;601a3c1 exact
 
 - [complete locally] P3 3.1–3.7 已实现，最终源码8bc050a。contracts1718/UI34/AI518、typecheck/build及浏览器72项通过，按任务本地提交。迁移/真实联调/集成/发布未执行。
 - [deferred] 真实数据库迁移与队列/模型验收、P1/P2/P3 跨分支集成、云端发布。必须保留平台审批和用户当前本地限制。
+
+## 2026-10-16 P4 本地前端阶段
+
+- [x] 语义样式、可见失败、品牌确认与统一导航。
+- [x] URL品牌隔离、旧路由跳转、account归位、formatElapsed解耦。
+- [x] 最终 L1 1664+34、AI500、types/build通过；页面Chromium16、画布52、实际Next路由12通过。
+- [ ] 部署预览后删除停用旧页面（用户仅本地，本轮不执行）。

@@ -2,11 +2,14 @@
 
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import type { GeneratedAsset, Project } from "@brandai/contracts";
 import { apiFetch, assetThumbUrl } from "@/lib/client";
 import { useEffect, useMemo, useState } from "react";
 import { PageHeader } from "../_ui";
 import { useBrand } from "../brand-context";
+import { QueryFailure } from "@/components/query-failure";
+import { studioEditorHref } from "@/lib/studio-navigation";
 
 const STATUS_LABELS: Record<string, string> = {
   DRAFT: "草稿",
@@ -74,6 +77,9 @@ function GeneratedPreviewImage({
  */
 export default function GeneratedImagesPage() {
   const { wsId, brandName } = useBrand();
+  const searchParams = useSearchParams();
+  const focusedGeneration = searchParams.get("generationId");
+  const focusedVersion = searchParams.get("versionId");
   const [q, setQ] = useState("");
   const [projectId, setProjectId] = useState("all");
   const [projectStatus, setProjectStatus] = useState("all");
@@ -82,6 +88,8 @@ export default function GeneratedImagesPage() {
 
   const query = useMemo(() => {
     const params = new URLSearchParams();
+    if (focusedGeneration !== null) params.set("generationId", focusedGeneration);
+    if (focusedVersion !== null) params.set("versionId", focusedVersion);
     if (q.trim()) params.set("q", q.trim());
     if (projectId !== "all") params.set("projectId", projectId);
     if (projectStatus !== "all") params.set("projectStatus", projectStatus);
@@ -89,9 +97,9 @@ export default function GeneratedImagesPage() {
     if (sort !== "recent") params.set("sort", sort);
     const suffix = params.toString();
     return suffix ? `?${suffix}` : "";
-  }, [projectId, projectStatus, q, range, sort]);
+  }, [projectId, projectStatus, q, range, sort, focusedGeneration, focusedVersion]);
 
-  const { data: images = [], isLoading } = useQuery({
+  const { data: images = [], isLoading, isError, refetch, isFetching } = useQuery({
     queryKey: ["brandai-generated-assets", wsId, query],
     queryFn: () =>
       apiFetch<GeneratedAsset[]>(
@@ -99,10 +107,18 @@ export default function GeneratedImagesPage() {
       ),
   });
 
-  const { data: projects = [] } = useQuery({
+  const { data: projects = [], isError: projectsError, refetch: retryProjects, isFetching: projectsFetching } = useQuery({
     queryKey: ["brandai-projects", wsId, "generated-filter"],
     queryFn: () => apiFetch<Project[]>(`/api/workspaces/${wsId}/projects`),
   });
+  const hasSource = focusedGeneration !== null || focusedVersion !== null;
+  const focusedImage = hasSource ? images.find(image => (!focusedGeneration || image.generationId === focusedGeneration) && (!focusedVersion || image.generationVersionId === focusedVersion)) : undefined;
+  const focusedImageId = focusedImage?.id;
+  useEffect(() => {
+    if (!focusedImageId) return;
+    const card = document.getElementById(`generated-${focusedImageId}`);
+    card?.scrollIntoView({ block: "center" }); card?.focus({ preventScroll: true });
+  }, [focusedImageId]);
 
   return (
     <div className="mx-auto max-w-[1180px] px-10 py-10">
@@ -117,6 +133,7 @@ export default function GeneratedImagesPage() {
       </div>
 
       <div className="mb-6 rounded-3xl border border-border bg-card p-4 shadow-[0_10px_28px_rgba(30,30,60,0.05)]">
+        {projectsError && <QueryFailure label="项目筛选" retry={retryProjects} retrying={projectsFetching} />}
         <div className="grid gap-3 lg:grid-cols-[minmax(260px,1.6fr)_1fr_1fr_1fr_1fr]">
           <label className="block">
             <span className="mb-1.5 block text-xs font-medium text-muted-foreground">
@@ -204,11 +221,15 @@ export default function GeneratedImagesPage() {
         </div>
       </div>
 
+      {hasSource && <Link href={`/generated?${new URLSearchParams({ workspaceId: wsId })}`} className="mb-3 inline-block text-sm text-primary underline">查看全部生成图</Link>}
+      {hasSource && !isLoading && !isError && <p role="status" className="mb-4 rounded-2xl bg-accent-soft p-4 text-sm text-foreground">
+        {focusedImage ? `已定位“${focusedImage.fileName}”。打开对应项目后，可从品牌素材库选择该图片加入画布再编辑。` : "未在当前列表找到指定生成图。请清空筛选后重试，或到对应项目的素材库查看原图。"}
+      </p>}
       {isLoading ? (
         <div className="rounded-3xl border border-border bg-card p-10 text-center text-sm text-muted-foreground">
           加载中…
         </div>
-      ) : images.length === 0 ? (
+      ) : isError ? <QueryFailure label="生成图" retry={refetch} retrying={isFetching} /> : images.length === 0 ? (
         <div className="rounded-3xl border border-dashed border-border bg-card p-12 text-center">
           <div className="text-lg font-semibold">还没有生成图</div>
           <p className="mt-2 text-sm text-muted-foreground">
@@ -220,7 +241,9 @@ export default function GeneratedImagesPage() {
           {images.map((asset) => (
             <article
               key={asset.id}
-              className="overflow-hidden rounded-3xl border border-border bg-card shadow-[0_8px_24px_rgba(30,30,60,0.06)]"
+              id={`generated-${asset.id}`}
+              tabIndex={focusedImage?.id === asset.id ? -1 : undefined}
+              className={"overflow-hidden rounded-3xl border border-border bg-card shadow-[0_8px_24px_rgba(30,30,60,0.06)] " + (focusedImage?.id === asset.id ? "ring-2 ring-primary" : "")}
             >
               <GeneratedPreviewImage
                 previewSrc={assetThumbUrl(wsId, asset.id, asset.url, 768)}
@@ -265,7 +288,7 @@ export default function GeneratedImagesPage() {
                 </div>
                 {asset.projectId ? (
                   <Link
-                    href={`/workspace?project=${asset.projectId}`}
+                    href={studioEditorHref({ workspaceId: wsId, projectId: asset.projectId })}
                     className="mt-4 inline-flex rounded-full border border-primary/20 px-3 py-1.5 text-xs font-semibold text-primary transition hover:bg-accent-soft"
                   >
                     回到项目工作台
