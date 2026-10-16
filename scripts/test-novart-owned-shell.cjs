@@ -2,10 +2,10 @@
  * Does not access a database, worker, user browser or deployed environment. */
 'use strict';
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
-const source=fs.readFileSync(path.join(__dirname,'export-novart-studio.py'),'utf8').replace(/\r\n/g,'\n');
-const start=source.indexOf("    replacement = '''  async function prepareArchive(p) {"),end=source.indexOf("'''\n    return text[:left]",start);
-assert.ok(start>=0&&end>start,'Product archive compiler boundary');
-const guard=source.slice(start+"    replacement = '''".length,end).trim();
+const source=fs.readFileSync(path.join(__dirname,'../apps/web/studio-shell/home-start-studio.js'),'utf8').replace(/\r\n/g,'\n');
+const start=source.indexOf('  async function prepareArchive(p) {'),end=source.indexOf('  function confirmArchive(p) {',start);
+assert.ok(start>=0&&end>start,'Product archive guard boundary');
+const guard=source.slice(start,end).trim();
 let passed=0;
 async function scenario({mounted=true,ready=true,status='saved',revision=7,stored=7,timeout=false}={}) {
   const handlers=new Set(),calls=[],projectId='synthetic-project';let listeners=0;

@@ -16,7 +16,7 @@ asset('library-product','品牌产品.png');asset('library-package','包装参�
 const state={revision:0,profile:{nickname:'交互检查',density:'comfortable',motion:'reduce'},brand:{name:ws.name,colors:['#7C5CFF','#202028','#F6F4FC'],font:'sans',notes:''},favorites:[]};
 const json=(res,value,status=200)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(value));};
 async function body(req){const values=[];for await(const value of req)values.push(value);return Buffer.concat(values);}
-function shell(){const context={workspaceId:ws.id,workspaces:[ws],user:actor};const html=fs.readFileSync(path.join(repo,'previews/novart-workbench/harness/home-start-studio.html'),'utf8').replace(/<script\b([^>]*)>/g,(_all,attrs)=>`<script type="application/x-novart"${attrs.replace(/\s+type=["'][^"']*["']/g,'')}>`);return html.replace('</head>',`<script id="novart-product-context" type="application/json">${JSON.stringify(context)}</script><script defer src="/novart-product-bootstrap.js"></script></head>`);}
+function shell(){const context={workspaceId:ws.id,workspaces:[ws],user:actor};const html=fs.readFileSync(path.join(repo,'apps/web/studio-shell/studio.html'),'utf8').replace(/<script\b([^>]*)>/g,(_all,attrs)=>`<script type="application/x-novart"${attrs.replace(/\s+type=["'][^"']*["']/g,'')}>`);return html.replace('</head>',`<script id="novart-product-context" type="application/json">${JSON.stringify(context)}</script><script defer src="/novart-product-bootstrap.js"></script></head>`);}
 async function handle(req,res){
  const url=new URL(req.url,'http://127.0.0.1'),prefix=`/api/workspaces/${ws.id}/studio-brand-materials`;
  if(url.pathname==='/studio'){res.setHeader('Content-Type','text/html');return res.end(shell());}
@@ -43,7 +43,7 @@ async function handle(req,res){
  if(url.pathname.endsWith('/notifications'))return json(res,{items:[]});
  if(url.pathname.endsWith('/studio-layer-activity'))return json(res,{requests:[]});
  if(url.pathname==='/favicon.ico'){res.writeHead(204);return res.end();}
- const production={'/novart-product-bootstrap.js':'deploy/novart/studio/novart-product-bootstrap.js','/novart-product-task-inbox.js':'deploy/novart/studio/novart-product-task-inbox.js','/home-start-studio.css':'previews/novart-workbench/harness/home-start-studio.css','/home-start-studio.js':'previews/novart-workbench/harness/home-start-studio.js','/home-start-attachments.js':'deploy/novart/studio/novart-owned-home-start.js'};
+ const production={'/novart-product-bootstrap.js':'deploy/novart/studio/novart-product-bootstrap.js','/novart-product-task-inbox.js':'deploy/novart/studio/novart-product-task-inbox.js','/home-start-studio.css':'apps/web/studio-shell/home-start-studio.css','/home-start-studio.js':'apps/web/studio-shell/home-start-studio.js','/home-start-attachments.js':'deploy/novart/studio/novart-owned-home-start.js'};
  const file=production[url.pathname]?path.join(repo,production[url.pathname]):path.join(exported,url.pathname.slice(1));
  if(path.relative(repo,file).startsWith('..')||!fs.existsSync(file)||!fs.statSync(file).isFile())return json(res,{error:'Unavailable fixture route'},404);
  res.writeHead(200,{'Content-Type':{'.js':'application/javascript','.css':'text/css','.svg':'image/svg+xml','.html':'text/html'}[path.extname(file)]||'application/octet-stream'});res.end(fs.readFileSync(file));

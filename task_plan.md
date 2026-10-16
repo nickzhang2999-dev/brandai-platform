@@ -315,3 +315,8 @@ User requests continuation and batch reporting, with prior local-only boundary r
 - [complete] P2.6 production phase and startup preflight, including actual Next/worker rejection.
 - [complete] Final source5de6ffc: contracts1737/UI34/AI500, types/build exit0; compiled-runtime3/3 pass after initial3/3 failure was fixed. Independent reviews complete.
 - [complete] Daily log, security report, README, page SSOT and attribution updated. Local commits only; P1/P2 remain separate, no deploy or integration merge.
+
+## 2026-10-16 · Approved optimization execution
+User approved D:/coding/公司/brandai-优化执行计划-2026-10-16.md. Original seven documentation files committed byte-unchanged as2cf3932 ondevUpdate1012. Current branchfix/p1-remove-captured-bundle. P1 owned shell/export, test/CI and read-only dependency audit run in parallel. P2–P5 pending; merge/config/online migration require the plan's separate confirmation. Detailed active plan: docs/optimization-execution-2026-10-16.md.
+
+P1 local gates complete: e0725bd owned shell/export;6ce5de0 routes;601a3c1 exact CI branches;d52b8a2 retired package deletion after green gates. After deletion contracts1612/UI34/AI500/typecheck/build passed, core browser52/engine9 and light checks49 passed; working shell browser66 passed earlier this stage. No push/deploy yet: CDS push auto-deploy enabled and project default DB is shared brandai; phase branch isolation missing. Prepare separate P1 preview DB/schema initialization approval per plan0.8 before risking deployment. Do not merge dev/main without separate approval. P2-P5 not implemented.

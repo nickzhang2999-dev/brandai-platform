@@ -13,6 +13,8 @@
 
 此表仅记录本地分支结果；真实数据库/对象存储/模型联调和云端发布本轮未验证。
 
+> **2026-10-16 · P1 自有资源迁移本地验证通过**：`fix/p1-remove-captured-bundle` 已迁入21个自有shell文件，构建仅输出24个自有资源，移除旧SDK/授权启动依赖；旧预览包176文件在门禁通过后以 `d52b8a2` 单独删除。删除后contracts1612/UI34/AI500、类型/生产构建和核心画布52＋引擎9项通过，另有工作台66项交互通过。**尚未推送或部署**：CDS新分支默认共享库且开启自动部署，需要先确认P1独立预览库初始化；现有dev预览仍是83a5dca。[本轮执行与证据](docs/optimization-execution-2026-10-16.md) · [开发日志](docs/development-log-2026-10-16.md)。P2–P5未实施，main未动。
+
 > **2026-10-15 17:46 自研画布引擎已上线开发预览**：`devUpdate1012 / 83a5dca` 的[云端验收38713351613](https://github.com/nickzhang2999-dev/brandai-platform/actions/runs/38713351613)成功，CDS部署完成。公网登录、Studio、实际编辑器JS的新引擎标记和Web/worker独立数据库均已读回核验。[打开新版](https://devupdate1012-brandai-platform.geole.me/studio?build=83a5dca#/home)。本地契约1614/UI34/AI500、类型/生产构建和103项浏览器检查通过；不代表 tldraw/Lovart 完整同等能力。main未动，本次发布模型调用0。[实现与边界](docs/deepflare-canvas-engine-2026-10-15.md)。本段为发布后本地回执，随下一批同步。
 
 > **2026-10-15 15:26 单张真实改图验收通过**：devUpdate1012已运行9fde897；真实任务修改成功、结果保存并重新读取SHA一致，最终1024×576。新任务仅在dev独立库/队列处理，main未动。[开发日志](docs/development-log-2026-10-15.md)。本段为部署后的本地回执。
@@ -159,15 +161,17 @@ CDS 主分支列表的预览按钮只打开域名，丢弃入口路径，导致�
 
 ## 独立前端评审分支 · 2026-10-08
 
+> 历史记录：以下目录和独立评审启动方式已在2026-10-16的P1阶段移除，不用于当前产品构建或部署。现有自有工作台源码为 `apps/web/studio-shell/`，编辑器入口为 `/studio-editor`；云端当前版本以顶部发布记录为准。
+
 2026-10-10 补充：已选择接入公司自有 tldraw 授权。相关本地配置与三个 CDS 项目均未发现已有配置；自有授权入口及严格派生接线已在本地补齐，缺失/无效授权的真实 HTTPS 拒绝回归通过。本批尚未推送或部署，有效授权下的稳定编辑、恢复和导出仍待验收，见 [当日日志](docs/开发日志-2026-10-10.md)。
 
 | 范围 | 状态 | 入口 |
 | --- | --- | --- |
-| Novart 工作台前端评审版（首页带图、项目归档、原画布编辑） | 独立 CDS 运行 2db9229；同源写入 403 已修复，Linux CI 及公网 76 项 HTTP 检查通过；浏览器交互待复核，未接真实业务后端 | [`previews/novart-workbench`](previews/novart-workbench/) · [最新联调日志与源码差异](docs/novart-integration-2026-10-09-origin-and-edit-review.md) |
+| Novart 工作台前端评审版（首页带图、项目归档、原画布编辑） | 独立 CDS 运行 2db9229；同源写入 403 已修复，Linux CI 及公网 76 项 HTTP 检查通过；浏览器交互待复核，未接真实业务后端 | `previews/novart-workbench`（历史目录，P1已移除） · [当时联调日志与源码差异](docs/novart-integration-2026-10-09-origin-and-edit-review.md) |
 
 ### 独立评审分支历史记录（合并保留）
 
-| Novart 工作台前端评审版（首页带图、项目归档、原画布编辑） | 2026-10-10 在本机 HTTPS 测试域复现：捕获 SDK 的域名授权拒绝会在约 5 秒后卸载画布。已补明确授权提示和真实 HTTPS 回归；正式可用仍阻塞于公司自有有效授权，不能称上线验收通过。发布与现场确认见日志 | [`previews/novart-workbench`](previews/novart-workbench/) · [运行与部署说明](docs/novart-workbench-preview.md) · [当日开发日志](docs/开发日志-2026-10-10.md) |
+| Novart 工作台前端评审版（首页带图、项目归档、原画布编辑） | 2026-10-10 在本机 HTTPS 测试域复现：捕获 SDK 的域名授权拒绝会在约 5 秒后卸载画布。已补明确授权提示和真实 HTTPS 回归；正式可用仍阻塞于公司自有有效授权，不能称上线验收通过。发布与现场确认见日志 | `previews/novart-workbench`（历史目录，P1已移除） · [历史运行与部署说明](docs/novart-workbench-preview.md) · [当日开发日志](docs/开发日志-2026-10-10.md) |
 
 这份独立评审程序用于操作与交互评审，使用独立文件存储，不接真实 AI、账号或生产业务数据。评审分支本身保留原有 Next.js 源码、`main`、正式站及根 `cds-compose.yml`；上述产品整合分支的增量另行记录。镜像由 `Branch Image` 工作流构建并检查，专用配置位于 `previews/novart-workbench/cds-compose.preview.yml`，只导入独立 CDS 评审项目，避免覆盖原产品的共享服务。屏幕适配覆盖大屏、小笔记本、平板与窄屏浏览器；评审版不代表正式产品已集成或已发布。
 

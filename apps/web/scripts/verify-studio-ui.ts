@@ -133,7 +133,7 @@ async function newPage(serviceWorkers: "allow" | "block" = "allow") {
     if (["http:", "https:"].includes(url.protocol) && url.origin !== base.origin) { networkProblems.push(`${url.origin}${url.pathname}`); await route.abort("blockedbyclient"); } else await route.continue(); });
   context.on("request", request => { const url = new URL(request.url());
     if (request.serviceWorker() && ["http:", "https:"].includes(url.protocol) && url.origin !== base.origin) networkProblems.push(`worker ${url.origin}${url.pathname}`);
-    if (!request.serviceWorker()) { try { if (new URL(request.frame().url()).pathname === "/studio-editor" && /\/(?:originals|m12-native)\//.test(url.pathname)) networkProblems.push(`owned editor loaded captured SDK: ${url.pathname}`); } catch { /* Navigation has no frame yet. */ } } });
+    if (/\/(?:originals|m12-native)\//.test(url.pathname)) networkProblems.push(`product loaded retired captured SDK: ${url.pathname}`); });
   context.on("response", response => { requests.push({ path: new URL(response.url()).pathname, method: response.request().method(), status: response.status() }); if (requests.length > 50) requests.shift(); });
   const page = await context.newPage(); currentPage = page; page.setDefaultTimeout(30000);
   page.on("pageerror", error => browserErrors.push(safe(error.message))); page.on("dialog", dialog => { void dialog.accept(); }); return page;

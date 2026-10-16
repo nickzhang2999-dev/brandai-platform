@@ -3,11 +3,8 @@ name: Branch Image
 # Publish immutable images for main and the isolated Novart branches. Deployment is a separate gate.
 on:
   push:
-    branches: [main, devUpdate1012, claude/novart-workbench-preview, claude/novart-product-integration]
+    branches: [main, devUpdate1012, claude/novart-product-integration, fix/p1-remove-captured-bundle, fix/p2-security, fix/p3-ai-reliability, fix/p4-frontend, chore/p5-engineering]
     paths:
-      - 'previews/novart-workbench/**'
-      - 'scripts/check-novart-container.py'
-      - 'scripts/test-novart-share-origin.py'
       - 'scripts/*novart*.py'
       - 'scripts/*novart*.cjs'
       - '.github/workflows/branch-image.yml'
@@ -31,67 +28,5 @@ concurrency:
 
 jobs:
   product:
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/devUpdate1012' || github.ref == 'refs/heads/claude/novart-product-integration'
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/devUpdate1012' || github.ref == 'refs/heads/claude/novart-product-integration' || github.ref == 'refs/heads/fix/p1-remove-captured-bundle' || github.ref == 'refs/heads/fix/p2-security' || github.ref == 'refs/heads/fix/p3-ai-reliability' || github.ref == 'refs/heads/fix/p4-frontend' || github.ref == 'refs/heads/chore/p5-engineering'
     uses: ./.github/workflows/novart-integration.yml
-
-  preview:
-    if: github.ref == 'refs/heads/claude/novart-workbench-preview'
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-
-      - name: Check trusted public origin and rejected cross-site writes
-        run: |
-          python3 -m pip install -r previews/novart-workbench/requirements.txt
-          python3 -B scripts/test-novart-share-origin.py
-          python3 -B scripts/test-novart-startup-diagnostics.py
-          python3 -B scripts/test-novart-license-config.py
-          python3 -B scripts/test-novart-product-entry.py
-          node scripts/test-novart-home-start.cjs
-          node scripts/test-novart-canvas-ready.cjs
-          node scripts/test-novart-startup-diagnostics.cjs
-
-      # localhost alone skips the SDK's production-domain license check. This
-      # verifies a real rejection is visible, not that this image is licensed.
-      - name: Check local editor and visible HTTPS license rejection
-        run: |
-          python3 -m pip install cryptography==43.0.3
-          npm install --prefix "$RUNNER_TEMP/novart-browser-test" --no-save playwright-core@1.62.1
-          node "$RUNNER_TEMP/novart-browser-test/node_modules/playwright-core/cli.js" install --with-deps chromium
-          NODE_PATH="$RUNNER_TEMP/novart-browser-test/node_modules" python3 -B scripts/test-novart-license-browser.py
-
-      - name: Verify package and build the image
-        env:
-          REPOSITORY: ${{ github.repository }}
-          COMMIT_SHA: ${{ github.sha }}
-        run: |
-          IMAGE="ghcr.io/${REPOSITORY,,}/novart-workbench-preview:sha-${COMMIT_SHA}"
-          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
-          python3 scripts/check-novart-container.py --verify-package-only
-          docker build --pull \
-            --label "org.opencontainers.image.source=https://github.com/$REPOSITORY" \
-            --label "org.opencontainers.image.revision=$COMMIT_SHA" \
-            --label "org.opencontainers.image.description=NovartLab isolated interaction review; no production AI or business data" \
-            -t "$IMAGE" previews/novart-workbench
-
-      - name: Check Linux startup, HTTP access and persistence across recreation
-        run: python3 scripts/check-novart-container.py --image "$IMAGE"
-
-      - name: Publish the tested image
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_ACTOR: ${{ github.actor }}
-        run: |
-          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GH_ACTOR" --password-stdin
-          docker push "$IMAGE"
-          docker logout ghcr.io
-          {
-            echo '### Novart preview container'
-            echo "- Tested image: \`$IMAGE\`"
-            echo '- Linux startup, access controls, asset and project persistence passed.'
-            echo '- CDS deployment and public HTTPS verification are separate gates.'
-            echo '- A newly created GHCR package may require owner visibility configuration before CDS can pull it.'
-          } >> "$GITHUB_STEP_SUMMARY"

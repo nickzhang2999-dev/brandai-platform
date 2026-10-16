@@ -3,16 +3,6 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 
 type Manifest = { format: string; files: Record<string, { file: string; mime: string; sha256: string; bytes: number }>; external: Record<string, string> };
-export type StudioLicenseConfig = { key: string; status: "missing" | "invalid" | "configured" };
-// This browser-consumed SDK license is distinct from AI/provider credentials.
-// Read only the dedicated runtime setting; configured does not mean licensed.
-export function studioLicenseConfig(value: unknown = process.env.NOVART_TLDRAW_LICENSE_KEY): StudioLicenseConfig {
-  if (value === undefined || value === "") return { key: "", status: "missing" };
-  if (typeof value !== "string" || value.length > 8192 || /[\u0000-\u001f\u007f-\u009f]/.test(value)) {
-    return { key: "", status: "invalid" };
-  }
-  return { key: value, status: "configured" };
-}
 const root = path.resolve(process.cwd(), "../../.novart-build/studio");
 let manifestPromise: Promise<Manifest> | undefined;
 export function studioManifest() {
@@ -35,7 +25,7 @@ export async function studioAsset(urlPath: string, allowHtml = false) {
 }
 export function studioHtml(html: string, data: unknown, bootstrapSha256: string) {
   if (typeof bootstrapSha256 !== "string" || !/^[a-f0-9]{64}$/.test(bootstrapSha256)) throw new Error("Invalid studio bootstrap checksum");
-  // Delay captured scripts until the authenticated bootstrap has installed the
+  // Delay owned shell scripts until the authenticated bootstrap has installed the
   // transport and scoped browser state. Preserve their original source order.
   const deferred = html.replace(/<script\b([^>]*)>/g, (_all, attrs: string) => `<script type="application/x-novart"${attrs.replace(/\s+type=["'][^"']*["']/g, "")}>`);
   const json = JSON.stringify(data).replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
