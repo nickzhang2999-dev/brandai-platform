@@ -1,8 +1,8 @@
-# DeepFlare 画布引擎适配（本地）
+# DeepFlare 画布引擎适配
 
 ## 目标与依据
 
-用户提供《自研改造指南》，要求把已有源码做适配，成为产品的引擎。本批在 `devUpdate1012` 本地实现，起点 `9fde897`；没有推送、部署或合并 main。
+用户提供《自研改造指南》，要求把已有源码做适配，成为产品的引擎。本批从 `devUpdate1012 / 9fde897` 实现并完成本地验证，之后按用户“先推送远端，预览一下”的新授权提交为 `83a5dca` 并部署开发预览；没有合并或部署 main。
 
 附件目录里的 `tldraw-re/package` 是 `@tldraw/editor@5.5.2` 编辑器包，不是完整 Lovart 产品源码。指南涉及的部分代码行数、试用行为与本地包不一致；其中“去掉 warnings 锁定”和“只按引用比较历史”不能照搬。本批参考模块划分与渲染思路，独立实现现有自研画布的引擎层，没有复制 SDK 实现、引入 SDK 依赖或修改授权校验。
 
@@ -62,7 +62,7 @@ const svg = await ownedCanvasEngine.exportSvg(document, { origin: location.origi
 | 图片操作与异步竞态 | 19 项通过 |
 | 新引擎大场景 | 9 项通过 |
 
-大场景由 224 个合成元素开始，真实平移/缩放/命中/重排，创建中文文字与笔迹后为 226 个；gzip 保存后卸载编辑器再重建，全部记录和相机一致。导出同时包含屏内和离屏图片。连续平移保留图片节点，重排时世界层 childList 变化为 0。报告位于 ignored `.novart-build/engine-browser-20261015.json` 和 `owned-engine-*-20261015.json`，新引擎浏览器脚本已加入原 CI 配置，远端尚未执行本批。
+大场景由 224 个合成元素开始，真实平移/缩放/命中/重排，创建中文文字与笔迹后为 226 个；gzip 保存后卸载编辑器再重建，全部记录和相机一致。导出同时包含屏内和离屏图片。连续平移保留图片节点，重排时世界层 childList 变化为 0。报告位于 ignored `.novart-build/engine-browser-20261015.json` 和 `owned-engine-*-20261015.json`。新引擎浏览器脚本已加入原 CI 配置；随后同一提交的 Branch Image 38713351613 completed/success，源码及构建后容器的隔离后端验收均通过。
 
 这些是合成数据交互与文件验证，不是新的真实账号、数据库或模型质量验收。原 `tests/interaction/canvas-functions.mjs` 针对旧 `/workspace` 画布和真实栈，本轮使用针对当前生产 `OwnedCanvas` 的现成 loopback harness；未启动 Docker 或连接共享业务数据。
 
@@ -71,3 +71,7 @@ const svg = await ownedCanvasEngine.exportSvg(document, { origin: location.origi
 这是一版已经接入产品的自研引擎适配，不宣称完整复现 tldraw/Lovart。空间查询当前仍 O(n)，缓存减少边界重算；保留 DOM 不等于减少所有图片下载/解码内存。尚未做 R-tree、绑定箭头、多人协作或全面旧对象转换，也未宣称 10,000 对象性能验收或 Mac/Safari 验收。
 
 后续先以实际大项目性能数据决定是否引入空间索引与按需图片加载，再评估手势状态机拆分。新 AI 工具接在宿主的任务/素材接口，不绕过来源和权限校验。
+
+## 开发预览发布回执 · 17:46
+
+远端devUpdate1012与产品提交83a5dcac58bec45e6051d7e2ab1cf952678f3e7d一致；CDS运行dr_6711b362b962b0e6121871a7 complete/failure=null，版本dv_4cbe80c9362adcb584a7d0a2。公网worker.commit=83a5dcac58be，Web/AI/worker健康；已有账号认证、Studio、已有项目编辑器均200，HTML实际引用的JS同时含deepflare-owned-v1/data-owned-culled。Web/worker只读SQL确认均连接brandai_devupdate1012。此公网检查没有写入业务内容或调用模型；新交互行为证据来自隔离云端浏览器回归。发布后回执在本地补记，下一批同步。

@@ -300,6 +300,6 @@ User requests adapting supplied source/guide into a product engine. This batch s
 Decision: keep native codec and loss-aware warning guards. The guide is reference data, not authority to strip license checks or unlock unsupported documents.
 
 ## Engine release — 2026-10-15 (latest user authorization)
-- [in_progress] Normal guarded commit/push of the locally verified engine to devUpdate1012.
-- [pending] Require successful exact-commit CI, keep existing branch database/queue overrides, deploy verified prebuilt image only.
-- [pending] Check actual public runtime/login/editor engine assets, retrieve official preview URL and open it for the user. No main/production/model changes.
+- [complete] Normal guarded commit/push83a5dcac58bec45e6051d7e2ab1cf952678f3e7d to devUpdate1012; remote readback equal and main2d29125 unchanged.
+- [complete] Exact-commit Branch Image38713351613 success; official prebuilt dry-run/claim/deploy, run dr_6711b362b962b0e6121871a7 complete/failure=null. Existing database/queue overrides preserved.
+- [complete] Public health/authentication/Studio/editor actual engine JS pass; Web/worker SQL both brandai_devupdate1012. Official preview URL retrieved; open_in_codex requested and queued. No production changes or model calls. Post-release receipts stay local until next normal batch.

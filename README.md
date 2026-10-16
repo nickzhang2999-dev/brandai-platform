@@ -1,6 +1,6 @@
 # DeepFlare — 品牌项目视觉 AI 生成平台
 
-> **2026-10-15 自研画布引擎适配已完成本地验证**：统一文档/导出入口，独立相机、场景、几何与历史，稳定层序、memo 和保留节点的视口剔除已接入现有产品。全量契约1614、UI34、AI500、Web类型及生产构建通过；实际浏览器核心52/工具13/分层10/图片19/引擎9通过。新引擎验证224元素编辑至226元素后完整保存重开。仅本地、未推送部署，不代表 tldraw/Lovart 完整同等能力。[实现与边界](docs/deepflare-canvas-engine-2026-10-15.md)。
+> **2026-10-15 17:46 自研画布引擎已上线开发预览**：`devUpdate1012 / 83a5dca` 的[云端验收38713351613](https://github.com/nickzhang2999-dev/brandai-platform/actions/runs/38713351613)成功，CDS部署完成。公网登录、Studio、实际编辑器JS的新引擎标记和Web/worker独立数据库均已读回核验。[打开新版](https://devupdate1012-brandai-platform.geole.me/studio?build=83a5dca#/home)。本地契约1614/UI34/AI500、类型/生产构建和103项浏览器检查通过；不代表 tldraw/Lovart 完整同等能力。main未动，本次发布模型调用0。[实现与边界](docs/deepflare-canvas-engine-2026-10-15.md)。本段为发布后本地回执，随下一批同步。
 
 > **2026-10-15 15:26 单张真实改图验收通过**：devUpdate1012已运行9fde897；真实任务修改成功、结果保存并重新读取SHA一致，最终1024×576。新任务仅在dev独立库/队列处理，main未动。[开发日志](docs/development-log-2026-10-15.md)。本段为部署后的本地回执。
 

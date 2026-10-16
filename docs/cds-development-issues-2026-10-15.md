@@ -32,3 +32,7 @@ ffc6198的Branch Image38685884784已success，但CDS仍waiting且ciWorkflowRunUr
 
 
 15:22–15:26：9fde897成功工作流38696804512仍未自动关联CDS，官方dry-run及claim/deploy后完成。运行版本与独立库连接均读回正确，随后真实改图成功；不是仅配置界面显示成功。发布后回执本地补记。
+
+## 17:43–17:46 · 引擎发布成功回执未自动关联
+
+GitHub38713351613已completed/success、head_sha=83a5dcac58bec45e6051d7e2ab1cf952678f3e7d；同期CDS ciTargetSha相同但ciImageStatus=waiting、ciWorkflowRunUrl为空，旧运行仍9fde897。官方dry-run核验后claim/deploy完成dr_6711b362b962b0e6121871a7，公网新JS/健康提交和独立数据库均验证。只记录状态关联问题，不推断webhook底层根因；没有修改CDS源码、绕过平台审批或在CDS源码构建。完整证据见当日开发日志，本段为发布后本地回执。
