@@ -8,7 +8,7 @@ import {
   useMemo,
   useState,
 } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import type { BrandWorkspace } from "@brandai/contracts";
 import { apiFetch } from "@/lib/client";
 import {
@@ -49,7 +49,21 @@ export function BrandProvider({
   children: React.ReactNode;
 }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const explicitWorkspaceId = searchParams.get("workspaceId");
+  const pendingWorkspace = explicitWorkspaceId !== null && explicitWorkspaceId !== value.wsId;
+  const [workspaceRefreshSlow, setWorkspaceRefreshSlow] = useState(false);
   const [brands, setBrands] = useState<BrandWorkspace[]>([]);
+
+  useEffect(() => {
+    // Shared Next layouts can survive a query-only soft navigation. Ask the
+    // server to validate the new URL before mounting any brand-scoped page.
+    setWorkspaceRefreshSlow(false);
+    if (!pendingWorkspace) return;
+    router.refresh();
+    const timer = setTimeout(() => setWorkspaceRefreshSlow(true), 10000);
+    return () => clearTimeout(timer);
+  }, [pendingWorkspace, explicitWorkspaceId, router]);
 
   const refreshBrands = useCallback(async () => {
     const loadedBrands = await apiFetch<BrandWorkspace[]>("/api/workspaces");
@@ -78,6 +92,11 @@ export function BrandProvider({
       document.cookie = `${ACTIVE_BRAND_COOKIE}=${encodeURIComponent(
         workspaceId,
       )}; path=/; max-age=${ACTIVE_BRAND_COOKIE_MAX_AGE}; samesite=lax`;
+      const url = new URL(window.location.href);
+      url.searchParams.set("workspaceId", workspaceId);
+      // A project belongs to its original brand; never carry it across a switch.
+      for (const key of ["projectId", "project", "gen", "generationId", "versionId"]) url.searchParams.delete(key);
+      router.replace(url.pathname + url.search + url.hash);
       router.refresh();
     },
     [router],
@@ -134,6 +153,9 @@ export function BrandProvider({
         return;
       }
       document.cookie = `${ACTIVE_BRAND_COOKIE}=; path=/; max-age=0; samesite=lax`;
+      const url = new URL(window.location.href);
+      for (const key of ["workspaceId", "projectId", "project", "gen", "generationId", "versionId"]) url.searchParams.delete(key);
+      router.replace(url.pathname + url.search + url.hash);
       router.refresh();
     },
     [brands, router, switchBrand, value.wsId],
@@ -164,7 +186,11 @@ export function BrandProvider({
     ],
   );
 
-  return <Ctx.Provider value={context}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={context}>{pendingWorkspace
+    ? <div role={workspaceRefreshSlow ? "alert" : "status"} className="p-6 text-muted-foreground">
+      {workspaceRefreshSlow ? <>品牌加载尚未完成。<button type="button" className="ml-2 text-primary underline" onClick={() => window.location.reload()}>重新打开</button></> : "正在切换品牌…"}
+    </div>
+    : children}</Ctx.Provider>;
 }
 
 export function useBrand(): BrandCtx {

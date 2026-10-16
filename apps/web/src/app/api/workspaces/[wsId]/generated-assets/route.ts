@@ -1,6 +1,6 @@
 import { prisma } from "@brandai/db";
-import { CampaignStatus, GeneratedAsset, SceneType } from "@brandai/contracts";
-import { handleError, ok, requireUser } from "@/lib/api";
+import { CampaignStatus, GeneratedAsset, GeneratedAssetTargetQueryInput, SceneType } from "@brandai/contracts";
+import { handleError, ok, parse, requireUser } from "@/lib/api";
 import { serializeAsset } from "@/lib/assets";
 import { requireOwnedWorkspace } from "@/lib/workspace";
 
@@ -22,6 +22,17 @@ export async function GET(
     await requireOwnedWorkspace(wsId, user.id);
 
     const url = new URL(req.url);
+    // Deep links must be filtered before the list cap. Reject duplicate/empty
+    // target values instead of silently falling back to unrelated recent images.
+    const targetValues = (key: string) => {
+      const values = url.searchParams.getAll(key);
+      return values.length > 1 ? values : values[0];
+    };
+    const { generationId, versionId } = parse(GeneratedAssetTargetQueryInput, {
+      generationId: targetValues("generationId"),
+      versionId: targetValues("versionId"),
+    });
+    const hasTarget = Boolean(generationId || versionId);
     const q = url.searchParams.get("q")?.trim();
     const projectId = url.searchParams.get("projectId")?.trim();
     const statusParam = url.searchParams.get("projectStatus");
@@ -37,15 +48,23 @@ export async function GET(
       : undefined;
 
     const relationFilter =
-      projectId || projectStatus
+      projectId || projectStatus || hasTarget
         ? {
             generationVersion: {
               is: {
+                ...(versionId ? { id: versionId } : {}),
                 generation: {
                   is: {
+                    ...(generationId ? { id: generationId } : {}),
+                    // Old mirror rows may contain incorrect references. The
+                    // target asset and its source must both belong to this brand.
+                    ...(hasTarget ? { workspaceId: wsId } : {}),
                     ...(projectId ? { projectId } : {}),
-                    ...(projectStatus
-                      ? { project: { is: { status: projectStatus } } }
+                    ...(projectStatus || hasTarget
+                      ? { project: { is: {
+                        ...(hasTarget ? { workspaceId: wsId } : {}),
+                        ...(projectStatus ? { status: projectStatus } : {}),
+                      } } }
                       : {}),
                   },
                 },

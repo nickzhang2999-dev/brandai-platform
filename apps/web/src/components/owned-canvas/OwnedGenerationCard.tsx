@@ -93,17 +93,17 @@ export function OwnedGenerationCard({ task, api, canEdit, onTask, onNotice, onIn
   }
   return <section className="space-y-2 rounded-2xl border border-border p-3" data-task-id={task.requestId} data-task-mode={task.mode}>
     {!compact && <h3 className="line-clamp-2 text-xs font-semibold">{task.displayText}</h3>}
-    {!compact && task.mode === "modify" && <p className="text-xs text-muted-fg">整图修改 · 原图保留</p>}
+    {!compact && task.mode === "modify" && <p className="text-xs text-muted-foreground">整图修改 · 原图保留</p>}
     {compact && task.status === "FAILED" ? <div className="space-y-2">
       <p role="alert" className="text-xs leading-6">{task.error?.startsWith("生成服务") ? task.error.split("。")[0] + "。" : "本次" + (task.mode === "modify" ? "修改" : "生成") + "未完成。"}{task.mode === "modify" ? "原图已保留。" : "需求已保留。"}</p>
-      <div className="flex flex-wrap items-start gap-3 text-xs"><details className="min-w-0 flex-1"><summary className="cursor-pointer text-muted-fg">查看详情</summary><p className="mt-2 break-words leading-6 text-muted-fg">{task.error || "具体原因尚未确认，请查看任务状态。"}</p></details>{onReedit && <button type="button" className="rounded-full text-primary disabled:opacity-40" disabled={!canEdit || recoveryDisabled} onClick={onReedit}>重新编辑</button>}</div>
-    </div> : <p role={task.resultState === "FAILED" ? "alert" : undefined} className="text-xs leading-5 text-muted-fg">{task.status === "FAILED" ? task.error : task.resultState === "READY" ? "图片已生成并保存" : task.resultState === "FAILED" ? task.archiveError || "生成结果保存失败" : activityNotice ? activityNotice : task.status === "SUCCEEDED" ? "生成完成，正在保存图片" : compact && task.status === "RUNNING" ? (task.progress === null ? "正在创作…" : `正在创作 · ${task.progress}%`) : task.status === "RUNNING" ? "正在生成…" : "已受理，排队中"}</p>}
+      <div className="flex flex-wrap items-start gap-3 text-xs"><details className="min-w-0 flex-1"><summary className="cursor-pointer text-muted-foreground">查看详情</summary><p className="mt-2 break-words leading-6 text-muted-foreground">{task.error || "具体原因尚未确认，请查看任务状态。"}</p></details>{onReedit && <button type="button" className="rounded-full text-primary disabled:opacity-40" disabled={!canEdit || recoveryDisabled} onClick={onReedit}>重新编辑</button>}</div>
+    </div> : <p role={task.resultState === "FAILED" ? "alert" : undefined} className="text-xs leading-5 text-muted-foreground">{task.status === "FAILED" ? task.error : task.resultState === "READY" ? "图片已生成并保存" : task.resultState === "FAILED" ? task.archiveError || "生成结果保存失败" : activityNotice ? activityNotice : task.status === "SUCCEEDED" ? "生成完成，正在保存图片" : compact && task.status === "RUNNING" ? (task.progress === null ? "正在创作…" : `正在创作 · ${task.progress}%`) : task.status === "RUNNING" ? "正在生成…" : "已受理，排队中"}</p>}
     {task.canRetryArchive && <button type="button" className={button} disabled={!canEdit || busy} onClick={() => void action(retryArchive)}>重试保存结果</button>}
     {selection.requested && <details open={compact ? undefined : true} className="space-y-2 rounded-xl bg-accent-soft p-3" data-testid="owned-generated-psd" data-status={psd?.status ?? "LOADING"}>
       <summary hidden={!compact} className="cursor-pointer text-xs">PSD 与图层{psd?.status === "READY" ? " · 已就绪" : psd?.status === "FAILED" ? " · 未完成" : " · 准备中"}</summary>
       <p className="text-xs font-semibold">可编辑 PSD · {psd?.decomposition ? ownedLayerTaskTitle(psd.decomposition) : selection.mode === "AUTO" ? "按内容自动分层" : `${selection.count} 层`}</p>
-      <p role="status" className="text-xs leading-5 text-muted-fg" data-testid="owned-generated-psd-status">{psdError || (psdPaused ? "自动读取已暂停，任务仍在后台处理；可刷新确认。" : psd?.status === "READY" ? "图层已保存，可展开编辑或导出 PSD；导出时会校验文件大小与资源限制。" : psd?.status === "FAILED" ? (psd.error || "PSD 准备未完成。") + " 生成图片仍保留。" : psd?.decomposition ? ownedLayerTaskStatus(psd.decomposition) + "，原图可以先使用。" : psd?.status === "RUNNING" ? "正在准备可编辑图层，原图可以先使用。" : psd?.status === "NOT_REQUESTED" ? "服务端尚未确认 PSD 请求，请刷新任务。" : "PSD 已请求，图片生成保存后将在后台准备。")}</p>
-      {psd?.decomposition?.analysisSummary && <p className="text-xs leading-5 text-muted-fg">{psd.decomposition.analysisSummary}</p>}
+      <p role="status" className="text-xs leading-5 text-muted-foreground" data-testid="owned-generated-psd-status">{psdError || (psdPaused ? "自动读取已暂停，任务仍在后台处理；可刷新确认。" : psd?.status === "READY" ? "图层已保存，可展开编辑或导出 PSD；导出时会校验文件大小与资源限制。" : psd?.status === "FAILED" ? (psd.error || "PSD 准备未完成。") + " 生成图片仍保留。" : psd?.decomposition ? ownedLayerTaskStatus(psd.decomposition) + "，原图可以先使用。" : psd?.status === "RUNNING" ? "正在准备可编辑图层，原图可以先使用。" : psd?.status === "NOT_REQUESTED" ? "服务端尚未确认 PSD 请求，请刷新任务。" : "PSD 已请求，图片生成保存后将在后台准备。")}</p>
+      {psd?.decomposition?.analysisSummary && <p className="text-xs leading-5 text-muted-foreground">{psd.decomposition.analysisSummary}</p>}
       <div className="flex flex-wrap gap-2">
         {psd?.status === "READY" && psd.downloadUrl && <button type="button" className={button + " bg-card"} disabled={!api || busy} onClick={() => void action(downloadPsd)} data-testid="owned-generated-psd-download">下载 PSD</button>}
         {psd?.status === "READY" && onInsertLayers && <button type="button" className={button + " bg-card"} disabled={!canEdit || busy} onClick={() => void action(expandPsd)}>展开为可编辑图层</button>}
@@ -117,8 +117,8 @@ export function OwnedGenerationCard({ task, api, canEdit, onTask, onNotice, onIn
         <img src={image.url} alt="生成结果" className="max-h-52 w-full rounded-xl object-contain" loading="lazy" />
         <button type="button" className={button} disabled={!canEdit || busy} onClick={() => void action(() => onInsert(image))}>加入画布</button>
         <details open={compact ? undefined : true}>
-        <summary hidden={!compact} className="cursor-pointer text-xs text-muted-fg">品牌检查</summary>
-        <p className="text-xs leading-5 text-muted-fg" data-testid="owned-compliance-status">{label}</p>
+        <summary hidden={!compact} className="cursor-pointer text-xs text-muted-foreground">品牌检查</summary>
+        <p className="text-xs leading-5 text-muted-foreground" data-testid="owned-compliance-status">{label}</p>
         {!!check?.report && <ul className="space-y-1 text-xs">{[...check.report.textResults, ...check.report.visualResults].map((issue, index) => <li key={index}>{issue.reason}{issue.replacement ? " · 建议：" + issue.replacement : ""}</li>)}</ul>}
         <div className="flex flex-wrap gap-2"><button type="button" className={button} disabled={busy || !api} onClick={() => void action(() => inspect(image))}>读取品牌检查</button>
           {check?.canRetry && <button type="button" className={button} disabled={busy || !canEdit} onClick={() => void action(() => inspect(image, true))}>{check.status === "NOT_REQUESTED" ? "开始品牌检查" : "重试品牌检查"}</button>}

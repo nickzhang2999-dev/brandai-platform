@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { BrandWorkspace } from "@brandai/contracts";
 import { apiFetch } from "@/lib/client";
 import { gradientFor } from "./_ui";
+import { QueryFailure } from "@/components/query-failure";
 
 /**
  * L2 / B5 / H14 — homepage "推荐品牌" masonry/waterfall. Renders REAL
@@ -16,7 +17,7 @@ import { gradientFor } from "./_ui";
  * No mock rows: with no brands, an honest empty state is shown.
  */
 export function RecommendedBrands() {
-  const { data: brands = [], isLoading } = useQuery({
+  const { data: brands = [], isLoading, isError, refetch, isFetching } = useQuery({
     queryKey: ["brandai-recommended-brands"],
     queryFn: () => apiFetch<BrandWorkspace[]>(`/api/brands/recommended`),
   });
@@ -34,7 +35,7 @@ export function RecommendedBrands() {
         <div className="rounded-3xl border border-border bg-card p-12 text-center text-sm text-muted-foreground">
           加载中…
         </div>
-      ) : brands.length === 0 ? (
+      ) : isError ? <QueryFailure label="推荐品牌" retry={refetch} retrying={isFetching} /> : brands.length === 0 ? (
         <div className="rounded-3xl border border-dashed border-border bg-card p-12 text-center">
           <span className="mb-3 inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-accent-soft text-xl text-primary">
             ✦

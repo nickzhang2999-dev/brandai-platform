@@ -35,6 +35,14 @@ export const CreateAssetInput = z.object({
 });
 export type CreateAssetInput = z.infer<typeof CreateAssetInput>;
 
+/** BFF-only generated-library deep-link targets; both fields combine with AND. */
+const GeneratedAssetTargetId = z.string().min(1).max(128).regex(/^\S+$/, "Invalid target id");
+export const GeneratedAssetTargetQueryInput = z.object({
+  generationId: GeneratedAssetTargetId.optional(),
+  versionId: GeneratedAssetTargetId.optional(),
+}).strict();
+export type GeneratedAssetTargetQueryInput = z.infer<typeof GeneratedAssetTargetQueryInput>;
+
 export const UpdateAssetTagsMode = z.enum(["append", "remove", "replace"]);
 export type UpdateAssetTagsMode = z.infer<typeof UpdateAssetTagsMode>;
 

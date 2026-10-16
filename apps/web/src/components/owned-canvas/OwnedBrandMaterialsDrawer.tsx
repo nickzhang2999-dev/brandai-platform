@@ -12,7 +12,7 @@ export type OwnedBrandMaterialsDrawerProps = {
   onReference: (material: StudioMaterial) => Promise<void> | void;
   onClose: () => void;
 };
-const button = "rounded-full border border-border bg-card px-3 py-2 text-xs text-fg hover:bg-muted disabled:opacity-40";
+const button = "rounded-full border border-border bg-card px-3 py-2 text-xs text-foreground hover:bg-muted disabled:opacity-40";
 const pending = (status: string) => status === "PENDING" || status === "RUNNING";
 
 /** Real BFF-backed brand library. Selection is distinct from canvas insertion
@@ -136,7 +136,7 @@ export function OwnedBrandMaterialsDrawer({ workspaceId, projectId, userId, read
   const imageFile = (files: FileList | null) => files && Array.from(files).find(file => file.type.startsWith("image/"));
 
   return <section ref={root} role="dialog" aria-modal="true" aria-label="品牌素材库" data-testid="owned-brand-materials"
-    className="flex min-h-0 flex-col rounded-3xl bg-card text-fg" onPointerDown={event => event.stopPropagation()}
+    className="flex min-h-0 flex-col rounded-3xl bg-card text-foreground" onPointerDown={event => event.stopPropagation()}
     onKeyDown={event => {
       if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); onClose(); }
       if (event.key !== "Tab") return;
@@ -148,21 +148,21 @@ export function OwnedBrandMaterialsDrawer({ workspaceId, projectId, userId, read
     }} onDragOver={event => { event.preventDefault(); event.stopPropagation(); }} onDrop={event => {
       event.preventDefault(); event.stopPropagation(); const file = imageFile(event.dataTransfer.files); if (file) void upload(file);
     }} onPaste={event => { const file = imageFile(event.clipboardData.files); if (file) { event.preventDefault(); event.stopPropagation(); void upload(file); } }}>
-    <div className="flex items-start justify-between gap-3"><div><h2 className="text-sm font-semibold">品牌素材库</h2><p className="mt-1 text-xs text-muted-fg">品牌内共享，选择后加入画布或对话。</p></div><button type="button" className={button} aria-label="关闭品牌素材库" onClick={onClose}>关闭</button></div>
-    <div className="mt-4 flex gap-2"><input ref={searchInput} aria-label="搜索品牌素材" type="search" placeholder="搜索名称或标签" value={search} maxLength={200} onChange={event => { setSearch(event.target.value); setChosen(""); }} className="min-w-0 flex-1 rounded-full border border-border bg-bg px-3 py-2 text-xs outline-none focus:border-primary" /><button type="button" className={button} disabled={readOnly || busy} onClick={() => fileInput.current?.click()}>上传</button></div>
+    <div className="flex items-start justify-between gap-3"><div><h2 className="text-sm font-semibold">品牌素材库</h2><p className="mt-1 text-xs text-muted-foreground">品牌内共享，选择后加入画布或对话。</p></div><button type="button" className={button} aria-label="关闭品牌素材库" onClick={onClose}>关闭</button></div>
+    <div className="mt-4 flex gap-2"><input ref={searchInput} aria-label="搜索品牌素材" type="search" placeholder="搜索名称或标签" value={search} maxLength={200} onChange={event => { setSearch(event.target.value); setChosen(""); }} className="min-w-0 flex-1 rounded-full border border-border bg-background px-3 py-2 text-xs outline-none focus:border-primary" /><button type="button" className={button} disabled={readOnly || busy} onClick={() => fileInput.current?.click()}>上传</button></div>
     <input ref={fileInput} type="file" hidden accept="image/png,image/jpeg,image/webp" onChange={event => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; if (file) void upload(file); }} />
-    <div className="mt-3 text-xs leading-5" aria-live="polite">{notice && <p>{notice}</p>}{error && <p role="alert" className="text-danger">{error}</p>}
+    <div className="mt-3 text-xs leading-5" aria-live="polite">{notice && <p>{notice}</p>}{error && <p role="alert" className="text-destructive">{error}</p>}
       {uploadAttempt.current && <button type="button" className="underline" disabled={busy} onClick={() => { const operation = uploadAttempt.current; if (operation) void upload(operation.file); }}>确认原上传回执</button>}
       {tasks.filter(task => task.status !== "SUCCEEDED").map(task => <p key={task.taskId}>{pending(task.status) ? `图片保存中 · ${task.progress}%` : task.error ?? "上传未完成"}</p>)}</div>
     <div className="mt-3 max-h-[55vh] min-h-0 overflow-y-auto" data-testid="owned-brand-material-list"><div className="grid grid-cols-2 gap-3">
       {items.map(item => <button key={item.assetId} type="button" aria-label={`选择素材 ${item.fileName}`} aria-pressed={chosen === item.assetId} disabled={busy}
         className={`overflow-hidden rounded-2xl border p-2 text-left ${chosen === item.assetId ? "border-primary bg-accent-soft" : "border-border bg-card"}`} onClick={() => { setChosen(item.assetId); setError(""); }}>
         <img src={item.url} alt={item.fileName} loading="lazy" className="aspect-square w-full rounded-xl object-contain" /><span className="mt-2 block truncate text-xs" title={item.fileName}>{item.fileName}</span>
-        <span className="text-[11px] text-muted-fg">{item.material ? `${item.material.width} × ${item.material.height}` : "使用前校验原图"}</span>
+        <span className="text-[11px] text-muted-foreground">{item.material ? `${item.material.width} × ${item.material.height}` : "使用前校验原图"}</span>
       </button>)}
-    </div>{!items.length && !loading && <p className="py-8 text-center text-xs text-muted-fg">{search ? "没有匹配素材" : "上传第一张品牌素材，多个项目都能复用。"}</p>}
-      {loading && <p className="py-4 text-center text-xs text-muted-fg">正在读取素材…</p>}{cursor && <button type="button" className={`${button} mt-4 w-full`} disabled={loading} onClick={() => void refresh(cursor)}>加载更多</button>}</div>
+    </div>{!items.length && !loading && <p className="py-8 text-center text-xs text-muted-foreground">{search ? "没有匹配素材" : "上传第一张品牌素材，多个项目都能复用。"}</p>}
+      {loading && <p className="py-4 text-center text-xs text-muted-foreground">正在读取素材…</p>}{cursor && <button type="button" className={`${button} mt-4 w-full`} disabled={loading} onClick={() => void refresh(cursor)}>加载更多</button>}</div>
     <div className="mt-4 flex flex-wrap gap-2 border-t border-border pt-4"><button type="button" className={button} disabled={readOnly || busy || !chosen} onClick={() => void choose("canvas")}>加入画布</button><button type="button" className={button} disabled={readOnly || busy || !chosen} onClick={() => void choose("conversation")}>加入对话</button><button type="button" className={button} disabled={loading} onClick={() => { pollStarted.current = Date.now(); void recoverUploads().then(() => refresh()).catch(error => setError(error instanceof Error ? error.message : "任务暂不可读。")); }}>刷新</button></div>
-    {readOnly && <p className="mt-2 text-xs text-muted-fg">当前项目只读，可以浏览品牌素材。</p>}
+    {readOnly && <p className="mt-2 text-xs text-muted-foreground">当前项目只读，可以浏览品牌素材。</p>}
   </section>;
 }

@@ -1,5 +1,5 @@
-import { cookies } from "next/headers";
-import { redirect } from "next/navigation";
+import { cookies, headers } from "next/headers";
+import { notFound, redirect } from "next/navigation";
 import { prisma } from "@brandai/db";
 import { auth } from "@/auth";
 import { isAdminUser } from "@/lib/admin";
@@ -37,7 +37,22 @@ export default async function BrandaiLayout({
   // honoring it (see getOrCreateActiveBrand), so SSR / refresh / deep links all
   // resolve the same brand the user picked.
   const preferredWsId = (await cookies()).get(ACTIVE_BRAND_COOKIE)?.value;
-  const brand = await getOrCreateActiveBrand(session.user.id, preferredWsId);
+  const workspaceHeader = (await headers()).get("x-brandai-workspace-id");
+  const explicitWsId = workspaceHeader === null ? null : decodeURIComponent(workspaceHeader);
+  let explicitBrand: { id: string; name: string } | null = null;
+  if (explicitWsId !== null) {
+    explicitBrand = await prisma.brandWorkspace.findFirst({
+      where: { id: explicitWsId },
+      select: { id: true, name: true, ownerId: true },
+    });
+    if (!explicitBrand) notFound();
+    const owned = explicitBrand as { id: string; name: string; ownerId: string };
+    if (owned.ownerId !== session.user.id && !(await prisma.membership.findUnique({
+      where: { userId_workspaceId: { userId: session.user.id, workspaceId: explicitWsId } },
+      select: { id: true },
+    }))) notFound();
+  }
+  const brand = explicitBrand ?? await getOrCreateActiveBrand(session.user.id, preferredWsId);
   const email = dbUser.email ?? session.user.email ?? "";
   const name = dbUser.name ?? email.split("@")[0] ?? "用户";
   const initial = (name || email || "U").trim().slice(0, 1).toUpperCase();

@@ -9,6 +9,12 @@ import { listWorkspaceNotifications } from "../../../apps/web/src/lib/notificati
 const upload = { taskId: "upload-task", projectId: "p", fileName: "my image.png", task: { status: "SUCCEEDED", error: null, updatedAt: new Date("2026-10-09T00:00:00Z") } };
 beforeEach(() => { vi.resetAllMocks(); f.generations.mockResolvedValue([]); f.tasks.mockResolvedValue([]); f.uploads.mockResolvedValue([upload]); f.projects.mockResolvedValue([{ id: "p" }]); f.studio.mockResolvedValue([]); f.layers.mockResolvedValue([]); });
 describe("private upload terminal notifications", () => {
+  it("opens an existing legacy generation in the image library instead of an empty native canvas", async () => {
+    f.uploads.mockResolvedValue([]);
+    f.generations.mockResolvedValue([{ id: "g", projectId: "p", status: "SUCCEEDED", sceneType: "SCENE", error: null,
+      finishedAt: new Date("2026-10-09T00:00:00Z"), createdAt: new Date("2026-10-09T00:00:00Z"), _count: { versions: 1 } }]);
+    expect((await listWorkspaceNotifications("w", 30, "u"))[0].href).toBe("/generated?workspaceId=w&generationId=g");
+  });
   it("links projectless brand-library uploads to the real brand library without a phantom project", async () => {
     f.uploads.mockResolvedValue([{ ...upload, projectId: null, attachToProject: false }]);
     const items = await listWorkspaceNotifications("w", 30, "u", "studio");
@@ -37,7 +43,7 @@ describe("private upload terminal notifications", () => {
     f.tasks.mockResolvedValue([{ id: "existing", kind: "RECOGNIZE", status: "SUCCEEDED", refCount: 2, updatedAt: new Date("2026-10-08T00:00:00Z") }]);
     const items = await listWorkspaceNotifications("w", 30, "u");
     expect(items[0]).toMatchObject({ status: "FAILED", title: "图片上传失败", detail: "图片已损坏，请重新选择。" });
-    expect(items[1]).toMatchObject({ kind: "RECOGNIZE", title: "素材识别完成", detail: "新增 2 条规则草稿", href: "/brand-knowledge" });
+    expect(items[1]).toMatchObject({ kind: "RECOGNIZE", title: "素材识别完成", detail: "新增 2 条规则草稿", href: "/brand-knowledge?workspaceId=w" });
   });
   it("product scope does not fetch or surface legacy workspace task events", async () => {
     const items = await listWorkspaceNotifications("w", 30, "u", "studio");

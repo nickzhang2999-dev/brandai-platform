@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { legacyStudioLocation } from "./lib/studio-navigation";
 
 /**
  * 边缘门禁(binding · 防止公网烧 OpenAI key)。
@@ -28,16 +29,21 @@ export function middleware(req: NextRequest) {
 
   // The product homepage is Studio. Redirect before the legacy homepage's
   // layout runs, and retain workspace/project query parameters for deep links.
-  if (pathname === "/") {
-    const url = req.nextUrl.clone();
-    url.pathname = "/studio";
-    return NextResponse.redirect(url);
-  }
+  const legacyLocation = legacyStudioLocation(pathname, req.nextUrl.searchParams);
+  if (legacyLocation) return NextResponse.redirect(new URL(legacyLocation, req.url));
 
   const hasSession = req.cookies
     .getAll()
     .some((c) => c.name.includes("session-token"));
-  if (hasSession) return NextResponse.next();
+  if (hasSession) {
+    // Replace any caller-supplied value; the server layout validates this URL
+    // scope against membership before loading a brand. A cookie is only fallback.
+    const requestHeaders = new Headers(req.headers);
+    requestHeaders.delete("x-brandai-workspace-id");
+    const workspaceId = req.nextUrl.searchParams.get("workspaceId");
+    if (workspaceId !== null) requestHeaders.set("x-brandai-workspace-id", encodeURIComponent(workspaceId));
+    return NextResponse.next({ request: { headers: requestHeaders } });
+  }
 
   if (pathname.startsWith("/api/") || /^\/(studio\/|compare\/api(?:\/|$)|workflow(?:\/|$))/.test(pathname)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

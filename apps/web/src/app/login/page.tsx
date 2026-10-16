@@ -12,6 +12,7 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [providers, setProviders] = useState<string[]>([]);
+  const [registrationOpen, setRegistrationOpen] = useState(false);
   function destination() {
     const value = new URLSearchParams(window.location.search).get("callbackUrl");
     if (!value) return "/studio";
@@ -24,10 +25,16 @@ export default function LoginPage() {
   }
 
   useEffect(() => {
+    const controller = new AbortController();
     fetch("/api/auth/providers")
       .then((r) => r.json())
       .then((p) => setProviders(Object.keys(p ?? {})))
       .catch(() => setProviders([]));
+    fetch("/api/auth/registration", { cache: "no-store", signal: controller.signal })
+      .then(async response => response.ok ? await response.json() : null)
+      .then(body => { if (!controller.signal.aborted) setRegistrationOpen(body?.registrationOpen === true); })
+      .catch(() => { if (!controller.signal.aborted) setRegistrationOpen(false); });
+    return () => controller.abort();
   }, []);
 
   async function submit(e: React.FormEvent) {
@@ -36,6 +43,7 @@ export default function LoginPage() {
     setLoading(true);
     try {
       if (mode === "register") {
+        if (!registrationOpen) throw new Error("注册暂未开放，请联系管理员");
         const res = await fetch("/api/auth/register", {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -163,7 +171,7 @@ export default function LoginPage() {
           </Button>
         </form>
 
-        <button
+        {registrationOpen && <button
           type="button"
           disabled={loading}
           className="mx-auto mt-6 block text-sm text-muted-foreground underline underline-offset-4 hover:text-foreground disabled:opacity-50"
@@ -174,7 +182,7 @@ export default function LoginPage() {
           }}
         >
           {mode === "login" ? "没有账号?去注册" : "已有账号?去登录"}
-        </button>
+        </button>}
 
         {providers.includes("credentials") && (
           <button

@@ -7,7 +7,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Project, TaskState } from "@brandai/contracts";
 import { startNavigationProgress } from "@/app/navigation-progress";
 import { apiFetch } from "@/lib/client";
-import { quickActions } from "@/lib/brandai-mock";
+import { quickActions } from "@/lib/brandai-nav";
+import { QueryFailure } from "@/components/query-failure";
+import { studioEditorHref } from "@/lib/studio-navigation";
 import { useBrand } from "./brand-context";
 import { AIInput } from "./ai-input";
 import { gradientFor } from "./_ui";
@@ -48,7 +50,7 @@ export default function HomePage() {
   const router = useRouter();
   const qc = useQueryClient();
 
-  const { data: projects = [] } = useQuery({
+  const { data: projects = [], isLoading: projectsLoading, isError: projectsError, refetch: retryProjects, isFetching: projectsFetching } = useQuery({
     queryKey: ["brandai-projects", wsId],
     queryFn: () =>
       apiFetch<Project[]>(`/api/workspaces/${wsId}/projects?latestCover=1`),
@@ -145,7 +147,7 @@ export default function HomePage() {
         params.set("style", result.styleKeywords.slice(0, 20).join(","));
       }
       startNavigationProgress();
-      router.push(`/workspace?${params.toString()}`);
+      router.push(studioEditorHref({ workspaceId: wsId, projectId: result?.projectId }));
     })();
   }, [status, jobId, wsId, brief, qc, router]);
 
@@ -154,7 +156,7 @@ export default function HomePage() {
     const text = brief.trim();
     if (!text) {
       startNavigationProgress();
-      router.push("/workspace");
+      router.push(studioEditorHref({ workspaceId: wsId }));
       return;
     }
     start.mutate(text);
@@ -237,7 +239,7 @@ export default function HomePage() {
         {quickActions.map((a) => (
           <Link
             key={a.title}
-            href={a.href}
+            href={a.href.startsWith("/studio") ? studioEditorHref({ workspaceId: wsId }) : a.href + "?" + new URLSearchParams({ workspaceId: wsId })}
             className="group flex flex-col gap-3 rounded-3xl border border-border bg-card p-5 shadow-[0_8px_24px_rgba(30,30,60,0.06)] transition-all hover:-translate-y-0.5 hover:border-primary/30"
           >
             <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-accent-soft text-lg text-primary">
@@ -254,13 +256,13 @@ export default function HomePage() {
       <section className="mt-12">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-2xl font-semibold">近期项目</h2>
-          <Link href="/campaigns" className="text-sm text-primary hover:underline">
+          <Link href={"/campaigns?" + new URLSearchParams({ workspaceId: wsId })} className="text-sm text-primary hover:underline">
             查看全部
           </Link>
         </div>
-        {projects.length === 0 ? (
+        {projectsLoading ? <p className="py-8 text-sm text-muted-foreground">加载项目中…</p> : projectsError ? <QueryFailure label="近期项目" retry={retryProjects} retrying={projectsFetching} /> : projects.length === 0 ? (
           <Link
-            href="/campaigns"
+            href={"/campaigns?" + new URLSearchParams({ workspaceId: wsId })}
             className="flex flex-col items-center rounded-3xl border border-dashed border-border bg-card p-12 text-center transition-colors hover:border-primary/30"
           >
             <span className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-accent-soft text-xl text-primary">
@@ -278,7 +280,7 @@ export default function HomePage() {
               return (
                 <Link
                   key={c.id}
-                  href="/campaigns"
+                  href={"/campaigns?" + new URLSearchParams({ workspaceId: wsId })}
                   className="flex flex-col overflow-hidden rounded-3xl border border-border bg-card shadow-[0_8px_24px_rgba(30,30,60,0.06)] transition-all hover:-translate-y-0.5"
                 >
                   <CampaignCover

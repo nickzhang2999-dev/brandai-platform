@@ -6,6 +6,8 @@ import { useQuery } from "@tanstack/react-query";
 import type { QueueItem, QueueResponse } from "@brandai/contracts";
 import { Badge } from "@brandai/ui";
 import { apiFetch } from "@/lib/client";
+import { formatElapsed } from "@/lib/format-elapsed";
+import { generatedImageHref, studioEditorHref } from "@/lib/studio-navigation";
 
 /**
  * §2.3 — persistent bottom-right queue widget. Polls
@@ -84,7 +86,7 @@ export function QueueWidget({ wsId }: { wsId: string | null }) {
       {open && (
         <ul className="mt-2 max-h-96 overflow-y-auto rounded-2xl border border-foreground/15 bg-card shadow-lg shadow-black/10">
           {items.map((it) => (
-            <QueueRow key={it.id} item={it} nowTs={nowTs} />
+            <QueueRow key={it.id} item={it} nowTs={nowTs} wsId={wsId} />
           ))}
         </ul>
       )}
@@ -92,7 +94,7 @@ export function QueueWidget({ wsId }: { wsId: string | null }) {
   );
 }
 
-function QueueRow({ item, nowTs }: { item: QueueItem; nowTs: number }) {
+function QueueRow({ item, nowTs, wsId }: { item: QueueItem; nowTs: number; wsId: string }) {
   const isActive = item.status === "PENDING" || item.status === "RUNNING";
   const createdAt = useMemo(
     () => new Date(item.createdAt).getTime(),
@@ -147,7 +149,9 @@ function QueueRow({ item, nowTs }: { item: QueueItem; nowTs: number }) {
     <li className="border-b border-foreground/10 last:border-b-0">
       {item.projectId ? (
         <Link
-          href={`/workspace?gen=${item.id}&project=${item.projectId}`}
+          href={item.status === "SUCCEEDED" && item.versionCount > 0
+            ? generatedImageHref(wsId, item.id)
+            : studioEditorHref({ workspaceId: wsId, projectId: item.projectId })}
           className="block px-4 py-3 transition-colors hover:bg-muted/40"
         >
           {inner}
@@ -177,15 +181,4 @@ function StatusBadge({
     case "FAILED":
       return <Badge tone="danger">失败</Badge>;
   }
-}
-
-/** mm:ss for short, h:mm:ss for longer. Used by the wizard too. */
-export function formatElapsed(ms: number): string {
-  const s = Math.floor(ms / 1000);
-  const hh = Math.floor(s / 3600);
-  const mm = Math.floor((s % 3600) / 60);
-  const ss = s % 60;
-  const pad = (n: number) => n.toString().padStart(2, "0");
-  if (hh > 0) return `${hh}:${pad(mm)}:${pad(ss)}`;
-  return `${pad(mm)}:${pad(ss)}`;
 }
