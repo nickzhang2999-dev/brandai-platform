@@ -76,3 +76,7 @@ CDS只读预检发现：项目a8a098f7193a启用githubAutoDeploy和push事件；
 下一步具体方案：为fix/p1-remove-captured-bundle设置独立预览数据库brandai_p1_remove_captured_bundle、独立队列和存储前缀，使用已通过同提交CI的预构建镜像。不得复制旧分支的业务数据或直接继承共享库；空库表结构初始化属于线上迁移，按原计划0.8先取得帅帅确认。预览通过后，再单独确认是否合入devUpdate1012；main本阶段不动。
 
 尚未验证：本阶段远端CI、镜像发布、公网/studio与/studio-editor；P2–P5。不能用昨天devUpdate1012@83a5dca的预览代替本阶段。
+
+## 用户决定 · 2026-10-16
+
+帅帅对P1独立预览环境确认问题选择「暂时只保留本地成果」。因此独立预览数据库初始化、CDS配置、推送和部署均暂不执行；上面的隔离发布方案保留为后续方案，不视为获得授权。P1实现与验证提交保留在本地fix/p1-remove-captured-bundle，不合入devUpdate1012/main。P2–P5状态不变，未实施。
