@@ -320,7 +320,7 @@ function ColorFields({ v, set }: FieldProps) {
   return (
     <>
       <div>
-        <Label>palette（一行一个 hex，可加 "名称|#hex"）</Label>
+        <Label>palette（一行一个 hex，可加 &quot;名称|#hex&quot;）</Label>
         <Textarea
           value={palette
             .map((c) => (c.name ? `${c.name}|${c.hex ?? ""}` : c.hex ?? ""))

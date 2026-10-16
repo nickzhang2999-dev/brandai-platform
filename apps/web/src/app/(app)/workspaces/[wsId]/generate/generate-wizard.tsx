@@ -1218,11 +1218,11 @@ function VersionCard({
   // P3.3 — also accept `appliedRules` (newer field name) so seeded/legacy
   // payloads both light up the ReferenceSourceList. The seed in
   // scripts/p3-seed-business.sql uses the `appliedRules` shape.
-  const ruleIds = Array.isArray(params.appliedRuleIds)
+  const ruleIds = useMemo(() => Array.isArray(params.appliedRuleIds)
     ? (params.appliedRuleIds as string[])
     : Array.isArray(params.appliedRules)
       ? (params.appliedRules as string[])
-      : [];
+      : [], [params.appliedRuleIds, params.appliedRules]);
   const referenceItems: ReferenceSource[] = useMemo(() => {
     if (ruleIds.length === 0) return [];
     const byId = new Map(confirmedRules.map((r) => [r.id, r]));

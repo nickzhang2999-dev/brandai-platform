@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   node:
-    name: web · contracts · ui (typecheck / test / build)
+    name: web · contracts · ui (lint / typecheck / test / build)
     runs-on: ubuntu-latest
     env:
       # next build / prisma 在 CI 无真实后端：用占位值，运行时真值来自
@@ -42,7 +42,10 @@ jobs:
       - name: Prisma generate
         run: pnpm db:generate
 
-      - name: Unit tests (L1 contracts + ui)
+      - name: Lint (web)
+        run: pnpm -F web lint
+
+      - name: Unit tests (L1 web + contracts + ui)
         run: pnpm test
 
       - name: Typecheck (web)

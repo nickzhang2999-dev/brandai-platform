@@ -55,6 +55,8 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
   const imageToolOperation = useRef<z.infer<typeof StudioImageToolInput> | null>(null), imageToolBusy = useRef(false);
   const [pendingImageTool, setPendingImageTool] = useState(false);
   const imageToolJournal = `deepflare:image-tool-pending:${JSON.stringify([userId, workspaceId, projectId])}`;
+  const readOnlyRef = useRef(readOnly); readOnlyRef.current = readOnly;
+  const initialTaskKind = initialTask?.kind, initialTaskId = initialTask?.id;
   const [panel, setPanel] = useState<"generate" | "materials" | "tasks" | "layers" | null>("generate");
   const [materials, setMaterials] = useState<Material[]>([]);
   const [uploads, setUploads] = useState<UploadTask[]>([]);
@@ -91,6 +93,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
   const draft = useOwnedDraft({ workspaceId, projectId, userId, value: { prompt, ratio, quality, ...(outputFrameId ? { outputFrameId } : {}) },
     onRestore: value => { setPrompt(value.prompt); setRatio(value.ratio); setQuality(value.quality); setOutputFrameId(value.outputFrameId ?? ""); },
     readOnly: readOnly || !!view?.readOnly || !!document?.warnings.length, frozen: pendingGeneration || submitting || generationRecoveryBlocked });
+  const { flush: flushDraft, confirmed: draftConfirmed } = draft;
 
   const clearGenerationIntent = useCallback(() => {
     const input = generationOperation.current, mode = generationMode.current;
@@ -142,6 +145,23 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
     docRef.current = named; sequence.current++; setDocument(named);
     if (!saveBusy.current && !pendingSave.current) setSaveState("dirty");
   }, []);
+
+  const insertImage = useCallback(async (material: PersistentImage, point?: { x: number; y: number }, identity?: string, sourceShapeId?: string) => {
+    if (!writableRef.current || !docRef.current || !apiRef.current) throw new Error("当前画布只读，无法加入图片。");
+    const api = apiRef.current; api.image(material);
+    await new Promise<void>((resolve, reject) => {
+      const image = new Image(), timer = setTimeout(() => { image.src = ""; reject(new Error("图片读取超时，素材仍保留在库中，可再次加入。")); }, 20000);
+      image.onload = () => { clearTimeout(timer); image.naturalWidth === material.width && image.naturalHeight === material.height ? resolve() : reject(new Error("图片尺寸与存储回执不一致，请刷新素材后重试。")); };
+      image.onerror = () => { clearTimeout(timer); reject(new Error("图片暂时无法读取，请检查存储后重试。")); }; image.src = material.url;
+    });
+    if (!alive.current || apiRef.current !== api) return;
+    if (!writableRef.current || !docRef.current) throw new Error("画布已变为只读，素材仍保留，图片尚未加入。");
+    const current = docRef.current, longest = Math.max(material.width, material.height), scale = Math.min(900 / longest, Math.max(1, 100 / longest));
+    const w = material.width * scale, h = material.height * scale;
+    const center = point ?? { x: (360 - current.camera.x) / current.camera.zoom, y: (260 - current.camera.y) / current.camera.zoom };
+    changeDocument({ ...current, items: [...current.items, { id: identity ?? "shape:" + crypto.randomUUID(), kind: "image", x: center.x - w / 2, y: center.y - h / 2, w, h, rotation: 0, opacity: 1, parentId: current.pageId, url: material.url, assetId: material.assetId, assetSha256: material.assetSha256, ...(material.versionId ? { versionId: material.versionId } : {}), ...(sourceShapeId ? { sourceShapeId } : {}) }] });
+    setNotice("图片已加入画布，保存状态见顶部。");
+  }, [changeDocument]);
 
   const refresh = useCallback(async (quiet = false) => {
     const api = apiRef.current;
@@ -212,18 +232,18 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
     } catch (error) { setGenerationRecoveryBlocked(true); setNotice(messageOf(error)); }
     void api.session.load().then(async result => {
       const decoded = await decodeOwnedCanvas(result.canvas);
-      const loaded = !readOnly && !result.readOnly ? assignOwnedImageNames(decoded) : decoded;
+      const loaded = !readOnlyRef.current && !result.readOnly ? assignOwnedImageNames(decoded) : decoded;
       if (!alive.current || apiRef.current !== api) return;
       docRef.current = loaded; viewRef.current = result; setView(result); setDocument(loaded);
       if (loaded !== decoded) { sequence.current++; setSaveState("dirty"); } else setSaveState("saved");
       void refresh(); void workflowSession.load();
-      if (initialTask) void openExistingTask(initialTask.kind, initialTask.id).catch(error => { if (alive.current && apiRef.current === api) setNotice(messageOf(error)); });
+      if (initialTaskKind && initialTaskId) void openExistingTask(initialTaskKind, initialTaskId).catch(error => { if (alive.current && apiRef.current === api) setNotice(messageOf(error)); });
     }).catch(error => {
       if (!alive.current || apiRef.current !== api) return;
       setSaveError(messageOf(error)); setSaveState("error"); send("startup-error", { code: "OWNED_CANVAS_LOAD_FAILED" });
     });
     return () => { alive.current = false; workflowSession.dispose(); stopWorkflow(); controller.abort(); if (saveTimer.current) clearTimeout(saveTimer.current); };
-  }, [workspaceId, projectId, userId, refresh, send, save, openExistingTask, initialTask?.kind, initialTask?.id]);
+  }, [workspaceId, projectId, userId, refresh, send, save, openExistingTask, initialTaskKind, initialTaskId, imageToolJournal]);
 
   useEffect(() => {
     if (!document) return;
@@ -270,7 +290,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
             if (!docRef.current) throw new Error("画布还没有恢复完成，请稍后再试。");
             if (data.action === "confirm-leave") {
               if (uploadBusy.current || generationBusy.current || refreshBusy.current || taskFocusBusy.current) throw new Error("创作或素材操作正在处理，请完成后再切换品牌。");
-              await draft.flush();
+              await flushDraft();
               await conversationRef.current?.flush();
               const workflow = workflowRef.current;
               if (workflow?.snapshot().dirty) await workflow.save();
@@ -295,7 +315,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
             const saved = await save();
             if (!alive.current || apiRef.current !== api) return;
             if (!saved || sequence.current !== savedSequence.current || pendingSave.current || saveBlocked.current) throw new Error("画布修改尚未确认保存，请稍后继续。");
-            if (data.action === "confirm-leave" && (!draft.confirmed() || conversationRef.current && !conversationRef.current.confirmed() || workflowRef.current?.snapshot().dirty)) throw new Error("仍有新的需求或素材修改，请确认保存后再切换品牌。");
+            if (data.action === "confirm-leave" && (!draftConfirmed() || conversationRef.current && !conversationRef.current.confirmed() || workflowRef.current?.snapshot().dirty)) throw new Error("仍有新的需求或素材修改，请确认保存后再切换品牌。");
             send(action, { requestId: data.requestId, status: "saved", revision: saved.revision });
           } catch (error) {
             if (alive.current && apiRef.current === api) send(action, { requestId: data.requestId, status: "failed", error: error instanceof Error && error.name === "ZodError" ? "素材回执格式无法确认，原文件保留。" : messageOf(error) });
@@ -313,7 +333,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
     };
     window.addEventListener("beforeunload", preventLoss); window.addEventListener("keydown", keyboard); window.addEventListener("message", command);
     return () => { window.removeEventListener("beforeunload", preventLoss); window.removeEventListener("keydown", keyboard); window.removeEventListener("message", command); };
-  }, [workspaceId, userId, projectId, save, send, openExistingTask, draft.flush, draft.confirmed]);
+  }, [workspaceId, userId, projectId, save, send, openExistingTask, flushDraft, draftConfirmed, insertImage]);
 
   useEffect(() => {
     if (!generations.some(activeGeneration) || pollPaused || generationPoll.timedOut) return;
@@ -324,22 +344,6 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
     if (generationPoll.timedOut) setNotice(TASK_POLL_PAUSED_MESSAGE);
   }, [generationPoll.timedOut]);
 
-  async function insertImage(material: PersistentImage, point?: { x: number; y: number }, identity?: string, sourceShapeId?: string) {
-    if (!writableRef.current || !docRef.current || !apiRef.current) throw new Error("当前画布只读，无法加入图片。");
-    const api = apiRef.current; api.image(material);
-    await new Promise<void>((resolve, reject) => {
-      const image = new Image(), timer = setTimeout(() => { image.src = ""; reject(new Error("图片读取超时，素材仍保留在库中，可再次加入。")); }, 20000);
-      image.onload = () => { clearTimeout(timer); image.naturalWidth === material.width && image.naturalHeight === material.height ? resolve() : reject(new Error("图片尺寸与存储回执不一致，请刷新素材后重试。")); };
-      image.onerror = () => { clearTimeout(timer); reject(new Error("图片暂时无法读取，请检查存储后重试。")); }; image.src = material.url;
-    });
-    if (!alive.current || apiRef.current !== api) return;
-    if (!writableRef.current || !docRef.current) throw new Error("画布已变为只读，素材仍保留，图片尚未加入。");
-    const current = docRef.current, longest = Math.max(material.width, material.height), scale = Math.min(900 / longest, Math.max(1, 100 / longest));
-    const w = material.width * scale, h = material.height * scale;
-    const center = point ?? { x: (360 - current.camera.x) / current.camera.zoom, y: (260 - current.camera.y) / current.camera.zoom };
-    changeDocument({ ...current, items: [...current.items, { id: identity ?? "shape:" + crypto.randomUUID(), kind: "image", x: center.x - w / 2, y: center.y - h / 2, w, h, rotation: 0, opacity: 1, parentId: current.pageId, url: material.url, assetId: material.assetId, assetSha256: material.assetSha256, ...(material.versionId ? { versionId: material.versionId } : {}), ...(sourceShapeId ? { sourceShapeId } : {}) }] });
-    setNotice("图片已加入画布，保存状态见顶部。");
-  }
 
   async function prepareLayers() {
     const saved = await save();

@@ -1,0 +1,182 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+const f = vi.hoisted(() => ({ dns: vi.fn(), fetch: vi.fn() }));
+vi.mock("node:dns/promises", () => ({ resolve4: f.dns }));
+const current = { parserRevision: "grounded-six-slot-r6", generationRevision: "gpt-image-2-size-quality-r1", visualCheckRevision: "studio-visual-check-evidence-r1", providerRetryRevision: "single-provider-attempt-r2" };
+const older = { parserRevision: current.parserRevision, generationRevision: current.generationRevision };
+const editable = { ...current, studioEditRevision: "studio-whole-image-edit-r1" };
+const layered = { ...current, studioDecompositionRevision: "studio-real-layer-single-attempt-r1" };
+const planned = { ...layered, studioLayerPlanRevision: "semantic-layer-plan-r1" };
+const load = () => import("../src/lib/ai-service");
+beforeEach(() => {
+  vi.resetModules(); vi.resetAllMocks(); vi.stubGlobal("fetch", f.fetch);
+  vi.stubEnv("BRANDAI_AI_SERVICE_URL", "http://configured.invalid:8000");
+  vi.stubEnv("AI_SERVICE_URL", "http://unused.invalid:8000");
+  f.dns.mockResolvedValue(["10.0.0.2", "10.0.0.1"]);
+});
+afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
+
+describe("product visual-check service capability gate", () => {
+  it("requires structured conversation capability before one paid text analysis dispatch", async () => {
+    f.fetch.mockImplementation(async () => Response.json(current));
+    const { resolveAiService } = await load();
+    await expect(resolveAiService({ requireStudioConversationIntent: true })).rejects.toThrow("structured conversation intent");
+    f.fetch.mockImplementation(async () => Response.json({ ...current, studioConversationIntentRevision: "structured-conversation-intent-r1" }));
+    expect(await resolveAiService({ requireStudioConversationIntent: true })).toMatchObject({ studioConversationIntentRevision: "structured-conversation-intent-r1" });
+  });
+  it("requires the semantic analysis capability before an AUTO task can send a paid vision request", async () => {
+    f.fetch.mockImplementation(async () => Response.json(layered));
+    const { resolveAiService } = await load();
+    await resolveAiService({ requireStudioDecomposition: true });
+    await expect(resolveAiService({ requireStudioLayerPlan: true })).rejects.toThrow("semantic-layer planning");
+    f.fetch.mockImplementation(async () => Response.json(planned));
+    expect(await resolveAiService({ requireStudioLayerPlan: true })).toMatchObject(planned);
+    await resolveAiService({ requireStudioLayerPlan: true }); expect(f.fetch).toHaveBeenCalledTimes(3);
+  });
+  it("semantic analysis cannot opt out of once-only provider attempts", async () => {
+    f.fetch.mockImplementation(async () => Response.json({ ...planned, providerRetryRevision: undefined }));
+    const { resolveAiService } = await load();
+    await expect(resolveAiService({ requireStudioLayerPlan: true })).rejects.toThrow("single-provider-attempt revision");
+  });
+  it("selects the actual planner-capable container rather than an older layer-only service", async () => {
+    vi.stubEnv("BRANDAI_AI_SERVICE_URL", "http://ai:8000");
+    f.fetch.mockImplementation(async (url: string) => Response.json(url.includes("10.0.0.1") ? layered : planned));
+    const { resolveAiService } = await load();
+    expect((await resolveAiService({ requireStudioDecomposition: true })).base).toBe("http://10.0.0.1:8000");
+    expect((await resolveAiService({ requireStudioLayerPlan: true })).base).toBe("http://10.0.0.2:8000");
+  });
+  it("rejects a generation-compatible explicit service before any real decomposition dispatch", async () => {
+    f.fetch.mockImplementation(async () => Response.json(current));
+    const { resolveAiService } = await load();
+    await resolveAiService({ requireSingleAttempt: true });
+    await expect(resolveAiService({ requireStudioDecomposition: true })).rejects.toThrow("real-layer decomposition revision");
+    f.fetch.mockImplementation(async () => Response.json(layered));
+    expect(await resolveAiService({ requireStudioDecomposition: true })).toMatchObject(layered);
+    await resolveAiService({ requireStudioDecomposition: true });
+    expect(f.fetch).toHaveBeenCalledTimes(3);
+  });
+  it("decomposition capability cannot bypass single-provider-attempt support", async () => {
+    f.fetch.mockImplementation(async () => Response.json({ ...layered, providerRetryRevision: undefined }));
+    const { resolveAiService } = await load();
+    await expect(resolveAiService({ requireStudioDecomposition: true })).rejects.toThrow("single-provider-attempt revision");
+  });
+  it("selects a layer-capable shared service instead of a cached generation-only container", async () => {
+    vi.stubEnv("BRANDAI_AI_SERVICE_URL", "http://ai:8000");
+    f.fetch.mockImplementation(async (url: string) => Response.json(url.includes("10.0.0.1") ? current : layered));
+    const { resolveAiService } = await load();
+    expect((await resolveAiService({ requireSingleAttempt: true })).base).toBe("http://10.0.0.1:8000");
+    expect((await resolveAiService({ requireStudioDecomposition: true })).base).toBe("http://10.0.0.2:8000");
+    expect(f.dns).toHaveBeenCalledTimes(2);
+  });
+  it("fails closed when every shared service lacks real decomposition support", async () => {
+    vi.stubEnv("BRANDAI_AI_SERVICE_URL", "http://ai:8000");
+    f.fetch.mockImplementation(async () => Response.json(current));
+    const { resolveAiService } = await load();
+    await expect(resolveAiService({ requireStudioDecomposition: true })).rejects.toThrow("real-layer decomposition revision");
+    expect(f.fetch.mock.calls.every(([url]) => url !== "http://ai:8000/health")).toBe(true);
+  });
+  it.each([123, null, "studio-real-layer-single-attempt-r0"])("rejects invalid or stale decomposition capability %j", async studioDecompositionRevision => {
+    f.fetch.mockResolvedValue(Response.json({ ...layered, studioDecompositionRevision }));
+    const { resolveAiService } = await load();
+    await expect(resolveAiService({ requireStudioDecomposition: true })).rejects.toThrow("real-layer decomposition revision");
+  });
+  it("refuses an unreachable explicit decomposition service before paid dispatch", async () => {
+    f.fetch.mockRejectedValue(new Error("offline"));
+    const { resolveAiService } = await load();
+    await expect(resolveAiService({ requireStudioDecomposition: true })).rejects.toThrow();
+  });
+  it("rechecks a valid generation cache before allowing edits and requires the edit revision", async () => {
+    f.fetch.mockImplementation(async () => Response.json(current));
+    const { resolveAiService } = await load();
+    await resolveAiService({ requireSingleAttempt: true });
+    await expect(resolveAiService({ requireStudioEdit: true })).rejects.toThrow("whole-image-edit revision");
+    f.fetch.mockImplementation(async () => Response.json(editable));
+    expect(await resolveAiService({ requireStudioEdit: true })).toMatchObject(editable);
+    await resolveAiService({ requireStudioEdit: true });
+    expect(f.fetch).toHaveBeenCalledTimes(3);
+  });
+  it("edit capability alone cannot bypass single-provider-attempt support", async () => {
+    f.fetch.mockImplementation(async () => Response.json({ ...editable, providerRetryRevision: undefined }));
+    const { resolveAiService } = await load();
+    await expect(resolveAiService({ requireStudioEdit: true })).rejects.toThrow("single-provider-attempt revision");
+  });
+  it("selects the edit-capable shared service instead of a cached generation-only container", async () => {
+    vi.stubEnv("BRANDAI_AI_SERVICE_URL", "http://ai:8000");
+    f.fetch.mockImplementation(async (url: string) => Response.json(url.includes("10.0.0.1") ? current : editable));
+    const { resolveAiService } = await load();
+    expect((await resolveAiService({ requireSingleAttempt: true })).base).toBe("http://10.0.0.1:8000");
+    expect((await resolveAiService({ requireStudioEdit: true })).base).toBe("http://10.0.0.2:8000");
+    expect(f.dns).toHaveBeenCalledTimes(2);
+  });
+  it("rejects an old explicit image service and a legacy cache lacking single-attempt support", async () => {
+    f.fetch.mockResolvedValue(Response.json(older)); const { resolveAiService } = await load();
+    await resolveAiService();
+    await expect(resolveAiService({ requireSingleAttempt: true })).rejects.toThrow("single-provider-attempt revision");
+    expect(f.fetch).toHaveBeenCalledTimes(1);
+  });
+  it("requires both retry and visual evidence capabilities for product checks", async () => {
+    f.fetch.mockImplementation(async () => Response.json({ ...current, providerRetryRevision: undefined })); const { resolveAiService } = await load();
+    await resolveAiService({ requireVisualCheck: true });
+    await expect(resolveAiService({ requireVisualCheck: true, requireSingleAttempt: true })).rejects.toThrow("single-provider-attempt revision");
+    f.fetch.mockResolvedValue(Response.json(current));
+    expect(await resolveAiService({ requireVisualCheck: true, requireSingleAttempt: true })).toMatchObject(current);
+  });
+  it("selects only a shared container with compatible single-attempt behavior", async () => {
+    vi.stubEnv("BRANDAI_AI_SERVICE_URL", "http://ai:8000");
+    f.fetch.mockImplementation(async (url: string) => Response.json(url.includes("10.0.0.1") ? older : current));
+    const { resolveAiService } = await load(); expect((await resolveAiService({ requireSingleAttempt: true })).base).toBe("http://10.0.0.2:8000");
+  });
+  it("keeps explicit legacy resolution authoritative without probing health", async () => {
+    const { resolveAiService } = await load();
+    expect(await resolveAiService()).toEqual({ base: "http://configured.invalid:8000", source: "configured" });
+    expect(f.fetch).not.toHaveBeenCalled(); expect(f.dns).not.toHaveBeenCalled();
+  });
+  it("requires evidence support even on an explicitly configured endpoint", async () => {
+    f.fetch.mockResolvedValue(Response.json(older)); const { resolveAiService } = await load();
+    await expect(resolveAiService({ requireVisualCheck: true })).rejects.toThrow("visual-check evidence revision");
+    expect(f.fetch).toHaveBeenCalledWith("http://configured.invalid:8000/health", expect.objectContaining({ cache: "no-store", signal: expect.any(AbortSignal) }));
+    expect(f.dns).not.toHaveBeenCalled();
+  });
+  it("does not reuse a legacy explicit URL cache as proof of evidence capability", async () => {
+    f.fetch.mockResolvedValue(Response.json(older)); const { resolveAiService } = await load();
+    await resolveAiService(); await expect(resolveAiService({ requireVisualCheck: true })).rejects.toThrow("visual-check evidence revision");
+    expect(f.fetch).toHaveBeenCalledTimes(1);
+    expect(await resolveAiService()).toEqual({ base: "http://configured.invalid:8000", source: "configured" });
+  });
+  it("caches verified explicit capabilities and retains configured source semantics", async () => {
+    f.fetch.mockResolvedValue(Response.json(current)); const { resolveAiService } = await load();
+    expect(await resolveAiService({ requireVisualCheck: true })).toMatchObject({ base: "http://configured.invalid:8000", source: "configured", visualCheckRevision: current.visualCheckRevision });
+    await resolveAiService({ requireVisualCheck: true }); await resolveAiService(); expect(f.fetch).toHaveBeenCalledTimes(1);
+  });
+  it("selects a shared-network container with all three required revisions", async () => {
+    vi.stubEnv("BRANDAI_AI_SERVICE_URL", "http://ai:8000");
+    f.fetch.mockImplementation(async (url: string) => Response.json(url.includes("10.0.0.1") ? older : current));
+    const { resolveAiService } = await load(); expect(await resolveAiService({ requireVisualCheck: true })).toMatchObject({ base: "http://10.0.0.2:8000", source: "revision-match", ...current });
+  });
+  it("reprobes an incompatible shared cache while preserving legacy parser/generation selection", async () => {
+    vi.stubEnv("BRANDAI_AI_SERVICE_URL", "http://ai:8000");
+    f.fetch.mockImplementation(async (url: string) => Response.json(url.includes("10.0.0.1") ? older : current));
+    const { resolveAiService } = await load(); expect((await resolveAiService()).base).toBe("http://10.0.0.1:8000");
+    expect((await resolveAiService({ requireVisualCheck: true })).base).toBe("http://10.0.0.2:8000"); expect(f.dns).toHaveBeenCalledTimes(2);
+  });
+  it("fails closed without falling back to a shared alias or a mismatched generation revision", async () => {
+    vi.stubEnv("BRANDAI_AI_SERVICE_URL", "http://ai:8000");
+    f.fetch.mockImplementation(async (url: string) => Response.json(url.includes("10.0.0.1") ? older : { ...current, generationRevision: "old-generation" }));
+    const { resolveAiService } = await load(); await expect(resolveAiService({ requireVisualCheck: true })).rejects.toThrow("visual-check evidence revisions");
+    expect(f.fetch.mock.calls.every(([url]) => url !== "http://ai:8000/health")).toBe(true);
+  });
+  it.each([123, null, "studio-visual-check-evidence-r0"])("rejects invalid or stale capability %j", async visualCheckRevision => {
+    f.fetch.mockResolvedValue(Response.json({ ...current, visualCheckRevision })); const { resolveAiService } = await load();
+    await expect(resolveAiService({ requireVisualCheck: true })).rejects.toThrow("visual-check evidence revision");
+  });
+  it("refuses failed or unreachable explicit health before returning a paid-check endpoint", async () => {
+    f.fetch.mockResolvedValueOnce(new Response("unavailable", { status: 503 })).mockRejectedValueOnce(new Error("offline"));
+    const { resolveAiService } = await load(); await expect(resolveAiService({ requireVisualCheck: true })).rejects.toThrow(); await expect(resolveAiService({ requireVisualCheck: true })).rejects.toThrow();
+  });
+});
+
+
+it("rejects r1 service that only enforces single attempt on product endpoints", async () => {
+  f.fetch.mockImplementation(async () => Response.json({ ...current, providerRetryRevision: "single-provider-attempt-r1" }));
+  const { resolveAiService } = await load();
+  await expect(resolveAiService({ requireSingleAttempt: true })).rejects.toThrow("single-provider-attempt revision");
+});

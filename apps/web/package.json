@@ -9,7 +9,8 @@
     "build:low-memory": "node scripts/build-low-memory.mjs",
     "start": "next start -p 3000",
     "worker": "tsx src/lib/workers/index.ts",
-    "lint": "next lint",
+    "lint": "eslint src",
+    "test": "vitest run",
     "typecheck": "next typegen && tsc --noEmit"
   },
   "dependencies": {
@@ -35,16 +36,20 @@
   },
   "devDependencies": {
     "@brandai/config": "workspace:*",
+    "@eslint/eslintrc": "3.3.1",
     "@playwright/test": "^1.60.0",
     "@types/archiver": "^6.0.3",
     "@types/node": "^22.10.2",
     "@types/react": "^19.0.2",
     "@types/react-dom": "^19.0.2",
     "autoprefixer": "^10.4.20",
+    "eslint": "9.39.1",
+    "eslint-config-next": "15.5.24",
     "playwright": "^1.60.0",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
     "tsx": "^4.19.2",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "vitest": "2.1.9"
   }
 }

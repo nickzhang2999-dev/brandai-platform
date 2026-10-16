@@ -62,7 +62,7 @@ jobs:
           pnpm -F web exec playwright install --with-deps chromium
       - name: Verify owned canvas adapters and compile the reviewed shell
         run: |
-          pnpm -F @brandai/contracts exec vitest run tests/owned-canvas.test.ts tests/owned-canvas-geometry.test.ts tests/owned-editor-api.test.ts
+          pnpm -F web exec vitest run tests/owned-canvas.test.ts tests/owned-canvas-geometry.test.ts tests/owned-editor-api.test.ts
           apps/ai/.venv/bin/python scripts/export-novart-studio.py
           apps/ai/.venv/bin/python -B scripts/test-novart-studio-export.py
           apps/ai/.venv/bin/python -B scripts/test-novart-ci-branches.py

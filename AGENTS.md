@@ -93,5 +93,9 @@ V0.02 把 `getConfirmedRules` 默认排序从 `createdAt asc` 翻成 `updatedAt 
 ## 5 · 完成任务时（CLAUDE.md §4）
 1. G-VERIFY 全绿。
 2. commit 用真实 subject（非 "WIP"），分支 `claude/<slug>`；**不建 PR 除非用户明确要求**。
-3. 更新 `README.md` 顶部进度表对应行 + 同步对应 `docs/` SSOT。
+3. 更新 `docs/worklog/progress.md` 对应记录 + 同步对应 `docs/` SSOT。
 4. **提需求调整自带归因代号**（N/S/I/O/R/E）记入 `docs/10_需求调整归因表.md`。
+
+## 工作日志位置（2026-10-16 工程整理）
+
+计划、进展、调查分别维护在 `docs/worklog/task_plan.md`、`docs/worklog/progress.md`、`docs/worklog/findings.md`。根 README 仅维护使用说明；不要重新把历史进度堆回首页。

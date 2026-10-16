@@ -523,6 +523,8 @@ CDS 主分支列表的预览按钮只打开域名，丢弃入口路径，导致�
 
 # 工程参考
 
+# DeepFlare — 品牌视觉 AI 工作台
+
 ## 架构
 
 Monorepo（pnpm + Turborepo）：
@@ -552,8 +554,10 @@ cd apps/ai && python3 -m venv .venv && . .venv/bin/activate \
   && uvicorn app.main:app --reload --port 8000      # http://localhost:8000/docs
 
 # Web（另开终端）
-pnpm --filter @brandai/web dev                        # http://localhost:3000
+pnpm -F web dev                        # http://localhost:3000
 ```
+
+Windows 的 AI 单测可在 `apps/ai` 下运行 `.venv\Scripts\python.exe -m pytest -q`。数据库命令仅对自己的隔离开发库执行，不要把示例连接配置指向共享库。Web 开发服务默认在 `http://localhost:3000`；登录后进入 `/studio`，项目画布使用 `/studio-editor?workspaceId=…&projectId=…`。
 
 真实出图 provider 通过 `/admin/settings/ai` 配置 → 加密进 `AppSetting`（DB 优先于 env）。
 
@@ -562,7 +566,8 @@ pnpm --filter @brandai/web dev                        # http://localhost:3000
 ```bash
 pnpm install
 pnpm db:generate       # ⚠️ 前置：未生成 Prisma client 时 typecheck/build 会红（@prisma/client did not initialize）
-pnpm test              # L1: contracts + ui vitest
+pnpm -F web lint       # ESLint + React Hooks
+pnpm test              # L1: contracts + web + ui vitest
 pnpm test:ai           # L2: apps/ai pytest
 pnpm -F web typecheck  # tsc --noEmit
 pnpm -F web build      # 生产构建
@@ -570,7 +575,7 @@ pnpm -F web build      # 生产构建
 
 ## 文档
 
-- **进度表（本仓库最重要的文档）**：见本 README 顶部 §A–§L。
+- 开发进度与历史：[工作记录目录](docs/worklog/README.md)。README 只维护使用说明；历史版本和发布回执不代表当前分支已部署。
 - **新对话 / 新 AI 快速接手入口**：[`docs/产品功能.md`](docs/产品功能.md) + [`docs/产品文档.md`](docs/产品文档.md)。
 - 产品/页面/视觉/字段规范：`docs/`（`01`~`08`）。
 - 工程约定与硬规则：`CLAUDE.md`。
