@@ -89,4 +89,3 @@ export const statusMeta: Record<CampaignStatusKey, { label: string; tone: string
   IN_PROGRESS: { label: "进行中", tone: "primary" },
   COMPLETED: { label: "已完成", tone: "success" },
 };
-
