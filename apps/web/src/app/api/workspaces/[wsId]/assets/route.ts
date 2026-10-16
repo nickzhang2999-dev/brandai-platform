@@ -8,6 +8,7 @@ import { handleError, ok, parse, requireUser } from "@/lib/api";
 import { getEffectiveStorage } from "@/lib/settings";
 import { requireOwnedWorkspace, requireWorkspaceRole } from "@/lib/workspace";
 import { serializeAsset } from "@/lib/assets";
+import { assertAssetStorageKey } from "@/lib/asset-storage-key";
 
 export async function GET(
   req: Request,
@@ -59,6 +60,7 @@ export async function POST(
       ...(await req.json()),
       workspaceId: wsId,
     });
+    assertAssetStorageKey(wsId, input.storageKey);
     // 2026-05-28 — publicUrl is sourced from AppSetting (admin-configured
     // R2 / COS / etc.), NOT module-level S3_PUBLIC_URL env. The cds-compose
     // change in the same commit removed the S3_* env injection because the

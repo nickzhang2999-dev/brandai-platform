@@ -18,6 +18,9 @@
 # Idempotent. The .:/app bind keeps node_modules + .next across deploys.
 set -e
 
+# Fail before placeholder readiness, dependency installation or DB migrations.
+node apps/web/scripts/check-runtime-security.mjs
+
 PORT=${PORT:-3000}
 BUILD_ID_FILE="apps/web/.next/BUILD_ID"
 # Records the git HEAD that produced the cached .next/. If the current HEAD

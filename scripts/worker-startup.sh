@@ -20,6 +20,9 @@
 # shared tree usable (tsx resolves), then exec's the BullMQ workers.
 set -e
 
+# Fail before placeholder readiness or waiting for the shared dependency tree.
+node apps/web/scripts/check-runtime-security.mjs
+
 PORT=${WORKER_HEALTH_PORT:-3001}
 
 corepack enable

@@ -1,4 +1,6 @@
 import { execFileSync } from "node:child_process";
+import { PHASE_PRODUCTION_SERVER } from "next/constants.js";
+import { assertProductionAuthSecret } from "./runtime-security.mjs";
 
 const lowMemoryBuild = process.env.NOVART_LOW_MEMORY_BUILD === "1";
 
@@ -36,10 +38,11 @@ const nextConfig = {
   },
   experimental: {
     serverActions: { bodySizeLimit: "10mb" },
-    // Next clones bodies before route handlers. Its 10 MiB default truncates a
-    // valid 10 MiB file once multipart headers are included. Match the bounded
-    // envelope in readStudioMaterialForm; the file limit itself stays 10 MiB.
-    middlewareClientMaxBodySize: 10 * 1024 * 1024 + 64 * 1024,
+    // Next clones bodies before route handlers. Preserve the legacy 50 MiB
+    // document upload plus multipart headers; both upload handlers still bound
+    // their own actual stream. Studio's independent image limit stays 10 MiB,
+    // and legacy image uploads stay 8 MiB (see asset-upload-policy).
+    middlewareClientMaxBodySize: 50 * 1024 * 1024 + 64 * 1024,
     ...(lowMemoryBuild ? {
       cpus: 1,
       webpackMemoryOptimizations: true,
@@ -54,4 +57,10 @@ const nextConfig = {
   typescript: { ignoreBuildErrors: true },
   eslint: { ignoreDuringBuilds: true },
 };
-export default nextConfig;
+/** @param {string} phase */
+export default function configureNext(phase) {
+  // Config loading is awaited before Next reports Ready. Instrumentation alone
+  // can fail after production's lazy prepare has already opened the listener.
+  if (phase === PHASE_PRODUCTION_SERVER) assertProductionAuthSecret();
+  return nextConfig;
+}

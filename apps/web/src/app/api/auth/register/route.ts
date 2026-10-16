@@ -23,12 +23,14 @@ export async function POST(req: Request) {
     const email = input.email.trim().toLowerCase();
 
     // Registration gate. Default CLOSED — a platform admin opens it from
-    // /admin/users. Two always-allowed exceptions so an operator is never
-    // locked out of a fresh deploy: (1) emails on the ADMIN_EMAILS allowlist;
-    // (2) the very first account when no admin exists yet (bootstrap).
-    const onAllowlist = adminEmails().includes(email);
+    // /admin/users. Explicit ADMIN_EMAILS operators may always register.
+    // First-account bootstrap is local-only: a fresh production deployment
+    // must never grant admin rights to whoever reaches sign-up first.
+    const allowlist = adminEmails();
+    const allowBootstrap = process.env.NODE_ENV !== "production" && allowlist.length === 0;
+    const onAllowlist = allowlist.includes(email);
     const noAdminYet =
-      adminEmails().length === 0 &&
+      allowBootstrap &&
       (await prisma.user.count({ where: { isAdmin: true } })) === 0;
     if (!onAllowlist && !noAdminYet && !(await isRegistrationOpen())) {
       throw new ApiException(403, "注册暂未开放,请联系管理员");
@@ -52,8 +54,8 @@ export async function POST(req: Request) {
       },
     });
 
-    // Bootstrap: the first user to register becomes the platform admin, unless
-    // an ADMIN_EMAILS allowlist is configured (then env is authoritative).
+    // Local bootstrap only. Explicit production admins are controlled by
+    // ADMIN_EMAILS or an existing User.isAdmin row; never by arrival order.
     //
     // The count-then-update must be atomic: two concurrent registrations could
     // both read adminCount === 0 and both promote themselves. We run the
@@ -62,7 +64,7 @@ export async function POST(req: Request) {
     // serialization error, which we swallow: that registrant simply stays
     // non-admin). Registration itself already succeeded above; promotion is
     // best-effort and never fails the request.
-    if (!user.isAdmin && adminEmails().length === 0) {
+    if (!user.isAdmin && allowBootstrap) {
       try {
         await prisma.$transaction(
           async (tx) => {

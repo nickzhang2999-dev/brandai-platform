@@ -8,8 +8,9 @@ import { ApiException, requireUser } from "@/lib/api";
  * Two modes:
  * - ADMIN_EMAILS set (comma-separated) → that allowlist is authoritative. This
  *   is the "change the admin via env" escape hatch.
- * - ADMIN_EMAILS unset → the first user to register is admin (User.isAdmin,
- *   bootstrapped in the register route). Zero-config for a fresh deploy.
+ * - ADMIN_EMAILS unset → an existing User.isAdmin flag is authoritative.
+ *   Only non-production environments may bootstrap the first local admin
+ *   in the register route; production requires an explicitly provisioned one.
  */
 export function adminEmails(): string[] {
   return (process.env.ADMIN_EMAILS ?? "")

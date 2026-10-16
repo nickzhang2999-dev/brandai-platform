@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { ZodError, type ZodSchema } from "zod";
 import { prisma } from "@brandai/db";
-import { auth } from "@/auth";
+import { auth } from "../auth";
 
 export async function requireUser() {
   const session = await auth();
@@ -40,7 +40,7 @@ export function ok<T>(data: T, init?: ResponseInit) {
 }
 
 export function handleError(err: unknown) {
-  if (err instanceof ApiException) {
+  if (err instanceof ApiException && err.status !== 500) {
     return NextResponse.json(
       { error: err.message, details: err.details },
       { status: err.status },
@@ -52,9 +52,13 @@ export function handleError(err: unknown) {
       { status: 422 },
     );
   }
-  console.error(err);
+  // Keep the diagnostic on the server; never serialize an unexpected error,
+  // database URL or stack into the response. Generate the ID here rather than
+  // trusting client input so each failure can be correlated with one log entry.
+  const requestId = crypto.randomUUID();
+  console.error("[api-error]", { requestId, error: err });
   return NextResponse.json(
-    { error: "InternalError", details: String(err) },
+    { error: "InternalError", requestId },
     { status: 500 },
   );
 }
