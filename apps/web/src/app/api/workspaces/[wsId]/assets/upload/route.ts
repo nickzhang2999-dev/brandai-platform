@@ -4,7 +4,7 @@ import { ApiException, handleError, ok, requireUser } from "@/lib/api";
 import { uploadBuffer } from "@/lib/s3";
 import { requireWorkspaceRole } from "@/lib/workspace";
 import { serializeAsset, decodeImageResolution } from "@/lib/assets";
-import { imageUploadLimitError } from "@/lib/upload-limits";
+import { readAssetUploadForm, validateAssetUpload } from "@/lib/asset-upload-policy";
 
 /**
  * Server-side brand-asset upload. The browser POSTs a `multipart/form-data` body
@@ -22,7 +22,7 @@ export async function POST(
     const { wsId } = await params;
     await requireWorkspaceRole(wsId, user.id, "EDITOR");
 
-    const form = await req.formData();
+    const form = await readAssetUploadForm(req);
     const file = form.get("file");
     const categoryRaw = form.get("category");
     const libraryKindRaw = form.get("libraryKind");
@@ -31,15 +31,8 @@ export async function POST(
     if (!(file instanceof File)) {
       throw new ApiException(400, "缺少文件");
     }
-    const mimeType = file.type || "application/octet-stream";
-    const sizeErr = imageUploadLimitError({
-      name: file.name,
-      size: file.size,
-      type: mimeType,
-    });
-    if (sizeErr) {
-      throw new ApiException(413, sizeErr);
-    }
+    const buf = Buffer.from(await file.arrayBuffer());
+    const { mimeType, storageMimeType } = validateAssetUpload(buf, file.name);
     const parsedCategory = AssetCategory.safeParse(categoryRaw);
     if (!parsedCategory.success) {
       throw new ApiException(400, "素材分类无效");
@@ -65,8 +58,7 @@ export async function POST(
       folderId = folderRaw;
     }
 
-    const buf = Buffer.from(await file.arrayBuffer());
-    const { key, url } = await uploadBuffer(buf, mimeType, wsId);
+    const { key, url } = await uploadBuffer(buf, storageMimeType, wsId);
 
     // P04-M12 — persist the pixel dimensions so the detail panel's 尺寸 row
     // renders. Zero-dependency probe (PNG IHDR / JPEG SOF); a miss leaves

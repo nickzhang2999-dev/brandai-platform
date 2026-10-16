@@ -8,6 +8,8 @@ import { STUDIO_MATERIAL_MAX_BYTES } from "../src/studio-materials";
 
 vi.mock("../../../apps/web/src/lib/api", () => ({ ApiException: class extends Error { constructor(public status: number, message: string) { super(message); } } }));
 import { readStudioMaterialForm } from "../../../apps/web/src/lib/studio-materials-policy";
+import { readAssetUploadForm, validateAssetUpload } from "../../../apps/web/src/lib/asset-upload-policy";
+import { MAX_ASSET_UPLOAD_BYTES } from "../../../apps/web/src/lib/upload-limits";
 
 // Exercise the installed Next implementation on a real IncomingMessage, not a
 // simulated truncation. Both streams use the same bounded middleware buffer.
@@ -29,7 +31,16 @@ const server = createServer(async (incoming, response) => {
     const request = new Request(base + "/studio/material-upload", {
       method: "POST", headers, body: requestToBodyStream(globalThis, Uint8Array, clonedBody), duplex: "half",
     } as RequestInit);
-    const upload = await readStudioMaterialForm(request);
+    let upload: { body: Buffer; sha256: string };
+    if (incoming.url === "/legacy-upload") {
+      const form = await readAssetUploadForm(request);
+      const file = form.get("file") as File;
+      const body = Buffer.from(await file.arrayBuffer());
+      validateAssetUpload(body, file.name);
+      upload = { body, sha256: createHash("sha256").update(body).digest("hex") };
+    } else {
+      upload = await readStudioMaterialForm(request);
+    }
     await clone.finalize();
     response.writeHead(200, { "Content-Type": "application/json" });
     response.end(JSON.stringify({ size: upload.body.length, sha256: upload.sha256 }));
@@ -79,4 +90,20 @@ describe("studio multipart intake through Next middleware body cloning", () => {
     const response = await fetch(base + "/studio/material-upload", { method: "POST", body: form });
     expect(response.status, await response.text()).toBe(413);
   });
+
+  it("preserves a 50 MiB legacy document through the same middleware without raising Studio's own limit", async () => {
+    const bytes = Buffer.alloc(MAX_ASSET_UPLOAD_BYTES); bytes.write("%PDF-1.7\n");
+    const form = new FormData(); form.append("category", "VI_DOC"); form.append("file", new Blob([bytes], { type: "application/pdf" }), "manual.pdf");
+    const response = await fetch(base + "/legacy-upload", { method: "POST", body: form });
+    const result = await response.json();
+    expect(response.status, JSON.stringify(result)).toBe(200);
+    expect(result).toEqual({ size: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") });
+  }, 30_000);
+
+  it("rejects a legacy document just above 50 MiB with 413 instead of truncating it", async () => {
+    const bytes = Buffer.alloc(MAX_ASSET_UPLOAD_BYTES + 1); bytes.write("%PDF-1.7\n");
+    const form = new FormData(); form.append("category", "VI_DOC"); form.append("file", new Blob([bytes], { type: "application/pdf" }), "manual.pdf");
+    const response = await fetch(base + "/legacy-upload", { method: "POST", body: form });
+    expect(response.status, await response.text()).toBe(413);
+  }, 30_000);
 });

@@ -36,8 +36,9 @@ function isAbsoluteUrl(s: string): boolean {
  * app 同源执行脚本(存储型 XSS),必须走附件下载。
  */
 function inlineSafeImage(contentType: string): boolean {
-  const t = (contentType || "").toLowerCase();
-  return t.startsWith("image/") && !t.includes("svg");
+  const t = (contentType || "").toLowerCase().split(";", 1)[0].trim();
+  return t.startsWith("image/") && !t.includes("svg")
+    && t !== "image/vnd.adobe.photoshop" && t !== "image/x-photoshop";
 }
 
 export async function GET(

@@ -36,10 +36,11 @@ const nextConfig = {
   },
   experimental: {
     serverActions: { bodySizeLimit: "10mb" },
-    // Next clones bodies before route handlers. Its 10 MiB default truncates a
-    // valid 10 MiB file once multipart headers are included. Match the bounded
-    // envelope in readStudioMaterialForm; the file limit itself stays 10 MiB.
-    middlewareClientMaxBodySize: 10 * 1024 * 1024 + 64 * 1024,
+    // Next clones bodies before route handlers. Preserve the legacy 50 MiB
+    // document upload plus multipart headers; both upload handlers still bound
+    // their own actual stream. Studio's independent image limit stays 10 MiB,
+    // and legacy image uploads stay 8 MiB (see asset-upload-policy).
+    middlewareClientMaxBodySize: 50 * 1024 * 1024 + 64 * 1024,
     ...(lowMemoryBuild ? {
       cpus: 1,
       webpackMemoryOptimizations: true,
