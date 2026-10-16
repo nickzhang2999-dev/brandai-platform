@@ -1,0 +1,92 @@
+.ns-brand-resource-search{min-width:120px;width:210px;max-width:100%;min-height:42px;padding:0 14px;border:1px solid color-mix(in srgb,currentColor 20%,transparent);border-radius:999px;background:transparent;color:inherit;font:inherit;font-size:12px;box-sizing:border-box}
+.ns-resource-actions{display:flex;flex-wrap:wrap;gap:10px}.ns-brand-resource-search:focus-visible{outline:2px solid currentColor;outline-offset:2px}
+@media(max-width:800px){.ns-brand-resource-search{width:100%;min-width:0}}
+.hs-pick{border:0;background:none;color:#695d76;border-radius:10px;padding:7px 9px;margin-left:-7px;display:inline-flex;align-items:center;gap:6px;font:inherit;font-size:13px;cursor:pointer}
+.hs-pick:hover{background:#f2eef8}.hs-pick svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.6}.hs-pick:disabled{opacity:.45;cursor:default}
+.hs-attachments{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:0 0 16px}.hs-attachments[hidden]{display:none}
+.hs-attachment{position:relative;display:flex;align-items:center;gap:10px;padding:8px 30px 8px 8px;min-width:0;background:#faf8fd;border:1px solid #eee8f3;border-radius:14px}
+.hs-attachment img{width:54px;height:54px;object-fit:cover;border-radius:9px;background:#f0ebf6;flex:none}.hs-file-info{min-width:0;display:flex;flex-direction:column;gap:5px;text-align:left}
+.hs-file-info strong{font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.hs-file-state{font-size:11px;color:#8b8098}.hs-attachment[data-state=error] .hs-file-state{color:#a05d4e}
+.hs-remove{position:absolute;right:7px;top:6px;width:22px;height:22px;border:0;border-radius:50%;background:none;color:#8d8298;font-size:17px;cursor:pointer}.hs-remove:hover{background:#eae4f2}.hs-remove:disabled{opacity:.4;cursor:default}
+.hs-retry{align-self:flex-start;padding:0;border:0;background:none;color:#785895;cursor:pointer;font:inherit;font-size:11px;text-decoration:underline;text-underline-offset:3px}
+.hs-draft-note{font-size:12px;color:#a05d4e;margin:8px 0}.hs-draft-note:empty{display:none}.hs-recovery{font-size:12px;line-height:1.7;color:#796a89;margin-top:12px}.hs-recovery .ns-text-button{margin-left:10px}
+.ns-composer.hs-drag{outline:2px solid #9b83b8;outline-offset:4px}.ns-composer textarea[readonly]{opacity:.65}
+.hs-handoff{position:fixed;z-index:150;left:calc(50% + 30px);top:46%;transform:translate(-50%,-50%);width:min(400px,calc(100vw - 120px));padding:30px;background:#fff;border:1px solid #e9e2f0;border-radius:22px;box-shadow:0 14px 70px #3c275925;text-align:center;line-height:1.7}
+.hs-handoff[hidden]{display:none}.hs-handoff-mark{display:grid;place-items:center;width:38px;height:38px;margin:0 auto 16px;border-radius:13px;background:#f1ebf8;color:#9276b1;font-size:21px}.hs-handoff strong{font-size:17px;font-weight:600}.hs-handoff p{font-size:13px;color:#91829f;margin:8px 0 0}.hs-handoff-actions{display:flex;justify-content:center;align-items:center;flex-wrap:wrap;gap:14px;margin-top:20px}
+#ns-frames.hs-transferring{pointer-events:none;opacity:.4}.hs-pick:focus-visible,.hs-remove:focus-visible,.hs-retry:focus-visible{outline:2px solid #9879b5;outline-offset:3px}
+@media(max-width:600px){.hs-attachments{grid-template-columns:1fr}.hs-handoff{left:50%;width:calc(100vw - 40px)}.hs-pick{font-size:12px}.ns-composer-footer .ns-keyboard-hint{display:none}}
+@media(prefers-reduced-motion:no-preference){.hs-attachment{animation:hs-enter .18s ease-out}@keyframes hs-enter{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}}
+.ns-brand-layout[hidden],.ns-knowledge-panel[hidden]{display:none}
+.ns-wordmark .ns-brand-emblem{height:28px}
+.ns-wordmark .ns-brand-emblem img{display:block;position:static;transform:none;width:100%;height:100%;object-fit:contain}
+.ns-knowledge-panel{margin-top:20px;min-width:0}
+.ns-knowledge-frame{display:block;width:100%;height:max(680px,calc(100dvh - 200px));border:0;border-radius:24px;background:var(--background,#FAFAFC)}
+
+/* A canvas uses an icon rail at every viewport width. Keep its controls inside
+   that rail rather than relying on a phone breakpoint or physical pixel size. */
+.ns-sidebar{height:100vh;height:100dvh;min-height:0;max-height:100dvh}
+.ns-sidebar .ns-wordmark,.ns-sidebar-bottom{flex-shrink:0}
+.ns-sidebar .ns-nav{min-height:0;overflow-y:auto;overscroll-behavior:contain}
+.ns-sidebar-bottom{min-width:0}
+.ns-sidebar svg{flex-shrink:0}
+.ns-sidebar .ns-nav a,.ns-profile-link{min-width:0}
+.ns-sidebar .ns-nav a>span{white-space:nowrap}
+.ns-sidebar .np-brand-switcher{min-width:0;flex-shrink:0}
+.np-brand-trigger{max-width:100%;min-width:0}
+.np-brand-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.np-brand-chevron,.np-brand-chevron svg{display:block;width:12px;height:12px;flex-shrink:0}
+body[data-page=workspace] .ns-sidebar .np-brand-label{display:none}
+body[data-page=workspace] .ns-sidebar .np-brand-initial{display:inline-flex;width:22px;height:22px;flex-shrink:0}
+body[data-page=workspace] .ns-sidebar .np-brand-trigger{justify-content:center;padding:4px;gap:2px}
+body[data-page=workspace] .ns-sidebar .np-brand-chevron,body[data-page=workspace] .ns-sidebar .np-brand-chevron svg{width:10px;height:10px}
+body[data-page=workspace] .ns-sidebar .np-brand-switcher{margin:0 0 12px}
+body[data-page=workspace] #ns-main{min-width:0}
+@media(max-width:960px){
+  .ns-sidebar .np-brand-label{display:none}
+  .ns-sidebar .np-brand-initial{display:inline-flex;width:22px;height:22px;flex-shrink:0}
+  .ns-sidebar .np-brand-trigger{justify-content:center;padding:4px;gap:2px}
+  .ns-sidebar .np-brand-chevron,.ns-sidebar .np-brand-chevron svg{width:10px;height:10px}
+  .ns-sidebar .np-brand-switcher{margin:0 0 12px}
+}
+
+/* Handoff M1: shared navigation rhythm, faithful brand preview and scoped tools. */
+:root{--ns-sidebar:216px}
+.ns-sidebar .ns-nav{gap:8px}
+.ns-sidebar .ns-nav a{min-height:44px;box-sizing:border-box}
+.ns-sidebar .np-brand-trigger{min-height:44px}
+.ns-sidebar .ns-profile-link{min-height:44px}
+.ns-sidebar .ns-nav a>span{overflow:hidden;text-overflow:ellipsis}
+body[data-page=home] .ns-shell-top .ns-history,
+body[data-page=home] #ns-page-label,
+body[data-page=home] .ns-preview-label{display:none}
+body[data-page=home] .ns-shell-top{justify-content:flex-end}
+body[data-page=workspace]{--ns-sidebar:64px}
+#ns-frames{left:64px}
+body[data-page=workspace] .ns-sidebar{padding-left:10px;padding-right:10px}
+body[data-page=workspace] .ns-sidebar .ns-nav a{width:44px;min-height:44px;padding:0}
+body[data-page=workspace] .ns-sidebar .np-brand-trigger{width:44px;min-height:44px}
+#ns-brand-preview{background:var(--brand-2);color:var(--brand-text,var(--brand-1))}
+#ns-brand-preview>strong,#ns-brand-preview>p,#ns-brand-preview>span{color:inherit}
+#ns-brand-preview .ns-preview-line{background:var(--brand-0)}
+.ns-brand-contrast{margin-top:14px;padding:14px 16px;border:1px solid var(--ns-border);border-radius:16px;background:var(--ns-purple-soft);color:var(--ns-text);font-size:13px;line-height:1.6}
+.ns-brand-contrast[hidden]{display:none}
+.ns-brand-contrast p{margin:0 0 8px}
+.ns-brand-contrast .ns-text-button{color:var(--ns-purple)}
+#ns-rename-name{box-sizing:border-box;width:100%;height:44px;border:1px solid var(--ns-border);border-radius:12px;padding:10px 12px;background:var(--ns-surface);color:var(--ns-text);font:inherit;margin-top:8px}
+#ns-rename-status{min-height:1.5em;overflow-wrap:anywhere;color:var(--ns-muted)}
+.ns-page-heading{flex-wrap:wrap}
+.ns-page-heading>div{min-width:0}
+@media(max-width:960px){
+  :root{--ns-sidebar:64px}
+  .ns-sidebar{padding-left:10px;padding-right:10px}
+  .ns-sidebar .ns-nav a{width:44px;height:44px;min-height:44px;padding:0;flex-direction:row;gap:0}
+  .ns-sidebar .ns-nav a>span{display:none}
+  .ns-sidebar .np-brand-trigger{width:44px;min-height:44px}
+  .ns-sidebar .ns-wordmark{padding-left:0;padding-right:0}
+  .ns-page-heading #ns-brand-new{min-height:44px}
+}
+@media(max-width:650px){
+  .ns-brand-colors .ns-color-fields{gap:8px}
+  .ns-brand-colors .ns-color-field{min-width:0}
+  .ns-brand-colors .ns-color-hex{width:100%;min-width:0;font-size:11px}
+}

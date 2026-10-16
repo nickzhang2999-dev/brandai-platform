@@ -1,0 +1,84 @@
+@import url('/m12-studio.css');
+@import url('/m13-motion.css');
+
+/* Only the entering content moves. Hidden pages stop immediately; the persistent
+   editor iframe and navigation geometry never take part in a page transition. */
+.ns-page:not([hidden]) {
+  animation: ns-content-enter var(--nv-motion-enter) var(--nv-motion-ease);
+}
+@keyframes ns-content-enter {
+  from { opacity: .72; transform: translateY(var(--nv-motion-distance)); }
+  to { opacity: 1; transform: none; }
+}
+
+:is(.ns-nav a,.ns-profile-link,.ns-primary,.ns-secondary,.ns-text-button,
+    .ns-text-link,.ns-prompt-chip,.ns-history button,.ns-favorite,.ns-tabs button,
+    .ns-filter-button,.ns-dialog-head button,.ns-source-link,.ns-starter-card button) {
+  transition: color var(--nv-motion-feedback) ease,
+    background-color var(--nv-motion-feedback) ease,
+    border-color var(--nv-motion-feedback) ease,
+    transform var(--nv-motion-press) var(--nv-motion-ease);
+}
+:is(.ns-primary,.ns-secondary,.ns-text-button,.ns-prompt-chip,.ns-history button,
+    .ns-favorite,.ns-filter-button,.ns-dialog-head button):not(:disabled):active {
+  transform: scale(.98);
+}
+.ns-project-card,.ns-asset-card,.ns-composer {
+  transition: border-color var(--nv-motion-feedback) ease,
+    box-shadow var(--nv-motion-feedback) ease;
+}
+@media (hover:hover) and (pointer:fine) {
+  .ns-asset-card:hover {
+    border-color:#d5cbe2;
+    box-shadow:0 5px 18px #70508908;
+  }
+}
+
+/* Native dialog owns modality, Escape and focus return. Closing releases it
+   immediately; no timer delays an action or leaves an invisible backdrop. */
+.ns-dialog[open] {
+  animation: ns-content-enter var(--nv-motion-enter) var(--nv-motion-ease);
+}
+.ns-dialog[open]::backdrop {
+  animation: ns-backdrop-enter var(--nv-motion-enter) ease;
+}
+@keyframes ns-backdrop-enter { from { opacity:0; } to { opacity:1; } }
+.ns-dialog { color:var(--ns-text); }
+.ns-dialog p,.ns-dialog select { color:#726d78; }
+.ns-dialog label { color:#625b6d; }
+.ns-dialog::backdrop { background:#24232838; backdrop-filter:blur(2px); }
+
+/* Toasts communicate without covering an input target during entry or exit. */
+.ns-toast {
+  pointer-events:none;
+  color:#514a5a;
+  opacity:1;
+  transform:translate(-50%,0);
+  transition:opacity var(--nv-motion-enter) var(--nv-motion-ease),
+    transform var(--nv-motion-enter) var(--nv-motion-ease),
+    display var(--nv-motion-enter) allow-discrete;
+}
+.ns-toast[hidden] {
+  opacity:0;
+  transform:translate(-50%,var(--nv-motion-distance));
+  transition-duration:var(--nv-motion-exit);
+}
+@starting-style {
+  .ns-toast:not([hidden]) {
+    opacity:0;
+    transform:translate(-50%,var(--nv-motion-distance));
+  }
+}
+
+/* M8's universal reduced-motion rules remain in force for all descendants.
+   These explicit targets also cancel pressed transforms and pseudo-elements. */
+body[data-motion=reduce] :is(.ns-page,.ns-dialog,.ns-primary,.ns-secondary,
+    .ns-text-button,.ns-prompt-chip,.ns-history button,.ns-favorite,
+    .ns-filter-button,.ns-dialog-head button) { transform:none!important; }
+body[data-motion=reduce] .ns-dialog::backdrop { animation:none!important; }
+@media (prefers-reduced-motion:reduce) {
+  :is(.ns-page,.ns-dialog,.ns-primary,.ns-secondary,.ns-text-button,
+      .ns-prompt-chip,.ns-history button,.ns-favorite,.ns-filter-button,
+      .ns-dialog-head button) { transform:none!important; }
+  .ns-dialog::backdrop { animation:none!important; }
+}

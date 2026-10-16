@@ -40,12 +40,12 @@ function handle(req,res) {
   if (url.pathname.endsWith('/notifications')) return json(res,{items:[]});
   if (url.pathname.endsWith('/studio-layer-activity')) return json(res,{requests:Array.from({length:12},(_,i)=>({requestId:'layout-task-'+i,projectId:project.projectId,status:'RUNNING',createdAt:'2026-10-13T08:00:00Z',expiresAt:'2026-10-14T08:00:00Z',layerCount:4}))});
   if (url.pathname === '/canvas') {res.writeHead(307,{Location:'/studio-editor'+url.search});return res.end();}
-  if (url.pathname === '/studio-editor') {res.setHeader('Content-Type','text/html; charset=utf-8');return res.end(`<!doctype html><html data-nv-studio-canvas-ready="true"><head><meta charset="utf-8"></head><body style="margin:0;height:100vh;background:#fafafc"><div data-testid="owned-editor">布局用 iframe 协议测试件</div><script>const projectId=${JSON.stringify(project.projectId)};parent.postMessage({type:'nv-studio',action:'ready',projectId},location.origin);</script></body></html>`);}
+  if (url.pathname === '/studio-editor') {res.setHeader('Content-Type','text/html; charset=utf-8');return res.end(`<!doctype html><html data-nv-studio-canvas-ready="true"><head><meta charset="utf-8"></head><body style="margin:0;height:100vh;background:#fafafc"><div data-testid="owned-editor">布局用 iframe 协议测试件</div><section data-testid="fixture-materials" hidden>素材面板协议测试件</section><script>const projectId=${JSON.stringify(project.projectId)};window.panelReceipts=[];addEventListener('message',e=>{const d=e.data;if(e.origin!==location.origin||e.source!==parent||d.type!=='nv-studio'||d.action!=='open-panel'||d.projectId!==projectId)return;panelReceipts.push(d);if(d.panel==='materials')document.querySelector('[data-testid="fixture-materials"]').hidden=false;});parent.postMessage({type:'nv-studio',action:'ready',projectId},location.origin);</script></body></html>`);}
   if (url.pathname === '/favicon.ico') {res.writeHead(204);return res.end();}
   const production = {
     '/novart-product-bootstrap.js':'deploy/novart/studio/novart-product-bootstrap.js',
     '/novart-product-task-inbox.js':'deploy/novart/studio/novart-product-task-inbox.js',
-    '/home-start-studio.css':'previews/novart-workbench/harness/home-start-studio.css',
+    '/home-start-studio.css':'apps/web/studio-shell/home-start-studio.css',
   };
   const file = production[url.pathname] ? path.join(repo,production[url.pathname]) : path.join(exported,url.pathname.slice(1));
   if (path.relative(repo,file).startsWith('..') || !fs.existsSync(file) || !fs.statSync(file).isFile()) return json(res,{error:'Unavailable isolated route'},404);
@@ -104,7 +104,22 @@ async function verifyViewport(browser,spec,origin) {
     const inbox=(await measure(page,['.np-task-inbox']))['.np-task-inbox'];assert.ok(inbox.x>=0&&inbox.right<=spec.width+1&&inbox.y>=0&&inbox.bottom<=spec.height+1,'Task popover must remain inside the viewport');
     await page.keyboard.press('Escape');
     const shot = reportPath.replace(/\.json$/i,'')+'-'+spec.name+'.png';await page.screenshot({path:shot});
-    check(spec.name,{viewport:spec,dpr:spec.dpr||1,homeMeasurements:home,measurements:values,screenshot:shot});
+    // The old upload deep link must immediately open the owned materials
+    // panel, retaining server workspace/build context. No synthetic click may
+    // launch a file picker across navigation or wait for retired SDK controls.
+    let fileChoosers=0;page.on('filechooser',()=>fileChoosers++);
+    await page.goto(origin+'/studio?workspaceId='+context.workspaceId+'&build=owned-shell-regression&panel=upload#/workspace/'+project.projectId);
+    await page.waitForFunction(()=>document.querySelector('iframe[data-ready="true"]'));
+    await page.frameLocator('#ns-frames iframe').getByTestId('fixture-materials').waitFor({state:'visible'});
+    const ownedFrame=page.frames().find(frame=>new URL(frame.url()).pathname==='/studio-editor');assert.ok(ownedFrame);
+    assert.equal(await ownedFrame.evaluate(()=>window.panelReceipts.length),1);
+    assert.equal(await ownedFrame.evaluate(()=>window.panelReceipts[0].panel),'materials');
+    const deepLink=new URL(page.url());assert.equal(deepLink.searchParams.get('workspaceId'),context.workspaceId);assert.equal(deepLink.searchParams.get('build'),'owned-shell-regression');assert.equal(deepLink.searchParams.has('panel'),false);
+    assert.equal(new URL(ownedFrame.url()).searchParams.get('workspaceId'),context.workspaceId);
+    await ownedFrame.evaluate(()=>parent.postMessage({type:'nv-studio',action:'ready',projectId},location.origin));await page.waitForTimeout(100);
+    assert.equal(await ownedFrame.evaluate(()=>window.panelReceipts.length),1,'Repeated ready cannot repeat the consumed upload command');
+    assert.equal(fileChoosers,0,'Navigation opens a panel; only a real user upload click can open the picker');
+    check(spec.name,{viewport:spec,dpr:spec.dpr||1,homeMeasurements:home,measurements:values,screenshot:shot,uploadDeepLink:'owned-materials-panel-once-with-retained-workspace'});
   } finally {await ctx.close();}
 }
 (async()=>{

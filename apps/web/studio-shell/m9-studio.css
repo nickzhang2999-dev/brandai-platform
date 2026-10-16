@@ -1,0 +1,44 @@
+@import url('/m8-studio.css');
+
+/* M9 adds readable supporting text while retaining M8's layout and frame geometry. */
+.ns-local-tag,.ns-local-caption,.ns-profile-text small,.ns-top-note,
+.ns-composer-footer>span,.ns-start-row>span,.ns-prompt-chip,
+.ns-project-info small,.ns-footnote,.ns-result-line,
+.ns-asset-info small,.ns-source-link,.ns-starter-card>span,
+.ns-form-card>label>span,.ns-form-footer>span,.ns-field-hint,
+.ns-preview-eyebrow,.ns-brand-preview>span:not(.ns-preview-eyebrow),
+.ns-image-dialog .ns-dialog-head p{font-size:11px}
+.ns-hero-caption,.ns-section-heading p,.ns-project-info strong,
+.ns-inline-status,.ns-panel-note,.ns-form-card>label,
+.ns-starter-card p,.ns-text-button,.ns-text-link{font-size:12px}
+.ns-project-info small{display:block;line-height:1.65;overflow-wrap:anywhere}
+.ns-favorite{bottom:40px}
+.ns-resource-actions .ns-primary{max-width:260px}
+.ns-upload-label{display:block;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.ns-resource-actions .ns-primary svg{flex-shrink:0}
+.ns-history button:disabled{cursor:default;opacity:.35}
+.ns-history button:disabled:hover{background:none;color:#aca5b3}
+.ns-composer-footer>span{line-height:1.7}
+.ns-preview-eyebrow{letter-spacing:1px}
+.ns-form-card input[aria-invalid=true],.ns-form-card textarea[aria-invalid=true],
+.ns-composer textarea[aria-invalid=true]{border-color:#ad8795}
+@media(max-width:960px){.ns-profile-text small,.ns-local-caption{font-size:11px}}
+@media(max-width:650px){
+  .ns-local-tag,.ns-profile-text small,.ns-top-note,.ns-composer-footer>span,
+  .ns-start-row>span,.ns-prompt-chip,.ns-project-info strong,.ns-project-info small,
+  .ns-footnote,.ns-result-line,.ns-asset-info strong,.ns-asset-info small,
+  .ns-source-link,.ns-starter-card>span,.ns-form-card>label>span,
+  .ns-form-footer>span,.ns-field-hint,.ns-hero-caption,.ns-section-heading p,
+  .ns-inline-status,.ns-panel-note,.ns-preview-eyebrow,
+  .ns-brand-preview>span:not(.ns-preview-eyebrow),.ns-text-button,.ns-text-link,
+  .ns-resource-actions .ns-primary,.ns-resource-actions>select,
+  .ns-image-dialog .ns-dialog-head p{font-size:11px}
+  .ns-composer-footer>span{max-width:140px}
+  .ns-composer .ns-primary{flex-shrink:0}
+  .ns-resource-actions .ns-primary{max-width:155px}
+  .ns-resource-actions>select{max-width:125px;min-width:0}
+  .ns-project-info{padding-bottom:11px}
+  .ns-project-info strong{margin-bottom:6px}
+  .ns-favorite{bottom:49px}
+  .ns-start-row .ns-text-button{font-size:11px}
+}

@@ -1,0 +1,9 @@
+/* One restrained rhythm for the studio shell and its comparison controls. */
+:root {
+  --nv-motion-enter: 160ms;
+  --nv-motion-exit: 100ms;
+  --nv-motion-feedback: 120ms;
+  --nv-motion-press: 90ms;
+  --nv-motion-ease: cubic-bezier(.2,.8,.2,1);
+  --nv-motion-distance: 4px;
+}
