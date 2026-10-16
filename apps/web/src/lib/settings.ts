@@ -328,9 +328,8 @@ export async function updateAiSettings(
 
 /**
  * Self-serve registration switch. Default CLOSED — a fresh deploy (no AppSetting
- * row yet) accepts no public sign-ups. Only the bootstrap-first-admin and
- * ADMIN_EMAILS allowlist paths bypass this (handled in the register route), so
- * an operator can always create the first account.
+ * row yet) accepts no public sign-ups. ADMIN_EMAILS operators may bypass it;
+ * first-admin bootstrap is permitted only outside production (register route).
  */
 export async function isRegistrationOpen(): Promise<boolean> {
   const row = await prisma.appSetting.findUnique({
