@@ -49,9 +49,8 @@ const nextConfig = {
     } : {}),
   },
   // The container build OOMs during next build's in-process type-check phase.
-  // We already gate every deploy on `tsc --noEmit` (and ESLint isn't configured),
-  // so skip the redundant in-build checks to keep the build within memory.
+  // We already gate every deploy on `tsc --noEmit`, so keep that duplicate
+  // type-check separate. ESLint also runs in CI and remains enabled in builds.
   typescript: { ignoreBuildErrors: true },
-  eslint: { ignoreDuringBuilds: true },
 };
 export default nextConfig;

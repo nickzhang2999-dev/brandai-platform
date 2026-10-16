@@ -1,0 +1,232 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+vi.mock("@/lib/studio-conversation-image-size", () => ({ sizeStudioConversationImage: vi.fn() }));
+const f = vi.hoisted(() => ({ transaction: vi.fn(), query: vi.fn(), gate: vi.fn(), read: vi.fn(), update: vi.fn(), updateMany: vi.fn(), output: vi.fn(), clearOutputs: vi.fn(), pending: vi.fn(), missing: vi.fn(), ensure: vi.fn(), enqueue: vi.fn(), settings: vi.fn(), bytes: vi.fn(), inspect: vi.fn(), process: vi.fn(), upload: vi.fn(), priorAsset: vi.fn(), logo: vi.fn(), asset: vi.fn(), version: vi.fn(), existingVersion: vi.fn(), link: vi.fn(), check: vi.fn(), enqueueCheck: vi.fn(), exact: vi.fn(), base: vi.fn(), editLock: vi.fn(), psd: vi.fn(), alpha: vi.fn() }));
+vi.mock("../../../packages/db/src/index", () => ({ Prisma: {}, prisma: { $transaction: f.transaction,
+  studioGeneratedMaterial: { updateMany: f.updateMany, findMany: f.pending }, studioGenerationOutput: { updateMany: f.clearOutputs }, studioGenerationRequest: { findMany: f.missing }, asset: { findUnique: f.priorAsset, findFirst: f.logo } } }));
+vi.mock("@/lib/queue", () => ({ connection: {}, queuePrefix: "test" }));
+vi.mock("@/lib/api", () => ({ ApiException: class extends Error { constructor(public status: number, message: string) { super(message); } } }));
+vi.mock("@/lib/s3", () => ({ uploadBuffer: f.upload }));
+vi.mock("@/lib/settings", () => ({ getEffectiveStorage: f.settings }));
+vi.mock("@/lib/asset-mirror", () => ({ assetCategoryForScene: () => "SOCIAL" }));
+vi.mock("@/lib/studio-generation-artifacts-image", () => ({ artifactDeadline: async (work: Promise<any>) => work,
+  artifactOwnObjectKey: () => null, readArtifactImageBytes: f.bytes, inspectArtifactImage: f.inspect, postprocessArtifactImage: f.process }));
+vi.mock("@/lib/studio-generation-artifacts-queue", () => ({ enqueueStudioArtifact: f.enqueue }));
+vi.mock("@/lib/studio-generation-compliance", () => ({ registerStudioGenerationCompliance: f.check }));
+vi.mock("@/lib/studio-generation-compliance-queue", () => ({ enqueueStudioCompliance: f.enqueueCheck }));
+vi.mock("@/lib/studio-image-tool-alpha", () => ({ requireStudioTransparentForeground: f.alpha }));
+vi.mock("@/lib/studio-generated-psd", () => ({ registerStudioGeneratedPsd: f.psd }));
+vi.mock("@/lib/studio-exact-image", () => ({ compositeStudioExactImage: f.exact }));
+vi.mock("@/lib/studio-generation-base", () => ({ storeStudioCleanBase: f.base, requireStudioBaseEncryption: vi.fn() }));
+vi.mock("@/lib/studio-generation-exact", async () => ({ ...await vi.importActual("../src/lib/studio-generation-exact"), loadStudioExactAsset: vi.fn() }));
+vi.mock("@/lib/studio-generation-edit", async () => ({ ...await vi.importActual("../src/lib/studio-generation-edit"), lockStudioEditPublicationSource: f.editLock }));
+vi.mock("@/lib/studio-generation-artifacts", () => ({ ensureStudioGenerationArtifacts: f.ensure, requireArtifactWrite: f.gate,
+  STUDIO_ARTIFACT_ERROR: "Archive failed; retry archive only", STUDIO_ARTIFACT_EXPIRED: "Raw recovery expired", STUDIO_ARTIFACT_RUN_MS: 60_000 }));
+import { runStudioGenerationArtifactJob, sweepStudioGenerationArtifacts } from "../src/lib/workers/studio-generation-artifacts.worker";
+import { ApiException } from "@/lib/api";
+import { ExactAssetTransform } from "../../../packages/contracts/src/resource-usage";
+
+let row: any, tx: any;
+const bytes = Buffer.from("unit image fixture; decoder mocked here"), sha = "a".repeat(64);
+const job = (attemptsMade = 0) => ({ data: { outputId: "output", epoch: row.expiresAt.getTime() }, attemptsMade, opts: { attempts: 3 } } as any);
+beforeEach(() => {
+  vi.resetAllMocks();
+  row = { outputId: "output", requestId: "request", workspaceId: "w", projectId: "p", userId: "u", versionId: null, status: "PENDING", attemptToken: null, expiresAt: new Date(Date.now() + 300_000),
+    output: { id: "output", requestId: "request", workspaceId: "w", projectId: "p", imageUrl: "data:image/png;base64,AAAA", expiresAt: new Date(Date.now() + 86_400_000), index: 0, params: { studioPostprocess: { watermarkOverlays: [], automaticBrandLogoAssetId: null }, studioSourceRetention: "bytes", appliedRuleIds: ["rule"] } },
+    request: { id: "request", status: "SUCCEEDED", workspaceId: "w", projectId: "p", userId: "u", generationId: "generation", generation: { workspaceId: "w", projectId: "p", sceneType: "SOCIAL_POSTER" } } };
+  tx = { $queryRaw: f.query, studioGeneratedMaterial: { findUnique: f.read, update: f.update }, studioGenerationOutput: { update: f.output },
+    generationVersion: { findUnique: f.existingVersion, upsert: f.version }, asset: { findUnique: f.priorAsset, upsert: f.asset }, projectAsset: { upsert: f.link } };
+  f.transaction.mockImplementation(fn => fn(tx)); f.read.mockImplementation(async () => structuredClone(row));
+  f.query.mockResolvedValue([{ id: "locked" }]);
+  f.update.mockImplementation(async ({ data }) => { Object.assign(row, data); return row; });
+  f.updateMany.mockImplementation(async ({ where, data }) => {
+    if (where.attemptToken && (where.attemptToken !== row.attemptToken || row.status !== where.status)) return { count: 0 };
+    Object.assign(row, data); return { count: 1 };
+  });
+  f.output.mockImplementation(async ({ data }) => { Object.assign(row.output, data); return row.output; });
+  f.settings.mockResolvedValue({ configured: true, publicUrl: "http://private.invalid/bucket" }); f.bytes.mockResolvedValue(bytes);
+  f.inspect.mockResolvedValue({ mimeType: "image/png", width: 48, height: 32, sizeBytes: bytes.length, sha256: sha });
+  f.process.mockResolvedValue({ body: bytes, mimeType: "image/png", width: 48, height: 32, sizeBytes: bytes.length, sha256: sha, appliedAssetIds: [] });
+  f.upload.mockImplementation(async (_b, _m, _p, _s, key) => ({ key, url: `http://private.invalid/bucket/${key}` }));
+  f.asset.mockResolvedValue({ id: "asset" }); f.priorAsset.mockResolvedValue(null); f.existingVersion.mockResolvedValue(null);
+  f.pending.mockResolvedValue([]); f.missing.mockResolvedValue([]);
+  f.check.mockResolvedValue({ id: "check", status: "PENDING", jobId: "check-attempt" }); f.enqueueCheck.mockResolvedValue(true);
+  f.exact.mockResolvedValue({ body: Buffer.from("composed-exact"), appliedAssetIds: ["locked"] });
+  f.base.mockResolvedValue({ schemaVersion: 1, encoding: "aes-256-gcm-v1", keyRevision: "c".repeat(24), objectKey: "w/studio-generation-bases/p/output/private", sha256: sha, width: 48, height: 32, mimeType: "image/png", sizeBytes: bytes.length });
+});
+function enableExact() {
+  const transform = ExactAssetTransform.parse({});
+  const assetUsages = [{ assetId: "locked", mode: "EXACT", order: 0, exactTransform: transform }];
+  row.output.params.assetUsages = assetUsages;
+  row.output.params.studioPostprocess.exactLayout = { target: { width: 48, height: 32 },
+    frame: { shapeId: "shape:frame", width: 48, height: 32, pageId: "page:one", pageTransform: [1,0,0,1,0,0] },
+    layers: [{ assetId: "locked", shapeId: "shape:locked", sha256: sha, width: 16, height: 16, displayWidth: 16, displayHeight: 16, relativeTransform: [1,0,0,1,10,10], transform }], assetUsages };
+}
+
+describe("generation archive worker (unit fixtures; no provider or remote storage)", () => {
+  it("validates background alpha before padding and after final composition, before upload", async () => {
+    row.output.params.studioPostprocess.imageTool = "remove-background";
+    await runStudioGenerationArtifactJob(job());
+    expect(row.status).toBe("SUCCEEDED"); expect(f.alpha).toHaveBeenCalledTimes(2);
+    expect(f.alpha.mock.invocationCallOrder[0]).toBeLessThan(f.process.mock.invocationCallOrder[0]);
+    expect(f.alpha.mock.invocationCallOrder[1]).toBeLessThan(f.upload.mock.invocationCallOrder[0]);
+  });
+  it("retains a paid result but rejects opaque background instead of accepting padding alpha", async () => {
+    row.output.params.studioPostprocess.imageTool = "remove-background";
+    f.alpha.mockRejectedValue(new ApiException(422, "No real background alpha"));
+    await runStudioGenerationArtifactJob(job()); expect(row.status).toBe("FAILED");
+    expect(row.output.imageUrl).not.toBeNull(); expect(f.upload).not.toHaveBeenCalled(); expect(f.version).not.toHaveBeenCalled();
+  });
+
+  it("starts an opted-in PSD only after a published original and isolates its failure from the image archive", async () => {
+    row.request.jobData = { studioPsdLayerCount: 2 };
+    f.psd.mockImplementation(async () => { expect(row.status).toBe("SUCCEEDED"); expect(row.assetId).toBeTruthy(); throw new Error("synthetic continuation outage"); });
+    await runStudioGenerationArtifactJob(job());
+    expect(f.psd).toHaveBeenCalledWith("request"); expect(row.status).toBe("SUCCEEDED"); expect(row.output.imageUrl).toBeNull();
+    expect(f.updateMany).not.toHaveBeenCalled();
+  });
+  it("never enters a PSD continuation for an unselected generation", async () => {
+    await runStudioGenerationArtifactJob(job()); expect(row.status).toBe("SUCCEEDED"); expect(f.psd).not.toHaveBeenCalled();
+  });
+  it("archives edits as new roots with authorized source provenance, never an invalid cross-generation parent", async () => {
+    const source = { assetId: "source", sha256: sha, width: 48, height: 32, shapeId: "shape:source", recipeHash: "b".repeat(64), versionId: "old-version", outputId: "old-output", sourceGenerationId: "old-generation" };
+    row.output.params.imageKind = "EDITED"; row.output.params.studioPostprocess.editSource = source;
+    row.request.jobData = { targets: [{ width: 48, height: 32 }] };
+    await runStudioGenerationArtifactJob(job());
+    expect(row.status).toBe("SUCCEEDED"); expect(f.editLock).toHaveBeenCalledWith(tx, "w", "p", source);
+    const created = f.version.mock.calls[0][0].create;
+    expect(created.generationId).toBe("generation"); expect(created).not.toHaveProperty("parentVersionId");
+    expect(created.params.source).toEqual({ assetId: "source", sha256: sha, versionId: "old-version", generationId: "old-generation", operation: "whole-image-edit" });
+    expect(JSON.stringify(created.params)).not.toMatch(/recipeHash|old-output|studioPostprocess/);
+  });
+  it("retains the paid edit but prevents publication when actual size or source identity changes", async () => {
+    row.output.params.imageKind = "EDITED";
+    row.output.params.studioPostprocess.editSource = { assetId: "source", sha256: sha, width: 48, height: 32, shapeId: "shape:source", recipeHash: "b".repeat(64) };
+    row.request.jobData = { targets: [{ width: 96, height: 64 }] };
+    await runStudioGenerationArtifactJob(job()); expect(row.status).toBe("FAILED"); expect(f.version).not.toHaveBeenCalled(); expect(row.output.imageUrl).not.toBeNull();
+    row.status = "PENDING"; row.request.jobData.targets = [{ width: 48, height: 32 }]; f.editLock.mockRejectedValue(new ApiException(422, "Source unlinked"));
+    await runStudioGenerationArtifactJob(job()); expect(row.status).toBe("FAILED"); expect(f.version).not.toHaveBeenCalled(); expect(row.output.imageUrl).not.toBeNull();
+  });
+  it("preserves an encrypted base for ordinary branded outputs so later edits do not redraw and duplicate the watermark", async () => {
+    row.output.params.studioPostprocess.watermarkOverlays = [{ enabled: true, text: "Brand" }];
+    await runStudioGenerationArtifactJob(job());
+    expect(row.status).toBe("SUCCEEDED"); expect(f.base).toHaveBeenCalledWith(bytes, { workspaceId: "w", projectId: "p", outputId: "output" }, expect.any(AbortSignal));
+    expect(row.output.params.studioPostprocess.cleanBase).toBeTruthy(); expect(f.version.mock.calls[0][0].create.params).not.toHaveProperty("studioPostprocess");
+  });
+  it("composites locked pixels before brand overlays, keeps encrypted clean base private and publishes both atomically", async () => {
+    enableExact(); await runStudioGenerationArtifactJob(job());
+    expect(row.status).toBe("SUCCEEDED");
+    expect(f.exact).toHaveBeenCalledWith(bytes, expect.arrayContaining([expect.objectContaining({ assetId: "locked" })]), expect.any(Function), expect.any(AbortSignal));
+    expect(f.process.mock.calls[0][0]).toEqual(Buffer.from("composed-exact"));
+    expect(f.base).toHaveBeenCalledWith(bytes, { workspaceId: "w", projectId: "p", outputId: "output" }, expect.any(AbortSignal));
+    expect(row.output.params.studioPostprocess.cleanBase.objectKey).toContain("studio-generation-bases");
+    const visible = f.version.mock.calls[0][0].create.params;
+    expect(visible.appliedExactAssetIds).toEqual(["locked"]); expect(JSON.stringify(visible)).not.toMatch(/studio-generation-bases|keyRevision|cleanBase/);
+    expect(row.output.imageUrl).toBeNull();
+  });
+  it("preserves paid output if encrypted clean-base storage fails and refuses to publish an uneditable composite", async () => {
+    enableExact(); f.base.mockRejectedValue(new Error("storage unavailable"));
+    await expect(runStudioGenerationArtifactJob(job())).rejects.toThrow("temporarily unavailable");
+    expect(row.output.imageUrl).not.toBeNull(); expect(f.version).not.toHaveBeenCalled(); expect(row.status).toBe("PENDING");
+    f.base.mockResolvedValue({ objectKey: "w/private-base" });
+    await runStudioGenerationArtifactJob(job()); expect(row.status).toBe("SUCCEEDED");
+  });
+  it("refuses a provider size mismatch or missing EXACT recipe rather than publishing displaced or absent originals", async () => {
+    enableExact(); row.output.params.studioPostprocess.exactLayout.target.width = 96;
+    await runStudioGenerationArtifactJob(job()); expect(row.status).toBe("FAILED"); expect(f.exact).not.toHaveBeenCalled(); expect(f.version).not.toHaveBeenCalled();
+    row.status = "PENDING"; delete row.output.params.studioPostprocess.exactLayout;
+    await runStudioGenerationArtifactJob(job()); expect(row.status).toBe("FAILED"); expect(f.version).not.toHaveBeenCalled();
+  });
+  it("locks and rechecks current source membership before publishing after storage I/O", async () => {
+    enableExact();
+    f.query.mockImplementation(async (sql: TemplateStringsArray) => sql.join("").includes("FOR SHARE OF") ? [] : [{ id: "locked" }]);
+    await runStudioGenerationArtifactJob(job());
+    expect(f.upload).toHaveBeenCalled(); expect(row.status).toBe("FAILED"); expect(row.output.imageUrl).not.toBeNull(); expect(f.version).not.toHaveBeenCalled();
+  });
+  it("publishes a real version/asset/project link only after complete archive and clears private bytes", async () => {
+    await runStudioGenerationArtifactJob(job());
+    expect(row.status).toBe("SUCCEEDED"); expect(row.sha256).toBe(sha); expect(row.output.imageUrl).toBeNull();
+    expect(row.versionId).toMatch(/^sgv_/); expect(row.assetId).toBe("asset");
+    expect(f.upload).toHaveBeenCalledWith(bytes, "image/png", "w/studio-generated/p", expect.any(AbortSignal), `w/studio-generated/p/output/${sha}`);
+    expect(f.version.mock.calls[0][0].create).toMatchObject({ generationId: "generation", width: 48, height: 32, params: { appliedRuleIds: ["rule"] } });
+    expect(f.version.mock.calls[0][0].create.params).not.toHaveProperty("studioPostprocess");
+    expect(f.link.mock.calls[0][0].create).toMatchObject({ projectId: "p", assetId: "asset", kind: "MEMBER" });
+    expect(f.gate).toHaveBeenCalledTimes(2);
+    expect(f.check).toHaveBeenCalledWith(tx, "w", row.versionId); expect(f.enqueueCheck).toHaveBeenCalledWith("check", "check-attempt");
+    await runStudioGenerationArtifactJob(job()); expect(f.upload).toHaveBeenCalledTimes(1); expect(f.asset).toHaveBeenCalledTimes(1);
+  });
+  it("keeps a published image and durable check when the compliance queue is unavailable", async () => {
+    f.enqueueCheck.mockRejectedValue(new Error("Redis unavailable"));
+    await runStudioGenerationArtifactJob(job());
+    expect(row.status).toBe("SUCCEEDED"); expect(row.output.imageUrl).toBeNull(); expect(f.check).toHaveBeenCalledTimes(1);
+  });
+  it("completes existing mirror metadata without duplicating the version asset or project link", async () => {
+    row.versionId = "existing-version"; row.output.imageUrl = "http://private.invalid/mirrored";
+    f.existingVersion.mockResolvedValue({ generationId: "generation" });
+    f.priorAsset.mockResolvedValue({ id: "asset", workspaceId: "w", storageKey: "w/prior", url: row.output.imageUrl, deprecatedAt: null, availableForGeneration: true });
+    await runStudioGenerationArtifactJob(job());
+    expect(f.bytes.mock.calls[0][0]).toMatchObject({ objectKey: "w/prior" });
+    expect(f.asset.mock.calls[0][0]).toMatchObject({ where: { generationVersionId: "existing-version" }, update: { sizeBytes: bytes.length, mimeType: "image/png", resolution: "48 × 32" } });
+    expect(row.versionId).toBe("existing-version");
+  });
+  it("retains paid provider bytes and does not publish a version when composition fails", async () => {
+    f.process.mockRejectedValue(new ApiException(422, "failed logo contains private details"));
+    await runStudioGenerationArtifactJob(job());
+    expect(row.status).toBe("FAILED"); expect(row.output.imageUrl).not.toBeNull();
+    expect(row.error).not.toContain("private details"); expect(f.version).not.toHaveBeenCalled(); expect(f.upload).not.toHaveBeenCalled();
+  });
+  it("materializes external URL bytes privately before a later storage failure", async () => {
+    row.output.imageUrl = "https://provider.invalid/temporary"; row.output.params.studioSourceRetention = "upstream-url";
+    f.upload.mockRejectedValue(new Error("S3 secret detail"));
+    await runStudioGenerationArtifactJob(job(2));
+    expect(row.status).toBe("FAILED"); expect(row.output.imageUrl).toBe(`data:image/png;base64,${bytes.toString("base64")}`);
+    expect(row.output.params.studioSourceRetention).toBe("bytes"); expect(f.version).not.toHaveBeenCalled();
+  });
+  it("preserves bytes for automatic transient retries without provider calls or terminal fake success", async () => {
+    f.upload.mockRejectedValue(new Error("S3 unavailable"));
+    await expect(runStudioGenerationArtifactJob(job())).rejects.toThrow("temporarily unavailable");
+    expect(row.status).toBe("PENDING"); expect(row.output.imageUrl).not.toBeNull();
+    await runStudioGenerationArtifactJob(job(2)); expect(row.status).toBe("FAILED"); expect(f.version).not.toHaveBeenCalled();
+  });
+  it("fails closed for changed ownership/archived project before storage and rechecks after it", async () => {
+    f.gate.mockRejectedValueOnce(new ApiException(403, "role revoked"));
+    await runStudioGenerationArtifactJob(job()); expect(row.status).toBe("FAILED"); expect(f.upload).not.toHaveBeenCalled();
+    row.status = "PENDING"; f.gate.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new ApiException(409, "archived during I/O"));
+    await runStudioGenerationArtifactJob(job()); expect(row.status).toBe("FAILED"); expect(f.version).not.toHaveBeenCalled();
+  });
+  it("does not let a stale queue epoch or active DB claim consume the source twice", async () => {
+    const obsolete = job(); obsolete.data.epoch--;
+    await runStudioGenerationArtifactJob(obsolete); expect(f.bytes).not.toHaveBeenCalled();
+    row.status = "RUNNING"; row.startedAt = new Date(); row.attemptToken = "active";
+    await runStudioGenerationArtifactJob(job()); expect(row.attemptToken).toBe("active"); expect(f.bytes).not.toHaveBeenCalled();
+  });
+  it("expires jobs and refuses malformed tenant references before any external IO", async () => {
+    row.expiresAt = new Date(Date.now() - 1); await runStudioGenerationArtifactJob(job()); expect(row.status).toBe("FAILED");
+    row.status = "PENDING"; row.expiresAt = new Date(Date.now() + 50000); row.request.workspaceId = "other";
+    await runStudioGenerationArtifactJob(job()); expect(row.status).toBe("FAILED"); expect(f.upload).not.toHaveBeenCalled(); expect(f.bytes).not.toHaveBeenCalled();
+  });
+  it("prevents late claims from publishing or clearing another worker's source", async () => {
+    f.upload.mockImplementation(async () => { row.attemptToken = "new-claim"; return { key: "key", url: "http://object.invalid/winner" }; });
+    await runStudioGenerationArtifactJob(job());
+    expect(row.attemptToken).toBe("new-claim"); expect(row.status).toBe("RUNNING"); expect(row.output.imageUrl).not.toBeNull(); expect(f.version).not.toHaveBeenCalled();
+  });
+  it("does not turn an uncertain DB reply after commit into failure or delete the winner", async () => {
+    let calls = 0;
+    f.transaction.mockImplementation(async fn => { const result = await fn(tx); if (++calls === 3) throw new Error("reply lost after commit"); return result; });
+    await runStudioGenerationArtifactJob(job());
+    expect(row.status).toBe("SUCCEEDED"); expect(row.output.imageUrl).toBeNull(); expect(row.assetId).toBe("asset");
+  });
+  it("refuses incomplete required logo application and deactivated preexisting assets", async () => {
+    row.output.params.studioPostprocess.automaticBrandLogoAssetId = "logo";
+    await runStudioGenerationArtifactJob(job()); expect(row.status).toBe("FAILED"); expect(f.upload).not.toHaveBeenCalled();
+    row.status = "PENDING"; row.output.params.studioPostprocess.automaticBrandLogoAssetId = null;
+    f.priorAsset.mockResolvedValue({ workspaceId: "w", deprecatedAt: new Date(), availableForGeneration: false });
+    await runStudioGenerationArtifactJob(job()); expect(row.status).toBe("FAILED"); expect(f.asset).not.toHaveBeenCalled();
+  });
+  it("recovers missing outboxes, expires private outputs and redelivers pending DB jobs", async () => {
+    f.missing.mockResolvedValue([{ id: "missing" }]); f.pending.mockResolvedValue([{ outputId: "waiting", expiresAt: row.expiresAt }]);
+    await sweepStudioGenerationArtifacts();
+    expect(f.ensure).toHaveBeenCalledWith("missing"); expect(f.enqueue).toHaveBeenCalledWith("waiting", row.expiresAt);
+    expect(f.clearOutputs.mock.calls[0][0]).toMatchObject({ where: { imageUrl: { not: null }, expiresAt: { lte: expect.any(Date) } }, data: { imageUrl: null } });
+    expect(f.updateMany.mock.calls[1][0].data).toEqual({ status: "PENDING", attemptToken: null });
+  });
+});

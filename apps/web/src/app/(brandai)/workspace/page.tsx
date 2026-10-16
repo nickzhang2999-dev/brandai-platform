@@ -948,7 +948,7 @@ function Workspace() {
 
   // 点击历史缩略图回看某次出图：复用整套机制（轮询无 jobId → 回退 SUCCEEDED，
   // 改图/终选/导出/审阅全部对该历史出图生效）。
-  function viewGeneration(id: string, focusVersionId?: string | null) {
+  const viewGeneration = useCallback((id: string, focusVersionId?: string | null) => {
     if (id === genId) return;
     setGenId(id);
     setJobId(null);
@@ -961,7 +961,7 @@ function Workspace() {
       : -1;
     setActiveVariant(idx >= 0 ? idx : 0);
     setSubmitErr(null);
-  }
+  }, [genId, history]);
 
   // 对话面板提交成功 → 新出图立即成为当前选中（带 jobId 走完整 job 轮询），
   // 画布无需用户手点「查看」即渲染新图（Codex P2）。
@@ -1692,8 +1692,7 @@ function Workspace() {
         );
       }
     },
-    // viewGeneration 是组件体内声明的函数（身份随渲染变化），与 versions 同列
-    // 依赖即可——本回调本就随 versions 变化重建。
+    // Follow the current generation/history without rebuilding on unrelated renders.
     [versions, history, chatPickImage, viewGeneration, resourceConfigById],
   );
 

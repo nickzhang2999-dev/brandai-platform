@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { BrandRule, Project, TaskState } from "@brandai/contracts";
 import { Button } from "@brandai/ui";
@@ -601,11 +602,11 @@ function RulesPanel({
                   ? "去「品牌套件」沉淀并确认 Logo、字体、颜色、设计指南和图像，确认后会在这里展示并约束出图。"
                   : "请先在品牌套件中开启「应用到项目」，项目才能调用其中的规则。"}
               </p>
-              <a href="/brand-knowledge">
+              <Link href="/brand-knowledge">
                 <Button variant="outline" className="mt-4">
                   前往品牌套件
                 </Button>
-              </a>
+              </Link>
             </div>
           ) : (
             <div className="flex flex-col gap-4">
@@ -653,11 +654,11 @@ function RulesPanel({
         </div>
 
         <div className="border-t border-border p-4">
-          <a href="/brand-knowledge">
+          <Link href="/brand-knowledge">
             <Button variant="outline" className="w-full justify-center">
               管理品牌套件
             </Button>
-          </a>
+          </Link>
         </div>
       </aside>
     </div>

@@ -66,8 +66,8 @@ export function OwnedCanvas({ document: incoming, onChange, readOnly = false, on
   const world = useRef<HTMLDivElement>(null), grid = useRef<HTMLDivElement>(null), cameraFrame = useRef<number | null>(null);
   const [view, setView] = useState(incoming), live = useRef(incoming), emitted = useRef<OwnedCanvasDocument | null>(null);
   const flagCache = useRef<{ items: OwnedCanvasItem[]; flags: ReturnType<typeof getSceneFlags> } | null>(null);
-  function flagsFor(items: OwnedCanvasItem[] = live.current.items) { if (flagCache.current?.items !== items) flagCache.current = { items, flags: getSceneFlags(items) }; return flagCache.current.flags; }
-  function selectable(item: OwnedCanvasItem) { const flags = flagsFor().get(item.id); return !flags?.hidden && !flags?.locked; }
+  const flagsFor = useCallback((items: OwnedCanvasItem[] = live.current.items) => { if (flagCache.current?.items !== items) flagCache.current = { items, flags: getSceneFlags(items) }; return flagCache.current.flags; }, []);
+  const selectable = useCallback((item: OwnedCanvasItem) => { const flags = flagsFor().get(item.id); return !flags?.hidden && !flags?.locked; }, [flagsFor]);
   const callbacks = useRef({ onChange, onUploadFiles, onExport, onReplaceImage, onSelectionChange, onImageAction }); callbacks.current = { onChange, onUploadFiles, onExport, onReplaceImage, onSelectionChange, onImageAction };
   const root = useRef<HTMLDivElement>(null), uploader = useRef<HTMLInputElement>(null), replacement = useRef<HTMLInputElement>(null), replacingId = useRef<string | null>(null), editor = useRef<HTMLTextAreaElement>(null);
   const [selected, setSelected] = useState<string[]>([]), selectedRef = useRef<string[]>([]);
@@ -112,7 +112,7 @@ export function OwnedCanvas({ document: incoming, onChange, readOnly = false, on
     if (cameraFrame.current === null) cameraFrame.current = requestAnimationFrame(() => { cameraFrame.current = null; setView(live.current); });
   }, [paintCamera]);
   useEffect(() => () => { if (cameraFrame.current !== null) cancelAnimationFrame(cameraFrame.current); }, []);
-  const choose = useCallback((ids: string[]) => { const items = live.current.items, eligible = items.filter(selectable), groups = new Set(eligible.filter(item => ids.includes(item.id)).map(item => item.groupId).filter(Boolean)); const next = eligible.filter(item => ids.includes(item.id) || item.groupId && groups.has(item.groupId)).map(item => item.id); selectedRef.current = next; setSelected(next); callbacks.current.onSelectionChange?.(next); }, []);
+  const choose = useCallback((ids: string[]) => { const items = live.current.items, eligible = items.filter(selectable), groups = new Set(eligible.filter(item => ids.includes(item.id)).map(item => item.groupId).filter(Boolean)); const next = eligible.filter(item => ids.includes(item.id) || item.groupId && groups.has(item.groupId)).map(item => item.id); selectedRef.current = next; setSelected(next); callbacks.current.onSelectionChange?.(next); }, [selectable]);
   const emit = useCallback((next: OwnedCanvasDocument) => { const named = assignOwnedImageNames(next, imageSequence.current); imageSequence.current = Number((named.source.novartOwnedCanvas as { imageSequence?: number })?.imageSequence) || imageSequence.current; updateView(named); emitted.current = named; callbacks.current.onChange(named); }, [updateView]);
   const complete = useCallback((before: OwnedCanvasDocument, next: OwnedCanvasDocument) => {
     if (lockedRef.current) return;
@@ -152,7 +152,7 @@ export function OwnedCanvas({ document: incoming, onChange, readOnly = false, on
     const existing = new Set(live.current.items.filter(selectable).map(item => item.id));
     if (selectedRef.current.some(id => !existing.has(id))) choose(selectedRef.current.filter(id => existing.has(id)));
     if (editingRef.current && !existing.has(editingRef.current)) { editingRef.current = null; editBefore.current = null; setEditing(null); }
-  }, [incoming, clipboardScope, choose, updateView]);
+  }, [incoming, clipboardScope, choose, updateView, selectable]);
   useEffect(() => { if (scopeRef.current !== clipboardScope) { scopeRef.current = clipboardScope; clipboard.current = null; history.current.clear(); gesture.current = null; setCropDraft(null); setMenu(null); choose([]); setHistoryVersion(v => v + 1); } }, [clipboardScope, choose]);
   useEffect(() => {
     if (!locked) return;

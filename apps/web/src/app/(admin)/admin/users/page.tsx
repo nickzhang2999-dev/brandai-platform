@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import Link from "next/link";
 import { auth } from "@/auth";
 import { isAdminUser } from "@/lib/admin";
 import { listAdminUsers } from "@/lib/admin-users";
@@ -37,12 +38,12 @@ export default async function AdminUsersPage() {
       <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
         「订阅额度」列显示的是该账号所在订阅档的额度。要改额度(如把默认档从 5/日 提到
         30/日),去{" "}
-        <a
+        <Link
           className="font-medium text-primary underline underline-offset-2 hover:text-primary/80"
           href="/admin/plans"
         >
           订阅额度设置
-        </a>
+        </Link>
         。
       </p>
       <div className="mt-8">

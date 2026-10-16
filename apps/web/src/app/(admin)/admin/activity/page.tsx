@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import Link from "next/link";
 import { auth } from "@/auth";
 import { isAdminUser } from "@/lib/admin";
 import { ActivityTable } from "./activity-table";
@@ -30,9 +31,9 @@ export default async function AdminActivityPage() {
         每次 AI 调用一行(生成 / 识别 / 解析说明书 / 编辑 / 合规预检)。重点列是
         「耗时」和「出图」—— 用来看请求是不是慢、有没有回内容。
         想看按天聚合的成本/失败率,看{" "}
-        <a className="underline hover:text-foreground" href="/admin/usage">
+        <Link className="underline hover:text-foreground" href="/admin/usage">
           用量看板
-        </a>
+        </Link>
         。
       </p>
       <ActivityTable />
