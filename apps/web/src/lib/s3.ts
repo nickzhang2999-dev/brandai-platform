@@ -50,14 +50,21 @@ export async function uploadDataUrlImage(
     // Not a base64 data: URL — already a hosted URL (or non-data scheme).
     return dataUrl;
   }
+  const isSvgPlaceholder = (match[1] || "").toLowerCase().includes("svg");
+  if (isSvgPlaceholder && process.env.NODE_ENV !== "production") return dataUrl;
+  // Production may never silently fall back to inline images when storage is
+  // missing (including the SVG mock-provider path). Development keeps demos usable.
+  const cfg = await getEffectiveStorage();
+  if (!cfg.configured && process.env.NODE_ENV === "production") {
+    throw new Error("未配置对象存储，请在 /admin/settings 配置");
+  }
   // Keep self-contained SVG placeholders (mock provider) inline: they're tiny
   // and render anywhere, so uploading them to object storage just adds a
   // fragile network hop that breaks the demo when storage isn't browser-
   // reachable. Real raster output (png/jpeg from a live provider) still uploads.
-  if ((match[1] || "").toLowerCase().includes("svg")) {
+  if (isSvgPlaceholder) {
     return dataUrl;
   }
-  const cfg = await getEffectiveStorage();
   if (!cfg.configured) {
     // No admin-configured storage. The S3_* env points at the internal MinIO
     // (host "minio" — not browser-reachable, nor resolvable from this app
