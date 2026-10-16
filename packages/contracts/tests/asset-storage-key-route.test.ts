@@ -99,4 +99,3 @@ describe("client asset storage key boundary", () => {
     expect(f.create).not.toHaveBeenCalled();
   });
 });
-

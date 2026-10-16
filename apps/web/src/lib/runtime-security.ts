@@ -1,6 +1,6 @@
 /** Runtime-only validation. Importing this module is safe during next build. */
 export function assertProductionAuthSecret(
-  env: Pick<NodeJS.ProcessEnv, "NODE_ENV" | "AUTH_SECRET"> = process.env,
+  env: { NODE_ENV?: string; AUTH_SECRET?: string } = process.env,
 ): void {
   if (env.NODE_ENV !== "production") return;
 
