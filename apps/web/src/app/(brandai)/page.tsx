@@ -7,6 +7,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Project, TaskState } from "@brandai/contracts";
 import { startNavigationProgress } from "@/app/navigation-progress";
 import { apiFetch } from "@/lib/client";
+import { useBoundedTaskQuery, TASK_POLL_PAUSED_MESSAGE } from "@/lib/use-bounded-task-poll";
 import { quickActions } from "@/lib/brandai-mock";
 import { useBrand } from "./brand-context";
 import { AIInput } from "./ai-input";
@@ -24,7 +25,6 @@ const STATUS_META: Record<Status, { label: string; tone: string }> = {
 };
 
 const POLL_INTERVAL_MS = 2500;
-const POLL_CAP_MS = 6 * 60 * 1000; // §2.2 有界中间态
 
 type StartResponse = { jobId: string; taskId: string; status: string };
 type DecomposeResult = {
@@ -61,7 +61,6 @@ export default function HomePage() {
   const [brief, setBrief] = useState("");
   const [taskId, setTaskId] = useState<string | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
-  const [timedOut, setTimedOut] = useState(false);
   const startedAt = useRef(0);
   const navigatedRef = useRef(false);
 
@@ -81,30 +80,21 @@ export default function HomePage() {
     },
   });
 
-  const { data: task } = useQuery<TaskState>({
+  const { data: task, timedOut, setTimedOut, resume: resumePoll } = useBoundedTaskQuery<TaskState>({
     queryKey: ["brandai-task", wsId, taskId],
-    queryFn: () => apiFetch<TaskState>(`/api/workspaces/${wsId}/tasks/${taskId}`),
+    queryFn: (signal) => apiFetch<TaskState>(`/api/workspaces/${wsId}/tasks/${taskId}`, { signal }),
     enabled: !!taskId,
-    refetchInterval: (q) => {
-      const s = q.state.data?.status;
-      if (s === "SUCCEEDED" || s === "FAILED") return false;
-      if (Date.now() - startedAt.current > POLL_CAP_MS) return false;
-      return POLL_INTERVAL_MS;
-    },
+    taskKey: taskId ? JSON.stringify([wsId, taskId]) : null,
+    startedAt,
+    getStatus: task => task?.status,
   });
 
   const status = task?.status ?? (taskId ? "PENDING" : null);
-  const running =
-    !!taskId && status !== "SUCCEEDED" && status !== "FAILED" && !timedOut;
+  const pending = !!taskId && status !== "SUCCEEDED" && status !== "FAILED";
+  const running = pending && !timedOut;
 
   // §2.4 bounded-state guard — flip to timed-out so the spinner can't run forever.
-  useEffect(() => {
-    if (!taskId) return;
-    const t = setInterval(() => {
-      if (Date.now() - startedAt.current > POLL_CAP_MS) setTimedOut(true);
-    }, 3000);
-    return () => clearInterval(t);
-  }, [taskId]);
+
 
   // On success, read the decomposed seeds from the job return value, then
   // navigate to the workspace prefilled. Fire exactly once.
@@ -150,7 +140,7 @@ export default function HomePage() {
   }, [status, jobId, wsId, brief, qc, router]);
 
   function handleStart() {
-    if (running || start.isPending) return;
+    if (pending || start.isPending) return;
     const text = brief.trim();
     if (!text) {
       startNavigationProgress();
@@ -160,8 +150,8 @@ export default function HomePage() {
     start.mutate(text);
   }
 
-  const busy = start.isPending || running;
-  const failed = status === "FAILED" || timedOut;
+  const busy = start.isPending || pending;
+  const failed = status === "FAILED";
 
   return (
     <div className="mx-auto max-w-[1180px] px-10 py-10">
@@ -188,7 +178,8 @@ export default function HomePage() {
               disabled={busy}
               className="h-11 shrink-0 rounded-[18px] bg-gradient-to-br from-primary to-accent px-6 text-sm font-medium text-primary-foreground shadow-[0_12px_28px_rgba(124,92,255,0.26)] transition-opacity disabled:opacity-70"
             >
-              {busy
+              {timedOut ? "查询已暂停"
+                : busy
                 ? status === "RUNNING"
                   ? "AI 拆解中…"
                   : "正在受理…"
@@ -202,7 +193,7 @@ export default function HomePage() {
           提交后 DeepFlare 会用 AI 拆解出核心卖点、画面场景与风格关键词，立项为草稿
           项目，并把拆解结果预填进工作台（服务端异步处理，可离开稍后查看）。
         </p>
-        {busy ? (
+        {start.isPending || running ? (
           <p className="mt-2 pl-6 text-xs text-primary">
             {status === "RUNNING"
               ? "AI 正在拆解你的需求，完成后将自动进入工作台…"
@@ -215,9 +206,10 @@ export default function HomePage() {
             {start.error instanceof Error ? start.error.message : "请重试"}
           </p>
         ) : null}
+      {timedOut ? <p role="status" className="text-sm text-muted-foreground">{TASK_POLL_PAUSED_MESSAGE} <button type="button" className="underline" onClick={resumePoll}>继续查询原任务</button></p> : null}
         {failed && !start.isError ? (
           <p className="mt-2 pl-6 text-xs text-destructive">
-            AI 拆解未完成（可能超时或失败）。
+            AI 拆解失败。
             <button
               type="button"
               onClick={() => {

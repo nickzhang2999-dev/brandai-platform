@@ -22,6 +22,7 @@ import {
   type WatermarkOverlayInput,
 } from "@brandai/contracts";
 import { apiFetch } from "@/lib/client";
+import { useBoundedTaskQuery, TASK_POLL_PAUSED_MESSAGE } from "@/lib/use-bounded-task-poll";
 import {
   buildModelBrief,
   chipToken,
@@ -330,27 +331,29 @@ export function ChatPanel({
     sizeSelectionState.selection,
   ]);
 
-  const { data: history = [] } = useQuery<Generation[]>({
+  const { data: history = [], timedOut: historyPaused, resume: resumeHistory, setTimedOut: setHistoryPaused } = useBoundedTaskQuery<Generation[]>({
     queryKey: ["brandai-project-gens", wsId, projectId],
-    queryFn: () =>
-      apiFetch(`/api/workspaces/${wsId}/generations?projectId=${projectId}`),
+    queryFn: signal =>
+      apiFetch(`/api/workspaces/${wsId}/generations?projectId=${projectId}`, { signal }),
     enabled: !!projectId,
-    refetchInterval: (q) =>
-      (q.state.data ?? []).some(
+    taskKey: projectId ? JSON.stringify([wsId, projectId]) : null,
+    intervalMs: 3000,
+    getStatus: (data) =>
+      (data ?? []).some(
         (g) => g.status === "PENDING" || g.status === "RUNNING",
       )
-        ? 3000
-        : false,
+        ? "RUNNING"
+        : "SUCCEEDED",
   });
 
   const anyActive = history.some(
     (g) => g.status === "PENDING" || g.status === "RUNNING",
   );
   useEffect(() => {
-    if (!anyActive) return;
+    if (!anyActive || historyPaused) return;
     const t = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(t);
-  }, [anyActive]);
+  }, [anyActive, historyPaused]);
 
   // 会话流 = **对话来源**的出图（chatContext 存在），旧→新。表单（生成面板）
   // 的历史 brief 不属于对话，不再混入（2026-07-18 用户验收「莫名其妙出现
@@ -625,6 +628,10 @@ export function ChatPanel({
       // 新出图立即成为当前选中——画布直接开始轮询渲染，不必等用户点「查看」
       // （父级只在 genId 为空时才从 history 播种，Codex P2）。
       if (res?.generation?.id) {
+        // A newly accepted task starts a fresh observation window even when
+        // the prior history contains only terminal tasks. The invalidation
+        // below then reads that accepted task; this never repeats its POST.
+        setHistoryPaused(false);
         onSubmitted?.(res.generation.id, res.jobId ?? null);
       }
       await qc.invalidateQueries({
@@ -688,6 +695,7 @@ export function ChatPanel({
       </div>
 
       {/* 会话流（仅对话来源） */}
+      {historyPaused && anyActive ? <p role="status" className="mb-2 text-xs text-muted-foreground">{TASK_POLL_PAUSED_MESSAGE} <button type="button" className="underline" onClick={resumeHistory}>继续查询</button></p> : null}
       <div
         ref={scrollRef}
         className="min-h-0 flex-1 overflow-y-auto pr-1"

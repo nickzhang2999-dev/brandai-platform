@@ -1,5 +1,5 @@
 import { prisma } from "@brandai/db";
-import type { AsyncTaskKind, TaskState } from "@brandai/contracts";
+import { parseAsyncTaskResult, type AsyncTaskKind, type TaskState } from "@brandai/contracts";
 
 /**
  * H-async — create / update / read server-authoritative async task rows. The
@@ -36,8 +36,15 @@ async function safeUpdate(taskId: string | undefined, data: Record<string, unkno
 
 export const markRunning = (taskId?: string, progress = 5) =>
   safeUpdate(taskId, { status: "RUNNING", progress });
-export const setProgress = (taskId: string | undefined, progress: number) =>
-  safeUpdate(taskId, { progress });
+export async function setProgress(taskId: string | undefined, progress: number): Promise<void> {
+  if (!taskId) return;
+  try {
+    await prisma.asyncTask.updateMany({ where: {
+      id: taskId, status: { in: ["PENDING", "RUNNING"] },
+      OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+    }, data: { progress } });
+  } catch (err) { console.error("[async-task] progress update failed:", err); }
+}
 export const markSucceeded = (
   taskId: string | undefined,
   ref?: { refId?: string; refCount?: number },
@@ -86,6 +93,7 @@ export async function getTask(
 ): Promise<TaskState | null> {
   const t = await prisma.asyncTask.findUnique({ where: { id: taskId } });
   if (!t || t.workspaceId !== workspaceId) return null;
+  const result = t.status === "SUCCEEDED" ? parseAsyncTaskResult(t.kind, t.resultJson) : undefined;
   return {
     id: t.id,
     workspaceId: t.workspaceId,
@@ -96,6 +104,7 @@ export async function getTask(
     ...(t.refId ? { refId: t.refId } : {}),
     refCount: t.refCount,
     ...(t.error ? { error: t.error } : {}),
+    ...(result ? { result } : {}),
     createdAt: t.createdAt.toISOString(),
     updatedAt: t.updatedAt.toISOString(),
   };

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { prisma } from "@brandai/db";
 import {
   ApiException,
@@ -89,6 +90,7 @@ export async function POST(
     const project = await getOrCreatePreviewProject(wsId);
 
     // K1 — same atomic quota reservation as /generations. Owner/admin是无限额度。
+    const generationAttemptToken = randomUUID();
     const reserved = await reserveGenerationQuota({
       workspaceId: wsId,
       count: 1,
@@ -99,6 +101,7 @@ export async function POST(
         sellingPoint: brief,
         scene: "品牌形象展示",
         status: "PENDING",
+        attemptToken: generationAttemptToken,
       }),
     });
     const generationId = reserved[0]!.id;
@@ -106,6 +109,7 @@ export async function POST(
     const jobData: GenerateJobData = {
       workspaceId: wsId,
       generationId,
+      generationAttemptToken,
       versionCount: 1,
       textMode: "layered",
     };

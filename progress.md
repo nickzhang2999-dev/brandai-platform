@@ -396,3 +396,12 @@ Conversation intent targeted tests82 and actual Chromium interactions34 passed. 
 
 2026-10-16 P1 local verification complete: old tracked preview package176 files removed in separate d52b8a2 after first full gates. Repeated full gates after deletion all green: contracts1612/UI34/AI500; types/build exit0. Core52/engine9 actual Chromium and49 light checks pass; previously this stage6 shell browser groups66 passed. No source edits after these gates except documentation. Pycache cleanup was policy-blocked; no alternate deletion attempted, ignored files retained. Initial pnpm argument and absent default browser errors were corrected and tests rerun. Git tracked previews=0; compiled SDK search=0. No Docker/model calls.
 CDS read-only preflight: CLI0.16.6/latest; project push automatic deploy true, default DBbrandai and default modesdev/release/release. No new branch override exists. No push or cloud mutation performed; existingdev83a5dca/main2d29125 unchanged. New isolated P1 DB/schema proposal needs plan0.8 approval. Logs/SSOT updated; docs-only receipt follows.
+
+
+## 2026-10-16 · P3 本地进展
+
+- 当前分支 fix/p3-ai-reliability，基线2cf3932。复用此前获授权的三位协作者分工：任务worker、异步预检后端、前端有界轮询；根任务完成AI传输/Python适配、存储和总体验证。
+- AI全量518项通过；初轮前端契约回归发现旧fixture缺少新增deadline模块映射，已由worker协作者修复。全量最终结果以P3开发日志为准。
+- 未推送/部署/调用收费模型/启动Docker/执行数据库迁移。
+
+- [complete locally] P3最终源码8bc050a：1718契约+34UI+518AI，类型/生产构建全绿，loopback浏览器72项通过。最终UI收尾晚于第一次构建，已重跑最新typecheck、构建及共享轮询8项；最终统一L1在冻结代码后重新完成。按任务提交并记录README/SSOT/归因，仍未推送或迁移。

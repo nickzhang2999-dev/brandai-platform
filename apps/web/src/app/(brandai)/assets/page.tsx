@@ -7,6 +7,7 @@ import type { Asset, AssetFolder, Project, TaskState } from "@brandai/contracts"
 import { Button } from "@brandai/ui";
 import { startNavigationProgress } from "@/app/navigation-progress";
 import { apiFetch, assetThumbUrl } from "@/lib/client";
+import { useBoundedTaskQuery, TASK_POLL_PAUSED_MESSAGE } from "@/lib/use-bounded-task-poll";
 import {
   MAX_BATCH_IMAGE_UPLOAD_FILES,
   imageUploadLimitError,
@@ -412,7 +413,6 @@ export default function AssetsPage() {
   // E9/E10 · AI 智能标注/生成描述 — POST 起异步任务（worker 调 /v1/describe →
   // 真 VLM → 回写 Asset.aiTags/aiDescription），客户端轮询任务，成功后刷新素材。
   const [describeTaskId, setDescribeTaskId] = useState<string | null>(null);
-  const [describeTimedOut, setDescribeTimedOut] = useState(false);
   // Which asset the in-flight describe belongs to — so the progress/disabled UI
   // only shows on that asset's detail pane, not whichever asset is selected.
   const [describeAssetId, setDescribeAssetId] = useState<string | null>(null);
@@ -427,18 +427,14 @@ export default function AssetsPage() {
     },
     onSuccess: (res) => setDescribeTaskId(res.taskId),
   });
-  const { data: describeTask } = useQuery<TaskState>({
+  const { data: describeTask, timedOut: describeTimedOut, setTimedOut: setDescribeTimedOut, resume: resumeDescribe } = useBoundedTaskQuery<TaskState>({
     queryKey: ["brandai-describe-task", wsId, describeTaskId],
-    queryFn: () =>
-      apiFetch<TaskState>(`/api/workspaces/${wsId}/tasks/${describeTaskId}`),
-    enabled: !!describeTaskId,
-    refetchInterval: (query) => {
-      const s = query.state.data?.status;
-      if (s === "SUCCEEDED" || s === "FAILED") return false;
-      // bounded intermediate (§2.2) — stop polling after 6 min.
-      if (Date.now() - describeStartedAt.current > 6 * 60_000) return false;
-      return 2000;
-    },
+    taskKey: describeTaskId ? JSON.stringify([wsId, describeTaskId]) : null,
+    startedAt: describeStartedAt,
+    intervalMs: 2000,
+    getStatus: task => task?.status,
+    queryFn: signal =>
+      apiFetch<TaskState>(`/api/workspaces/${wsId}/tasks/${describeTaskId}`, { signal }),
   });
   const describeStatus =
     describeTask?.status ?? (describeTaskId ? "PENDING" : null);
@@ -447,23 +443,10 @@ export default function AssetsPage() {
     describeStatus !== "SUCCEEDED" &&
     describeStatus !== "FAILED" &&
     !describeTimedOut;
-  // §2.4 bounded-state guard — after the 6-min poll cap the query stops
-  // refetching; flip a timed-out flag so the button re-enables (retry) instead
-  // of being stuck on "AI 标注中…" forever (mirrors home/campaigns timedOut).
-  useEffect(() => {
-    if (!describeTaskId) return;
-    if (describeStatus === "SUCCEEDED" || describeStatus === "FAILED") return;
-    const t = setInterval(() => {
-      if (Date.now() - describeStartedAt.current > 6 * 60_000) {
-        setDescribeTimedOut(true);
-      }
-    }, 3000);
-    return () => clearInterval(t);
-  }, [describeTaskId, describeStatus]);
   // Busy state scoped to the asset that started the describe — switching to
   // another asset must not show "AI 标注中…"/disable its button.
   const describeBusyHere =
-    (describe.isPending || describeRunning) && describeAssetId === active?.id;
+    (describe.isPending || !!describeTaskId && describeStatus !== "SUCCEEDED" && describeStatus !== "FAILED") && describeAssetId === active?.id;
   // On success, refresh assets (so the new tags/description surface) once.
   const describeFiredFor = useRef<string | null>(null);
   useEffect(() => {
@@ -1002,7 +985,7 @@ export default function AssetsPage() {
                         describe.mutate(active.id);
                       }}
                     >
-                      {describeBusyHere
+                      {describeTimedOut && describeAssetId === active.id ? "查询已暂停" : describeBusyHere
                         ? "AI 标注中…"
                         : active.aiTags && active.aiTags.length > 0
                           ? "✦ 重新 AI 标注"
@@ -1014,7 +997,7 @@ export default function AssetsPage() {
                       </p>
                     ) : describeTimedOut && describeStatus !== "SUCCEEDED" ? (
                       <p className="mt-2 text-center text-xs text-destructive">
-                        分析超时，可能已失败，请重试。
+                        {TASK_POLL_PAUSED_MESSAGE} <button type="button" className="underline" onClick={resumeDescribe}>继续查询原任务</button>
                       </p>
                     ) : describeStatus === "FAILED" ? (
                       <p className="mt-2 text-center text-xs text-destructive">

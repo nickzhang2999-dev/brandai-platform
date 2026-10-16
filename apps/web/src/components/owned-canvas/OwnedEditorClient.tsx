@@ -1,5 +1,7 @@
 "use client";
 
+import { useBoundedTaskPoll, TASK_POLL_PAUSED_MESSAGE } from "../../lib/use-bounded-task-poll";
+
 import { useCallback, useEffect, useRef, useState } from "react";
 import { StudioMaterial, GenerationAspectRatioKey, resolveGenerationSize, type EditorDocumentView } from "@brandai/contracts";
 import { NovartApiError } from "../../lib/novart-api-client";
@@ -72,12 +74,13 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
   const [generationRecoveryBlocked, setGenerationRecoveryBlocked] = useState(false);
   const [pendingUpload, setPendingUpload] = useState(false);
   const [pollPaused, setPollPaused] = useState(false);
+  const generationPoll = useBoundedTaskPoll({ taskKey: JSON.stringify([workspaceId, userId, projectId]), active: generations.some(activeGeneration) });
   const apiRef = useRef<ProductApi | null>(null), alive = useRef(false), docRef = useRef<OwnedCanvasDocument | null>(null);
   const viewRef = useRef<EditorDocumentView | null>(null), writableRef = useRef(false), savedSequence = useRef(0), sequence = useRef(0);
   const saveBusy = useRef(false), saveBlocked = useRef(false), pendingSave = useRef<{ canvas: string; sequence: number } | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null), uploadInput = useRef<HTMLInputElement>(null);
   const generationOperation = useRef<GenerationInput | null>(null), uploadOperation = useRef<{ file: File; mutationId: string; point?: { x: number; y: number }; sourceShapeId?: string } | null>(null);
-  const refreshBusy = useRef(false), generationBusy = useRef(false), uploadBusy = useRef(false), pollStarted = useRef(0);
+  const refreshBusy = useRef(false), generationBusy = useRef(false), uploadBusy = useRef(false);
   const handoffBusy = useRef(false);
   const replacementOperation = useRef<{ api: ProductApi; itemId: string; file: File; mutationId: string } | null>(null);
   const workflowRef = useRef<OwnedWorkflowSession | null>(null), generationMode = useRef<"generate" | "modify" | null>(null), taskFocusBusy = useRef(false);
@@ -143,7 +146,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
   const refresh = useCallback(async (quiet = false) => {
     const api = apiRef.current;
     if (!api || refreshBusy.current) return;
-    refreshBusy.current = true; if (!quiet) { setRefreshing(true); pollStarted.current = Date.now(); setPollPaused(false); }
+    refreshBusy.current = true; if (!quiet) { setRefreshing(true); generationPoll.resume(); setPollPaused(false); }
     try {
       const values = await Promise.allSettled([api.listMaterials(), api.listUploads(), api.listGenerations()]);
       if (!alive.current || apiRef.current !== api) return;
@@ -163,7 +166,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
       const failure = values.find(value => value.status === "rejected");
       if (failure?.status === "rejected") { setNotice(messageOf(failure.reason)); if (quiet) setPollPaused(true); }
     } finally { if (apiRef.current === api) { refreshBusy.current = false; if (alive.current) setRefreshing(false); } }
-  }, [clearGenerationIntent]);
+  }, [clearGenerationIntent, generationPoll.resume]);
 
   const openExistingTask = useCallback(async (kind: InitialTask["kind"], id: string) => {
     const api = apiRef.current;
@@ -213,7 +216,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
       if (!alive.current || apiRef.current !== api) return;
       docRef.current = loaded; viewRef.current = result; setView(result); setDocument(loaded);
       if (loaded !== decoded) { sequence.current++; setSaveState("dirty"); } else setSaveState("saved");
-      pollStarted.current = Date.now(); void refresh(); void workflowSession.load();
+      void refresh(); void workflowSession.load();
       if (initialTask) void openExistingTask(initialTask.kind, initialTask.id).catch(error => { if (alive.current && apiRef.current === api) setNotice(messageOf(error)); });
     }).catch(error => {
       if (!alive.current || apiRef.current !== api) return;
@@ -313,13 +316,13 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
   }, [workspaceId, userId, projectId, save, send, openExistingTask, draft.flush, draft.confirmed]);
 
   useEffect(() => {
-    if (!generations.some(activeGeneration) || pollPaused) return;
-    const timer = setTimeout(() => {
-      if (Date.now() - pollStarted.current >= 360000) { setPollPaused(true); setNotice("自动读取已暂停，已受理的任务仍由服务器处理，可刷新任务确认最终结果。"); }
-      else void refresh(true);
-    }, 3500);
+    if (!generations.some(activeGeneration) || pollPaused || generationPoll.timedOut) return;
+    const timer = setTimeout(() => { if (!generationPoll.expired()) void refresh(true); }, Math.min(3500, generationPoll.remaining()));
     return () => clearTimeout(timer);
-  }, [generations, pollPaused, refresh]);
+  }, [generations, pollPaused, refresh, generationPoll.timedOut, generationPoll.expired, generationPoll.remaining]);
+  useEffect(() => {
+    if (generationPoll.timedOut) setNotice(TASK_POLL_PAUSED_MESSAGE);
+  }, [generationPoll.timedOut]);
 
   async function insertImage(material: PersistentImage, point?: { x: number; y: number }, identity?: string, sourceShapeId?: string) {
     if (!writableRef.current || !docRef.current || !apiRef.current) throw new Error("当前画布只读，无法加入图片。");
@@ -389,7 +392,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
       const task = await api.submitImageTool(input);
       if (!alive.current || apiRef.current !== api) return;
       setGenerations(current => mergeTask(current, task, value => value.requestId)); localStorage.removeItem(imageToolJournal); imageToolOperation.current = null; setPendingImageTool(false);
-      pollStarted.current = Date.now(); setPollPaused(false); setPanel("tasks"); setNotice("图片工具已受理，原图保留。结果会在任务中显示，关闭页面后仍会继续处理。");
+      generationPoll.resume(); setPollPaused(false); setPanel("tasks"); setNotice("图片工具已受理，原图保留。结果会在任务中显示，关闭页面后仍会继续处理。");
     } catch (error) {
       if (error instanceof NovartApiError && !error.uncertain && error.status !== null && error.status >= 400 && error.status < 500) { localStorage.removeItem(imageToolJournal); imageToolOperation.current = null; setPendingImageTool(false); }
       if (alive.current && apiRef.current === api) setNotice(messageOf(error)); throw error;
@@ -542,7 +545,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
       clearGenerationIntent();
       if (!alive.current) return;
       setGenerations(current => mergeTask(current, result, value => value.requestId));
-      pollStarted.current = Date.now(); setPollPaused(false); setPanel("tasks");
+      generationPoll.resume(); setPollPaused(false); setPanel("tasks");
       setNotice(result.mode === "modify" ? "整图修改已受理，原图保留。新结果存入素材库后，可手动加入画布。" : "任务已受理，完成并存入素材库后，可手动加入画布。");
     } catch (error) {
       if (apiRef.current !== api) return;
@@ -627,7 +630,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
         <div className="flex items-center gap-2 border-b border-border px-4 py-3"><button className="mr-auto text-sm font-semibold" onClick={() => setPanel("generate")} aria-label="返回设计对话">{panel === "materials" ? "品牌素材" : panel === "tasks" ? "任务记录" : panel === "layers" ? "图片分层" : "设计助手"}</button><details className="relative"><summary aria-label="工作台更多面板" className={button + " cursor-pointer list-none"}>···</summary><div className="absolute right-0 top-full z-30 mt-2 w-36 space-y-1 rounded-2xl border border-border bg-card p-2 shadow-lg">{([['generate', '设计对话'], ['materials', '品牌素材'], ['tasks', '任务记录'], ['layers', 'AI 分层']] as const).map(([id, label]) => <button key={id} className={button + " w-full"} onClick={event => { setPanel(id); event.currentTarget.closest("details")?.removeAttribute("open"); }}>{label}</button>)}</div></details><button className="px-2 text-muted-fg" aria-label="收起面板" onClick={() => setPanel(null)}>×</button></div>
         <div className={panel === "generate" ? "flex min-h-0 flex-1 flex-col gap-3 overflow-hidden p-4" : "min-h-0 flex-1 space-y-4 overflow-y-auto p-4"}>
           {!!notice && <p role="status" className="rounded-xl bg-accent-soft p-3 text-xs leading-6" data-testid="owned-notice">{notice}</p>}
-          <div hidden={panel !== "generate"} className={panel === "generate" ? "min-h-0 flex-1" : undefined}><OwnedConversationPanel ref={conversationRef} workspaceId={workspaceId} projectId={projectId} userId={userId} readOnly={!canEdit} api={apiRef.current} prepare={prepareConversation} onAddReference={() => setPanel("materials")} onNotice={setNotice} onGeneration={task => { setGenerations(current => mergeTask(current, task, value => value.requestId)); pollStarted.current = Date.now(); setPollPaused(false); }} onInsert={(image, sourceShapeId) => insertImage(image, undefined, undefined, sourceShapeId)} onInsertLayers={insertLayers} /></div>
+          <div hidden={panel !== "generate"} className={panel === "generate" ? "min-h-0 flex-1" : undefined}><OwnedConversationPanel ref={conversationRef} workspaceId={workspaceId} projectId={projectId} userId={userId} readOnly={!canEdit} api={apiRef.current} prepare={prepareConversation} onAddReference={() => setPanel("materials")} onNotice={setNotice} onGeneration={task => { setGenerations(current => mergeTask(current, task, value => value.requestId)); generationPoll.resume(); setPollPaused(false); }} onInsert={(image, sourceShapeId) => insertImage(image, undefined, undefined, sourceShapeId)} onInsertLayers={insertLayers} /></div>
           {panel === "layers" && <OwnedLayerPanel key={projectId} api={apiRef.current} workspaceId={workspaceId} projectId={projectId} userId={userId} document={document} selectedIds={selectedIds} readOnly={!canEdit} onPrepare={prepareLayers} onPlace={insertLayers} />}
           {panel === "generate" && <details className="max-h-[40%] shrink-0 overflow-y-auto" data-testid="owned-advanced-generation"><summary className="cursor-pointer text-xs text-muted-fg">高级创作与素材设置</summary><div className="mt-4 space-y-4">
             <div><h2 className="text-sm font-semibold">{workflow?.mode === "modify" ? "修改整张图片" : "生成新图片"}</h2><p className="mt-1 text-xs leading-5 text-muted-fg">描述想法，结果单独保留，由你决定是否加入画布。</p></div>
@@ -652,7 +655,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
             {!uploads.length && !generations.length && <p className="py-8 text-center text-xs text-muted-fg">上传和生成进度会显示在这里。</p>}
             {uploads.map(task => <section className="space-y-2 rounded-2xl border border-border p-3" key={task.taskId} data-task-id={task.taskId}><h3 className="truncate text-xs font-semibold">{task.material?.fileName || "图片上传"}</h3><p className="text-xs text-muted-fg">{task.status === "SUCCEEDED" ? "已存入素材库" : task.status === "FAILED" ? task.error : Date.now() > Date.parse(task.expiresAt) ? "处理时间较长，请刷新确认结果" : `保存中 · ${task.progress}%`}</p>{task.material && <button className={button} disabled={!canEdit} onClick={() => void insertImage(task.material!).catch(error => setNotice(messageOf(error)))}>加入画布</button>}</section>)}
             {generations.map(task => <OwnedGenerationCard key={projectId + ":" + task.requestId} task={task} api={apiRef.current} canEdit={canEdit} onNotice={setNotice}
-              onTask={updated => { setGenerations(current => mergeTask(current, updated, value => value.requestId)); pollStarted.current = Date.now(); setPollPaused(false); }}
+              onTask={updated => { setGenerations(current => mergeTask(current, updated, value => value.requestId)); generationPoll.resume(); setPollPaused(false); }}
               onInsert={image => insertImage(image, undefined, undefined, task.sourceShapeId)} onInsertLayers={insertLayers} />)}
           </>}
         </div>

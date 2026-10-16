@@ -59,11 +59,11 @@ it("never posts decomposition when service capability cannot be confirmed", asyn
   await expect(ai.decompose({} as never, { requireRealLayerProvider: true })).rejects.toThrow("Unsupported real-layer decomposition revision");
   expect(f.fetch).not.toHaveBeenCalled();
 });
-it("does not require product layer capabilities or alter legacy decomposition payloads", async () => {
+it("requires single-attempt capability for legacy decomposition without requiring real layer setup", async () => {
   const request = { imageUrl: "data:image/png;base64,YQ==", layerCount: 2 } as Parameters<typeof ai.decompose>[0];
   await ai.decompose(request);
-  expect(f.service).toHaveBeenCalledWith(undefined);
-  expect(JSON.parse(f.fetch.mock.calls[0][1].body)).toEqual(request);
+  expect(f.service).toHaveBeenCalledWith({ requireSingleAttempt: true });
+  expect(JSON.parse(f.fetch.mock.calls[0][1].body)).toEqual({ ...request, providerRetryPolicy: "never" });
 });
 
 it("requires real image configuration and edit capability without inserting a forbidden top-level retry field", async () => {
@@ -112,10 +112,10 @@ describe("product AI transport opt-in", () => {
     const error = await ai.generate(body, {}).catch(value => value);
     expect(error.message).toContain("HTTP 503"); expect(error.message).not.toContain("fixture-private-value");
   });
-  it("keeps legacy callers' behavior opt-out", async () => {
+  it("bounds legacy callers and disables automatic paid retries by default", async () => {
     expect(await ai.generate(body)).toEqual({ versions: [] });
-    expect(f.fetch.mock.calls[0]?.[1]).not.toHaveProperty("signal");
-    expect(JSON.parse(f.fetch.mock.calls[0]?.[1].body)).not.toHaveProperty("providerRetryPolicy");
+    expect(f.fetch.mock.calls[0]?.[1].signal).toBeInstanceOf(AbortSignal);
+    expect(JSON.parse(f.fetch.mock.calls[0]?.[1].body).providerRetryPolicy).toBe("never");
   });
   it.each([{ provider: "mock", apiKey: "fixture" }, { provider: " MOCK ", apiKey: "fixture" }, { provider: "", apiKey: "fixture" }, { provider: "openai", apiKey: "" }, { provider: "openai", apiKey: "  " }])(
     "refuses a product call when the actual outgoing settings snapshot is unavailable: %j", async image => {
@@ -153,4 +153,36 @@ describe("product AI transport opt-in", () => {
     expect(JSON.parse(f.fetch.mock.calls[0]?.[1].body)).toEqual({ text: "fixture text", providerRetryPolicy: "never" });
     expect(f.fetch).toHaveBeenCalledTimes(1);
   });
+});
+
+
+it.each(["ingestWebsite", "recognize", "describe", "parseManual", "summarize", "edit"] as const)(
+  "forwards worker cancellation and never-retry policy for %s", async method => {
+    const controller = new AbortController();
+    await ai[method]({} as never, { signal: controller.signal });
+    expect(f.fetch.mock.calls[0][1].signal).toBe(controller.signal);
+    expect(JSON.parse(f.fetch.mock.calls[0][1].body).providerRetryPolicy).toBe("never");
+    expect(f.service).toHaveBeenCalledWith({ requireSingleAttempt: true });
+  });
+
+it.each(["discovery", "fetch", "body"])("the default five-minute deadline bounds stalled %s without worker options", async stage => {
+  const controller = new AbortController();
+  const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(controller.signal);
+  if (stage === "discovery") f.service.mockImplementation(() => new Promise(() => {}));
+  if (stage === "fetch") f.fetch.mockImplementation(() => new Promise(() => {}));
+  if (stage === "body") f.fetch.mockResolvedValue(new Response(new ReadableStream({ start() {} })));
+  const pending = ai.generate(body);
+  const check = expect(pending).rejects.toThrow("default deadline elapsed");
+  await new Promise(resolve => setTimeout(resolve, 0));
+  controller.abort(new Error("default deadline elapsed"));
+  await check;
+  expect(timeout).toHaveBeenCalledWith(300000);
+  expect(f.fetch.mock.calls.length).toBe(stage === "discovery" ? 0 : 1);
+});
+
+it("legacy errors use the bounded redacted parser too", async () => {
+  f.fetch.mockResolvedValue(new Response("private-provider-secret", { status: 500 }));
+  const error = await ai.recognize({ assets: [] }).catch(error => error);
+  expect(error.message).not.toContain("private-provider-secret");
+  expect(f.fetch).toHaveBeenCalledOnce();
 });

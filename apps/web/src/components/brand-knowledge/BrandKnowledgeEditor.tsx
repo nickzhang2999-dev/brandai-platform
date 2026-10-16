@@ -21,6 +21,7 @@ import {
   ZoomIn,
 } from "lucide-react";
 import { apiFetch, assetThumbUrl } from "../../lib/client";
+import { useBoundedTaskQuery, TASK_POLL_PAUSED_MESSAGE } from "../../lib/use-bounded-task-poll";
 import { imageUploadLimitError } from "../../lib/upload-limits";
 import type { BrandWorkspace, WorkspaceRole } from "@brandai/contracts";
 import { KnowledgeManagementPanels, ManualRuleForm } from "./KnowledgeManagementPanels";
@@ -141,7 +142,6 @@ export function BrandKnowledgeEditor({ wsId, brandName: initialName, userId, rol
 }
 
 // §2.2 — bounded intermediate state; mirror the workspace page's POLL_CAP.
-const POLL_CAP_MS = 6 * 60 * 1000;
 const POLL_INTERVAL_MS = 2500;
 
 const BRAND_KIT_IMPORT_SLOTS: {
@@ -1136,7 +1136,7 @@ function TaskProgress({
   isManual: boolean;
 }) {
   let label = "处理中…";
-  if (timedOut) label = "处理超时";
+  if (timedOut) label = "自动查询已暂停";
   else if (status === "FAILED") label = "处理失败";
   else if (status === "PENDING") label = "文件已上传，等待开始解析…";
   else if (status === "RUNNING" && isManual && progress < 50)
@@ -1397,7 +1397,6 @@ function RecognizeModal({
   const multi = mode === "recognize";
   const [selected, setSelected] = useState<string[]>([]);
   const [taskId, setTaskId] = useState<string | null>(null);
-  const [timedOut, setTimedOut] = useState(false);
   const startedAt = useRef(0);
 
   const { data: assets = [], isLoading } = useQuery({
@@ -1433,27 +1432,18 @@ function RecognizeModal({
     onSuccess: (res) => setTaskId(res.taskId),
   });
 
-  const { data: task } = useQuery<TaskState>({
+  const { data: task, timedOut, setTimedOut, resume: resumePoll } = useBoundedTaskQuery<TaskState>({
     queryKey: ["brandai-task", wsId, taskId],
-    queryFn: () =>
-      apiFetch<TaskState>(`/api/workspaces/${wsId}/tasks/${taskId}`),
+    queryFn: (signal) =>
+      apiFetch<TaskState>(`/api/workspaces/${wsId}/tasks/${taskId}`, { signal }),
     enabled: !!taskId,
-    refetchInterval: (q) => {
-      const s = q.state.data?.status;
-      if (s === "SUCCEEDED" || s === "FAILED") return false;
-      if (Date.now() - startedAt.current > POLL_CAP_MS) return false;
-      return POLL_INTERVAL_MS;
-    },
+    taskKey: taskId ? JSON.stringify([wsId, taskId]) : null,
+    startedAt,
+    getStatus: task => task?.status,
   });
 
   // bounded-state guard — flip to timed-out so the spinner can't run forever.
-  useEffect(() => {
-    if (!taskId) return;
-    const t = setInterval(() => {
-      if (Date.now() - startedAt.current > POLL_CAP_MS) setTimedOut(true);
-    }, 3000);
-    return () => clearInterval(t);
-  }, [taskId]);
+
 
   const status = task?.status ?? (taskId ? "PENDING" : null);
   const running =
@@ -1490,7 +1480,7 @@ function RecognizeModal({
     start.reset();
   }
 
-  const failed = status === "FAILED" || timedOut;
+  const failed = status === "FAILED";
 
   return (
     <ModalShell
@@ -1517,19 +1507,17 @@ function RecognizeModal({
           </div>
         ) : taskId ? (
           <div className="flex flex-col gap-4">
-            <TaskProgress
+            <><p hidden={!timedOut} role="status" className="text-sm text-muted-foreground">{TASK_POLL_PAUSED_MESSAGE} <button type="button" className="underline" onClick={resumePoll}>继续查询原任务</button></p><TaskProgress
               status={status}
               progress={task?.progress ?? 0}
               timedOut={timedOut}
               isManual={mode === "parse-manual"}
               error={
                 failed
-                  ? timedOut
-                    ? "处理超时，可能仍在后台运行，请稍后刷新页面或重试。"
-                    : (task?.error ?? "AI 处理失败，请重试。")
+                  ? (task?.error ?? "AI 处理失败，请重试。")
                   : null
               }
-            />
+            /></>
             {failed ? (
               <Button variant="outline" onClick={reset} className="self-start">
                 重试
@@ -1667,7 +1655,6 @@ function AICoCreate({
   const [uploadType, setUploadType] = useState<string | null>(null);
   // parse-manual async task (from an attached PDF)
   const [taskId, setTaskId] = useState<string | null>(null);
-  const [timedOut, setTimedOut] = useState(false);
   const [attachErr, setAttachErr] = useState<string | null>(null);
   const [lastUpload, setLastUpload] = useState<{
     name: string;
@@ -1744,26 +1731,17 @@ function AICoCreate({
     onError: (e) => setAttachErr(e instanceof Error ? e.message : "解析失败"),
   });
 
-  const { data: task, error: taskError, refetch: readTask } = useQuery<TaskState>({
+  const { data: task, error: taskError, refetch: readTask, timedOut, setTimedOut, resume: resumePoll } = useBoundedTaskQuery<TaskState>({
     queryKey: ["brandai-task", wsId, taskId],
-    queryFn: () =>
-      apiFetch<TaskState>(`/api/workspaces/${wsId}/tasks/${taskId}`),
+    queryFn: (signal) =>
+      apiFetch<TaskState>(`/api/workspaces/${wsId}/tasks/${taskId}`, { signal }),
     enabled: !!taskId,
-    refetchInterval: (q) => {
-      const s = q.state.data?.status;
-      if (s === "SUCCEEDED" || s === "FAILED") return false;
-      if (Date.now() - startedAt.current > POLL_CAP_MS) return false;
-      return POLL_INTERVAL_MS;
-    },
+    taskKey: taskId ? JSON.stringify([wsId, taskId]) : null,
+    startedAt,
+    getStatus: task => task?.status,
   });
 
-  useEffect(() => {
-    if (!taskId) return;
-    const t = setInterval(() => {
-      if (Date.now() - startedAt.current > POLL_CAP_MS) setTimedOut(true);
-    }, 3000);
-    return () => clearInterval(t);
-  }, [taskId]);
+
 
   useEffect(() => {
     const url = new URL(window.location.href);
@@ -1790,7 +1768,7 @@ function AICoCreate({
     }
   }, [status, taskId, qc, wsId]);
 
-  const parsing = analyzeAttachment.isPending || running;
+  const parsing = analyzeAttachment.isPending || (!!taskId && status !== "SUCCEEDED" && status !== "FAILED");
   const activeSlot = BRAND_KIT_IMPORT_SLOTS.find(
     (slot) => slot.type === uploadType,
   );
@@ -1847,19 +1825,17 @@ function AICoCreate({
                 : `“${lastUpload?.name ?? "上传内容"}”已解析完成，但没有识别到可用的品牌规则。请检查 PDF 是否清晰、是否包含品牌规范页后重试。`}
             </div>
           ) : (
-            <TaskProgress
+            <><p hidden={!timedOut} role="status" className="text-sm text-muted-foreground">{TASK_POLL_PAUSED_MESSAGE} <button type="button" className="underline" onClick={resumePoll}>继续查询原任务</button></p><TaskProgress
               status={analyzeAttachment.isPending ? "PENDING" : status}
               progress={task?.progress ?? (analyzeAttachment.isPending ? 5 : 0)}
               timedOut={timedOut}
               isManual={lastUpload?.isPdf ?? false}
               error={
-                timedOut
-                  ? "解析超时，可能仍在后台运行，请稍后刷新页面。"
-                  : status === "FAILED"
+                status === "FAILED"
                     ? (task?.error ?? "AI 解析失败，请重试。")
                     : null
               }
-            />
+            /></>
           )}
         </div>
       ) : null}

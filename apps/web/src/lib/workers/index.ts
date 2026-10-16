@@ -31,6 +31,8 @@ import { createStudioGenerationArtifactWorker } from "./studio-generation-artifa
 import { createStudioGenerationComplianceWorker } from "./studio-generation-compliance.worker";
 import { createStudioDecompositionWorker } from "./studio-decomposition.worker";
 import { createStudioConversationWorker, dispatchStudioConversations } from "./studio-conversation.worker";
+import { createComplianceTaskWorker } from "./compliance-task.worker";
+import { sweepStaleLegacyTasks } from "@/lib/legacy-task-runtime";
 import { sweepStaleGenerations } from "@/lib/generations";
 import { dispatchStudioGenerations } from "@/lib/studio-generation";
 import { dispatchStudioGeneratedPsds } from "@/lib/studio-generated-psd";
@@ -97,6 +99,7 @@ try {
     createStudioGenerationComplianceWorker(),
     createStudioDecompositionWorker(),
     createStudioConversationWorker(),
+    createComplianceTaskWorker(),
   );
   workersReady = true;
   console.log(`[workers] started: ${workers.length} worker(s)`);
@@ -117,12 +120,17 @@ try {
   // BullMQ job died with a previous worker/Redis. Run once on boot, then on
   // an interval, so the queue widget never shows a row that nobody will
   // finish. Best-effort: a sweep failure must not crash the worker.
-  const sweep = () =>
-    sweepStaleGenerations()
-      .then((n) => {
-        if (n > 0) console.log(`[sweep] failed ${n} stale generation(s)`);
-      })
-      .catch((e) => console.error("[sweep] failed:", e));
+  let sweeping = false;
+  const sweep = async () => {
+    if (sweeping) return;
+    sweeping = true;
+    try {
+      const generations = await sweepStaleGenerations();
+      const tasks = await sweepStaleLegacyTasks();
+      if (generations + tasks > 0) console.log(`[sweep] failed ${generations} stale generation(s), ${tasks} stale task(s)`);
+    } catch (error) { console.error("[sweep] failed:", error); }
+    finally { sweeping = false; }
+  };
   void sweep();
   setInterval(sweep, 5 * 60_000).unref();
 

@@ -320,3 +320,11 @@ User requests continuation and batch reporting, with prior local-only boundary r
 User approved D:/coding/公司/brandai-优化执行计划-2026-10-16.md. Original seven documentation files committed byte-unchanged as2cf3932 ondevUpdate1012. Current branchfix/p1-remove-captured-bundle. P1 owned shell/export, test/CI and read-only dependency audit run in parallel. P2–P5 pending; merge/config/online migration require the plan's separate confirmation. Detailed active plan: docs/optimization-execution-2026-10-16.md.
 
 P1 local gates complete: e0725bd owned shell/export;6ce5de0 routes;601a3c1 exact CI branches;d52b8a2 retired package deletion after green gates. After deletion contracts1612/UI34/AI500/typecheck/build passed, core browser52/engine9 and light checks49 passed; working shell browser66 passed earlier this stage. No push/deploy yet: CDS push auto-deploy enabled and project default DB is shared brandai; phase branch isolation missing. Prepare separate P1 preview DB/schema initialization approval per plan0.8 before risking deployment. Do not merge dev/main without separate approval. P2-P5 not implemented.
+
+
+## 2026-10-16 · P3 AI可靠性（当前授权：仅本地）
+
+从 devUpdate1012@2cf3932 新建 fix/p3-ai-reliability。P1@97ed7fb、P2@940e0fd 分别保留，没有合入本分支；不推送、部署、运行真实模型或迁移数据库。
+
+- [complete locally] P3 3.1–3.7 已实现，最终源码8bc050a。contracts1718/UI34/AI518、typecheck/build及浏览器72项通过，按任务本地提交。迁移/真实联调/集成/发布未执行。
+- [deferred] 真实数据库迁移与队列/模型验收、P1/P2/P3 跨分支集成、云端发布。必须保留平台审批和用户当前本地限制。

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { prisma } from "@brandai/db";
 import {
   CampaignKitInput,
@@ -92,6 +93,7 @@ export async function POST(
     // a user never gets a half-finished set then a 402 mid-way, and concurrent
     // kits can't over-spend. Metered against the workspace OWNER (tenant).
     const sceneTypes = [...new Set(input.scenes)];
+    const attemptTokens = sceneTypes.map(() => randomUUID());
     const resolvedBriefs = sceneTypes.map((sceneType) =>
       resolveGenerationDefaults({
         project,
@@ -111,6 +113,7 @@ export async function POST(
         sellingPoint: resolvedBriefs[i]!.sellingPoint,
         scene: resolvedBriefs[i]!.scene,
         status: "PENDING",
+        attemptToken: attemptTokens[i]!,
       }),
     });
 
@@ -125,6 +128,7 @@ export async function POST(
       const jobData: GenerateJobData = {
         workspaceId: wsId,
         generationId,
+        generationAttemptToken: attemptTokens[i]!,
         versionCount: 1,
         textMode: input.textMode,
         targets: input.targets,
@@ -132,6 +136,7 @@ export async function POST(
       const job = await generateQueue.add("generate", jobData, {
         removeOnComplete: 50,
         removeOnFail: 50,
+        attempts: 1,
       });
       scenes.push({
         sceneType,

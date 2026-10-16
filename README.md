@@ -15,6 +15,8 @@
 
 > **2026-10-16 · P1 自有资源迁移本地验证通过**：`fix/p1-remove-captured-bundle` 已迁入21个自有shell文件，构建仅输出24个自有资源，移除旧SDK/授权启动依赖；旧预览包176文件在门禁通过后以 `d52b8a2` 单独删除。删除后contracts1612/UI34/AI500、类型/生产构建和核心画布52＋引擎9项通过，另有工作台66项交互通过。**尚未推送或部署**：CDS新分支默认共享库且开启自动部署，需要先确认P1独立预览库初始化；现有dev预览仍是83a5dca。[本轮执行与证据](docs/optimization-execution-2026-10-16.md) · [开发日志](docs/development-log-2026-10-16.md)。P2–P5未实施，main未动。
 
+> **2026-10-16 P3 本地修复完成**：基于devUpdate1012的 `fix/p3-ai-reliability@8bc050a` 补齐默认超时、异步预检/复检、旧worker中止与防重放、多尺寸预算、可恢复轮询和生产存储保护。契约1718/UI34/AI518、类型/生产构建及72项浏览器检查通过；两份迁移未执行，未推送部署，未合入独立P1/P2或dev/main。这是现有产品修复，不是新产品。[本轮日志与边界](docs/development-log-2026-10-16-p3.md)。
+
 > **2026-10-15 17:46 自研画布引擎已上线开发预览**：`devUpdate1012 / 83a5dca` 的[云端验收38713351613](https://github.com/nickzhang2999-dev/brandai-platform/actions/runs/38713351613)成功，CDS部署完成。公网登录、Studio、实际编辑器JS的新引擎标记和Web/worker独立数据库均已读回核验。[打开新版](https://devupdate1012-brandai-platform.geole.me/studio?build=83a5dca#/home)。本地契约1614/UI34/AI500、类型/生产构建和103项浏览器检查通过；不代表 tldraw/Lovart 完整同等能力。main未动，本次发布模型调用0。[实现与边界](docs/deepflare-canvas-engine-2026-10-15.md)。本段为发布后本地回执，随下一批同步。
 
 > **2026-10-15 15:26 单张真实改图验收通过**：devUpdate1012已运行9fde897；真实任务修改成功、结果保存并重新读取SHA一致，最终1024×576。新任务仅在dev独立库/队列处理，main未动。[开发日志](docs/development-log-2026-10-15.md)。本段为部署后的本地回执。

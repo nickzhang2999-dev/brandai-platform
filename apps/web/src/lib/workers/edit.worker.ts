@@ -1,3 +1,4 @@
+import { runLegacyTask } from "../legacy-task-runtime";
 import { Worker, type Job } from "bullmq";
 import { prisma, Prisma } from "@brandai/db";
 import {
@@ -20,10 +21,7 @@ import {
   type ResolvedWatermarkOverlay,
 } from "@/lib/watermark";
 import {
-  markRunning,
   setProgress,
-  markSucceeded,
-  markFailed,
 } from "@/lib/async-tasks";
 import {
   applyExactAssetLayers,
@@ -79,9 +77,9 @@ export async function runEditJob(
     workspaceId,
     watermarkOverlays,
   } = job.data;
-  try {
+  return runLegacyTask({ taskId, workspaceId, kind: "EDIT" }, async ctx => {
     await job.updateProgress(5);
-    await markRunning(taskId, 5);
+    ctx.check();
 
     const source = await prisma.generationVersion.findUnique({
       where: { id: sourceVersionId },
@@ -136,7 +134,8 @@ export async function runEditJob(
     const _t0 = Date.now();
     let raw: unknown;
     try {
-      raw = await ai.edit(request);
+      raw = await ai.edit(request, { signal: ctx.signal });
+      ctx.check();
     } catch (aiErr) {
       await recordUsage({
         workspaceId,
@@ -291,6 +290,7 @@ export async function runEditJob(
         ? await uploadDataUrlImage(
             result.imageUrl,
             `generations/${workspaceId}/bases`,
+            ctx.signal,
           )
         : null;
     const exactComposited =
@@ -309,6 +309,7 @@ export async function runEditJob(
     const editedImageUrl = await uploadDataUrlImage(
       finalEditImageUrl,
       `generations/${workspaceId}`,
+      ctx.signal,
     );
 
     // 尺寸:仅当本次编辑显式指定了 width/height(RESIZE / OUTPAINT 等改变画布的操作
@@ -336,7 +337,7 @@ export async function runEditJob(
         ? { ...resultParams, mask: "[mask omitted]" }
         : resultParams;
 
-    const created = await prisma.generationVersion.create({
+    const created = await ctx.write(tx => tx.generationVersion.create({
       data: {
         generationId,
         index: nextIndex,
@@ -387,11 +388,13 @@ export async function runEditJob(
         } as Prisma.InputJsonValue,
         // complianceReport left null for M5 to (re)fill on edited versions.
       },
-    });
+    }));
 
     // F18 · 出图回流素材库 — 改图子版本同样镜像成素材，使改图产物也进素材库。
     // sceneType 沿用源版本 params 里 generate.worker 盖的戳；best-effort，不阻断改图。
+    ctx.check();
     await mirrorGenerationVersionToAsset({
+      signal: ctx.signal, persist: ctx.write,
       workspaceId,
       generationVersionId: created.id,
       imageUrl: editedImageUrl,
@@ -407,16 +410,13 @@ export async function runEditJob(
     });
 
     await job.updateProgress(100);
-    await markSucceeded(taskId, { refId: created.id, refCount: 1 });
+    await ctx.succeed({ refId: created.id, refCount: 1 });
     return {
       generationId,
       sourceVersionId: source.id,
       versionId: created.id,
     };
-  } catch (err) {
-    await markFailed(taskId, String(err));
-    throw err;
-  }
+  });
 }
 
 export function createEditWorker() {

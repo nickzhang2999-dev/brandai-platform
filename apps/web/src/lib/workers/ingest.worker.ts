@@ -1,8 +1,8 @@
+import { runLegacyTask } from "../legacy-task-runtime";
 import { Worker, type Job } from "bullmq";
 import { IngestWebsiteResponse } from "@brandai/contracts";
 import { connection, queuePrefix } from "@/lib/queue";
 import { ai } from "@/lib/ai";
-import { markRunning, markSucceeded, markFailed } from "@/lib/async-tasks";
 
 /**
  * K3 / §2 — payload enqueued by POST /api/workspaces/[wsId]/ingest. Crawling a
@@ -31,20 +31,18 @@ export async function runIngestJob(
 ): Promise<IngestJobResult> {
   const data = job.data;
   const taskId = data.taskId;
-  try {
+  return runLegacyTask({ taskId, workspaceId: data.workspaceId, kind: "INGEST" }, async ctx => {
     await job.updateProgress(10);
-    await markRunning(taskId, 10);
+    ctx.check();
 
-    const raw = await ai.ingestWebsite({ url: data.url });
+    const raw = await ai.ingestWebsite({ url: data.url }, { signal: ctx.signal });
+    ctx.check();
     const result = IngestWebsiteResponse.parse(raw);
 
     await job.updateProgress(100);
-    await markSucceeded(taskId, { refCount: result.images.length });
+    await ctx.succeed({ refCount: result.images.length });
     return result;
-  } catch (err) {
-    await markFailed(taskId, String(err));
-    throw err;
-  }
+  });
 }
 
 export function createIngestWorker() {

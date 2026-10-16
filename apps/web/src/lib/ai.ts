@@ -73,15 +73,15 @@ async function providerHeaders(requireRealImageProvider = false, requireRealVlmP
 }
 
 async function call<TReq, TRes>(path: string, body: TReq, options?: AiCallOptions): Promise<TRes> {
-  const signal = options ? options.signal ?? AbortSignal.timeout(5 * 60_000) : undefined;
-  signal?.throwIfAborted();
+  const signal = options?.signal ?? AbortSignal.timeout(5 * 60_000);
+  signal.throwIfAborted();
   const requireVisualCheck = path === "/v1/compliance/check" && options?.requireRealVlmProvider === true;
   const requireStudioEdit = path === "/v1/studio/edit";
   const requireStudioImageTools = requireStudioEdit && !!(body as { imageTool?: unknown }).imageTool;
   const requireStudioDecomposition = path === "/v1/decompose" && options?.requireRealLayerProvider === true;
   const requireStudioLayerPlan = path === "/v1/studio/layer-plan";
   const requireConversationIntent = path === "/v1/studio/conversation-intent";
-  const requireSingleAttempt = requireConversationIntent || requireStudioEdit || requireStudioDecomposition || requireStudioLayerPlan || (["/v1/generate", "/v1/compliance/check"].includes(path) && (options?.requireRealImageProvider === true || options?.requireRealVlmProvider === true));
+  const requireSingleAttempt = path !== "/v1/diag";
   const setup = Promise.all([resolveAiService(requireVisualCheck || requireSingleAttempt ? {
     ...(requireVisualCheck ? { requireVisualCheck: true } : {}), ...(requireSingleAttempt ? { requireSingleAttempt: true } : {}),
     ...(requireStudioEdit ? { requireStudioEdit: true } : {}),
@@ -94,9 +94,9 @@ async function call<TReq, TRes>(path: string, body: TReq, options?: AiCallOption
     requireVisualCheck || requireStudioLayerPlan || requireConversationIntent,
     path === "/v1/decompose" && options?.requireRealLayerProvider === true,
   )]);
-  const [service, headers] = await (signal ? withinAiDeadline(setup, signal) : setup);
-  signal?.throwIfAborted();
-  const res = await fetch(`${service.base}${path}`, {
+  const [service, headers] = await withinAiDeadline(setup, signal);
+  signal.throwIfAborted();
+  const res = await withinAiDeadline(fetch(`${service.base}${path}`, {
     method: "POST",
     headers: { "content-type": "application/json", ...headers,
       ...(options?.requestId && /^sgr_[a-f0-9]{32}$/.test(options.requestId) ? { "X-Novart-Request-Id": options.requestId } : {}),
@@ -105,16 +105,10 @@ async function call<TReq, TRes>(path: string, body: TReq, options?: AiCallOption
     // the paid POST. Enforce this also for its optional text precheck.
     body: JSON.stringify(requireSingleAttempt && !requireStudioEdit ? { ...body, providerRetryPolicy: "never" } : body),
     cache: "no-store",
-    ...(signal ? { signal } : {}),
-  });
-  if (!res.ok) {
-    if (options) {
-      throw await readAiFailure(res, signal);
-    }
-    throw new Error(`AI ${path} failed: ${res.status} ${await res.text()}`);
-  }
-  if (signal) return readBoundedAiJson<TRes>(res, signal, options?.maxResponseBytes ?? 48 * 1024 * 1024);
-  return (await res.json()) as TRes;
+    signal,
+  }), signal);
+  if (!res.ok) throw await readAiFailure(res, signal);
+  return readBoundedAiJson<TRes>(res, signal, options?.maxResponseBytes ?? 48 * 1024 * 1024);
 }
 
 export const ai = {
@@ -122,24 +116,25 @@ export const ai = {
     call<StudioConversationModelRequest, StudioConversationModelResponse>("/v1/studio/conversation-intent", body, { ...options, requireRealVlmProvider: true }),
   studioLayerPlan: (b: StudioLayerPlanRequest, options?: AiCallOptions) =>
     call<StudioLayerPlanRequest, StudioLayerPlanResponse>("/v1/studio/layer-plan", b, { ...options, requireRealVlmProvider: true }),
-  ingestWebsite: (b: IngestWebsiteRequest) =>
+  ingestWebsite: (b: IngestWebsiteRequest, options?: AiCallOptions) =>
     call<IngestWebsiteRequest, IngestWebsiteResponse>(
       "/v1/ingest/website",
       b,
+      options,
     ),
-  recognize: (b: RecognizeRequest) =>
-    call<RecognizeRequest, RecognizeResponse>("/v1/recognize", b),
-  describe: (b: DescribeRequest) =>
-    call<DescribeRequest, DescribeResponse>("/v1/describe", b),
-  parseManual: (b: ParseManualRequest) =>
-    call<ParseManualRequest, ParseManualResponse>("/v1/parse-manual", b),
-  summarize: (b: SummarizeRequest) =>
-    call<SummarizeRequest, SummarizeResponse>("/v1/summarize", b),
+  recognize: (b: RecognizeRequest, options?: AiCallOptions) =>
+    call<RecognizeRequest, RecognizeResponse>("/v1/recognize", b, options),
+  describe: (b: DescribeRequest, options?: AiCallOptions) =>
+    call<DescribeRequest, DescribeResponse>("/v1/describe", b, options),
+  parseManual: (b: ParseManualRequest, options?: AiCallOptions) =>
+    call<ParseManualRequest, ParseManualResponse>("/v1/parse-manual", b, options),
+  summarize: (b: SummarizeRequest, options?: AiCallOptions) =>
+    call<SummarizeRequest, SummarizeResponse>("/v1/summarize", b, options),
   generate: (b: GenerateRequest, options?: AiCallOptions) =>
     call<GenerateRequest, GenerateResponse>("/v1/generate", b, options),
   studioEdit: (b: StudioEditRequest, options?: AiCallOptions) =>
     call<StudioEditRequest, StudioEditResponse>("/v1/studio/edit", b, { ...options, requireRealImageProvider: true }),
-  edit: (b: EditRequest) => call<EditRequest, EditResponse>("/v1/edit", b),
+  edit: (b: EditRequest, options?: AiCallOptions) => call<EditRequest, EditResponse>("/v1/edit", b, options),
   /**
    * 图层分解。只有 worker 该调它——实测真上游 12–42 秒，第一次调用就打穿
    * 30 秒边缘网关上限（§2.1：AI 调用不许出现在 HTTP handler 里）。

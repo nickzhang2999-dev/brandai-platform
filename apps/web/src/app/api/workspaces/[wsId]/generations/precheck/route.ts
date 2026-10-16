@@ -11,18 +11,9 @@ import {
   requireUser,
 } from "@/lib/api";
 import { requireWorkspaceRole } from "@/lib/workspace";
-import { runPrecheck } from "@/lib/precheck";
+import { createComplianceTask } from "@/lib/compliance-tasks";
 
-/**
- * Pre-generation compliance precheck (M3 → M5 adapter front-door).
- *
- * The wizard calls this before it submits the generation so RISK / FORBIDDEN
- * findings can be surfaced and the user can revise the copy. The actual
- * resolution lives in `lib/precheck.ts` (which prefers an M5-owned
- * `/compliance/precheck` route and falls back to the AI service). Keeping the
- * precheck behind this stable route + adapter means M5 can take over without
- * touching the wizard.
- */
+/** Accept a durable generation brief check; no model call in this handler. */
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ wsId: string }> },
@@ -53,13 +44,10 @@ export async function POST(
       scene: input.scene,
     });
 
-    const origin = new URL(req.url).origin;
-    const result = await runPrecheck({
-      workspaceId: wsId,
-      text: resolvedBrief.sellingPoint,
-      baseUrl: origin,
+    const result = await createComplianceTask(wsId, "GENERATION_PRECHECK", {
+      userId: user.id, projectId: project.id, text: resolvedBrief.sellingPoint,
     });
-    return ok(result);
+    return ok(result, { status: 202 });
   } catch (err) {
     return handleError(err);
   }

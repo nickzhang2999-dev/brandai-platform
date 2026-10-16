@@ -143,7 +143,7 @@ _RISK_LEXICON = {
 PARSER_REVISION = "grounded-six-slot-r6"
 GENERATION_REVISION = "gpt-image-2-size-quality-r1"
 VISUAL_CHECK_REVISION = "studio-visual-check-evidence-r1"
-PROVIDER_RETRY_REVISION = "single-provider-attempt-r1"
+PROVIDER_RETRY_REVISION = "single-provider-attempt-r2"
 STUDIO_DECOMPOSITION_REVISION = "studio-real-layer-single-attempt-r1"
 
 
@@ -199,7 +199,7 @@ async def ingest_website(
     req: IngestWebsiteRequest,
     vlm: VLMProvider = Depends(resolve_vlm_provider),
 ):
-    data = await vlm.scrape_website(req.url)
+    data = await call_with_retry_policy(req.providerRetryPolicy, vlm.scrape_website, req.url)
     return IngestWebsiteResponse(**data)
 
 
@@ -208,7 +208,8 @@ async def recognize(
     req: RecognizeRequest,
     vlm: VLMProvider = Depends(resolve_vlm_provider),
 ):
-    data = await vlm.analyze_assets(
+    data = await call_with_retry_policy(
+        req.providerRetryPolicy, vlm.analyze_assets,
         [a.model_dump() for a in req.assets]
     )
     return RecognizeResponse(**data)
@@ -220,7 +221,8 @@ async def describe(
     vlm: VLMProvider = Depends(resolve_vlm_provider),
 ):
     """E9/E10 — auto-tag one image asset (tags + description) for the library."""
-    data = await vlm.describe_asset(
+    data = await call_with_retry_policy(
+        req.providerRetryPolicy, vlm.describe_asset,
         req.url,
         category=req.category,
         brand_tone=req.brandTone,
@@ -239,7 +241,8 @@ async def summarize(
     mode="brief_decompose": decompose a free-text brief into creation seeds.
     mode="campaign_summary": condense a campaign's context into a summary.
     """
-    data = await vlm.summarize(
+    data = await call_with_retry_policy(
+        req.providerRetryPolicy, vlm.summarize,
         req.mode,
         req.text,
         context=req.context.model_dump() if req.context else None,
@@ -345,7 +348,7 @@ async def parse_manual(
         return ParseManualResponse(
             rules=[], pageCount=page_count, warnings=warnings
         )
-    data = await vlm.parse_manual(text, pages=pages)
+    data = await call_with_retry_policy(req.providerRetryPolicy, vlm.parse_manual, text, pages=pages)
     provider_warnings = data.pop("warnings", [])
     return ParseManualResponse(
         **data,
@@ -962,7 +965,7 @@ async def edit(
     req: EditRequest,
     provider: ImageProvider = Depends(resolve_image_provider),
 ):
-    url = await provider.edit(req.imageUrl, req.op, req.payload)
+    url = await call_with_retry_policy(req.providerRetryPolicy, provider.edit, req.imageUrl, req.op, req.payload)
     w = int(req.payload.get("width", 1024))
     h = int(req.payload.get("height", 1024))
     return EditResponse(

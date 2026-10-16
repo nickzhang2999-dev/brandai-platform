@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { prepareGeneration } from "@/lib/generation-prepare";
 import { prisma } from "@brandai/db";
 import { CreateGenerationInput } from "@brandai/contracts";
@@ -56,9 +57,10 @@ export async function POST(
 
     const input = parse(CreateGenerationInput, await req.json());
     const prepared = await prepareGeneration(wsId, input);
-    const reserved = await reserveGenerationQuota({ workspaceId: wsId, count: 1, make: () => prepared.generationData });
+    const generationAttemptToken = randomUUID();
+    const reserved = await reserveGenerationQuota({ workspaceId: wsId, count: 1, make: () => ({ ...prepared.generationData, attemptToken: generationAttemptToken }) });
     const generation = { id: reserved[0]!.id };
-    const jobData: GenerateJobData = { ...prepared.jobData, generationId: generation.id };
+    const jobData: GenerateJobData = { ...prepared.jobData, generationId: generation.id, generationAttemptToken };
     const job = await generateQueue.add("generate", jobData, {
       removeOnComplete: 50,
       removeOnFail: 50,

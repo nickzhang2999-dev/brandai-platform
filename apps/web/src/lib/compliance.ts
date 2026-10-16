@@ -6,6 +6,7 @@ import {
 import { ai } from "@/lib/ai";
 import { loadProhibitionReferenceImages } from "@/lib/prohibitions";
 import { getConfirmedRules } from "@/lib/rules";
+import { withinAiDeadline, type AiCallOptions } from "./ai-response";
 
 /**
  * M5 server-side compliance helpers.
@@ -13,9 +14,9 @@ import { getConfirmedRules } from "@/lib/rules";
  * The single source of truth for turning a workspace's `ComplianceTerm`
  * rows into the `termLib` the AI service expects, and for running a
  * text/visual compliance check through the frozen AI contract. Used by:
- *  - `POST /api/workspaces/[wsId]/compliance/precheck` (M3 pre-generation
- *    precheck — must return a `ComplianceCheckResponse`).
- *  - the post-generation recheck route (text + visual, persisted into
+ *  - the compliance precheck worker (M3 pre-generation result is a
+ *    `ComplianceCheckResponse`).
+ *  - the post-generation recheck worker (text + visual, persisted into
  *    `GenerationVersion.complianceReport`).
  *
  * The AI mock provider keeps this deterministic with zero keys.
@@ -46,19 +47,21 @@ export async function runComplianceCheck(input: {
   workspaceId: string;
   text?: string;
   imageUrl?: string;
-}): Promise<ComplianceCheckResponse> {
-  const termLib = await loadTermLib(input.workspaceId);
+}, options?: AiCallOptions): Promise<ComplianceCheckResponse> {
+  const signal = options?.signal ?? AbortSignal.timeout(5 * 60_000);
+  signal.throwIfAborted();
+  const termLib = await withinAiDeadline(loadTermLib(input.workspaceId), signal);
   // D5 — only an image check benefits from visual example references; skip the
   // extra query for text-only prechecks.
   const referenceImages = input.imageUrl
-    ? await loadProhibitionReferenceImages(input.workspaceId, "validation")
+    ? await withinAiDeadline(loadProhibitionReferenceImages(input.workspaceId, "validation"), signal)
     : [];
   // 视觉复查必须带上已确认的品牌规则(色彩/版式/Logo 等),否则 AI 端拿到空
   // brandRules,复查只能靠 term/prohibition 兜底,放过偏离规范的图。文本检查无需。
   const brandRules = input.imageUrl
-    ? await getConfirmedRules(input.workspaceId, {
+    ? await withinAiDeadline(getConfirmedRules(input.workspaceId, {
         respectKitAvailability: true,
-      })
+      }), signal)
     : [];
   const request = ComplianceCheckRequest.parse({
     text: input.text,
@@ -66,7 +69,10 @@ export async function runComplianceCheck(input: {
     brandRules,
     termLib,
     referenceImages,
+    providerRetryPolicy: "never",
   });
-  const raw = await ai.complianceCheck(request);
+  signal.throwIfAborted();
+  const raw = await withinAiDeadline(ai.complianceCheck(request, { ...options, signal,
+    maxResponseBytes: Math.min(options?.maxResponseBytes ?? 4 * 1024 * 1024, 4 * 1024 * 1024) }), signal);
   return ComplianceCheckResponse.parse(raw);
 }

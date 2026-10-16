@@ -210,3 +210,12 @@ P2 dependency pre-audit: untrustedstorageKey entry isPOSTworkspaces/[wsId]/asset
 
 2026-10-16 P1 final: old SDK startup/SW dependency removed; unregister only exact same-origin root oldworker asynchronously. 24 owned compiled assets no external dependencies; archive and upload use owned messages. Independent audit confirms no live previews imports. Two unbundled legacy adapter JS files still contain webpack strings but have no consumers and are not in exporter/Docker copied output; not a runtime dependency. Old README preview links marked retired, historical evidence retained.
 CDS preflight directly confirms push automatic deployment and default shared brandai DB. Existing dev isolation is a branch-specific override, not evidence new P1 branch is safe. Therefore phase push has been held pending a concrete isolated P1 preview setup; no CDS runtime fault is asserted. Stage plan explicitly requires approval for online schema initialization and dev/main merge. Read-only sanitized evidence: .novart-build/cds-p1-readiness-20261016.json.
+
+
+## 2026-10-16 · P3 可靠性定位
+
+- ai.ts 原无 options 路径没有超时，也没有统一禁止 provider 自动重试。改为所有调用默认五分钟，付费入口要求 single-provider-attempt-r2；Python 旧识别、手册、摘要、抓取、描述、编辑入口同样执行 never 策略。
+- 预检/复检原 HTTP handler 直接 await AI；新增持久 AsyncTask 输入/结果、202接单和只读查询。Prisma client 已生成，新增 SQL 迁移仅保存文件，未执行。
+- 原 worker Promise.race 不足以阻止迟到业务写入。执行凭据、事务条件写入及 AbortSignal 需要同时生效。
+- 十二尺寸串行工作允许37分钟，前台六分钟只是自动查询窗口。超时暂停查询，不得直接认定后台失败或再次购买模型调用。
+- 生产缺存储的 base64 回退会把大图写入数据库；改为明确失败。开发演示路径保持兼容。

@@ -136,7 +136,7 @@ function QueueRow({ item, nowTs }: { item: QueueItem; nowTs: number }) {
       )}
       {stale && (
         <p className="mt-1.5 text-[10px] text-warning">
-          已超过 6 分钟未完成,可能已失败
+          运行较久，仍在后台处理中；结果以服务端最终状态为准。
         </p>
       )}
     </>
@@ -166,7 +166,7 @@ function StatusBadge({
   status: QueueItem["status"];
   stale: boolean;
 }) {
-  if (stale) return <Badge tone="danger">超时?</Badge>;
+  if (stale) return <Badge tone="neutral">后台处理中</Badge>;
   switch (status) {
     case "PENDING":
       return <Badge tone="neutral">排队</Badge>;

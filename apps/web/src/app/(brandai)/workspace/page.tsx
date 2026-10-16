@@ -1,5 +1,7 @@
 "use client";
 
+import { useBoundedTaskPoll, useBoundedTaskQuery, TASK_POLL_PAUSED_MESSAGE, isTaskTerminal } from "@/lib/use-bounded-task-poll";
+
 import {
   Suspense,
   useCallback,
@@ -32,7 +34,6 @@ import type {
 import {
   CHANNEL_SIZES,
   ExactAssetTransform as ExactAssetTransformSchema,
-  isTaskWatchExpired,
   readLayerMeta,
   resolveGenerationDefaults,
 } from "@brandai/contracts";
@@ -85,7 +86,6 @@ const CANVAS_OPS: { value: string; label: string; mask?: boolean }[] = [
   { value: "REMOVE_ELEMENT", label: "去元素" },
 ];
 
-const POLL_CAP_MS = 6 * 60 * 1000; // §2.2 有界中间态
 const HISTORY_RESTORE_TIMEOUT_MS = 15_000;
 const ACTIVE_GENERATION_STATUSES = new Set(["PENDING", "RUNNING"]);
 
@@ -791,54 +791,33 @@ function Workspace() {
   const [submitErr, setSubmitErr] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const startedAt = useRef<number>(0);
-  const [timedOut, setTimedOut] = useState(false);
+  const generationPollBudget = useBoundedTaskPoll({ taskKey: genId ? JSON.stringify([wsId, genId]) : null, startedAt });
+  const { setTimedOut } = generationPollBudget;
   // 改图(edit)中间态计时 —— §2.4 有界:改图轮询超过上界给明确出口,绝不无限「改图中…」。
   const editStartedAt = useRef<number>(0);
-  // 改图客户端超时后,worker 可能仍在后台完成 —— 记一个有界的「继续观察到」时刻,让
-  // 主 generation 查询在此期间即便已 SUCCEEDED 也慢速续轮询,迟到的改图子版本才能
-  // 自动浮现,不必整页刷新(Bugbot Medium)。
-  const [editWatchUntil, setEditWatchUntil] = useState(0);
+  const editContext = JSON.stringify([wsId, projectId, genId]);
+  const editContextRef = useRef(editContext);
+  editContextRef.current = editContext;
+  // 前台观察到期只暂停 GET，保留 AsyncTask，继续查询时仍读取原任务。
 
   const { data: poll } = useQuery<JobState>({
     queryKey: ["brandai-gen", wsId, genId, jobId],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       apiFetch<JobState>(
         // jobId 仅在「本次会话刚提交」时存在；回看历史出图（无 job）时省略，
         // 路由会回退到 generation.status（SUCCEEDED），不再拼出 ?jobId=null。
         `/api/workspaces/${wsId}/generations/${genId}${jobId ? `?jobId=${jobId}` : ""}`,
+        { signal: AbortSignal.any([signal, AbortSignal.timeout(Math.max(1, Math.min(20_000, generationPollBudget.remaining())))]) },
       ),
-    enabled: !!genId,
+    enabled: !!genId && !generationPollBudget.timedOut,
+    retry: false, refetchOnWindowFocus: false, refetchOnReconnect: false,
     refetchInterval: (q) => {
       const d = q.state.data;
-      const s = d?.job?.status ?? d?.generation.status;
-      if (s === "SUCCEEDED" || s === "FAILED") {
-        // 改图超时后的有界续观察:generation 虽已终态,仍慢速轮询以捞回迟到的改图子版本。
-        return editWatchUntil > Date.now() ? 8000 : false;
-      }
-      // §2.4 6-min 上界。实时出图(有 jobId)用本地 startedAt;回看历史出图
-      // (jobId=null → startedAt=0)改用该 generation 的服务端起始时间
-      // (startedAt→createdAt),否则 0 会让仍在跑的历史出图被瞬间判超时而停轮询,
-      // 卡死在"生成中"直到整页刷新(Bugbot #3d80902a)。无可解析时间则继续轮询。
-      const startMs =
-        startedAt.current > 0
-          ? startedAt.current
-          : Date.parse(
-              d?.generation.startedAt ?? d?.generation.createdAt ?? "",
-            ) || 0;
-      if (startMs > 0 && Date.now() - startMs > POLL_CAP_MS) return false;
-      return 2500;
+      return generationPollBudget.interval(d?.job?.status ?? d?.generation.status);
     },
   });
 
-  // 中间态超时只在「本会话实时出图」（有 jobId）时计时；回看历史出图（jobId=null）
-  // 不参与计时，否则 startedAt=0 会被瞬间判超时。
-  useEffect(() => {
-    if (!genId || !jobId) return;
-    const t = setInterval(() => {
-      if (Date.now() - startedAt.current > POLL_CAP_MS) setTimedOut(true);
-    }, 3000);
-    return () => clearInterval(t);
-  }, [genId, jobId]);
+  const timedOut = generationPollBudget.timedOut && !isTaskTerminal(poll?.job?.status ?? poll?.generation.status);
 
   // 切换 Campaign 时清掉当前查看的出图，交给下面的「默认展示最近一次」按新项目
   // 重新播种（否则上一个项目的图会残留、且 POST/改图会打到错项目）。
@@ -1047,7 +1026,7 @@ function Workspace() {
   const [maskTarget, setMaskTarget] = useState<GenerationVersion | null>(null);
   const [editInstr, setEditInstr] = useState("");
   const [editVid, setEditVid] = useState<string | null>(null);
-  const [editJobId, setEditJobId] = useState<string | null>(null);
+  const [editTaskId, setEditTaskId] = useState<string | null>(null);
   const [actionErr, setActionErr] = useState<string | null>(null);
   const [busy, setBusy] = useState<null | "edit" | "final" | "export">(null);
   // 局部重画 —— 蒙版绘制覆盖层开关（迁移自 prd_agent 视觉创作）。
@@ -1126,18 +1105,10 @@ function Workspace() {
   /** 上面那个 ref 在 UI 上的影子：ref 变化不触发重渲染，按钮得靠 state 才会灰。 */
   const [decomposeSubmitting, setDecomposeSubmitting] = useState(false);
   const decomposeStartedAt = useRef(0);
-  /** 首次观察到 RUNNING 的时刻;还在排队时为 0。判据见 `isTaskWatchExpired`。 */
+  /** 首次观察到 RUNNING 的时刻;还在排队时为 0。仅这一转换续一次前台观察预算。 */
   const decomposeRunningAt = useRef(0);
-  const decomposeWatchExpired = useCallback(
-    () =>
-      isTaskWatchExpired({
-        submittedAt: decomposeStartedAt.current,
-        runningAt: decomposeRunningAt.current,
-        now: Date.now(),
-        capMs: POLL_CAP_MS,
-      }),
-    [],
-  );
+  const decomposePollBudget = useBoundedTaskPoll({ taskKey: decomposeTaskId ? JSON.stringify([wsId, decomposeTaskId]) : null, startedAt: decomposeStartedAt });
+  const decomposeWatchExpired = decomposePollBudget.expired;
   /**
    * 发起这次分解时**当时**的 generation / campaign。
    *
@@ -1152,9 +1123,10 @@ function Workspace() {
 
   const { data: decomposePoll, error: decomposePollErr } = useQuery<TaskState>({
     queryKey: ["brandai-decompose", wsId, decomposeTaskId],
-    queryFn: () =>
-      apiFetch<TaskState>(`/api/workspaces/${wsId}/tasks/${decomposeTaskId}`),
-    enabled: !!decomposeTaskId,
+    queryFn: ({ signal }) =>
+      apiFetch<TaskState>(`/api/workspaces/${wsId}/tasks/${decomposeTaskId}`, { signal: AbortSignal.any([signal, AbortSignal.timeout(Math.max(1, Math.min(20_000, decomposePollBudget.remaining())))]) }),
+    enabled: !!decomposeTaskId && !decomposePollBudget.timedOut,
+    retry: false, refetchOnWindowFocus: false, refetchOnReconnect: false,
     refetchInterval: (q) => {
       const s = q.state.data?.status;
       if (s === "SUCCEEDED" || s === "FAILED") return false;
@@ -1181,7 +1153,8 @@ function Workspace() {
     if (decomposePoll?.status !== "RUNNING") return;
     if (decomposeRunningAt.current > 0) return;
     decomposeRunningAt.current = Date.now();
-  }, [decomposePoll?.status]);
+    decomposePollBudget.resume(); // First RUNNING receives its own observation window.
+  }, [decomposePoll?.status, decomposePollBudget.resume]);
 
   useEffect(() => {
     const s = decomposePoll?.status;
@@ -1215,33 +1188,13 @@ function Workspace() {
     }
   }, [decomposePoll, qc, wsId, genId, projectId, syncDecomposeTaskUrl]);
 
-  // §2.4 中间态上界:等太久就停止跟,并说清下一步。
-  //
-  // **只停止跟,不销毁任何东西**——地址栏的 `?decomposeTask=` 这几个参数、以及
-  // `decomposeTaskId` 本身(它同时是「别再提交一单」的闸)都原样留着。
-  //
-  // 这两样各丢一样都会把用户推去再花一次钱:抹掉 URL 参数,刷新就找不回这一单;
-  // 抹掉 taskId,按钮当场解锁,再点一次就是第二单**而且会覆盖掉指向第一单的那几个
-  // URL 参数**,第一单从此没人认领。客户端等腻了不等于服务端失败——服务端状态才是
-  // 权威(§2.2)。
-  //
-  // 出口是刷新:续跑 effect 会重新拉一次任务,已终态就收拾干净并解锁,还在跑就
-  // 重新挂上轮询。轮询停了也不是死路,窗口重新获得焦点时 React Query 还会再探一次。
+  // Preserve taskId and the URL when observation pauses: a lost task pointer
+  // would unlock a duplicate paid request. Resume only reads the same receipt.
   useEffect(() => {
-    if (!decomposeTaskId) return;
-    let notified = false;
-    const t = setInterval(() => {
-      if (notified || !decomposeWatchExpired()) return;
-      // 只播报一次:这条 effect 不再自我了结(taskId 留着),不设闸就会每 3 秒
-      // 重复 invalidate 一轮。
-      notified = true;
-      setActionErr(
-        "图层分解等太久了:任务仍在后台跑,按钮先锁着以免重复下单。刷新页面可以继续跟进度,结果出来会回到这张图下面。",
-      );
-      qc.invalidateQueries({ queryKey: ["brandai-gen", wsId, genId] });
-    }, 3000);
-    return () => clearInterval(t);
-  }, [decomposeTaskId, qc, wsId, genId, decomposeWatchExpired]);
+    if (!decomposeTaskId || !decomposePollBudget.timedOut) return;
+    setActionErr(TASK_POLL_PAUSED_MESSAGE);
+    qc.invalidateQueries({ queryKey: ["brandai-gen", wsId, genId] });
+  }, [decomposeTaskId, decomposePollBudget.timedOut, qc, wsId, genId]);
 
   // 刷新续跑:读 `?decomposeTask=`,还在跑就重新挂上轮询,已经跑完就直接把结果
   // 拉出来(并打开对应图层组),不让用户对着一个"什么都没发生"的画布重拆一次。
@@ -1378,57 +1331,27 @@ function Workspace() {
     ],
   );
 
-  // 改图 server-authoritative:POST→202→轮询 edit job→成功后刷新主 generation,
-  // 新的子版本(parentVersionId)就会出现在变体条里。
-  const { data: editPoll } = useQuery<{ job?: { status: string } }>({
-    queryKey: ["brandai-edit", wsId, genId, editVid, editJobId],
-    queryFn: () =>
-      apiFetch(
-        `/api/workspaces/${wsId}/generations/${genId}/versions/${editVid}/edit?jobId=${editJobId}`,
-      ),
-    enabled: !!editJobId && !!editVid && !!genId,
-    refetchInterval: (q) => {
-      const s = q.state.data?.job?.status;
-      if (s === "SUCCEEDED" || s === "FAILED") return false;
-      // §2.4 6-min 上界:改图卡死就停轮询(下面的计时器给出口),不无限转「改图中…」。
-      if (
-        editStartedAt.current > 0 &&
-        Date.now() - editStartedAt.current > POLL_CAP_MS
-      )
-        return false;
-      return 2500;
-    },
+  // Read the durable AsyncTask, never BullMQ's evictable job record.
+  const { data: editPoll, timedOut: editPollPaused, resume: resumeEditPoll } = useBoundedTaskQuery<TaskState>({
+    queryKey: ["brandai-edit", wsId, genId, editVid, editTaskId],
+    taskKey: editTaskId && editVid && genId ? JSON.stringify([wsId, genId, editVid, editTaskId]) : null,
+    startedAt: editStartedAt,
+    queryFn: signal => apiFetch<TaskState>(`/api/workspaces/${wsId}/tasks/${editTaskId}`, { signal }),
+    getStatus: data => data?.status,
   });
-  // §2.4 改图中间态超时出口:超界则清掉 job(busy 解锁)+ 给可读出口,不卡死工具条。
   useEffect(() => {
-    if (!editJobId) return;
-    const t = setInterval(() => {
-      if (
-        editStartedAt.current > 0 &&
-        Date.now() - editStartedAt.current > POLL_CAP_MS
-      ) {
-        setEditJobId(null);
-        setEditVid(null);
-        setMaskOpen(false);
-        setActionErr("改图超时:可能仍在后台,请稍后在变体条查看或重试。");
-        // 立即捞一次(可能刚好在超时边界完成)+ 开启有界续观察,让迟到子版本自动浮现。
-        qc.invalidateQueries({ queryKey: ["brandai-gen", wsId, genId] });
-        setEditWatchUntil(Date.now() + POLL_CAP_MS);
-      }
-    }, 3000);
-    return () => clearInterval(t);
-  }, [editJobId, qc, wsId, genId]);
+    if (editPollPaused) { setMaskOpen(false); setActionErr(TASK_POLL_PAUSED_MESSAGE); }
+  }, [editPollPaused]);
   useEffect(() => {
-    const s = editPoll?.job?.status;
+    const s = editPoll?.status;
     if (s === "SUCCEEDED") {
-      setEditJobId(null);
+      setEditTaskId(null);
       setEditVid(null);
       setEditInstr("");
       setMaskOpen(false); // 局部重画成功 → 关闭蒙版覆盖层，新子版本浮现在变体条
-      setEditWatchUntil(0); // 正常完成 → 关掉续观察
       qc.invalidateQueries({ queryKey: ["brandai-gen", wsId, genId] });
     } else if (s === "FAILED") {
-      setEditJobId(null);
+      setEditTaskId(null);
       setMaskOpen(false);
       setActionErr("改图失败,请重试");
     }
@@ -1437,19 +1360,18 @@ function Workspace() {
   // 蒙版覆盖层 —— 否则 maskTarget 仍钉在旧 gen 的版本,确认时 runEdit 会拿旧 versionId
   // 打到当前 genId(打错 generation / 报错,覆盖层还显示旧图)(Bugbot High)。
   useEffect(() => {
-    setEditWatchUntil(0);
     setMaskOpen(false);
     setMaskTarget(null);
-    // 同时停掉上一张的改图轮询 —— 否则 editVid/editJobId 仍指旧 gen 的版本,轮询会拿旧
-    // jobId 打到当前 genId 的版本 URL(打错 generation),UI 卡「改图中…」到超时、成功
-    // 回调还可能刷错 generation(Bugbot High)。改图 server-authoritative,离开后照常在
+    // 同时停掉上一张的改图轮询 —— 否则 editVid/editTaskId 仍指旧 gen 的版本,轮询会拿旧
+    // taskId 留在新 generation 上，成功回调会刷错 generation。改图 server-authoritative,离开后照常在
     // 后台完成,回到该 gen 时子版本随 generation 轮询自然浮现。
-    setEditJobId(null);
+    setEditTaskId(null);
     setEditVid(null);
+    setBusy(value => value === "edit" ? null : value);
     // 快捷编辑指令也清 —— 否则切到别的 generation 后工具条还留着上一张的指令文本,
     // 对新图 arm 一个操作时可能带着旧 prompt 出图(Bugbot Low)。
     setEditInstr("");
-  }, [genId]);
+  }, [editContext]);
   // F11 — refresh the quota bar once a generation completes so the displayed
   // 本周期/今日 用量 matches server-side enforcement without a manual reload.
   const quotaInvalidatedRef = useRef<string | null>(null);
@@ -1471,7 +1393,7 @@ function Workspace() {
   // URL(刷新/分享落到刚生成的这张)。否则 submit() 设的 jobId 整个会话不清,
   // 反向同步的 `if (jobId) return` 永远挡住,新出的图分享不出去(Bugbot)。
   // 只在 SUCCEEDED 清:FAILED 仍需保留 jobId,否则轮询会丢掉 ?jobId= 携带的
-  // failedReason。改图流同样在终态清 editJobId,此处对齐。
+  // failedReason。改图流同样在终态清 editTaskId,此处对齐。
   useEffect(() => {
     if (jobId && status === "SUCCEEDED") setJobId(null);
   }, [status, jobId]);
@@ -1550,9 +1472,7 @@ function Workspace() {
   }
 
   // 统一的改图提交入口：换背景/改色/局部重画(INPAINT+mask)/扩展(OUTPAINT) 全走这里
-  // → POST /edit(202) → 轮询 edit job → 成功后新子版本(parentVersionId)浮现在变体条。
-  // 统一改图入口:换背景/改色/局部重画(INPAINT+mask)/扩展(OUTPAINT) 全走这里 →
-  // POST /edit(202) → 轮询 edit job → 成功后新子版本随 versions 浮现到画布。
+  // → POST /edit(202) → 查询持久化 AsyncTask → 成功后读取新子版本。
   async function runEdit(
     op: string,
     payload: Record<string, unknown>,
@@ -1569,6 +1489,7 @@ function Workspace() {
     }
     setActionErr(null);
     setBusy("edit");
+    const submittedContext = editContext;
     try {
       // 带上源版本“真实像素尺寸” —— 否则 AI /v1/edit 缺 width/height 会默认 1024²,非方图
       // (小红书封面/Banner)会被改成方图却按原比例存/导出,子版本尺寸对不上(Codex P2)。
@@ -1581,7 +1502,7 @@ function Workspace() {
         height: px.height,
         ...payload,
       };
-      const r = await apiFetch<{ jobId: string }>(
+      const r = await apiFetch<{ taskId: string }>(
         `/api/workspaces/${wsId}/generations/${genId}/versions/${v.id}/edit`,
         {
           method: "POST",
@@ -1592,13 +1513,14 @@ function Workspace() {
           }),
         },
       );
+      if (editContextRef.current !== submittedContext) return;
       editStartedAt.current = Date.now();
       setEditVid(v.id);
-      setEditJobId(r.jobId);
+      setEditTaskId(r.taskId);
     } catch (e) {
-      setActionErr(e instanceof Error ? e.message : "改图提交失败");
+      if (editContextRef.current === submittedContext) setActionErr(e instanceof Error ? e.message : "改图提交失败");
     } finally {
-      setBusy(null);
+      if (editContextRef.current === submittedContext) setBusy(null);
     }
   }
 
@@ -1843,6 +1765,9 @@ function Workspace() {
         </nav>
         <div className="flex items-center gap-3">
           <StatusPill status={status} timedOut={timedOut} />
+          {timedOut ? <button type="button" className="text-xs underline" onClick={generationPollBudget.resume}>继续查询生成进度</button> : null}
+          {editPollPaused ? <button type="button" className="text-xs underline" onClick={resumeEditPoll}>继续查询编辑进度</button> : null}
+          {decomposePollBudget.timedOut && decomposeTaskId ? <button type="button" className="text-xs underline" onClick={decomposePollBudget.resume}>继续查询分层进度</button> : null}
         </div>
       </div>
 
@@ -1885,7 +1810,7 @@ function Workspace() {
             uploadFilesRef={chatUploadFilesRef}
             edit={{
               ops: CANVAS_OPS,
-              busy: !!editJobId || busy === "edit",
+              busy: !!editTaskId || busy === "edit",
               instr: editInstr,
               onInstrChange: setEditInstr,
               onRun: (version, op) =>
@@ -2071,7 +1996,7 @@ function Workspace() {
           imageSrc={(maskTarget ?? current)!.imageUrl}
           imageWidth={versionPixelSize((maskTarget ?? current)!).width}
           imageHeight={versionPixelSize((maskTarget ?? current)!).height}
-          submitting={!!editJobId || busy === "edit"}
+          submitting={!!editTaskId || busy === "edit"}
           onConfirm={confirmMaskEdit}
           onCancel={() => setMaskOpen(false)}
         />
@@ -3312,7 +3237,7 @@ function StatusPill({
   status: string | null;
   timedOut: boolean;
 }) {
-  if (timedOut) return <Pill tone="warning">超时，请重试</Pill>;
+  if (timedOut) return <Pill tone="warning">自动查询已暂停</Pill>;
   if (!status) return null;
   const map: Record<string, { tone: Tone; label: string }> = {
     PENDING: { tone: "muted", label: "已受理 · 排队中" },

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { prisma } from "@brandai/db";
 import { AssetUsageInput, SizeSpec } from "@brandai/contracts";
@@ -55,7 +56,7 @@ export async function GET(
   try {
     const user = await requireUser();
     const { wsId, genId } = await params;
-    await loadOwned(wsId, genId, user.id);
+    const ownedGeneration = await loadOwned(wsId, genId, user.id);
 
     const generation = await getGeneration(genId);
     const jobId = new URL(req.url).searchParams.get("jobId");
@@ -70,7 +71,8 @@ export async function GET(
       | undefined;
     if (jobId) {
       const j = await generateQueue.getJob(jobId);
-      if (j && (j.data as GenerateJobData)?.generationId === genId) {
+      if (j && (j.data as GenerateJobData)?.generationId === genId
+        && (!ownedGeneration.attemptToken || (j.data as GenerateJobData).generationAttemptToken === ownedGeneration.attemptToken)) {
         const state = await j.getState();
         const status = JOB_STATE_MAP[state] ?? "PENDING";
         job = {
@@ -137,10 +139,12 @@ export async function POST(
     // createdAt,会被下一次 sweep 立刻误杀为 FAILED(并放行再次重试,与仍在跑的
     // 本次 job 撞车)。这里把 createdAt 重置为现在、清空上一轮 started/finished。
     const now = new Date();
+    const generationAttemptToken = randomUUID();
     const claimed = await prisma.generation.updateMany({
       where: { id: genId, status: { in: ["SUCCEEDED", "FAILED"] } },
       data: {
         status: "PENDING",
+        attemptToken: generationAttemptToken,
         error: null,
         createdAt: now,
         startedAt: null,
@@ -418,6 +422,7 @@ export async function POST(
     const jobData: GenerateJobData = {
       workspaceId: wsId,
       generationId: genId,
+      generationAttemptToken,
       versionCount: priorRoots.length > 0 ? priorRoots.length : 4,
       ...(targets ? { targets } : {}),
       ...(reconstructedTextMode ? { textMode: reconstructedTextMode } : {}),

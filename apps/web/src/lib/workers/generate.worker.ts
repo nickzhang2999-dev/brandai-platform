@@ -1,3 +1,4 @@
+import { createWorkerDeadline, generationRunBudgetMs, settleWorkerCleanup, GENERATION_TARGET_MS } from "../worker-deadline";
 import { inlineStudioGenerationReferences, studioProviderParams } from "@/lib/studio-generation-references";
 import { claimStudioGeneration, assertStudioGenerationReady, finishStudioGeneration, stageStudioGenerationOutput } from "@/lib/studio-generation-lifecycle";
 import { ensureStudioGenerationArtifacts } from "@/lib/studio-generation-artifacts";
@@ -33,7 +34,6 @@ import {
   serializeProhibition,
 } from "@/lib/prohibitions";
 import { loadTermLib } from "@/lib/compliance";
-import { setVersionComplianceReport } from "@/lib/generations";
 import { compileAIConstraints, constraintsEnabled } from "@/lib/ai-constraints";
 import { recordUsage, fromGenerateUsage } from "@/lib/usage";
 import { getEffectiveAiSettings } from "@/lib/settings";
@@ -134,15 +134,13 @@ export class PrecheckBlockError extends Error {
   }
 }
 
-/** §2.4 — server-side watchdog. The worker races the generation against
- *  TIMEOUT_MS so a wedged AI call eventually marks the row FAILED instead of
- *  burning a job slot forever. Smaller than the client's 6-min cap so the
- *  DB row reaches FAILED *before* the wizard gives up — the user sees a real
- *  error, not "may have timed out". */
+/** Single-call/Studio budget. Legacy target batches instead receive 3 minutes
+ * per size plus 1 minute, capped at 37 minutes. The client's six-minute watch
+ * stops polling only; it must keep the receipt and never infer server failure. */
 const TIMEOUT_MS = 5 * 60_000;
 class GenerationTimeoutError extends Error {
-  constructor() {
-    super(`generation timed out after ${TIMEOUT_MS / 1000}s`);
+  constructor(timeoutMs = TIMEOUT_MS) {
+    super(`generation timed out after ${timeoutMs / 1000}s`);
     this.name = "GenerationTimeoutError";
   }
 }
@@ -157,6 +155,9 @@ class GenerationTimeoutError extends Error {
 export interface GenerateJobData {
   workspaceId: string;
   generationId: string;
+  /** Persisted by producers for one legacy submission; stale Redis jobs cannot
+   * claim a newer retry on the same Generation row. Studio has its own receipt. */
+  generationAttemptToken?: string;
   versionCount: number;
   /** Product-only, server-resolved accepted byte identities. Read from the
    * durable request jobData, never accepted from an HTTP caller. */
@@ -276,6 +277,8 @@ async function runAutoCompliance(
   workspaceId: string,
   versionIds: string[],
   brandRules: BrandRule[],
+  signal: AbortSignal,
+  persist: <T>(work: (tx: Prisma.TransactionClient) => Promise<T>) => Promise<T>,
 ): Promise<void> {
   if (!autoComplianceEnabled() || versionIds.length === 0) return;
 
@@ -300,6 +303,7 @@ async function runAutoCompliance(
   }
 
   for (const versionId of versionIds) {
+    if (signal.aborted) return;
     try {
       const version = await prisma.generationVersion.findUnique({
         where: { id: versionId },
@@ -314,12 +318,10 @@ async function runAutoCompliance(
         referenceImages,
       });
       const { report } = ComplianceCheckResponse.parse(
-        await ai.complianceCheck(request),
+        await ai.complianceCheck(request, { signal }),
       );
-      await setVersionComplianceReport(
-        versionId,
-        ComplianceReport.parse(report),
-      );
+      signal.throwIfAborted();
+      await persist(tx => tx.generationVersion.update({ where: { id: versionId }, data: { complianceReport: ComplianceReport.parse(report) } }));
     } catch (err) {
       // Best-effort: a failed check must not sink the generation.
       console.error(
@@ -350,9 +352,19 @@ export async function runGenerateJob(
     const updateProgress = job.updateProgress.bind(job);
     job.updateProgress = async value => { try { await updateProgress(value); } catch { /* receipt is authoritative */ } };
   }
-  const controller = studio ? new AbortController() : null;
-  const transport = controller ? { signal: controller.signal, maxResponseBytes: 48 * 1024 * 1024, requireRealImageProvider: true, requestId: studio!.id } : undefined;
+  const controller = new AbortController();
+  const transport = { signal: controller.signal, ...(studio ? { maxResponseBytes: 48 * 1024 * 1024, requireRealImageProvider: true, requestId: studio.id } : {}) };
   const { workspaceId, generationId, versionCount } = job.data;
+  const attemptToken = job.data.generationAttemptToken;
+  if (!studio && !attemptToken) {
+    const error = new Error("生成任务缺少本轮凭据，请重新提交；未调用模型");
+    // Upgrade-only exit: an old tokenless delivery must not fail a newer retry.
+    await settleWorkerCleanup(prisma.generation.updateMany({
+      where: { id: generationId, workspaceId, attemptToken: null, status: "PENDING", studioRequest: { is: null } },
+      data: { status: "FAILED", error: error.message, finishedAt: new Date() },
+    }));
+    throw error;
+  }
   const targets =
     (studio || multiSizeEnabled()) && job.data.targets && job.data.targets.length > 0
       ? job.data.targets
@@ -362,7 +374,7 @@ export async function runGenerateJob(
   const generationRow = await prisma.generation.findUnique({
     where: { id: generationId },
   });
-  if (!generationRow) {
+  if (!generationRow || generationRow.workspaceId !== workspaceId) {
     throw new Error(`Generation ${generationId} not found`);
   }
   // Alias to a definitely-non-null local so the nested runGenerationInner
@@ -373,8 +385,7 @@ export async function runGenerateJob(
   // every terminal write uses the same baseline.
   const startedAt = new Date();
   // §2.4 watchdog-race fence. Promise.race only decides which promise the
-  // OUTER await sees — it does NOT cancel runGenerationInner(), which keeps
-  // running after a timeout (no AbortController on the AI fetch). Without a
+  // OUTER await sees — even an aborted provider may settle late. Without a
   // guard, a slow-but-eventual success would run its SUCCEEDED update and
   // overwrite the watchdog's FAILED (and could clobber a user-triggered
   // regenerate). `settled` makes the FIRST terminal writer win: whoever
@@ -388,46 +399,47 @@ export async function runGenerateJob(
   ): Promise<boolean> => {
     if (settled) return false;
     settled = true;
-    if (studio) return finishStudioGeneration(studio, extra.status === "SUCCEEDED" ? "SUCCEEDED" : "FAILED", extra.error);
-    await prisma.generation.update({
-      where: { id: generationId },
-      data: {
-        ...extra,
-        finishedAt: new Date(),
-        durationMs: Date.now() - startedAt.getTime(),
-      },
-    });
-    return true;
+    try {
+      if (studio) return finishStudioGeneration(studio, extra.status === "SUCCEEDED" ? "SUCCEEDED" : "FAILED", extra.error);
+      const terminal = await prisma.generation.updateMany({
+        where: { id: generationId, workspaceId, attemptToken, status: "RUNNING", startedAt },
+        data: { ...extra, finishedAt: new Date(), durationMs: Date.now() - startedAt.getTime() },
+      });
+      return terminal.count === 1;
+    } catch (error) { settled = false; throw error; }
   };
 
-  if (!studio) await prisma.generation.update({
-    where: { id: generationId },
-    data: { status: "RUNNING", error: null, startedAt },
-  });
+  async function writeGeneration<T>(work: (tx: Prisma.TransactionClient) => Promise<T>, signal = controller.signal, completed = false): Promise<T> {
+    signal.throwIfAborted();
+    return prisma.$transaction(async tx => {
+      const lease = await tx.generation.updateMany({
+        where: { id: generationId, workspaceId, attemptToken, status: completed ? "SUCCEEDED" : "RUNNING", startedAt },
+        data: { startedAt },
+      });
+      if (lease.count !== 1) throw new Error("Generation run is no longer active; discarding late result");
+      signal.throwIfAborted();
+      const value = await work(tx);
+      signal.throwIfAborted();
+      return value;
+    }, { maxWait: 1_000, timeout: 5_000 });
+  }
 
   // T-conn-b — owner id for per-user usage attribution (best-effort).
-  const ownerId =
-    (
-      await prisma.brandWorkspace.findUnique({
-        where: { id: workspaceId },
-        select: { ownerId: true },
-      })
-    )?.ownerId ?? undefined;
+  let ownerId: string | undefined;
 
-  // §2.4 watchdog: race the whole pipeline against TIMEOUT_MS. On timeout
-  // the rejection lands in the outer catch → FAILED with a clear reason.
-  // The orphan AI fetch may keep running upstream (no AbortController on
-  // ai.call), but the job slot frees and attempts:1 prevents replay.
+  // Abort the transport when the total budget ends. Conditional task claims
+  // stop stalled-job replays, and transaction fences reject late persistence.
+  const timeoutMs = studio ? Math.max(1, Math.min(TIMEOUT_MS, studio.expiresAt.getTime() - Date.now())) : generationRunBudgetMs(targets?.length);
   let watchdog: NodeJS.Timeout | null = null;
   const timeout = new Promise<never>((_, reject) => {
     watchdog = setTimeout(
-      () => { controller?.abort(); reject(new GenerationTimeoutError()); },
-      studio ? Math.max(1, Math.min(TIMEOUT_MS, studio.expiresAt.getTime() - Date.now())) : TIMEOUT_MS,
+      () => { const error = new GenerationTimeoutError(timeoutMs); controller.abort(error); reject(error); },
+      timeoutMs,
     );
   });
 
   try {
-    const result = await Promise.race([runGenerationInner(), timeout]);
+    const result = await Promise.race([claimAndRun(), timeout]);
     if (watchdog) clearTimeout(watchdog);
     return result;
   } catch (err) {
@@ -436,8 +448,30 @@ export async function runGenerateJob(
     // writeTerminal no-ops if the inner already settled SUCCEEDED (can't
     // normally happen — a success clears the watchdog — but keeps the
     // invariant "first terminal write wins" airtight).
-    await writeTerminal({ status: "FAILED", error: studio ? err : String(err) });
+    await settleWorkerCleanup(writeTerminal({ status: "FAILED", error: studio ? err : String(err) }));
     throw err;
+  }
+
+  async function claimAndRun(): Promise<GenerateJobResult> {
+    if (!studio) {
+      const claim = await prisma.generation.updateMany({
+        where: { id: generationId, workspaceId, attemptToken, status: "PENDING", studioRequest: { is: null } },
+        data: { status: "RUNNING", error: null, startedAt, finishedAt: null },
+      });
+      if (claim.count === 1 && controller.signal.aborted) {
+        await settleWorkerCleanup(prisma.generation.updateMany({
+          where: { id: generationId, workspaceId, attemptToken, status: "RUNNING", startedAt },
+          data: { status: "FAILED", error: String(controller.signal.reason), finishedAt: new Date(), durationMs: Date.now() - startedAt.getTime() },
+        }));
+      }
+      controller.signal.throwIfAborted();
+      if (claim.count !== 1) return { generationId, versionIds: [] };
+    }
+    ownerId = (await prisma.brandWorkspace.findUnique({
+      where: { id: workspaceId }, select: { ownerId: true },
+    }))?.ownerId ?? undefined;
+    controller.signal.throwIfAborted();
+    return runGenerationInner();
   }
 
   async function runGenerationInner(): Promise<GenerateJobResult> {
@@ -837,9 +871,9 @@ export async function runGenerateJob(
       : 0;
     async function dropStaleRoots() {
       if (staleRootIds.length > 0) {
-        await prisma.generationVersion.deleteMany({
-          where: { id: { in: staleRootIds } },
-        });
+        await writeGeneration(tx => tx.generationVersion.deleteMany({
+          where: { id: { in: staleRootIds }, generationId },
+        }), controller.signal, true);
       }
     }
 
@@ -1040,7 +1074,7 @@ export async function runGenerateJob(
     }
 
     const baseFields = {
-      ...(studio ? { providerRetryPolicy: "never" as const } : {}),
+      providerRetryPolicy: "never" as const,
       sceneType: generation.sceneType,
       sellingPoint: generation.sellingPoint,
       scene: chatOrigin ? "" : generation.scene,
@@ -1074,7 +1108,9 @@ export async function runGenerateJob(
     async function persist(
       v: GenerateResponse["versions"][number],
       index: number,
+      signal = controller.signal,
     ): Promise<string> {
+      signal.throwIfAborted();
       if (studio) {
         return stageStudioGenerationOutput(studio, { imageUrl: v.imageUrl, width: v.width, height: v.height,
           params: { ...studioProviderParams(v.params), appliedRuleIds, appliedBrandRuleCount: appliedRuleIds.length,
@@ -1109,6 +1145,7 @@ export async function runGenerateJob(
           ? await uploadDataUrlImage(
               v.imageUrl,
               `generations/${workspaceId}/bases`,
+              signal,
             )
           : null;
       const exactComposited =
@@ -1134,8 +1171,9 @@ export async function runGenerateJob(
       const imageUrl = await uploadDataUrlImage(
         finalImageUrl,
         `generations/${workspaceId}`,
+        signal,
       );
-      const created = await prisma.generationVersion.create({
+      const created = await writeGeneration(tx => tx.generationVersion.create({
         data: {
           generationId,
           index,
@@ -1201,7 +1239,7 @@ export async function runGenerateJob(
           // complianceReport / parentVersionId / isFinal left null/default
           // for M5 / M4 / M6 to fill in.
         },
-      });
+      }), signal);
       // F18 · 出图回流素材库 — 把刚落库的出图版本镜像成一条真实 Asset，使生成图与
       // 上传素材并列出现在素材库（P04）。best-effort：失败只 warn，绝不让出图 FAILED。
       const mWidth =
@@ -1209,6 +1247,7 @@ export async function runGenerateJob(
       const mHeight =
         (actualSize as { actualHeight?: number }).actualHeight ?? v.height;
       await mirrorGenerationVersionToAsset({
+        signal, persist: work => writeGeneration(work, signal),
         workspaceId,
         generationVersionId: created.id,
         imageUrl,
@@ -1245,7 +1284,13 @@ export async function runGenerateJob(
         // Keep this outside the per-size catch so an authoritative 409 remains
         // readable instead of becoming an opaque "all target sizes failed".
         if (studio) await assertStudioGenerationReady(studio, controller!.signal);
+        const targetDeadline = createWorkerDeadline(
+          studio ? Math.max(1, Math.min(TIMEOUT_MS, studio.expiresAt.getTime() - Date.now())) : GENERATION_TARGET_MS,
+          `尺寸 ${t.key}`,
+        );
+        const targetSignal = AbortSignal.any([controller.signal, targetDeadline.signal]);
         try {
+          await targetDeadline.run((async () => {
           const request = GenerateRequest.parse({
             ...baseFields,
             ...(job.data.studioImageTool ? { brandRules: [], aiConstraints: { ...baseFields.aiConstraints, referenceImages: [] } } : {}),
@@ -1257,18 +1302,23 @@ export async function runGenerateJob(
             targets: [studio && job.data.studioConversationSize && !job.data.studioImageTool
               ? { ...t, ...studioConversationProviderSize(t) } : t],
           });
+          targetSignal.throwIfAborted();
+          const targetTransport = { ...transport, signal: targetSignal };
           const result = studioEdit
-            ? StudioEditResponse.parse(await ai.studioEdit(StudioEditRequest.parse({ imageUrl: studioEdit.imageUrl, generation: request, ...(job.data.studioImageTool ? { imageTool: job.data.studioImageTool } : {}) }), transport))
-            : GenerateResponse.parse(await ai.generate(request, transport));
+            ? StudioEditResponse.parse(await ai.studioEdit(StudioEditRequest.parse({ imageUrl: studioEdit.imageUrl, generation: request, ...(job.data.studioImageTool ? { imageTool: job.data.studioImageTool } : {}) }), targetTransport))
+            : GenerateResponse.parse(await ai.generate(request, targetTransport));
+          targetSignal.throwIfAborted();
           if (settled) {
             console.warn(
               `[generate] ${generationId} settled (timeout) after size ${t.key} AI call; discarding`,
             );
-            break;
+            throw new Error("Generation already settled; discarding late target");
           }
           if (studio && result.versions.length !== 1) throw new Error("Product generation must return exactly one image");
           for (const v of result.versions) {
-            versionIds.push(await persist(v, index));
+            const id = await persist(v, index, targetSignal);
+            targetSignal.throwIfAborted();
+            versionIds.push(id);
             index += 1;
           }
           await recordUsage({
@@ -1279,6 +1329,7 @@ export async function runGenerateJob(
             generationId,
             ...fromGenerateUsage(result.usage),
           });
+          })());
         } catch (sizeErr) {
           failures.push(
             `[${t.key} ${t.label} ${t.width}×${t.height}] ${String(sizeErr)}`,
@@ -1290,7 +1341,8 @@ export async function runGenerateJob(
             status: "FAILED",
             size: `${t.width}x${t.height}`,
           });
-        }
+        } finally { targetDeadline.dispose(); }
+        controller.signal.throwIfAborted();
         await job.updateProgress(
           25 + Math.round((index / Math.max(targets.length, 1)) * 70),
         );
@@ -1320,7 +1372,7 @@ export async function runGenerateJob(
       // optional + can be slow (VLM calls); if the watchdog fires during it, the
       // FAILED write no-ops (settled), so a job with usable outputs stays
       // SUCCEEDED instead of being flipped to FAILED.
-      await runAutoCompliance(workspaceId, versionIds, brandRules);
+      await runAutoCompliance(workspaceId, versionIds, brandRules, controller.signal, work => writeGeneration(work, controller.signal, true));
       await job.updateProgress(100);
       return { generationId, versionIds };
     }
@@ -1333,7 +1385,9 @@ export async function runGenerateJob(
     if (studio) await assertStudioGenerationReady(studio, controller!.signal);
     let raw: unknown;
     try {
+      controller.signal.throwIfAborted();
       raw = await ai.generate(request, transport);
+      controller.signal.throwIfAborted();
     } catch (genErr) {
       await recordUsage({
         workspaceId,
@@ -1385,7 +1439,7 @@ export async function runGenerateJob(
     // Best-effort auto visual compliance AFTER SUCCEEDED is written (see
     // multi-size path): optional + slow, must not let the watchdog flip a job
     // with usable outputs to FAILED.
-    await runAutoCompliance(workspaceId, versionIds, brandRules);
+    await runAutoCompliance(workspaceId, versionIds, brandRules, controller.signal, work => writeGeneration(work, controller.signal, true));
     await job.updateProgress(100);
     return { generationId, versionIds };
   }
