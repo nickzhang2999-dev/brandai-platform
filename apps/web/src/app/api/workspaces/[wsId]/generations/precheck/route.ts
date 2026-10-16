@@ -10,7 +10,7 @@ import {
   parse,
   requireUser,
 } from "@/lib/api";
-import { requireOwnedWorkspace } from "@/lib/workspace";
+import { requireWorkspaceRole } from "@/lib/workspace";
 import { runPrecheck } from "@/lib/precheck";
 
 /**
@@ -30,7 +30,7 @@ export async function POST(
   try {
     const user = await requireUser();
     const { wsId } = await params;
-    await requireOwnedWorkspace(wsId, user.id);
+    await requireWorkspaceRole(wsId, user.id, "EDITOR");
 
     const input = parse(CreateGenerationInput, await req.json());
 
