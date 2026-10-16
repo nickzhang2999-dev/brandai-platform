@@ -8,8 +8,11 @@
  * exits the container with code 1, the placeholder is already gone, and CDS
  * just shows "stopped" with no stdout — invisible from the API. So we bind a
  * health server FIRST and keep it alive reporting whatever went wrong, which
- * /api/health proxies out for an operator to read.
+ * /api/health proxies out for an operator to read. Invalid production auth
+ * configuration is the deliberate exception: the first dependency below
+ * rejects it before any connection, consumer or health listener is created.
  */
+import "./runtime-env";
 import http from "node:http";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
