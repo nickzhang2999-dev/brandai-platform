@@ -44,7 +44,7 @@ export async function studioRoute(req: Request) {
       if (typeof bootstrapSha256 !== "string" || !/^[a-f0-9]{64}$/.test(bootstrapSha256)) {
         throw new ApiException(503, "工作台启动资源版本无效，请重新构建。");
       }
-      const asset = await studioAsset(pathname === "/canvas" ? "/canvas.html" : "/studio.html", true);
+      const asset = await studioAsset("/studio.html", true);
       if (!asset) throw new ApiException(503, "工作台资源尚未构建。");
       return new Response(studioHtml(asset.bytes.toString("utf8"), { ...session, workspaceId, readOnly }, bootstrapSha256), {
         headers: { ...headers, "Content-Type": "text/html; charset=utf-8", "X-Frame-Options": "SAMEORIGIN",
