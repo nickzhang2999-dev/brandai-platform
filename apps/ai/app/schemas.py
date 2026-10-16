@@ -240,11 +240,18 @@ class AssetRef(BaseModel):
     # K7 — provenance hint for SSRF policy. "UPLOAD" (default) trusts the initial
     # host (our own storage may be private); "WEBSITE" re-validates the initial
     # host too (defense against DNS rebinding of a harvested third-party URL).
-    source: Optional[str] = None
+    source: Optional[Literal["UPLOAD", "WEBSITE"]] = None
+
+    @field_validator("source", mode="before")
+    @classmethod
+    def reject_null_source(cls, value):
+        if value is None:
+            raise ValueError("source must be omitted, UPLOAD, or WEBSITE")
+        return value
 
 
 class RecognizeRequest(BaseModel):
-    assets: list[AssetRef]
+    assets: list[AssetRef] = Field(min_length=1)
 
 
 class DescribeRequest(BaseModel):
@@ -254,7 +261,14 @@ class DescribeRequest(BaseModel):
     category: Optional[str] = None
     brandTone: Optional[str] = None
     # K7 — provenance hint for SSRF policy (see AssetRef.source).
-    source: Optional[str] = None
+    source: Optional[Literal["UPLOAD", "WEBSITE"]] = None
+
+    @field_validator("source", mode="before")
+    @classmethod
+    def reject_null_source(cls, value):
+        if value is None:
+            raise ValueError("source must be omitted, UPLOAD, or WEBSITE")
+        return value
 
 
 class DescribeResponse(BaseModel):
@@ -272,7 +286,7 @@ class SummarizeContext(BaseModel):
 class SummarizeRequest(BaseModel):
     """POST /v1/summarize — B2/C8 text-only VLM endpoint, two modes."""
 
-    mode: str  # "brief_decompose" | "campaign_summary"
+    mode: Literal["brief_decompose", "campaign_summary"]
     text: str
     context: Optional[SummarizeContext] = None
 
@@ -451,7 +465,7 @@ class GenerateRequest(BaseModel):
     # M3 — text rendering strategy. "direct" (default) = model renders any text
     # itself (legacy). "layered" = steer the model to leave clean negative space
     # and render NO text, so the client overlays crisp editable text on top.
-    textMode: str = "direct"
+    textMode: Literal["direct", "layered"] = "direct"
     # V0.0.13 — admin-configured image system prompt (AppSetting.imageSystemPrompt
     # threaded through the web worker). Prepended verbatim to the prompt.
     # Frozen-additive: absent → prompt unchanged.
@@ -496,7 +510,10 @@ class GenerateResponse(BaseModel):
 
 class EditRequest(BaseModel):
     imageUrl: str
-    op: str
+    op: Literal[
+        "IMAGE_EDIT", "REPLACE_BACKGROUND", "MOVE_PRODUCT", "EDIT_TEXT",
+        "RECOLOR", "ADD_ELEMENT", "REMOVE_ELEMENT", "OUTPAINT", "INPAINT", "RESIZE",
+    ]
     payload: dict[str, Any] = {}
 
 

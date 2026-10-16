@@ -185,6 +185,7 @@ model Membership {
   userId      String
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   workspaceId String
+  workspace   BrandWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   role        String   @default("OWNER")
   createdAt   DateTime @default(now())
 
@@ -221,6 +222,13 @@ model BrandWorkspace {
   workbenchUsers WorkbenchUserState[]
   creationReceipts StudioBrandCreation[]
   studioConversations StudioConversation[]
+
+  memberships Membership[]
+  generations Generation[]
+  studioBrandMaterials StudioBrandMaterialReceipt[]
+  studioGenerationRequests StudioGenerationRequest[]
+  studioGenerationOutputs StudioGenerationOutput[]
+  studioGeneratedMaterials StudioGeneratedMaterial[]
 
   @@index([ownerId])
 }
@@ -294,6 +302,7 @@ model Asset {
   @@index([workspaceId, libraryKind])
   @@index([workspaceId, availableForGeneration])
   @@index([workspaceId, folderId])
+  @@index([replacementAssetId])
 }
 
 // V0.0.9 · workspace 级水印配置。配置本身可持续编辑；每次生成会把当时的
@@ -556,6 +565,7 @@ model WorkbenchChatDraft {
   inputForm Json?
   updatedAt DateTime @updatedAt
   @@unique([userId, projectId])
+  @@index([projectId])
 }
 
 // M3 one durable conversation per user/project; message attachments are an
@@ -574,6 +584,8 @@ model StudioConversation {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   @@unique([workspaceId, userId, projectId])
+  @@index([projectId])
+  @@index([userId])
 }
 
 model StudioConversationMessage {
@@ -607,6 +619,7 @@ model Generation {
   projectId    String
   project      Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
   workspaceId  String
+  workspace    BrandWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   sceneType    SceneType
   sellingPoint String
   scene        String
@@ -656,6 +669,7 @@ model GenerationVersion {
   mirrorAsset      Asset?     @relation("GenerationVersionMirror")
 
   @@index([generationId])
+  @@index([parentVersionId])
 }
 
 // H-async — server-authoritative async task row so recognize / parse-manual /
@@ -667,6 +681,8 @@ model AsyncTask {
   studioBrandMaterialReceipt StudioBrandMaterialReceipt?
   id          String    @id @default(cuid())
   workspaceId String
+  // Intentionally soft: upload task deletion would cascade away the durable
+  // object-cleanup receipt. See P5 audit notes before introducing a workspace FK.
   kind        String // "RECOGNIZE" | "PARSE_MANUAL" | "EDIT"
   status      JobStatus @default(PENDING)
   progress    Int       @default(0)
@@ -681,6 +697,7 @@ model AsyncTask {
   updatedAt   DateTime  @updatedAt
 
   @@index([workspaceId, kind, createdAt])
+  @@index([refId])
 }
 
 // Upload bytes are a bounded durable outbox, never the final asset storage.
@@ -689,6 +706,7 @@ model StudioMaterialUpload {
   taskId       String    @id
   task         AsyncTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
   workspaceId  String
+  // Retain objectKey/expiry cleanup markers when a brand is deleted.
   userId       String
   projectId    String?
   attachToProject Boolean @default(true)
@@ -719,6 +737,7 @@ model StudioBrandMaterialReceipt {
   assetId String @id
   asset Asset @relation(fields: [assetId], references: [id], onDelete: Cascade)
   workspaceId String
+  workspace BrandWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   userId String
   taskId String @unique
   task AsyncTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
@@ -806,6 +825,7 @@ model UsageLog {
 model StudioGenerationRequest {
   id String @id @default(cuid())
   workspaceId String
+  workspace BrandWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   userId String
   projectId String
   mutationId String
@@ -838,6 +858,7 @@ model StudioGenerationOutput {
   requestId String
   request StudioGenerationRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
   workspaceId String
+  workspace BrandWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   projectId String
   imageUrl String? @db.Text
   widthHint Int
@@ -849,6 +870,7 @@ model StudioGenerationOutput {
   artifact StudioGeneratedMaterial?
   @@unique([requestId, index])
   @@index([expiresAt])
+  @@index([workspaceId])
 }
 
 model StudioGeneratedMaterial {
@@ -859,6 +881,7 @@ model StudioGeneratedMaterial {
   requestId String
   request StudioGenerationRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
   workspaceId String
+  workspace BrandWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   projectId String
   userId String
   status JobStatus @default(PENDING)
@@ -887,6 +910,8 @@ model StudioGeneratedMaterial {
 model StudioDecompositionRequest {
   id String @id @default(cuid())
   workspaceId String
+  // Intentionally soft: objectKeys/publishedLayers remain available for orphan
+  // cleanup after project/brand deletion. Do not cascade away this receipt.
   userId String
   projectId String
   mutationId String @db.Uuid
