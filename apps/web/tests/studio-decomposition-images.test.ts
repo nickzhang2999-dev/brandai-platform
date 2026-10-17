@@ -60,12 +60,17 @@ describe("Studio decomposition image boundary (local fixtures; no provider or DB
       await expect(inspectStudioLayer(bytes, width!, height!, signal())).rejects.toMatchObject({ status: 422 });
     }
   });
-  it("rejects empty and sub-threshold alpha while sharing the existing ink threshold", async () => {
-    for (const bytes of [await fixture(12, 8), await fixture(12, 8, { left: 1, top: 1, width: 2, height: 2, alpha: 63 })]) {
-      await expect(inspectStudioLayer(bytes, 12, 8, signal())).rejects.toMatchObject({ status: 422 });
-    }
+  it("rejects fully transparent layers but keeps the coverage threshold", async () => {
+    await expect(inspectStudioLayer(await fixture(12, 8), 12, 8, signal())).rejects.toMatchObject({ status: 422 });
     const result = await inspectStudioLayer(await fixture(12, 8, { left: 1, top: 1, width: 2, height: 2, alpha: 64 }), 12, 8, signal());
     expect(result).toMatchObject({ alphaBounds: { left: 1, top: 1, width: 2, height: 2 }, inkCoverage: 4 / 96, hasTransparency: true });
+  });
+  it.each([1, 4, 63])("preserves a whole faint layer at alpha=%i without amplifying it", async alpha => {
+    const result = await inspectStudioLayer(await fixture(12, 8, { left: 1, top: 1, width: 2, height: 2, alpha }), 12, 8, signal());
+    expect(result).toMatchObject({ alphaBounds: { left: 1, top: 1, width: 2, height: 2 }, inkCoverage: 0, hasTransparency: true });
+    const raw = await sharp(result.body).raw().toBuffer();
+    expect([...raw.subarray((12 + 1) * 4, (12 + 1) * 4 + 4)]).toEqual([120, 70, 220, alpha]);
+    expect(raw[3]).toBe(0);
   });
   it("rejects corrupt, non-raster, oversized, animated and invalid source inputs", async () => {
     const bytes = await fixture(12, 8, { left: 1, top: 1, width: 2, height: 2 });

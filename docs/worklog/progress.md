@@ -432,3 +432,5 @@ CDS read-only preflight: CLI0.16.6/latest; project push automatic deploy true, d
 Web/Worker只读SQL证明实际独立库brandai_devupdate1012、三条新迁移完成、失败迁移0、Membership品牌外键生效。真实预览浏览器登录、创建唯一验收项目、画布工具持续显示、文字保存刷新恢复、SVG/PNG实际下载全通过。Web/AI/Worker健康ok，Worker提交与发布一致。未改main、共享数据、CDS配置；模型调用0。详情docs/development-log-2026-10-17-release.md；最终发布回执仅本地保留，远端及部署不再因文档回填变动。
 
 后续用户反馈并授权修复AUTO分层：只读线上任务和日志证实分析HTTP502/上游400，实际微量接口探针确认gpt-5.6-sol拒绝max_tokens，修正参数后200。代码修复参数兼容、安全错误分类及面板终态提示；本地1597+293+34/AI557/types/build、浏览器10+3通过，lint0错误14警告。之前发布回执随本次修复批次一并提交。真实图像验收待部署后执行，详见development-log-2026-10-17-layer-fix.md。
+
+57c6795完整CI39016728629通过并部署。单次真实AUTO验收分析成功、Fal返回9张图；发现其中两层最大alpha=4，旧64阈值把非零淡层当空白而阻断归档。修正图层检查和PSD双路径的非零像素判定，仍保留整组有效内容/透明度门禁；不重新调用模型，仅准备恢复已有输出。第二次修复定向81项、Web1605/contracts293/UI34、AI557/types/lint通过，构建及恢复验收待回填。

@@ -77,13 +77,15 @@ export async function inspectStudioLayer(
       for (let x = 0; x < sourceWidth; x++) {
         const alpha = decoded.data[(y * sourceWidth + x) * 4 + 3]!;
         if (alpha < 255) hasTransparency = true;
-        if (alpha < INK_ALPHA_THRESHOLD) continue;
-        ink++;
+        if (alpha >= INK_ALPHA_THRESHOLD) ink++;
+        // Faint shadows are real pixels. Keep the threshold for coverage,
+        // never use it to discard a layer or crop its translucent edges.
+        if (!alpha) continue;
         minX = Math.min(minX, x); minY = Math.min(minY, y);
         maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
       }
     }
-    if (!ink) throw failure("分层服务返回了空白或全透明图层，未发布不完整的分层结果。");
+    if (maxX < 0) throw failure("分层服务返回了空白或全透明图层，未发布不完整的分层结果。");
     const encoding = sharp(decoded.data, { raw: { width: sourceWidth, height: sourceHeight, channels: 4 }, limitInputPixels: STUDIO_LAYER_TOTAL_PIXELS });
     const abortEncoding = () => { encoding.destroy(); };
     signal.addEventListener("abort", abortEncoding, { once: true });

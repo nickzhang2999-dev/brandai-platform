@@ -297,6 +297,21 @@ describe("once-only worker claim and atomic publication", () => {
     seed(); f.layer.mockResolvedValue({ ...layers()[0], body: bytes, hasTransparency: false });
     await runStudioDecomposition("request"); expect(row().status).toBe("FAILED"); expect(publishedAssets).toEqual([]); expect(row().publishedLayers).toEqual([]);
   });
+  it("keeps faint layers alongside two substantive layers without another provider call", async () => {
+    const three = { ...result, layers: [...result.layers, result.layers[0]!] };
+    seed({ status: "RUNNING", providerStartedAt: new Date(), outputJson: { result: three, publishedLayers: null }, archiveExpiresAt: new Date(Date.now() + 60_000) });
+    f.layer.mockResolvedValueOnce({ ...layers()[0], body: bytes, hasTransparency: true, inkCoverage: 0 });
+    await runStudioDecomposition("request");
+    expect(row().status).toBe("SUCCEEDED"); expect(publishedAssets).toHaveLength(3);
+    expect(row().publishedLayers[0].inkCoverage).toBe(0); expect(f.paid).not.toHaveBeenCalled();
+  });
+  it("rejects a group of only faint noise and records the actual validation reason", async () => {
+    seed(); f.layer.mockResolvedValue({ ...layers()[0], body: bytes, hasTransparency: true, inkCoverage: 0 });
+    await runStudioDecomposition("request");
+    expect(row().status).toBe("FAILED"); expect(publishedAssets).toHaveLength(0);
+    expect(row().error).toContain("不足两个具有有效内容");
+    expect(row().outputJson.result).toEqual(result); expect(f.paid).toHaveBeenCalledTimes(1);
+  });
   it("retains no raw upstream message when provider submission fails", async () => {
     seed(); f.paid.mockRejectedValue(new Error("https://private-provider.invalid?secret=synthetic-private user intent"));
     await runStudioDecomposition("request"); expect(row().status).toBe("FAILED"); expect(String(row().error)).not.toMatch(/https|secret|synthetic-private|user intent/);

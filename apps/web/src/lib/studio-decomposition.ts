@@ -375,6 +375,9 @@ async function archiveLayers(row: Row, signal: AbortSignal) {
     layers.push(StudioDecompositionLayer.parse({ ...meta, assetId, order: index, url: `/api/workspaces/${row.workspaceId}/assets/${assetId}/raw` }));
   }
   if (!transparent) throw new ApiException(422, "模型结果没有透明前景，未将普通图片冒充分层结果。");
+  if (layers.filter(layer => layer.inkCoverage > 0).length < 2) {
+    throw new ApiException(422, "模型结果不足两个具有有效内容的图层，未将近透明噪点冒充分层结果。");
+  }
   signal.throwIfAborted();
   await prisma.$transaction(async tx => {
     const locked = await tx.$queryRaw<Array<{ id: string }>>`SELECT "id" FROM "StudioDecompositionRequest" WHERE "id"=${row.id} FOR UPDATE`;
@@ -394,8 +397,10 @@ async function archiveLayers(row: Row, signal: AbortSignal) {
     await tx.studioDecompositionRequest.update({ where: { id: row.id }, data: { status: "SUCCEEDED", outputJson: Prisma.DbNull, publishedLayers: layers as Prisma.InputJsonValue, archiveToken: null, archivingStartedAt: null, error: null } });
   }, { timeout: 15_000 });
   } catch (error) {
+    const reason = error instanceof ApiException && [409, 422].includes(error.status)
+      ? error.message : "图层保存未完成，原图片保持不变。";
     await prisma.studioDecompositionRequest.updateMany({ where: { id: row.id, status: "RUNNING", archiveToken: token, expiresAt: row.expiresAt },
-      data: { status: "FAILED", archiveToken: null, archivingStartedAt: null, error: "图层保存未完成，原图片保持不变。可重新保存已有模型结果，不会重复调用模型。" } });
+      data: { status: "FAILED", archiveToken: null, archivingStartedAt: null, error: `${reason}已有模型结果暂时保留；重新保存不会重复调用模型。` } });
     throw error;
   }
 }

@@ -70,12 +70,12 @@ try {
   const children = [];
   for (const layer of layers) {
     const rgba = new Uint8ClampedArray(layer.pixels);
-    let hasInk = false;
+    let hasPixels = false;
     for (let y = 0; y < layer.height; y++) for (let x = 0; x < layer.width; x++) {
       const i = (y * layer.width + x) * 4;
       const target = ((y + layer.top) * width + x + layer.left) * 4;
       const alpha = rgba[i + 3];
-      if (alpha >= 64) hasInk = true;
+      if (alpha > 0) hasPixels = true;
       if (!alpha) continue;
       const a = alpha / 255;
       const previous = composite[target + 3] / 255;
@@ -85,7 +85,7 @@ try {
       }
       composite[target + 3] = Math.round(outputAlpha * 255);
     }
-    if (!hasInk) throw new Error('empty-layer');
+    if (!hasPixels) throw new Error('empty-layer');
     children.push({ name: layer.name, left: layer.left, top: layer.top, blendMode: 'normal', opacity: 1, hidden: false,
       imageData: { width: layer.width, height: layer.height, data: rgba } });
   }
@@ -144,21 +144,20 @@ export async function encodeStudioPsd(
       }
       const raw = await deadline(image.toColourspace("srgb").ensureAlpha().raw().toBuffer({ resolveWithObject: true }), signal);
       if (raw.info.channels !== 4 || raw.data.length !== width * height * 4) throw new StudioPsdEncodingError(422, "图层像素读取失败。");
-      let left = width, top = height, right = -1, bottom = -1, hasInk = false;
+      let left = width, top = height, right = -1, bottom = -1;
       for (let y = 0; y < height; y++) {
         signal.throwIfAborted();
         for (let x = 0; x < width; x++) {
           const alpha = raw.data[(y * width + x) * 4 + 3]!;
           if (alpha < 255) hasTransparency = true;
-          if (alpha >= 64) hasInk = true;
-          // Unlike persisted inkBounds (threshold=64), any nonzero alpha
-          // belongs in the crop. Faint shadows/antialiased edges survive.
+          // Every nonzero alpha belongs in the crop, even when the entire
+          // layer is a faint shadow. Never amplify or discard its opacity.
           if (!alpha) continue;
           left = Math.min(left, x); top = Math.min(top, y);
           right = Math.max(right, x); bottom = Math.max(bottom, y);
         }
       }
-      if (!hasInk || right < left) throw new StudioPsdEncodingError(422, "图层没有有效透明内容，未导出不完整的 PSD。");
+      if (right < left) throw new StudioPsdEncodingError(422, "图层没有有效透明内容，未导出不完整的 PSD。");
       const crop = { width: right - left + 1, height: bottom - top + 1 };
       // Reject before allocating another crop or starting the writer; layer
       // count alone never stands in for the actual visible pixel budget.

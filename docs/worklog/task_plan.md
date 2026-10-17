@@ -356,5 +356,7 @@ P1 local gates complete: e0725bd owned shell/export;6ce5de0 routes;601a3c1 exact
 - [x] 只读定位失败阶段；极小真实接口校验确认旧max_tokens参数导致上游400。
 - [x] 修复推理视觉模型参数、分层安全失败原因和任务提示同步。
 - [x] 本地全部测试、typecheck、lint、生产构建及浏览器正常/失败交互通过。
-- [ ] 推送devUpdate1012并验证精确提交CI、CDS运行版本。
+- [x] 参数修复57c6795推送devUpdate1012，完整CI与CDS精确版本确认。
+- [x] 单次真实分析与Fal拆层完成，定位淡alpha被误判空白的第二处故障。
+- [ ] 淡alpha修复完成全门禁并部署，恢复已有模型结果（不重新调用模型）。
 - [ ] 故障原图副本真实AUTO分析→分层→保存→PSD验收，补齐日志。

@@ -19,6 +19,20 @@ async function fixture(allOpaque = false) {
   return { width, height, bytes, layers };
 }
 describe("Studio PSD codec: actual binary encode/readback, synthetic pixels only", () => {
+  it.each([1, 4, 63])("writes and reopens a complete faint layer at alpha=%i unchanged", async alpha => {
+    const f = await fixture();
+    const raw = Buffer.alloc(8 * 8 * 4);
+    raw.set([120, 70, 220, alpha], (2 * 8 + 3) * 4);
+    const faint = await sharp(raw, { raw: { width: 8, height: 8, channels: 4 } }).png().toBuffer();
+    f.bytes[1] = faint;
+    f.layers[1] = { ...f.layers[1]!, sizeBytes: faint.length, assetSha256: createHash("sha256").update(faint).digest("hex") };
+    const body = await encodeStudioPsd(8, 8, f.layers, async layer => f.bytes[layer.order]!, AbortSignal.timeout(3000));
+    const document = readPsd(body, { useImageData: true });
+    expect(document.children).toHaveLength(2);
+    const layer = document.children![0]!;
+    expect([layer.left, layer.top, layer.imageData!.width, layer.imageData!.height]).toEqual([3, 2, 1, 1]);
+    expect([...layer.imageData!.data]).toEqual([120, 70, 220, alpha]);
+  });
   it("proves independent layers, straight alpha, order and expected composite pixels with actual writer/reader", async () => {
     const report = await verifyStudioPsdFile();
     expect(report).toMatchObject({ aiGenerated: false, realProviderAcceptance: false, layerCount: 3, width: 96, height: 64 });
