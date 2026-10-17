@@ -418,3 +418,9 @@ CDS read-only preflight: CLI0.16.6/latest; project push automatic deploy true, d
 使用独立worktree和分支，从同一dev基线改造；不是产品重写。29项Python请求契约/58项SQL验证通过，真实库不动。完整范围与验证见 ../development-log-2026-10-16-p5.md。
 
 最终门禁：Web1327/contracts287/UI34、AI529通过；typecheck/build通过；lint 0错误12警告。Web测试迁移109文件保留全部测试体，实际Chromium画布前后各52项。完成本地工程检查；真实库审计及五阶段集成未验收，未推送。
+## 2026-10-17 推送交接检查
+
+接手 integration/devupdate-opt@21eb6a5。实测独立库 brandai_devupdate1012 的 Membership 孤儿记录1条，其他25表与6条跨品牌检查均0；按交接要求停止推送，不修改数据库。Web/Worker启动密钥校验通过。已刷新远端83a5dca并确认可快进。重新执行测试1596/293/34、AI547、types/lint通过；构建结果与完整计数见 docs/push-preflight-2026-10-17.md。未部署、未调用模型、未修改CDS配置。
+## 2026-10-17 经确认解除迁移阻断
+
+用户明确批准备份并清理唯一孤立Membership，再推送验收。已完成受限本地备份及事务内精确删除1条；26表孤儿/6项跨品牌检查全部0，用户和品牌数量不变。未修改main、CDS配置或密钥。即将正常推送集成版本，部署结果另补，不把本次数据修复当成新版上线证据。

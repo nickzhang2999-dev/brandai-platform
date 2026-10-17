@@ -227,3 +227,6 @@ CDS preflight directly confirms push automatic deployment and default shared bra
 ## 2026-10-16 P5调查
 
 上传和分层任务必须留下删除品牌后的对象清理依据，直接cascade新增FK会破坏这条生命周期；仅补安全的6表FK，例外明确记录。测试迁移后alias/relative双mock解析同一模块，vi.importMock自引用会死等，已按真实同模块工厂去重处理。
+## 2026-10-17 发布阻断实证
+
+实际事务回读current_database=brandai_devupdate1012、transaction_read_only=on。26表审计仅Membership=1，其余0；6项跨品牌检查0。新P5迁移包含Membership外键，孤儿未解决前不得推送触发迁移。未修改数据或CDS配置；这不是已发生的CDS平台故障。运行中Web/Worker实际AUTH_SECRET trim后长度与非示例值检查通过，未输出密钥。

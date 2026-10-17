@@ -1,5 +1,11 @@
 # 开发日志 · 2026-10-16 · 优化分支集成
 
+## 2026-10-17 接手续验更新（覆盖下文旧验证状态）
+
+小克在同一集成提交21eb6a5重新执行并保留日志：Web1596/contracts293/UI34、AI547通过；typecheck通过；lint 0错误14警告；build:low-memory exit0。此前“Web待重跑、低内存构建未执行”已补齐。
+
+已对实际独立库执行只读审计：Membership孤儿记录1，其余25表均0，6项跨品牌不一致均0；Web和Worker实际AUTH_SECRET符合启动条件。因Membership阻断新外键迁移，按推送交接停止发布，未推送、未部署、未清理数据。详见 [推送前检查完整报告](push-preflight-2026-10-17.md)。本次不是Git权限失败或CDS构建失败。
+
 ## 范围
 
 按《brandai-优化执行计划-2026-10-16》，把五个阶段分支依次合入集成分支 `integration/devupdate-opt`。该分支从 `devUpdate1012@2cf3932` 拉出，工作目录为 `D:/coding/公司/brandai-integration`。

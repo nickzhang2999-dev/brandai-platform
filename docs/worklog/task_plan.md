@@ -342,3 +342,9 @@ P1 local gates complete: e0725bd owned shell/export;6ce5de0 routes;601a3c1 exact
 - [x] PGlite SQL反例验证58项。
 - [x] 109 个 Web 测试迁移完成；L1 1327+287+34、AI529、types/build/lint 全通过。
 - [ ] 目标真实DB孤儿统计/nativePG迁移验收（不连共享库，本轮未验证）。
+## 2026-10-17 集成发布交接
+
+- [x] 重新执行集成测试、类型、lint、低内存生产构建，均通过。
+- [x] 官方CDS入口只读核对独立库与启动密钥；完整计数见 docs/push-preflight-2026-10-17.md。
+- [blocked] Membership孤儿记录1条，按交接停止推送，等待只读定位及经确认的数据处置；禁止擅自删除或跳过迁移。
+- [ ] 阻断解除后重新预检，再推送并验收CI/运行版本/页面/迁移。
