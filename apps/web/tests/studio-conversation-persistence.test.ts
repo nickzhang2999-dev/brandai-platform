@@ -73,6 +73,21 @@ describe("durable conversation intake and isolated drafts (DB adapter interactio
     await expect(readStudioConversation("w", "other", "p", { messageId: receipt.messageId })).rejects.toMatchObject({ status: 404 });
     await expect(readStudioConversation("w", "u", "p", { before: "foreign" })).rejects.toMatchObject({ status: 404 });
   });
+  it("starts a new project's chat input with the home brief, once and within limits", async () => {
+    f.db.workbenchProjectState.findUnique = async () => ({ workspaceId: "w", workflowRevision: 0, brief: "  夏季新品海报，蓝紫渐变  " });
+    const fresh: any = await readStudioConversation("w", "u", "p", {});
+    expect(fresh.draft).toMatchObject({ text: "夏季新品海报，蓝紫渐变", references: [], revision: 0 });
+    // The prefilled draft saves through the normal revision path, then wins over the brief.
+    await saveStudioConversationDraft("w", "u", "p", { ...fresh.draft, text: "改成橙色" });
+    expect(((await readStudioConversation("w", "u", "p", {})) as any).draft.text).toBe("改成橙色");
+    conversation = null;
+    f.db.workbenchProjectState.findUnique = async () => ({ workspaceId: "w", workflowRevision: 0, brief: "长".repeat(5000) });
+    expect(((await readStudioConversation("w", "u", "p", {})) as any).draft.text).toHaveLength(4000);
+    f.db.workbenchProjectState.findUnique = async () => ({ workspaceId: "other", workflowRevision: 0, brief: "别家品牌需求" });
+    expect(((await readStudioConversation("w", "u", "p", {})) as any).draft).toBeNull();
+    f.db.workbenchProjectState.findUnique = async () => ({ workspaceId: "w", workflowRevision: 0, brief: "   " });
+    expect(((await readStudioConversation("w", "u", "p", {})) as any).draft).toBeNull();
+  });
   it("persists ordered draft refs and protects newer drafts across tabs", async () => {
     const draft = { revision: 0, text: "unfinished", references: [reference], quickEditTargetId: reference.referenceId, sizeSelection: base.sizeSelection };
     const saved = await saveStudioConversationDraft("w", "u", "p", draft); expect(saved.revision).toBe(1);

@@ -108,11 +108,26 @@ export async function submitStudioConversation(workspaceId: string, userId: stri
   return receipt(row);
 }
 
+/** A project created from the home composer starts with that brief in the
+ * chat input, so the user does not retype it. Only offered before any
+ * conversation exists; revision 0 keeps the normal save/conflict path. */
+async function homeBriefDraft(workspaceId: string, projectId: string) {
+  const state = await prisma.workbenchProjectState.findUnique({ where: { projectId }, select: { workspaceId: true, brief: true } });
+  if (!state || state.workspaceId !== workspaceId) return null;
+  const text = (state.brief ?? "").trim().slice(0, STUDIO_CONVERSATION_DRAFT_MAX);
+  if (!text) return null;
+  return StudioConversationDraft.parse({ text, references: [], quickEditTargetId: null, sizeSelection: { ratioKey: "1:1", resolutionTier: "1K" }, revision: 0 });
+}
+const STUDIO_CONVERSATION_DRAFT_MAX = 4000;
+
 export async function readStudioConversation(workspaceId: string, userId: string, projectId: string, raw: unknown) {
   await requireStudioMaterialProject(workspaceId, userId, projectId);
   const query = StudioConversationQuery.parse(raw);
   const conversation = await prisma.studioConversation.findUnique({ where: { workspaceId_userId_projectId: own(workspaceId, userId, projectId) } });
-  if (!conversation) { if (query.messageId || query.before) throw new ApiException(404, "消息不存在。"); return { messages: [], nextCursor: null, draft: null }; }
+  if (!conversation) {
+    if (query.messageId || query.before) throw new ApiException(404, "消息不存在。");
+    return { messages: [], nextCursor: null, draft: await homeBriefDraft(workspaceId, projectId) };
+  }
   if (query.messageId) {
     const row = await prisma.studioConversationMessage.findFirst({ where: { id: query.messageId, conversationId: conversation.id }, include: { conversation: true } });
     if (!row) throw new ApiException(404, "消息不存在。"); return receipt(row);
