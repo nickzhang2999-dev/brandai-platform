@@ -36,3 +36,10 @@ export function ownedLayerTaskStatus(task: DecompositionTask) {
   }
   return task.status === "RUNNING" ? "正在拆分图层" : "等待处理";
 }
+
+export function ownedLayerTaskNotice(task: DecompositionTask) {
+  if (task.status === "SUCCEEDED") return "图层已保存，可展开到画布或下载 PSD。";
+  if (task.status === "FAILED") return task.error || "分层未完成，原图片保留。任务已停止，不会自动重复调用模型。";
+  if (Date.parse(task.expiresAt) <= Date.now()) return "分层等待已超时，请刷新查看最终结果；不会自动重新提交。";
+  return `${ownedLayerTaskStatus(task)}。关闭页面后任务仍会继续，可稍后回到此项目查看。`;
+}

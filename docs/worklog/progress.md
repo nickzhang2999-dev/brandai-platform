@@ -424,3 +424,11 @@ CDS read-only preflight: CLI0.16.6/latest; project push automatic deploy true, d
 ## 2026-10-17 经确认解除迁移阻断
 
 用户明确批准备份并清理唯一孤立Membership，再推送验收。已完成受限本地备份及事务内精确删除1条；26表孤儿/6项跨品牌检查全部0，用户和品牌数量不变。未修改main、CDS配置或密钥。即将正常推送集成版本，部署结果另补，不把本次数据修复当成新版上线证据。
+
+## 2026-10-17 集成版本发布完成
+
+集成代码21eb6a5经文档提交48d5a3d正常推送。首轮CI仅因工作流仍断言providerRetryRevision=r1失败；更新为既有Web/AI所需r2，定向42+30项测试通过，修复提交c5da4a7再次正常推送。完整CI39012731982成功。CDS仍关联旧镜像，经官方dry-run、claim/deploy更新到精确c5da4a7，部署运行dr_fb54ab5d604975d6e9cadf06完成，版本dv_43f341362168e2d54fefedc7。
+
+Web/Worker只读SQL证明实际独立库brandai_devupdate1012、三条新迁移完成、失败迁移0、Membership品牌外键生效。真实预览浏览器登录、创建唯一验收项目、画布工具持续显示、文字保存刷新恢复、SVG/PNG实际下载全通过。Web/AI/Worker健康ok，Worker提交与发布一致。未改main、共享数据、CDS配置；模型调用0。详情docs/development-log-2026-10-17-release.md；最终发布回执仅本地保留，远端及部署不再因文档回填变动。
+
+后续用户反馈并授权修复AUTO分层：只读线上任务和日志证实分析HTTP502/上游400，实际微量接口探针确认gpt-5.6-sol拒绝max_tokens，修正参数后200。代码修复参数兼容、安全错误分类及面板终态提示；本地1597+293+34/AI557/types/build、浏览器10+3通过，lint0错误14警告。之前发布回执随本次修复批次一并提交。真实图像验收待部署后执行，详见development-log-2026-10-17-layer-fix.md。

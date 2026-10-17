@@ -933,24 +933,42 @@ class HttpVLMProvider(VLMProvider):
                 {"role": "system", "content": system},
                 {"role": "user", "content": content},
             ],
-            "temperature": 0.2,
-            "max_tokens": max_tokens,
             "response_format": {"type": "json_object"},
         }
-        async with self._client() as c:
-            r = await c.post(
-                f"{self.base_url}/chat/completions",
-                headers={"Authorization": f"Bearer {self.api_key}"},
-                json=body,
-            )
-            r.raise_for_status()
+        # Reasoning models reject the legacy max_tokens parameter. Do not
+        # probe/fallback with another paid POST; select the wire shape up front.
+        # Keep older and third-party models on their existing request contract.
+        reasoning = re.match(r"^(?:gpt-5(?:[.-]|$)|o[134](?:-|$))", self.model) is not None
+        if reasoning:
+            body.update(max_completion_tokens=max_tokens, reasoning_effort="low")
+        else:
+            body.update(max_tokens=max_tokens, temperature=0.2)
+        try:
+            async with self._client() as c:
+                r = await c.post(
+                    f"{self.base_url}/chat/completions",
+                    headers={"Authorization": f"Bearer {self.api_key}"},
+                    json=body,
+                )
+                r.raise_for_status()
+        except httpx.HTTPError as exc:
+            exc._novart_failure_stage = "provider"
+            raise
+        try:
             data = r.json()
-        text = (
-            (data.get("choices") or [{}])[0]
-            .get("message", {})
-            .get("content", "")
-        )
-        return _loads_json_lenient(text)
+            choice = (data.get("choices") or [{}])[0]
+            if choice.get("finish_reason") in ("length", "content_filter"):
+                raise ValueError("Incomplete vision result")
+            text = choice.get("message", {}).get("content", "")
+            if not isinstance(text, str) or not text.strip():
+                raise ValueError("Empty vision result")
+            result = _loads_json_lenient(text)
+            if not isinstance(result, dict):
+                raise ValueError("Vision result is not an object")
+            return result
+        except (ValueError, TypeError, AttributeError, IndexError):
+            # No raw response/URL/prompt in the product error or logs.
+            raise ImageResponseError("Vision provider returned unusable JSON") from None
 
     async def analyze_assets(
         self, assets: list[dict[str, str]]

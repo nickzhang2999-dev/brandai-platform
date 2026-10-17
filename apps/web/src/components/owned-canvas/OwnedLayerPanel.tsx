@@ -8,7 +8,7 @@ import { createOwnedLayerRecovery } from "./owned-layer-recovery";
 import type { createOwnedEditorApi, DecompositionInput, DecompositionTask } from "./owned-editor-api";
 import { downloadOwnedPsd } from "./owned-psd-download";
 import { OwnedLayerOptions } from "./OwnedLayerOptions";
-import { matchesOwnedDecomposition, ownedLayerTaskTitle, ownedLayerTaskStatus, type OwnedLayerMode } from "./owned-layer-options";
+import { matchesOwnedDecomposition, ownedLayerTaskTitle, ownedLayerTaskStatus, ownedLayerTaskNotice, type OwnedLayerMode } from "./owned-layer-options";
 
 type Api = ReturnType<typeof createOwnedEditorApi>;
 type Props = {
@@ -26,6 +26,7 @@ export function OwnedLayerPanel({ api, workspaceId, projectId, userId, document,
   const [blocked, setBlocked] = useState(false), [notice, setNotice] = useState("");
   const recovery = useRef<ReturnType<typeof createOwnedLayerRecovery> | null>(null), operation = useRef<DecompositionInput | null>(null);
   const alive = useRef(true), activeApi = useRef(api), serial = useRef(false), readBusy = useRef(false);
+  const noticeTask = useRef<string | null>(null);
   activeApi.current = api;
   const sourceId = refineSourceId ?? (selectedIds.length === 1 ? selectedIds[0] : undefined);
   const source = document?.items.find(item => item.id === sourceId && item.kind === "image");
@@ -60,7 +61,7 @@ export function OwnedLayerPanel({ api, workspaceId, projectId, userId, document,
   }, [confirm]);
 
   useEffect(() => {
-    alive.current = true; operation.current = null; setPending(false); setBlocked(false); setTasks([]); setRefineSourceId(null); setLayerMode("AUTO"); setLayerCount(4);
+    alive.current = true; operation.current = null; noticeTask.current = null; setNotice(""); setPending(false); setBlocked(false); setTasks([]); setRefineSourceId(null); setLayerMode("AUTO"); setLayerCount(4);
     try {
       recovery.current = createOwnedLayerRecovery({ workspaceId, projectId, userId });
       operation.current = recovery.current.load(); setPending(!!operation.current);
@@ -73,6 +74,12 @@ export function OwnedLayerPanel({ api, workspaceId, projectId, userId, document,
     if (!tasks.some(task => ["PENDING", "RUNNING"].includes(task.status) && Date.parse(task.expiresAt) > Date.now())) return;
     const timer = setTimeout(() => void refresh(), 2500); return () => clearTimeout(timer);
   }, [tasks, refresh]);
+  useEffect(() => {
+    const task = tasks.find(value => value.requestId === noticeTask.current);
+    if (!task) return;
+    setNotice(ownedLayerTaskNotice(task));
+    if (["FAILED", "SUCCEEDED"].includes(task.status)) noticeTask.current = null;
+  }, [tasks]);
 
   async function submit() {
     const expected = activeApi.current;
@@ -94,7 +101,8 @@ export function OwnedLayerPanel({ api, workspaceId, projectId, userId, document,
       }
       const receipt = await expected.submitDecomposition(operation.current);
       if (!current(expected)) return;
-      accept(receipt); confirm([receipt]); setNotice(receipt.status === "SUCCEEDED" ? "图层已保存，可展开到画布。" : "分层已受理。关闭页面后任务仍会继续，可稍后回到此项目查看。");
+      noticeTask.current = receipt.requestId;
+      accept(receipt); confirm([receipt]); setNotice(ownedLayerTaskNotice(receipt));
     } catch (error) {
       if (!current(expected)) return;
       if (error instanceof NovartApiError && !error.uncertain && operation.current) {
@@ -114,7 +122,7 @@ export function OwnedLayerPanel({ api, workspaceId, projectId, userId, document,
   async function retryArchive(task: DecompositionTask) {
     const expected = activeApi.current; if (!expected || readOnly || serial.current) return;
     serial.current = true; setBusy(true);
-    try { const result = await expected.retryLayerArchive(task.requestId); if (current(expected)) { accept(result); setNotice("正在重新保存已有图层，不会重新调用分层模型。"); } }
+    try { const result = await expected.retryLayerArchive(task.requestId); if (current(expected)) { noticeTask.current = result.requestId; accept(result); setNotice("正在重新保存已有图层，不会重新调用分层模型。"); } }
     catch (error) { if (current(expected)) setNotice(message(error)); }
     finally { if (current(expected)) { serial.current = false; setBusy(false); } }
   }

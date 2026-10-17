@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { studioDecompositionFailure } from "./studio-decomposition-failure";
 import { z } from "zod";
 import { prisma, Prisma } from "@brandai/db";
 import { DecomposeResponse } from "@brandai/contracts";
@@ -348,8 +349,7 @@ export async function runStudioDecomposition(requestId: string) {
         : { status: "PENDING", providerStartedAt: null }) },
       data: { status: "FAILED", ...(ownedAnalysisClaim ? { planningJson: { ...initialPlanning, status: "FAILED", startedAt: (ownedAnalysisClaim as { startedAt: string }).startedAt } } : {}),
         error: !ownedProviderClaim && error instanceof ApiException && [422, 503].includes(error.status) ? error.message
-        : ownedAnalysisClaim ? "图片内容分析未完成，未调用分层模型。原图片已保留，系统不会自动重复付费分析。"
-        : "AI 分层或图层保存未完成。原图片保持不变；已有模型结果可尝试重新保存，不会自动重复调用模型。", archiveToken: null, archivingStartedAt: null } });
+        : studioDecompositionFailure(error, !!ownedAnalysisClaim), archiveToken: null, archivingStartedAt: null } });
   }
 }
 async function archiveLayers(row: Row, signal: AbortSignal) {

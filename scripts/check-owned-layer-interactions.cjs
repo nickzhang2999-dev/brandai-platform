@@ -3,7 +3,7 @@
 'use strict';
 const assert = require('node:assert/strict');
 
-async function runOwnedLayerChecks({page,surface,origin,fixture,png,material,layerResults,shapes,check,report,setStage,allowLayerDownloads,state}) {
+async function runOwnedLayerChecks({page,surface,origin,fixture,png,material,layerResults,shapes,check,report,setStage,allowLayerDownloads,state,failureOnly=false}) {
   const button=name=>page.getByRole('button',{name,exact:true});
   const waitSaved=async()=>{await page.waitForFunction(()=>document.querySelector('[data-testid="owned-editor"]')?.dataset.saveState==='saved');};
   const save=async()=>{const control=button('保存');if(await control.isEnabled())await control.click();await waitSaved();};
@@ -27,7 +27,21 @@ async function runOwnedLayerChecks({page,surface,origin,fixture,png,material,lay
   assert.equal(state().decompositionPostInputs[0].assetId,material.assetId);assert.equal(state().decompositionPostInputs[0].assetSha256,material.assetSha256);
   assert.equal(state().decompositionPostInputs[0].layerMode,'MANUAL');assert.equal(state().decompositionPostInputs[0].layerCount,2);
   await page.locator('[data-testid="owned-layer-task"][data-status="RUNNING"]').waitFor();
+  if (failureOnly) {
+    await page.locator('[data-testid="owned-layer-task"][data-status="FAILED"]').waitFor();
+    const notice=page.getByTestId('owned-layer-notice');
+    await notice.filter({hasText:'HTTP 400'}).waitFor();
+    assert.ok(!(await notice.innerText()).includes('任务仍会继续'));
+    await page.waitForTimeout(3000);assert.equal(state().decompositionPosts,1);
+    assert.equal(shapes().length,1);assert.notEqual(sourceRecord().meta?.novartOwned?.hidden,true);
+    await button('刷新分层任务').click();await notice.filter({hasText:'HTTP 400'}).waitFor();
+    assert.equal(state().decompositionPosts,1);
+    check('failed-task-replaces-running-notice-preserves-source-and-does-not-retry');
+    report.unverified=['Real provider failure and model quality; this is a local fixture UI test'];
+    return;
+  }
   await page.locator('[data-testid="owned-layer-task"][data-status="SUCCEEDED"]').waitFor();
+  await page.getByTestId('owned-layer-notice').filter({hasText:'图层已保存'}).waitFor();
   assert.deepEqual([...new Set(state().layerTaskReads.map(value=>value.status))],['PENDING','RUNNING','SUCCEEDED']);assert.equal(shapes().length,1);assert.notEqual(sourceRecord().meta?.novartOwned?.hidden,true);
   check('strict-saved-source-request-pending-running-succeeded-without-auto-insert');
 

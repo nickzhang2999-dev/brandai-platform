@@ -25,16 +25,34 @@
 
 首轮CI的源码与构建后容器真实API/UI均exit0，32项UI检查通过，PSD文件读写与2K内存边界证明通过；失败位于工作流嵌入Python第10行的providerRetryRevision断言。P3已将Web/AI契约提升到single-provider-attempt-r2，工作流仍要求r1。修复只更新CI断言到r2并补充失败说明，未移除门禁、放宽兼容条件或改业务代码。新提交重跑完整工作流，结果另补。
 
+修复提交c5da4a75718c8ca3e4328c2036c271c6d5d76c68已正常推送，远端回读一致。定向Python42、Web30项通过。第二次推送前实际独立库26表/6项审计仍全部0。[第二轮Branch Image 39012731982](https://github.com/nickzhang2999-dev/brandai-platform/actions/runs/39012731982) 已启动。
+
 ## 部署与真实页面验收
 
-待最终回填。旧版 CDS 服务在 CI 期间保持运行。不得将推送成功或临时CI环境通过写成新版本已上线。
+第二轮 Branch Image 39012731982 全部成功，31个步骤成功、无失败步骤。成功构建后，CDS 的 ciTargetSha 仍停在83a5dca；通过平台官方 prebuilt-image/claim 先 dry-run 验证，再认领并部署精确提交 c5da4a75718c8ca3e4328c2036c271c6d5d76c68。
 
-计划检查运行提交、Web/AI/Worker健康、实际Web/Worker数据库、三条新迁移、真实登录、画布工具持续显示、单独验收项目保存重开及导出。模型调用为0。
+- 部署运行：dr_fb54ab5d604975d6e9cadf06，phase=complete、status=running、failure=null。
+- 当前版本：dv_43f341362168e2d54fefedc7；分支运行提交c5da4a7，Web/Worker/AI均running。
+- 官方预览入口：https://devupdate1012-brandai-platform.geole.me/ 。
+- Web和Worker容器分别执行只读SQL，实际数据库均为brandai_devupdate1012。
+- 20261016080000_async_task_compliance_payload、20261016080500_generation_attempt_token、20261016090000_workspace_fk_indexes均已完成，未回滚，无未解决的失败迁移。
+- Membership_workspaceId_fkey已存在。没有手动跳过迁移，也未修改共享业务库。
+
+真实预览浏览器验收已通过（本机headless Chromium，连接真实CDS预览后端，非模拟API）：
+
+1. /api/health 的Web/AI/Worker均ok，Worker提交c5da4a75718c与发布提交一致。
+2. 使用已有验收账号登录成功，认证后的/studio页面正常。
+3. 新建唯一验收项目“发布验收 2026-10-17 c5da4a7”，不修改既有项目内容。
+4. 自研画布与文字工具加载后继续等待12秒，仍可见、可操作。
+5. 添加两行文字并保存，刷新页面后内容恢复。
+6. 实际下载SVG与PNG，验证文件非空及对应格式标记。
+
+结果文件：.novart-build/release-browser-20261017.json（Git忽略，本地留证）。本轮模型调用为0；以上不代表已进行真实AI生成或分层效果验收。最终部署回执和日志更新保留本地，避免仅为回填发布结果再触发下一轮部署；远端及运行版本均保持c5da4a7。
 
 ## 平台与工具观察
 
 - GitHub连接器的fetch_commit_workflow_runs仅返回pull_request触发记录，不能用于判定push没有触发CI。已改用本仓库Git凭据帮助器，在内存中认证GitHub只读Actions API，确认实际push工作流；未打印或保存访问凭据。
-- 推送后初次CDS记录仍指向旧CI及旧提交；当前仅记录尚未更新，不能提前定性为CDS故障。若需官方成功镜像认领，后续记录明确操作与结果。
+- 新CI成功后，CDS仍关联旧CI与旧ciTargetSha；官方成功镜像认领后部署正常。本次确认的是镜像状态同步未及时更新，未调查平台内部根因，不将其误写为产品构建失败。
 - 一次只读CDS分支请求发生网络错误，重试后成功，未重试任何不确定的数据删除操作。
 
 ## 明确未纳入本次

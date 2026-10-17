@@ -13,6 +13,7 @@ const {spawnSync} = require('node:child_process');
 const {chromium} = require('playwright-core');
 const repo = path.resolve(__dirname, '..');
 const layersOnly = process.env.NOVART_OWNED_LAYERS_ONLY === '1';
+const layerFailureOnly = process.env.NOVART_OWNED_LAYERS_FAILURE_ONLY === '1';
 const temporaryRoot = path.join(repo, '.novart-build', 'temporary');
 fs.mkdirSync(temporaryRoot, {recursive: true});
 const directory = fs.mkdtempSync(path.join(temporaryRoot, 'owned-browser-'));
@@ -162,7 +163,7 @@ async function handle(req,res) {
       decompositions.set(view.requestId,{view,reads:0});layerTaskReads.push({requestId:view.requestId,status:'PENDING',method:'POST'});return json(res,view,202);
     }
     function read(value) {
-      if(['PENDING','RUNNING'].includes(value.view.status)) {value.reads++;value.view={...value.view,status:value.reads>=2?'SUCCEEDED':'RUNNING',layers:value.reads>=2?layerResults:[]};}
+      if(['PENDING','RUNNING'].includes(value.view.status)) {value.reads++;value.view={...value.view,status:value.reads>=2?(layerFailureOnly?'FAILED':'SUCCEEDED'):'RUNNING',layers:value.reads>=2&&!layerFailureOnly?layerResults:[],error:value.reads>=2&&layerFailureOnly?'图片内容分析服务拒绝了请求。（上游 HTTP 400）未调用分层模型，原图片保留。':null};}
       layerTaskReads.push({requestId:value.view.requestId,status:value.view.status,method:'GET',direct:url.searchParams.has('requestId')});
       return contracts.StudioDecompositionView.parse(value.view);
     }
@@ -203,7 +204,7 @@ async function fixtureSettled(condition) {const deadline=Date.now()+10000;while(
   const surface=page.getByTestId('owned-canvas');
   if(layersOnly) {
     await require('./check-owned-layer-interactions.cjs').runOwnedLayerChecks({page,surface,origin,fixture,png,material,layerResults,shapes,records,check,report,
-      setStage:value=>{stage=value;},allowLayerDownloads:()=>{failLayerDownload=false;},
+      setStage:value=>{stage=value;},allowLayerDownloads:()=>{failLayerDownload=false;},failureOnly:layerFailureOnly,
       state:()=>({canvas,revision,writes,decompositionPosts,decompositionPostInputs,layerTaskReads,layerDownloads})});
     assert.deepEqual(report.externalRequests,[]);assert.deepEqual(report.errors,[]);report.passed=true;return;
   }

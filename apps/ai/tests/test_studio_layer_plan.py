@@ -32,7 +32,7 @@ def reset_overrides():
     app.dependency_overrides.clear()
     app.dependency_overrides.update(old)
 
-def configured(result=None, status=200):
+def configured(result=None, status=200, model="fixture-vision"):
     calls = []
     def handler(request):
         body = json.loads(request.content)
@@ -41,7 +41,7 @@ def configured(result=None, status=200):
         if status != 200:
             return httpx.Response(status, json={"error": "fixture provider rejected"})
         return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(result if result is not None else plan())}}]})
-    provider = HttpVLMProvider("https://fixture.invalid/v1", "fixture-not-a-real-key", model="fixture-vision", transport=httpx.MockTransport(handler))
+    provider = HttpVLMProvider("https://fixture.invalid/v1", "fixture-not-a-real-key", model=model, transport=httpx.MockTransport(handler))
     app.dependency_overrides[resolve_vlm_provider] = lambda: provider
     return calls
 
@@ -85,6 +85,30 @@ def test_duplicate_semantic_names_are_rejected():
 def test_vision_paid_post_is_not_retried_even_when_transport_returns_error():
     calls = configured(status=503)
     assert post().status_code == 502
+    assert len(calls) == 1
+
+@pytest.mark.parametrize("model", ["gpt-5.6-sol", "gpt-5", "gpt-5-mini", "o3", "o4-mini"])
+def test_reasoning_vision_uses_supported_bounded_parameters_without_fallback(model):
+    calls = configured(model=model)
+    assert post().status_code == 200
+    assert len(calls) == 1
+    assert calls[0]["model"] == model
+    assert calls[0]["max_completion_tokens"] == 2400
+    assert calls[0]["reasoning_effort"] == "low"
+    assert "max_tokens" not in calls[0] and "temperature" not in calls[0]
+
+def test_existing_non_reasoning_provider_parameters_unchanged():
+    calls = configured(model="custom-vision")
+    assert post().status_code == 200
+    assert calls[0]["max_tokens"] == 2400 and calls[0]["temperature"] == .2
+    assert "max_completion_tokens" not in calls[0]
+
+@pytest.mark.parametrize("status,code", [(400,"PROVIDER_REQUEST_REJECTED"),(401,"PROVIDER_AUTH"),(429,"PROVIDER_RATE_LIMITED"),(503,"PROVIDER_UNAVAILABLE")])
+def test_planner_preserves_safe_provider_failure_category_without_second_paid_post(status, code):
+    calls = configured(status=status, model="gpt-5.6-sol")
+    response = post()
+    assert response.status_code == 502
+    assert response.json()["error"] == {"code":code,"stage":"provider","upstreamStatus":status}
     assert len(calls) == 1
 
 def test_raw_remote_urls_or_corrupt_inlined_bytes_never_reach_the_paid_vision_post():

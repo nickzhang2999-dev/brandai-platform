@@ -37,6 +37,7 @@ vi.mock("../src/lib/image-preview", () => ({ nodeStreamToBuffer: async (stream: 
 import { submitStudioDecomposition, submitGeneratedStudioDecomposition, readStudioDecompositions, retryStudioLayerArchive, runStudioDecomposition, readStudioLayerAsset } from "../src/lib/studio-decomposition";
 import { encryptStudioBase, decryptStudioBase } from "../src/lib/studio-generation-base";
 import { newStudioLayerPlanning } from "../src/lib/studio-decomposition-planning";
+import { AiServiceFailure } from "../src/lib/ai-failure";
 
 // This suite proves service decisions with simulated persistence, not a real
 // database/provider acceptance. Only the envelope crypto below runs unmocked.
@@ -373,6 +374,14 @@ describe("semantic AUTO planning: simulated once-only paid boundaries, not model
   it("unsupported or unsafe content plans do not enter the decomposition model", async () => {
     seed({ planningJson: newStudioLayerPlanning("AUTO") }); f.plan.mockRejectedValue(new Error("图片服务请求失败（HTTP 422）"));
     await runStudioDecomposition("request"); expect(f.paid).not.toHaveBeenCalled(); expect(row().error).toContain("未得到可靠的可拆分内容方案");
+  });
+  it("preserves the actual safe vision rejection and never calls the layer model or retries analysis", async () => {
+    seed({ planningJson: newStudioLayerPlanning("AUTO") });
+    f.plan.mockRejectedValue(new AiServiceFailure({ code: "PROVIDER_REQUEST_REJECTED", stage: "provider", upstreamStatus: 400 }));
+    await runStudioDecomposition("request"); await runStudioDecomposition("request");
+    expect(f.plan).toHaveBeenCalledOnce(); expect(f.paid).not.toHaveBeenCalled();
+    expect(row().error).toContain("图片内容分析服务拒绝了请求"); expect(row().error).toContain("HTTP 400");
+    expect(row().error).toContain("未调用分层模型"); expect(row().planningJson.status).toBe("FAILED");
   });
   it("budgeted maximum is computed from native dimensions before calling the analysis and never silently downsamples", async () => {
     seed({ sourceWidth: 2048, sourceHeight: 2048, planningJson: newStudioLayerPlanning("AUTO") });
