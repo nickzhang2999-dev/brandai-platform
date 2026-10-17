@@ -13,7 +13,7 @@ export function OwnedImageMask({ source, name, readOnly, onSubmit, onClose }: Pr
   const [instruction, setInstruction] = useState("擦除涂抹区域中的内容，并自然补全背景"), lock = useRef(false), mounted = useRef(false);
   useEffect(() => {
     mounted.current = true; const image = new Image(), timeout = setTimeout(() => { if (mounted.current) setError("原图读取超时，请重新打开，原图保留。"); }, 20_000);
-    image.onload = () => { clearTimeout(timeout); if (!mounted.current) return; if (image.naturalWidth !== source.width || image.naturalHeight !== source.height || source.width * source.height > 16_777_216) setError("原图尺寸与回执不一致或超过处理预算。"); else setReady(true); };
+    image.onload = () => { clearTimeout(timeout); if (!mounted.current) return; if (image.naturalWidth !== source.width || image.naturalHeight !== source.height || source.width * source.height > 16_777_216) setError("原图尺寸与结果不一致或超过处理预算。"); else setReady(true); };
     image.onerror = () => { clearTimeout(timeout); if (mounted.current) setError("原图暂不可读，请读取最新素材后重试。"); }; image.src = source.url;
     return () => { mounted.current = false; clearTimeout(timeout); image.src = ""; };
   }, [source.url, source.width, source.height]);
@@ -53,7 +53,7 @@ export function OwnedImageMask({ source, name, readOnly, onSubmit, onClose }: Pr
       <div className="flex flex-wrap items-center gap-2"><label className="mr-auto text-xs">画笔范围 <input aria-label="蒙版画笔范围" type="range" min={4} max={80} value={brush} disabled={busy} onChange={event => setBrush(Number(event.target.value))} /></label><button className="text-xs underline" disabled={busy || !count} onClick={() => { strokes.current.pop(); render(); setCount(strokes.current.length); }}>撤销涂抹</button><button className="text-xs underline" disabled={busy || !count} onClick={() => { strokes.current = []; render(); setCount(0); }}>清空</button></div>
       <textarea aria-label="蒙版修改说明" className="min-h-20 w-full rounded-2xl border border-border bg-background p-3 text-sm" maxLength={4000} value={instruction} disabled={busy} onChange={event => setInstruction(event.target.value)} />
       {error && <p role="alert" className="text-xs leading-6">{error}</p>}
-      <button className="w-full rounded-full bg-primary py-3 text-sm text-primary-foreground disabled:opacity-40" disabled={!ready || readOnly || busy || !count || !instruction.trim()} onClick={() => void submit()}>{busy ? "确认受理…" : "擦除并补全"}</button>
+      <button className="w-full rounded-full bg-primary py-3 text-sm text-primary-foreground disabled:opacity-40" disabled={!ready || readOnly || busy || !count || !instruction.trim()} onClick={() => void submit()}>{busy ? "正在提交…" : "擦除并补全"}</button>
     </section>
   </div>;
 }

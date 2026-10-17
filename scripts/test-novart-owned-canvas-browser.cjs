@@ -269,7 +269,7 @@ async function fixtureSettled(condition) {const deadline=Date.now()+10000;while(
   assert.deepEqual(JSON.parse(pendingRecord).intent,{mode:'generate',input:generationPostInputs[0]});
   const pendingBaseline={posts:generationPosts,draftWrites,workflowWrites,canvas};
   await page.reload();await waitDraft();await waitWorkflow();
-  const confirmIntent=page.getByRole('button',{name:'确认上一份生成回执',exact:true});await confirmIntent.waitFor();
+  const confirmIntent=page.getByRole('button',{name:'检查上次生成',exact:true});await confirmIntent.waitFor();
   assert.equal(await confirmIntent.isEnabled(),true);
   assert.equal(await page.getByRole('textbox',{name:'创作需求',exact:true}).isDisabled(),true);
   assert.equal(await page.getByRole('combobox',{name:'创作方式',exact:true}).isDisabled(),true);
@@ -311,14 +311,14 @@ async function fixtureSettled(condition) {const deadline=Date.now()+10000;while(
         assert.equal(await isolatedPage.evaluate(key=>sessionStorage.getItem(key),pendingKey),null);
       } else if(scenario==='readonly') {
         await isolatedPage.evaluate(()=>window.changeFixtureReadOnly(true));
-        await isolatedPage.waitForFunction(()=>[...document.querySelectorAll('button')].some(button=>button.textContent==='确认上一份生成回执'&&button.disabled));
+        await isolatedPage.waitForFunction(()=>[...document.querySelectorAll('button')].some(button=>button.textContent==='检查上次生成'&&button.disabled));
         assert.equal(await isolatedPage.evaluate(key=>sessionStorage.getItem(key),pendingKey),pendingRecord);
       } else {
         await isolatedPage.getByText(scenario==='corrupt'?'上一份创作的确认记录暂不可读':'浏览器暂不能保存创作确认记录',{exact:false}).waitFor();
         if(scenario==='corrupt')assert.equal(await isolatedPage.evaluate(key=>sessionStorage.getItem(key),pendingKey),'{unreadable');
       }
       assert.equal(await isolatedPage.getByRole('textbox',{name:'创作需求',exact:true}).isDisabled(),true);
-      assert.equal(await isolatedPage.getByRole('button',{name:scenario==='readonly'?'确认上一份生成回执':'生成图片',exact:true}).isDisabled(),true);
+      assert.equal(await isolatedPage.getByRole('button',{name:scenario==='readonly'?'检查上次生成':'生成图片',exact:true}).isDisabled(),true);
       assert.equal(generationPosts,noPost,'Unsafe local storage or a read-only project must not post generation');
       assert.equal(generations.size,0);check('generation-journal-'+scenario+'-preserves-safety-without-post');
     } finally {await isolatedContext.close();}

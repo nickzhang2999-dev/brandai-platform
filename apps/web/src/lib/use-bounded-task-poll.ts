@@ -5,7 +5,7 @@ import { useQuery, type QueryKey } from "@tanstack/react-query";
 import { apiFetch } from "./client";
 
 export const TASK_POLL_WINDOW_MS = 6 * 60_000;
-export const TASK_POLL_PAUSED_MESSAGE = "自动查询已暂停，任务可能仍在后台处理；可继续查询或去队列查看。不会自动重新生成。";
+export const TASK_POLL_PAUSED_MESSAGE = "自动刷新已暂停，任务可能还在后台处理；可以点“继续查询”或到任务记录查看，不会自动重新生成。";
 export const isTaskTerminal = (status?: string | null) => ["SUCCEEDED", "FAILED", "READY", "CANCELLED", "NOT_REQUESTED"].includes(status ?? "");
 
 /** A foreground observation window, not the server's job lifetime. Multi-size

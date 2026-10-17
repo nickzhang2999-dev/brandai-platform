@@ -94,7 +94,7 @@ export function OwnedGenerationCard({ task, api, canEdit, onTask, onNotice, onIn
     if (!latest.current.task.results.some(result => result.versionId === image.versionId && result.assetSha256 === image.assetSha256)
       || receipt.status === "SUCCEEDED" && receipt.checkedImageSha256 !== image.assetSha256) throw new Error("检查的图片与当前结果不一致，请保留图片并刷新确认。");
     setChecks(current => ({ ...current, [imageKey(image)]: receipt }));
-    if (retry) onNotice("已受理品牌检查，图片保留；不会重新生成图片。");
+    if (retry) onNotice("已提交品牌检查，图片保留；不会重新生成图片。");
   }
   return <section className="space-y-2 rounded-2xl border border-border p-3" data-task-id={task.requestId} data-task-mode={task.mode}>
     {!compact && <h3 className="line-clamp-2 text-xs font-semibold">{task.displayText}</h3>}
@@ -102,7 +102,7 @@ export function OwnedGenerationCard({ task, api, canEdit, onTask, onNotice, onIn
     {compact && task.status === "FAILED" ? <div className="space-y-2">
       <p role="alert" className="text-xs leading-6">{task.error?.startsWith("生成服务") ? task.error.split("。")[0] + "。" : "本次" + (task.mode === "modify" ? "修改" : "生成") + "未完成。"}{task.mode === "modify" ? "原图已保留。" : "需求已保留。"}</p>
       <div className="flex flex-wrap items-start gap-3 text-xs"><details className="min-w-0 flex-1"><summary className="cursor-pointer text-muted-foreground">查看详情</summary><p className="mt-2 break-words leading-6 text-muted-foreground">{task.error || "具体原因尚未确认，请查看任务状态。"}</p></details>{onReedit && <button type="button" className="rounded-full text-primary disabled:opacity-40" disabled={!canEdit || recoveryDisabled} onClick={onReedit}>重新编辑</button>}</div>
-    </div> : <p role={task.resultState === "FAILED" ? "alert" : undefined} className="text-xs leading-5 text-muted-foreground">{task.status === "FAILED" ? task.error : task.resultState === "READY" ? "图片已生成并保存" : task.resultState === "FAILED" ? task.archiveError || "生成结果保存失败" : activityNotice ? activityNotice : task.status === "SUCCEEDED" ? "生成完成，正在保存图片" : compact && task.status === "RUNNING" ? (task.progress === null ? "正在创作…" : `正在创作 · ${task.progress}%`) : task.status === "RUNNING" ? "正在生成…" : "已受理，排队中"}</p>}
+    </div> : <p role={task.resultState === "FAILED" ? "alert" : undefined} className="text-xs leading-5 text-muted-foreground">{task.status === "FAILED" ? task.error : task.resultState === "READY" ? "图片已生成并保存" : task.resultState === "FAILED" ? task.archiveError || "生成结果保存失败" : activityNotice ? activityNotice : task.status === "SUCCEEDED" ? "生成完成，正在保存图片" : compact && task.status === "RUNNING" ? (task.progress === null ? "正在创作…" : `正在创作 · ${task.progress}%`) : task.status === "RUNNING" ? "正在生成…" : "已提交，排队中"}</p>}
     {task.canRetryArchive && <button type="button" className={button} disabled={!canEdit || busy} onClick={() => void action(retryArchive)}>重试保存结果</button>}
     {selection.requested && <details open={compact ? undefined : true} className="space-y-2 rounded-xl bg-accent-soft p-3" data-testid="owned-generated-psd" data-status={psd?.status ?? "LOADING"}>
       <summary hidden={!compact} className="cursor-pointer text-xs">PSD 与图层{psd?.status === "READY" ? " · 已就绪" : psd?.status === "FAILED" ? " · 未完成" : " · 准备中"}</summary>

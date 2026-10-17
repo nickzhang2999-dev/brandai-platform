@@ -40,7 +40,7 @@ export const OwnedConversationPanel = forwardRef<OwnedConversationHandle, Props>
   const updateDraft = useCallback((value: Draft) => { draftRef.current = value; setDraft(value); }, []);
   const edit = (value: Partial<Draft>) => updateDraft({ ...draftRef.current, ...value });
   const accept = useCallback((message: Message, order = ++requestOrder.current) => {
-    if (message.projectId !== latest.current.projectId) throw new Error("对话回执不属于当前项目。");
+    if (message.projectId !== latest.current.projectId) throw new Error("对话结果不属于当前项目。");
     // A poll/list started before a newer read or explicit retry cannot undo it.
     // Do not freeze READY forever: a later authoritative read can revoke assets.
     if (order < (acceptedOrder.current.get(message.messageId) ?? 0)) return;
@@ -118,7 +118,7 @@ export const OwnedConversationPanel = forwardRef<OwnedConversationHandle, Props>
       const order = ++requestOrder.current;
       const message = StudioConversationMessage.parse(await context.send(operation));
       if (!mounted.current || api.current !== context) return;
-      if (message.mutationId !== operation.mutationId || message.text !== operation.text) throw new Error("对话受理回执与原请求不一致，原请求仍保留。");
+      if (message.mutationId !== operation.mutationId || message.text !== operation.text) throw new Error("对话提交结果与原请求不一致，原请求仍保留。");
       accept(message, order); localStorage.removeItem(keyRef.current); pending.current = null; setUnknown(false); setPaused(false); setError("");
       updateDraft({ ...draftRef.current, text: "" });
     } catch (failure) {
@@ -133,7 +133,7 @@ export const OwnedConversationPanel = forwardRef<OwnedConversationHandle, Props>
     finally { if (api.current === context) { sendBusy.current = false; setSending(false); } }
   }, [accept, flush, updateDraft]);
   useImperativeHandle(ref, () => ({ flush, confirmed: () => readyRef.current && !composing.current && !saveBusy.current && !saveSnapshot.current && same(draftRef.current, confirmedDraft.current!),
-    addReferences(refs, quickEditTargetId) { if (!readyRef.current || latest.current.readOnly || sendBusy.current || pending.current) throw new Error("对话尚未准备完成，请确认草稿和上一份受理回执。");
+    addReferences(refs, quickEditTargetId) { if (!readyRef.current || latest.current.readOnly || sendBusy.current || pending.current) throw new Error("对话还没准备好，请稍候，或先检查上次提交。");
       const base = quickEditTargetId ? draftRef.current.references.filter(value => !refs.some(ref => ref.assetId === value.assetId)) : draftRef.current.references;
       const merged = mergeOwnedConversationReferences(base, refs);
       const target = quickEditTargetId ? merged.find(value => value.referenceId === quickEditTargetId) : undefined;
@@ -195,12 +195,12 @@ export const OwnedConversationPanel = forwardRef<OwnedConversationHandle, Props>
         {message.intent?.modelStatus === "UNAVAILABLE" && !message.generation && <p className="p-2 text-xs leading-6 text-muted-foreground">智能意图识别暂不可用，已按明确指令判断需求。</p>}
         {message.intent?.modelStatus === "UNKNOWN" && <p className="p-2 text-xs leading-6 text-muted-foreground">智能意图识别结果尚未确认，请补充明确目标；不会重复调用。</p>}
         {message.error && !message.generation && <p role="alert" className="p-2 text-xs leading-6">{message.error}</p>}
-        {active(message) && !message.generation && <p className="p-2 text-xs text-muted-foreground">{Date.now() >= deadline(message) ? "等待较久，请读取任务确认；不会重复调用模型。" : "需求已受理，正在核对图片和尺寸…"}</p>}
+        {active(message) && !message.generation && <p className="p-2 text-xs text-muted-foreground">{Date.now() >= deadline(message) ? "等待较久，请读取任务确认；不会重复调用模型。" : "需求已提交，正在核对图片和尺寸…"}</p>}
         {message.generation && <OwnedGenerationCard compact activityNotice={active(message) && Date.now() >= deadline(message) ? "等待较久，请读取任务确认；不会重复调用模型。" : undefined} task={message.generation} api={props.api} canEdit={!props.readOnly} recoveryDisabled={locked} onReedit={() => reedit(message)} onTask={task => acceptGeneration(message.messageId, task)} onNotice={props.onNotice} onInsert={image => props.onInsert(image, message.intent?.action === "modify" ? message.references.find(ref => ref.referenceId === message.intent?.targetReferenceId)?.shapeId : undefined)} onInsertLayers={props.onInsertLayers} />}
       </article>)}
     </div>
     {error && <div role="alert" className="rounded-xl bg-accent-soft p-3 text-xs leading-6">{error}{ready && !unknown && <button className="ml-2 underline" onClick={() => { setError(""); void flush().catch(() => undefined); }}>确认草稿</button>}</div>}
-    {unknown && <div className="space-y-2 rounded-xl border border-border p-3"><p className="text-xs leading-6">上一份请求尚未确认，需求和引用已冻结。确认会读取／重放同一受理号，避免重复付费。</p><button className={button} disabled={sending || !pending.current || props.readOnly} onClick={() => void send().catch(() => undefined)}>确认原请求回执</button></div>}
+    {unknown && <div className="space-y-2 rounded-xl border border-border p-3"><p className="text-xs leading-6">上次提交的结果还没确认，需求和引用先保留不动。点“检查上次提交”会读取同一次请求，不会重复扣费。</p><button className={button} disabled={sending || !pending.current || props.readOnly} onClick={() => void send().catch(() => undefined)}>检查上次提交</button></div>}
     <div className="mt-auto shrink-0 space-y-3 rounded-3xl border border-border bg-background p-3">
       <div className="flex max-h-32 flex-wrap gap-2 overflow-y-auto" aria-label="对话引用图片">{draft.references.map(value => {
         const target = draft.quickEditTargetId === value.referenceId;
@@ -223,7 +223,7 @@ export const OwnedConversationPanel = forwardRef<OwnedConversationHandle, Props>
           </div>
         </details>
         <span role="status" className="min-w-0 truncate text-xs text-muted-foreground" title={saving ? "正在保存对话草稿…" : !ready ? "正在恢复项目对话…" : same(draft, confirmedDraft.current!) ? "对话草稿已保存" : "对话草稿待保存"} data-testid="conversation-draft-status" data-saved={ready && !saving && same(draft, confirmedDraft.current!)}>{saving ? "保存中…" : !ready ? "恢复中…" : same(draft, confirmedDraft.current!) ? "已保存" : "待保存"}</span>
-        <button className="ml-auto rounded-full bg-primary px-4 py-2 text-sm text-primary-foreground disabled:opacity-40" disabled={locked || !draft.text.trim()} onClick={() => void send().catch(() => undefined)}>{sending ? "确认受理…" : "发送"}</button>
+        <button className="ml-auto rounded-full bg-primary px-4 py-2 text-sm text-primary-foreground disabled:opacity-40" disabled={locked || !draft.text.trim()} onClick={() => void send().catch(() => undefined)}>{sending ? "正在提交…" : "发送"}</button>
       </div>
     </div>
   </section>;

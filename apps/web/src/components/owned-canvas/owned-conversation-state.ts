@@ -32,7 +32,7 @@ export function ownedConversationGeneration(message: Message, generation: Genera
   const previous = message.generation;
   if (!previous || generation.projectId !== message.projectId || generation.requestId !== previous.requestId
     || generation.mutationId !== previous.mutationId || generation.generationId !== previous.generationId) {
-    throw new Error("生成回执与原对话任务不一致，请读取最新记录。");
+    throw new Error("生成结果与原对话任务不一致，请读取最新记录。");
   }
   // A retry's earlier PENDING response can arrive after the conversation poll
   // has already confirmed READY. An archived result cannot regress to pending.

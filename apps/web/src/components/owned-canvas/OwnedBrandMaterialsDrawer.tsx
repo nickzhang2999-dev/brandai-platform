@@ -40,16 +40,16 @@ export function OwnedBrandMaterialsDrawer({ workspaceId, projectId, userId, read
       const body = await response.json();
       if (!response.ok) throw new NovartApiError(typeof body?.error === "string" ? body.error : "素材请求未完成。", response.status, undefined, writing && response.status >= 500);
       const parsed = schema.safeParse(body);
-      if (!parsed.success) throw new NovartApiError("素材回执不完整，请重新打开确认。", response.status, "INVALID_RECEIPT", writing);
+      if (!parsed.success) throw new NovartApiError("素材结果不完整，请重新打开确认。", response.status, "INVALID_RECEIPT", writing);
       return parsed.data;
     } catch (error) {
       if (error instanceof NovartApiError) throw error;
-      throw new NovartApiError("素材连接中断，请刷新确认已受理的任务。", null, undefined, writing);
+      throw new NovartApiError("素材连接中断，请刷新确认已提交的任务。", null, undefined, writing);
     }
   }, [userId]);
   const materialScope = useCallback((material: StudioMaterial) => {
     if (material.url !== `/api/workspaces/${encodeURIComponent(workspaceId)}/assets/${encodeURIComponent(material.assetId)}/raw`)
-      throw new Error("图片回执不属于当前品牌。");
+      throw new Error("图片结果不属于当前品牌。");
     return material;
   }, [workspaceId]);
   const refresh = useCallback(async (nextCursor?: string) => {
@@ -68,7 +68,7 @@ export function OwnedBrandMaterialsDrawer({ workspaceId, projectId, userId, read
   const uploadUrl = useCallback((taskId?: string) => prefix + "/upload" + (taskId ? "?" + new URLSearchParams({ taskId }) : ""), [prefix]);
   const recoverUploads = useCallback(async () => {
     const data = await request(uploadUrl(), z.object({ tasks: StudioBrandMaterialUploadView.array() }).strict());
-    data.tasks.forEach(task => { if (task.workspaceId !== workspaceId) throw new Error("上传回执不属于当前品牌。"); if (task.material) materialScope(task.material); });
+    data.tasks.forEach(task => { if (task.workspaceId !== workspaceId) throw new Error("上传结果不属于当前品牌。"); if (task.material) materialScope(task.material); });
     setTasks(data.tasks);
   }, [materialScope, workspaceId, request, uploadUrl]);
 
@@ -91,16 +91,16 @@ export function OwnedBrandMaterialsDrawer({ workspaceId, projectId, userId, read
     if (!file.size || file.size > 10 * 1024 * 1024 || !["image/png", "image/jpeg", "image/webp"].includes(file.type)) { setError("请选择 10 MiB 以内的 PNG、JPEG 或 WebP 图片。"); return; }
     lock.current = true; setBusy(true); setError(""); setNotice("正在保存图片…");
     try {
-      if (uploadAttempt.current && uploadAttempt.current.file !== file) throw new Error("上一张图片的受理结果尚未确认，请先重试原上传或刷新任务。");
+      if (uploadAttempt.current && uploadAttempt.current.file !== file) throw new Error("上一张图片的上传结果还没确认，请先重试原上传或刷新任务。");
       uploadAttempt.current ??= { file, mutationId: crypto.randomUUID() };
       const form = new FormData(); form.set("file", uploadAttempt.current.file);
       form.set("mutationId", uploadAttempt.current.mutationId);
       const task = await request(uploadUrl(), StudioBrandMaterialUploadView, { method: "POST", body: form });
-      if (task.workspaceId !== workspaceId || task.mutationId !== uploadAttempt.current.mutationId) throw new NovartApiError("上传回执与当前操作不一致，请刷新确认。", 422, "INVALID_RECEIPT", true);
+      if (task.workspaceId !== workspaceId || task.mutationId !== uploadAttempt.current.mutationId) throw new NovartApiError("上传结果与当前操作不一致，请刷新确认。", 422, "INVALID_RECEIPT", true);
       uploadAttempt.current = null; resumeUploadPoll();
       setTasks(old => [task, ...old.filter(value => value.taskId !== task.taskId)]);
       if (task.material) { materialScope(task.material); setChosen(task.material.assetId); await refresh(); }
-      setNotice(task.status === "SUCCEEDED" ? "图片已保存到品牌素材库，可以选择加入画布或对话。" : "上传已受理，图片会保留在品牌素材库；可以关闭抽屉。" );
+      setNotice(task.status === "SUCCEEDED" ? "图片已保存到品牌素材库，可以选择加入画布或对话。" : "上传已提交，图片会保留在品牌素材库；可以关闭抽屉。" );
     } catch (error) {
       if (error instanceof NovartApiError && !error.uncertain) uploadAttempt.current = null;
       setError(error instanceof Error ? error.message : "上传未完成。");
@@ -128,7 +128,7 @@ export function OwnedBrandMaterialsDrawer({ workspaceId, projectId, userId, read
       const material = materialScope(receipt.material);
       const linked = materialScope(await request(endpoint, StudioMaterial, { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ operation: "link", projectId, assetSha256: material.assetSha256 }) }));
-      if (linked.assetId !== material.assetId || linked.assetSha256 !== material.assetSha256) throw new Error("图片关联回执不一致，未插入画布。");
+      if (linked.assetId !== material.assetId || linked.assetSha256 !== material.assetSha256) throw new Error("图片关联结果不一致，未插入画布。");
       if (kind === "canvas") await onInsert(linked); else await onReference(linked);
       setNotice(kind === "canvas" ? "已加入画布。品牌素材仍可在其他项目复用。" : "已加入对话引用。画布选择保持不变。" );
       await refresh();
@@ -155,7 +155,7 @@ export function OwnedBrandMaterialsDrawer({ workspaceId, projectId, userId, read
     <input ref={fileInput} type="file" hidden accept="image/png,image/jpeg,image/webp" onChange={event => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; if (file) void upload(file); }} />
     <div className="mt-3 text-xs leading-5" aria-live="polite">{notice && <p>{notice}</p>}{error && <p role="alert" className="text-destructive">{error}</p>}
       {uploadPoll.timedOut && <p role="status">{TASK_POLL_PAUSED_MESSAGE} 点击下方“刷新”继续读取原上传。</p>}
-      {uploadAttempt.current && <button type="button" className="underline" disabled={busy} onClick={() => { const operation = uploadAttempt.current; if (operation) void upload(operation.file); }}>确认原上传回执</button>}
+      {uploadAttempt.current && <button type="button" className="underline" disabled={busy} onClick={() => { const operation = uploadAttempt.current; if (operation) void upload(operation.file); }}>检查上次上传</button>}
       {tasks.filter(task => task.status !== "SUCCEEDED").map(task => <p key={task.taskId}>{pending(task.status) ? `图片保存中 · ${task.progress}%` : task.error ?? "上传未完成"}</p>)}</div>
     <div className="mt-3 max-h-[55vh] min-h-0 overflow-y-auto" data-testid="owned-brand-material-list"><div className="grid grid-cols-2 gap-3">
       {items.map(item => <button key={item.assetId} type="button" aria-label={`选择素材 ${item.fileName}`} aria-pressed={chosen === item.assetId} disabled={busy}

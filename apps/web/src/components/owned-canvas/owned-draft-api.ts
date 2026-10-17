@@ -79,10 +79,10 @@ export function createOwnedDraftApi(workspaceId: string, projectId: string, user
       if (url.origin !== origin) throw problem("草稿地址不属于当前工作台。");
       const response = await fetcher(url.pathname + url.search, { method: input ? "POST" : "GET", headers: { "X-Novart-User": userId, ...(input ? { "Content-Type": "application/json" } : {}) }, body,
         signal: controller.signal, credentials: "same-origin", cache: "no-store", keepalive });
-      const raw = await response.json().catch(() => { throw new NovartApiError("草稿回执无法读取，请保留本页并确认保存。", controller.signal.aborted ? null : response.status, "DRAFT_RECEIPT", !!input); });
+      const raw = await response.json().catch(() => { throw new NovartApiError("草稿结果无法读取，请保留本页并确认保存。", controller.signal.aborted ? null : response.status, "DRAFT_RECEIPT", !!input); });
       if (!response.ok) throw new NovartApiError(response.status === 409 ? "另一页面已修改这份需求。当前输入仍保留，请先复制内容再重新打开。" : typeof raw?.error === "string" ? raw.error : "需求暂未保存，请保留本页后重试。", response.status, raw?.code, !!input && response.status >= 500);
       const parsed = WorkbenchDraftView.safeParse(raw);
-      if (!parsed.success || parsed.data.projectId !== projectId) throw new NovartApiError("草稿回执与当前项目不一致，原输入仍保留。", 422, "DRAFT_RECEIPT", !!input);
+      if (!parsed.success || parsed.data.projectId !== projectId) throw new NovartApiError("草稿结果与当前项目不一致，原输入仍保留。", 422, "DRAFT_RECEIPT", !!input);
       return parsed.data;
     } catch (error) {
       if (error instanceof NovartApiError) throw error;
@@ -105,7 +105,7 @@ export function createOwnedDraftSession(api: DraftTransport, projectId: string, 
   const publish = () => notify(snapshot());
   const fail = (problem: unknown) => { error = problem instanceof Error ? problem.message : "需求暂未保存，请保留本页。"; state = problem instanceof NovartApiError && problem.status === 409 ? "conflict" : problem instanceof NovartApiError && problem.code === "DRAFT_UNSUPPORTED" ? "unsupported" : "error"; publish(); };
   function accepted(view: WorkbenchDraftView, operation: NonNullable<typeof pending>) {
-    if (view.projectId !== projectId || view.revision !== operation.input.revision + 1 || view.referenceIssues.length || !same(view.inputForm, operation.input.inputForm)) throw new NovartApiError("保存回执尚未核对，请保留本页后重试确认。", null, "DRAFT_RECEIPT", true);
+    if (view.projectId !== projectId || view.revision !== operation.input.revision + 1 || view.referenceIssues.length || !same(view.inputForm, operation.input.inputForm)) throw new NovartApiError("保存结果尚未核对，请保留本页后重试确认。", null, "DRAFT_RECEIPT", true);
     decodeOwnedDraft(view); current = view; confirmed = operation.value; pending = null;
   }
   function load(): Promise<OwnedDraftValue> {

@@ -60,7 +60,7 @@ export function createOwnedGenerationRecovery(rawIdentity: OwnedGenerationIdenti
     load,
     store(raw: OwnedGenerationIntent): OwnedGenerationIntent {
       const next = intent(raw), before = load();
-      if (before && signature(before) !== signature(next)) throw new OwnedGenerationRecoveryError("上一份创作的受理结果还未确认，请先确认同一份请求，暂不创建新任务。");
+      if (before && signature(before) !== signature(next)) throw new OwnedGenerationRecoveryError("上次创作的提交结果还没确认，请先点“检查上次生成”，暂不创建新任务。");
       const serialized = JSON.stringify({ ...identity, version: 1, intent: next });
       if (serialized.length > MAX_RECORD_CHARS) throw new OwnedGenerationRecoveryError("创作确认记录过大，尚未提交生成，请缩短需求后重试。");
       try { storage().setItem(key, serialized); }

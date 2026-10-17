@@ -13,7 +13,7 @@ export function createOwnedConversationApi(workspaceId: string, projectId: strin
       const value = await response.json();
       if (!response.ok) throw new NovartApiError(typeof value?.error === "string" ? value.error : "对话尚未确认，请重新读取。", response.status, value?.code, method !== "GET" && response.status >= 500);
       const parsed = schema.safeParse(value);
-      if (!parsed.success) throw new NovartApiError("对话回执不完整，原需求和引用仍保留。", response.status, "INVALID_RECEIPT", method !== "GET");
+      if (!parsed.success) throw new NovartApiError("对话结果不完整，原需求和引用仍保留。", response.status, "INVALID_RECEIPT", method !== "GET");
       return parsed.data;
     } catch (error) {
       if (error instanceof NovartApiError) throw error;

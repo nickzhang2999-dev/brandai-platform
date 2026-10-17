@@ -65,7 +65,7 @@ export function OwnedLayerPanel({ api, workspaceId, projectId, userId, document,
     try {
       recovery.current = createOwnedLayerRecovery({ workspaceId, projectId, userId });
       operation.current = recovery.current.load(); setPending(!!operation.current);
-      if (operation.current) { setLayerMode(operation.current.layerMode ?? "MANUAL"); setLayerCount(operation.current.layerCount ?? 4); setNotice("上次分层受理结果还未确认。页面只读取已有任务，确认按钮会使用同一次请求。"); }
+      if (operation.current) { setLayerMode(operation.current.layerMode ?? "MANUAL"); setLayerCount(operation.current.layerCount ?? 4); setNotice("上次分层的提交结果还没确认。页面只读取已有任务，点“检查上次分层”会使用同一次请求，不会重复扣费。"); }
     } catch (error) { setBlocked(true); setNotice(message(error)); }
     void refresh();
     return () => { alive.current = false; };
@@ -139,7 +139,7 @@ export function OwnedLayerPanel({ api, workspaceId, projectId, userId, document,
     {refineSourceId && source && <div className="flex items-center gap-3 rounded-2xl border border-border p-3"><img src={source.url} alt="进一步分层的对象" className="h-14 w-14 shrink-0 rounded-lg bg-muted object-contain" /><button type="button" className={control} disabled={pending || busy} onClick={() => setRefineSourceId(null)}>返回画布选中对象</button></div>}
     <OwnedLayerOptions mode={layerMode} count={layerCount} context="分层" disabled={readOnly || busy || pending || blocked} onMode={setLayerMode} onCount={setLayerCount} />
     <textarea aria-label="分层说明" className="min-h-24 w-full rounded-2xl border border-border bg-background p-3 text-sm" placeholder="可选：优先拆分主体、文字和背景…" maxLength={500} value={intent} disabled={readOnly || busy || pending || blocked} onChange={event => setIntent(event.target.value)} />
-    <button type="button" className="w-full rounded-full bg-primary py-3 text-sm text-primary-foreground disabled:opacity-40" data-testid="owned-layer-submit" disabled={!api || readOnly || busy || blocked || !pending && !!sourceError} onClick={() => void submit()}>{busy ? "正在确认…" : pending ? "确认同一次分层" : refining ? "进一步分层" : "开始 AI 分层"}</button>
+    <button type="button" className="w-full rounded-full bg-primary py-3 text-sm text-primary-foreground disabled:opacity-40" data-testid="owned-layer-submit" disabled={!api || readOnly || busy || blocked || !pending && !!sourceError} onClick={() => void submit()}>{busy ? "正在确认…" : pending ? "检查上次分层" : refining ? "进一步分层" : "开始 AI 分层"}</button>
     {!!notice && <p role="status" className="rounded-xl bg-accent-soft p-3 text-xs leading-6" data-testid="owned-layer-notice">{notice}</p>}
     <button type="button" className={control} disabled={reading || busy} onClick={() => void refresh()}>{reading ? "正在读取…" : "刷新分层任务"}</button>
     {!tasks.length && <p className="py-4 text-center text-xs text-muted-foreground">当前项目还没有分层任务。</p>}
