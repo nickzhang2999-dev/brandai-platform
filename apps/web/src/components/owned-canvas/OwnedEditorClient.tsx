@@ -25,6 +25,7 @@ import { generatedOwnedSourceShapeId, placeGeneratedOwnedLayers } from "./owned-
 import { createOwnedWorkflowSession, type OwnedWorkflowSession, type WorkflowSessionState } from "./owned-workflow-session";
 import { useOwnedDraft } from "./use-owned-draft";
 import { createOwnedGenerationRecovery, OwnedGenerationRecoveryError } from "./owned-generation-recovery";
+import { takeReadyGenerationImages } from "./owned-generation-autoinsert";
 import { createOwnedEditorApi, type Material, type UploadTask, type GenerationTask, type PersistentImage, type GenerationInput, type WorkflowInput, type DecompositionTask } from "./owned-editor-api";
 
 type InitialTask = { kind: "STUDIO_UPLOAD" | "STUDIO_GENERATION" | "STUDIO_DECOMPOSITION"; id: string };
@@ -163,6 +164,24 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
     changeDocument({ ...current, items: [...current.items, { id: identity ?? "shape:" + crypto.randomUUID(), kind: "image", x: center.x - w / 2, y: center.y - h / 2, w, h, rotation: 0, opacity: 1, parentId: current.pageId, url: material.url, assetId: material.assetId, assetSha256: material.assetSha256, ...(material.versionId ? { versionId: material.versionId } : {}), ...(sourceShapeId ? { sourceShapeId } : {}) }] });
     setNotice("图片已加入画布，保存状态见顶部。");
   }, [changeDocument]);
+
+  // Place results of generations started or watched on this page as soon as
+  // they are stored; a reopened project never re-adds earlier results.
+  const watchedGenerations = useRef(new Set<string>()), placedGenerations = useRef(new Set<string>());
+  useEffect(() => { watchedGenerations.current = new Set(); placedGenerations.current = new Set(); }, [workspaceId, projectId, userId]);
+  useEffect(() => {
+    if (!canEdit) return;
+    const ready = takeReadyGenerationImages(generations, watchedGenerations.current, placedGenerations.current, docRef.current);
+    if (!ready.length) return;
+    void (async () => {
+      let count = 0;
+      for (const { task, images } of ready) for (const image of images) {
+        try { await insertImage(image, undefined, undefined, task.sourceShapeId); count++; }
+        catch (error) { setNotice(messageOf(error)); return; }
+      }
+      if (count) setNotice(`${count} 张新图片已自动加入画布，可撤销。`);
+    })();
+  }, [generations, canEdit, insertImage]);
 
   const refresh = useCallback(async (quiet = false) => {
     const api = apiRef.current;
@@ -551,7 +570,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
       if (!alive.current) return;
       setGenerations(current => mergeTask(current, result, value => value.requestId));
       generationPoll.resume(); setPollPaused(false); setPanel("tasks");
-      setNotice(result.mode === "modify" ? "整图修改已提交，原图保留。新结果存入素材库后，可手动加入画布。" : "任务已提交，完成并存入素材库后，可手动加入画布。");
+      setNotice(result.mode === "modify" ? "整图修改已提交，原图保留。新结果完成后会自动加入画布。" : "任务已提交，完成后图片会自动加入画布。");
     } catch (error) {
       if (apiRef.current !== api) return;
       if (error instanceof OwnedGenerationRecoveryError) setGenerationRecoveryBlocked(true);
