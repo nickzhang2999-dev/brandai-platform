@@ -938,7 +938,10 @@ class HttpVLMProvider(VLMProvider):
         # Reasoning models reject the legacy max_tokens parameter. Do not
         # probe/fallback with another paid POST; select the wire shape up front.
         # Keep older and third-party models on their existing request contract.
-        reasoning = re.match(r"^(?:gpt-5(?:[.-]|$)|o[134](?:-|$))", self.model) is not None
+        # Gateways often prefix the vendor ("openai/gpt-5.6"); match the final
+        # path segment so a renamed route does not fall back to max_tokens.
+        model_name = self.model.strip().rsplit("/", 1)[-1].lower()
+        reasoning = re.match(r"^(?:gpt-5(?:[.-]|$)|o[134](?:-|$))", model_name) is not None
         if reasoning:
             body.update(max_completion_tokens=max_tokens, reasoning_effort="low")
         else:

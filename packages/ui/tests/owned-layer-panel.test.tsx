@@ -46,6 +46,18 @@ describe("owned semantic layer interaction", () => {
     fireEvent.click(screen.getByTestId("owned-layer-submit")); await settle();
     expect(f.api.submitDecomposition).not.toHaveBeenCalled(); expect(screen.getByTestId("owned-layer-notice").textContent).toContain("选中的图片已变化");
   });
+  it("labels almost-empty layers instead of hiding them", async () => {
+    const faint = StudioDecompositionView.parse({ ...task, layers: task.layers.map((layer, index) => index === 1 ? { ...layer, inkCoverage: 0 } : layer) });
+    fixture(undefined, [faint]); await settle();
+    expect(screen.getAllByText("几乎透明")).toHaveLength(1);
+    expect(screen.getByRole("img", { name: "图层 2（几乎透明）" })).toBeTruthy();
+    expect(screen.getByTestId("owned-layer-faint-note")).toBeTruthy();
+  });
+  it("shows no faint note when every layer has visible content", async () => {
+    fixture(); await settle();
+    expect(screen.queryByText("几乎透明")).toBeNull();
+    expect(screen.queryByTestId("owned-layer-faint-note")).toBeNull();
+  });
   it("does not offer refinement before the real saved layer is on the canvas", async () => {
     fixture(); await settle(); expect((screen.getByRole("button", { name: "进一步分层：图层 1" }) as HTMLButtonElement).disabled).toBe(true);
   });

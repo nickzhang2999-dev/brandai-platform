@@ -149,10 +149,13 @@ export function OwnedLayerPanel({ api, workspaceId, projectId, userId, document,
       {task.error && <p role="alert" className="text-xs leading-5 text-muted-foreground">{task.error}</p>}
       {task.layers.length > 0 && <><div className="grid grid-cols-2 gap-2">{task.layers.map(layer => {
         const label = layer.name || `图层 ${layer.order + 1}`;
+        // No pixel reaches the visible-ink threshold: the model returned an
+        // almost empty layer. Keep it (never drop real pixels) but say so.
+        const faint = layer.inkCoverage === 0;
         const item = document?.items.find(value => value.kind === "image" && value.assetId === layer.assetId && value.assetSha256 === layer.assetSha256 && !value.hidden);
-        return <div key={layer.assetId} className="min-w-0 space-y-2 rounded-xl bg-muted p-2"><img src={layer.url} alt={label} loading="lazy" className="aspect-square w-full object-contain" /><p className="truncate text-xs text-muted-foreground" title={label}>{label}</p>
+        return <div key={layer.assetId} className={"min-w-0 space-y-2 rounded-xl bg-muted p-2" + (faint ? " opacity-60" : "")} data-faint={faint || undefined}><img src={layer.url} alt={faint ? `${label}（几乎透明）` : label} loading="lazy" className="aspect-square w-full object-contain" /><p className="truncate text-xs text-muted-foreground" title={label}>{label}{faint && <span className="ml-1 rounded-full bg-background px-1.5">几乎透明</span>}</p>
           <button type="button" className={control + " w-full !px-2"} aria-label={`进一步分层：${label}`} disabled={!item || readOnly || busy || pending || blocked} onClick={() => { if (item) { setRefineSourceId(item.id); setLayerMode("AUTO"); setNotice(`已选择${label}。确认拆分后才会调用模型，原图层与其他图层仍保留。`); } }}>进一步分层</button></div>;
-      })}</div><p className="text-xs leading-5 text-muted-foreground">展开到画布后，可选择其中一个图层继续细拆。</p></>}
+      })}</div>{task.layers.some(layer => layer.inkCoverage === 0) && <p className="text-xs leading-5 text-muted-foreground" data-testid="owned-layer-faint-note">标记为“几乎透明”的图层基本没有可见内容，可以在画布上隐藏或删除，不影响其他图层。</p>}<p className="text-xs leading-5 text-muted-foreground">展开到画布后，可选择其中一个图层继续细拆。</p></>}
       {task.status === "SUCCEEDED" && <div className="flex flex-wrap gap-2"><button type="button" className={control} disabled={readOnly || busy} onClick={() => void place(task)}>展开为可编辑图层</button>
         {api && <button type="button" className={control} disabled={busy} onClick={() => void download(task)} data-testid="owned-layer-psd-download">下载 PSD</button>}
       </div>}
