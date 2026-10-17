@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { createRequire } from "node:module";
+import { resolve } from "node:path";
 import { Worker } from "node:worker_threads";
 import sharp from "sharp";
 
@@ -179,7 +179,14 @@ export async function encodeStudioPsd(
   }
   signal.throwIfAborted();
   const budget = assertPixelBudget(width, height, decoded);
-  const writerModulePath = createRequire(import.meta.url).resolve("ag-psd/dist/psdWriter.js");
+  // Next/Webpack rewrites createRequire(import.meta.url).resolve(literal) to
+  // its numeric module ID, which cannot be loaded in a separate Node worker.
+  // All web/codec launchers run in apps/web; resolve the installed module at
+  // runtime so workerData contains an actual filesystem path after bundling.
+  // The Node 22 builtin lookup also prevents Webpack's createRequire parser
+  // from replacing a dynamic factory call with undefined during compilation.
+  const runtimeRequire = process.getBuiltinModule("module").createRequire(resolve(process.cwd(), "package.json"));
+  const writerModulePath = runtimeRequire.resolve("ag-psd/dist/psdWriter.js");
   return new Promise<Buffer>((resolve, reject) => {
     const worker = new Worker(writerProgram, {
       eval: true, workerData: { width, height, layers: decoded, hasTransparency, maxBytes: STUDIO_PSD_MAX_FILE_BYTES,

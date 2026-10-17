@@ -358,6 +358,9 @@ jobs:
           # the actual built image, independently of real model acceptance.
           docker exec novart-ci-web pnpm -F web exec tsx scripts/verify-studio-psd-file.ts
           docker exec novart-ci-web pnpm -F web exec tsx scripts/verify-studio-psd-memory.ts
+          # Source-level TS checks miss Webpack rewriting a Node worker's
+          # module path to a numeric bundle ID. Exercise the packaged codec.
+          docker exec novart-ci-web pnpm -F web exec node scripts/verify-studio-psd-built.cjs
           python - <<'PY'
           import json, time, urllib.request
           from pathlib import Path

@@ -358,5 +358,6 @@ P1 local gates complete: e0725bd owned shell/export;6ce5de0 routes;601a3c1 exact
 - [x] 本地全部测试、typecheck、lint、生产构建及浏览器正常/失败交互通过。
 - [x] 参数修复57c6795推送devUpdate1012，完整CI与CDS精确版本确认。
 - [x] 单次真实分析与Fal拆层完成，定位淡alpha被误判空白的第二处故障。
-- [ ] 淡alpha修复完成全门禁并部署，恢复已有模型结果（不重新调用模型）。
+- [x] 淡alpha修复完成全门禁并部署，恢复已有模型结果，真实9层保存/哈希通过（不重新调用模型）。
+- [ ] 修正PSD线程的生产模块路径，部署并通过真实文件下载与画布恢复验收。
 - [ ] 故障原图副本真实AUTO分析→分层→保存→PSD验收，补齐日志。
