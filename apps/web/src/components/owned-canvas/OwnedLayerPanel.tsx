@@ -160,6 +160,15 @@ export function OwnedLayerPanel({ api, workspaceId, projectId, userId, document,
         {api && <button type="button" className={control} disabled={busy} onClick={() => void download(task)} data-testid="owned-layer-psd-download">下载 PSD</button>}
       </div>}
       {task.canRetryArchive && <button type="button" className={control} disabled={readOnly || busy} onClick={() => void retryArchive(task)}>重新保存已有图层</button>}
+      {task.status === "FAILED" && !task.canRetryArchive && (() => {
+        // Retry only preselects the same image and settings; the paid call
+        // still needs the explicit submit button below the options.
+        const original = document?.items.find(item => item.id === task.sourceShapeId && item.kind === "image" && item.assetId === task.assetId && item.assetSha256 === task.assetSha256);
+        return <button type="button" className={control} data-testid="owned-layer-retry" disabled={!original || readOnly || busy || pending || blocked}
+          title={original ? undefined : "原图片已不在画布上，请重新选择图片后分层。"}
+          onClick={() => { if (!original) return; setRefineSourceId(original.id); setLayerMode(task.layerMode); if (task.layerMode === "MANUAL") setLayerCount(task.layerCount);
+            setNotice("已选好原图和原设置。点“开始 AI 分层”才会重新提交，会再次使用分层额度。"); }}>用同样设置重新分层</button>;
+      })()}
     </article>)}
   </section>;
 }

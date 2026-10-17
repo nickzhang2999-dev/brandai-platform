@@ -58,6 +58,21 @@ describe("owned semantic layer interaction", () => {
     expect(screen.queryByText("几乎透明")).toBeNull();
     expect(screen.queryByTestId("owned-layer-faint-note")).toBeNull();
   });
+  it("retry on a failed task preselects the same image and settings without submitting", async () => {
+    const failed = StudioDecompositionView.parse({ ...task, requestId: "failed", status: "FAILED", layerMode: "MANUAL", layerCount: 3, error: "图片内容分析服务拒绝了请求。", layers: [] });
+    const f = fixture(undefined, [failed]); await settle();
+    fireEvent.click(screen.getByTestId("owned-layer-retry"));
+    expect(f.api.submitDecomposition).not.toHaveBeenCalled();
+    expect(screen.getByTestId("owned-layer-notice").textContent).toContain("会再次使用分层额度");
+    fireEvent.click(screen.getByTestId("owned-layer-submit")); await settle();
+    expect(f.api.submitDecomposition).toHaveBeenCalledTimes(1);
+    expect(f.api.submitDecomposition.mock.calls[0]![0]).toMatchObject({ sourceShapeId: source.id, assetId: source.assetId, layerMode: "MANUAL", layerCount: 3 });
+  });
+  it("disables retry when the failed task's image is no longer on the canvas", async () => {
+    const failed = StudioDecompositionView.parse({ ...task, requestId: "failed", status: "FAILED", error: "失败", layers: [] });
+    fixture({ ...emptyOwnedDocument(), items: [] }, [failed]); await settle();
+    expect((screen.getByTestId("owned-layer-retry") as HTMLButtonElement).disabled).toBe(true);
+  });
   it("does not offer refinement before the real saved layer is on the canvas", async () => {
     fixture(); await settle(); expect((screen.getByRole("button", { name: "进一步分层：图层 1" }) as HTMLButtonElement).disabled).toBe(true);
   });
