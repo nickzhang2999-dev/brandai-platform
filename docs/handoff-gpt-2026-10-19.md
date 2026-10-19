@@ -117,7 +117,48 @@ git checkout -- packages/ui/tests/__snapshots__/business.test.tsx.snap   # 测�
 - 本机默认的 Playwright 浏览器缺失，浏览器用例改用本机 Chrome。
 - `D:/coding/公司/私密账号` 存放账号，不要读取内容，也不要打印。
 
-## 7. 已核对并关闭的事项
+## 7. 对话意图理解改为大模型主导（帅帅 10-19 定的方向，可以多花成本）
+
+**帅帅的要求**：自然语言经常模棱两可，不能靠正则硬猜。由大模型理解用户想干什么，再把需求「翻译」成生图模型容易理解的描述。为此可以多花模型成本。
+
+### 7.1 现状（小克读代码确认）
+
+- **模型默认关闭。** 只有 `STUDIO_CONVERSATION_INTENT_ENABLED=1` 并且配置了真实 VLM，才会走模型（`apps/web/src/lib/studio-conversation-model.ts:8-14`）。否则全部走 `studio-conversation-intent.ts` 里的 24 条正则。反馈第 1 页的那句回复只有正则路径才会给出，**推测**预览环境没有开模型，需要只读核实。
+- **模型拿到的信息很少。** 请求里只有用户原话、引用图的名字（例如「图片3」）、是否可编辑，以及快捷编辑目标和上一张结果的 ID（`packages/contracts/src/studio-conversation-model.ts`）。**没有图片内容，也没有前几轮对话。**
+- **模型只做分类，不做翻译。** 返回的只有 action、目标、引用、置信度、追问文案。发给生图模型的仍然是用户原文（`studio-conversation-intent.ts` 中的 `prompt: text`，`studio-conversation-model.ts` 注释写着 "Keep user text unchanged"）。
+- **推测的不稳定原因**：意图调用的上限是 `max_completion_tokens=1200`，配合 `reasoning_effort="low"`（`apps/ai/app/providers/http_providers.py` 的 `_chat_json`），AI 侧还有 25 秒超时（`apps/ai/app/studio_conversation_model.py`）。推理模型可能把额度用在思考上，输出被截断或超时，结果就记成 UNKNOWN，用户看到的就是「结果尚未确认」。这一点需要用日志核实。
+
+### 7.2 要做的改造（按顺序）
+
+1. **只读核实预览环境配置**：开关、VLM 提供方、模型名，以及最近对话消息的 `parser` 和 `modelStatus` 分布。不调用模型，不读取密钥值。
+2. **规划器升级到 r2**：TS 合约和 Python 模型同时升版本号，旧消息里 r1 的意图要能照常读出来。
+   - 输入增加：引用图缩略图（走 VLM 图片输入，限制尺寸和张数）、最近 2～3 轮对话与对应结果、上一张生成结果、当前画布选中的对象。
+   - 输出增加：`imagePrompt`，即改写后给生图模型的描述。澄清时额外返回 2～3 个可点击的 `options`，每个选项都带好 action、目标和 imagePrompt。
+   - 适当调高 `reasoning_effort` 和 token 上限，保证在 worker 现有 30 秒的预算内能跑完。具体数值以日志为准，不要拍脑袋定。
+3. **生图使用改写后的描述**：
+   - 生成时用 `imagePrompt`。用户原文保留下来，用于对话显示和审计。
+   - 改写不能凭空加入用户没提的品牌元素、文字或主体。引号里的文案原样保留。
+   - 尺寸优先级、EXACT 素材、输出画框、品牌硬禁令，仍然由服务端规则负责，模型不能覆盖。
+   - 结果卡片上可以展开查看「实际发给生图模型的描述」。
+4. **正则规则缩减为两种用途**：
+   - 调用模型前的拦截：提问、「先别生成」、纯评价这类话不花钱，直接处理。现有的 `studioConversationNonActionable` 保留。
+   - 模型不可用时的兜底：不再直接追问一句话，而是给出「生成新图」「修改图片 N」按钮。
+5. **澄清改成按钮**：前端渲染 `options`，用户点一下就以同一个 mutation 提交，不需要重新打字。生图要花钱，所以不能替用户猜一个直接跑，但选项要替用户想好。
+6. **判断错了可以一键纠正**：结果卡片上加「其实想修改原图」或「其实想要新图」，用同一段需求按另一种意图重新提交。这会产生一次新的付费生成，界面上要写明。
+
+### 7.3 守住的边界
+
+- 模型只负责理解语义。引用 ID 必须属于本次消息，`modify` 的目标必须可编辑。这些校验（`validate_decision` 和 TS 侧的检查）保留。
+- `providerRetryPolicy: "never"` 和「结果未知不自动重试」的保护保留，不能为了稳定而自动重放付费调用。
+- 成本：每条消息多一次带图的 VLM 调用，帅帅已经同意。上线前在 worklog 里记下单次调用的大致 token 数和耗时。
+
+### 7.4 验收
+
+- 准备一组固定语料，至少包括：反馈原句、无关键词的场景描述、句中提问、否定和「先别生成」、多图未说明用途、引号文案、「把背景换成蓝色」这类改图。
+- 先用测试夹具对比 r1 和 r2 的判断结果。真实模型评测需要帅帅授权，并事先限定调用次数。
+- 真实环境里，反馈第 1 页那句话要能直接出图，发给生图模型的 `imagePrompt` 要和用户意思一致。
+
+## 8. 已核对并关闭的事项
 
 - **PSD 生产模块路径 + 真实下载**：已完成。10-17 的真实验收回执记录：commit `2492b43`，`psdHttpStatus` 为 200，9 层，`realProvider` 为 true，检查项包括 `real-psd-download-and-layer-structure-readback`。`handoff-remaining-2026-10-17.md` 里写的「PSD 仍返回 503」是更早的状态，已经过时。
 - **故障原图完整链路**：同一份回执包含 `same-failing-source-readable-and-sha256-verified`、`real-analysis-and-layer-task-succeeded` 和 `real-layers-placed-saved-and-restored`，已完成。
