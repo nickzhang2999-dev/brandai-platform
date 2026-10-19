@@ -44,6 +44,7 @@ export const StudioGenerationView = z.object({
     mimeType: z.enum(["image/png", "image/jpeg", "image/webp"]),
     url: z.string().regex(/^\/api\/workspaces\/[a-zA-Z0-9_-]+\/assets\/[a-zA-Z0-9_-]+\/raw$/).refine(v => !v.includes("\n")),
   }).strict()), error: z.string().nullable(), archiveError: z.string().nullable(), canRetryArchive: z.boolean(),
+  appliedBrandRuleCount: z.number().int().min(0).nullable().default(null),
 }).strict().superRefine((value, context) => {
   if (value.sourceShapeId !== undefined && value.mode !== "modify") context.addIssue({ code: "custom", path: ["sourceShapeId"], message: "Only modified results have a source shape" });
 });

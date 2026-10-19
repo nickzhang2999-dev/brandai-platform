@@ -22,13 +22,20 @@ export function generatedMaterialWhere(workspaceId: string, projectId: string) {
 export async function readStudioGenerationResults(request: StudioArtifactRequest, db: Db = prisma) {
   const [outputs, recoverableOutputs, artifacts, project] = await Promise.all([
     db.studioGenerationOutput.findMany({ where: { requestId: request.id, workspaceId: request.workspaceId, projectId: request.projectId },
-      select: { id: true, expiresAt: true }, orderBy: { index: "asc" } }),
+      select: { id: true, expiresAt: true, params: true }, orderBy: { index: "asc" } }),
     db.studioGenerationOutput.findMany({ where: { requestId: request.id, workspaceId: request.workspaceId, projectId: request.projectId, imageUrl: { not: null }, expiresAt: { gt: new Date() } }, select: { id: true } }),
     db.studioGeneratedMaterial.findMany({ where: { requestId: request.id, workspaceId: request.workspaceId, projectId: request.projectId },
       select: studioArtifactViewSelect, orderBy: { createdAt: "asc" } }),
     db.project.findFirst({ where: { id: request.projectId, workspaceId: request.workspaceId }, select: { archivedAt: true } }),
   ]);
-  return projectStudioGenerationResults(request, { outputs, recoverableOutputs, artifacts, project });
+  return { ...projectStudioGenerationResults(request, { outputs, recoverableOutputs, artifacts, project }), appliedBrandRuleCount: appliedBrandRuleCount(outputs) };
+}
+
+// Written by the worker from the rules actually sent to the provider; older
+// outputs predate the field and report null rather than a guessed zero.
+function appliedBrandRuleCount(outputs: Array<{ params: unknown }>) {
+  const value = (outputs[0]?.params as { appliedBrandRuleCount?: unknown } | null)?.appliedBrandRuleCount;
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
 
 /** Recheck writer membership inside the same transaction as publication. */

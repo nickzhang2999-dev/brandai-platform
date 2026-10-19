@@ -40,19 +40,15 @@
 
 **判断**：这条待办很可能是旧的没清掉。接手时先对一遍，确认无误就划掉，不要重复做审计。
 
-## 四、「已应用 N 条品牌规则」（纯开发）
+## 四、「已应用 N 条品牌规则」（2026-10-19 已完成，本地）
 
-**依据**：小克 10-17 直接读代码确认。
+原判断「要改数据库」不对。worker 早已把实际发给模型的规则数写进每条输出的 `params.appliedBrandRuleCount`（`generate.worker.ts` 第 1106/1116 行，图片工具分支为 0），只是没人读出。
 
-`apps/web/src/lib/studio-generation-policy.ts` 第 128-142 行会读取 `getConfirmedRules` 和 `prohibitionRule`，但最后只 `hashStudioPayload(...)` 存一个哈希，**没有保存规则条数**。`StudioGenerationView` 契约里也没有这个字段。
+本次改动：契约 `StudioGenerationView` 增加 `appliedBrandRuleCount`（可空，默认 null）；`readStudioGenerationResults` 从第一条输出读取；生成卡片显示「已应用 N 条品牌规则」或「本次未应用品牌规则」。字段出现前的旧输出返回 null、不显示，不猜 0。无迁移。
 
-要在界面上显示「本次应用了 N 条品牌规则」，需要：
+## 三之后：过期待办已核对
 
-1. 生成记录里保存规则数（数据库迁移）
-2. 加进 `packages/contracts/src/studio-generation.ts` 的视图契约
-3. 前端在生成卡片上显示
-
-跨数据库、契约、前端三层。不调模型，可以独立做完。
+第三项那条 P5 待办已在 `task_plan.md` 勾掉，依据 `push-preflight-2026-10-17.md`。
 
 ## 需要帅帅确认的一件事
 

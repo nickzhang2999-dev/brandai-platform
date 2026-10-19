@@ -341,7 +341,7 @@ P1 local gates complete: e0725bd owned shell/export;6ce5de0 routes;601a3c1 exact
 - [x] Lint/CI配置、Pydantic契约、只读孤儿审计、安全FK与索引候选迁移、历史日志归档。
 - [x] PGlite SQL反例验证58项。
 - [x] 109 个 Web 测试迁移完成；L1 1327+287+34、AI529、types/build/lint 全通过。
-- [ ] 目标真实DB孤儿统计/nativePG迁移验收（不连共享库，本轮未验证）。
+- [x] 目标真实DB孤儿统计/nativePG迁移验收：已由2026-10-17集成发布完成（独立库26表孤儿/6项跨品牌全0，三条迁移只读验收通过），见 docs/push-preflight-2026-10-17.md。
 ## 2026-10-17 集成发布交接
 
 - [x] 重新执行集成测试、类型、lint、低内存生产构建，均通过。

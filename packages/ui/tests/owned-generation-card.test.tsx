@@ -8,7 +8,7 @@ import { createOwnedEditorApi, type GenerationTask, type GenerationCompliance } 
 // These tests do not exercise any real provider, storage, account or database.
 const image = { versionId: "fixture-version", assetId: "fixture-asset", assetSha256: "a".repeat(64), width: 16, height: 16, mimeType: "image/png" as const, url: "/api/workspaces/fixture-workspace/assets/fixture-asset/raw" };
 const task = (override: Partial<GenerationTask> = {}): GenerationTask => ({ mode: "generate", requestId: "fixture-request", mutationId: "94f32517-d416-46ea-b8a0-401fe8d4ed65", projectId: "fixture-project", generationId: "fixture-generation", status: "SUCCEEDED", progress: null,
-  expiresAt: "2099-01-01T00:00:00.000Z", archiveExpiresAt: "2099-01-02T00:00:00.000Z", archiveProcessingExpiresAt: null, displayText: "合成结果卡片交互", resultState: "READY", results: [image], error: null, archiveError: null, canRetryArchive: false, psdLayerCount: null, psdLayerMode: null, ...override });
+  expiresAt: "2099-01-01T00:00:00.000Z", archiveExpiresAt: "2099-01-02T00:00:00.000Z", archiveProcessingExpiresAt: null, appliedBrandRuleCount: null, displayText: "合成结果卡片交互", resultState: "READY", results: [image], error: null, archiveError: null, canRetryArchive: false, psdLayerCount: null, psdLayerMode: null, ...override });
 const check = (override: Partial<GenerationCompliance> = {}): GenerationCompliance => ({ taskId: "fixture-check", versionId: image.versionId, status: "SUCCEEDED", progress: 100, expiresAt: "2099-01-01T00:00:00.000Z", checkedImageSha256: image.assetSha256,
   report: { overall: "PASS", textResults: [{ level: "PASS", reason: "合成文字检查理由" }], visualResults: [{ level: "PASS", reason: "合成视觉检查理由", replacement: "合成建议" }], checkedAt: "2026-10-10T00:00:00.000Z" }, error: null, canRetry: false, ...override });
 const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json" } });
@@ -51,6 +51,14 @@ describe("owned generation card explicit actions", () => {
     expect(screen.getByTestId("owned-generated-psd-status").textContent).toContain("生成图片仍保留");
     expect((screen.getByRole("button", { name: "加入画布" }) as HTMLButtonElement).disabled).toBe(false);
     expect(screen.queryByRole("button", { name: "下载 PSD" })).toBeNull();
+  });
+  it("shows the applied brand rule count only when the server recorded it", async () => {
+    const f = fixture(task({ appliedBrandRuleCount: 3 })); await settle();
+    expect(screen.getByTestId("owned-generation-rule-count").textContent).toBe("已应用 3 条品牌规则");
+    f.rerender(<OwnedGenerationCard {...f.props} task={task({ appliedBrandRuleCount: 0 })} />);
+    expect(screen.getByTestId("owned-generation-rule-count").textContent).toBe("本次未应用品牌规则");
+    f.rerender(<OwnedGenerationCard {...f.props} task={task({ appliedBrandRuleCount: null })} />);
+    expect(screen.queryByTestId("owned-generation-rule-count")).toBeNull();
   });
   it("does not automatically generate, inspect, archive or insert on mount/rerender", async () => {
     const f = fixture(task({ canRetryArchive: true })); await settle(); f.rerender(<OwnedGenerationCard {...f.props} task={{ ...f.props.task }} />); await settle();

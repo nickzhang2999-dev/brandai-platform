@@ -25,6 +25,21 @@ beforeEach(() => {
   f.transaction.mockImplementation(fn => fn(tx));
 });
 
+describe("applied brand rule count", () => {
+  it("reports the worker-recorded count and null for outputs without it", async () => {
+    outputs = [{ id: "output", expiresAt: future(), params: { appliedBrandRuleCount: 3 } }];
+    expect((await readStudioGenerationResults(request)).appliedBrandRuleCount).toBe(3);
+    outputs = [{ id: "output", expiresAt: future(), params: { appliedBrandRuleCount: 0 } }];
+    expect((await readStudioGenerationResults(request)).appliedBrandRuleCount).toBe(0);
+    for (const params of [{}, null, { appliedBrandRuleCount: "3" }, { appliedBrandRuleCount: -1 }, { appliedBrandRuleCount: 1.5 }]) {
+      outputs = [{ id: "output", expiresAt: future(), params }];
+      expect((await readStudioGenerationResults(request)).appliedBrandRuleCount).toBeNull();
+    }
+    outputs = [];
+    expect((await readStudioGenerationResults(request)).appliedBrandRuleCount).toBeNull();
+  });
+});
+
 describe("durable archive receipt and retry boundaries (unit DB fixtures)", () => {
   it("keeps generation success separate from pending or failed archive and never projects private source URLs", async () => {
     expect(await readStudioGenerationResults(request)).toMatchObject({ resultState: "PENDING", results: [], canRetryArchive: false });
