@@ -647,6 +647,9 @@ try {
     await saveWorkflow(frame); finalWorkflowRevision = workflowBefore.workflowRevision + 2;
     await persistedWorkflow(projectId, workspace.id, expectedWorkflow, finalWorkflowRevision);
     await frame.getByRole("button", { name: "应用到对话", exact: true }).click();
+    // Applying references awaits document/workflow/material readback. Wait for
+    // its completed UI transition before inspecting or removing the new refs.
+    await expect(frame.getByRole("dialog", { name: "素材与画框", exact: true })).toBeHidden();
     // Explicitly remove all references before the opt-in plain-generation check.
     while (await frame.getByRole("button", { name: /^移除对话引用 / }).count()) await frame.getByRole("button", { name: /^移除对话引用 / }).first().click();
     await conversationDraft(user.id, workspace.id, projectId, "", []);
