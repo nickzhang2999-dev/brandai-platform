@@ -74,15 +74,22 @@ describe("Studio decomposition image boundary (local fixtures; no provider or DB
     expect(studioLayerProviderFrames(1920, 2560)).toEqual([{ width: 544, height: 736 }]);
     expect(studioLayerProviderFrames(1024, 1024)).toEqual([{ width: 640, height: 640 }]);
     expect(studioLayerProviderFrames(1920, 1080)).toEqual([{ width: 864, height: 480 }]);
+    expect(studioLayerProviderFrames(100, 6400)).toEqual([{ width: 64, height: 5120 }]);
   });
   it("maps a provider-resized full frame back onto the source without shifting content", async () => {
     // Content at 25%..50% of the provider frame must land at 25%..50% of the source.
-    const result = await inspectStudioLayer(await fixture(544, 736, { left: 136, top: 184, width: 136, height: 184 }), 1920, 2560, signal());
+    const result = await inspectStudioLayer(await fixture(544, 736, { left: 136, top: 184, width: 136, height: 184 }), 1920, 2560, signal(), { provider: "FalLayerProvider", model: "fal-ai/qwen-image-layered" });
     expect(result).toMatchObject({ width: 1920, height: 2560, hasTransparency: true });
     const { left, top, width, height } = result.alphaBounds;
     // ~3.5× upscaling blurs edges by a few pixels; misplacement would be hundreds.
     expect(Math.abs(left - 480)).toBeLessThanOrEqual(8); expect(Math.abs(top - 640)).toBeLessThanOrEqual(8);
     expect(Math.abs(left + width - 960)).toBeLessThanOrEqual(8); expect(Math.abs(top + height - 1280)).toBeLessThanOrEqual(8);
+  });
+  it("does not apply Qwen's geometry to unknown models or missing provider receipts", async () => {
+    const bytes = await fixture(544, 736, { left: 10, top: 10, width: 20, height: 20 });
+    for (const provider of [undefined, { provider: "FalLayerProvider", model: "other-layer-model" }, { provider: "OtherProvider", model: "fal-ai/qwen-image-layered" }]) {
+      await expect(inspectStudioLayer(bytes, 1920, 2560, signal(), provider)).rejects.toMatchObject({ status: 422 });
+    }
   });
   it("still rejects off-aspect frames that are not the predicted provider frame", async () => {
     // 552×736 is exactly 3:4 and is accepted by the same-aspect rule instead.

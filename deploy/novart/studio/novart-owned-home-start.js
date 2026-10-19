@@ -435,19 +435,38 @@ window.createHomeStart = function createHomeStart(host) {
     if (own || key === legacyKey) return own;
     const legacy = await dbTask('readonly', undefined, legacyKey);
     if (!legacy) return null;
-    // Records saved before per-brand keys carry no brand. Adopt one only when it
-    // cannot belong to another brand: no project yet, or a project of this brand.
+    // A missing project is unknown ownership (possibly a lost create response).
+    // Keep that original record instead of assigning it to whichever brand opens first.
     const projectId = legacy.submitted?.projectId;
-    if (projectId) {
-      try { await host.reloadProjects(); } catch {}
-      if (!host.project(projectId)) return null;
+    if (!identity(projectId)) {
+      notify('检测到尚未确认品牌归属的旧版草稿，原始记录仍保留，未放入当前品牌。');
+      return null;
     }
-    await dbTask('readwrite', legacy);
-    await dbTask('readwrite', undefined, legacyKey);
-    return legacy;
+    await host.reloadProjects();
+    if (!host.project(projectId)) return null;
+    // Network checks happen before the transaction. Re-read both keys under a
+    // single write transaction: another tab may already have recovered/saved.
+    const db = await dbPromise;
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction('draft','readwrite'), store = transaction.objectStore('draft');
+      let value = null;
+      const timer = setTimeout(() => { try { transaction.abort(); } catch {} reject(new Error('恢复记录保存超时')); },8000);
+      transaction.oncomplete = () => { clearTimeout(timer); resolve(value); };
+      transaction.onerror = transaction.onabort = () => { clearTimeout(timer); reject(new Error('恢复记录未能保存')); };
+      const ownRequest = store.get(key);
+      ownRequest.onsuccess = () => {
+        if (ownRequest.result) { value = ownRequest.result; return; }
+        const legacyRequest = store.get(legacyKey);
+        legacyRequest.onsuccess = () => {
+          const candidate = legacyRequest.result;
+          if (candidate?.submitted?.projectId !== projectId) return;
+          try { validateRecovery(candidate); } catch { transaction.abort(); return; }
+          value = candidate; store.put(candidate,key); store.delete(legacyKey);
+        };
+      };
+    });
   }
-  loadRecovery().then(value => {
-    if (!value) return;
+  function validateRecovery(value) {
     if (value.version !== 1 || !Array.isArray(value.items) || value.items.length > 4 || new Set(value.items.map(item => item.id)).size !== value.items.length
       || value.items.some(item => !uuid(item.id) || typeof item.name !== 'string' || !validFile(item.file) || item.taskId && !identity(item.taskId))) throw new Error('恢复记录无法读取');
     if (value.submitted && (!uuid(value.submitted.requestId) || typeof value.submitted.brief !== 'string' || typeof value.submitted.projectName !== 'string'
@@ -455,6 +474,10 @@ window.createHomeStart = function createHomeStart(host) {
       || value.submitted.startCreation !== undefined && typeof value.submitted.startCreation !== 'boolean'
       || value.submitted.creationStarted !== undefined && typeof value.submitted.creationStarted !== 'boolean'
       || value.submitted.creationAccepted !== undefined && typeof value.submitted.creationAccepted !== 'boolean')) throw new Error('恢复记录无法读取');
+  }
+  loadRecovery().then(value => {
+    if (!value) return;
+    validateRecovery(value);
     items = value.items.map(item => ({id:item.id,file:item.file,name:item.name,taskId:item.taskId || null,taskStatus:null,uploadStarted:typeof item.uploadStarted === 'boolean' ? item.uploadStarted : Boolean(value.submitted),material:null,saved:false,url:URL.createObjectURL(item.file),error:''})); submitted = value.submitted || null;
     if (submitted) $('ns-home-brief').value = submitted.brief;
   }).catch(() => { recoveryBlocked = true; draftError = '原图恢复记录暂不可用，请保留本页和原文件，检查存储空间后刷新。'; })

@@ -259,3 +259,8 @@ CDS preflight directly confirms push automatic deployment and default shared bra
 - r2采用已授权且hash一致的4张受限缩略图、3轮历史和真实选中引用；上一张非引用图片只能看不能被修改。改写提示词与原话分开保存。
 - 独立审查发现模型可丢掉非目标EXACT引用，现已在decision/option两处拒绝；同时保护中文单引号文案、旧intent payloadhash和旧首页空selection兼容。
 - 首页恢复IDB全站统一key的历史设计仍需品牌分桶迁移审查。未随本次修复换key或丢弃旧恢复资料。
+
+### 2026-10-19 新提交复核
+
+- 新增 f791cd4 / 78b3b88 后，发现未绑定项目的旧草稿归属推断不成立；单一原子事务才能防多标签页在迁移间隙覆盖目标/删掉变更后的源记录。
+- 官方 Diffusers QwenImageLayeredPipeline 明确按 resolution²、32步长取整并整图resize。544×736现在有实现依据；仅指定模型640档启用，未知模型不能用“碰巧同尺寸”代替几何契约。原非方图调查结论更新为已实现本地适配，真实全组重合与模型质量仍未重新验收。

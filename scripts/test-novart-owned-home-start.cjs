@@ -36,10 +36,17 @@ function harness(options = {}) {
   let legacy = options.legacy || null; const keys = new Set();
   const isLegacy = k => k === 'owned-home-start-v1';
   const db = {createObjectStore(){}, transaction(_name,mode) {
-    const tx={abort(){tx.onabort?.();},objectStore(){return {
-      get(k){keys.add(k);const request={};queueMicrotask(()=>{request.result=isLegacy(k)?legacy:stored;tx.oncomplete?.();});return request;},
-      put(value,k){keys.add(k);const request={};queueMicrotask(()=>{if(options.failWrites){tx.onerror?.();return;}if(isLegacy(k))legacy=structuredClone(value);else{stored=structuredClone(value);writes.push(stored);}tx.oncomplete?.();});return request;},
-      delete(k){keys.add(k);const request={};queueMicrotask(()=>{if(isLegacy(k))legacy=null;else stored=null;tx.oncomplete?.();});return request;},
+    let pending=0,aborted=false,nextStored=stored,nextLegacy=legacy;const staged=[];
+    function request(k,operation,write=false){keys.add(k);pending++;const req={};queueMicrotask(()=>{
+      if(aborted)return;
+      if(write&&options.failWrites){tx.abort();return;}
+      req.result=operation();req.onsuccess?.();pending--;
+      if(!pending&&!aborted){stored=nextStored;legacy=nextLegacy;writes.push(...staged);tx.oncomplete?.();}
+    });return req;}
+    const tx={abort(){aborted=true;tx.onabort?.();},objectStore(){return {
+      get(k){return request(k,()=>isLegacy(k)?nextLegacy:nextStored);},
+      put(value,k){return request(k,()=>{if(isLegacy(k))nextLegacy=structuredClone(value);else{nextStored=structuredClone(value);staged.push(nextStored);}},true);},
+      delete(k){return request(k,()=>{if(isLegacy(k))nextLegacy=null;else nextStored=null;},true);},
     };}}; return tx;
   }};
   const indexedDB={open(){const request={result:db};queueMicrotask(()=>{request.onupgradeneeded?.();request.onsuccess?.();});return request;}};
@@ -50,7 +57,7 @@ function harness(options = {}) {
   const host={
     async api(url,payload){creates.push({url,payload});apiCalls++;assert.equal(stored?.submitted?.requestId,payload.requestId,'Creation identity must be durable before network');if(options.loseCreateOnce&&apiCalls===1)throw new Error('synthetic lost response');return {projectId:entry.id};},
     node:(tag,_class,text)=>new Element(tag,text),button:(text,_class,action)=>{const value=new Element('button',text);value.onclick=action;return value;},notify:value=>notices.push(value),
-    legacyBlocked:()=>false,composing:()=>false,reloadProjects:async()=>{},project:id=>id===entry.id?{projectId:id}:null,
+    legacyBlocked:()=>false,composing:()=>false,reloadProjects:async()=>{options.onReload?.(fixture);},project:id=>id===entry.id?{projectId:id}:null,
     openProject(){active=true;context.location.hash='#/workspace/'+entry.id;},current:value=>active&&value===entry,goProjects(){active=false;context.location.hash='#/projects';},invalidateAssets(){},showRequirements(){},refreshImportedFrame(){refreshed++;},
   };
   const context={window:null,document:{getElementById:get,querySelectorAll:()=>[entry.frame]},indexedDB,Blob,File:TestFile,FormData,AbortController,Error,TypeError,Number,Promise,Map,Set,Date:class extends Date{static now(){return now;}},
@@ -63,7 +70,7 @@ function harness(options = {}) {
   context.window=context;
   const fixture={entry,host,elements,events,timers,writes,posts,requests,creates,notices,task,dispatch,ack,get data(){return stored;},get legacy(){return legacy;},get keys(){return [...keys];},get module(){return module;},
     async ready(){await flush(()=>module.snapshot().loaded);},async add(files=[file()]){get('hs-file-input').listeners.change({target:{files,value:'selected'}});await flush(()=>stored?.items?.length===Math.min(files.length,4)||get('hs-draft-note').textContent);},
-    async create(){await module.create();},async resume(){return module.resume(entry,true);},activate(){active=true;},get,get refreshed(){return refreshed;},completeInSibling(){stored={version:1,items:[],submitted:null};},replaceInSibling(value){stored=structuredClone(value);},
+    async create(){await module.create();},async resume(){return module.resume(entry,true);},activate(){active=true;},get,get refreshed(){return refreshed;},completeInSibling(){stored={version:1,items:[],submitted:null};},replaceInSibling(value){stored=structuredClone(value);},replaceLegacyInSibling(value){legacy=structuredClone(value);},
     fire(ms){const match=[...timers].find(value=>value.ms===ms);assert(match,'Expected bounded timer');clear(match);now+=ms;match.callback();},
   };
   vm.runInNewContext(source,context);module=context.createHomeStart(host);return fixture;
@@ -230,9 +237,23 @@ function harness(options = {}) {
     const f=harness({legacy:record});await f.ready();assert.equal(f.data,null);assert.equal(f.legacy?.submitted?.requestId,requestId);assert.equal(f.module.hasDraft(),false);count++;
   }
   {
-    // A pre-brand record with no project yet has nothing tying it elsewhere and is adopted.
+    // No project means unknown ownership, not permission to claim it for this brand.
     const requestId=randomUUID(),record={version:1,items:[],submitted:{requestId,projectId:null,brief:'未建项目',projectName:'新项目'}};
-    const f=harness({legacy:record});await f.ready();assert.equal(f.data?.submitted?.requestId,requestId);assert.equal(f.legacy,null);count++;
+    const f=harness({legacy:record});await f.ready();assert.equal(f.data,null);assert.equal(f.legacy?.submitted?.requestId,requestId);assert.equal(f.module.hasDraft(),false);count++;
+  }
+  {
+    const record={version:1,items:[],submitted:{requestId:randomUUID(),projectId:'project-fixture',brief:'旧记录',projectName:'旧项目'}};
+    const fresh={version:1,items:[],submitted:{...record.submitted,requestId:randomUUID(),brief:'另一标签页的新草稿'}};
+    const f=harness({legacy:record,onReload:f=>f.replaceInSibling(fresh)});await f.ready();assert.equal(f.data.submitted.requestId,fresh.submitted.requestId);assert.equal(f.legacy.submitted.requestId,record.submitted.requestId);count++;
+  }
+  {
+    const record={version:1,items:[],submitted:{requestId:randomUUID(),projectId:'project-fixture',brief:'旧记录',projectName:'旧项目'}};
+    const changed={...record,submitted:{...record.submitted,projectId:'other-project'}};
+    const f=harness({legacy:record,onReload:f=>f.replaceLegacyInSibling(changed)});await f.ready();assert.equal(f.data,null);assert.equal(f.legacy.submitted.projectId,'other-project');count++;
+  }
+  {
+    const record={version:1,items:[],submitted:{requestId:randomUUID(),projectId:'project-fixture',brief:'旧记录',projectName:'旧项目'}};
+    const f=harness({legacy:record,failWrites:true});await f.ready();assert.equal(f.data,null);assert.equal(f.legacy.submitted.requestId,record.submitted.requestId);assert.equal(f.module.snapshot().recoveryBlocked,true);count++;
   }
   assert(!source.includes('/studio/start/'));assert(!source.includes('webpack'));assert(!source.includes('/studio/generation'));
   console.log(`Owned homepage protocol boundary checks: ${count} passed; production services were not exercised.`);

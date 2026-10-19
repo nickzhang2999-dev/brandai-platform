@@ -368,7 +368,7 @@ async function archiveLayers(row: Row, signal: AbortSignal) {
   for (let index = 0; index < count; index++) {
     signal.throwIfAborted();
     const raw = await readArtifactImageBytes({ imageUrl: output.result.layers[index]!.imageUrl }, signal);
-    const image = await inspectStudioLayer(raw, row.sourceWidth, row.sourceHeight, signal); transparent ||= image.hasTransparency;
+    const image = await inspectStudioLayer(raw, row.sourceWidth, row.sourceHeight, signal, output.result.usage); transparent ||= image.hasTransparency;
     const assetId = `sdl_${row.id}_${index}`;
     await artifactDeadline(uploadBuffer(encryptStudioBase(image.body, { workspaceId: row.workspaceId, projectId: row.projectId, outputId: `${row.id}_${index}` }), "application/octet-stream", prefix, signal, objectKeys[index]), signal);
     const { body: _body, hasTransparency: _transparent, ...meta } = image;
