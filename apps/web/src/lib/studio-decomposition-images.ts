@@ -14,6 +14,21 @@ function validDimensions(width: number, height: number) {
     && width > 0 && height > 0 && width <= 16384 && height <= 16384;
 }
 
+// The layer model resizes the whole input to ~640² pixels of area and rounds
+// each side to a multiple of 32 independently (1920×2560 → 544×736,
+// 1024² → 640²). Only that exact predicted frame is accepted as a stretched
+// full frame; any other off-aspect size is still treated as a crop or pad.
+const STUDIO_LAYER_PROVIDER_AREA = 640 * 640;
+function roundToStep(value: number, step: number) {
+  const units = value / step, floor = Math.floor(units);
+  // Exact halves differ between round-half-even and half-up; accept both.
+  return units - floor === 0.5 ? [floor * step, (floor + 1) * step] : [Math.round(units) * step];
+}
+export function studioLayerProviderFrames(sourceWidth: number, sourceHeight: number) {
+  const ratio = sourceWidth / sourceHeight, width = Math.sqrt(STUDIO_LAYER_PROVIDER_AREA * ratio), height = width / ratio;
+  return roundToStep(width, 32).flatMap(w => roundToStep(height, 32).map(h => ({ width: w, height: h }))).filter(frame => frame.width > 0 && frame.height > 0);
+}
+
 /** The caller checks this whole-group budget before provider/decode work. */
 export function assertStudioLayerBudget(width: number, height: number, count: number): void {
   if (!validDimensions(width, height) || !Number.isSafeInteger(count) || count < 2 || count > 10
@@ -60,12 +75,13 @@ export async function inspectStudioLayer(
     const height = rotated ? metadata.width : metadata.height;
     if (!validDimensions(width, height) || width * height > STUDIO_LAYER_TOTAL_PIXELS) throw invalid();
     // A near aspect ratio alone cannot prove a full frame: a crop or padding
-    // can also differ by one pixel. Keep this strict until provider output
-    // includes a verified full-frame transform/placement contract.
-    if (width * sourceHeight !== height * sourceWidth) {
+    // can also differ by one pixel. Accept only an exact same-aspect frame or
+    // the provider's predicted resize frame for this source.
+    const providerFrame = studioLayerProviderFrames(sourceWidth, sourceHeight).some(frame => frame.width === width && frame.height === height);
+    if (!providerFrame && width * sourceHeight !== height * sourceWidth) {
       throw failure(`分层结果的比例与原图不一致，已保留原图。原图 ${sourceWidth}×${sourceHeight}，返回图层 ${width}×${height}；缺少完整画幅的位置记录，未拉伸或裁切发布。`);
     }
-    if (width > sourceWidth || height > sourceHeight) {
+    if (!providerFrame && (width > sourceWidth || height > sourceHeight)) {
       throw failure(`分层结果的尺寸超出原图，已保留原图。原图 ${sourceWidth}×${sourceHeight}，返回图层 ${width}×${height}；缺少完整画幅的缩放记录，未缩放发布。`);
     }
     image.rotate().toColourspace("srgb").ensureAlpha();

@@ -5,7 +5,7 @@ vi.mock("../src/lib/api", () => ({ ApiException: class extends Error { construct
 vi.mock("../src/lib/s3", () => ({ getObjectStream: vi.fn() }));
 vi.mock("../src/lib/ssrf", () => ({ safeFetch: vi.fn() }));
 vi.mock("../src/lib/watermark", () => ({ applyWatermarksToImage: vi.fn() }));
-import { assertStudioLayerBudget, inspectStudioLayer, STUDIO_LAYER_TOTAL_PIXELS } from "../src/lib/studio-decomposition-images";
+import { assertStudioLayerBudget, inspectStudioLayer, studioLayerProviderFrames, STUDIO_LAYER_TOTAL_PIXELS } from "../src/lib/studio-decomposition-images";
 
 const signal = () => AbortSignal.timeout(3000);
 async function fixture(width: number, height: number, ink?: { left: number; top: number; width: number; height: number; alpha?: number }) {
@@ -68,6 +68,27 @@ describe("Studio decomposition image boundary (local fixtures; no provider or DB
   });
   it.each([[159, 90], [160, 89], [160, 91]])("does not assume a one-pixel crop or pad (%i×%i) is a verified full frame", async (width, height) => {
     await expect(inspectStudioLayer(await fixture(width, height, { left: 10, top: 12, width: 20, height: 18 }), 160, 90, signal())).rejects.toMatchObject({ status: 422 });
+  });
+  it("predicts the provider's resize frame from the observed real outputs", () => {
+    // 1920×2560 → 544×736 is the real 2026-10-19 feedback task output.
+    expect(studioLayerProviderFrames(1920, 2560)).toEqual([{ width: 544, height: 736 }]);
+    expect(studioLayerProviderFrames(1024, 1024)).toEqual([{ width: 640, height: 640 }]);
+    expect(studioLayerProviderFrames(1920, 1080)).toEqual([{ width: 864, height: 480 }]);
+  });
+  it("maps a provider-resized full frame back onto the source without shifting content", async () => {
+    // Content at 25%..50% of the provider frame must land at 25%..50% of the source.
+    const result = await inspectStudioLayer(await fixture(544, 736, { left: 136, top: 184, width: 136, height: 184 }), 1920, 2560, signal());
+    expect(result).toMatchObject({ width: 1920, height: 2560, hasTransparency: true });
+    const { left, top, width, height } = result.alphaBounds;
+    // ~3.5× upscaling blurs edges by a few pixels; misplacement would be hundreds.
+    expect(Math.abs(left - 480)).toBeLessThanOrEqual(8); expect(Math.abs(top - 640)).toBeLessThanOrEqual(8);
+    expect(Math.abs(left + width - 960)).toBeLessThanOrEqual(8); expect(Math.abs(top + height - 1280)).toBeLessThanOrEqual(8);
+  });
+  it("still rejects off-aspect frames that are not the predicted provider frame", async () => {
+    // 552×736 is exactly 3:4 and is accepted by the same-aspect rule instead.
+    for (const [width, height] of [[544, 704], [512, 736], [544, 768], [576, 736]]) {
+      await expect(inspectStudioLayer(await fixture(width!, height!, { left: 10, top: 10, width: 20, height: 20 }), 1920, 2560, signal())).rejects.toMatchObject({ status: 422 });
+    }
   });
   it("rejects cropped proportions and oversized provider frames rather than distorting their positions", async () => {
     const bytes = await fixture(12, 8, { left: 3, top: 2, width: 4, height: 3 });
