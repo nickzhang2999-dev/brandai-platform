@@ -26,6 +26,13 @@ type Props = { document: OwnedCanvasDocument; item: OwnedCanvasItem; readOnly: b
 export function OwnedImageResize({ document, item, readOnly, onStore, onClose }: Props) {
   const [width, setWidth] = useState(Math.round(item.w)), [height, setHeight] = useState(Math.round(item.h)), [fit, setFit] = useState<"contain" | "cover">("contain");
   const [busy, setBusy] = useState(false), [error, setError] = useState(""), root = useRef<HTMLDivElement>(null), lock = useRef(false);
+  const [aspectLocked, setAspectLocked] = useState(() => { try { return localStorage.getItem("deepflare:resize-aspect-lock") !== "false"; } catch { return true; } });
+  const aspect = useRef(item.w / item.h);
+  function toggleAspect() { const next = !aspectLocked; if (next && width > 0 && height > 0) aspect.current = width / height; setAspectLocked(next); try { localStorage.setItem("deepflare:resize-aspect-lock", String(next)); } catch { /* Preference only; never blocks editing. */ } }
+  function dimensions(axis: "width" | "height", value: number) {
+    if (axis === "width") { setWidth(value); if (aspectLocked) setHeight(Math.round(value / aspect.current)); }
+    else { setHeight(value); if (aspectLocked) setWidth(Math.round(value * aspect.current)); }
+  }
   useEffect(() => { const before = window.document.activeElement as HTMLElement | null; root.current?.querySelector<HTMLInputElement>("input")?.focus(); return () => before?.focus(); }, []);
   async function run(store: boolean) {
     if (lock.current || readOnly) return; lock.current = true; setBusy(true); setError("");
@@ -40,7 +47,8 @@ export function OwnedImageResize({ document, item, readOnly, onStore, onClose }:
     <div ref={root} role="dialog" aria-modal="true" aria-label="图片像素尺寸" className="w-full max-w-sm space-y-4 rounded-3xl border border-border bg-card p-6 shadow-lg" onKeyDown={event => { event.stopPropagation(); if (event.key === "Escape" && !busy) onClose(); }}>
       <div className="flex items-center gap-2"><h2 className="mr-auto font-semibold">{ownedImageName(item)} · 调整尺寸</h2><button aria-label="关闭尺寸工具" disabled={busy} onClick={onClose}>×</button></div>
       <p className="text-xs leading-6 text-muted-foreground">按当前裁切、翻转和旋转生成一份新图片，原图保留。尺寸调整使用像素缩放。</p>
-      <div className="flex gap-3">{([['width', '宽度', width, setWidth], ['height', '高度', height, setHeight]] as const).map(([key, label, value, change]) => <label key={key} className="min-w-0 flex-1 space-y-2 text-xs">{label}<input aria-label={`图片像素${label}`} type="number" className="w-full rounded-xl border border-border bg-background p-3" min={32} max={8192} step={1} value={value} disabled={busy || readOnly} onChange={event => change(Number(event.target.value))} /></label>)}</div>
+      <div className="flex items-end gap-3">{([['width', '宽度', width], ['height', '高度', height]] as const).map(([key, label, value]) => <label key={key} className="min-w-0 flex-1 space-y-2 text-xs">{label}<input aria-label={`图片像素${label}`} type="number" className="w-full rounded-xl border border-border bg-background p-3" min={32} max={8192} step={1} value={value} disabled={busy || readOnly} onChange={event => dimensions(key, Number(event.target.value))} /></label>)}<button type="button" aria-label="锁定宽高比例" aria-pressed={aspectLocked} disabled={busy || readOnly} className="rounded-xl border border-border px-3 py-3 text-xs" onClick={toggleAspect}>{aspectLocked ? "等比" : "自由"}</button></div>
+      <div className="flex gap-2">{[0.5, 1, 2].map(scale => <button type="button" key={scale} disabled={busy || readOnly} className="rounded-full border border-border px-3 py-1 text-xs" onClick={() => { setWidth(Math.round(item.w * scale)); setHeight(Math.round(item.h * scale)); aspect.current = item.w / item.h; }}>{scale * 100}%</button>)}</div>
       <label className="block space-y-2 text-xs">画面适配<select aria-label="图片尺寸适配" className="w-full rounded-xl border border-border bg-background p-3" value={fit} disabled={busy} onChange={event => setFit(event.target.value as typeof fit)}><option value="contain">保留完整画面，空余处透明</option><option value="cover">填满画面，裁去超出部分</option></select></label>
       {error && <p role="alert" className="text-xs leading-6">{error}</p>}
       <div className="flex gap-2"><button className="rounded-full border border-border px-4 py-2 text-sm disabled:opacity-40" disabled={busy || readOnly} onClick={() => void run(false)}>下载 PNG</button><button className="ml-auto rounded-full bg-primary px-4 py-2 text-sm text-primary-foreground disabled:opacity-40" disabled={busy || readOnly} onClick={() => void run(true)}>{busy ? "正在处理…" : "保存并加入画布"}</button></div>

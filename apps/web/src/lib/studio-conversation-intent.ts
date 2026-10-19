@@ -1,8 +1,31 @@
 import { StudioConversationIntent, StudioConversationPixels, type StudioConversationInput, type StudioConversationReference, resolveGenerationSize } from "@brandai/contracts";
 import { studioConversationFeedback } from "./studio-conversation-feedback";
 
-/** Deliberately conservative. Unseen or ambiguous language asks a question;
- * this parser never infers a chargeable edit solely from having attachments. */
+/** A free-form scene can be a creation brief without a generation keyword.
+ * These are only negative boundaries, shared with the worker so commentary
+ * cannot incur a semantic-model charge before it is rejected by the parser.
+ * Quoted image copy is not an instruction to the application. */
+export function studioConversationNonActionable(input: Pick<StudioConversationInput, "text">): boolean {
+  const text = input.text.replace(/“[^”]*”|"[^"]*"|「[^」]*」|『[^』]*』/g, "").trim();
+  if (!text) return true;
+  if (/(?:先别|暂时不要|暂不|不要|别|不用|无需)\s*(?:生成|生图|制作|创作|开始|执行)|(?:先|只是|仅供)\s*(?:看看|讨论|参考)|(?:do not|don't)\s+(?:generate|create)/i.test(text)) return true;
+  if (/[？?]|(?:是不是|能不能|可不可以|是否)|(?:怎么样|如何评价|好不好|是什么|为什么|觉得如何|吗)\s*[。！!]?\s*$/.test(text)) return true;
+  const clauses = text.split(/[，,。；;\n！!]/).map(clause => clause.trim()).filter(Boolean);
+  return clauses.length > 0 && clauses.every(clause => {
+    // A negative-only clause is not an action. A complete scene may still
+    // contain constraints ("小狐狸在门口等朋友，不要红色背景").
+    if (/^(?:请|我)?\s*(?:图片\s*\d+\s*(?:的)?)?\s*(?:(?:构图|场景|环境|画面|背景|光影|光照|光线|颜色|色调|阳光)\s*)?(?:不要|不需要|无需|不用|不必|禁止|不想|不能|不准|别让|别把)|^(?:do not|don't)\s+edit/i.test(clause)) return true;
+    if (/^(?:(?:图片\s*\d+\s*(?:的)?)?\s*(?:构图\s*(?:保持|维持)(?:不变|原样)|(?:保持|维持|保留)\s*(?:原有|原|当前)?构图(?:不变|原样)?|不(?:改|改变|修改|调整)\s*(?:原有|原|当前)?构图))$/.test(clause)) return true;
+    if (/(?:很(?:好|自然|真实|漂亮|棒)|不错|好看|很好看|真好看|效果不错|非常漂亮|非常好看)\s*(?:啊|呀|呢|的)?$/.test(clause)) return true;
+    if (/^(?:参考|看看|看一下|我觉得|我感觉).*(?:效果|样子|风格|照片|图片)$/.test(clause)) return true;
+    if (/^(?:阳光|月光)\s*(?:洒下|洒下来|照进|洒进)(?:来)?$/.test(clause)) return true;
+    if (/^(?:文案为|文字为|标题为|写上|写着|标注|印上|text\s+(?:says|is))\s*$/i.test(clause)) return true;
+    return /^(?:(?:这是|这张|这几张|图片\s*\d+|参考图|参考|看看|看一下|好[的]?|谢谢|继续|根据这张图|根据图片\s*\d+|用这张参考)[\s]*)+$/.test(clause);
+  });
+}
+
+/** A reference alone never implies editing it. A clear scene brief can create
+ * a new image; ambiguity about multiple images still requires clarification. */
 export function parseStudioConversationIntent(input: StudioConversationInput, previous?: StudioConversationReference, decision?: { action: "generate" | "modify"; targetReferenceId: string | null }): StudioConversationIntent {
   const text = input.text.trim();
   const refs = [...input.references];
@@ -12,6 +35,7 @@ export function parseStudioConversationIntent(input: StudioConversationInput, pr
     clarification: message, requestedSize: null, sizeSource: "default", sizeSelection: input.sizeSelection, parser: "safe-rules-v1" });
   const feedback = studioConversationFeedback(input);
   if (feedback) return clarify(feedback);
+  if (studioConversationNonActionable(input)) return clarify("这次要参考图片创作，还是修改已有图片？确认后再开始。");
   if (forcedId && !forced) return clarify("指定的修改对象不在本次引用中，请重新选择修改对象。");
   const explicitNew = decision?.action === "generate" || /(?:重新(?:生成|设计|制作)|新建|新做|全新|另做|另外|再生成|(?:生成|设计|制作)\s*(?:一|1)\s*(?:张|幅|个)|合成|融合|组合|结合|new\s+(?:image|design)|combine|compose)/i.test(text);
   const compositionPattern = "(?:构图\\s*(?:保持|维持)(?:不变|原样)|(?:保持|维持|保留)\\s*(?:原有|原|当前)?构图(?:不变|原样)?|不(?:改|改变|修改|调整)\\s*(?:原有|原|当前)?构图)";
@@ -57,7 +81,6 @@ export function parseStudioConversationIntent(input: StudioConversationInput, pr
   if (target && !target.shapeId) return clarify("快捷改图需要画布中的图片，请先将这张素材加入画布再选择它。");
   if (!forced && !explicitNew && refs.length > 1 && !target) return clarify("你引用了多张图片：要合成一张新图，还是修改其中一张？请写明图片名称。");
   if (!forced && edit && !target && !explicitNew) return clarify("请把要修改的图片加入对话，或明确说明需要设计一张新图。");
-  if (refs.length && !target && !explicitNew && !/(?:生成|设计|海报|创作|制作|poster|design)/i.test(text)) return clarify("请说明要用这些参考设计什么，或者指定要修改的图片。");
   if (!target && refs.some(ref => ref.purpose === "EXACT") && !input.outputFrameId) return clarify("严格保留素材需要指定输出画框，请选择画框，或将素材用途改为参考后发送。");
 
   // Quoted/copywriting dimensions are poster content, not output settings.

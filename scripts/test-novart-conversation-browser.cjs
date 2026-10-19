@@ -92,7 +92,7 @@ function Fixture(){const panel=useRef<any>(null),[selected,setSelected]=useState
  const ownedApi=useMemo(()=>createOwnedEditorApi('${fixture.workspaceId}',projectId,'${fixture.userId}'),[projectId]);
  const run=(fn:any)=>{try{Promise.resolve(fn()).catch(e=>setNotice(e.message))}catch(e:any){setNotice(e.message)}};
  return <><fieldset><legend>交互测试夹具 · 非业务验收</legend><button onClick={()=>setSelected([refs[0]])}>选择图片1</button><button onClick={()=>setSelected([refs[1],refs[0]])}>选择图片2和1</button><button onClick={()=>run(()=>panel.current.addReferences(selected))}>加入当前选择</button><button onClick={()=>run(()=>panel.current.addReferences([refs[1]],refs[1].referenceId))}>固定快捷目标图片2</button><button onClick={()=>run(async()=>{await panel.current.flush();setNotice('离页草稿已确认')} )}>模拟品牌离页保存</button><p role="status">{notice}</p></fieldset>
- <button onClick={()=>setProjectId('fixture-other-project')}>切换另一个项目</button><button onClick={()=>run(()=>panel.current.quickEdit(refs[0],'后来的快捷编辑不应篡改原请求'))}>直接快捷修改图片1</button>
+ <button onClick={()=>setProjectId('fixture-other-project')}>切换另一个项目</button><button onClick={()=>run(()=>panel.current.startHome('首页生成一张海报','605a9288-8aae-4ccd-8ced-99c05e32b2bd',[Object.fromEntries(Object.entries(refs[0]).reverse())]))}>首页开始创作</button><button onClick={()=>run(()=>panel.current.quickEdit(refs[0],'后来的快捷编辑不应篡改原请求'))}>直接快捷修改图片1</button>
  <div className="fixture-panel"><OwnedConversationPanel ref={panel} {...${JSON.stringify(fixture)}} projectId={projectId} readOnly={readOnly} api={ownedApi} prepare={async()=>({documentRevision:1,workflowRevision:0})} onNotice={setNotice} onGeneration={()=>{}} onInsert={async()=>{}} onInsertLayers={async()=>{}} /></div></>}
 createRoot(document.getElementById('root')!).render(<Fixture/>);`);
   await esbuild.build({entryPoints:[entry],outfile:path.join(directory,'app.js'),bundle:true,platform:'browser',format:'iife',jsx:'automatic',tsconfig:path.join(repo,'apps/web/tsconfig.json'),nodePaths:[path.join(repo,'apps/web/node_modules')],define:{'process.env.NODE_ENV':'"development"'},logLevel:'silent'});
@@ -118,6 +118,10 @@ createRoot(document.getElementById('root')!).render(<Fixture/>);`);
   stage = 'ime'; const beforeIme=postInputs.length; await input().dispatchEvent('compositionstart'); await input().fill('把背景改成蓝色'); await input().press('Enter');
   assert.equal(postInputs.length,beforeIme); await input().dispatchEvent('compositionend'); check('chinese-composition-enter-never-sends');
   await button('发送').click(); await page.getByText('你引用了多张图片：要合成一张新图，还是修改其中一张？请写明图片名称。',{exact:true}).waitFor();check('ambiguous-multi-image-request-renders-server-clarification');
+  stage='clarification-actions-preserve-explicit-send';const clarifyPosts=postInputs.length;
+  await input().fill('另一份尚未发送的需求');await button('参考生成新图').click();assert.equal(await input().inputValue(),'另一份尚未发送的需求');assert.equal(postInputs.length,clarifyPosts);
+  await input().fill('');await button('参考生成新图').click();await saved();assert.equal(await input().inputValue(),'生成一张新图：把背景改成蓝色');assert.equal(postInputs.length,clarifyPosts);assert.equal(draft.quickEditTargetId,null);
+  check('clarification-choice-preserves-other-draft-and-never-auto-submits');
   stage = 'quick-target'; await button('固定快捷目标图片2').click(); await input().fill('生成一张夜景海报'); await button('发送').click();
   await page.waitForFunction(()=>document.querySelectorAll('[data-message-id]').length===2); assert.equal(messages.at(-1).intent.action,'modify');assert.equal(messages.at(-1).intent.targetReferenceId,references[1].referenceId);check('quick-edit-freezes-explicit-target-even-with-new-image-language');
   stage = 'lost-response'; loseResponse=true; await input().fill('图片2背景改成浅色'); const priorCount=messages.length; await button('发送').click();
@@ -183,7 +187,7 @@ createRoot(document.getElementById('root')!).render(<Fixture/>);`);
   stage = 'stale-retry-response';await show([row(archiveFailed,{status:'FAILED',error:'夹具保存失败'})]);delayRetry=true;
   await button('重试保存结果').click();await until(()=>!!retryRelease);
   messages=[row(task({status:'SUCCEEDED',resultState:'READY',results:[result]}),{status:'SUCCEEDED',text:'最新会话内容必须保留'})];
-  await button('读取最新').click();await page.getByText('最新会话内容必须保留',{exact:true}).waitFor();await page.getByText('图片已生成并保存',{exact:true}).waitFor();
+  await page.evaluate(()=>window.dispatchEvent(new Event('focus')));await page.getByText('最新会话内容必须保留',{exact:true}).waitFor();await page.getByText('图片已生成并保存',{exact:true}).waitFor();
   const release=retryRelease;retryRelease=null;delayRetry=false;release();await button('重试保存结果').waitFor({state:'hidden'});
   await page.getByRole('status').filter({hasText:'已重新保存生成结果，不会再次生成图片。'}).waitFor();
   assert.equal(await page.getByText('最新会话内容必须保留',{exact:true}).count(),1);assert.equal(await activity().count(),0);assert.equal(await page.getByRole('alert').filter({hasText:'夹具保存失败'}).count(),0);
@@ -197,14 +201,14 @@ createRoot(document.getElementById('root')!).render(<Fixture/>);`);
 
   stage = 'stale-poll-after-list';delayedMessageRead='terminal-message';await show([row(task())]);await until(()=>!!messageReadRelease);
   messages=[row(task({status:'SUCCEEDED',resultState:'READY',results:[result]}),{status:'SUCCEEDED',text:'最新读取已经保存'})];
-  await button('读取最新').click();await page.getByText('图片已生成并保存',{exact:true}).waitFor();
+  await page.evaluate(()=>window.dispatchEvent(new Event('focus')));await page.getByText('图片已生成并保存',{exact:true}).waitFor();
   const releaseRead=messageReadRelease;messageReadRelease=null;releaseRead();await page.waitForTimeout(250);
   assert.equal(await activity().count(),0);assert.equal(await page.getByText('最新读取已经保存',{exact:true}).count(),1);
   await quiet('Earlier poll cannot replace newer list READY receipt',['terminal-message']);
   check('late-poll-does-not-regress-newer-manual-read-or-message-metadata');
 
   stage='new-authoritative-revocation';messages=[row(task({status:'SUCCEEDED',resultState:'FAILED',archiveError:'图片已由服务端撤销',results:[]}),{status:'FAILED',error:'图片已由服务端撤销'})];
-  await button('读取最新').click();await page.getByRole('alert').filter({hasText:'图片已由服务端撤销'}).waitFor();
+  await page.evaluate(()=>window.dispatchEvent(new Event('focus')));await page.getByRole('alert').filter({hasText:'图片已由服务端撤销'}).waitFor();
   assert.equal(await page.getByText('图片已生成并保存',{exact:true}).count(),0);
   check('later-authoritative-read-can-revoke-ready-results-without-permanent-client-freeze');
 
@@ -217,7 +221,7 @@ createRoot(document.getElementById('root')!).render(<Fixture/>);`);
 
   stage = 'expired-archive-explicit-retry';await show([row(task({...archiveFailed,expiresAt:past}),{status:'FAILED',error:'夹具保存失败',expiresAt:past})]);
   await button('重试保存结果').click();await activity().waitFor();await until(()=>pollCount('terminal-message')>=1);
-  messages=[row(task({status:'SUCCEEDED',resultState:'READY',results:[result]}),{status:'SUCCEEDED',expiresAt:past})];await button('读取最新').click();
+  messages=[row(task({status:'SUCCEEDED',resultState:'READY',results:[result]}),{status:'SUCCEEDED',expiresAt:past})];await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
   await page.getByText('图片已生成并保存',{exact:true}).waitFor();
   check('explicit-archive-retry-resumes-polling-with-new-lease-after-message-expiry');
 
@@ -227,6 +231,12 @@ createRoot(document.getElementById('root')!).render(<Fixture/>);`);
   await until(()=>postInputs.length>postsBeforeQuick);delayPut=0;assert.equal(postInputs.length,postsBeforeQuick+1);
   assert.equal(postInputs.at(-1).text,'生成一张需要保留的原始海报需求');assert.equal(postInputs.at(-1).quickEditTargetId,null);
   check('quick-edit-during-inflight-send-cannot-replace-frozen-user-prompt-or-target');
+
+  stage='home-accepted-receipt-restores-without-repost';await show([]);loseResponse=true;const homePosts=postInputs.length;
+  await button('首页开始创作').click();await button('检查上次提交').waitFor();assert.equal(postInputs.length,homePosts+1);assert.equal(postInputs.at(-1).homeStart,true);assert.equal(messages.length,1);
+  await page.reload();await ready();assert.equal(await page.locator('[data-message-id]').count(),1);await button('首页开始创作').click();await button('检查上次提交').waitFor({state:'hidden'});assert.equal(postInputs.length,homePosts+1);
+  assert.equal(await page.evaluate(key=>localStorage.getItem(key),'deepflare:conversation-pending:'+JSON.stringify([fixture.userId,fixture.workspaceId,fixture.projectId])),null);
+  check('home-start-lost-receipt-confirms-reordered-reference-keys-from-history-without-second-post');
 
   stage = 'composer-target-choice';await show([]);await button('选择图片2和1').click();await button('加入当前选择').click();await saved();
   const targetChoice=(number=1)=>page.getByRole('button',{name:`修改对象 图片${number}`,exact:true});
@@ -261,6 +271,10 @@ createRoot(document.getElementById('root')!).render(<Fixture/>);`);
   await page.getByLabel('生成设置',{exact:true}).click();await page.reload();await ready();
   await page.getByLabel('生成设置',{exact:true}).click();assert.equal(await page.getByRole('combobox',{name:'对话图片比例'}).inputValue(),'16:9');
   check('collapsed-settings-remain-editable-and-persist-after-refresh');
+  stage='psd-options-persist-and-send';await page.getByRole('checkbox',{name:'同时准备可编辑PSD',exact:true}).check();await page.getByRole('combobox',{name:'PSD分层方式',exact:true}).selectOption('MANUAL');await page.getByRole('spinbutton',{name:'PSD图层数量',exact:true}).fill('6');await saved();
+  await page.reload();await ready();await page.getByLabel('生成设置',{exact:true}).click();assert.equal(await page.getByRole('checkbox',{name:'同时准备可编辑PSD',exact:true}).isChecked(),true);assert.equal(await page.getByRole('combobox',{name:'PSD分层方式',exact:true}).inputValue(),'MANUAL');assert.equal(await page.getByRole('spinbutton',{name:'PSD图层数量',exact:true}).inputValue(),'6');
+  await page.getByLabel('生成设置',{exact:true}).click();await input().fill('生成一张星空海报');const beforePsd=postInputs.length;await button('发送').click();await until(()=>postInputs.length>beforePsd);await saved();assert.equal(postInputs.at(-1).psdLayerMode,'MANUAL');assert.equal(postInputs.at(-1).psdLayerCount,6);assert.equal(generationPosts,0);
+  check('manual-psd-options-restore-and-travel-with-one-conversation-request');
   stage = 'failure-reedit';
   const recoverIntent=contracts.parseStudioConversationIntent({text:'加一个角色在最前面',references,quickEditTargetId:references[1].referenceId,sizeSelection:{ratioKey:'3:4',resolutionTier:'2K'}});
   const recoverRow=row(task({status:'FAILED',mode:'modify',error:'生成服务暂时异常，本次请求未完成。系统不会自动重新生成；请稍后检查任务结果。'}),{status:'FAILED',text:'加一个角色在最前面',references,intent:recoverIntent});
@@ -274,7 +288,7 @@ createRoot(document.getElementById('root')!).render(<Fixture/>);`);
   await page.goto(origin+'/?readonly=1');await ready();assert.equal(await button('重新编辑').isDisabled(),true);assert.equal(postInputs.length,recoverPosts);
   check('read-only-failure-cannot-restore-or-submit-a-request');
   await show([row(task({status:'SUCCEEDED',resultState:'READY',results:[result]}),{status:'SUCCEEDED'})]);
-  assert.equal(await button('加入画布').isVisible(),true);assert.equal(await button('读取品牌检查').isVisible(),false);
+  assert.equal(await button('恢复到画布').isVisible(),true);assert.equal(await button('读取品牌检查').isVisible(),false);
   await page.getByText('品牌检查',{exact:true}).click();assert.equal(await button('读取品牌检查').isVisible(),true);
   check('compact-result-hides-secondary-controls-without-removing-them');
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { StudioConversationInput, StudioConversationDraftInput, StudioConversationPixels } from "../../../packages/contracts/src/studio-conversation";
+import { StudioConversationInput, StudioConversationDraftInput, StudioConversationDraft, StudioConversationPixels } from "../../../packages/contracts/src/studio-conversation";
 import { parseStudioConversationIntent } from "../src/lib/studio-conversation-intent";
 
 const one = { referenceId: "shape:one", shapeId: "shape:one", assetId: "a1", assetSha256: "a".repeat(64), name: "图片1", width: 1080, height: 1920 };
@@ -11,6 +11,51 @@ const base = { mutationId: "831a0280-2cf1-41ba-ac94-621053c4a4c6", documentRevis
 const parse = (text: string, references: unknown[] = [], extra = {}) => parseStudioConversationIntent(StudioConversationInput.parse({ ...base, text, references, ...extra }));
 
 describe("durable conversation contract and conservative action/size routing", () => {
+  it("uses one PSD contract for drafts, restored drafts and sent messages", () => {
+    const draft = { revision: 0, text: "", references: [], sizeSelection: base.sizeSelection };
+    for (const options of [{}, { psdLayerMode: "AUTO" }, { psdLayerMode: "MANUAL", psdLayerCount: 2 }, { psdLayerMode: "MANUAL", psdLayerCount: 10 }]) {
+      expect(StudioConversationDraftInput.parse({ ...draft, ...options })).toMatchObject(options);
+      expect(StudioConversationDraft.parse({ ...draft, ...options })).toMatchObject(options);
+      expect(StudioConversationInput.parse({ ...base, ...options })).toMatchObject(options);
+    }
+    for (const options of [{ psdLayerMode: "MANUAL" }, { psdLayerMode: "AUTO", psdLayerCount: 3 }, { psdLayerCount: 3 },
+      { psdLayerMode: "MANUAL", psdLayerCount: 1 }, { psdLayerMode: "MANUAL", psdLayerCount: 11 },
+      { psdLayerMode: "MANUAL", psdLayerCount: 2.5 }, { psdLayerMode: "AUTO", psdLayerCount: null }, { psdLayerMode: null }]) {
+      expect(StudioConversationDraftInput.safeParse({ ...draft, ...options }).success).toBe(false);
+      expect(StudioConversationDraft.safeParse({ ...draft, ...options }).success).toBe(false);
+      expect(StudioConversationInput.safeParse({ ...base, ...options }).success).toBe(false);
+    }
+  });
+  it.each([
+    "根据这张图，我需要小狐狸在家里开门给小白鼠糖",
+    "夕阳下的海边，一只小狐狸坐在木椅上喝咖啡",
+    "小狐狸在家里开门给小白鼠糖",
+    "小狐狸在门口等朋友不要穿红色衣服",
+    "小狐狸在门口等朋友，不要红色背景",
+  ])("accepts a complete scene brief with a reference without magic creation words: %s", text => {
+    const intent = parse(text, [four]);
+    expect(intent.action).toBe("generate"); expect(intent.targetReferenceId).toBeNull();
+    expect(intent.referenceIds).toEqual([four.referenceId]); expect(intent.prompt).toBe(text);
+    expect(parse(text, [one, four]).action).toBe("clarify");
+    expect(parse(text, [one, four], { quickEditTargetId: four.referenceId }).targetReferenceId).toBe(four.referenceId);
+  });
+  it.each([
+    "先别生成一张海报", "先讨论，生成一张海报怎么样", "不要修改背景", "这张怎么样？",
+    "能不能生成一张海报", "可不可以修改光影", "这是参考图", "谢谢", "背景很好看",
+  ])("does not let a pinned target or structured decision override a hold/comment: %s", text => {
+    for (const extra of [{}, { quickEditTargetId: four.referenceId }]) {
+      const input = StudioConversationInput.parse({ ...base, text, references: [four], ...extra });
+      for (const decision of [undefined, { action: "generate" as const, targetReferenceId: null }, { action: "modify" as const, targetReferenceId: four.referenceId }]) {
+        expect(parseStudioConversationIntent(input, undefined, decision).action).toBe("clarify");
+      }
+    }
+  });
+  it("treats quoted questions and hold words as image copy when the surrounding request is actionable", () => {
+    for (const copy of ["为什么？", "先别生成", "能不能修改", "不要修改背景"]) {
+      expect(parse(`生成一张海报，标题为“${copy}”`, [four]).action).toBe("generate");
+    }
+    expect(parse("生成一张海报，不要修改背景", [four]).action).toBe("generate");
+  });
   it.each([
     "光影自然一点，阳光洒下", "构图保持不变，场景真实一点，阳光洒下来",
     "画面更真实", "背景再明亮一些", "色调温暖一点", "让阳光洒进窗户",

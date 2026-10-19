@@ -230,3 +230,14 @@ CDS preflight directly confirms push automatic deployment and default shared bra
 ## 2026-10-17 发布阻断实证
 
 实际事务回读current_database=brandai_devupdate1012、transaction_read_only=on。26表审计仅Membership=1，其余0；6项跨品牌检查0。新P5迁移包含Membership外键，孤儿未解决前不得推送触发迁移。未修改数据或CDS配置；这不是已发生的CDS平台故障。运行中Web/Worker实际AUTH_SECRET trim后长度与非示例值检查通过，未输出密钥。
+
+## 2026-10-19 方案评审落实
+当前工作区为brandai-layer-ux，integration目录的AOCI不代表此工作区。双输入常驻；画布已有修改/分层/尺寸入口。分层校验同时拒绝比例误差及大于原图，真实失败尺寸未取证。自动上画布提前标记taken，且只跟踪当前页在途任务；不能直接删除恢复入口。首页带图交接另有IndexedDB与保存确认，不可让首图抢在引用图上传之前提交。
+
+## 2026-10-19 最终发现与实现边界
+- 完整场景描述不应依赖生成关键词；否定/评论/问题应在付费意图模型前澄清。PSD在BFF对话草稿契约增加选项，向现有generation协议透传，AI服务wire没有新增字段。
+- 单输入改造保留EXACT用途、输出画框、PSD、旧未知提交恢复；普通状态不常驻技术按钮。分层/素材/任务窗口按需打开，素材在底部dock。
+- 实际浏览器发现并修复用途移除残留、popover遮挡、上传modal挡撤销、首页初始化顺序、首页回执规范化比较/清journal、focus相机提交与saveACK竞态。跨项目旧任务候选也明确过滤。
+- 生成任务成功解码/插图之后才写文档账本；归档失败不标已放入，原任务归档重试成功可恢复。已确认任务的撤销/删除不撤销账本；用户仍可从结果手动恢复。
+- 分层原图右侧分组使用显式besideSource参数；保留旧helper默认、原图、undo/replay与PNG/PSD原有保护。
+- 1024方图旧真实成功不能说明本次街景图失败根因，未取到失败输出，不启用猜测性像素容差。

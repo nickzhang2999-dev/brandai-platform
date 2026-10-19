@@ -4,20 +4,19 @@ import type { GenerationTask, PersistentImage } from "./owned-editor-api";
 const inFlight = (task: GenerationTask) =>
   ["PENDING", "RUNNING"].includes(task.status) || task.status === "SUCCEEDED" && ["NOT_REQUESTED", "PENDING", "RUNNING"].includes(task.resultState);
 
-/** Results to place automatically. Only tasks this page saw in flight are
- * eligible, so reopening a project never re-adds old results; each task is
- * taken once, and images already on the canvas are skipped. Mutates the two
- * tracking sets so repeated polls stay idempotent. */
+/** The saved document ledger survives refresh and user undo. A candidate is
+ * acknowledged only AFTER insertion succeeds, never merely after polling. */
 export function takeReadyGenerationImages(tasks: GenerationTask[], watched: Set<string>, taken: Set<string>, document: OwnedCanvasDocument | null) {
   const ready: { task: GenerationTask; images: PersistentImage[] }[] = [];
-  for (const task of tasks) {
+  const acknowledged = new Set(Array.isArray(document?.source.novartPlacedGenerations) ? document.source.novartPlacedGenerations as string[] : []);
+  for (const task of [...tasks].sort((a, b) => a.expiresAt.localeCompare(b.expiresAt) || a.requestId.localeCompare(b.requestId))) {
     if (inFlight(task)) { watched.add(task.requestId); continue; }
-    if (!watched.has(task.requestId) || taken.has(task.requestId)) continue;
-    if (task.status !== "SUCCEEDED" || task.resultState !== "READY") { if (task.status === "FAILED" || task.resultState === "FAILED") taken.add(task.requestId); continue; }
-    taken.add(task.requestId);
+    if (taken.has(task.requestId) || acknowledged.has(task.requestId)) continue;
+    // Archive retry reuses this identity. Failure is not a placement receipt.
+    if (task.status !== "SUCCEEDED" || task.resultState !== "READY") continue;
     const placed = new Set((document?.items ?? []).filter(item => item.kind === "image").map(item => `${item.assetId}:${item.assetSha256}`));
     const images = task.results.filter(image => !placed.has(`${image.assetId}:${image.assetSha256}`));
-    if (images.length) ready.push({ task, images });
+    ready.push({ task, images });
   }
   return ready;
 }

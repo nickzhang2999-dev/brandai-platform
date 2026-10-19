@@ -13,6 +13,16 @@ const input = (extra = {}) => StudioConversationInput.parse({ mutationId: "831a0
 const response = (decision = {}) => ({ revision: "structured-conversation-intent-r1", decision: { action: "modify", targetReferenceId: two.referenceId, referenceIds: [ref.referenceId], confidence: .95, clarification: null, ...decision } });
 beforeEach(() => { vi.resetAllMocks(); delete process.env.STUDIO_CONVERSATION_INTENT_ENABLED; f.model.mockResolvedValue(response()); f.settings.mockResolvedValue({ vlm: { provider: "openai", apiKey: "fixture-unit-only" } }); });
 describe("formal structured model adapter without any real provider calls", () => {
+  it.each(["不要生成一张海报", "光影是不是更自然", "这张怎么样？"])("refuses a non-actionable input before a semantic model call: %s", async text => {
+    const result = await resolveStudioConversationModel(input({ text }), undefined, AbortSignal.timeout(1000));
+    expect(result.action).toBe("clarify"); expect(f.model).not.toHaveBeenCalled();
+  });
+  it("preserves a model-resolved reference creation scene without generation keywords", async () => {
+    f.model.mockResolvedValue(response({ action: "generate", targetReferenceId: null, referenceIds: [ref.referenceId] }));
+    const result = await resolveStudioConversationModel(input({ text: "根据这张图，我需要小狐狸在家里开门给小白鼠糖", references: [ref] }), undefined, AbortSignal.timeout(1000));
+    expect(result.action).toBe("generate"); expect(result.referenceIds).toEqual([ref.referenceId]);
+    expect(f.model).toHaveBeenCalledOnce();
+  });
   it("requires explicit activation and an existing nonmock VLM config", async () => {
     expect(await studioConversationModelAvailable()).toBe(false); expect(f.settings).not.toHaveBeenCalled();
     process.env.STUDIO_CONVERSATION_INTENT_ENABLED = "1"; expect(await studioConversationModelAvailable()).toBe(true);

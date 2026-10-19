@@ -22,6 +22,7 @@ function harness(options = {}) {
     setAttribute(name,value) { this[name]=value; }
     querySelector() { return this.span ||= new Element('span'); }
     contains() { return false; }
+    focus() { this.focused=true; }
     click() { return this.onclick?.(); }
   }
   const get = id => { if(!elements.has(id)) elements.set(id,new Element()); return elements.get(id); };
@@ -36,7 +37,7 @@ function harness(options = {}) {
   const indexedDB={open(){const request={result:db};queueMicrotask(()=>{request.onupgradeneeded?.();request.onsuccess?.();});return request;}};
   const entry={id:'project-fixture',ready:true,frame:{inert:false,contentWindow:{postMessage(value,origin){posts.push({value,origin});options.onPost?.(value,fixture);if(options.autoAck!==false)queueMicrotask(()=>ack(value));}}}};
   function dispatch(data,sourceWindow=entry.frame.contentWindow,origin='https://novart.test') { events.get('message')?.({data,source:sourceWindow,origin}); }
-  function ack(value,extra={}) { dispatch({type:'nv-studio',action:'insert-material-result',projectId:entry.id,requestId:value.requestId,status:'saved',revision:1,...extra}); }
+  function ack(value,extra={}) { dispatch({type:'nv-studio',action:value.action==='start-creation'?'start-creation-result':'insert-material-result',projectId:entry.id,requestId:value.requestId,status:value.action==='start-creation'?'accepted':'saved',revision:1,...extra}); }
   const task = (mutationId,status='SUCCEEDED') => ({taskId:'task-'+mutationId,projectId:entry.id,mutationId,status,progress:status==='SUCCEEDED'?100:30,expiresAt:new Date(now+360000).toISOString(),...(status==='SUCCEEDED'?{material}:status==='FAILED'?{error:'Synthetic upload failure'}:{})});
   const host={
     async api(url,payload){creates.push({url,payload});apiCalls++;assert.equal(stored?.submitted?.requestId,payload.requestId,'Creation identity must be durable before network');if(options.loseCreateOnce&&apiCalls===1)throw new Error('synthetic lost response');return {projectId:entry.id};},
@@ -54,7 +55,7 @@ function harness(options = {}) {
   context.window=context;
   const fixture={entry,host,elements,events,timers,writes,posts,requests,creates,notices,task,dispatch,ack,get data(){return stored;},get module(){return module;},
     async ready(){await flush(()=>module.snapshot().loaded);},async add(files=[file()]){get('hs-file-input').listeners.change({target:{files,value:'selected'}});await flush(()=>stored?.items?.length===Math.min(files.length,4)||get('hs-draft-note').textContent);},
-    async create(){await module.create();},async resume(){return module.resume(entry,true);},get,get refreshed(){return refreshed;},completeInSibling(){stored={version:1,items:[],submitted:null};},
+    async create(){await module.create();},async resume(){return module.resume(entry,true);},activate(){active=true;},get,get refreshed(){return refreshed;},completeInSibling(){stored={version:1,items:[],submitted:null};},
     fire(ms){const match=[...timers].find(value=>value.ms===ms);assert(match,'Expected bounded timer');clear(match);now+=ms;match.callback();},
   };
   vm.runInNewContext(source,context);module=context.createHomeStart(host);return fixture;
@@ -111,6 +112,47 @@ function harness(options = {}) {
     const f=harness({respond:({task,mutationId,init})=>task(mutationId,init.method==='POST'?'PENDING':'SUCCEEDED')});await f.ready();await f.add();await f.create();const run=f.resume();
     await flush(()=>[...f.timers].some(value=>value.ms===1500));assert.equal(f.posts.length,0);assert(f.module.hasDraft());f.fire(1500);await run;
     assert.equal(f.requests.length,2);assert(f.requests[1].url.includes('taskId=task-'));assert.equal(f.posts.length,1);assert.equal(f.module.hasDraft(),false);count++;
+  }
+  {
+    const f=harness();await f.ready();await f.create();assert.equal(f.creates.length,0);assert.equal(f.posts.length,0);assert(f.get('ns-home-brief').focused);count++;
+  }
+  {
+    const f=harness();await f.ready();const text='完整需求'.repeat(1001);f.get('ns-home-brief').value=text;await f.create();assert.equal(f.creates.length,0);assert.equal(f.get('ns-home-brief').value,text);assert(f.get('ns-create-status').textContent.includes('4000'));count++;
+  }
+  {
+    const f=harness();await f.ready();f.get('ns-home-brief').value='日落时分的海边场景';await f.create();const identity=f.data.submitted.requestId;assert.equal(f.data.submitted.startCreation,true);await f.resume();
+    assert.equal(f.creates.length,1);assert.equal(f.requests.length,0);assert.equal(f.posts.length,1);assert.equal(f.posts[0].value.action,'start-creation');assert.equal(f.posts[0].value.requestId,identity);assert.deepEqual([...f.posts[0].value.referenceShapeIds],[]);assert.equal(f.module.hasDraft(),false);assert.equal(f.get('ns-home-brief').value,'');count++;
+  }
+  {
+    const f=harness();await f.ready();f.get('ns-home-brief').value='😀'.repeat(2001);await f.create();assert.equal(f.creates.length,0);assert.equal(f.get('ns-home-brief').value,'😀'.repeat(2001));f.get('ns-home-brief').value='😀'.repeat(2000);await f.create();await f.resume();assert.equal(f.posts[0].value.text,'😀'.repeat(2000));count++;
+  }
+  {
+    const f=harness({autoAck:false});await f.ready();f.get('ns-home-brief').value='参考原图创作海报';await f.add();await f.create();const creationId=f.data.submitted.requestId;const run=f.resume();await flush(()=>f.posts.length===1);
+    const insert=f.posts[0].value;assert.equal(insert.action,'insert-material');assert.equal(f.data.submitted.creationAccepted,false);assert(f.data.items.length);
+    f.ack(insert);await flush(()=>f.posts.length===2);const creation=f.posts[1].value;assert.equal(creation.action,'start-creation');assert.equal(creation.requestId,creationId);assert.deepEqual([...creation.referenceShapeIds],['shape:home-'+insert.requestId]);assert(f.module.hasDraft());
+    f.ack(creation,{action:'insert-material-result'});f.ack(creation,{status:'saved'});f.ack(creation,{projectId:'other-project'});await flush();assert(f.module.hasDraft(),'Mismatched creation receipts cannot discard recovery');
+    f.ack(creation);await run;assert.equal(f.module.hasDraft(),false);count++;
+  }
+  {
+    const f=harness({autoAck:false});await f.ready();f.get('ns-home-brief').value='月光下的森林';await f.create();const run=f.resume();await flush(()=>f.posts.length===1);const first=f.posts[0].value;
+    await f.module.resume(f.entry,true);assert.equal(f.posts.length,1,'Repeated start while waiting must stay in the same run');
+    f.fire(30000);await run;assert.equal(f.data.submitted.requestId,first.requestId);assert.equal(f.get('ns-home-brief').value,first.text);
+    const retry=f.resume();await flush(()=>f.posts.length===2);assert.deepEqual(f.posts[1].value,first);assert.equal(f.creates.length,1);f.ack(f.posts[1].value);await retry;assert.equal(f.module.hasDraft(),false);count++;
+  }
+  {
+    const f=harness({autoAck:false});await f.ready();f.get('ns-home-brief').value='另一份需求';await f.create();const run=f.resume();await flush(()=>f.posts.length===1);const first=f.posts[0].value;
+    f.ack(first,{status:'failed',error:'Synthetic editor save rejected'});await run;assert(f.module.hasDraft());
+    const recovered=harness({stored:f.data});await recovered.ready();await recovered.create();await recovered.resume();assert.equal(recovered.creates.length,0);assert.equal(recovered.posts[0].value.requestId,first.requestId);assert.equal(recovered.posts[0].value.text,first.text);count++;
+  }
+  {
+    const requestId=randomUUID(),f=harness({stored:{version:1,items:[],submitted:{requestId,projectId:'project-fixture',brief:'旧版仅保存需求',projectName:'旧项目'}}});await f.ready();await f.create();await f.resume();assert.equal(f.creates.length,0);assert.equal(f.posts.length,0,'Historical records are upload-only, never retrospective paid creation');assert.equal(f.module.hasDraft(),false);count++;
+  }
+  {
+    const requestId=randomUUID(),f=harness({stored:{version:1,items:[],submitted:{requestId,projectId:'project-fixture',brief:'已受理的需求',projectName:'项目',startCreation:true,creationAccepted:true}}});await f.ready();await f.create();await f.resume();assert.equal(f.posts.length,0,'Persisted accepted receipt suppresses even idempotent resubmission');assert.equal(f.module.hasDraft(),false);count++;
+  }
+  {
+    const options={lockUnavailable:true};const f=harness(options);await f.ready();f.get('ns-home-brief').value='同一份跨页需求';await f.create();await f.resume();assert.equal(f.posts.length,0);
+    f.completeInSibling();options.lockUnavailable=false;await f.resume();assert.equal(f.posts.length,0);assert.equal(f.refreshed,1);assert.equal(f.module.hasDraft(),false);count++;
   }
   assert(!source.includes('/studio/start/'));assert(!source.includes('webpack'));assert(!source.includes('/studio/generation'));
   console.log(`Owned homepage protocol boundary checks: ${count} passed; production services were not exercised.`);

@@ -59,8 +59,14 @@ export async function inspectStudioLayer(
     const width = rotated ? metadata.height : metadata.width;
     const height = rotated ? metadata.width : metadata.height;
     if (!validDimensions(width, height) || width * height > STUDIO_LAYER_TOTAL_PIXELS) throw invalid();
-    if (width * sourceHeight !== height * sourceWidth || width > sourceWidth || height > sourceHeight) {
-      throw failure("分层服务返回的图层不是原图完整画幅，或尺寸比例不一致；缺少位置记录，未拉伸或裁切发布。");
+    // A near aspect ratio alone cannot prove a full frame: a crop or padding
+    // can also differ by one pixel. Keep this strict until provider output
+    // includes a verified full-frame transform/placement contract.
+    if (width * sourceHeight !== height * sourceWidth) {
+      throw failure(`分层结果的比例与原图不一致，已保留原图。原图 ${sourceWidth}×${sourceHeight}，返回图层 ${width}×${height}；缺少完整画幅的位置记录，未拉伸或裁切发布。`);
+    }
+    if (width > sourceWidth || height > sourceHeight) {
+      throw failure(`分层结果的尺寸超出原图，已保留原图。原图 ${sourceWidth}×${sourceHeight}，返回图层 ${width}×${height}；缺少完整画幅的缩放记录，未缩放发布。`);
     }
     image.rotate().toColourspace("srgb").ensureAlpha();
     if (width !== sourceWidth || height !== sourceHeight) image.resize({ width: sourceWidth, height: sourceHeight, fit: "fill" });

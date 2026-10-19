@@ -1,5 +1,6 @@
-/* Product homepage handoff. Files stay recoverable until the owned editor
-   confirms an actual document save. No captured-editor APIs or AI calls. */
+/* Product homepage handoff. Inputs stay recoverable until the owned editor
+   confirms document saves and the explicitly requested conversation receipt.
+   This shell never calls a provider or generates a second request identity. */
 window.createHomeStart = function createHomeStart(host) {
   'use strict';
   const $ = id => document.getElementById(id), {api, node, button, notify} = host;
@@ -72,7 +73,7 @@ window.createHomeStart = function createHomeStart(host) {
     $('ns-home-brief').readOnly = frozen;
     $('ns-create-blank').disabled = frozen || recoveryBlocked || host.legacyBlocked();
     $('ns-create').disabled = busy || !loaded || recoveryBlocked || host.legacyBlocked() || (!submitted && items.some(item => !validFile(item.file)));
-    $('ns-create').querySelector('span').textContent = busy ? '正在创建…' : submitted ? '继续这个项目' : items.length ? '带图开始' : '创建项目';
+    $('ns-create').querySelector('span').textContent = busy ? '正在创建…' : submitted ? '继续这个项目' : items.length && !$('ns-home-brief').value.trim() ? '放入画布' : '开始创作';
   }
   function render() {
     const list = $('hs-attachments'); list.hidden = !items.length; list.replaceChildren();
@@ -85,7 +86,7 @@ window.createHomeStart = function createHomeStart(host) {
     }
     $('hs-draft-note').textContent = draftError;
     const recovery = $('hs-recovery'); recovery.hidden = !submitted; recovery.replaceChildren();
-    if (submitted) recovery.append(node('span','','项目和原图恢复记录仍保留。继续会使用同一项目，不会自动生成图片。'),button('继续这个项目','ns-text-button',create));
+    if (submitted) recovery.append(node('span','',submitted.startCreation ? '需求已保留。继续会确认同一次创作，不会新建重复生成请求。' : '项目和原图恢复记录仍保留。继续会使用同一项目，不会自动生成图片。'),button('继续这个项目','ns-text-button',create));
     controls();
   }
   async function addFiles(files) {
@@ -100,10 +101,14 @@ window.createHomeStart = function createHomeStart(host) {
   async function create() {
     if (busy || !loaded || recoveryBlocked || host.legacyBlocked() || host.composing()) return;
     const brief = $('ns-home-brief').value;
-    if (!submitted && (!items.length || Array.from(brief).length > 6000 || items.some(item => !validFile(item.file)))) return;
+    if (!submitted && brief.length > 4000) { $('ns-create-status').textContent = '创作需求最多 4000 个字符，完整草稿仍保留。请缩短后再开始。'; $('ns-home-brief').focus(); return; }
+    if (!submitted && !items.length && !brief.trim()) { $('ns-create-status').textContent = '先写一句需求，或打开空白画布。'; $('ns-home-brief').focus(); return; }
+    if (!submitted && items.some(item => !validFile(item.file))) return;
     busy = true; render(); const origin = location.hash;
     try {
-      if (!submitted) submitted = {requestId:crypto.randomUUID(),brief,projectName:Array.from(brief.trim().split('\n')[0] || '图片创作').slice(0,32).join(''),projectId:null};
+      // Only a new explicit click opts into first creation. Historical saved
+      // handoffs without this flag keep their original upload-only meaning.
+      if (!submitted) submitted = {requestId:crypto.randomUUID(),brief,projectName:Array.from(brief.trim().split('\n')[0] || '图片创作').slice(0,32).join(''),projectId:null,startCreation:Boolean(brief.trim()),creationAccepted:false};
       // Persist both creation identity and every upload identity before writes.
       await persist(); $('ns-create-status').textContent = '正在创建项目并保存需求…';
       if (!submitted.projectId) {
@@ -113,9 +118,9 @@ window.createHomeStart = function createHomeStart(host) {
       }
       await host.reloadProjects();
       if (!host.project(submitted.projectId)) throw new Error('项目已创建，项目库还未同步，请稍后继续。');
-      $('ns-create-status').textContent = '项目已创建，打开画布后继续保存图片。';
+      $('ns-create-status').textContent = submitted.startCreation ? '项目已创建，打开画布后开始这次创作。' : '项目已创建，打开画布后继续保存图片。';
       if (location.hash === origin) host.openProject(submitted.projectId);
-      else notify('项目已保留在项目库，打开后继续处理图片。');
+      else notify('项目和需求已保留在项目库，打开后继续。');
     } catch (error) { $('ns-create-status').textContent = (typeof error?.message === 'string' ? error.message.slice(0,240) : '创建尚未确认，请继续。') + ' 需求和原图仍保留。'; }
     finally { busy = false; render(); }
   }
@@ -181,20 +186,30 @@ window.createHomeStart = function createHomeStart(host) {
     return new Promise((resolve,reject) => {
       const timeout = remaining(deadline);
       const timer = setTimeout(() => { waiters.delete(item.id); reject(new Error('画布保存还未确认。原图和素材已保留，继续确认不会重复插入。')); },timeout);
-      waiters.set(item.id,{entry,resolve,reject,timer});
+      waiters.set(item.id,{entry,resolve,reject,timer,action:'insert-material-result'});
       try { entry.frame.contentWindow.postMessage({type:'nv-studio',action:'insert-material',projectId:entry.id,requestId:item.id,material:materialReceipt(item.material)},location.origin); }
       catch { clearTimeout(timer); waiters.delete(item.id); reject(new Error('画布尚未接收图片，请重新打开项目后继续。')); }
     });
   }
+  function waitForCreation(entry, submission, deadline) {
+    return new Promise((resolve,reject) => {
+      const requestId = submission.requestId;
+      const timer = setTimeout(() => { waiters.delete(requestId); reject(new Error('创作受理结果尚未确认。需求已保留，继续只会核对同一次请求。')); }, Math.min(30000,remaining(deadline)));
+      waiters.set(requestId,{entry,resolve,reject,timer,action:'start-creation-result'});
+      try { entry.frame.contentWindow.postMessage({type:'nv-studio',action:'start-creation',projectId:entry.id,requestId,text:submission.brief,referenceShapeIds:items.map(item => 'shape:home-' + item.id)},location.origin); }
+      catch { clearTimeout(timer); waiters.delete(requestId); reject(new Error('画布尚未接收创作需求，请重新打开项目后继续。')); }
+    });
+  }
   function receive(event) {
     const data = event.data;
-    if (event.origin !== location.origin || !data || data.type !== 'nv-studio' || data.action !== 'insert-material-result' || !uuid(data.requestId)) return;
+    if (event.origin !== location.origin || !data || data.type !== 'nv-studio' || !['insert-material-result','start-creation-result'].includes(data.action) || !uuid(data.requestId)) return;
     const waiter = waiters.get(data.requestId);
-    if (!waiter || event.source !== waiter.entry.frame.contentWindow || data.projectId !== waiter.entry.id) return;
-    if (data.status !== 'saved' && data.status !== 'failed') return;
-    if (data.status === 'saved' && (!Number.isInteger(data.revision) || data.revision < 1)) return;
+    if (!waiter || data.action !== waiter.action || event.source !== waiter.entry.frame.contentWindow || data.projectId !== waiter.entry.id) return;
+    const success = data.action === 'start-creation-result' ? 'accepted' : 'saved';
+    if (data.status !== success && data.status !== 'failed') return;
+    if (success === 'saved' && data.status === success && (!Number.isInteger(data.revision) || data.revision < 1)) return;
     clearTimeout(waiter.timer); waiters.delete(data.requestId);
-    if (data.status === 'saved') waiter.resolve();
+    if (data.status === success) waiter.resolve();
     else waiter.reject(new Error(typeof data.error === 'string' ? data.error.slice(0,240) : '画布保存尚未确认，请继续确认。'));
   }
   async function run(entry) {
@@ -216,6 +231,7 @@ window.createHomeStart = function createHomeStart(host) {
         render(); return;
       }
       if (stored.submitted.requestId !== submitted?.requestId || stored.submitted.projectId !== entry.id) throw new Error('恢复记录已变化，请返回首页确认当前项目。');
+      if (stored.submitted.creationAccepted === true) submitted.creationAccepted = true;
       for (const item of items) {
         const receipt = stored.items?.find(value => value.id === item.id);
         if (!receipt || receipt.taskId && !identity(receipt.taskId)) throw new Error('图片恢复记录已变化，请返回首页确认。');
@@ -230,15 +246,22 @@ window.createHomeStart = function createHomeStart(host) {
         paint(entry,{kind:'loading',title:'正在确认画布保存',detail:'素材已保存，等待画布确认第 '+(items.indexOf(item)+1)+' 张图片。'});
         await waitForSaved(entry,item,deadline); item.saved = true; await persist(); render();
       }
+      if (submitted.startCreation === true && !submitted.creationAccepted) {
+        if (!submitted.brief.trim() || submitted.brief.length > 4000) throw new Error('创作需求长度不符合要求，请保留原始需求并在项目中继续编辑。');
+        if (!current(entry) || !entry.ready) throw new Error('画布暂时不可用，需求和已保存素材仍保留。');
+        paint(entry,{kind:'loading',title:'正在开始创作',detail:'需求和参考图已保存，正在确认本次创作已受理。'});
+        await waitForCreation(entry,submitted,deadline);
+        submitted.creationAccepted = true; await persist();
+      }
       const completed = items, previous = submitted;
       items = []; submitted = null;
       try { await persist(); } catch (error) { items = completed; submitted = previous; throw error; }
       completed.forEach(item => { if (item.url) URL.revokeObjectURL(item.url); });
       if ($('ns-home-brief').value === previous.brief) { $('ns-home-brief').value = ''; try { localStorage.removeItem('novart-m24-home-brief'); } catch {} }
       states.delete(entry.id); host.invalidateAssets(entry.id); render();
-      if (current(entry)) { hide(); notify('图片和需求已保存，可以继续编辑。'); host.showRequirements(entry); }
+      if (current(entry)) { hide(); notify(previous.startCreation ? '创作已受理，可以在对话中查看进度。' : '图片和需求已保存，可以继续编辑。'); if (!previous.startCreation) host.showRequirements(entry); }
     } catch (error) {
-      paint(entry,{kind:'error',title:'图片交接尚未完成',detail:(typeof error?.message === 'string' ? error.message.slice(0,300) : '请稍后继续确认。') + ' 原图仍保留。',failedId:error.failedId});
+      paint(entry,{kind:'error',title:submitted?.startCreation ? '创作交接尚未完成' : '图片交接尚未完成',detail:(typeof error?.message === 'string' ? error.message.slice(0,300) : '请稍后继续确认。') + ' 需求和原图仍保留。',failedId:error.failedId});
     }
   }
   async function resume(entry, retry=false) {
@@ -263,6 +286,7 @@ window.createHomeStart = function createHomeStart(host) {
   }
   $('hs-file-input').addEventListener('change',event => { void addFiles([...event.target.files]); event.target.value = ''; });
   $('hs-pick').addEventListener('click',() => $('hs-file-input').click());
+  $('ns-home-brief').addEventListener('input',controls);
   const composer = $('ns-composer');
   composer.addEventListener('dragover',event => { if (event.dataTransfer.types.includes('Files')) { event.preventDefault(); composer.classList.add('hs-drag'); } });
   composer.addEventListener('dragleave',event => { if (!composer.contains(event.relatedTarget)) composer.classList.remove('hs-drag'); });
@@ -275,7 +299,9 @@ window.createHomeStart = function createHomeStart(host) {
     if (value.version !== 1 || !Array.isArray(value.items) || value.items.length > 4 || new Set(value.items.map(item => item.id)).size !== value.items.length
       || value.items.some(item => !uuid(item.id) || typeof item.name !== 'string' || !validFile(item.file) || item.taskId && !identity(item.taskId))) throw new Error('恢复记录无法读取');
     if (value.submitted && (!uuid(value.submitted.requestId) || typeof value.submitted.brief !== 'string' || typeof value.submitted.projectName !== 'string'
-      || value.submitted.projectId !== null && !identity(value.submitted.projectId))) throw new Error('恢复记录无法读取');
+      || value.submitted.projectId !== null && !identity(value.submitted.projectId)
+      || value.submitted.startCreation !== undefined && typeof value.submitted.startCreation !== 'boolean'
+      || value.submitted.creationAccepted !== undefined && typeof value.submitted.creationAccepted !== 'boolean')) throw new Error('恢复记录无法读取');
     items = value.items.map(item => ({id:item.id,file:item.file,name:item.name,taskId:item.taskId || null,taskStatus:null,material:null,saved:false,url:URL.createObjectURL(item.file),error:''})); submitted = value.submitted || null;
     if (submitted) $('ns-home-brief').value = submitted.brief;
   }).catch(() => { recoveryBlocked = true; draftError = '原图恢复记录暂不可用，请保留本页和原文件，检查存储空间后刷新。'; })

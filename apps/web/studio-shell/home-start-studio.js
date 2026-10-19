@@ -504,13 +504,13 @@
   }
   function validDraft(value) { return value && typeof value.profile?.nickname === 'string' && textLength(value.profile.nickname) <= 80 && typeof value.brand?.name === 'string' && textLength(value.brand.name) <= 120 && typeof value.brand.notes === 'string' && textLength(value.brand.notes) <= 4000 && Array.isArray(value.brand.colors) && value.brand.colors.length === 3 && value.brand.colors.every(color => typeof color === 'string' && color.length <= 7) && validState({...value, profile: {...value.profile, nickname: ''}, brand: {...value.brand, name: '', notes: '', colors: defaults.brand.colors}}); }
   const textRules = {
-    'ns-home-brief': {limit: 6000, label: '创作需求', status: 'ns-create-status'},
+    'ns-home-brief': {limit: 4000, label: '创作需求', status: 'ns-create-status', codeUnits:true},
     'ns-settings-nickname': {limit: 40, label: '昵称', status: 'ns-settings-status'},
     'ns-brand-name': {limit: 60, label: '品牌名称', status: 'ns-brand-status'},
     'ns-brand-notes': {limit: 2000, label: '使用说明', status: 'ns-brand-status'}
   };
   function validateText(id) {
-    const field = $(id), rule = textRules[id], length = textLength(field.value), error = length > rule.limit ? rule.label + '最多 ' + rule.limit + ' 个字符（当前 ' + length + ' 个），请调整后再保存。' : '';
+    const field = $(id), rule = textRules[id], length = rule.codeUnits ? field.value.length : textLength(field.value), error = length > rule.limit ? rule.label + '最多 ' + rule.limit + ' 个字符（当前 ' + length + ' 个），请调整后再保存。' : '';
     const counter = $(id + '-count'); if (counter) { counter.textContent = length + ' / ' + rule.limit; counter.dataset.invalid = String(Boolean(error)); }
     field.setCustomValidity(error); field.setAttribute('aria-invalid', String(Boolean(error))); if (error) $(rule.status).textContent = error; return !error;
   }
@@ -892,6 +892,9 @@
     const brief = blank ? '' : $('ns-home-brief').value;
     if (recoveryRecord && recoveryRecord.blank === blank && recoveryRecord.submittedBrief === brief) { recoverProject(recoveryRecord, true, blank ? null : brief); return; }
     if (!blank && !validateText('ns-home-brief')) { $('ns-home-brief').focus(); return; } if (!blank && !brief.trim()) { $('ns-create-status').textContent = '先写一句需求，或打开空白画布。'; $('ns-home-brief').focus(); return; }
+    // New explicit creation uses one durable identity through the owned editor.
+    // Keep the legacy recovery decision above: old records never gain AI work.
+    if (!blank) { await homeStart.create(); return; }
     const creationVersion = routeVersion;
     createBusy = true; $('ns-create').disabled = true; $('ns-create-blank').disabled = true; $('ns-create-status').textContent = '正在创建项目…';
     try {
@@ -919,7 +922,7 @@
     if (homeStart.busy() || homeStart.snapshot().submittedRequestId) { notify('这份需求已提交，请先继续已创建的项目。'); return; }
     const current = $('ns-home-brief').value, combined = current.trim() ? current + '\n\n' + prompt : prompt;
     go('/home'); requestAnimationFrame(() => { $('ns-home-brief').focus(); $('ns-home-brief').selectionStart = $('ns-home-brief').selectionEnd = $('ns-home-brief').value.length; });
-    if (textLength(combined) > 6000) { const message = '加入这个需求起点会超过 6000 个字符，当前草稿保持完整。请先缩短内容，再加入模板。'; $('ns-create-status').textContent = message; notify(message); return; }
+    if (combined.length > 4000) { const message = '加入这个需求起点会超过 4000 个字符，当前草稿保持完整。请先缩短内容，再加入模板。'; $('ns-create-status').textContent = message; notify(message); return; }
     $('ns-home-brief').value = combined; const stored = storage.set(briefKey, combined);
     if (!stored) $('ns-create-status').textContent = '无法暂存需求，请保留当前页面。'; else if (validateText('ns-home-brief')) $('ns-create-status').textContent = createBusy ? '当前项目正在创建，新的需求草稿已保留。' : '';
     notify(current.trim() ? '需求起点已追加到现有草稿，可继续编辑。' : '需求起点已带回首页，可继续编辑。');

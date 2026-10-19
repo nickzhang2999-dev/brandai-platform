@@ -1,7 +1,7 @@
 "use client";
 
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
-import { StudioConversationInput, StudioConversationMessage, type StudioConversationDraftInput, type StudioConversationReference, type StudioConversationMessage as Message } from "@brandai/contracts";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState, type ReactNode } from "react";
+import { GenerationAspectRatioKey, StudioConversationInput, StudioConversationMessage, type StudioConversationDraftInput, type StudioConversationReference, type StudioConversationMessage as Message } from "@brandai/contracts";
 import type { z } from "zod";
 import { NovartApiError } from "../../lib/novart-api-client";
 import { createOwnedConversationApi } from "./owned-conversation-api";
@@ -12,15 +12,15 @@ import type { createOwnedEditorApi, DecompositionTask, GenerationTask, Persisten
 
 type Draft = Omit<StudioConversationDraftInput, "revision">;
 type Input = z.infer<typeof StudioConversationInput>;
-export type OwnedConversationHandle = { flush(): Promise<void>; confirmed(): boolean; addReferences(refs: StudioConversationReference[], quickEditTargetId?: string): void; quickEdit(ref: StudioConversationReference, text: string): Promise<void> };
+export type OwnedConversationHandle = { ready(): boolean; flush(): Promise<void>; confirmed(): boolean; addReferences(refs: StudioConversationReference[], quickEditTargetId?: string): void; configureReferences(refs: StudioConversationReference[], managedHashes: string[], targetId?: string): void; restoreText(text: string): void; sizeSelection(): Draft["sizeSelection"]; quickEdit(ref: StudioConversationReference, text: string): Promise<void>; startHome(text: string, mutationId: string, refs: StudioConversationReference[]): Promise<void> };
 type Props = { workspaceId: string; projectId: string; userId: string; readOnly: boolean;
   api: ReturnType<typeof createOwnedEditorApi> | null;
   prepare(): Promise<{ documentRevision: number; workflowRevision: number; outputFrameId?: string }>;
-  onNotice(message: string): void; onGeneration(task: GenerationTask): void; onInsert(image: PersistentImage, sourceShapeId?: string): Promise<void>;
-  onInsertLayers(task: DecompositionTask, source: PersistentImage): Promise<void>; onAddReference?(): void };
+  isImagePlaced?(image: PersistentImage): boolean; onNotice(message: string): void; onGeneration(task: GenerationTask): void; onInsert(image: PersistentImage, sourceShapeId?: string): Promise<void>;
+  onInsertLayers(task: DecompositionTask, source: PersistentImage): Promise<void>; onAddReference?(): void; onAdvancedSettings?(): void; activity?: ReactNode };
 const button = "rounded-full border border-border px-3 py-2 text-xs disabled:opacity-40";
 const empty = (): Draft => ({ text: "", references: [], quickEditTargetId: null, sizeSelection: { ratioKey: "1:1", resolutionTier: "1K" } });
-const draftValue = (value: StudioConversationDraftInput): Draft => ({ text: value.text, references: value.references, quickEditTargetId: value.quickEditTargetId, sizeSelection: value.sizeSelection });
+const draftValue = (value: StudioConversationDraftInput): Draft => ({ text: value.text, references: value.references, quickEditTargetId: value.quickEditTargetId, sizeSelection: value.sizeSelection, ...(value.psdLayerMode ? { psdLayerMode: value.psdLayerMode, ...(value.psdLayerCount ? { psdLayerCount: value.psdLayerCount } : {}) } : {}) });
 const same = ownedConversationDraftEqual;
 const explain = (error: unknown) => error instanceof Error ? error.message : "对话暂未确认，原需求仍保留。";
 
@@ -100,7 +100,7 @@ export const OwnedConversationPanel = forwardRef<OwnedConversationHandle, Props>
     } catch (failure) { if (mounted.current && api.current === context) setError(explain(failure)); throw failure; }
     finally { if (api.current === context) { saveBusy.current = false; setSaving(false); } }
   }, []);
-  const send = useCallback(async () => {
+  const send = useCallback(async (home?: { mutationId: string }) => {
     const context = api.current;
     if (!context || !readyRef.current || latest.current.readOnly || composing.current || sendBusy.current) return;
     sendBusy.current = true; setSending(true);
@@ -111,7 +111,7 @@ export const OwnedConversationPanel = forwardRef<OwnedConversationHandle, Props>
         if (!mounted.current || api.current !== context) return;
         const prepared = await latest.current.prepare();
         if (!mounted.current || api.current !== context) return;
-        operation = StudioConversationInput.parse({ ...structuredClone(draftRef.current), ...prepared, mutationId: crypto.randomUUID() });
+        operation = StudioConversationInput.parse({ ...structuredClone(draftRef.current), ...prepared, mutationId: home?.mutationId ?? crypto.randomUUID(), ...(home ? { homeStart: true } : {}) });
         // Persist before sending. A storage error must not lead to an untracked paid request.
         localStorage.setItem(keyRef.current, JSON.stringify(operation)); pending.current = operation; setUnknown(true);
       }
@@ -121,6 +121,7 @@ export const OwnedConversationPanel = forwardRef<OwnedConversationHandle, Props>
       if (message.mutationId !== operation.mutationId || message.text !== operation.text) throw new Error("对话提交结果与原请求不一致，原请求仍保留。");
       accept(message, order); localStorage.removeItem(keyRef.current); pending.current = null; setUnknown(false); setPaused(false); setError("");
       updateDraft({ ...draftRef.current, text: "" });
+      return message;
     } catch (failure) {
       if (mounted.current && api.current === context) {
         if (failure instanceof NovartApiError && !failure.uncertain && failure.status !== null && failure.status >= 400 && failure.status < 500) {
@@ -132,7 +133,34 @@ export const OwnedConversationPanel = forwardRef<OwnedConversationHandle, Props>
     }
     finally { if (api.current === context) { sendBusy.current = false; setSending(false); } }
   }, [accept, flush, updateDraft]);
-  useImperativeHandle(ref, () => ({ flush, confirmed: () => readyRef.current && !composing.current && !saveBusy.current && !saveSnapshot.current && same(draftRef.current, confirmedDraft.current!),
+  useImperativeHandle(ref, () => ({ ready: () => readyRef.current, flush, confirmed: () => readyRef.current && !composing.current && !saveBusy.current && !saveSnapshot.current && same(draftRef.current, confirmedDraft.current!),
+    async startHome(text, mutationId, refs) {
+      if (!readyRef.current || latest.current.readOnly || sendBusy.current || composing.current) throw new Error("请先完成当前输入，等待对话恢复后继续创作。");
+      const accepted = messagesRef.current.find(message => message.mutationId === mutationId);
+      if (accepted) {
+        if (accepted.text !== text.trim() || !same(accepted.references, refs)) throw new Error("首页恢复内容与原提交不一致，请核对原任务。");
+        if (pending.current?.mutationId === mutationId) { localStorage.removeItem(keyRef.current); pending.current = null; setUnknown(false); setError(""); }
+        if (draftRef.current.text.trim() === text.trim()) updateDraft({ ...draftRef.current, text: "" });
+        return;
+      }
+      if (pending.current && pending.current.mutationId !== mutationId) throw new Error("请先确认上一份对话提交。");
+      if (!pending.current && draftRef.current.text.trim() && draftRef.current.text !== text) throw new Error("对话里已有另一份未发送需求，请先保留或清空，再继续首页创作。");
+      if (!pending.current) updateDraft({ ...empty(), text, references: refs });
+      const acceptedMessage = await send({ mutationId });
+      if (!acceptedMessage || acceptedMessage.mutationId !== mutationId) throw new Error("首次创作还未确认受理，原需求仍保留。");
+    },
+    sizeSelection: () => structuredClone(draftRef.current.sizeSelection),
+    restoreText(text) {
+      if (!readyRef.current || latest.current.readOnly || sendBusy.current || pending.current || draftRef.current.text.trim()) throw new Error("请先确认或清空当前输入，原需求仍保留。");
+      if (text.length > 4000) throw new Error("旧需求超过 4000 字，请先复制并精简后使用，不会截断原文。");
+      updateDraft({ ...draftRef.current, text }); requestAnimationFrame(() => input.current?.focus());
+    },
+    configureReferences(refs, managedHashes, targetId) {
+      if (!readyRef.current || latest.current.readOnly || sendBusy.current || pending.current) throw new Error("请先确认对话已恢复和上一份提交。");
+      const merged = mergeOwnedConversationReferences(draftRef.current.references.filter(value => !managedHashes.includes(value.assetSha256)), refs);
+      if (targetId && !merged.some(value => value.referenceId === targetId && value.shapeId)) throw new Error("修改目标尚未确认加入对话。");
+      updateDraft({ ...draftRef.current, references: merged, quickEditTargetId: targetId ?? (merged.some(value => value.referenceId === draftRef.current.quickEditTargetId) ? draftRef.current.quickEditTargetId : null) });
+    },
     addReferences(refs, quickEditTargetId) { if (!readyRef.current || latest.current.readOnly || sendBusy.current || pending.current) throw new Error("对话还没准备好，请稍候，或先检查上次提交。");
       const base = quickEditTargetId ? draftRef.current.references.filter(value => !refs.some(ref => ref.assetId === value.assetId)) : draftRef.current.references;
       const merged = mergeOwnedConversationReferences(base, refs);
@@ -154,6 +182,7 @@ export const OwnedConversationPanel = forwardRef<OwnedConversationHandle, Props>
     return () => { mounted.current = false; controller.abort(); if (timer.current) clearTimeout(timer.current); api.current = null; };
   }, [props.workspaceId, props.projectId, props.userId, journalKey, read, updateDraft]);
   useEffect(() => { if (!ready || props.readOnly || error || composing.current || same(draft, confirmedDraft.current!)) return; if (timer.current) clearTimeout(timer.current); timer.current = setTimeout(() => { void flush().catch(() => undefined); }, 700); return () => { if (timer.current) clearTimeout(timer.current); }; }, [draft, ready, props.readOnly, error, flush, saving]);
+  useEffect(() => { const refresh = () => { if (document.visibilityState !== "hidden") void read(); }; window.addEventListener("focus", refresh); document.addEventListener("visibilitychange", refresh); return () => { window.removeEventListener("focus", refresh); document.removeEventListener("visibilitychange", refresh); }; }, [read]);
   useEffect(() => {
     if (!ready || !messages.some(active)) return;
     const pending = messages.filter(value => active(value) && Date.now() < deadline(value));
@@ -176,28 +205,33 @@ export const OwnedConversationPanel = forwardRef<OwnedConversationHandle, Props>
   useEffect(() => { if (follow.current) history.current?.scrollTo({ top: history.current.scrollHeight, behavior: "auto" }); }, [messages]);
   useEffect(() => { const leaving = (event: BeforeUnloadEvent) => { if (readyRef.current && !same(draftRef.current, confirmedDraft.current!) || pending.current) { event.preventDefault(); event.returnValue = ""; } }; window.addEventListener("beforeunload", leaving); return () => window.removeEventListener("beforeunload", leaving); }, []);
   const locked = props.readOnly || !ready || sending || unknown;
+  function clarify(message: Message, targetId?: string) {
+    if (locked) return;
+    if (draftRef.current.text.trim()) { props.onNotice("输入框还有未发送内容，请先保留或清空，再选择这条需求的处理方式。"); input.current?.focus(); return; }
+    updateDraft({ ...draftRef.current, text: targetId ? message.text : `生成一张新图：${message.text}`, references: message.references, quickEditTargetId: targetId ?? null }); input.current?.focus();
+  }
   function reedit(message: Message) {
     // Recover a draft only. Never reuse an accepted mutation or call send().
     if (props.readOnly || !readyRef.current || sendBusy.current || pending.current || composing.current) return;
     if (draftRef.current.text.trim() || draftRef.current.references.length > 0 && JSON.stringify(draftRef.current.references) !== JSON.stringify(message.references)) { props.onNotice("输入框中还有未发送的需求或不同引用，请先保留或清空，再重新编辑这条需求。"); input.current?.focus(); return; }
     const target = message.intent?.action === "modify" ? message.references.find(value => value.shapeId && value.referenceId === message.intent?.targetReferenceId) : undefined;
-    updateDraft({ text: message.text, references: message.references, quickEditTargetId: target?.referenceId ?? null, sizeSelection: message.intent?.sizeSelection ?? draftRef.current.sizeSelection });
+    updateDraft({ text: message.text, references: message.references, quickEditTargetId: target?.referenceId ?? null, sizeSelection: message.intent?.sizeSelection ?? draftRef.current.sizeSelection, ...(message.generation?.psdLayerMode ? { psdLayerMode: message.generation.psdLayerMode, ...(message.generation.psdLayerMode === "MANUAL" && message.generation.psdLayerCount ? { psdLayerCount: message.generation.psdLayerCount } : {}) } : {}) });
     props.onNotice("需求已放回输入框，请确认图片和内容后点击发送。"); input.current?.focus();
   }
   return <section className="flex h-full min-h-0 flex-col gap-3" data-testid="owned-conversation" data-conversation-ready={ready}>
-    <div className="flex shrink-0 justify-end"><button className="rounded-full px-2 py-1 text-xs text-muted-foreground disabled:opacity-40" disabled={sending || saving} onClick={() => { setPaused(false); void read(); }}>读取最新</button></div>
+    {(error || paused) && <div className="flex shrink-0 justify-end"><button className="rounded-full px-2 py-1 text-xs text-muted-foreground disabled:opacity-40" disabled={sending || saving} onClick={() => { setPaused(false); void read(); }}>检查任务状态</button></div>}
     <div ref={history} className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain" onScroll={event => { const node = event.currentTarget; follow.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80; }} aria-label="项目对话记录">
       {nextCursor && <button className={button + " w-full"} onClick={() => { const context = api.current, order = ++requestOrder.current; if (context) void context.list(nextCursor).then(page => { if (!mounted.current || api.current !== context) return; page.messages.forEach(message => accept(message, order)); if (order >= cursorOrder.current) { cursorOrder.current = order; setNextCursor(page.nextCursor); } }).catch(failure => { if (mounted.current && api.current === context) setError(explain(failure)); }); }}>读取更早对话</button>}
       {!messages.length && <p className="py-6 text-center text-xs leading-6 text-muted-foreground">描述想法开始创作。<br />选中图片后，点击「加入对话」再发送修改或参考需求。</p>}
       {messages.map(message => <article key={message.messageId} className="space-y-2" data-message-id={message.messageId}>
         <div className="ml-5 rounded-2xl rounded-tr-md bg-accent-soft p-3 text-sm leading-6"><p className="whitespace-pre-wrap break-words">{message.text}</p>{message.references.length > 0 && <p className="mt-2 text-xs text-muted-foreground">{message.references.map(value => value.name).join("、")}</p>}</div>
         {message.clarification && <p className="rounded-xl border border-border p-3 text-xs leading-6">{message.clarification}</p>}
-        {message.intent?.modelStatus === "UNAVAILABLE" && !message.generation && <p className="p-2 text-xs leading-6 text-muted-foreground">智能意图识别暂不可用，已按明确指令判断需求。</p>}
-        {message.intent?.modelStatus === "UNKNOWN" && <p className="p-2 text-xs leading-6 text-muted-foreground">智能意图识别结果尚未确认，请补充明确目标；不会重复调用。</p>}
+        {message.status === "CLARIFICATION" && <div className="flex flex-wrap gap-2"><button className={button} disabled={locked} onClick={() => clarify(message)}>参考生成新图</button>{message.references.filter(value => value.shapeId).map(value => <button key={value.referenceId} className={button} disabled={locked} onClick={() => clarify(message, value.referenceId)}>修改{value.name}</button>)}</div>}
         {message.error && !message.generation && <p role="alert" className="p-2 text-xs leading-6">{message.error}</p>}
         {active(message) && !message.generation && <p className="p-2 text-xs text-muted-foreground">{Date.now() >= deadline(message) ? "等待较久，请读取任务确认；不会重复调用模型。" : "需求已提交，正在核对图片和尺寸…"}</p>}
-        {message.generation && <OwnedGenerationCard compact activityNotice={active(message) && Date.now() >= deadline(message) ? "等待较久，请读取任务确认；不会重复调用模型。" : undefined} task={message.generation} api={props.api} canEdit={!props.readOnly} recoveryDisabled={locked} onReedit={() => reedit(message)} onTask={task => acceptGeneration(message.messageId, task)} onNotice={props.onNotice} onInsert={image => props.onInsert(image, message.intent?.action === "modify" ? message.references.find(ref => ref.referenceId === message.intent?.targetReferenceId)?.shapeId : undefined)} onInsertLayers={props.onInsertLayers} />}
+        {message.generation && <OwnedGenerationCard compact isImagePlaced={props.isImagePlaced} activityNotice={active(message) && Date.now() >= deadline(message) ? "等待较久，请读取任务确认；不会重复调用模型。" : undefined} task={message.generation} api={props.api} canEdit={!props.readOnly} recoveryDisabled={locked} onReedit={() => reedit(message)} onTask={task => acceptGeneration(message.messageId, task)} onNotice={props.onNotice} onInsert={image => props.onInsert(image, message.intent?.action === "modify" ? message.references.find(ref => ref.referenceId === message.intent?.targetReferenceId)?.shapeId : undefined)} onInsertLayers={props.onInsertLayers} />}
       </article>)}
+      {props.activity}
     </div>
     {error && <div role="alert" className="rounded-xl bg-accent-soft p-3 text-xs leading-6">{error}{ready && !unknown && <button className="ml-2 underline" onClick={() => { setError(""); void flush().catch(() => undefined); }}>确认草稿</button>}</div>}
     {unknown && <div className="space-y-2 rounded-xl border border-border p-3"><p className="text-xs leading-6">上次提交的结果还没确认，需求和引用先保留不动。点“检查上次提交”会读取同一次请求，不会重复扣费。</p><button className={button} disabled={sending || !pending.current || props.readOnly} onClick={() => void send().catch(() => undefined)}>检查上次提交</button></div>}
@@ -217,12 +251,16 @@ export const OwnedConversationPanel = forwardRef<OwnedConversationHandle, Props>
         {props.onAddReference && <button type="button" className={button} aria-label="添加参考图片" title="从素材库添加参考图片" disabled={locked} onClick={props.onAddReference}>＋</button>}
         <details className="relative" data-testid="conversation-settings"><summary className={button + " cursor-pointer list-none"} aria-label="生成设置">设置</summary>
           <div className="absolute bottom-full left-0 z-30 mb-2 w-60 space-y-3 rounded-2xl border border-border bg-card p-4 shadow-lg">
-            <label className="flex items-center justify-between text-xs">比例<select aria-label="对话图片比例" className={button} value={draft.sizeSelection.ratioKey} disabled={locked} onChange={event => edit({ sizeSelection: { ...draft.sizeSelection, ratioKey: event.target.value as Draft["sizeSelection"]["ratioKey"] } })}>{["1:1", "3:4", "4:3", "9:16", "16:9"].map(value => <option key={value}>{value}</option>)}</select></label>
+            <label className="flex items-center justify-between text-xs">比例<select aria-label="对话图片比例" className={button} value={draft.sizeSelection.ratioKey} disabled={locked} onChange={event => edit({ sizeSelection: { ratioKey: event.target.value as Draft["sizeSelection"]["ratioKey"], resolutionTier: draft.sizeSelection.resolutionTier, ...(event.target.value === "custom" ? { customRatio: { width: 1, height: 1 } } : {}) } })}>{GenerationAspectRatioKey.options.map(value => <option key={value} value={value}>{value === "custom" ? "自定义" : value}</option>)}</select></label>
+            {draft.sizeSelection.ratioKey === "custom" && <div className="flex gap-2">{(["width", "height"] as const).map(axis => <input key={axis} aria-label={axis === "width" ? "自定义比例宽" : "自定义比例高"} className="w-20 rounded border border-border bg-background px-2 py-1" type="number" min={1} max={10000} disabled={locked} value={draft.sizeSelection.customRatio?.[axis] ?? 1} onChange={event => edit({ sizeSelection: { ...draft.sizeSelection, customRatio: { width: 1, height: 1, ...draft.sizeSelection.customRatio, [axis]: Number(event.target.value) } } })} />)}</div>}
             <label className="flex items-center justify-between text-xs">画质<select aria-label="对话图片画质" className={button} value={draft.sizeSelection.resolutionTier} disabled={locked} onChange={event => edit({ sizeSelection: { ...draft.sizeSelection, resolutionTier: event.target.value as "1K" | "2K" } })}><option>1K</option><option>2K</option></select></label>
             <p className="text-xs leading-5 text-muted-foreground">需求里指定的尺寸优先。Enter 发送，Shift+Enter 换行。</p>
+            <label className="flex items-center gap-2 text-xs"><input type="checkbox" aria-label="同时准备可编辑PSD" checked={!!draft.psdLayerMode} disabled={locked} onChange={event => edit({ psdLayerMode: event.target.checked ? "AUTO" : undefined, psdLayerCount: undefined })} />同时准备 PSD</label>
+            {draft.psdLayerMode && <><select aria-label="PSD分层方式" className={button} disabled={locked} value={draft.psdLayerMode} onChange={event => edit({ psdLayerMode: event.target.value as "AUTO" | "MANUAL", psdLayerCount: event.target.value === "MANUAL" ? 4 : undefined })}><option value="AUTO">按内容自动分层</option><option value="MANUAL">指定层数</option></select>{draft.psdLayerMode === "MANUAL" && <input aria-label="PSD图层数量" className="w-16 rounded border border-border" type="number" min={2} max={10} value={draft.psdLayerCount} disabled={locked} onChange={event => edit({ psdLayerCount: Number(event.target.value) })} />}<p className="text-xs text-muted-foreground">会额外使用分层服务额度，原图先可用。</p></>}
+            {props.onAdvancedSettings && <button className={button} type="button" onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); props.onAdvancedSettings?.(); }}>素材用途与输出画框</button>}
           </div>
         </details>
-        <span role="status" className="min-w-0 truncate text-xs text-muted-foreground" title={saving ? "正在保存对话草稿…" : !ready ? "正在恢复项目对话…" : same(draft, confirmedDraft.current!) ? "对话草稿已保存" : "对话草稿待保存"} data-testid="conversation-draft-status" data-saved={ready && !saving && same(draft, confirmedDraft.current!)}>{saving ? "保存中…" : !ready ? "恢复中…" : same(draft, confirmedDraft.current!) ? "已保存" : "待保存"}</span>
+        <span role="status" className="min-w-0 truncate text-xs text-muted-foreground" data-testid="conversation-draft-status" data-saved={ready && !saving && same(draft, confirmedDraft.current!)}>{!ready ? "恢复中…" : saving || !same(draft, confirmedDraft.current!) ? "保存中…" : ""}</span>
         <button className="ml-auto rounded-full bg-primary px-4 py-2 text-sm text-primary-foreground disabled:opacity-40" disabled={locked || !draft.text.trim()} onClick={() => void send().catch(() => undefined)}>{sending ? "正在提交…" : "发送"}</button>
       </div>
     </div>

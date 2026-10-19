@@ -30,6 +30,30 @@ beforeEach(() => {
         || where.expiresAt?.gt && f.row.expiresAt <= where.expiresAt.gt) return {count:0}; Object.assign(f.row,data); return {count:1}; }) } });
 });
 describe("durable structured intent claim, no real model or image calls", () => {
+  it.each(["先别生成一张海报", "不要修改背景", "这张怎么样？", "背景很好看", "这是参考图"])
+  ("does not charge either semantic or image models for commentary/holds: %s", async text => {
+    const ref = { referenceId: "shape:one", shapeId: "shape:one", assetId: "a1", assetSha256: "a".repeat(64), name: "图片1", width: 1024, height: 1024 };
+    f.row.input = StudioConversationInput.parse({ ...input, text, references: [ref], quickEditTargetId: ref.referenceId });
+    await runStudioConversationJob({ data: { messageId: "m" } } as any);
+    expect(f.available).not.toHaveBeenCalled(); expect(f.resolve).not.toHaveBeenCalled(); expect(f.submit).not.toHaveBeenCalled();
+    expect(f.row.status).toBe("CLARIFICATION"); expect(f.row.intent.targetReferenceId).toBeNull();
+  });
+  it("does not execute a legacy saved chargeable intent for a hold", async () => {
+    f.row.input = StudioConversationInput.parse({ ...input, text: "先别生成一张海报" });
+    f.row.intent = parseStudioConversationIntent(input);
+    await runStudioConversationJob({ data: { messageId: "m" } } as any);
+    expect(f.recover).toHaveBeenCalledOnce();
+    expect(f.available).not.toHaveBeenCalled(); expect(f.submit).not.toHaveBeenCalled();
+    expect(f.row.status).toBe("CLARIFICATION");
+  });
+  it("generates a reference scene brief when no semantic model is configured", async () => {
+    const ref = { referenceId: "shape:one", shapeId: "shape:one", assetId: "a1", assetSha256: "a".repeat(64), name: "图片1", width: 1024, height: 1024 };
+    f.available.mockResolvedValue(false);
+    f.row.input = StudioConversationInput.parse({ ...input, text: "根据这张图，我需要小狐狸在家里开门给小白鼠糖", references: [ref] });
+    await runStudioConversationJob({ data: { messageId: "m" } } as any);
+    expect(f.resolve).not.toHaveBeenCalled(); expect(f.submit).toHaveBeenCalledOnce();
+    expect(f.row.intent.action).toBe("generate"); expect(f.row.intent.referenceIds).toEqual([ref.referenceId]);
+  });
   it("uses an explicitly selected target without re-deciding it through a model", async () => {
     const ref = { referenceId: "shape:one", shapeId: "shape:one", assetId: "a1", assetSha256: "a".repeat(64), name: "图片1", width: 1024, height: 1024 };
     f.row.input = StudioConversationInput.parse({ ...input, text: "光影自然一点，阳光洒下", references: [ref], quickEditTargetId: ref.referenceId });

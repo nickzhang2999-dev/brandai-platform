@@ -16,10 +16,11 @@ type Props = {
   document: OwnedCanvasDocument | null; selectedIds: string[]; readOnly: boolean;
   onPrepare: () => Promise<{ document: OwnedCanvasDocument; revision: number }>;
   onPlace: (task: DecompositionTask) => Promise<void>;
+  onTasks?: (tasks: DecompositionTask[]) => void;
 };
 const control = "rounded-full border border-border bg-card px-3 py-2 text-xs text-foreground hover:bg-muted disabled:opacity-40";
 const message = (error: unknown) => error instanceof Error ? error.message : "操作未完成，请重新读取任务。";
-export function OwnedLayerPanel({ api, workspaceId, projectId, userId, document, selectedIds, readOnly, onPrepare, onPlace }: Props) {
+export function OwnedLayerPanel({ api, workspaceId, projectId, userId, document, selectedIds, readOnly, onPrepare, onPlace, onTasks }: Props) {
   const [tasks, setTasks] = useState<DecompositionTask[]>([]), [layerMode, setLayerMode] = useState<OwnedLayerMode>("AUTO"), [layerCount, setLayerCount] = useState(4), [intent, setIntent] = useState("");
   const [refineSourceId, setRefineSourceId] = useState<string | null>(null);
   const [pending, setPending] = useState(false), [busy, setBusy] = useState(false), [reading, setReading] = useState(false);
@@ -33,6 +34,7 @@ export function OwnedLayerPanel({ api, workspaceId, projectId, userId, document,
   const sourceLayer = source && tasks.flatMap(task => task.layers).find(layer => layer.assetId === source.assetId && layer.assetSha256 === source.assetSha256);
   const refining = !!sourceLayer;
   const selectionKey = selectedIds.join(":");
+  useEffect(() => { onTasks?.(tasks); }, [tasks, onTasks]);
   useEffect(() => { setRefineSourceId(null); }, [selectionKey]);
   let sourceError = "请选择一张已保存的图片。";
   if (source && document && source.assetId && source.assetSha256) {
@@ -59,6 +61,8 @@ export function OwnedLayerPanel({ api, workspaceId, projectId, userId, document,
     } catch (error) { if (current(expected)) setNotice(message(error)); }
     finally { if (current(expected)) { readBusy.current = false; setReading(false); } }
   }, [confirm]);
+  useEffect(() => { const check = () => { if (window.document.visibilityState !== "hidden") void refresh(); }; window.addEventListener("focus", check); return () => window.removeEventListener("focus", check); }, [refresh]);
+
 
   useEffect(() => {
     alive.current = true; operation.current = null; noticeTask.current = null; setNotice(""); setPending(false); setBlocked(false); setTasks([]); setRefineSourceId(null); setLayerMode("AUTO"); setLayerCount(4);
@@ -140,13 +144,13 @@ export function OwnedLayerPanel({ api, workspaceId, projectId, userId, document,
     <OwnedLayerOptions mode={layerMode} count={layerCount} context="分层" disabled={readOnly || busy || pending || blocked} onMode={setLayerMode} onCount={setLayerCount} />
     <textarea aria-label="分层说明" className="min-h-24 w-full rounded-2xl border border-border bg-background p-3 text-sm" placeholder="可选：优先拆分主体、文字和背景…" maxLength={500} value={intent} disabled={readOnly || busy || pending || blocked} onChange={event => setIntent(event.target.value)} />
     <button type="button" className="w-full rounded-full bg-primary py-3 text-sm text-primary-foreground disabled:opacity-40" data-testid="owned-layer-submit" disabled={!api || readOnly || busy || blocked || !pending && !!sourceError} onClick={() => void submit()}>{busy ? "正在确认…" : pending ? "检查上次分层" : refining ? "进一步分层" : "开始 AI 分层"}</button>
-    {!!notice && <p role="status" className="rounded-xl bg-accent-soft p-3 text-xs leading-6" data-testid="owned-layer-notice">{notice}</p>}
-    <button type="button" className={control} disabled={reading || busy} onClick={() => void refresh()}>{reading ? "正在读取…" : "刷新分层任务"}</button>
+    {!!notice && !tasks.some(task => task.error && notice.includes(task.error)) && <p role="status" className="rounded-xl bg-accent-soft p-3 text-xs leading-6" data-testid="owned-layer-notice">{notice}</p>}
+    {(blocked || tasks.some(task => ["PENDING", "RUNNING"].includes(task.status) && Date.parse(task.expiresAt) <= Date.now())) && <button type="button" className={control} disabled={reading || busy} onClick={() => void refresh()}>检查分层状态</button>}
     {!tasks.length && <p className="py-4 text-center text-xs text-muted-foreground">当前项目还没有分层任务。</p>}
     {tasks.map(task => <article className="space-y-3 rounded-2xl border border-border p-3" key={task.requestId} data-testid="owned-layer-task" data-status={task.status}>
       <div className="flex flex-wrap justify-between gap-2 text-xs"><strong>{ownedLayerTaskTitle(task)}</strong><span>{ownedLayerTaskStatus(task)}</span></div>
       {task.analysisSummary && <p className="text-xs leading-5 text-muted-foreground">{task.analysisSummary}</p>}
-      {task.error && <p role="alert" className="text-xs leading-5 text-muted-foreground">{task.error}</p>}
+      {task.error && <div role="alert" className="text-xs leading-5 text-muted-foreground"><p>{/画幅|尺寸比例/.test(task.error) ? "分层结果尺寸与原图不一致，已保留原图。" : task.error}</p>{/画幅|尺寸比例/.test(task.error) && <details><summary>查看详情</summary>{task.error}</details>}</div>}
       {task.layers.length > 0 && <><div className="grid grid-cols-2 gap-2">{task.layers.map(layer => {
         const label = layer.name || `图层 ${layer.order + 1}`;
         // No pixel reaches the visible-ink threshold: the model returned an

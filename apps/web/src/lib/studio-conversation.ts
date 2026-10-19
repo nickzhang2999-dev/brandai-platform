@@ -32,6 +32,7 @@ export async function validateConversationReferences(db: Prisma.TransactionClien
 export function conversationGenerationInput(projectId: string, input: StudioConversationInput, intent: StudioConversationIntent) {
   return StudioGenerationInput.parse({ projectId, mutationId: input.mutationId, prompt: intent.prompt,
     sizeSelection: intent.sizeSelection, documentRevision: input.documentRevision, workflowRevision: input.workflowRevision,
+    ...(input.psdLayerMode ? { psdLayerMode: input.psdLayerMode, ...(input.psdLayerCount ? { psdLayerCount: input.psdLayerCount } : {}) } : {}),
     ...(input.outputFrameId ? { outputFrameId: input.outputFrameId } : {}) });
 }
 
@@ -88,7 +89,13 @@ export async function submitStudioConversation(workspaceId: string, userId: stri
         const identity = own(workspaceId, userId, projectId);
         const conversation = await tx.studioConversation.upsert({ where: { workspaceId_userId_projectId: identity }, create: identity, update: {} });
         const old = await tx.studioConversationMessage.findUnique({ where: { conversationId_mutationId: { conversationId: conversation.id, mutationId: input.mutationId } }, include: { conversation: true } });
-        if (old) { if (old.payloadHash !== payloadHash) throw new ApiException(409, "同一次发送不能换成其他内容，请重新发送。"); return old; }
+        if (old) {
+          // Home handoff may resume after the canvas has advanced. The same
+          // explicit click retains its original accepted snapshot and job.
+          const stableHome = (value: unknown) => { const { documentRevision: _d, workflowRevision: _w, ...rest } = StudioConversationInput.parse(value); return hashStudioPayload(rest); };
+          if (old.payloadHash !== payloadHash && !(input.homeStart && StudioConversationInput.parse(old.input).homeStart && stableHome(old.input) === stableHome(input))) throw new ApiException(409, "同一次发送不能换成其他内容，请重新发送。");
+          return old;
+        }
         const [document, workflow] = await Promise.all([tx.editorDocument.findUnique({ where: { projectId } }), tx.workbenchProjectState.findUnique({ where: { projectId } })]);
         if ((document?.revision ?? 0) !== input.documentRevision || (workflow?.workflowRevision ?? 0) !== input.workflowRevision) throw new ApiException(409, "画布或工作流已更新，请保存最新内容后发送。");
         if (document && document.workspaceId !== workspaceId || workflow && workflow.workspaceId !== workspaceId) throw new ApiException(404, "项目不存在。");

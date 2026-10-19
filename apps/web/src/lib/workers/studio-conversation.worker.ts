@@ -3,7 +3,7 @@ import { Worker, type Job } from "bullmq";
 import { prisma, Prisma } from "@brandai/db";
 import { StudioConversationInput, StudioConversationIntent, type StudioConversationReference } from "@brandai/contracts";
 import { connection, queuePrefix } from "@/lib/queue";
-import { parseStudioConversationIntent } from "@/lib/studio-conversation-intent";
+import { parseStudioConversationIntent, studioConversationNonActionable } from "@/lib/studio-conversation-intent";
 import { studioConversationFeedback } from "@/lib/studio-conversation-feedback";
 import { submitStudioGeneration } from "@/lib/studio-generation";
 import { requireArtifactWrite } from "@/lib/studio-generation-artifacts";
@@ -42,9 +42,9 @@ export async function runStudioConversationJob(job: Job<{ messageId: string }>) 
       if (outputs.length === 1) previous = input.references.find(ref => ref.assetId === outputs[0]!.assetId);
     }
     let intent: StudioConversationIntent;
-    // An echoed system notice must never start either paid intent parsing or
-    // image generation, including an unsubmitted intent left by an old worker.
-    if (studioConversationFeedback(input)) {
+    // Feedback, questions and explicit holds must never start paid intent
+    // parsing or generation, including an unsubmitted legacy saved intent.
+    if (studioConversationFeedback(input) || studioConversationNonActionable(input)) {
       // An old worker may have accepted a generation but crashed before linking
       // its receipt. Recover that same request before changing its saved intent.
       const recovered = await recoverStudioConversationGeneration(row);

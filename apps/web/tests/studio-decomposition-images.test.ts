@@ -54,6 +54,21 @@ describe("Studio decomposition image boundary (local fixtures; no provider or DB
     const rgba = await sharp(result.body).raw().toBuffer();
     expect(rgba[3]).toBe(0);
   });
+  it.each([[160, 90], [120, 90], [90, 160]])("keeps full-frame non-square layers aligned at %i×%i (synthetic, not provider acceptance)", async (width, height) => {
+    const result = await inspectStudioLayer(await fixture(width, height, { left: 10, top: 12, width: 20, height: 18 }), width, height, signal());
+    expect(result).toMatchObject({ width, height, alphaBounds: { left: 10, top: 12, width: 20, height: 18 }, hasTransparency: true });
+    const normalized = await inspectStudioLayer(await fixture(width, height, { left: 10, top: 12, width: 20, height: 18 }), width * 2, height * 2, signal());
+    expect(normalized).toMatchObject({ width: width * 2, height: height * 2, hasTransparency: true });
+  });
+  it("reports measured source and returned dimensions and separates aspect mismatch from oversize", async () => {
+    const bytes = await fixture(160, 90, { left: 10, top: 12, width: 20, height: 18 });
+    await expect(inspectStudioLayer(bytes, 160, 91, signal())).rejects.toThrow("原图 160×91，返回图层 160×90");
+    await expect(inspectStudioLayer(bytes, 80, 45, signal())).rejects.toThrow("尺寸超出原图");
+    await expect(inspectStudioLayer(bytes, 160, 91, signal())).rejects.toThrow("比例与原图不一致");
+  });
+  it.each([[159, 90], [160, 89], [160, 91]])("does not assume a one-pixel crop or pad (%i×%i) is a verified full frame", async (width, height) => {
+    await expect(inspectStudioLayer(await fixture(width, height, { left: 10, top: 12, width: 20, height: 18 }), 160, 90, signal())).rejects.toMatchObject({ status: 422 });
+  });
   it("rejects cropped proportions and oversized provider frames rather than distorting their positions", async () => {
     const bytes = await fixture(12, 8, { left: 3, top: 2, width: 4, height: 3 });
     for (const [width, height] of [[12, 12], [24, 15], [6, 4]]) {

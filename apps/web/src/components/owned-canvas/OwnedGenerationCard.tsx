@@ -7,7 +7,7 @@ import { ownedPsdSelection, ownedLayerTaskStatus, ownedLayerTaskTitle } from "./
 import { useBoundedTaskPoll } from "../../lib/use-bounded-task-poll";
 
 type Props = { task: GenerationTask; api: ReturnType<typeof createOwnedEditorApi> | null; canEdit: boolean;
-  compact?: boolean; activityNotice?: string; recoveryDisabled?: boolean; onReedit?(): void;
+  isImagePlaced?(image: PersistentImage): boolean; compact?: boolean; activityNotice?: string; recoveryDisabled?: boolean; onReedit?(): void;
   onTask(task: GenerationTask): void; onNotice(message: string): void; onInsert(image: PersistentImage): Promise<void>;
   onInsertLayers?(task: DecompositionTask, source: PersistentImage): Promise<void> };
 const button = "rounded-full border border-border px-3 py-2 text-xs disabled:opacity-40";
@@ -16,7 +16,7 @@ const imageKey = (image: GenerationTask["results"][number]) => image.versionId +
 
 /** Reads only existing receipts. Archive/check retries are separate explicit
  * actions and never submit another image-generation request. */
-export function OwnedGenerationCard({ task, api, canEdit, onTask, onNotice, onInsert, onInsertLayers, compact = false, activityNotice, recoveryDisabled = false, onReedit }: Props) {
+export function OwnedGenerationCard({ task, api, canEdit, onTask, onNotice, onInsert, onInsertLayers, compact = false, activityNotice, recoveryDisabled = false, onReedit, isImagePlaced }: Props) {
   const selection = ownedPsdSelection(task);
   const alive = useRef(false), running = useRef(false), latest = useRef({ task, api, canEdit });
   latest.current = { task, api, canEdit };
@@ -121,7 +121,7 @@ export function OwnedGenerationCard({ task, api, canEdit, onTask, onNotice, onIn
       const label = !check ? "尚未读取品牌检查" : check.status === "FAILED" ? check.error : check.status === "NOT_REQUESTED" ? "图片尚未检查" : check.status === "SUCCEEDED" ? "品牌检查：" + (check.report?.overall === "PASS" ? "通过" : check.report?.overall === "RISK" ? "建议复核" : "需要调整") : "品牌检查处理中 · " + check.progress + "%";
       return <div className="space-y-2" key={image.versionId} data-version-id={image.versionId}>
         <img src={image.url} alt="生成结果" className="max-h-52 w-full rounded-xl object-contain" loading="lazy" />
-        <button type="button" className={button} disabled={!canEdit || busy} onClick={() => void action(() => onInsert(image))}>加入画布</button>
+        {!isImagePlaced?.(image) && <button type="button" className={button} disabled={!canEdit || busy} onClick={() => void action(() => onInsert(image))}>{compact ? "恢复到画布" : "加入画布"}</button>}
         <details open={compact ? undefined : true}>
         <summary hidden={!compact} className="cursor-pointer text-xs text-muted-foreground">品牌检查</summary>
         <p className="text-xs leading-5 text-muted-foreground" data-testid="owned-compliance-status">{label}</p>

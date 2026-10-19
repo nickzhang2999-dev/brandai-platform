@@ -45,6 +45,48 @@ beforeEach(() => {
   });
 });
 describe("durable conversation intake and isolated drafts (DB adapter interaction tests)", () => {
+  it.each([{ psdLayerMode: "AUTO" }, { psdLayerMode: "MANUAL", psdLayerCount: 4 }])("restores PSD draft settings and passes them to normal and modify generation: %j", async options => {
+    const draft = { revision: 0, text: "夏季海报", references: [], sizeSelection: base.sizeSelection, ...options };
+    const saved = await saveStudioConversationDraft("w", "u", "p", draft);
+    expect(saved).toMatchObject({ ...options, revision: 1 });
+    expect((await readStudioConversation("w", "u", "p", {}) as any).draft).toMatchObject(options);
+    for (const edit of [false, true]) {
+      const input = StudioConversationInput.parse({ ...base, ...options, ...(edit ? { text: "背景改成蓝色", references: [reference], quickEditTargetId: reference.referenceId } : {}) });
+      const intent = parseStudioConversationIntent(input);
+      expect(intent.action).toBe(edit ? "modify" : "generate");
+      expect(conversationGenerationInput("p", input, intent)).toMatchObject({ ...options, mutationId: base.mutationId });
+    }
+    // Disabling PSD clears both fields in the same authoritative draft.
+    const cleared = await saveStudioConversationDraft("w", "u", "p", { revision: saved.revision, text: draft.text, references: [], sizeSelection: base.sizeSelection });
+    expect(cleared.psdLayerMode).toBeUndefined(); expect(cleared.psdLayerCount).toBeUndefined();
+    expect((await readStudioConversation("w", "u", "p", {}) as any).draft.psdLayerMode).toBeUndefined();
+  });
+  it("retains the original PSD request on replay and rejects changing its settings under the same mutation", async () => {
+    const request = { ...base, psdLayerMode: "AUTO" };
+    const accepted = await submitStudioConversation("w", "u", "p", request);
+    expect(messages[0].input.psdLayerMode).toBe("AUTO");
+    expect((await submitStudioConversation("w", "u", "p", request)).messageId).toBe(accepted.messageId);
+    await expect(submitStudioConversation("w", "u", "p", { ...base, psdLayerMode: "MANUAL", psdLayerCount: 4 })).rejects.toMatchObject({ status: 409 });
+    expect(messages).toHaveLength(1); expect(f.generation).not.toHaveBeenCalled();
+  });
+  it("replays a home submission after autosave without changing its frozen canvas or enqueueing another generation", async () => {
+    const input = { ...base, homeStart: true, references: [reference] };
+    const accepted = await submitStudioConversation("w", "u", "p", input);
+    const original = messages[0].acceptedCanvas;
+    canvas = "newer canvas";
+    const result = await submitStudioConversation("w", "u", "p", { ...input, documentRevision: 9, workflowRevision: 4 });
+    expect(result.messageId).toBe(accepted.messageId); expect(messages).toHaveLength(1);
+    expect(messages[0].acceptedCanvas).toBe(original); expect(f.generation).not.toHaveBeenCalled();
+    for (const changed of [{ text: "另一个需求" }, { references: [] }, { homeStart: undefined }, { psdLayerMode: "AUTO" }]) {
+      await expect(submitStudioConversation("w", "u", "p", { ...input, ...changed, documentRevision: 9 })).rejects.toMatchObject({ status: 409 });
+    }
+    expect(messages).toHaveLength(1);
+  });
+  it("does not relax ordinary conversation revision replay constraints", async () => {
+    await submitStudioConversation("w", "u", "p", base);
+    await expect(submitStudioConversation("w", "u", "p", { ...base, documentRevision: 2 })).rejects.toMatchObject({ status: 409 });
+    expect(messages).toHaveLength(1);
+  });
   it("persists a pending outbox and immutable refs/canvas before queue delivery", async () => {
     const reply = await submitStudioConversation("w", "u", "p", { ...base, references: [reference] });
     expect(reply.status).toBe("PENDING"); expect(messages[0].acceptedCanvas).toBe(canvas);
@@ -95,8 +137,8 @@ describe("durable conversation intake and isolated drafts (DB adapter interactio
     await expect(saveStudioConversationDraft("w", "u", "p", { ...draft, text: "changed", revision: 0 })).rejects.toMatchObject({ status: 409 });
     const history: any = await readStudioConversation("w", "u", "p", {}); expect(history.draft.text).toBe("unfinished"); expect(history.draft.quickEditTargetId).toBe(reference.referenceId);
   });
-  it("recovers an accepted generation after an unknown acknowledgement without enqueueing again", async () => {
-    await submitStudioConversation("w", "u", "p", base);
+  it.each([{}, { psdLayerMode: "AUTO" }, { psdLayerMode: "MANUAL", psdLayerCount: 4 }])("recovers an accepted generation with PSD options %j after an unknown acknowledgement without enqueueing again", async options => {
+    await submitStudioConversation("w", "u", "p", { ...base, ...options });
     const row = messages[0], input = StudioConversationInput.parse(row.input), intent = parseStudioConversationIntent(input); row.intent = intent;
     const expected = createHash("sha256").update(JSON.stringify({ input: conversationGenerationInput("p", input, intent), accepted: { canvas: row.acceptedCanvas, references: input.references, intent } })).digest("hex");
     f.db.studioGenerationRequest = { findUnique: vi.fn().mockResolvedValue({ id: "original-generation", payloadHash: expected }) };

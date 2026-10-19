@@ -9,6 +9,25 @@ const sourceShapeId = "shape:generated-" + createHash("sha256").update(source.as
 const task = { requestId: "auto-decomposition", sourceShapeId, ...source, status: "SUCCEEDED", sourceWidth: 12, sourceHeight: 8,
   layers: [0, 1].map(order => ({ order, assetId: "auto-layer-" + order, assetSha256: String(order + 1).repeat(64), width: 12, height: 8, url: `/api/workspaces/w/assets/auto-layer-${order}/raw` })) };
 describe("automatic PSD layer placement", () => {
+  it("places a comparison group beside its visible original and preserves that placement on replay", async () => {
+    const original = { id: "shape:original", kind: "image" as const, x: 30, y: 70, w: 120, h: 80, rotation: 0, opacity: 1, parentId: "page:novart", assetId: source.assetId, assetSha256: source.assetSha256, url: source.url };
+    const before = { ...emptyOwnedDocument(), items: [original], camera: { x: 9999, y: 8888, zoom: 0.1 } };
+    const placed = await placeGeneratedOwnedLayers(before, task as never, "w", source, [], { besideSource: true });
+    expect(placed.document.items[0]).toEqual(original);
+    for (const item of placed.document.items.slice(1)) expect(item).toMatchObject({ x: 198, y: 70, w: 120, h: 80 });
+    expect(new Set(placed.document.items.slice(1).map(item => item.groupId)).size).toBe(1);
+    const replay = await placeGeneratedOwnedLayers(placed.document, task as never, "w", source, [], { besideSource: true });
+    expect(replay.replayed).toBe(true); expect(replay.document).toBe(placed.document);
+    const edit = createEdit(before, placed.document)!; expect(applyEdit(placed.document, edit, "before").items).toEqual(before.items);
+    expect(parseOwnedDocument(serializeOwnedDocument(placed.document)).items).toEqual(placed.document.items);
+  });
+  it("uses document order for a missing automatic source instead of the panned viewport", async () => {
+    const before = { ...emptyOwnedDocument(), camera: { x: 9999, y: 8888, zoom: 0.1 } };
+    const placed = await placeGeneratedOwnedLayers(before, task as never, "w", source, [], { besideSource: true });
+    expect(placed.document.items[0]).toMatchObject({ x: 0, y: 0 });
+    expect(placed.document.items[0]?.hidden).not.toBe(true);
+    expect(placed.document.items[1]?.x).toBeGreaterThan(placed.document.items[0]!.w);
+  });
   it("matches worker SHA source identity without importing Node crypto into browser", async () => {
     expect(await generatedOwnedSourceShapeId(source.assetId)).toBe(sourceShapeId);
   });

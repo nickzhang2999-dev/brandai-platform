@@ -15,14 +15,19 @@ export const StudioConversationReference = z.object({
   purpose: z.enum(["REFERENCE", "ADAPTIVE", "EXACT"]).default("REFERENCE"),
 }).strict();
 const refs = z.array(StudioConversationReference).max(8).refine(value => new Set(value.map(item => item.referenceId)).size === value.length && new Set(value.map(item => item.assetId)).size === value.length, "引用图片不能重复");
-const draftFields = z.object({ text: z.string().max(4000), references: refs, quickEditTargetId: z.string().min(1).max(200).nullable().default(null), sizeSelection: StudioGenerationSizeSelection }).strict();
-const validTarget = (value: z.infer<typeof draftFields>) => value.quickEditTargetId === null || value.references.some(ref => ref.referenceId === value.quickEditTargetId && ref.shapeId !== undefined);
-export const StudioConversationDraftInput = draftFields.extend({ revision: z.number().int().min(0).max(2147483646) }).refine(validTarget, "快捷编辑目标必须在本次引用中");
-export const StudioConversationDraft = draftFields.extend({ revision: z.number().int().min(0).max(2147483647) }).refine(validTarget, "快捷编辑目标必须在本次引用中");
+const draftFields = z.object({ text: z.string().max(4000), references: refs, quickEditTargetId: z.string().min(1).max(200).nullable().default(null), sizeSelection: StudioGenerationSizeSelection,
+  psdLayerMode: z.enum(["AUTO", "MANUAL"]).optional(), psdLayerCount: z.number().int().min(2).max(10).optional() }).strict();
+const validateDraft = (value: z.infer<typeof draftFields>, ctx: z.RefinementCtx) => {
+  if (value.quickEditTargetId !== null && !value.references.some(ref => ref.referenceId === value.quickEditTargetId && ref.shapeId !== undefined)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["quickEditTargetId"], message: "快捷编辑目标必须在本次引用中" });
+  if (value.psdLayerMode === "MANUAL" && value.psdLayerCount === undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["psdLayerCount"], message: "指定 PSD 层数时，请填写 2–10 层" });
+  if (value.psdLayerMode !== "MANUAL" && value.psdLayerCount !== undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["psdLayerCount"], message: "只有指定层数模式才能填写 PSD 层数" });
+};
+export const StudioConversationDraftInput = draftFields.extend({ revision: z.number().int().min(0).max(2147483646) }).superRefine(validateDraft);
+export const StudioConversationDraft = draftFields.extend({ revision: z.number().int().min(0).max(2147483647) }).superRefine(validateDraft);
 export const StudioConversationInput = draftFields.extend({ mutationId: z.string().uuid(), text: z.string().trim().min(1).max(4000),
   documentRevision: z.number().int().min(0).max(2147483646), workflowRevision: z.number().int().min(0).max(2147483646),
-  requestedSize: StudioConversationPixels.optional(), outputFrameId: StudioWorkflowTarget.shape.shapeId.optional(),
-}).refine(validTarget, "快捷编辑目标必须在本次引用中");
+  requestedSize: StudioConversationPixels.optional(), outputFrameId: StudioWorkflowTarget.shape.shapeId.optional(), homeStart: z.literal(true).optional(),
+}).superRefine(validateDraft);
 export const StudioConversationIntent = z.object({
   action: z.enum(["generate", "modify", "clarify"]), targetReferenceId: z.string().nullable(), referenceIds: z.array(z.string()).max(8),
   prompt: z.string().min(1).max(4000), clarification: z.string().nullable(),

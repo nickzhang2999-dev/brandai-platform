@@ -1,5 +1,6 @@
 import { StudioConversationIntent, StudioConversationModelRequest, StudioConversationModelResponse, type StudioConversationInput, type StudioConversationReference } from "@brandai/contracts";
-import { parseStudioConversationIntent } from "./studio-conversation-intent";
+import { parseStudioConversationIntent, studioConversationNonActionable } from "./studio-conversation-intent";
+import { studioConversationFeedback } from "./studio-conversation-feedback";
 import { getEffectiveAiSettings } from "./settings";
 import { ai } from "./ai";
 import { resolveAiService } from "./ai-service";
@@ -17,6 +18,7 @@ export function unknownStudioConversationIntent(input: StudioConversationInput) 
     clarification: "上一份模型意图请求的结果尚未确认，系统不会自动重试或开始生图。请明确图片目标和需求后重新发送。", parser: "structured-model-v1", modelStatus: "UNKNOWN" });
 }
 export async function resolveStudioConversationModel(input: StudioConversationInput, previous: StudioConversationReference | undefined, signal: AbortSignal) {
+  if (studioConversationNonActionable(input) || studioConversationFeedback(input)) return parseStudioConversationIntent(input, previous);
   const request = StudioConversationModelRequest.parse({ schemaVersion: 1, text: input.text,
     references: input.references.map(ref => ({ referenceId: ref.referenceId, name: ref.name, editable: !!ref.shapeId })),
     quickEditTargetId: input.quickEditTargetId, previousResultReferenceId: previous?.referenceId ?? null, providerRetryPolicy: "never" });

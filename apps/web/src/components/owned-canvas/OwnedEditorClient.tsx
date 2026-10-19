@@ -3,7 +3,7 @@
 import { useBoundedTaskPoll, TASK_POLL_PAUSED_MESSAGE } from "../../lib/use-bounded-task-poll";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { StudioMaterial, GenerationAspectRatioKey, resolveGenerationSize, type EditorDocumentView } from "@brandai/contracts";
+import { StudioMaterial, resolveGenerationSize, type EditorDocumentView } from "@brandai/contracts";
 import { NovartApiError } from "../../lib/novart-api-client";
 import { ownedCanvasEngine } from "../../lib/owned-canvas-engine";
 import { assignOwnedImageNames, type OwnedCanvasDocument, type OwnedCanvasItem } from "../../lib/owned-canvas-model";
@@ -12,7 +12,6 @@ import { OwnedCanvas } from "./OwnedCanvas";
 import { OwnedWorkflowPanel } from "./OwnedWorkflowPanel";
 import { OwnedGenerationCard } from "./OwnedGenerationCard";
 import { OwnedLayerPanel } from "./OwnedLayerPanel";
-import { OwnedLayerOptions } from "./OwnedLayerOptions";
 import { OwnedConversationPanel, type OwnedConversationHandle } from "./OwnedConversationPanel";
 import { selectedOwnedConversationReferences } from "./owned-conversation-references";
 import { OwnedBrandMaterialsDrawer } from "./OwnedBrandMaterialsDrawer";
@@ -26,6 +25,7 @@ import { createOwnedWorkflowSession, type OwnedWorkflowSession, type WorkflowSes
 import { useOwnedDraft } from "./use-owned-draft";
 import { createOwnedGenerationRecovery, OwnedGenerationRecoveryError } from "./owned-generation-recovery";
 import { takeReadyGenerationImages } from "./owned-generation-autoinsert";
+import { nextOwnedImagePosition } from "./owned-image-placement";
 import { createOwnedEditorApi, type Material, type UploadTask, type GenerationTask, type PersistentImage, type GenerationInput, type WorkflowInput, type DecompositionTask } from "./owned-editor-api";
 
 type InitialTask = { kind: "STUDIO_UPLOAD" | "STUDIO_GENERATION" | "STUDIO_DECOMPOSITION"; id: string };
@@ -58,13 +58,36 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
   const imageToolJournal = `deepflare:image-tool-pending:${JSON.stringify([userId, workspaceId, projectId])}`;
   const readOnlyRef = useRef(readOnly); readOnlyRef.current = readOnly;
   const initialTaskKind = initialTask?.kind, initialTaskId = initialTask?.id;
-  const [panel, setPanel] = useState<"generate" | "materials" | "tasks" | "layers" | null>("generate");
+  const [panel, setPanel] = useState<"generate" | "materials" | "tasks" | "layers" | "settings" | null>("generate");
+  const toolDialog = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (!panel || panel === "generate") return;
+    const previous = window.document.activeElement as HTMLElement | null;
+    const node = toolDialog.current;
+    const focusable = () => Array.from(node?.querySelectorAll<HTMLElement>('button:not(:disabled), select:not(:disabled), input:not(:disabled), textarea:not(:disabled), [tabindex="0"]') ?? []).filter(item => item.getClientRects().length);
+    focusable()[0]?.focus();
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setPanel("generate"); }
+      if (event.key === "Tab") { const items = focusable(), first = items[0], last = items.at(-1); if (!first) return; if (event.shiftKey && window.document.activeElement === first) { event.preventDefault(); last?.focus(); } else if (!event.shiftKey && window.document.activeElement === last) { event.preventDefault(); first.focus(); } }
+    };
+    node?.addEventListener("keydown", keydown);
+    return () => { node?.removeEventListener("keydown", keydown); if (previous?.isConnected) previous.focus(); };
+  }, [panel]);
+  const [layerTasks, setLayerTasks] = useState<DecompositionTask[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
   const [uploads, setUploads] = useState<UploadTask[]>([]);
   const [generations, setGenerations] = useState<GenerationTask[]>([]);
   const [workflowState, setWorkflowState] = useState<WorkflowSessionState | null>(null);
+  const managedWorkflowHashes = useRef(new Set<string>());
+  useEffect(() => { managedWorkflowHashes.current.clear(); }, [workspaceId, projectId, userId]);
+  useEffect(() => {
+    for (const value of [...(workflowState?.server?.references ?? []), ...(workflowState?.draft?.references ?? [])]) managedWorkflowHashes.current.add(value.assetSha256);
+  }, [workflowState]);
   const [outputFrameId, setOutputFrameId] = useState("");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [focusImageId, setFocusImageId] = useState<string>();
+  const placementBusy = useRef(false), failedPlacements = useRef(new Set<string>());
+  const [placementRetry, setPlacementRetry] = useState(0), [placementFailed, setPlacementFailed] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [ratio, setRatio] = useState<GenerationInput["sizeSelection"]["ratioKey"]>("1:1");
   const [quality, setQuality] = useState<"1K" | "2K">("1K");
@@ -140,10 +163,30 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
     } finally { if (apiRef.current === api) saveBusy.current = false; }
   }, [send]);
 
+  const saveSettled = useCallback(async () => {
+    const api = apiRef.current, deadline = Date.now() + 25_000;
+    // Auto-focus can commit the new viewport just after an image insertion.
+    // Acknowledge the latest scene, never an earlier successfully saved snapshot.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 30));
+      while (saveBusy.current && Date.now() < deadline && alive.current && apiRef.current === api) await new Promise(resolve => setTimeout(resolve, 50));
+      if (!alive.current || apiRef.current !== api) return null;
+      if (Date.now() >= deadline) throw new Error("画布保存等待较久，请保留页面并稍后确认。");
+      const receipt = await save();
+      await new Promise(resolve => setTimeout(resolve, 30));
+      if (!alive.current || apiRef.current !== api) return null;
+      if (receipt && sequence.current === savedSequence.current && !pendingSave.current && !saveBlocked.current) return receipt;
+    }
+    throw new Error("画布仍有新的修改，请稍后确认保存。");
+  }, [save]);
+
   const changeDocument = useCallback((next: OwnedCanvasDocument) => {
     if (!writableRef.current) return;
     const previousSequence = Number((docRef.current?.source.novartOwnedCanvas as { imageSequence?: number })?.imageSequence) || 0;
-    const named = assignOwnedImageNames(next, previousSequence);
+    // Undo deletes the object, not the acknowledgement that this result was
+    // delivered. Otherwise refresh would silently undo the user's undo.
+    const acknowledged = [...new Set([...(Array.isArray(docRef.current?.source.novartPlacedGenerations) ? docRef.current.source.novartPlacedGenerations as string[] : []), ...(Array.isArray(next.source.novartPlacedGenerations) ? next.source.novartPlacedGenerations as string[] : [])])];
+    const named = assignOwnedImageNames({ ...next, source: { ...next.source, novartPlacedGenerations: acknowledged } }, previousSequence);
     docRef.current = named; sequence.current++; setDocument(named);
     if (!saveBusy.current && !pendingSave.current) setSaveState("dirty");
   }, []);
@@ -160,28 +203,42 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
     if (!writableRef.current || !docRef.current) throw new Error("画布已变为只读，素材仍保留，图片尚未加入。");
     const current = docRef.current, longest = Math.max(material.width, material.height), scale = Math.min(900 / longest, Math.max(1, 100 / longest));
     const w = material.width * scale, h = material.height * scale;
-    const center = point ?? { x: (360 - current.camera.x) / current.camera.zoom, y: (260 - current.camera.y) / current.camera.zoom };
-    changeDocument({ ...current, items: [...current.items, { id: identity ?? "shape:" + crypto.randomUUID(), kind: "image", x: center.x - w / 2, y: center.y - h / 2, w, h, rotation: 0, opacity: 1, parentId: current.pageId, url: material.url, assetId: material.assetId, assetSha256: material.assetSha256, ...(material.versionId ? { versionId: material.versionId } : {}), ...(sourceShapeId ? { sourceShapeId } : {}) }] });
+    const center = point ?? nextOwnedImagePosition(current, w, h, sourceShapeId);
+    const id = identity ?? "shape:" + crypto.randomUUID();
+    changeDocument({ ...current, items: [...current.items, { id, kind: "image", x: center.x - w / 2, y: center.y - h / 2, w, h, rotation: 0, opacity: 1, parentId: current.pageId, url: material.url, assetId: material.assetId, assetSha256: material.assetSha256, ...(material.versionId ? { versionId: material.versionId } : {}), ...(sourceShapeId ? { sourceShapeId } : {}) }] });
+    if (!point) setFocusImageId(id);
     setNotice("图片已加入画布，保存状态见顶部。");
   }, [changeDocument]);
 
-  // Place results of generations started or watched on this page as soon as
-  // they are stored; a reopened project never re-adds earlier results.
+  // Recover unplaced durable results too; the saved ledger prevents repeated
+  // insertion after refresh or an intentional undo/delete.
   const watchedGenerations = useRef(new Set<string>()), placedGenerations = useRef(new Set<string>());
-  useEffect(() => { watchedGenerations.current = new Set(); placedGenerations.current = new Set(); }, [workspaceId, projectId, userId]);
+  useEffect(() => { watchedGenerations.current = new Set(); placedGenerations.current = new Set(); failedPlacements.current.clear(); setPlacementFailed(false); }, [workspaceId, projectId, userId]);
   useEffect(() => {
-    if (!canEdit) return;
-    const ready = takeReadyGenerationImages(generations, watchedGenerations.current, placedGenerations.current, docRef.current);
+    if (!canEdit || placementBusy.current) return;
+    const context = apiRef.current;
+    const ready = takeReadyGenerationImages(generations.filter(task => task.projectId === projectId), watchedGenerations.current, placedGenerations.current, docRef.current).filter(value => !failedPlacements.current.has(value.task.requestId));
     if (!ready.length) return;
     void (async () => {
+      placementBusy.current = true;
       let count = 0;
-      for (const { task, images } of ready) for (const image of images) {
-        try { await insertImage(image, undefined, undefined, task.sourceShapeId); count++; }
-        catch (error) { setNotice(messageOf(error)); return; }
+      try { for (const { task, images } of ready) {
+        try {
+          for (const image of images) {
+            if (!alive.current || apiRef.current !== context) return;
+            if (docRef.current?.items.some(item => item.assetId === image.assetId && item.assetSha256 === image.assetSha256)) continue;
+            await insertImage(image, undefined, undefined, task.sourceShapeId); count++;
+          }
+          if (!alive.current || apiRef.current !== context || !docRef.current) return;
+          const current = docRef.current;
+          changeDocument({ ...current, source: { ...current.source, novartPlacedGenerations: [...new Set([...(Array.isArray(current.source.novartPlacedGenerations) ? current.source.novartPlacedGenerations as string[] : []), task.requestId])] } });
+          placedGenerations.current.add(task.requestId);
+        } catch (error) { failedPlacements.current.add(task.requestId); setPlacementFailed(true); setNotice(messageOf(error)); }
       }
       if (count) setNotice(`${count} 张新图片已自动加入画布，可撤销。`);
+      } finally { if (apiRef.current === context) { placementBusy.current = false; if (alive.current) setPlacementRetry(value => value + 1); } }
     })();
-  }, [generations, canEdit, insertImage]);
+  }, [projectId, generations, canEdit, insertImage, changeDocument, placementRetry]);
 
   const refresh = useCallback(async (quiet = false) => {
     const api = apiRef.current;
@@ -229,9 +286,10 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
       if (!alive.current || apiRef.current !== api || !saved || sequence.current !== savedSequence.current || pendingSave.current || saveBlocked.current) throw new Error("画布保存尚未确认，请保存后再设置用途。");
     } });
     workflowRef.current = workflowSession; const stopWorkflow = workflowSession.subscribe(setWorkflowState);
+    setGenerations([]); setMaterials([]); setUploads([]); setLayerTasks([]);
     setSaveState("loading"); setSaveError(""); setDocument(null); setView(null); docRef.current = null; viewRef.current = null; sequence.current = 0; savedSequence.current = 0;
     pendingSave.current = null; saveBlocked.current = false;
-    saveBusy.current = false; refreshBusy.current = false; uploadBusy.current = false; generationBusy.current = false; handoffBusy.current = false; taskFocusBusy.current = false;
+    placementBusy.current = false; saveBusy.current = false; refreshBusy.current = false; uploadBusy.current = false; generationBusy.current = false; handoffBusy.current = false; taskFocusBusy.current = false;
     generationMode.current = null; setSelectedIds([]);
     psdSelectionRestored.current = false; setPreparePsd(false); setPsdLayerMode("AUTO"); setPsdLayerCount(4);
     uploadOperation.current = null; generationOperation.current = null; setPendingUpload(false); setPendingGeneration(false);
@@ -299,6 +357,33 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
       if (data.action === "project-renamed" && typeof data.projectName === "string" && data.projectName.trim().length >= 1 && data.projectName.trim().length <= 200) {
         setVisibleName(data.projectName.trim()); return;
       }
+      if (data.action === "start-creation") {
+        if (parent === window || typeof data.requestId !== "string" || !/^[a-f0-9-]{36}$/i.test(data.requestId)) return;
+        const api = apiRef.current, requestId = data.requestId;
+        const reply = (status: "accepted" | "failed", error?: string) => { if (alive.current && apiRef.current === api) send("start-creation-result", { requestId, status, ...(error ? { error } : {}) }); };
+        if (!api || handoffBusy.current) { reply("failed", "正在确认上一份保存，请稍后继续。"); return; }
+        handoffBusy.current = true;
+        void (async () => {
+          try {
+            const deadline = Date.now() + 20_000;
+            while (alive.current && apiRef.current === api && (!conversationRef.current?.ready() || workflowRef.current?.snapshot().busy || workflowRef.current?.snapshot().status === "loading" || saveBusy.current)) {
+              if (Date.now() >= deadline) throw new Error("创作页面准备较久，原需求仍保留，可稍后继续。");
+              await new Promise(resolve => setTimeout(resolve, 100));
+            }
+            if (!alive.current || apiRef.current !== api) return;
+            if (!writableRef.current || !docRef.current || !conversationRef.current) throw new Error("创作页面尚未恢复，请稍后继续。");
+            if (typeof data.text !== "string" || !data.text.trim() || data.text.length > 4000 || !Array.isArray(data.referenceShapeIds) || data.referenceShapeIds.length > 8 || data.referenceShapeIds.some((id: unknown) => typeof id !== "string" || !/^shape:home-[a-f0-9-]{36}$/i.test(id))) throw new Error("首页创作内容无法确认，原需求仍保留。");
+            const saved = await saveSettled();
+            if (!saved || sequence.current !== savedSequence.current || pendingSave.current || saveBlocked.current) throw new Error("请先确认画布已保存，再继续创作。");
+            const refs = selectedOwnedConversationReferences(docRef.current, data.referenceShapeIds, await api.listMaterials());
+            if (!alive.current || apiRef.current !== api) return;
+            await conversationRef.current.startHome(data.text, requestId, refs);
+            if (!alive.current || apiRef.current !== api) return;
+            setPanel("generate"); reply("accepted");
+          } catch (error) { reply("failed", messageOf(error)); }
+          finally { if (apiRef.current === api) handoffBusy.current = false; }
+        })(); return;
+      }
       if (["insert-material", "confirm-save", "confirm-leave"].includes(data.action)) {
         if (typeof data.requestId !== "string" || !/^[a-f0-9-]{36}$/i.test(data.requestId)) return;
         const action = data.action === "insert-material" ? "insert-material-result" : data.action === "confirm-leave" ? "confirm-leave-result" : "confirm-save-result";
@@ -332,7 +417,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
               if (!writableRef.current || !inserted || inserted.kind !== "image" || inserted.assetId !== stored.assetId
                 || inserted.assetSha256 !== stored.assetSha256 || inserted.url !== stored.url) throw new Error("图片还未确认加入可编辑画布，恢复记录仍保留。");
             }
-            const saved = await save();
+            const saved = await saveSettled();
             if (!alive.current || apiRef.current !== api) return;
             if (!saved || sequence.current !== savedSequence.current || pendingSave.current || saveBlocked.current) throw new Error("画布修改尚未确认保存，请稍后继续。");
             if (data.action === "confirm-leave" && (!draftConfirmed() || conversationRef.current && !conversationRef.current.confirmed() || workflowRef.current?.snapshot().dirty)) throw new Error("仍有新的需求或素材修改，请确认保存后再切换品牌。");
@@ -353,7 +438,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
     };
     window.addEventListener("beforeunload", preventLoss); window.addEventListener("keydown", keyboard); window.addEventListener("message", command);
     return () => { window.removeEventListener("beforeunload", preventLoss); window.removeEventListener("keydown", keyboard); window.removeEventListener("message", command); };
-  }, [workspaceId, userId, projectId, save, send, openExistingTask, flushDraft, draftConfirmed, insertImage]);
+  }, [workspaceId, userId, projectId, saveSettled, save, send, openExistingTask, flushDraft, draftConfirmed, insertImage]);
 
   useEffect(() => {
     if (!generations.some(activeGeneration) || pollPaused || generationPollTimedOut) return;
@@ -366,7 +451,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
 
 
   async function prepareLayers() {
-    const saved = await save();
+    const saved = await saveSettled();
     if (!alive.current || !writableRef.current || !docRef.current || !saved || sequence.current !== savedSequence.current
       || pendingSave.current || saveBlocked.current) throw new Error("画布保存尚未确认，请先保存后再提交分层。");
     return { document: docRef.current, revision: saved.revision };
@@ -379,6 +464,21 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
     const state = workflow.snapshot();
     if (!writableRef.current || state.dirty || state.busy || state.status !== "ready" || !state.server) throw new Error("素材设置尚未确认，请读取最新设置。");
     return { documentRevision: saved.revision, workflowRevision: state.server.revision, ...(outputFrameId ? { outputFrameId } : {}) };
+  }
+  async function applyWorkflowToConversation() {
+    const prepared = await prepareLayers(), state = workflowRef.current?.snapshot().draft;
+    if (!state || !apiRef.current || !conversationRef.current) throw new Error("素材设置还未准备好。");
+    const ids = state.references.filter(value => value.participates && value.shapeId).map(value => value.shapeId!);
+    const materials = await apiRef.current.listMaterials();
+    const refs = selectedOwnedConversationReferences(prepared.document, ids, materials);
+    refs.forEach(ref => { ref.purpose = state.references.find(value => value.shapeId === ref.shapeId)?.purpose ?? "REFERENCE"; });
+    for (const ref of state.references.filter(value => value.participates && !value.shapeId)) {
+      const material = materials.find(value => value.assetSha256 === ref.assetSha256);
+      if (!material || !ref.purpose) throw new Error("有参与素材尚未确认可用，原选择仍保留。");
+      refs.push({ referenceId: "brand:" + material.assetId, name: material.fileName, assetId: material.assetId, assetSha256: material.assetSha256, width: material.width, height: material.height, purpose: ref.purpose });
+    }
+    conversationRef.current.configureReferences(refs, [...managedWorkflowHashes.current, ...state.references.map(value => value.assetSha256)]);
+    setPanel("generate");
   }
   async function imageAction(action: "quick-edit" | "add-reference" | "layers" | "resize" | "remove-background" | "inpaint", ids: string[]) {
     if (action === "layers") { setSelectedIds(ids); setPanel("layers"); return; }
@@ -422,13 +522,6 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
       if (alive.current && apiRef.current === api) setNotice(messageOf(error)); throw error;
     } finally { if (apiRef.current === api) imageToolBusy.current = false; }
   }
-  async function quickEditImage(itemId: string, instruction: string) {
-    const saved = await prepareLayers(), api = apiRef.current;
-    if (!api || !conversationRef.current) throw new Error("对话尚未恢复，请稍后再试。");
-    const reference = selectedOwnedConversationReferences(saved.document, [itemId], await api.listMaterials())[0];
-    if (!reference) throw new Error("快捷编辑目标尚未确认。");
-    setPanel("generate"); await conversationRef.current.quickEdit(reference, instruction);
-  }
   async function insertLayers(task: DecompositionTask, suppliedSource?: PersistentImage) {
     const api = apiRef.current;
     if (!api || !writableRef.current || !docRef.current) throw new Error("当前画布不可编辑，图层仍保存在任务中。");
@@ -453,17 +546,17 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
     }
     const before = docRef.current;
     if (!before) throw new Error("画布尚未准备完成。");
-    const placed = await placeGeneratedOwnedLayers(before, task, workspaceId, source, selectedIds);
+    const placed = await placeGeneratedOwnedLayers(before, task, workspaceId, source, selectedIds, { besideSource: true });
     if (!alive.current || apiRef.current !== api || !writableRef.current || docRef.current !== before) throw new Error("画布刚刚发生变化，请重新展开图层，原内容仍保留。");
-    if (!placed.replayed) changeDocument(placed.document);
-    setNotice(placed.replayed ? "这一组图层已经在画布中，保留当前编辑。" : "图层已展开，原图隐藏保留。可解除组合后分别移动、隐藏和编辑。");
-    await save();
+    if (!placed.replayed) { changeDocument(placed.document); setFocusImageId(placed.itemIds[0]); }
+    setNotice(placed.replayed ? "这一组图层已经在画布中，保留当前编辑。" : "图层已在原图右侧展开。原图保留，可解除组合后分别编辑。");
+    await saveSettled();
   }
 
   async function runUpload() {
     const api = apiRef.current, operation = uploadOperation.current;
     if (!api || !operation || uploadBusy.current || !writableRef.current) return;
-    uploadBusy.current = true; setUploading(true); setPanel("tasks");
+    uploadBusy.current = true; setUploading(true); setPanel("generate");
     try {
       setNotice("正在提交图片…");
       const task = await api.uploadFile(operation.file, operation.mutationId);
@@ -598,7 +691,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
     const refs = workflowRef.current?.snapshot().draft?.references.filter(ref => ref.participates && ref.purpose === "EXACT") ?? [];
     const images = current.items.filter(item => refs.some(ref => ref.shapeId === item.id));
     const bounds = images.length ? getOwnedBounds(current, { itemIds: images.map(item => item.id) }) : { x: 0, y: 0, w: 640, h: 480 };
-    const size = resolveGenerationSize({ ratioKey: ratio, resolutionTier: quality }), scale = Math.max(0.5, (bounds.w + 80) / size.width, (bounds.h + 80) / size.height);
+    const size = resolveGenerationSize(conversationRef.current?.sizeSelection() ?? { ratioKey: ratio, resolutionTier: quality }), scale = Math.max(0.5, (bounds.w + 80) / size.width, (bounds.h + 80) / size.height);
     const w = size.width * scale, h = size.height * scale, id = "shape:" + crypto.randomUUID();
     changeDocument({ ...current, items: [{ id, kind: "frame", x: bounds.x + bounds.w / 2 - w / 2, y: bounds.y + bounds.h / 2 - h / 2, w, h, rotation: 0, opacity: 1, parentId: current.pageId, text: "输出画框", fill: "#ffffff" }, ...current.items] });
     setOutputFrameId(id); setNotice("已按当前输出比例创建新画框，原画框和图片保持不变。保存后可提交严格保留创作。");
@@ -631,7 +724,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
 
   const saveLabel = saveState === "loading" ? "正在打开…" : saveState === "saving" ? "正在保存…" : saveState === "dirty" ? "有未保存修改" : saveState === "conflict" ? "保存冲突" : saveState === "error" ? "保存未确认" : view?.updatedAt ? "已保存 " + new Date(view.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "已打开";
   return <div className="flex h-dvh min-h-0 flex-col overflow-hidden bg-background text-foreground" data-testid="owned-editor" data-save-state={saveState} data-document-revision={view?.revision}>
-    <header className="flex min-h-14 shrink-0 items-center gap-1 border-b border-border bg-card px-2 sm:gap-3 sm:px-5">
+    <header className="flex min-h-14 shrink-0 flex-wrap items-center gap-1 border-b border-border bg-card px-2 sm:gap-3 sm:px-5">
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img src="/brand/deepflare-mark.svg" alt="DeepFlare · 曜影深蓝" className="h-6 w-6 shrink-0 object-contain sm:h-7 sm:w-7" />
       <button type="button" className={headerButton} onClick={() => void back()} aria-label="返回项目库">←<span className="hidden sm:inline"> 项目</span></button>
@@ -639,53 +732,56 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
       <span className="max-w-24 shrink-0 truncate text-xs text-muted-foreground sm:max-w-none" title={saveLabel} role="status" data-testid="owned-save-status">{saveLabel}</span>
       {canEdit && <button type="button" className={headerButton} disabled={saveState === "saving" || saveState === "saved"} onClick={() => void save().catch(() => undefined)}>{saveState === "error" ? "确认保存" : "保存"}</button>}
       <button type="button" className={headerButton} onClick={() => setPanel(current => current ? null : "generate")} aria-expanded={!!panel}>创作</button>
-      <button type="button" className={headerButton} onClick={() => setPanel("layers")} aria-expanded={panel === "layers"}>AI 分层</button>
+      <button type="button" className={headerButton} onClick={() => setPanel("tasks")} aria-label="任务记录">任务{generations.some(activeGeneration) || uploads.some(task => ["PENDING", "RUNNING"].includes(task.status)) ? " ·" : ""}</button>
+      <details className="relative"><summary className={headerButton + " cursor-pointer list-none"}>导出</summary><div className="absolute right-0 top-full z-30 flex gap-2 rounded-2xl border border-border bg-card p-3 shadow-lg">{(["png", "svg", "json"] as const).map(format => <button key={format} className={button} disabled={!document || !!document.warnings.length} onClick={() => void exportDocument(format).catch(() => undefined)}>{format.toUpperCase()}</button>)}</div></details>
     </header>
     {!!saveError && <div role="alert" className="border-b border-border bg-accent-soft px-4 py-2 text-xs">{saveError}{saveState === "conflict" && " 当前内容仍在本页，请先导出副本再重新打开。"}{!document && <button type="button" className="ml-3 underline" onClick={() => location.reload()}>重新打开</button>}</div>}
     {!!document?.warnings.length && <div role="alert" className="border-b border-border bg-accent-soft px-4 py-2 text-xs">原项目含暂不能可靠转换的对象，已启用只读保护，未覆盖原稿。{document.warnings.join("；")}</div>}
     {(readOnly || view?.readOnly) && <div className="border-b border-border px-4 py-2 text-xs text-muted-foreground">当前项目为只读，可查看与导出。</div>}
     <div className="relative flex min-h-0 flex-1">
       <main className="relative min-h-0 min-w-0 flex-1">
-        {document ? <OwnedCanvas key={projectId} document={document} clipboardScope={`${userId}:${workspaceId}:${projectId}`} onChange={changeDocument} readOnly={!canEdit} onUploadFiles={uploadFiles} onReplaceImage={replaceImage} onExport={(format, scope) => exportDocument(format, scope)} onSelectionChange={setSelectedIds} onImageAction={(action, ids) => void imageAction(action, ids)} onQuickEdit={quickEditImage} imageTools={imageTools} /> : <div className="grid h-full place-content-center text-sm text-muted-foreground">{saveError ? "画布未能打开，原数据没有被修改。" : "正在读取项目…"}</div>}
+        {document ? <OwnedCanvas key={projectId} document={document} focusImageId={focusImageId} clipboardScope={`${userId}:${workspaceId}:${projectId}`} onChange={changeDocument} readOnly={!canEdit} onUploadFiles={uploadFiles} onOpenMaterials={() => setPanel("materials")} onReplaceImage={replaceImage} onExport={(format, scope) => exportDocument(format, scope)} onSelectionChange={setSelectedIds} onImageAction={(action, ids) => void imageAction(action, ids)} imageTools={imageTools} /> : <div className="grid h-full place-content-center text-sm text-muted-foreground">{saveError ? "画布未能打开，原数据没有被修改。" : "正在读取项目…"}</div>}
         {resizingImage && document && <OwnedImageResize document={document} item={resizingImage} readOnly={!canEdit} onClose={() => setResizingImage(null)} onStore={async (file, sourceShapeId) => { if (!writableRef.current || uploadOperation.current || uploadBusy.current) throw new Error("请先确认正在上传的图片。"); uploadOperation.current = { file, sourceShapeId, mutationId: crypto.randomUUID() }; setPendingUpload(true); const completed = await runUpload(); if (!completed) throw new Error("上传结果尚未确认，图片文件仍保留，请在任务中继续读取。"); }} />}
         {maskingImage && <OwnedImageMask key={maskingImage.item.id} source={maskingImage.material} name={`图片${maskingImage.item.imageNumber ?? ""}`} readOnly={!canEdit} onClose={() => setMaskingImage(null)} onSubmit={(mask, instruction) => submitImageTool("inpaint", maskingImage.item.id, mask, instruction)} />}
       </main>
       <aside aria-label="创作面板" hidden={!panel} className={(panel ? "flex " : "hidden ") + "absolute inset-y-0 right-0 z-20 w-[min(380px,92vw)] flex-col border-l border-border bg-card shadow-lg md:relative md:w-[360px] md:shrink-0 md:shadow-none"}>
-        <div className="flex items-center gap-2 border-b border-border px-4 py-3"><button className="mr-auto text-sm font-semibold" onClick={() => setPanel("generate")} aria-label="返回设计对话">{panel === "materials" ? "品牌素材" : panel === "tasks" ? "任务记录" : panel === "layers" ? "图片分层" : "设计助手"}</button><details className="relative"><summary aria-label="工作台更多面板" className={button + " cursor-pointer list-none"}>···</summary><div className="absolute right-0 top-full z-30 mt-2 w-36 space-y-1 rounded-2xl border border-border bg-card p-2 shadow-lg">{([['generate', '设计对话'], ['materials', '品牌素材'], ['tasks', '任务记录'], ['layers', 'AI 分层']] as const).map(([id, label]) => <button key={id} className={button + " w-full"} onClick={event => { setPanel(id); event.currentTarget.closest("details")?.removeAttribute("open"); }}>{label}</button>)}</div></details><button className="px-2 text-muted-foreground" aria-label="收起面板" onClick={() => setPanel(null)}>×</button></div>
-        <div className={panel === "generate" ? "flex min-h-0 flex-1 flex-col gap-3 overflow-hidden p-4" : "min-h-0 flex-1 space-y-4 overflow-y-auto p-4"}>
-          {!!notice && <p role="status" className="rounded-xl bg-accent-soft p-3 text-xs leading-6" data-testid="owned-notice">{notice}</p>}
-          <div hidden={panel !== "generate"} className={panel === "generate" ? "min-h-0 flex-1" : undefined}><OwnedConversationPanel ref={conversationRef} workspaceId={workspaceId} projectId={projectId} userId={userId} readOnly={!canEdit} api={apiRef.current} prepare={prepareConversation} onAddReference={() => setPanel("materials")} onNotice={setNotice} onGeneration={task => { setGenerations(current => mergeTask(current, task, value => value.requestId)); generationPoll.resume(); setPollPaused(false); }} onInsert={(image, sourceShapeId) => insertImage(image, undefined, undefined, sourceShapeId)} onInsertLayers={insertLayers} /></div>
-          {panel === "layers" && <OwnedLayerPanel key={projectId} api={apiRef.current} workspaceId={workspaceId} projectId={projectId} userId={userId} document={document} selectedIds={selectedIds} readOnly={!canEdit} onPrepare={prepareLayers} onPlace={insertLayers} />}
-          {panel === "generate" && <details className="max-h-[40%] shrink-0 overflow-y-auto" data-testid="owned-advanced-generation"><summary className="cursor-pointer text-xs text-muted-foreground">高级创作与素材设置</summary><div className="mt-4 space-y-4">
-            <div><h2 className="text-sm font-semibold">{workflow?.mode === "modify" ? "修改整张图片" : "生成新图片"}</h2><p className="mt-1 text-xs leading-5 text-muted-foreground">描述想法，结果单独保留，由你决定是否加入画布。</p></div>
-            <textarea aria-label="创作需求" className="min-h-40 w-full resize-y rounded-2xl border border-border bg-background p-3 text-sm outline-none focus:border-primary" placeholder="想创作什么？" maxLength={4000} value={prompt} onChange={event => setPrompt(event.target.value)} onCompositionStart={draft.compositionStart} onCompositionEnd={draft.compositionEnd} disabled={!canEdit || pendingGeneration || submitting || generationRecoveryBlocked || !draft.ready || draft.blocked} />
-            <div className="flex gap-2"><select aria-label="图片比例" className={button} value={ratio} disabled={!canEdit || pendingGeneration || submitting || generationRecoveryBlocked || !draft.ready || draft.blocked} onChange={event => setRatio(event.target.value as typeof ratio)}>{GenerationAspectRatioKey.options.filter(value => value !== "custom").map(value => <option key={value}>{value}</option>)}</select><select aria-label="图片画质" className={button} value={quality} disabled={!canEdit || pendingGeneration || submitting || generationRecoveryBlocked || !draft.ready || draft.blocked} onChange={event => setQuality(event.target.value as typeof quality)}><option>1K</option><option>2K</option></select></div>
-            {workflow?.mode === "generate" && <div className="space-y-2 rounded-2xl bg-accent-soft p-3" data-testid="owned-psd-selection">
-              <label className="flex items-center gap-2 text-xs font-medium"><input type="checkbox" aria-label="同时准备可编辑PSD" className="h-4 w-4 accent-primary" checked={preparePsd} disabled={!canEdit || pendingGeneration || submitting || generationRecoveryBlocked || !draft.ready || draft.blocked} onChange={event => { psdSelectionRestored.current = true; setPreparePsd(event.target.checked); if (event.target.checked) setPsdLayerMode("AUTO"); }} />同时准备可编辑 PSD</label>
-              {preparePsd && <><OwnedLayerOptions mode={psdLayerMode} count={psdLayerCount} context="PSD" disabled={!canEdit || pendingGeneration || submitting || generationRecoveryBlocked || !draft.ready || draft.blocked} onMode={mode => { psdSelectionRestored.current = true; setPsdLayerMode(mode); }} onCount={count => { psdSelectionRestored.current = true; setPsdLayerCount(count); }} />
-                <p className="text-xs leading-5 text-muted-foreground">{psdLayerMode === "AUTO" ? "图片保存后先做内容分析，再拆分图层，会额外使用分析与分层服务额度。" : "图片保存后按指定层数拆分，会额外使用分层服务额度。"}原图先可用，PSD 在后台准备。</p></>}
-            </div>}
-            <div className="text-xs text-muted-foreground" data-testid="owned-draft-status" data-draft-state={draft.state}>{draft.error || (draft.state === "saved" ? "需求已保存" : draft.state === "saving" ? "正在保存需求…" : draft.dirty ? "需求有待保存修改" : "正在恢复需求…")}{["error", "loading"].includes(draft.state) && <button type="button" className="ml-2 underline" onClick={() => void draft.retry().catch(error => setNotice(messageOf(error)))}>重新确认需求</button>}</div>
-            <OwnedWorkflowPanel key={projectId} state={workflowState} document={document} selectedIds={selectedIds} readOnly={!canEdit} frozen={pendingGeneration || submitting || generationRecoveryBlocked || !draft.ready || draft.blocked} outputFrameId={outputFrameId} onOutputFrameChange={setOutputFrameId} onCreateOutputFrame={createOutputFrame} onChange={changeWorkflow} onSave={() => void workflowRef.current?.save().catch(error => setNotice(messageOf(error)))} onRefresh={() => void refreshWorkflow()} onResolveConflict={choice => { try { workflowRef.current?.resolveConflict(choice); } catch (error) { setNotice(messageOf(error)); } }} />
-            <button type="button" className="w-full rounded-full bg-primary py-3 text-sm text-primary-foreground disabled:opacity-40" disabled={!canEdit || submitting || generationRecoveryBlocked || !workflow || !pendingGeneration && (!prompt.trim() || !draft.ready || draft.blocked || !!workflowState?.dirty || !!workflowState?.busy || workflowState?.status !== "ready" || workflow.mode === "generate" && workflow.references.some(value => value.participates && value.purpose === "EXACT") && !outputFrameId)} onClick={() => void submitGeneration()}>{submitting ? "正在提交…" : pendingGeneration ? "检查上次生成" : workflow?.mode === "modify" ? "提交整图修改" : "生成图片"}</button>
-            <p className="text-xs text-muted-foreground">品牌规则和素材权限由服务器核验；配置缺失或布局不支持时会说明原因。</p>
-          </div></details>}
-          {panel === "materials" && <OwnedBrandMaterialsDrawer workspaceId={workspaceId} projectId={projectId} userId={userId} readOnly={!canEdit} onClose={() => setPanel("generate")} onInsert={material => insertImage(material)} onReference={material => { if (!conversationRef.current) throw new Error("对话尚未恢复。"); conversationRef.current.addReferences([{ referenceId: "brand:" + material.assetId, name: material.fileName, assetId: material.assetId, assetSha256: material.assetSha256, width: material.width, height: material.height, purpose: "REFERENCE" }]); setPanel("generate"); }} />}
-          {panel === "tasks" && <>
+        <div className="flex items-center justify-between border-b border-border px-5 py-4"><h2 className="text-sm font-semibold">项目对话</h2><button className="px-2 text-muted-foreground" aria-label="收起面板" onClick={() => setPanel(null)}>×</button></div>
+        <div className="flex min-h-0 flex-1 flex-col gap-2 p-4">
+          {placementFailed && <p role="alert" className="text-xs">图片已生成，放入画布未完成。<button className="ml-2 underline" onClick={() => { failedPlacements.current.clear(); setPlacementFailed(false); setPlacementRetry(value => value + 1); }}>重试放入</button></p>}
+          {(pendingGeneration || pendingUpload || pendingImageTool || generationRecoveryBlocked) && <button className="text-left text-xs underline" onClick={() => setPanel("tasks")}>有尚未确认的操作，检查原任务</button>}
+          <div className="min-h-0 flex-1"><OwnedConversationPanel ref={conversationRef} workspaceId={workspaceId} projectId={projectId} userId={userId} readOnly={!canEdit || pendingGeneration || generationRecoveryBlocked || pendingImageTool} isImagePlaced={image => !!document?.items.some(item => item.assetId === image.assetId && item.assetSha256 === image.assetSha256)} api={apiRef.current} prepare={prepareConversation} onAddReference={() => setPanel("materials")} onAdvancedSettings={() => { setPanel("settings"); if (!workflowRef.current?.snapshot().dirty) void refreshWorkflow(); }} activity={layerTasks.map(task => <button key={task.requestId} className="flex w-full items-center justify-between rounded-2xl border border-border px-3 py-3 text-xs" onClick={() => setPanel("layers")}><span>图片分层 · {task.layerMode === "AUTO" ? "按内容" : `${task.layerCount} 层`}</span><span>{task.status === "SUCCEEDED" ? "查看图层" : task.status === "FAILED" ? "未完成 · 查看" : "处理中…"}</span></button>)} onNotice={setNotice} onGeneration={task => { setGenerations(current => mergeTask(current, task, value => value.requestId)); generationPoll.resume(); setPollPaused(false); }} onInsert={(image, sourceShapeId) => insertImage(image, undefined, undefined, sourceShapeId)} onInsertLayers={insertLayers} /></div>
+        </div>
+      </aside>
+      {<div hidden={!panel || panel === "generate"} style={{ display: !panel || panel === "generate" ? "none" : "flex" }} className="absolute inset-0 z-40 items-center justify-center bg-foreground/15 p-3" onPointerDown={event => event.stopPropagation()}>
+        <section ref={toolDialog} role="dialog" aria-modal="true" aria-label={panel === "layers" ? "图片分层" : panel === "materials" ? "品牌素材" : panel === "settings" ? "素材与画框" : "任务记录"} className="flex max-h-[90%] w-full max-w-md flex-col rounded-3xl border border-border bg-card shadow-lg">
+          <header className="flex shrink-0 items-center justify-between border-b border-border p-4"><h2 className="text-sm font-semibold">{panel === "layers" ? "图片分层" : panel === "materials" ? "品牌素材" : panel === "settings" ? "素材与画框" : "任务记录"}</h2><button aria-label="关闭工具窗口" onClick={() => setPanel("generate")}>×</button></header>
+          <div className="min-h-0 space-y-3 overflow-y-auto p-4">
+            {!!notice && panel && panel !== "generate" && <p role="status" className="text-xs leading-6" data-testid="owned-notice">{notice}</p>}
+            {<div hidden={panel !== "layers"}><OwnedLayerPanel key={projectId} api={apiRef.current} workspaceId={workspaceId} projectId={projectId} userId={userId} document={document} selectedIds={selectedIds} readOnly={!canEdit} onPrepare={prepareLayers} onPlace={insertLayers} onTasks={setLayerTasks} /></div>}
+            <span className="sr-only" data-testid="owned-draft-status" data-draft-state={draft.state}>{draft.error || draft.state}</span>
+            {draft.blocked && <p role="alert" className="text-xs">{draft.error || "旧需求正在恢复。"}<button className="ml-2 underline" disabled={!canEdit} onClick={() => void draft.retry().catch(error => setNotice(messageOf(error)))}>检查需求保存</button></p>}
+            {panel === "settings" && <>
+              <OwnedWorkflowPanel conversationOnly key={projectId} state={workflowState} document={document} selectedIds={selectedIds} readOnly={!canEdit} frozen={pendingGeneration || submitting || generationRecoveryBlocked || !draft.ready || draft.blocked} outputFrameId={outputFrameId} onOutputFrameChange={setOutputFrameId} onCreateOutputFrame={() => { try { createOutputFrame(); } catch (error) { setNotice(messageOf(error)); } }} onChange={changeWorkflow} onSave={() => void workflowRef.current?.save().catch(error => setNotice(messageOf(error)))} onRefresh={() => void refreshWorkflow()} onResolveConflict={choice => { try { workflowRef.current?.resolveConflict(choice); } catch (error) { setNotice(messageOf(error)); } }} />
+              <button className={button} disabled={!canEdit} onClick={() => void applyWorkflowToConversation().catch(error => setNotice(messageOf(error)))}>应用到对话</button>
+              {prompt && <details><summary className="text-xs">旧版未发送需求</summary><p className="whitespace-pre-wrap text-sm">{prompt}</p><button className={button} disabled={!canEdit} onClick={() => { try { conversationRef.current?.restoreText(prompt); setPanel("generate"); } catch (error) { setNotice(messageOf(error)); } }}>复制到对话</button></details>}
+            </>}
+            {panel === "materials" && <OwnedBrandMaterialsDrawer workspaceId={workspaceId} projectId={projectId} userId={userId} readOnly={!canEdit} onClose={() => setPanel("generate")} onInsert={material => insertImage(material)} onReference={material => { if (!conversationRef.current) throw new Error("对话尚未恢复。"); conversationRef.current.addReferences([{ referenceId: "brand:" + material.assetId, name: material.fileName, assetId: material.assetId, assetSha256: material.assetSha256, width: material.width, height: material.height, purpose: "REFERENCE" }]); setPanel("generate"); }} />}
+                      {panel === "tasks" && <>
             {pendingImageTool && <button className={button} disabled={!canEdit || !imageToolOperation.current} onClick={() => { const input = imageToolOperation.current; if (input) void submitImageTool(input.operation, input.target.shapeId, input.mask, input.instruction).catch(() => undefined); }}>检查上次图片编辑</button>}
             <button className={button} disabled={refreshing} onClick={() => void refresh()}>{refreshing ? "正在读取…" : "刷新任务"}</button>
             {pendingUpload && <button className={button + " ml-2"} disabled={uploading || !canEdit} onClick={() => void runUpload()}>检查上次上传</button>}
             {pendingGeneration && <button className={button} disabled={submitting || !canEdit} onClick={() => void submitGeneration()}>检查上次生成</button>}
             {!uploads.length && !generations.length && <p className="py-8 text-center text-xs text-muted-foreground">上传和生成进度会显示在这里。</p>}
-            {uploads.map(task => <section className="space-y-2 rounded-2xl border border-border p-3" key={task.taskId} data-task-id={task.taskId}><h3 className="truncate text-xs font-semibold">{task.material?.fileName || "图片上传"}</h3><p className="text-xs text-muted-foreground">{task.status === "SUCCEEDED" ? "已存入素材库" : task.status === "FAILED" ? task.error : Date.now() > Date.parse(task.expiresAt) ? "处理时间较长，请刷新确认结果" : `保存中 · ${task.progress}%`}</p>{task.material && <button className={button} disabled={!canEdit} onClick={() => void insertImage(task.material!).catch(error => setNotice(messageOf(error)))}>加入画布</button>}</section>)}
-            {generations.map(task => <OwnedGenerationCard key={projectId + ":" + task.requestId} task={task} api={apiRef.current} canEdit={canEdit} onNotice={setNotice}
+            {uploads.map(task => <section className="flex items-center gap-2 border-b border-border py-2" key={task.taskId} data-task-id={task.taskId}><h3 className="truncate text-xs font-semibold">{task.material?.fileName || "图片上传"}</h3><p className="text-xs text-muted-foreground">{task.status === "SUCCEEDED" ? "已存入素材库" : task.status === "FAILED" ? task.error : Date.now() > Date.parse(task.expiresAt) ? "处理时间较长，请刷新确认结果" : `保存中 · ${task.progress}%`}</p>{task.material && !document?.items.some(item => item.assetId === task.material!.assetId && item.assetSha256 === task.material!.assetSha256) && <button className={button} disabled={!canEdit} onClick={() => void insertImage(task.material!).catch(error => setNotice(messageOf(error)))}>加入画布</button>}</section>)}
+            {generations.map(task => <OwnedGenerationCard compact isImagePlaced={image => !!document?.items.some(item => item.assetId === image.assetId && item.assetSha256 === image.assetSha256)} key={projectId + ":" + task.requestId} task={task} api={apiRef.current} canEdit={canEdit} onNotice={setNotice}
               onTask={updated => { setGenerations(current => mergeTask(current, updated, value => value.requestId)); generationPoll.resume(); setPollPaused(false); }}
               onInsert={image => insertImage(image, undefined, undefined, task.sourceShapeId)} onInsertLayers={insertLayers} />)}
           </>}
-        </div>
-        <div className="flex items-center gap-2 border-t border-border p-3"><span className="mr-auto text-xs text-muted-foreground">导出</span>{(["png", "svg", "json"] as const).map(format => <button key={format} className={button} disabled={!document || !!document.warnings.length} onClick={() => void exportDocument(format).catch(() => undefined)}>{format.toUpperCase()}</button>)}</div>
-      </aside>
+          </div>
+        </section>
+      </div>}
     </div>
+    {notice && (!panel || panel === "generate") && <div role="status" data-testid="owned-notice" className="fixed bottom-20 left-4 z-30 flex max-w-[min(460px,80vw)] gap-3 rounded-2xl border border-border bg-card px-4 py-3 text-xs shadow-lg"><span>{notice}</span><button aria-label="关闭提示" onClick={() => setNotice("")}>×</button></div>}
     <input ref={uploadInput} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" aria-label="选择图片" onChange={event => { const files = Array.from(event.target.files || []); event.target.value = ""; if (files.length) void uploadFiles(files); }} />
   </div>;
 }

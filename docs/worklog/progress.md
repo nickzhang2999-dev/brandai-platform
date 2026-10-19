@@ -436,3 +436,15 @@ Web/Worker只读SQL证明实际独立库brandai_devupdate1012、三条新迁移�
 57c6795完整CI39016728629通过并部署。单次真实AUTO验收分析成功、Fal返回9张图；发现其中两层最大alpha=4，旧64阈值把非零淡层当空白而阻断归档。修正图层检查和PSD双路径的非零像素判定，仍保留整组有效内容/透明度门禁；不重新调用模型，仅准备恢复已有输出。第二次修复定向81项、Web1605/contracts293/UI34、AI557/types/lint通过，构建及恢复验收待回填。
 
 ef42d5c CI39018642952通过并部署，真实同任务归档恢复成功、9层SHA/alpha全部通过；PSD下载暴露独立的生产构建问题：Webpack把Worker需要的模块路径改为数字，源码测试未覆盖。新增实际Next产物测试，先复现503，再修为Node22运行时builtin加载，重新构建后的实际2层PSD写入/读回通过。已将该证明纳入容器CI；最终部署与全链路验收待回填，未追加模型调用。
+
+## 2026-10-19 开始统一体验改造
+已读取方案与本地代码；初始业务工作区干净，基线24e92b0。安装正常推送门禁，仅本地开发。默认浏览器运行失败（缺少Playwright自带Chromium），将使用已安装Chrome。未访问账号目录、线上数据库或付费模型。
+
+## 2026-10-19 画布与对话统一改造完成（本地）
+- 基线 fix/layer-faint-and-model-prefix@24e92b0，三路子智能体参与：意图/分层、首页交接、浏览器回归；主任务负责单一对话UI、布局、集成和报告。
+- 完成：自然需求判断、右栏收纳、等比尺寸、世界坐标顺序排图、源图右侧改图/分层、可恢复自动插图、首页文字/带图首次创作及同请求幂等。
+- 最终 pnpm test：Web1662 / contracts293 / UI39；AI561（1 dependency warning）；Web typecheck、ESLint（0error/14warning）、低内存Next生产build均exit0。
+- Chromium产品React交互：core55、conversation43、experience10、layers10、failure3，共121项全通过；另首页协议21、首页浏览器7、品牌离开9通过。合成业务API，仅本地交互测试，外部请求/脚本错误/真实模型调用均0。
+- 全量回执在 .novart-build/*report.json 与 experience-*.log；报告 docs/development-report-2026-10-19-canvas-conversation.md。
+- 过程中默认Playwright浏览器缺失改本机Chrome；当前worktree缺Python venv改复用brandai-devUpdate1012/apps/ai/.venv；壳导出目录缺失由export脚本本地生成。JSX闭合和task.createdAt类型问题已修；新图层测试fixture多带width/height被codec过滤，修正fixture后重跑。
+- 本轮没有Git提交/推送、CDS操作、在线DB修改或模型付费调用；既有真实分层失败仍待原始输出取证。
