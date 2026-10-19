@@ -411,3 +411,4 @@ P1 local gates complete: e0725bd owned shell/export;6ce5de0 routes;601a3c1 exact
 - [x] 全量门禁及真实Chrome交互通过，审查报告完成。
 - [x] 正常推送4388d7f到既有 devUpdate1012，CDS已识别新提交；首次云端门禁发现旧浏览器脚本入口失效，单独修复并本地复验。
 - [ ] 修正提交的云端构建与实际部署版本核对，回执独立保存，不混同付费模型验收。
+- [x] 第二轮真实 API 验收通过；迁移旧真实 UI 脚本并补对话离页保存，最新本地全量门禁及 Chrome 53 项通过。

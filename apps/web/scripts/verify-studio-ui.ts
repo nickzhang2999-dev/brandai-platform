@@ -55,24 +55,22 @@ async function saved(frame: Frame, projectId: string, predicate: (items: Shape[]
 }
 type DraftExpectation = { prompt: string; ratio: string; quality: string };
 type WorkflowExpectation = { mode: "generate" | "modify"; target: { shapeId: string; assetSha256: string } | null; references: Array<{ shapeId: string; assetSha256: string; purpose: "EXACT" | "ADAPTIVE" | "REFERENCE"; participates: boolean }> };
-async function persistedDraft(userId: string, projectId: string, expected: DraftExpectation) {
+async function persistedDraft(userId: string, workspaceId: string, projectId: string, expected: DraftExpectation) {
   const row = await eventually("real composer draft row", async () => {
-    const value = await prisma.workbenchChatDraft.findUnique({ where: { userId_projectId: { userId, projectId } } });
-    const form = value?.inputForm as any;
+    const value = await prisma.studioConversation.findUnique({ where: { workspaceId_userId_projectId: { workspaceId, userId, projectId } } });
+    const form = value?.draft as any;
     return value && form?.text === expected.prompt && form?.sizeSelection?.ratioKey === expected.ratio && form?.sizeSelection?.resolutionTier === expected.quality ? value : null;
   });
-  assert.equal(row.userId, userId); assert.equal(row.projectId, projectId); assert.ok(row.revision >= 1);
-  const form = row.inputForm as any;
-  assert.deepEqual(form.paramList, []); assert.deepEqual(form.mentionPreviewList, []);
-  assert.equal(form.lexicalJSONState.root.children.map((paragraph: any) => paragraph.children.map((node: any) => node.text ?? "\n").join("")).join("\n"), expected.prompt);
+  assert.equal(row.userId, userId); assert.equal(row.workspaceId, workspaceId); assert.equal(row.projectId, projectId); assert.ok(row.draftRevision >= 1);
   return row;
 }
 async function restoredDraft(frame: Frame, expected: DraftExpectation) {
   await openAdvancedGeneration(frame);
-  await expect(frame.getByTestId("owned-draft-status")).toHaveAttribute("data-draft-state", "saved");
-  await expect(frame.getByRole("textbox", { name: "创作需求", exact: true })).toHaveValue(expected.prompt);
-  await expect(frame.getByRole("combobox", { name: "图片比例", exact: true })).toHaveValue(expected.ratio);
-  await expect(frame.getByRole("combobox", { name: "图片画质", exact: true })).toHaveValue(expected.quality);
+  await expect(frame.getByTestId("conversation-draft-status")).toHaveAttribute("data-saved", "true");
+  await expect(frame.getByRole("textbox", { name: "对话设计需求", exact: true })).toHaveValue(expected.prompt);
+  await expect(frame.getByRole("combobox", { name: "对话图片比例", exact: true })).toHaveValue(expected.ratio);
+  await expect(frame.getByRole("combobox", { name: "对话图片画质", exact: true })).toHaveValue(expected.quality);
+  await frame.getByLabel("生成设置", { exact: true }).click();
 }
 async function persistedWorkflow(projectId: string, workspaceId: string, expected: WorkflowExpectation, revision: number) {
   const row = await prisma.workbenchProjectState.findUniqueOrThrow({ where: { projectId } });
@@ -81,11 +79,11 @@ async function persistedWorkflow(projectId: string, workspaceId: string, expecte
   assert.ok(row.workflowUpdatedAt); return row;
 }
 async function restoredWorkflow(frame: Frame, expected: WorkflowExpectation) {
-  await openAdvancedGeneration(frame);
+  await openWorkflow(frame);
   const panel = frame.getByTestId("owned-workflow");
   await expect(panel).toHaveAttribute("data-workflow-state", "ready"); await expect(panel).toHaveAttribute("data-workflow-dirty", "false");
-  await expect(frame.getByRole("combobox", { name: "创作方式", exact: true })).toHaveValue(expected.mode);
-  if (expected.target) await expect(frame.getByRole("combobox", { name: "修改目标", exact: true })).toHaveValue(JSON.stringify([expected.target.shapeId, expected.target.assetSha256]));
+  // Modification targets now live in the conversation draft, not this drawer.
+  await expect(frame.getByRole("combobox", { name: "创作方式", exact: true })).toHaveCount(0);
   await expect(frame.getByTestId("owned-workflow-reference")).toHaveCount(expected.references.length);
   for (const [index, ref] of expected.references.entries()) {
     await expect(frame.getByRole("combobox", { name: `素材用途 ${index + 1}`, exact: true })).toHaveValue(ref.purpose);
@@ -94,23 +92,27 @@ async function restoredWorkflow(frame: Frame, expected: WorkflowExpectation) {
   await expect(frame.getByRole("button", { name: "用途已保存", exact: true })).toBeVisible();
 }
 async function openConversation(frame: Frame) {
+  const close = frame.getByRole("button", { name: "关闭工具窗口", exact: true });
+  if (await close.isVisible()) await close.click();
   const toggle = frame.getByRole("button", { name: "创作", exact: true });
   if (await toggle.getAttribute("aria-expanded") !== "true") await toggle.click();
-  await frame.getByRole("button", { name: "返回设计对话", exact: true }).click();
   await expect(frame.getByTestId("owned-conversation")).toHaveAttribute("data-conversation-ready", "true");
+  const settings = frame.getByTestId("conversation-settings");
+  if (await settings.getAttribute("open") !== null) await settings.locator("summary").click();
 }
 async function openAdvancedGeneration(frame: Frame) {
   await openConversation(frame);
-  const details = frame.getByTestId("owned-advanced-generation");
-  if (await details.getAttribute("open") === null) await details.locator("summary").first().click();
-  await expect(frame.getByRole("textbox", { name: "创作需求", exact: true })).toBeVisible();
+  await frame.getByLabel("生成设置", { exact: true }).click();
+  await expect(frame.getByRole("textbox", { name: "对话设计需求", exact: true })).toBeVisible();
+}
+async function openWorkflow(frame: Frame) {
+  await openAdvancedGeneration(frame);
+  await frame.getByRole("button", { name: "素材用途与输出画框", exact: true }).click();
+  await expect(frame.getByTestId("owned-workflow")).toHaveAttribute("data-workflow-state", "ready");
 }
 async function openTasks(frame: Frame) {
-  const toggle = frame.getByRole("button", { name: "创作", exact: true });
-  if (await toggle.getAttribute("aria-expanded") !== "true") await toggle.click();
-  const menu = frame.getByRole("button", { name: "任务记录", exact: true });
-  if (!await menu.isVisible()) await frame.getByLabel("工作台更多面板", { exact: true }).click();
-  await menu.click(); await expect(frame.getByRole("button", { name: "刷新任务", exact: true })).toBeVisible();
+  await openConversation(frame);
+  await frame.getByRole("button", { name: "任务记录", exact: true }).click(); await expect(frame.getByRole("button", { name: "刷新任务", exact: true })).toBeVisible();
 }
 async function conversationDraft(userId: string, workspaceId: string, projectId: string, text: string, assetIds: string[] = [], size?: { ratioKey: string; resolutionTier: string }) {
   return eventually("real persistent conversation draft", async () => {
@@ -183,6 +185,7 @@ async function gesture(page: Page, frame: Frame, points: Array<[number, number]>
   for (const [x, y] of points.slice(1)) await page.mouse.move(box.x + x, box.y + y, { steps: 5 }); await page.mouse.up();
 }
 async function exportScene(page: Page, frame: Frame, format: "png" | "svg", label: string) {
+  await openConversation(frame);
   await frame.getByRole("button", { name: "导出", exact: true }).click(); const pending = page.waitForEvent("download"); await frame.getByRole("button", { name: format === "png" ? "导出PNG" : "导出SVG", exact: true }).click();
   const download = await pending; assert.equal(await download.failure(), null); await mkdir(artifacts, { recursive: true }); const filename = path.join(artifacts, `${label}.${format}`); await download.saveAs(filename);
   const bytes = await readFile(filename); assert.ok(bytes.length > 50);
@@ -486,36 +489,36 @@ try {
   enter("unsent composer autosave and actual page-unload recovery");
   let expectedDraft: DraftExpectation = { prompt: `草稿自动保存 ${run}\n中文第二行，不提交生成。`, ratio: "4:3", quality: "2K" };
   await openAdvancedGeneration(frame);
-  await expect(frame.getByRole("textbox", { name: "创作需求", exact: true })).toBeEnabled();
+  await expect(frame.getByRole("textbox", { name: "对话设计需求", exact: true })).toBeEnabled();
   enter("real product automatic PSD controls do not submit a model task");
   const psdChoice = frame.getByRole("checkbox", { name: "同时准备可编辑PSD", exact: true });
   await expect(psdChoice).toBeEnabled(); await expect(psdChoice).not.toBeChecked();
   await psdChoice.check();
-  const psdLayers = frame.getByRole("combobox", { name: "PSD图层数量", exact: true });
+  const psdLayers = frame.getByRole("spinbutton", { name: "PSD图层数量", exact: true });
   await expect(psdLayers).toHaveCount(0);
-  await expect(frame.getByTestId("owned-psd-layer-options").getByText("按内容自动拆分，无需指定层数。", { exact: true })).toBeVisible();
-  await frame.getByTestId("owned-psd-layer-options").locator("summary").click();
-  await frame.getByTestId("owned-psd-layer-options").getByRole("radio", { name: "手动指定层数", exact: true }).check();
-  await expect(psdLayers).toHaveValue("4"); await psdLayers.selectOption("2");
+  await expect(frame.getByRole("combobox", { name: "PSD分层方式", exact: true })).toHaveValue("AUTO");
+  await frame.getByRole("combobox", { name: "PSD分层方式", exact: true }).selectOption("MANUAL");
+  await expect(psdLayers).toHaveValue("4"); await psdLayers.fill("2");
   await expect(psdLayers).toHaveValue("2"); await psdChoice.uncheck();
   assert.equal(await prisma.studioDecompositionRequest.count({ where: { workspaceId: workspace.id, projectId } }), 0);
   assert.equal(await prisma.generation.count({ where: { projectId } }), 0);
   check("actual product defaults PSD to content analysis and retains advanced manual count without model calls");
   enter("unsent composer autosave and actual page-unload recovery");
-  await frame.getByRole("textbox", { name: "创作需求", exact: true }).fill(expectedDraft.prompt);
-  await frame.getByRole("combobox", { name: "图片比例", exact: true }).selectOption(expectedDraft.ratio);
-  await frame.getByRole("combobox", { name: "图片画质", exact: true }).selectOption(expectedDraft.quality);
-  await expect(frame.getByTestId("owned-draft-status")).toHaveAttribute("data-draft-state", "saved");
-  const autoDraft = await persistedDraft(user.id, projectId, expectedDraft);
+  await frame.getByRole("textbox", { name: "对话设计需求", exact: true }).fill(expectedDraft.prompt);
+  await frame.getByRole("combobox", { name: "对话图片比例", exact: true }).selectOption(expectedDraft.ratio);
+  await frame.getByRole("combobox", { name: "对话图片画质", exact: true }).selectOption(expectedDraft.quality);
+  await frame.getByLabel("生成设置", { exact: true }).click();
+  await expect(frame.getByTestId("conversation-draft-status")).toHaveAttribute("data-saved", "true");
+  const autoDraft = await persistedDraft(user.id, workspace.id, projectId, expectedDraft);
   expectedDraft = { ...expectedDraft, prompt: `离开前最后输入 ${run}\n这份需求仍未提交，只保存草稿。` };
-  await frame.getByRole("textbox", { name: "创作需求", exact: true }).fill(expectedDraft.prompt);
-  await expect(frame.getByTestId("owned-draft-status")).toHaveAttribute("data-draft-state", "dirty");
+  await frame.getByRole("textbox", { name: "对话设计需求", exact: true }).fill(expectedDraft.prompt);
+  await expect(frame.getByTestId("conversation-draft-status")).toHaveAttribute("data-saved", "false");
   // Leave a genuinely dirty page. Do not synthesize pagehide, call the hook, or
   // write the database to imitate the browser's close-time save.
   await page.goto("about:blank", { waitUntil: "domcontentloaded" });
-  const unloadedDraft = await persistedDraft(user.id, projectId, expectedDraft); assert.ok(unloadedDraft.revision > autoDraft.revision);
+  const unloadedDraft = await persistedDraft(user.id, workspace.id, projectId, expectedDraft); assert.ok(unloadedDraft.draftRevision > autoDraft.draftRevision);
   await page.goto(new URL(`/studio?workspaceId=${workspace.id}#/workspace/${projectId}`, base).href); await studioReady(page); frame = await editorFrame(page, projectId);
-  await restoredDraft(frame, expectedDraft); assert.equal((await persistedDraft(user.id, projectId, expectedDraft)).revision, unloadedDraft.revision, "Opening must not rewrite an already saved draft");
+  await restoredDraft(frame, expectedDraft); assert.equal((await persistedDraft(user.id, workspace.id, projectId, expectedDraft)).draftRevision, unloadedDraft.draftRevision, "Opening must not rewrite an already saved draft");
   assert.equal(await prisma.generation.count({ where: { projectId } }), 0, "Draft save and recovery must not invoke image generation");
   check("unsent Chinese draft and image options persist through autosave and a real dirty-page navigation");
 
@@ -538,6 +541,10 @@ try {
 
     enter("real uploaded assets become explicit ordered conversation references and clarify without fees");
     await openConversation(frame);
+    // One composer now owns both unsent text and reference selection.
+    expectedDraft = { ...expectedDraft, prompt: "" };
+    await frame.getByRole("textbox", { name: "对话设计需求", exact: true }).fill("");
+    await persistedDraft(user.id, workspace.id, projectId, expectedDraft);
     const layerToggle = frame.getByRole("button", { name: "图层", exact: true });
     if (await layerToggle.getAttribute("aria-expanded") !== "true") await layerToggle.click();
     const detachedId = await existing.getAttribute("data-owned-id"); assert.ok(detachedId);
@@ -548,6 +555,9 @@ try {
     const orderedIds = [receipt.material.assetId, detachedReceipt.material.assetId];
     const withReferences = await conversationDraft(user.id, workspace.id, projectId, "", orderedIds);
     assert.deepEqual((withReferences.draft as any).references.map((ref: any) => ref.shapeId), [uploadedId, detachedId]);
+    // No current canvas selection may disambiguate this intentionally unclear
+    // request; a selected image is now part of the real intent context.
+    await frame.getByTestId("owned-canvas").press("Escape");
     const multiPrompt = `背景改成蓝色，多图目标待确认 ${run}`;
     await frame.getByRole("textbox", { name: "对话设计需求", exact: true }).fill(multiPrompt);
     const multiAcceptedResponse = page.waitForResponse(response => new URL(response.url()).pathname === chatEndpoint && response.request().method() === "POST");
@@ -583,68 +593,88 @@ try {
     assert.equal((feedbackMessage.intent as any).action, "clarify");
     assert.match((feedbackMessage.intent as any).clarification, /不会据此发起新的模型调用/);
     assert.equal(await prisma.generation.count({ where: { projectId } }), 0);
-    await frame.getByTestId("owned-conversation").getByRole("button", { name: "读取最新", exact: true }).click();
+    await page.reload(); await studioReady(page); frame = await editorFrame(page, projectId); await openConversation(frame);
     await expect(frame.getByTestId("owned-conversation")).toContainText((feedbackMessage.intent as any).clarification);
     check("real uploaded single-image source notice is stored as clarification without intent-model or generation calls");
 
     enter("real uploaded-image purposes and explicit modification target persist");
     assert.ok(uploadedId);
     const target = { shapeId: uploadedId, assetSha256: receipt.material.assetSha256 }, selected = JSON.stringify([target.shapeId, target.assetSha256]);
-    await restoredDraft(frame, expectedDraft); await frame.getByRole("button", { name: "读取最新设置", exact: true }).click();
-    await expect(frame.getByTestId("owned-workflow")).toHaveAttribute("data-workflow-state", "ready");
+    await restoredDraft(frame, expectedDraft); await openWorkflow(frame);
     const workflowBefore = await prisma.workbenchProjectState.findUniqueOrThrow({ where: { projectId } });
     await frame.getByRole("combobox", { name: "添加画布素材用途", exact: true }).selectOption(selected);
     await frame.getByRole("button", { name: "添加用途", exact: true }).click();
     await expect(frame.getByRole("checkbox", { name: "参与生成 1", exact: true })).not.toBeChecked();
     await frame.getByRole("combobox", { name: "素材用途 1", exact: true }).selectOption("ADAPTIVE");
     await frame.getByRole("checkbox", { name: "参与生成 1", exact: true }).check();
-    await expect(frame.getByRole("button", { name: "生成图片", exact: true })).toBeDisabled();
+    await expect(frame.getByTestId("owned-workflow")).toHaveAttribute("data-workflow-dirty", "true");
     expectedWorkflow = { mode: "generate", target: null, references: [{ ...target, purpose: "ADAPTIVE", participates: true }] };
     await saveWorkflow(frame); await persistedWorkflow(projectId, workspace.id, expectedWorkflow, workflowBefore.workflowRevision + 1);
-    await frame.getByRole("combobox", { name: "创作方式", exact: true }).selectOption("modify");
-    await frame.getByRole("combobox", { name: "修改目标", exact: true }).selectOption(selected);
-    await expect(frame.getByRole("button", { name: "提交整图修改", exact: true })).toBeDisabled();
-    expectedWorkflow = { ...expectedWorkflow, mode: "modify", target };
-    await saveWorkflow(frame); const modifying = await persistedWorkflow(projectId, workspace.id, expectedWorkflow, workflowBefore.workflowRevision + 2);
+    await frame.getByRole("button", { name: "应用到对话", exact: true }).click();
+    const configured = await eventually("applied purpose in real conversation draft", async () => {
+      const value = await persistedDraft(user.id, workspace.id, projectId, expectedDraft);
+      return (value.draft as any).references.find((ref: any) => ref.shapeId === uploadedId && ref.purpose === "ADAPTIVE") ? value : null;
+    });
+    const targetReference = (configured.draft as any).references.find((ref: any) => ref.shapeId === uploadedId);
+    await frame.getByRole("button", { name: `修改对象 ${targetReference.name}`, exact: true }).click();
+    const modifying = await eventually("explicit target saved by actual composer", async () => {
+      const value = await persistedDraft(user.id, workspace.id, projectId, expectedDraft);
+      return (value.draft as any).quickEditTargetId === targetReference.referenceId ? value : null;
+    });
+    await persistedWorkflow(projectId, workspace.id, expectedWorkflow, workflowBefore.workflowRevision + 1);
     assert.equal(await prisma.generation.count({ where: { projectId } }), 0, "Saving purposes and a modification target must not call a provider");
 
     enter("fresh browser restores modification mode, original target and active purpose");
     const workflowFresh = await newPage(); await login(workflowFresh, email, password, `/studio?workspaceId=${workspace.id}`); await studioReady(workflowFresh);
     await workflowFresh.getByTestId("studio-nav-projects").click(); await workflowFresh.locator(`#ns-project-library [data-project-id="${projectId}"] [data-action="open-project"]`).click();
     const workflowFrame = await editorFrame(workflowFresh, projectId); await restoredDraft(workflowFrame, expectedDraft); await restoredWorkflow(workflowFrame, expectedWorkflow);
-    await persistedWorkflow(projectId, workspace.id, expectedWorkflow, modifying.workflowRevision);
+    await persistedWorkflow(projectId, workspace.id, expectedWorkflow, workflowBefore.workflowRevision + 1);
+    await openConversation(workflowFrame);
+    await expect(workflowFrame.getByRole("button", { name: `修改对象 ${targetReference.name}`, exact: true })).toHaveAttribute("aria-pressed", "true");
+    assert.deepEqual((await persistedDraft(user.id, workspace.id, projectId, expectedDraft)).draft, modifying.draft);
     await workflowFresh.context().close(); currentPage = page;
     check("real workflow rows and a fresh authenticated browser preserve mode, exact target, purpose and participation without generation");
 
     // Return to an explicit plain-generation selection before the opt-in
     // provider test. Never spend a model request as a side effect of this test.
-    await frame.getByRole("combobox", { name: "创作方式", exact: true }).selectOption("generate");
+    await frame.getByRole("button", { name: `修改对象 ${targetReference.name}`, exact: true }).click();
+    await expect(frame.getByTestId("conversation-draft-status")).toHaveAttribute("data-saved", "true");
+    assert.equal(((await persistedDraft(user.id, workspace.id, projectId, expectedDraft)).draft as any).quickEditTargetId, null);
+    await openWorkflow(frame);
     await frame.getByRole("combobox", { name: "素材用途 1", exact: true }).selectOption("REFERENCE");
     await frame.getByRole("checkbox", { name: "参与生成 1", exact: true }).uncheck();
     expectedWorkflow = { mode: "generate", target: null, references: [{ ...target, purpose: "REFERENCE", participates: false }] };
-    await saveWorkflow(frame); finalWorkflowRevision = modifying.workflowRevision + 1;
+    await saveWorkflow(frame); finalWorkflowRevision = workflowBefore.workflowRevision + 2;
     await persistedWorkflow(projectId, workspace.id, expectedWorkflow, finalWorkflowRevision);
+    await frame.getByRole("button", { name: "应用到对话", exact: true }).click();
+    // Explicitly remove all references before the opt-in plain-generation check.
+    while (await frame.getByRole("button", { name: /^移除对话引用 / }).count()) await frame.getByRole("button", { name: /^移除对话引用 / }).first().click();
+    await conversationDraft(user.id, workspace.id, projectId, "", []);
   } else console.log("SKIP real upload acceptance: enable WORKBENCH_TEST_MATERIAL_UPLOAD with disposable storage/worker.");
 
   if (process.env.WORKBENCH_TEST_GENERATION === "1") {
-    enter("real provider, lost-202 confirmation and manual insertion"); await openAdvancedGeneration(frame); const prompt = `Create one violet geometric poster on white with no text. Acceptance ${run}`;
+    enter("real provider, lost-202 confirmation and undoable automatic insertion"); await openAdvancedGeneration(frame); const prompt = `Create one violet geometric poster on white with no text. Acceptance ${run}`;
     expectedDraft = { prompt, ratio: "1:1", quality: "1K" };
-    await frame.getByRole("textbox", { name: "创作需求", exact: true }).fill(prompt); await frame.getByRole("combobox", { name: "图片比例", exact: true }).selectOption("1:1"); await frame.getByRole("combobox", { name: "图片画质", exact: true }).selectOption("1K");
+    await frame.getByRole("textbox", { name: "对话设计需求", exact: true }).fill(prompt); await frame.getByRole("combobox", { name: "对话图片比例", exact: true }).selectOption("1:1"); await frame.getByRole("combobox", { name: "对话图片画质", exact: true }).selectOption("1K");
+    await frame.getByLabel("生成设置", { exact: true }).click();
     let lost = false; const mutations: string[] = []; const fault = async (route: Route) => { if (route.request().method() !== "POST") return route.continue(); mutations.push(String(route.request().postDataJSON().mutationId));
       if (!lost) { const actual = await route.fetch(); assert.equal(actual.status(), 202, "Opt-in run requires real provider/storage"); lost = true; return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Acceptance receipt loss; confirm existing operation" }) }); } return route.continue(); };
-    await page.route("**/studio/generation?**", fault); let accepted: any;
-    try { await frame.getByRole("button", { name: "生成图片", exact: true }).click(); await expect(frame.getByTestId("owned-notice")).toContainText("Acceptance receipt loss");
-      const next = page.waitForResponse(response => new URL(response.url()).pathname === "/studio/generation" && response.request().method() === "POST" && response.status() === 202); await frame.getByRole("button", { name: "确认上一份生成回执", exact: true }).click(); accepted = await (await next).json();
-    } finally { await page.unroute("**/studio/generation?**", fault); }
+    await page.route("**/studio-conversation", fault); let accepted: any;
+    try { await frame.getByRole("button", { name: "发送", exact: true }).click(); await expect(frame.getByTestId("owned-conversation").getByRole("alert")).toContainText("Acceptance receipt loss");
+      const next = page.waitForResponse(response => new URL(response.url()).pathname === chatEndpoint && response.request().method() === "POST" && response.status() === 202); await frame.getByRole("button", { name: "检查上次提交", exact: true }).click(); accepted = await (await next).json();
+    } finally { await page.unroute("**/studio-conversation", fault); }
     assert.equal(mutations.length, 2); assert.equal(mutations[0], mutations[1]); assert.equal(accepted.mutationId, mutations[0]);
-    const complete = await eventually("real generation and archive", async () => { const response = await page.context().request.get(new URL(`/studio/generation?workspaceId=${workspace.id}&projectId=${projectId}&requestId=${accepted.requestId}`, base).href);
-      assert.equal(response.status(), 200); const value = await response.json(); assert.notEqual(value.status, "FAILED", "Real generation failed"); assert.notEqual(value.resultState, "FAILED", "Real archive failed"); return value.status === "SUCCEEDED" && value.resultState === "READY" ? value : null; }, 720000);
+    expectedDraft = { ...expectedDraft, prompt: "" };
+    const complete = await eventually("real generation and archive", async () => { const response = await page.context().request.get(new URL(`${chatEndpoint}?messageId=${accepted.messageId}`, base).href);
+      assert.equal(response.status(), 200); const message = await response.json(); assert.notEqual(message.status, "FAILED", "Real conversation generation failed");
+      const value = message.generation; if (!value) return null;
+      assert.notEqual(value.status, "FAILED", "Real generation failed"); assert.notEqual(value.resultState, "FAILED", "Real archive failed"); return value.status === "SUCCEEDED" && value.resultState === "READY" ? value : null; }, 720000);
     assert.equal(complete.results.length, 1); const result = complete.results[0], bytes = await assertMaterial(page, workspace.id, projectId, result);
-    const version = await prisma.generationVersion.findUniqueOrThrow({ where: { id: result.versionId } }); assert.equal(version.generationId, accepted.generationId); const gen = await prisma.generation.findUniqueOrThrow({ where: { id: accepted.generationId } }); assert.equal(gen.workspaceId, workspace.id); assert.equal(gen.projectId, projectId); assert.equal(gen.status, "SUCCEEDED");
+    const version = await prisma.generationVersion.findUniqueOrThrow({ where: { id: result.versionId } }); assert.equal(version.generationId, complete.generationId); const gen = await prisma.generation.findUniqueOrThrow({ where: { id: complete.generationId } }); assert.equal(gen.workspaceId, workspace.id); assert.equal(gen.projectId, projectId); assert.equal(gen.status, "SUCCEEDED");
     assert.equal(await prisma.generation.count({ where: { projectId } }), 1, "Lost response must not create a second paid generation"); const dimensions = await sharp(bytes).metadata(); assert.deepEqual([dimensions.width, dimensions.height], [result.width, result.height]);
-    const image = frame.locator('[data-kind="image"]').filter({ has: frame.locator(`svg image[href="${result.url}"]`) }); await expect(image).toHaveCount(0); await openTasks(frame); await frame.getByRole("button", { name: "刷新任务", exact: true }).click(); const row = frame.locator(`section[data-task-id="${accepted.requestId}"]`);
-    await expect(row).toContainText("图片已生成并保存"); await row.getByRole("button", { name: "加入画布", exact: true }).click(); await expect(image).toHaveCount(1); await assertRenderedImage(image, result.url); await frame.getByRole("button", { name: "撤销", exact: true }).click(); await expect(image).toHaveCount(0); await frame.getByRole("button", { name: "重做", exact: true }).click(); await expect(image).toHaveCount(1);
-    await saved(frame, projectId, items => items.some(item => item.props.url === result.url)); check("real provider, idempotent receipt, persisted bytes and manually inserted undoable result");
+    const image = frame.locator('[data-kind="image"]').filter({ has: frame.locator(`svg image[href="${result.url}"]`) }); await openTasks(frame); await frame.getByRole("button", { name: "刷新任务", exact: true }).click(); const row = frame.getByRole("dialog", { name: "任务记录" }).locator(`section[data-task-id="${complete.requestId}"]`);
+    await expect(row).toContainText("图片已生成并保存"); await expect(image).toHaveCount(1, { timeout: 45000 }); await assertRenderedImage(image, result.url); await openConversation(frame); await frame.getByRole("button", { name: "撤销", exact: true }).click(); await expect(image).toHaveCount(0); await frame.getByRole("button", { name: "重做", exact: true }).click(); await expect(image).toHaveCount(1);
+    await saved(frame, projectId, items => items.some(item => item.props.url === result.url)); check("real provider, idempotent conversation receipt, persisted bytes and automatically inserted undoable result");
   } else console.log("SKIP real generation acceptance: no provider result is claimed by this run.");
 
   enter("whole-scene PNG/SVG export"); await saved(frame, projectId); const png = await exportScene(page, frame, "png", "owned-scene"), svg = await exportScene(page, frame, "svg", "owned-scene"); assert.ok(svg.bytes.toString("utf8").includes(chinese));
@@ -657,7 +687,7 @@ try {
   await eventually("real favorite row", async () => { const row = await prisma.workbenchUserState.findUnique({ where: { userId_workspaceId: { userId: user.id, workspaceId: workspace.id } } }); return row?.favorites.includes(projectId) ? row : null; }); check("profile and favorites persist through reviewed shell");
 
   enter("fresh browser restores scene and matching export pixels"); const finalRow = await prisma.editorDocument.findUniqueOrThrow({ where: { projectId } }), finalShapes = Object.values(store(finalRow.canvas)).filter(item => item.typeName === "shape");
-  const finalDraft = await persistedDraft(user.id, projectId, expectedDraft);
+  const finalDraft = await persistedDraft(user.id, workspace.id, projectId, expectedDraft);
   // The first-party shell and owned editor must work when this browser cannot
   // be controlled by a resource service worker. Keep other journeys ordinary.
   const fresh = await newPage("block"); await login(fresh, email, password, `/studio?workspaceId=${workspace.id}`); await studioReady(fresh);
@@ -666,7 +696,7 @@ try {
   await expect(freshCard.locator('[data-action="favorite"]')).toHaveAttribute("aria-pressed", "true"); await freshCard.locator('[data-action="open-project"]').click(); frame = await editorFrame(fresh, projectId); await expect(frame.getByTestId("owned-canvas-item")).toHaveCount(finalShapes.length);
   check("same-origin homepage and existing owned canvas open with service workers blocked");
   for (const item of finalShapes) { const node = frame.locator(`[data-owned-id="${item.id}"]`); await expect(node).toHaveCount(1); if (item.type === "c-image") await assertRenderedImage(node, item.props.url); }
-  await restoredDraft(frame, expectedDraft); assert.equal((await persistedDraft(user.id, projectId, expectedDraft)).revision, finalDraft.revision);
+  await restoredDraft(frame, expectedDraft); assert.equal((await persistedDraft(user.id, workspace.id, projectId, expectedDraft)).draftRevision, finalDraft.draftRevision);
   await openConversation(frame);
   await expect(frame.getByTestId("owned-conversation").locator(`[data-message-id="${verifiedConversationId}"]`)).toContainText(ambiguousText);
   const conversationRead = await fresh.context().request.get(new URL(`${chatEndpoint}?messageId=${verifiedConversationId}`, base).href);

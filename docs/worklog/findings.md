@@ -264,3 +264,8 @@ CDS preflight directly confirms push automatic deployment and default shared bra
 
 - 新增 f791cd4 / 78b3b88 后，发现未绑定项目的旧草稿归属推断不成立；单一原子事务才能防多标签页在迁移间隙覆盖目标/删掉变更后的源记录。
 - 官方 Diffusers QwenImageLayeredPipeline 明确按 resolution²、32步长取整并整图resize。544×736现在有实现依据；仅指定模型640档启用，未知模型不能用“碰巧同尺寸”代替几何契约。原非方图调查结论更新为已实现本地适配，真实全组重合与模型质量仍未重新验收。
+# 2026-10-19 云端验收暴露的入口与离页差异
+
+- `39216392222` API exit 0 / UI exit 1。真实 UI 验收还在调用“返回设计对话”“创作需求”与旧的工作流修改目标，必须迁移到当前对话，而非删验收。
+- 当前对话仅防抖保存和 beforeunload 警告，缺离页保存，输入后立即确认离开可能丢失末段文字；补 revision checked keepalive PUT 后 Chrome 真实导航恢复通过。未承诺强退/断网或未确认写入一定保存。
+- 新的修改目标存于 StudioConversation.draft.quickEditTargetId；素材用途仍在 WorkbenchProjectState，两者分别查库，不能再要求旧模式控件同时存在。

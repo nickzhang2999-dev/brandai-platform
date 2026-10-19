@@ -69,7 +69,7 @@ export const OwnedConversationPanel = forwardRef<OwnedConversationHandle, Props>
     } catch (failure) { if (mounted.current && api.current === context) setError(explain(failure)); }
     finally { if (api.current === context) pollBusy.current = false; }
   }, [accept, updateDraft]);
-  const flush = useCallback(async () => {
+  const flush = useCallback(async (keepalive = false) => {
     if (timer.current) clearTimeout(timer.current);
     const context = api.current;
     if (!readyRef.current || !context) throw new Error("对话草稿还未恢复，请重新读取后再离开。");
@@ -81,7 +81,7 @@ export const OwnedConversationPanel = forwardRef<OwnedConversationHandle, Props>
     const operation = saveSnapshot.current ?? { ...structuredClone(draftRef.current), revision: revision.current }; saveSnapshot.current = operation;
     try {
       let receipt;
-      try { receipt = await context.saveDraft(operation); }
+      try { receipt = await context.saveDraft(operation, keepalive); }
       catch (failure) {
         if (!(failure instanceof NovartApiError) || !failure.uncertain && failure.status !== 409) throw failure;
         const state = await context.list();
@@ -94,7 +94,7 @@ export const OwnedConversationPanel = forwardRef<OwnedConversationHandle, Props>
       // or send until the CURRENT composer has also received a checked receipt.
       for (let attempt = 0; !same(draftRef.current, confirmedDraft.current) && attempt < 3; attempt++) {
         const newer = { ...structuredClone(draftRef.current), revision: revision.current }; saveSnapshot.current = newer;
-        const saved = await context.saveDraft(newer);
+        const saved = await context.saveDraft(newer, keepalive);
         if (!mounted.current || api.current !== context) return;
         revision.current = saved.revision; confirmedDraft.current = draftValue(saved); saveSnapshot.current = null;
       }
@@ -212,7 +212,17 @@ export const OwnedConversationPanel = forwardRef<OwnedConversationHandle, Props>
     return () => clearTimeout(interval);
   }, [messages, ready, paused, accept]);
   useEffect(() => { if (follow.current) history.current?.scrollTo({ top: history.current.scrollHeight, behavior: "auto" }); }, [messages]);
-  useEffect(() => { const leaving = (event: BeforeUnloadEvent) => { if (readyRef.current && !same(draftRef.current, confirmedDraft.current!) || pending.current) { event.preventDefault(); event.returnValue = ""; } }; window.addEventListener("beforeunload", leaving); return () => window.removeEventListener("beforeunload", leaving); }, []);
+  useEffect(() => {
+    const saveOnLeave = () => {
+      // Do not race an in-flight/uncertain write, commit an IME fragment, or
+      // replay a pending paid request. The normal close warning stays active.
+      if (readyRef.current && !latest.current.readOnly && !composing.current && !saveBusy.current && !sendBusy.current && !pending.current) void flush(true).catch(() => undefined);
+    };
+    const leaving = (event: BeforeUnloadEvent) => { if (readyRef.current && !same(draftRef.current, confirmedDraft.current!) || pending.current) { event.preventDefault(); event.returnValue = ""; saveOnLeave(); } };
+    const hiding = () => { if (document.visibilityState === "hidden") saveOnLeave(); };
+    window.addEventListener("beforeunload", leaving); window.addEventListener("pagehide", saveOnLeave); document.addEventListener("visibilitychange", hiding);
+    return () => { window.removeEventListener("beforeunload", leaving); window.removeEventListener("pagehide", saveOnLeave); document.removeEventListener("visibilitychange", hiding); };
+  }, [flush]);
   const locked = props.readOnly || !ready || sending || unknown;
   function clarify(message: Message, targetId?: string) {
     if (locked || message.intent?.modelStatus === "UNKNOWN") return;

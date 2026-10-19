@@ -126,6 +126,16 @@ createRoot(document.getElementById('root')!).render(<Fixture/>);`);
   await button('加入当前选择').click(); assert.equal(await page.getByRole('button',{name:/移除对话引用/}).count(),2); check('explicit-add-keeps-order-and-deduplicates');
   stage = 'draft-restore'; await input().fill('还没有写完的海报需求'); await saved(); await page.reload(); await ready();
   assert.equal(await input().inputValue(),'还没有写完的海报需求'); assert.equal(await page.getByRole('button',{name:/移除对话引用/}).count(),2);check('server-draft-and-ordered-references-restore-after-refresh');
+  stage = 'real-dirty-page-unload'; const beforeUnloadPosts=postInputs.length, beforeUnloadRevision=draft.revision;
+  const acceptLeave=dialog=>dialog.accept();page.on('dialog',acceptLeave);
+  await input().fill('刚输入就离开：最后一段中文必须保存');
+  assert.equal(await page.getByTestId('conversation-draft-status').getAttribute('data-saved'),'false');
+  await page.goto('about:blank');
+  await until(()=>draft.text==='刚输入就离开：最后一段中文必须保存');
+  assert.equal(draft.revision,beforeUnloadRevision+1);assert.equal(postInputs.length,beforeUnloadPosts);
+  await page.goto(origin);await ready();await saved();page.off('dialog',acceptLeave);
+  assert.equal(await input().inputValue(),'刚输入就离开：最后一段中文必须保存');assert.deepEqual(draft.references.map(ref=>ref.assetId),['asset2','asset1']);
+  check('actual-dirty-page-navigation-saves-latest-conversation-without-generation');
   stage = 'ime'; const beforeIme=postInputs.length; await input().dispatchEvent('compositionstart'); await input().fill('把背景改成蓝色'); await input().press('Enter');
   assert.equal(postInputs.length,beforeIme); await input().dispatchEvent('compositionend'); check('chinese-composition-enter-never-sends');
   await button('发送').click(); await page.getByText('你引用了多张图片：要合成一张新图，还是修改其中一张？请写明图片名称。',{exact:true}).waitFor();check('ambiguous-multi-image-request-renders-server-clarification');
@@ -168,7 +178,7 @@ createRoot(document.getElementById('root')!).render(<Fixture/>);`);
   const show = async rows => {messages=rows;draft=null;messageReads.clear();await page.goto(origin);await ready();};
   const activity = () => page.getByText(/^(正在创作…|生成完成，正在保存图片)$/);
   const pollCount = id => messageReads.get(id)??0;
-  const until = async condition => {const end=Date.now()+7000;while(!condition()){assert.ok(Date.now()<end,'Expected conversation poll did not arrive');await new Promise(resolve=>setTimeout(resolve,50));}};
+  async function until(condition) {const end=Date.now()+7000;while(!condition()){assert.ok(Date.now()<end,'Expected conversation poll did not arrive');await new Promise(resolve=>setTimeout(resolve,50));}}
   const quiet = async (scenario, ids) => {const before=ids.map(pollCount);await page.waitForTimeout(4100);assert.deepEqual(ids.map(pollCount),before);report.terminalStateEvidence.push({scenario,messagePolls:ids.map((id,index)=>({messageId:id,before:before[index],after:pollCount(id)}))});};
 
   stage = 'failed-terminal';const failed=task({status:'FAILED',error:'夹具模型失败，未生成图片'});
