@@ -147,7 +147,7 @@ export const OwnedConversationPanel = forwardRef<OwnedConversationHandle, Props>
       if (!pending.current && draftRef.current.text.trim() && draftRef.current.text !== text) throw new Error("对话里已有另一份未发送需求，请先保留或清空，再继续首页创作。");
       if (!pending.current) updateDraft({ ...empty(), text, references: refs });
       const acceptedMessage = await send({ mutationId });
-      if (!acceptedMessage || acceptedMessage.mutationId !== mutationId) throw new Error("首次创作还未确认受理，原需求仍保留。");
+      if (!acceptedMessage || acceptedMessage.mutationId !== mutationId) throw new Error("首次创作还没确认提交结果，原需求仍保留。");
     },
     sizeSelection: () => structuredClone(draftRef.current.sizeSelection),
     restoreText(text) {

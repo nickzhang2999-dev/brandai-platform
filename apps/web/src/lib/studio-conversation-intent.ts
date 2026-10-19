@@ -9,7 +9,7 @@ export function studioConversationNonActionable(input: Pick<StudioConversationIn
   const text = input.text.replace(/“[^”]*”|"[^"]*"|「[^」]*」|『[^』]*』/g, "").trim();
   if (!text) return true;
   if (/(?:先别|暂时不要|暂不|不要|别|不用|无需)\s*(?:生成|生图|制作|创作|开始|执行)|(?:先|只是|仅供)\s*(?:看看|讨论|参考)|(?:do not|don't)\s+(?:generate|create)/i.test(text)) return true;
-  if (/[？?]|(?:是不是|能不能|可不可以|是否)|(?:怎么样|如何评价|好不好|是什么|为什么|觉得如何|吗)\s*[。！!]?\s*$/.test(text)) return true;
+  if (/[？?]|(?:是不是|能不能|可不可以|是否|为什么|为啥|怎么回事|怎么会|咋回事)|(?:怎么样|如何评价|好不好|是什么|为什么|觉得如何|吗)\s*[。！!]?\s*$/.test(text)) return true;
   const clauses = text.split(/[，,。；;\n！!]/).map(clause => clause.trim()).filter(Boolean);
   return clauses.length > 0 && clauses.every(clause => {
     // A negative-only clause is not an action. A complete scene may still

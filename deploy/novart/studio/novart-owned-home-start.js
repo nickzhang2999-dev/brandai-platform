@@ -55,13 +55,13 @@ window.createHomeStart = function createHomeStart(host) {
       || value.kind !== 'image' || !types.includes(value.mimeType) || typeof value.fileName !== 'string' || !value.fileName.length || value.fileName.length > 255
       || !Number.isInteger(value.sizeBytes) || value.sizeBytes < 1 || value.sizeBytes > limit
       || !Number.isInteger(value.width) || value.width < 1 || value.width > 16384 || !Number.isInteger(value.height) || value.height < 1 || value.height > 16384
-      || !identity(workspace) || value.url !== '/api/workspaces/' + encodeURIComponent(workspace) + '/assets/' + encodeURIComponent(value.assetId) + '/raw') throw new Error('素材回执不完整或不属于当前品牌，请重新确认。');
+      || !identity(workspace) || value.url !== '/api/workspaces/' + encodeURIComponent(workspace) + '/assets/' + encodeURIComponent(value.assetId) + '/raw') throw new Error('素材信息不完整或不属于当前品牌，请重新确认。');
     return {id:value.id, assetId:value.assetId, assetSha256:value.assetSha256, kind:'image', mimeType:value.mimeType, fileName:value.fileName, sizeBytes:value.sizeBytes, width:value.width, height:value.height, url:value.url};
   }
   function taskReceipt(value, item, projectId) {
     if (!value || !identity(value.taskId) || value.projectId !== projectId || value.mutationId !== item.id
       || (item.taskId && item.taskId !== value.taskId) || !['PENDING','RUNNING','SUCCEEDED','FAILED'].includes(value.status)
-      || !Number.isInteger(value.progress) || value.progress < 0 || value.progress > 100 || !Number.isFinite(Date.parse(value.expiresAt))) throw new Error('上传回执与本次项目或图片不一致，请继续确认。');
+      || !Number.isInteger(value.progress) || value.progress < 0 || value.progress > 100 || !Number.isFinite(Date.parse(value.expiresAt))) throw new Error('上传结果与本次项目或图片不一致，请继续确认。');
     if (value.status === 'SUCCEEDED') return {...value, material:materialReceipt(value.material)};
     if (value.material) throw new Error('素材尚未确认保存，不能放入画布。');
     return value;
@@ -113,7 +113,7 @@ window.createHomeStart = function createHomeStart(host) {
       await persist(); $('ns-create-status').textContent = '正在创建项目并保存需求…';
       if (!submitted.projectId) {
         const response = await api('/compare/api/create',{requestId:submitted.requestId,projectName:submitted.projectName,brief:submitted.brief});
-        if (!identity(response?.projectId)) throw new Error('创建回执未确认，请继续同一请求。');
+        if (!identity(response?.projectId)) throw new Error('项目创建结果还没确认，请继续同一次请求。');
         submitted.projectId = response.projectId; await persist();
       }
       await host.reloadProjects();
@@ -148,12 +148,12 @@ window.createHomeStart = function createHomeStart(host) {
     }
     $('ns-frames').classList.add('hs-transferring'); entry.frame.inert = true;
   }
-  function remaining(deadline) { const value = deadline - Date.now(); if (value <= 0) throw new Error('本次等待已结束。已受理的任务仍可能继续，请稍后继续确认，原图仍保留。'); return value; }
+  function remaining(deadline) { const value = deadline - Date.now(); if (value <= 0) throw new Error('本次等待已结束。已提交的任务可能还在处理，请稍后继续确认，原图仍保留。'); return value; }
   async function request(path, init, deadline) {
     const controller = new AbortController(), timer = setTimeout(() => controller.abort(), Math.min(20000,remaining(deadline)));
     try {
       const response = await fetch(path,{...init,signal:controller.signal,credentials:'same-origin',cache:'no-store'});
-      let value; try { value = await response.json(); } catch { throw new Error('素材回执暂时无法读取，继续会复用同一请求。'); }
+      let value; try { value = await response.json(); } catch { throw new Error('暂时读不到素材结果，继续会复用同一次请求。'); }
       if (!response.ok) throw new Error(response.status === 409 ? '当前内容已变化，请重新打开项目后继续确认。' : response.status === 413 ? '图片超过大小限制，原图仍保留。' : '素材请求未完成，请继续确认。');
       return value;
     } catch (error) { if (controller.signal.aborted || error instanceof TypeError) throw new Error('请求结果未确认，继续会复用同一个请求，不会重复创建。'); throw error; }
@@ -172,9 +172,9 @@ window.createHomeStart = function createHomeStart(host) {
     }
     item.taskId = task.taskId; item.taskStatus = task.status; await persist();
     while (task.status === 'PENDING' || task.status === 'RUNNING') {
-      if (!current(entry)) throw new Error('页面已切换，已受理的任务会继续处理。');
+      if (!current(entry)) throw new Error('页面已切换，已提交的任务会继续处理。');
       if (Date.parse(task.expiresAt) <= Date.now()) throw new Error('任务处理时间已到，请到任务面板确认结果，原图仍保留。');
-      paint(entry,{kind:'loading',title:'正在保存图片素材',detail:'已受理 '+(items.indexOf(item)+1)+' / '+items.length+' 张，正在等待处理结果。'});
+      paint(entry,{kind:'loading',title:'正在保存图片素材',detail:'已提交 '+(items.indexOf(item)+1)+' / '+items.length+' 张，正在等待处理结果。'});
       await new Promise(resolve => setTimeout(resolve,Math.min(1500,remaining(deadline))));
       task = taskReceipt(await request(endpoint + '&taskId=' + encodeURIComponent(item.taskId),{},deadline),item,entry.id);
       item.taskStatus = task.status;
@@ -194,7 +194,7 @@ window.createHomeStart = function createHomeStart(host) {
   function waitForCreation(entry, submission, deadline) {
     return new Promise((resolve,reject) => {
       const requestId = submission.requestId;
-      const timer = setTimeout(() => { waiters.delete(requestId); reject(new Error('创作受理结果尚未确认。需求已保留，继续只会核对同一次请求。')); }, Math.min(30000,remaining(deadline)));
+      const timer = setTimeout(() => { waiters.delete(requestId); reject(new Error('创作的提交结果还没确认。需求已保留，继续只会核对同一次请求，不会重复扣费。')); }, Math.min(30000,remaining(deadline)));
       waiters.set(requestId,{entry,resolve,reject,timer,action:'start-creation-result'});
       try { entry.frame.contentWindow.postMessage({type:'nv-studio',action:'start-creation',projectId:entry.id,requestId,text:submission.brief,referenceShapeIds:items.map(item => 'shape:home-' + item.id)},location.origin); }
       catch { clearTimeout(timer); waiters.delete(requestId); reject(new Error('画布尚未接收创作需求，请重新打开项目后继续。')); }
@@ -249,7 +249,7 @@ window.createHomeStart = function createHomeStart(host) {
       if (submitted.startCreation === true && !submitted.creationAccepted) {
         if (!submitted.brief.trim() || submitted.brief.length > 4000) throw new Error('创作需求长度不符合要求，请保留原始需求并在项目中继续编辑。');
         if (!current(entry) || !entry.ready) throw new Error('画布暂时不可用，需求和已保存素材仍保留。');
-        paint(entry,{kind:'loading',title:'正在开始创作',detail:'需求和参考图已保存，正在确认本次创作已受理。'});
+        paint(entry,{kind:'loading',title:'正在开始创作',detail:'需求和参考图已保存，正在提交这次创作。'});
         await waitForCreation(entry,submitted,deadline);
         submitted.creationAccepted = true; await persist();
       }
@@ -259,7 +259,7 @@ window.createHomeStart = function createHomeStart(host) {
       completed.forEach(item => { if (item.url) URL.revokeObjectURL(item.url); });
       if ($('ns-home-brief').value === previous.brief) { $('ns-home-brief').value = ''; try { localStorage.removeItem('novart-m24-home-brief'); } catch {} }
       states.delete(entry.id); host.invalidateAssets(entry.id); render();
-      if (current(entry)) { hide(); notify(previous.startCreation ? '创作已受理，可以在对话中查看进度。' : '图片和需求已保存，可以继续编辑。'); if (!previous.startCreation) host.showRequirements(entry); }
+      if (current(entry)) { hide(); notify(previous.startCreation ? '创作已提交，可以在对话中查看进度。' : '图片和需求已保存，可以继续编辑。'); if (!previous.startCreation) host.showRequirements(entry); }
     } catch (error) {
       paint(entry,{kind:'error',title:submitted?.startCreation ? '创作交接尚未完成' : '图片交接尚未完成',detail:(typeof error?.message === 'string' ? error.message.slice(0,300) : '请稍后继续确认。') + ' 需求和原图仍保留。',failedId:error.failedId});
     }

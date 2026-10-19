@@ -284,7 +284,7 @@
     ['ns-rename-name','ns-rename-close','ns-rename-cancel','ns-rename-submit'].forEach(id => { $(id).disabled = true; });
     try {
       const result = await api('/api/canva/project/updateProjectName', {projectId:current.projectId,projectName:name});
-      if (result.code !== 0 || result.data?.projectId !== current.projectId || result.data?.projectName !== name) throw new Error(result.msg || '修改名称的回执尚未确认，请读取项目库检查。');
+      if (result.code !== 0 || result.data?.projectId !== current.projectId || result.data?.projectName !== name) throw new Error(result.msg || '名称修改结果还没确认，请到项目库检查。');
       current.projectName = result.data.projectName; renamedProject(current); $('ns-rename-dialog').close(); renderProjects();
       projectEvent?.postMessage({projectId:current.projectId}); notify('项目名称已保存。');
     } catch (error) { $('ns-rename-status').textContent = error.message + (error.uncertain ? ' 当前输入仍保留，请先刷新项目库核对名称。' : ''); }
@@ -961,7 +961,7 @@
   }
   function brandAssetCard(asset) {
     const context = brandLibraryScope(), expected = '/api/workspaces/' + encodeURIComponent(context.workspaceId) + '/assets/' + encodeURIComponent(asset.assetId) + '/raw';
-    if (!/^[a-zA-Z0-9_-]{1,128}$/.test(asset.assetId) || asset.url !== expected || asset.material && !validBrandMaterial(asset.material)) throw new Error('素材回执不属于当前品牌。');
+    if (!/^[a-zA-Z0-9_-]{1,128}$/.test(asset.assetId) || asset.url !== expected || asset.material && !validBrandMaterial(asset.material)) throw new Error('素材不属于当前品牌。');
     const card = node('article', 'ns-asset-card'); card.dataset.projectId = ''; card.dataset.assetSha256 = asset.material?.assetSha256 || ''; card.dataset.shapeId = 'brand:' + asset.assetId; card.dataset.assetId = asset.assetId;
     const preview = button('', 'ns-asset-image', () => {
       previewFocus = {container: 'ns-assets', project: '', sha: card.dataset.assetSha256, shape: card.dataset.shapeId, action: 'preview'};
@@ -976,7 +976,7 @@
       const scope = brandLibraryScope(), search = $('ns-brand-resource-search').value.trim(), query = new URLSearchParams({limit: '24', ...(search ? {search} : {}), ...(nextCursor ? {cursor: nextCursor} : {})});
       const value = await brandLibraryRequest(scope.path + '?' + query);
       if (generation !== resourceGeneration || resourceProject) return;
-      if (!Array.isArray(value.items) || value.items.length > 60 || value.nextCursor !== null && (typeof value.nextCursor !== 'string' || value.nextCursor.length > 512)) throw new Error('品牌素材分页回执不完整。');
+      if (!Array.isArray(value.items) || value.items.length > 60 || value.nextCursor !== null && (typeof value.nextCursor !== 'string' || value.nextCursor.length > 512)) throw new Error('品牌素材列表读取不完整，请刷新重试。');
       value.items.forEach(brandAssetCard);
       brandResourceItems = nextCursor ? [...brandResourceItems, ...value.items.filter(asset => !brandResourceItems.some(item => item.assetId === asset.assetId))] : value.items;
       brandResourceCursor = value.nextCursor; $('ns-assets').replaceChildren(...brandResourceItems.map(brandAssetCard));
@@ -996,13 +996,13 @@
     const scope = brandLibraryScope();
     if (value?.context !== 'brand-library' || value.workspaceId !== scope.workspaceId || !/^[a-zA-Z0-9_-]{1,128}$/.test(value.taskId)
       || !['PENDING', 'RUNNING', 'SUCCEEDED', 'FAILED'].includes(value.status) || (value.status === 'SUCCEEDED') !== !!value.material
-      || value.material && !validBrandMaterial(value.material) || value.status === 'FAILED' && !value.error) throw new Error('品牌上传回执不完整，请刷新确认；原文件仍保留。');
+      || value.material && !validBrandMaterial(value.material) || value.status === 'FAILED' && !value.error) throw new Error('品牌上传结果不完整，请刷新确认；原文件仍保留。');
     return value;
   }
   async function recoverBrandUploads() {
     if (route.page !== 'resources' || resourceTab !== 'images') return;
     const scope = brandLibraryScope(), value = await brandLibraryRequest(scope.path + '/upload');
-    if (!Array.isArray(value.tasks) || value.tasks.length > 50) throw new Error('品牌上传任务回执不完整。');
+    if (!Array.isArray(value.tasks) || value.tasks.length > 50) throw new Error('品牌上传任务信息不完整，请刷新确认。');
     const tasks = value.tasks.map(brandUploadReceipt), active = tasks.filter(task => ['PENDING', 'RUNNING'].includes(task.status));
     clearTimeout(brandUploadPoll);
     if (brandUploadOperation && tasks.some(task => task.mutationId === brandUploadOperation.mutationId)) { brandUploadOperation = null; $('ns-brand-upload-retry').hidden = true; }
@@ -1021,9 +1021,9 @@
     try {
       const scope = brandLibraryScope(), form = new FormData(); form.set('file', brandUploadOperation.file); form.set('mutationId', brandUploadOperation.mutationId);
       const task = brandUploadReceipt(await brandLibraryRequest(scope.path + '/upload', {method: 'POST', body: form}));
-      if (task.mutationId !== brandUploadOperation.mutationId) { const error = new Error('上传受理标识不一致，请刷新确认原任务。'); error.uncertain = true; throw error; }
+      if (task.mutationId !== brandUploadOperation.mutationId) { const error = new Error('上传任务标识不一致，请刷新确认原任务。'); error.uncertain = true; throw error; }
       brandUploadOperation = null; $('ns-brand-upload-retry').hidden = true;
-      feedback('ns-brand-upload-status', task.status === 'SUCCEEDED' ? '图片已保存到品牌素材库，可在任意项目中选择复用。' : task.error || '图片上传已受理，关闭页面后仍会继续保存。', task.status === 'FAILED' ? 'error' : 'idle');
+      feedback('ns-brand-upload-status', task.status === 'SUCCEEDED' ? '图片已保存到品牌素材库，可在任意项目中选择复用。' : task.error || '图片上传已提交，关闭页面后仍会继续保存。', task.status === 'FAILED' ? 'error' : 'idle');
       brandUploadWatch = Date.now(); if (!resourceProject) await loadResources(true); await recoverBrandUploads();
     } catch (error) {
       if (!error.uncertain) brandUploadOperation = null; $('ns-brand-upload-retry').hidden = !brandUploadOperation;

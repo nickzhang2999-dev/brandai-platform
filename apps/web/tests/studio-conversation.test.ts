@@ -71,6 +71,7 @@ describe("durable conversation contract and conservative action/size routing", (
     "参考这个光影更自然的效果", "不要让光影更自然", "别让阳光洒下", "光影不用更自然",
     "构图保持不变，场景不要真实一点", "文案为“光影自然一点”",
     "文案为“欢迎回来，光影自然一点，春天到了”", "背景更明亮的照片很好看",
+    "为什么会这样", "为啥背景变暗了", "怎么回事，图片糊了", "这张图怎么会这么暗",
   ])("does not charge for visual commentary, questions, quotes or negation: %s", text => {
     expect(parse(text, [four]).action).toBe("clarify");
   });
