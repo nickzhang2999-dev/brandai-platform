@@ -32,10 +32,14 @@ function harness(options = {}) {
   const get = id => { if(!elements.has(id)) elements.set(id,new Element()); return elements.get(id); };
   function timer(callback,ms) { const token={callback,ms};timers.add(token);return token; }
   function clear(token) { timers.delete(token); }
+  // `stored` is this brand's record; `legacy` is the pre-brand shared key.
+  let legacy = options.legacy || null; const keys = new Set();
+  const isLegacy = k => k === 'owned-home-start-v1';
   const db = {createObjectStore(){}, transaction(_name,mode) {
     const tx={abort(){tx.onabort?.();},objectStore(){return {
-      get(){const request={};queueMicrotask(()=>{request.result=stored;tx.oncomplete?.();});return request;},
-      put(value){const request={};queueMicrotask(()=>{if(options.failWrites){tx.onerror?.();return;}stored=structuredClone(value);writes.push(stored);tx.oncomplete?.();});return request;},
+      get(k){keys.add(k);const request={};queueMicrotask(()=>{request.result=isLegacy(k)?legacy:stored;tx.oncomplete?.();});return request;},
+      put(value,k){keys.add(k);const request={};queueMicrotask(()=>{if(options.failWrites){tx.onerror?.();return;}if(isLegacy(k))legacy=structuredClone(value);else{stored=structuredClone(value);writes.push(stored);}tx.oncomplete?.();});return request;},
+      delete(k){keys.add(k);const request={};queueMicrotask(()=>{if(isLegacy(k))legacy=null;else stored=null;tx.oncomplete?.();});return request;},
     };}}; return tx;
   }};
   const indexedDB={open(){const request={result:db};queueMicrotask(()=>{request.onupgradeneeded?.();request.onsuccess?.();});return request;}};
@@ -57,7 +61,7 @@ function harness(options = {}) {
     async fetch(url,init){requests.push({url,init});const mutationId=init.method==='POST'?init.body.get('mutationId'):url.split('taskId=task-')[1];if(init.method==='POST'){assert(stored.items.some(item=>item.id===mutationId),'Upload mutation must be durable');assert.equal(init.body.get('projectId'),entry.id);}const result=options.respond?await options.respond({url,init,mutationId,task,fixture}):task(mutationId);return {ok:true,status:200,json:async()=>result};},
   };
   context.window=context;
-  const fixture={entry,host,elements,events,timers,writes,posts,requests,creates,notices,task,dispatch,ack,get data(){return stored;},get module(){return module;},
+  const fixture={entry,host,elements,events,timers,writes,posts,requests,creates,notices,task,dispatch,ack,get data(){return stored;},get legacy(){return legacy;},get keys(){return [...keys];},get module(){return module;},
     async ready(){await flush(()=>module.snapshot().loaded);},async add(files=[file()]){get('hs-file-input').listeners.change({target:{files,value:'selected'}});await flush(()=>stored?.items?.length===Math.min(files.length,4)||get('hs-draft-note').textContent);},
     async create(){await module.create();},async resume(){return module.resume(entry,true);},activate(){active=true;},get,get refreshed(){return refreshed;},completeInSibling(){stored={version:1,items:[],submitted:null};},replaceInSibling(value){stored=structuredClone(value);},
     fire(ms){const match=[...timers].find(value=>value.ms===ms);assert(match,'Expected bounded timer');clear(match);now+=ms;match.callback();},
@@ -209,6 +213,26 @@ function harness(options = {}) {
   }
   {
     const options={respond:({task,mutationId})=>task(mutationId,'FAILED')};const f=harness(options);await f.ready();await f.add([file('first.png'),file('second.png')]);await f.create();await f.resume();options.failWrites=true;await findControl(f,'移除失败图片').click();await flush(()=>Boolean(f.module.snapshot().recoveryError));assert.equal(f.module.snapshot().attachmentCount,2);assert.equal(findControl(f,'失败图片已移除'),undefined);options.failWrites=false;await findControl(f,'移除失败图片').click();await flush(()=>!f.module.snapshot().recoveryPending);assert.equal(f.module.snapshot().attachmentCount,1);assert.equal(f.data.items[0].name,'second.png');assert(findControl(f,'失败图片已移除'));assert.equal(f.posts.length,0);assert.equal(f.requests.length,1);count++;
+  }
+  {
+    // Recovery is stored per brand, never under the shared key.
+    const f=harness();await f.ready();f.get('ns-home-brief').value='品牌隔离';await f.create();
+    assert(f.keys.includes('owned-home-start-v1:workspace-fixture'));assert(!f.keys.some(k=>k==='owned-home-start-v1'&&f.legacy));count++;
+  }
+  {
+    // A pre-brand record for a project of this brand is adopted and the shared copy removed.
+    const requestId=randomUUID(),record={version:1,items:[],submitted:{requestId,projectId:'project-fixture',brief:'旧记录',projectName:'旧项目'}};
+    const f=harness({legacy:record});await f.ready();assert.equal(f.data?.submitted?.requestId,requestId);assert.equal(f.legacy,null);count++;
+  }
+  {
+    // A pre-brand record for another brand's project is left untouched for that brand.
+    const requestId=randomUUID(),record={version:1,items:[],submitted:{requestId,projectId:'project-other-brand',brief:'别的品牌',projectName:'别家'}};
+    const f=harness({legacy:record});await f.ready();assert.equal(f.data,null);assert.equal(f.legacy?.submitted?.requestId,requestId);assert.equal(f.module.hasDraft(),false);count++;
+  }
+  {
+    // A pre-brand record with no project yet has nothing tying it elsewhere and is adopted.
+    const requestId=randomUUID(),record={version:1,items:[],submitted:{requestId,projectId:null,brief:'未建项目',projectName:'新项目'}};
+    const f=harness({legacy:record});await f.ready();assert.equal(f.data?.submitted?.requestId,requestId);assert.equal(f.legacy,null);count++;
   }
   assert(!source.includes('/studio/start/'));assert(!source.includes('webpack'));assert(!source.includes('/studio/generation'));
   console.log(`Owned homepage protocol boundary checks: ${count} passed; production services were not exercised.`);

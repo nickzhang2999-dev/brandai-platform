@@ -4,9 +4,12 @@
 window.createHomeStart = function createHomeStart(host) {
   'use strict';
   const $ = id => document.getElementById(id), {api, node, button, notify} = host;
-  const key = 'owned-home-start-v1', limit = 10 * 1024 * 1024, budgetMs = 120000;
+  const legacyKey = 'owned-home-start-v1', limit = 10 * 1024 * 1024, budgetMs = 120000;
   const uuid = value => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
   const identity = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(value);
+  // Switching brand reloads the page, so the brand is fixed for this module.
+  const homeWorkspace = window.__NOVART_PRODUCT__?.workspaceId;
+  const key = identity(homeWorkspace) ? legacyKey + ':' + homeWorkspace : legacyKey;
   const types = ['image/png','image/jpeg','image/webp'];
   let items = [], submitted = null, busy = false, loaded = false, draftError = '', latestEntry = null, recoveryBlocked = false;
   let checkingRecovery = false;
@@ -19,11 +22,11 @@ window.createHomeStart = function createHomeStart(host) {
     request.onsuccess = () => { clearTimeout(timer); resolve(request.result); };
     request.onerror = request.onblocked = () => { clearTimeout(timer); reject(new Error('恢复空间暂不可用')); };
   });
-  async function dbTask(mode, value) {
+  async function dbTask(mode, value, target = key) {
     const db = await dbPromise;
     return new Promise((resolve, reject) => {
       const transaction = db.transaction('draft', mode), store = transaction.objectStore('draft');
-      const request = mode === 'readonly' ? store.get(key) : store.put(value, key);
+      const request = mode === 'readonly' ? store.get(target) : value === undefined ? store.delete(target) : store.put(value, target);
       const timer = setTimeout(() => { try { transaction.abort(); } catch {} reject(new Error('恢复记录保存超时')); },8000);
       transaction.oncomplete = () => { clearTimeout(timer); resolve(request.result); };
       transaction.onerror = transaction.onabort = () => { clearTimeout(timer); reject(new Error('恢复记录未能保存')); };
@@ -427,7 +430,23 @@ window.createHomeStart = function createHomeStart(host) {
   composer.addEventListener('paste',event => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void addFiles(files); } });
   window.addEventListener('message',receive);
   window.addEventListener('pagehide',() => { window.removeEventListener('message',receive); for (const waiter of waiters.values()) { clearTimeout(waiter.timer); waiter.reject(new Error('页面已关闭，原图恢复记录仍保留。')); } waiters.clear(); },{once:true});
-  dbTask('readonly').then(value => {
+  async function loadRecovery() {
+    const own = await dbTask('readonly');
+    if (own || key === legacyKey) return own;
+    const legacy = await dbTask('readonly', undefined, legacyKey);
+    if (!legacy) return null;
+    // Records saved before per-brand keys carry no brand. Adopt one only when it
+    // cannot belong to another brand: no project yet, or a project of this brand.
+    const projectId = legacy.submitted?.projectId;
+    if (projectId) {
+      try { await host.reloadProjects(); } catch {}
+      if (!host.project(projectId)) return null;
+    }
+    await dbTask('readwrite', legacy);
+    await dbTask('readwrite', undefined, legacyKey);
+    return legacy;
+  }
+  loadRecovery().then(value => {
     if (!value) return;
     if (value.version !== 1 || !Array.isArray(value.items) || value.items.length > 4 || new Set(value.items.map(item => item.id)).size !== value.items.length
       || value.items.some(item => !uuid(item.id) || typeof item.name !== 'string' || !validFile(item.file) || item.taskId && !identity(item.taskId))) throw new Error('恢复记录无法读取');

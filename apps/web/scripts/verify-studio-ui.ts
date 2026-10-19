@@ -295,7 +295,7 @@ async function homepageDraft(page: Page) {
     request.onupgradeneeded = () => { request.transaction?.abort(); };
     request.onerror = request.onblocked = () => { clearTimeout(timer); reject(new Error("Homepage draft store is unavailable")); };
     request.onsuccess = () => {
-      const db = request.result, transaction = db.transaction("draft", "readonly"), read = transaction.objectStore("draft").get("owned-home-start-v1");
+      const db = request.result, transaction = db.transaction("draft", "readonly"), read = transaction.objectStore("draft").get("owned-home-start-v1:" + (window as unknown as { __NOVART_PRODUCT__: { workspaceId: string } }).__NOVART_PRODUCT__.workspaceId);
       transaction.oncomplete = () => { clearTimeout(timer); db.close(); const value = read.result;
         resolve(value ? { version: value.version, items: value.items.map((item: { id: string; name: string; file: Blob; taskId?: string }) => ({ id: item.id, name: item.name, size: item.file?.size, taskId: item.taskId ?? null })), submitted: value.submitted } : null); };
       transaction.onerror = transaction.onabort = () => { clearTimeout(timer); db.close(); reject(new Error("Homepage draft could not be inspected")); };
