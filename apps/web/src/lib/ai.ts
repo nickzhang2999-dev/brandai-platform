@@ -3,6 +3,9 @@ import type {
   ComplianceCheckResponse,
   DecomposeRequest,
   DecomposeResponse,
+  DecomposeQueueTicket,
+  DecomposeQueuePollRequest,
+  DecomposeQueuePollResponse,
   DescribeRequest,
   DescribeResponse,
   DiagResponse,
@@ -79,6 +82,7 @@ async function call<TReq, TRes>(path: string, body: TReq, options?: AiCallOption
   const requireStudioEdit = path === "/v1/studio/edit";
   const requireStudioImageTools = requireStudioEdit && !!(body as { imageTool?: unknown }).imageTool;
   const requireStudioDecomposition = path === "/v1/decompose" && options?.requireRealLayerProvider === true;
+  const requireStudioDecompositionQueue = path === "/v1/decompose/submit" || path === "/v1/decompose/poll";
   const requireStudioLayerPlan = path === "/v1/studio/layer-plan";
   const requireConversationIntent = path === "/v1/studio/conversation-intent";
   const requireSingleAttempt = path !== "/v1/diag";
@@ -87,19 +91,20 @@ async function call<TReq, TRes>(path: string, body: TReq, options?: AiCallOption
     ...(requireStudioEdit ? { requireStudioEdit: true } : {}),
     ...(requireStudioImageTools ? { requireStudioImageTools: true } : {}),
     ...(requireStudioDecomposition ? { requireStudioDecomposition: true } : {}),
+    ...(requireStudioDecompositionQueue ? { requireStudioDecompositionQueue: true } : {}),
     ...(requireStudioLayerPlan ? { requireStudioLayerPlan: true } : {}),
     ...(requireConversationIntent ? { requireStudioConversationIntent: true } : {}),
   } : undefined), providerHeaders(
     requireStudioEdit || (path === "/v1/generate" && options?.requireRealImageProvider === true),
     requireVisualCheck || requireStudioLayerPlan || requireConversationIntent,
-    path === "/v1/decompose" && options?.requireRealLayerProvider === true,
+    requireStudioDecomposition || requireStudioDecompositionQueue,
   )]);
   const [service, headers] = await withinAiDeadline(setup, signal);
   signal.throwIfAborted();
   const res = await withinAiDeadline(fetch(`${service.base}${path}`, {
     method: "POST",
     headers: { "content-type": "application/json", ...headers,
-      ...(options?.requestId && /^sgr_[a-f0-9]{32}$/.test(options.requestId) ? { "X-Novart-Request-Id": options.requestId } : {}),
+      ...(options?.requestId && /^s(?:gr|dr)_[a-f0-9]{32}$/.test(options.requestId) ? { "X-Novart-Request-Id": options.requestId } : {}),
     },
     // The product's task claim is insufficient if a lower client layer retries
     // the paid POST. Enforce this also for its optional text precheck.
@@ -141,6 +146,12 @@ export const ai = {
    */
   decompose: (b: DecomposeRequest, options?: AiCallOptions) =>
     call<DecomposeRequest, DecomposeResponse>("/v1/decompose", b, options),
+  /** Submit once; the worker persists the receipt before polling the same task. */
+  decomposeSubmit: (b: DecomposeRequest, options?: AiCallOptions) =>
+    call<DecomposeRequest, DecomposeQueueTicket>("/v1/decompose/submit", b, { ...options, requireRealLayerProvider: true }),
+  /** Read an existing provider task. This endpoint never starts inference. */
+  decomposePoll: (b: DecomposeQueuePollRequest, options?: AiCallOptions) =>
+    call<DecomposeQueuePollRequest, DecomposeQueuePollResponse>("/v1/decompose/poll", b, { ...options, requireRealLayerProvider: true }),
   complianceCheck: (b: ComplianceCheckRequest, options?: AiCallOptions) =>
     call<ComplianceCheckRequest, ComplianceCheckResponse>(
       "/v1/compliance/check",

@@ -3,7 +3,7 @@
 'use strict';
 const assert = require('node:assert/strict');
 
-async function runOwnedLayerChecks({page,surface,origin,fixture,png,material,layerResults,shapes,check,report,setStage,allowLayerDownloads,state,failureOnly=false}) {
+async function runOwnedLayerChecks({page,surface,origin,fixture,png,material,layerResults,shapes,check,report,setStage,allowLayerDownloads,state,failureOnly=false,queueRecovery=false}) {
   const button=name=>page.getByRole('button',{name,exact:true});
   const waitSaved=async()=>{await page.waitForFunction(()=>document.querySelector('[data-testid="owned-editor"]')?.dataset.saveState==='saved');};
   const save=async()=>{if(!await page.getByRole('dialog',{name:'图片分层',exact:true}).isVisible()){const control=button('保存');if(await control.isEnabled())await control.click();}await waitSaved();};
@@ -29,6 +29,22 @@ async function runOwnedLayerChecks({page,surface,origin,fixture,png,material,lay
   if (failureOnly) {
     await page.locator('[data-testid="owned-layer-task"][data-status="FAILED"]').waitFor();
     const notice=page.getByTestId('owned-layer-task');
+    if(queueRecovery) {
+      await notice.filter({hasText:'分层等待超时'}).waitFor();
+      assert.equal(await button('用同样设置重新分层').count(),0);
+      await page.reload();await surface.waitFor();await page.getByTestId('owned-canvas-item').click();await button('选图AI分层').click();
+      await button('检查并保存已有结果').click();
+      await notice.filter({hasText:'图层已保存'}).waitFor();
+      assert.equal(state().decompositionPosts,1);assert.equal(state().layerRecoveryPosts,1);
+      assert.equal(shapes().length,1);assert.notEqual(sourceRecord().meta?.novartOwned?.hidden,true);
+      check('expired-provider-task-survives-reload-and-recovers-via-explicit-read-without-resubmission');
+      await page.reload();await surface.waitFor();await page.getByTestId('owned-canvas-item').click();await button('选图AI分层').click();
+      await button('展开为可编辑图层').waitFor();
+      assert.equal(state().decompositionPosts,1);assert.equal(state().layerRecoveryPosts,1);
+      check('recovered-result-persists-and-remains-explicitly-placeable');
+      report.unverified=['This fixture tests UI recovery only; no real provider or database is used'];
+      return;
+    }
     await notice.filter({hasText:'HTTP 400'}).waitFor();
     assert.ok(!(await notice.innerText()).includes('任务仍会继续'));
     await page.waitForTimeout(3000);assert.equal(state().decompositionPosts,1);

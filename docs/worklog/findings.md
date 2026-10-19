@@ -269,3 +269,11 @@ CDS preflight directly confirms push automatic deployment and default shared bra
 - `39216392222` API exit 0 / UI exit 1。真实 UI 验收还在调用“返回设计对话”“创作需求”与旧的工作流修改目标，必须迁移到当前对话，而非删验收。
 - 当前对话仅防抖保存和 beforeunload 警告，缺离页保存，输入后立即确认离开可能丢失末段文字；补 revision checked keepalive PUT 后 Chrome 真实导航恢复通过。未承诺强退/断网或未确认写入一定保存。
 - 新的修改目标存于 StudioConversation.draft.quickEditTargetId；素材用途仍在 WorkbenchProjectState，两者分别查库，不能再要求旧模式控件同时存在。
+
+## 2026-10-19 7层超时的线上证据
+
+- 两任务原图1024²，规划7层成功，providerStartedAt后180.414/180.619秒失败；outputJson为空、发布图层0。
+- 容器timeout=180，/layer-plan200后/decompose504；ai.failure stage=unknown，确认同步请求超时和分类遗漏，未进入几何归档。
+- layer配置无自定义覆盖，默认官方fal-ai/qwen-image-layered；采用其持久队列，无需改密钥或新增配置。
+- GitHub84fa5e4成功run39220851878；CDS timed_out_no_run、workflow URL空，实际deployedImage及health仍2492b43。正常恢复入口为claim-prebuilt先dry-run再deploy，不修改平台结果。
+- 安全边界：POST无编号不重发；有编号查询可重试。6分钟退出后只显式查询原任务，24小时恢复期限不延长。旧失败任务无编号不能凭空恢复。

@@ -126,7 +126,7 @@ export function OwnedLayerPanel({ api, workspaceId, projectId, userId, document,
   async function retryArchive(task: DecompositionTask) {
     const expected = activeApi.current; if (!expected || readOnly || serial.current) return;
     serial.current = true; setBusy(true);
-    try { const result = await expected.retryLayerArchive(task.requestId); if (current(expected)) { noticeTask.current = result.requestId; accept(result); setNotice("正在重新保存已有图层，不会重新调用分层模型。"); } }
+    try { const result = await expected.retryLayerArchive(task.requestId); if (current(expected)) { noticeTask.current = result.requestId; accept(result); setNotice("正在检查并保存原任务的结果，不会重新提交分层模型。"); } }
     catch (error) { if (current(expected)) setNotice(message(error)); }
     finally { if (current(expected)) { serial.current = false; setBusy(false); } }
   }
@@ -163,7 +163,7 @@ export function OwnedLayerPanel({ api, workspaceId, projectId, userId, document,
       {task.status === "SUCCEEDED" && <div className="flex flex-wrap gap-2"><button type="button" className={control} disabled={readOnly || busy} onClick={() => void place(task)}>展开为可编辑图层</button>
         {api && <button type="button" className={control} disabled={busy} onClick={() => void download(task)} data-testid="owned-layer-psd-download">下载 PSD</button>}
       </div>}
-      {task.canRetryArchive && <button type="button" className={control} disabled={readOnly || busy} onClick={() => void retryArchive(task)}>重新保存已有图层</button>}
+      {task.canRetryArchive && <button type="button" className={control} disabled={readOnly || busy} onClick={() => void retryArchive(task)}>检查并保存已有结果</button>}
       {task.status === "FAILED" && !task.canRetryArchive && (() => {
         // Retry only preselects the same image and settings; the paid call
         // still needs the explicit submit button below the options.

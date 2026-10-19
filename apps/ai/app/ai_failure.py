@@ -55,7 +55,7 @@ def failure_response(exc: Exception, request_id: str | None) -> tuple[int, dict]
         else:
             code = "PROVIDER_NETWORK"
     info = AiFailureInfo(code=code, stage=stage, upstreamStatus=status)
-    safe_id = request_id if request_id and re.fullmatch(r"sgr_[a-f0-9]{32}", request_id) else "unavailable"
+    safe_id = request_id if request_id and re.fullmatch(r"s(?:gr|dr)_[a-f0-9]{32}", request_id) else "unavailable"
     # Format these allowlisted values into the message: default log formatters
     # discard `extra`. Never log exception text/body/URL/key/prompt or traceback.
     logger.warning("ai.failure request=%s code=%s stage=%s upstream=%s", safe_id, info.code, info.stage, info.upstreamStatus)

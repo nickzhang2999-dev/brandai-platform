@@ -582,6 +582,34 @@ class DecomposeResponse(BaseModel):
     usage: Optional[GenerateUsage] = None
 
 
+DecomposeQueueRequestId = Annotated[str, StringConstraints(strict=True, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]*$")]
+DecomposeEndpointId = Annotated[str, StringConstraints(strict=True, max_length=200, pattern=r"^[a-z0-9][a-z0-9_-]*(/[a-z0-9][a-z0-9_-]*)+$")]
+
+
+class DecomposeQueueTicket(BaseModel):
+    model_config = {"extra": "forbid"}
+    requestId: DecomposeQueueRequestId
+    endpointId: DecomposeEndpointId
+
+
+class DecomposeQueuePollRequest(DecomposeQueueTicket):
+    providerRetryPolicy: Literal["never"]
+
+
+class DecomposeQueueWaiting(BaseModel):
+    model_config = {"extra": "forbid"}
+    status: Literal["IN_QUEUE", "IN_PROGRESS"]
+
+
+class DecomposeQueueCompleted(BaseModel):
+    model_config = {"extra": "forbid"}
+    status: Literal["COMPLETED"]
+    result: DecomposeResponse
+
+
+DecomposeQueuePollResponse = Annotated[DecomposeQueueWaiting | DecomposeQueueCompleted, Field(discriminator="status")]
+
+
 class TermIn(BaseModel):
     type: str
     term: str

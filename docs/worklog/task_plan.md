@@ -1,5 +1,13 @@
 # Novart product integration
 
+## 2026-10-19 分层 180 秒超时修复
+
+- [x] 只读取证：两次 AUTO 分析成功，7 层分解约 180 秒失败；AI 配置 180 秒、两次 HTTP 504、错误分类阶段缺失；实际运行 2492b43，GitHub 84fa5e4 构建成功未被 CDS 接续。
+- [x] 官方 Fal 队列单次提交、任务编号持久化、只读查询与结果恢复；禁止不明提交自动重发，保持有界等待和权限校验。
+- [x] 错误分类、版本能力门禁、前端原任务恢复入口及并发/重启/超时回归。
+- [pending] 全量门禁、实际 Chrome 交互、独立审查、修复报告；正常推送 devUpdate1012 后通过 CDS 原生已构建镜像流程验证实际版本。
+- [boundary] 不改 main、正式环境、模型配置或数据库结构；此前无模型编号的旧失败记录不能伪造恢复。本轮修复与真实付费模型质量验收分开记录。
+
 ## Current task — canvas bug audit and one verified branch push · 2026-10-15
 
 Latest user instruction authorizes continuing yesterday's bug log and one final normal push to `devUpdate1012`. Earlier local-only entries below are historical. Keep main, production, shared data and deployment configuration unchanged; do not start Docker or make paid model calls for these regressions.

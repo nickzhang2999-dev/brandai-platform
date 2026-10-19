@@ -16,6 +16,28 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 describe("product visual-check service capability gate", () => {
+  it("rejects a cached synchronous layer service before queue submission", async () => {
+    f.fetch.mockImplementation(async () => Response.json(layered));
+    const { resolveAiService } = await load();
+    await resolveAiService({ requireStudioDecomposition: true });
+    await expect(resolveAiService({ requireStudioDecompositionQueue: true })).rejects.toThrow("durable layer queue tasks");
+    f.fetch.mockImplementation(async () => Response.json({ ...layered, studioDecompositionQueueRevision: "studio-layer-queue-r1" }));
+    expect(await resolveAiService({ requireStudioDecompositionQueue: true })).toMatchObject({ studioDecompositionQueueRevision: "studio-layer-queue-r1" });
+    await resolveAiService({ requireStudioDecompositionQueue: true });
+    expect(f.fetch).toHaveBeenCalledTimes(3);
+  });
+  it("resolves only a queue-capable container and does not fall back to the synchronous alias", async () => {
+    vi.stubEnv("BRANDAI_AI_SERVICE_URL", "http://ai:8000");
+    f.fetch.mockImplementation(async (url: string) => Response.json(url.includes("10.0.0.1") ? layered : { ...layered, studioDecompositionQueueRevision: "studio-layer-queue-r1" }));
+    const { resolveAiService } = await load();
+    expect((await resolveAiService({ requireStudioDecomposition: true })).base).toBe("http://10.0.0.1:8000");
+    expect((await resolveAiService({ requireStudioDecompositionQueue: true })).base).toBe("http://10.0.0.2:8000");
+  });
+  it("queue support cannot opt out of the single-provider-attempt contract", async () => {
+    f.fetch.mockResolvedValue(Response.json({ ...layered, providerRetryRevision: undefined, studioDecompositionQueueRevision: "studio-layer-queue-r1" }));
+    const { resolveAiService } = await load();
+    await expect(resolveAiService({ requireStudioDecompositionQueue: true })).rejects.toThrow("single-provider-attempt revision");
+  });
   it("requires structured conversation capability before one paid text analysis dispatch", async () => {
     f.fetch.mockImplementation(async () => Response.json(current));
     const { resolveAiService } = await load();

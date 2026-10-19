@@ -2,7 +2,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { studioDecompositionFailure } from "./studio-decomposition-failure";
 import { z } from "zod";
 import { prisma, Prisma } from "@brandai/db";
-import { DecomposeResponse } from "@brandai/contracts";
+import { DecomposeResponse, DecomposeQueueTicket, DecomposeQueuePollResponse } from "@brandai/contracts";
+import { AiServiceFailure } from "./ai-failure";
 import { StudioDecompositionInput, StudioDecompositionQuery, StudioDecompositionView, StudioDecompositionLayer,
   STUDIO_DECOMPOSITION_TTL_MS, STUDIO_LAYER_RECOVERY_TTL_MS } from "../../../../packages/contracts/src/studio-decomposition";
 import { ApiException } from "./api";
@@ -28,7 +29,14 @@ import { studioBrandMaterialSourceDigest, studioBrandObjectKey } from "./studio-
 
 type Row = Prisma.StudioDecompositionRequestGetPayload<object>;
 type Layer = z.infer<typeof StudioDecompositionLayer>;
-const PrivateOutput = z.object({ result: DecomposeResponse, publishedLayers: z.array(StudioDecompositionLayer).nullable() }).strict();
+// A ticket is a durable receipt for one paid submission, never permission to
+// submit again. Legacy completed outputs remain readable without a queue key.
+const PrivateOutput = z.object({ result: DecomposeResponse.nullable(), publishedLayers: z.array(StudioDecompositionLayer).nullable(),
+  queue: DecomposeQueueTicket.optional(), pollAfter: z.string().datetime().optional() }).strict().refine(value => value.result || value.queue);
+const POLL_INTERVAL_MS = 15_000;
+// A completed Fal poll performs status + result GETs, each bounded at 15s.
+const POLL_TIMEOUT_MS = 35_000;
+const POLL_LEASE_MS = POLL_TIMEOUT_MS + 5_000;
 const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const keysOf = (row: Pick<Row, "objectKeys">) => z.array(z.string().max(512)).max(30).parse(row.objectKeys);
 const outputOf = (row: Row) => row.outputJson === null ? null : PrivateOutput.parse(row.outputJson);
@@ -125,7 +133,7 @@ async function sourceAsset(workspaceId: string, projectId: string, assetId: stri
 
 export async function expireStudioDecompositions(workspaceId?: string) {
   await prisma.studioDecompositionRequest.updateMany({ where: { ...(workspaceId ? { workspaceId } : {}), status: { in: ["PENDING", "RUNNING"] }, expiresAt: { lte: new Date() } },
-    data: { status: "FAILED", error: "分层任务超过处理期限。已有结果可重新保存；未确认模型结果时不会自动再次调用。", archiveToken: null, archivingStartedAt: null } });
+    data: { status: "FAILED", error: "分层任务超过处理期限。已受理的任务可检查并保存已有结果；系统不会自动重新提交分层模型。", archiveToken: null, archivingStartedAt: null } });
 }
 export async function readStudioDecompositions(workspaceId: string, userId: string, raw: unknown) {
   const input = StudioDecompositionQuery.parse(raw); await projectAccess(workspaceId, userId, input.projectId);
@@ -242,11 +250,62 @@ export async function retryStudioLayerArchive(workspaceId: string, userId: strin
   if (row.status === "SUCCEEDED") return receipt(row);
   if (!canRetry(row) || !row.outputJson) throw new ApiException(409, "没有可重存的模型结果。请核对任务状态；不会重新调用模型。");
   const output = outputOf(row);
-  if (!output || keysOf(row).length + output.result.layers.length > 30) throw new ApiException(409, "图层保存重试次数已达到上限，请联系管理员检查存储。");
+  if (!output || keysOf(row).length + (output.result?.layers.length ?? 0) > 30) throw new ApiException(409, "图层保存重试次数已达到上限，请联系管理员检查存储。");
   const changed = await prisma.studioDecompositionRequest.updateMany({ where: { id: row.id, status: "FAILED", archiveToken: null, archiveExpiresAt: { gt: new Date() } },
     data: { status: "RUNNING", expiresAt: new Date(Math.min(Date.now() + STUDIO_DECOMPOSITION_TTL_MS, row.archiveExpiresAt!.getTime())), error: null } });
   if (changed.count) await enqueueStudioDecomposition(row.id);
   return receipt(await prisma.studioDecompositionRequest.findUniqueOrThrow({ where: { id: row.id } }));
+}
+
+const decompositionTraceId = (requestId: string) => `sdr_${createHash("sha256").update(requestId).digest("hex").slice(0, 32)}`;
+
+/** One bounded status/result GET per delivery. A persisted CAS lease prevents
+ * duplicate deliveries polling simultaneously; a worker crash releases it by
+ * time, while the ticket and the original paid claim survive independently. */
+async function pollQueuedLayers(row: Row, parentSignal: AbortSignal) {
+  const output = outputOf(row);
+  if (!output?.queue || output.result || row.status !== "RUNNING" || row.expiresAt.getTime() <= Date.now()
+    || !row.archiveExpiresAt || row.archiveExpiresAt.getTime() <= Date.now()
+    || (output.pollAfter && Date.parse(output.pollAfter) > Date.now())) return;
+  const leased = { ...output, pollAfter: new Date(Date.now() + POLL_LEASE_MS).toISOString() };
+  const claim = await prisma.studioDecompositionRequest.updateMany({ where: { id: row.id, status: "RUNNING", archiveToken: null,
+    expiresAt: row.expiresAt, outputJson: { equals: row.outputJson as Prisma.InputJsonValue } },
+    data: { outputJson: leased as Prisma.InputJsonValue } });
+  if (!claim.count) return;
+  const owned = { id: row.id, status: "RUNNING", archiveToken: null, expiresAt: row.expiresAt,
+    outputJson: { equals: leased as Prisma.InputJsonValue } } satisfies Prisma.StudioDecompositionRequestWhereInput;
+  try {
+    await projectAccess(row.workspaceId, row.userId, row.projectId, true);
+    await prisma.$transaction(async tx => actorInTransaction(tx, row));
+    await sourceAsset(row.workspaceId, row.projectId, row.assetId, row.assetSha256);
+    const signal = AbortSignal.any([parentSignal, AbortSignal.timeout(POLL_TIMEOUT_MS)]);
+    const response = DecomposeQueuePollResponse.parse(await ai.decomposePoll({ ...output.queue, providerRetryPolicy: "never" },
+      { signal, requestId: decompositionTraceId(row.id), requireRealLayerProvider: true, maxResponseBytes: 32 * 1024 * 1024 }));
+    signal.throwIfAborted();
+    if (response.status !== "COMPLETED") {
+      await prisma.studioDecompositionRequest.updateMany({ where: owned,
+        data: { outputJson: { ...output, pollAfter: new Date(Date.now() + POLL_INTERVAL_MS).toISOString() } as Prisma.InputJsonValue } });
+      return;
+    }
+    const result = DecomposeResponse.parse(response.result);
+    if (result.usage?.provider !== "FalLayerProvider" || result.layers.length < 2 || result.layers.length > 10)
+      throw new ApiException(502, "真实分层模型未返回完整的透明图层结果。");
+    assertStudioLayerBudget(row.sourceWidth, row.sourceHeight, result.layers.length);
+    const saved = await prisma.studioDecompositionRequest.updateMany({ where: { ...owned, AND: [{ expiresAt: { gt: new Date() } }] },
+      data: { outputJson: { ...output, result, publishedLayers: null } as Prisma.InputJsonValue } });
+    if (saved.count) await recordUsage({ workspaceId: row.workspaceId, kind: "DECOMPOSE", status: "SUCCEEDED", provider: result.usage.provider,
+      ...(result.usage.model ? { model: result.usage.model } : {}), imageCount: result.layers.length,
+      ...(result.usage.latencyMs !== undefined ? { latencyMs: result.usage.latencyMs } : {}) });
+  } catch (error) {
+    const permanent = error instanceof ApiException || error instanceof z.ZodError
+      || (error instanceof AiServiceFailure && ["PROVIDER_AUTH", "PROVIDER_REQUEST_REJECTED", "PROVIDER_INVALID_RESPONSE", "SOURCE_UNAVAILABLE"].includes(error.info.code));
+    // Status reads can be repeated safely. Keep the paid receipt through any
+    // transient network/gateway timeout, but never extend its fixed 24h window.
+    await prisma.studioDecompositionRequest.updateMany({ where: owned,
+      data: permanent ? { status: "FAILED", error: error instanceof ApiException && [403, 404, 409, 422].includes(error.status)
+        ? error.message : studioDecompositionFailure(error, false) }
+        : { outputJson: { ...output, pollAfter: new Date(Date.now() + POLL_INTERVAL_MS).toISOString() } as Prisma.InputJsonValue } });
+  }
 }
 
 /** Claim once in Postgres. Redis retries and lost HTTP receipts cannot re-enter
@@ -328,23 +387,28 @@ export async function runStudioDecomposition(requestId: string) {
       if (!claimed.count) return;
       ownedProviderClaim = claimTime;
       signal.throwIfAborted();
-      const result = DecomposeResponse.parse(await ai.decompose({ imageUrl: `data:${metadata.mimeType};base64,${original.toString("base64")}`, layerCount: row.layerCount,
-        providerRetryPolicy: "never", ...(semanticDecompositionIntent(row.intent, planning) ? { intent: semanticDecompositionIntent(row.intent, planning) } : {}) }, { signal, requireRealLayerProvider: true, maxResponseBytes: 32 * 1024 * 1024 }));
-      signal.throwIfAborted();
-      if (result.usage?.provider !== "FalLayerProvider" || result.layers.length < 2 || result.layers.length > 10) throw new ApiException(502, "真实分层模型未返回完整的透明图层结果。");
-      assertStudioLayerBudget(row.sourceWidth, row.sourceHeight, result.layers.length);
-      const saved = await prisma.studioDecompositionRequest.updateMany({ where: { id: requestId, status: "RUNNING", outputJson: { equals: Prisma.DbNull }, expiresAt: { gt: new Date() } },
-        data: { outputJson: { result, publishedLayers: null } as Prisma.InputJsonValue, archiveExpiresAt: new Date(Date.now() + STUDIO_LAYER_RECOVERY_TTL_MS) } });
+      const queue = DecomposeQueueTicket.parse(await ai.decomposeSubmit({ imageUrl: `data:${metadata.mimeType};base64,${original.toString("base64")}`, layerCount: row.layerCount,
+        providerRetryPolicy: "never", ...(semanticDecompositionIntent(row.intent, planning) ? { intent: semanticDecompositionIntent(row.intent, planning) } : {}) },
+        { signal, requestId: decompositionTraceId(requestId), requireRealLayerProvider: true, maxResponseBytes: 4096 }));
+      // Even a response arriving just after the task TTL must retain its ticket:
+      // explicit recovery can then GET the existing task without another charge.
+      const saved = await prisma.studioDecompositionRequest.updateMany({ where: { id: requestId, status: { in: ["RUNNING", "FAILED"] },
+        providerStartedAt: claimTime, outputJson: { equals: Prisma.DbNull }, expiresAt: originalDeadline },
+        data: { outputJson: { queue, result: null, publishedLayers: null } as Prisma.InputJsonValue,
+          archiveExpiresAt: new Date(claimTime.getTime() + STUDIO_LAYER_RECOVERY_TTL_MS) } });
       if (!saved.count) return;
-      await recordUsage({ workspaceId: row.workspaceId, kind: "DECOMPOSE", status: "SUCCEEDED", provider: result.usage.provider,
-        ...(result.usage.model ? { model: result.usage.model } : {}), imageCount: result.layers.length, ...(result.usage.latencyMs !== undefined ? { latencyMs: result.usage.latencyMs } : {}) });
     }
     row = await prisma.studioDecompositionRequest.findUniqueOrThrow({ where: { id: requestId } });
-    if (row.outputJson) await archiveLayers(row, signal);
+    if (row.expiresAt.getTime() !== originalDeadline.getTime()) return;
+    const output = outputOf(row);
+    if (output?.queue && !output.result) await pollQueuedLayers(row, signal);
+    row = await prisma.studioDecompositionRequest.findUniqueOrThrow({ where: { id: requestId } });
+    if (row.expiresAt.getTime() !== originalDeadline.getTime()) return;
+    if (outputOf(row)?.result) await archiveLayers(row, signal);
   } catch (error) {
     // Never echo provider URLs, headers or prompts from an upstream exception.
     await prisma.studioDecompositionRequest.updateMany({ where: { id: requestId, expiresAt: originalDeadline,
-      ...(ownedProviderClaim ? { status: "RUNNING", providerStartedAt: ownedProviderClaim, archiveToken: null }
+      ...(ownedProviderClaim ? { status: "RUNNING", providerStartedAt: ownedProviderClaim, archiveToken: null, outputJson: { equals: Prisma.DbNull } }
         : ownedAnalysisClaim ? { status: "RUNNING", providerStartedAt: null, planningJson: { equals: ownedAnalysisClaim } }
         : { status: "PENDING", providerStartedAt: null }) },
       data: { status: "FAILED", ...(ownedAnalysisClaim ? { planningJson: { ...initialPlanning, status: "FAILED", startedAt: (ownedAnalysisClaim as { startedAt: string }).startedAt } } : {}),
@@ -353,7 +417,7 @@ export async function runStudioDecomposition(requestId: string) {
   }
 }
 async function archiveLayers(row: Row, signal: AbortSignal) {
-  const output = outputOf(row); if (!output || output.publishedLayers || !row.archiveExpiresAt || row.archiveExpiresAt.getTime() <= Date.now()) return;
+  const output = outputOf(row); if (!output?.result || output.publishedLayers || !row.archiveExpiresAt || row.archiveExpiresAt.getTime() <= Date.now()) return;
   const oldKeys = keysOf(row), count = output.result.layers.length;
   if (oldKeys.length + count > 30) throw new ApiException(409, "图层保存重试次数已达到上限，请联系管理员检查存储。");
   const token = randomUUID(), prefix = `${row.workspaceId}/studio-layer-assets/${row.projectId}/${row.id}/${token}`;

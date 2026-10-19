@@ -26,6 +26,8 @@ from .studio_image_tool_schemas import STUDIO_IMAGE_TOOLS_REVISION
 from .studio_image_tools import run_studio_image_tool
 from .studio_edit import prepare_studio_edit, studio_edit_instructions, studio_edit_params
 from .providers.http_providers import (
+    FalLayerProvider,
+    LayerQueueConfigurationError,
     _DEFAULT_IMAGE_QUALITY,
     _estimate_cost_usd,
 )
@@ -38,6 +40,9 @@ from .schemas import (
     ComplianceResult,
     DecomposeRequest,
     DecomposeResponse,
+    DecomposeQueueTicket,
+    DecomposeQueuePollRequest,
+    DecomposeQueuePollResponse,
     DecomposedLayer,
     DescribeRequest,
     DescribeResponse,
@@ -145,6 +150,7 @@ GENERATION_REVISION = "gpt-image-2-size-quality-r1"
 VISUAL_CHECK_REVISION = "studio-visual-check-evidence-r1"
 PROVIDER_RETRY_REVISION = "single-provider-attempt-r2"
 STUDIO_DECOMPOSITION_REVISION = "studio-real-layer-single-attempt-r1"
+STUDIO_DECOMPOSITION_QUEUE_REVISION = "studio-layer-queue-r1"
 
 
 @app.get("/health")
@@ -165,6 +171,7 @@ async def health():
         "studioEditRevision": STUDIO_EDIT_REVISION,
         "studioImageToolsRevision": STUDIO_IMAGE_TOOLS_REVISION,
         "studioDecompositionRevision": STUDIO_DECOMPOSITION_REVISION,
+        "studioDecompositionQueueRevision": STUDIO_DECOMPOSITION_QUEUE_REVISION,
         "studioLayerPlanRevision": STUDIO_LAYER_PLAN_REVISION,
         "studioConversationIntentRevision": STUDIO_CONVERSATION_MODEL_REVISION,
     }
@@ -1051,6 +1058,10 @@ async def decompose(
     )
     latency_ms = int((time.perf_counter() - started) * 1000)
 
+    return _decomposition_response(result, provider, latency_ms)
+
+
+def _decomposition_response(result: dict, provider: LayerProvider, latency_ms: int) -> DecomposeResponse:
     layers = [
         DecomposedLayer(
             imageUrl=item["imageUrl"],
@@ -1073,6 +1084,33 @@ async def decompose(
             latencyMs=latency_ms,
         ),
     )
+
+
+@app.post("/v1/decompose/submit", response_model=DecomposeQueueTicket)
+async def decompose_submit(req: DecomposeRequest, provider: LayerProvider = Depends(resolve_layer_provider)):
+    if type(provider) is not FalLayerProvider or req.providerRetryPolicy != "never":
+        raise HTTPException(status_code=503, detail="Real single-attempt layer queue unavailable")
+    if not req.imageUrl.strip():
+        raise HTTPException(status_code=400, detail="imageUrl is required")
+    try:
+        return await provider.submit_decomposition(req.imageUrl, layer_count=req.layerCount, intent=req.intent)
+    except LayerQueueConfigurationError as exc:
+        # Only fixed local configuration messages, never provider content.
+        raise HTTPException(status_code=503, detail=str(exc)) from None
+
+
+@app.post("/v1/decompose/poll", response_model=DecomposeQueuePollResponse, response_model_exclude_none=True)
+async def decompose_poll(req: DecomposeQueuePollRequest, provider: LayerProvider = Depends(resolve_layer_provider)):
+    if type(provider) is not FalLayerProvider:
+        raise HTTPException(status_code=503, detail="Real single-attempt layer queue unavailable")
+    started = time.perf_counter()
+    try:
+        result = await provider.poll_decomposition(req.requestId, req.endpointId)
+    except LayerQueueConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from None
+    if result["status"] != "COMPLETED":
+        return result
+    return {"status": "COMPLETED", "result": _decomposition_response(result["result"], provider, int((time.perf_counter() - started) * 1000))}
 
 
 def _scan_text(text: str, term_lib) -> list[ComplianceResult]:

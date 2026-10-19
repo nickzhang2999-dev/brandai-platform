@@ -7,6 +7,7 @@ export const REQUIRED_AI_PROVIDER_RETRY_REVISION = "single-provider-attempt-r2";
 export const REQUIRED_AI_STUDIO_EDIT_REVISION = "studio-whole-image-edit-r1";
 export const REQUIRED_AI_STUDIO_IMAGE_TOOLS_REVISION = "studio-image-tools-r1";
 export const REQUIRED_AI_STUDIO_DECOMPOSITION_REVISION = "studio-real-layer-single-attempt-r1";
+export const REQUIRED_AI_STUDIO_DECOMPOSITION_QUEUE_REVISION = "studio-layer-queue-r1";
 export const REQUIRED_AI_STUDIO_LAYER_PLAN_REVISION = "semantic-layer-plan-r1";
 export const REQUIRED_AI_STUDIO_CONVERSATION_INTENT_REVISION = "structured-conversation-intent-r2";
 
@@ -27,11 +28,12 @@ export type AiServiceResolution = {
   studioEditRevision?: string;
   studioImageToolsRevision?: string;
   studioDecompositionRevision?: string;
+  studioDecompositionQueueRevision?: string;
   studioLayerPlanRevision?: string;
   studioConversationIntentRevision?: string;
 };
 
-export type AiServiceRequirements = { requireVisualCheck?: boolean; requireSingleAttempt?: boolean; requireStudioEdit?: boolean; requireStudioDecomposition?: boolean; requireStudioLayerPlan?: boolean; requireStudioImageTools?: boolean; requireStudioConversationIntent?: boolean };
+export type AiServiceRequirements = { requireVisualCheck?: boolean; requireSingleAttempt?: boolean; requireStudioEdit?: boolean; requireStudioDecomposition?: boolean; requireStudioDecompositionQueue?: boolean; requireStudioLayerPlan?: boolean; requireStudioImageTools?: boolean; requireStudioConversationIntent?: boolean };
 
 let cachedResolution: { value: AiServiceResolution; expiresAt: number } | null =
   null;
@@ -57,6 +59,7 @@ async function probe(base: string): Promise<AiServiceResolution | null> {
       studioEditRevision?: unknown;
       studioImageToolsRevision?: unknown;
       studioDecompositionRevision?: unknown;
+      studioDecompositionQueueRevision?: unknown;
       studioLayerPlanRevision?: unknown;
       studioConversationIntentRevision?: unknown;
     };
@@ -79,6 +82,7 @@ async function probe(base: string): Promise<AiServiceResolution | null> {
       studioEditRevision: typeof body.studioEditRevision === "string" ? body.studioEditRevision : undefined,
       studioImageToolsRevision: typeof body.studioImageToolsRevision === "string" ? body.studioImageToolsRevision : undefined,
       studioDecompositionRevision: typeof body.studioDecompositionRevision === "string" ? body.studioDecompositionRevision : undefined,
+      studioDecompositionQueueRevision: typeof body.studioDecompositionQueueRevision === "string" ? body.studioDecompositionQueueRevision : undefined,
       studioLayerPlanRevision: typeof body.studioLayerPlanRevision === "string" ? body.studioLayerPlanRevision : undefined,
       studioConversationIntentRevision: typeof body.studioConversationIntentRevision === "string" ? body.studioConversationIntentRevision : undefined,
     };
@@ -104,13 +108,15 @@ export async function resolveAiService(requirements: AiServiceRequirements = {})
   const requireStudioEdit = requirements.requireStudioEdit === true;
   const requireStudioImageTools = requirements.requireStudioImageTools === true;
   const requireStudioDecomposition = requirements.requireStudioDecomposition === true;
+  const requireStudioDecompositionQueue = requirements.requireStudioDecompositionQueue === true;
   const requireStudioLayerPlan = requirements.requireStudioLayerPlan === true;
   const requireStudioConversationIntent = requirements.requireStudioConversationIntent === true;
-  const requireSingleAttempt = requirements.requireSingleAttempt === true || requireStudioEdit || requireStudioDecomposition || requireStudioLayerPlan || requireStudioImageTools || requireStudioConversationIntent;
+  const requireSingleAttempt = requirements.requireSingleAttempt === true || requireStudioEdit || requireStudioDecomposition || requireStudioDecompositionQueue || requireStudioLayerPlan || requireStudioImageTools || requireStudioConversationIntent;
   if (cachedResolution && cachedResolution.expiresAt > now &&
       (!requireStudioEdit || cachedResolution.value.studioEditRevision === REQUIRED_AI_STUDIO_EDIT_REVISION) &&
       (!requireStudioImageTools || cachedResolution.value.studioImageToolsRevision === REQUIRED_AI_STUDIO_IMAGE_TOOLS_REVISION) &&
       (!requireStudioDecomposition || cachedResolution.value.studioDecompositionRevision === REQUIRED_AI_STUDIO_DECOMPOSITION_REVISION) &&
+      (!requireStudioDecompositionQueue || cachedResolution.value.studioDecompositionQueueRevision === REQUIRED_AI_STUDIO_DECOMPOSITION_QUEUE_REVISION) &&
       (!requireStudioLayerPlan || cachedResolution.value.studioLayerPlanRevision === REQUIRED_AI_STUDIO_LAYER_PLAN_REVISION) &&
       (!requireStudioConversationIntent || cachedResolution.value.studioConversationIntentRevision === REQUIRED_AI_STUDIO_CONVERSATION_INTENT_REVISION) &&
       (!requireSingleAttempt || cachedResolution.value.providerRetryRevision === REQUIRED_AI_PROVIDER_RETRY_REVISION) &&
@@ -139,6 +145,9 @@ export async function resolveAiService(requirements: AiServiceRequirements = {})
       if (requireStudioDecomposition && health?.studioDecompositionRevision !== REQUIRED_AI_STUDIO_DECOMPOSITION_REVISION) {
         throw new Error("Configured AI service does not support the required real-layer decomposition revision");
       }
+      if (requireStudioDecompositionQueue && health?.studioDecompositionQueueRevision !== REQUIRED_AI_STUDIO_DECOMPOSITION_QUEUE_REVISION) {
+        throw new Error("Configured AI service does not support durable layer queue tasks");
+      }
       if (requireStudioLayerPlan && health?.studioLayerPlanRevision !== REQUIRED_AI_STUDIO_LAYER_PLAN_REVISION) {
         throw new Error("Configured AI service does not support real semantic-layer planning");
       }
@@ -162,6 +171,7 @@ export async function resolveAiService(requirements: AiServiceRequirements = {})
         (!requireStudioEdit || result.studioEditRevision === REQUIRED_AI_STUDIO_EDIT_REVISION) &&
         (!requireStudioImageTools || result.studioImageToolsRevision === REQUIRED_AI_STUDIO_IMAGE_TOOLS_REVISION) &&
         (!requireStudioDecomposition || result.studioDecompositionRevision === REQUIRED_AI_STUDIO_DECOMPOSITION_REVISION) &&
+        (!requireStudioDecompositionQueue || result.studioDecompositionQueueRevision === REQUIRED_AI_STUDIO_DECOMPOSITION_QUEUE_REVISION) &&
         (!requireStudioLayerPlan || result.studioLayerPlanRevision === REQUIRED_AI_STUDIO_LAYER_PLAN_REVISION) &&
         (!requireStudioConversationIntent || result.studioConversationIntentRevision === REQUIRED_AI_STUDIO_CONVERSATION_INTENT_REVISION) &&
         (!requireSingleAttempt || result.providerRetryRevision === REQUIRED_AI_PROVIDER_RETRY_REVISION) &&
@@ -183,7 +193,9 @@ export async function resolveAiService(requirements: AiServiceRequirements = {})
   // older branch and silently return the wrong dimensions/quality. A visible
   // retryable generation failure is safer than persisting a false 3:1 result.
   throw new Error(
-    requireStudioLayerPlan
+    requireStudioDecompositionQueue
+      ? "No compatible AI service found for durable layer queue tasks"
+      : requireStudioLayerPlan
       ? "No compatible AI service found for real semantic-layer planning"
       : requireStudioDecomposition
       ? "No compatible AI service found for the required real-layer decomposition revision and single-provider-attempt support"

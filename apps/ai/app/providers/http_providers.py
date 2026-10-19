@@ -23,7 +23,7 @@ import re
 import time
 from collections import Counter
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 from bs4 import BeautifulSoup
@@ -2262,6 +2262,10 @@ def _coerce_ingest(
 _FAL_PROBE_REQUEST_ID = "00000000-0000-0000-0000-000000000000"
 
 
+class LayerQueueConfigurationError(ValueError):
+    """Queue routing cannot safely be derived from the configured provider."""
+
+
 class FalLayerProvider(LayerProvider):
     """fal.ai `qwen-image-layered` — one image in, N RGBA layers out.
 
@@ -2306,52 +2310,145 @@ class FalLayerProvider(LayerProvider):
         return {
             "Authorization": f"Key {self.api_key}",
             "content-type": "application/json",
+            "X-Fal-No-Retry": "1",
         }
 
-    async def decompose(
-        self,
-        image_url: str,
-        *,
-        layer_count: int,
-        intent: str | None = None,
-    ) -> dict[str, Any]:
-        n = clamp_layer_count(layer_count)
-        body = {
+    @staticmethod
+    def _body(image_url: str, layer_count: int, intent: str | None) -> dict[str, Any]:
+        return {
             "image_url": image_url,
-            "num_layers": n,
+            "num_layers": clamp_layer_count(layer_count),
             "output_format": "png",
             "enable_safety_checker": True,
             "acceleration": "regular",
             "prompt": build_decompose_prompt(intent),
         }
-        async with self._client() as c:
-            r = await c.post(self.base_url, headers=self._headers(), json=body)
-            r.raise_for_status()
-            data = r.json()
 
+    @staticmethod
+    def _json(response: httpx.Response) -> dict[str, Any]:
+        try:
+            data = response.json()
+        except (ValueError, UnicodeError):
+            raise ImageResponseError("Invalid layer provider response") from None
+        if not isinstance(data, dict):
+            raise ImageResponseError("Invalid layer provider response")
+        return data
+
+    def _result(self, data: dict[str, Any]) -> dict[str, Any]:
+        images = data.get("images")
+        if not isinstance(images, list) or not 1 <= len(images) <= 10:
+            raise ImageResponseError("Layer provider returned no usable layers")
         layers: list[dict[str, Any]] = []
-        for item in data.get("images") or []:
+        for item in images:
             if not isinstance(item, dict):
-                continue
+                raise ImageResponseError("Invalid layer provider response")
             url = item.get("url")
-            if not url:
-                continue
+            # Fal's Image dimensions are optional. Preserve the existing wire
+            # placeholder for absent dimensions; archival decodes real pixels
+            # before placement and never trusts this placeholder as geometry.
+            width, height = item.get("width", 1), item.get("height", 1)
+            try:
+                parsed = urlsplit(url) if isinstance(url, str) else None
+                valid_url = parsed is not None and parsed.scheme == "https" and bool(parsed.hostname) and not parsed.username and not parsed.password
+            except ValueError:
+                valid_url = False
+            if not valid_url or type(width) is not int or type(height) is not int or width <= 0 or height <= 0:
+                raise ImageResponseError("Invalid layer provider response")
             layers.append(
                 {
                     "imageUrl": url,
-                    "width": int(item.get("width") or 0) or 1,
-                    "height": int(item.get("height") or 0) or 1,
+                    "width": width,
+                    "height": height,
                 }
             )
-        if not layers:
-            raise ValueError("fal layer decomposition returned no images")
-
         seed = data.get("seed")
         return {
             "layers": layers,
-            "seed": int(seed) if isinstance(seed, (int, float)) else None,
+            "seed": seed if type(seed) is int else None,
             "model": self.model,
         }
+
+    async def decompose(
+        self, image_url: str, *, layer_count: int, intent: str | None = None,
+    ) -> dict[str, Any]:
+        # Legacy callers still receive the same result, but never lose the
+        # safe timeout/auth classification or silently replay a paid request.
+        try:
+            async with self._client() as c:
+                r = await c.post(self.base_url, headers=self._headers(), json=self._body(image_url, layer_count, intent))
+                r.raise_for_status()
+        except httpx.HTTPError as exc:
+            exc._novart_failure_stage = "provider"
+            raise
+        return self._result(self._json(r))
+
+    def queue_endpoint_id(self) -> str:
+        # Never reinterpret a custom gateway credential as a direct Fal key.
+        # Never follow provider-returned status/response URLs with our key.
+        try:
+            parsed = urlsplit(self.base_url)
+            endpoint = parsed.path.removeprefix("/")
+            valid = (parsed.scheme == "https" and parsed.netloc in ("fal.run", "queue.fal.run")
+                     and not parsed.query and not parsed.fragment and len(endpoint) <= 200
+                     # This adapter supports the canonical owner/model queue.
+                     # Sub-path queue routing differs between Fal models; do
+                     # not guess a result route after accepting a paid job.
+                     and re.fullmatch(r"[a-z0-9][a-z0-9_-]*/[a-z0-9][a-z0-9_-]*", endpoint)
+                     and endpoint == self.model and bool(self.api_key.strip()))
+        except ValueError:
+            valid = False
+        if not valid:
+            raise LayerQueueConfigurationError("Layer queue requires a matching official Fal endpoint and model; custom gateway queue support is not configured")
+        return endpoint
+
+    async def _queue_request(self, method: str, url: str, body: dict | None = None) -> dict[str, Any]:
+        headers = self._headers()
+        if method == "POST":
+            headers["X-Fal-Request-Start-Timeout"] = "360"
+        # A poll performs at most two GETs. Bound each complete transfer to
+        # 15s, not merely an idle read timeout; the worker schedules the next
+        # poll from its durable checkpoint instead of holding an HTTP call.
+        kwargs: dict[str, Any] = {"timeout": 15.0, "follow_redirects": False}
+        if self._transport is not None:
+            kwargs["transport"] = self._transport
+        try:
+            async with httpx.AsyncClient(**kwargs) as c:
+                response = await asyncio.wait_for(c.request(method, url, headers=headers, json=body), timeout=15.0)
+                response.raise_for_status()
+        except asyncio.TimeoutError:
+            exc = httpx.ReadTimeout("Layer queue response timed out")
+            exc._novart_failure_stage = "provider"
+            raise exc from None
+        except httpx.HTTPError as exc:
+            exc._novart_failure_stage = "provider"
+            raise
+        return self._json(response)
+
+    async def submit_decomposition(self, image_url: str, *, layer_count: int, intent: str | None = None) -> dict[str, str]:
+        endpoint = self.queue_endpoint_id()
+        data = await self._queue_request("POST", f"https://queue.fal.run/{endpoint}", self._body(image_url, layer_count, intent))
+        request_id = data.get("request_id")
+        if not isinstance(request_id, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", request_id):
+            raise ImageResponseError("Layer queue did not return a usable request identifier")
+        return {"requestId": request_id, "endpointId": endpoint}
+
+    async def poll_decomposition(self, request_id: str, endpoint_id: str) -> dict[str, Any]:
+        endpoint = self.queue_endpoint_id()
+        if endpoint_id != endpoint or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", request_id):
+            raise LayerQueueConfigurationError("Layer queue checkpoint does not match the configured model")
+        root = f"https://queue.fal.run/{endpoint}/requests/{request_id}"
+        data = await self._queue_request("GET", root + "/status")
+        if data.get("request_id", request_id) != request_id:
+            raise ImageResponseError("Layer queue returned a mismatched request identifier")
+        status = data.get("status")
+        if status in ("IN_QUEUE", "IN_PROGRESS"):
+            return {"status": status}
+        if status != "COMPLETED":
+            raise ImageResponseError("Layer queue returned an unknown state")
+        # Even a COMPLETED state can represent a failed inference. Its result
+        # endpoint supplies the HTTP failure classification; never re-submit.
+        result = self._result(await self._queue_request("GET", root))
+        return {"status": "COMPLETED", "result": result}
 
     def probe_url(self) -> str:
         """A cheap endpoint that answers auth without starting an inference.
@@ -2368,8 +2465,9 @@ class FalLayerProvider(LayerProvider):
           * bad key  → 401 `{"detail":"invalid key credentials"}`
         """
         # base_url is ".../<owner>/<model>"; the queue host mirrors that path.
-        path = self.base_url.split("fal.run/", 1)[-1] if "fal.run/" in self.base_url else ""
-        if not path:
+        try:
+            path = self.queue_endpoint_id()
+        except LayerQueueConfigurationError:
             return ""
         return f"https://queue.fal.run/{path}/requests/{_FAL_PROBE_REQUEST_ID}/status"
 

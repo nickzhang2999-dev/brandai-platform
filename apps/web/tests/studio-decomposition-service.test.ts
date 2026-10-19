@@ -6,7 +6,7 @@ const f = vi.hoisted(() => ({ role: vi.fn(), project: vi.fn(), document: vi.fn()
   settings: vi.fn(), storage: vi.fn(), asset: vi.fn(), uploadReceipt: vi.fn(), generatedReceipt: vi.fn(),
   find: vi.fn(), findOrThrow: vi.fn(), findFirst: vi.fn(), list: vi.fn(), create: vi.fn(), updateMany: vi.fn(), update: vi.fn(), count: vi.fn(),
   transaction: vi.fn(), lock: vi.fn(), workspace: vi.fn(), user: vi.fn(), membership: vi.fn(), saved: vi.fn(),
-  queue: vi.fn(), readBytes: vi.fn(), inspect: vi.fn(), layer: vi.fn(), budget: vi.fn(), paid: vi.fn(), plan: vi.fn(), usage: vi.fn(),
+  queue: vi.fn(), readBytes: vi.fn(), inspect: vi.fn(), layer: vi.fn(), budget: vi.fn(), paid: vi.fn(), poll: vi.fn(), plan: vi.fn(), usage: vi.fn(),
   put: vi.fn(), get: vi.fn(), remove: vi.fn(), assetCreate: vi.fn(), linkCreate: vi.fn(),
   generationRequest: vi.fn(), archivedSource: vi.fn(),
 }));
@@ -27,14 +27,14 @@ vi.mock("../src/lib/studio-generation-artifacts-image", () => ({
 }));
 vi.mock("../src/lib/studio-decomposition-images", () => ({ inspectStudioLayer: f.layer, assertStudioLayerBudget: f.budget, STUDIO_LAYER_TOTAL_PIXELS: 40_000_000 }));
 vi.mock("../src/lib/studio-decomposition-queue", () => ({ enqueueStudioDecomposition: f.queue }));
-vi.mock("../src/lib/ai", () => ({ ai: { decompose: f.paid, studioLayerPlan: f.plan } }));
+vi.mock("../src/lib/ai", () => ({ ai: { decomposeSubmit: f.paid, decomposePoll: f.poll, studioLayerPlan: f.plan } }));
 vi.mock("../src/lib/usage", () => ({ recordUsage: f.usage }));
 vi.mock("../src/lib/s3", () => ({ uploadBuffer: f.put, getObjectStream: f.get, deleteObject: f.remove }));
 vi.mock("../src/lib/image-preview", () => ({ nodeStreamToBuffer: async (stream: Readable) => {
   const chunks: Buffer[] = []; for await (const chunk of stream) chunks.push(Buffer.from(chunk)); return Buffer.concat(chunks);
 } }));
 
-import { submitStudioDecomposition, submitGeneratedStudioDecomposition, readStudioDecompositions, retryStudioLayerArchive, runStudioDecomposition, readStudioLayerAsset } from "../src/lib/studio-decomposition";
+import { submitStudioDecomposition, submitGeneratedStudioDecomposition, readStudioDecompositions, retryStudioLayerArchive, runStudioDecomposition, readStudioLayerAsset, dispatchStudioDecompositions, expireStudioDecompositions } from "../src/lib/studio-decomposition";
 import { encryptStudioBase, decryptStudioBase } from "../src/lib/studio-generation-base";
 import { newStudioLayerPlanning } from "../src/lib/studio-decomposition-planning";
 import { AiServiceFailure } from "../src/lib/ai-failure";
@@ -45,6 +45,7 @@ const bytes = Buffer.from("synthetic layer bytes");
 const digest = (body: Buffer) => createHash("sha256").update(body).digest("hex");
 const input = { projectId: "p", mutationId: "9decc9bc-6fb2-4d6f-a52d-83f90acff1ae", sourceShapeId: "shape:source", assetId: "source", assetSha256: digest(bytes), documentRevision: 4, layerCount: 2 };
 const result = { layers: [0, 1].map(index => ({ imageUrl: `https://private-provider.invalid/layer-${index}?signature=synthetic-private`, width: 8, height: 8 })), usage: { provider: "FalLayerProvider", model: "unit-model", imageCount: 2 } };
+const ticket = { requestId: "provider-request-1", endpointId: "fal-ai/qwen-image-layered" };
 let rows: Map<string, any>, objects: Map<string, Buffer>, publishedAssets: any[], publishedLinks: any[];
 let tx: any;
 const row = () => rows.get("request");
@@ -98,7 +99,8 @@ beforeEach(() => {
   f.lock.mockResolvedValue([{ id: "locked" }]); f.workspace.mockResolvedValue({ ownerId: "u" }); f.user.mockResolvedValue({ isActive: true }); f.membership.mockResolvedValue({ role: "EDITOR" });
   f.saved.mockResolvedValue({ workspaceId: "w", revision: 4, checksum: "document-checksum" }); f.queue.mockResolvedValue(true);
   f.readBytes.mockResolvedValue(bytes); f.inspect.mockResolvedValue({ sha256: digest(bytes), width: 8, height: 8, sizeBytes: bytes.length, mimeType: "image/png" });
-  f.layer.mockResolvedValue({ ...layers()[0], body: bytes, hasTransparency: true }); f.paid.mockResolvedValue(result);
+  f.layer.mockResolvedValue({ ...layers()[0], body: bytes, hasTransparency: true }); f.paid.mockResolvedValue(ticket);
+  f.poll.mockResolvedValue({ status: "COMPLETED", result });
   f.put.mockImplementation(async (body: Buffer, _mime: string, _prefix: string, _signal: AbortSignal, key: string) => { objects.set(key, Buffer.from(body)); return { key }; });
   f.get.mockImplementation(async (key: string) => { const body = objects.get(key); if (!body) throw new Error("fixture object absent"); return { body: Readable.from(body), contentLength: body.length }; });
   f.assetCreate.mockImplementation(({ data }) => { publishedAssets.push(structuredClone(data)); return data; });
@@ -169,7 +171,7 @@ describe("automatic PSD accepts only a real generated archive, never an unsaved 
     expect(await readStudioDecompositions("w", "u", { projectId: "p", requestId: "request" })).toMatchObject({ status: "FAILED", layers: [], error: expect.stringContaining("尚未配置") });
   });
 });
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => { vi.unstubAllEnvs(); vi.useRealTimers(); });
 
 describe("Studio decomposition intake: simulated DB, never a provider call", () => {
   it("accepts the saved scoped source once, then dispatches only its durable request ID", async () => {
@@ -248,7 +250,7 @@ describe("once-only worker claim and atomic publication", () => {
     seed(); await runStudioDecomposition("request");
     expect(f.paid).toHaveBeenCalledTimes(1);
     expect(f.paid).toHaveBeenCalledWith(expect.objectContaining({ layerCount: 2, providerRetryPolicy: "never", imageUrl: `data:image/png;base64,${bytes.toString("base64")}` }),
-      expect.objectContaining({ requireRealLayerProvider: true, signal: expect.any(AbortSignal), maxResponseBytes: 32 * 1024 * 1024 }));
+      expect.objectContaining({ requireRealLayerProvider: true, signal: expect.any(AbortSignal), maxResponseBytes: 4096 }));
     const claimIndex = f.updateMany.mock.calls.findIndex(([args]) => args.data.providerStartedAt);
     expect(claimIndex).toBeGreaterThanOrEqual(0); expect(f.updateMany.mock.invocationCallOrder[claimIndex]).toBeLessThan(f.paid.mock.invocationCallOrder[0]!);
     expect(row().status).toBe("SUCCEEDED"); expect(row().outputJson).toBeNull(); expect(row().publishedLayers).toEqual(layers());
@@ -262,9 +264,9 @@ describe("once-only worker claim and atomic publication", () => {
     await runStudioDecomposition("request"); expect(f.paid).toHaveBeenCalledTimes(1);
   });
   it("does not accept a mock result even if it contains plausible image URLs", async () => {
-    seed(); f.paid.mockResolvedValue({ ...result, usage: { provider: "MockLayerProvider", imageCount: 2 } });
+    seed(); f.poll.mockResolvedValue({ status: "COMPLETED", result: { ...result, usage: { provider: "MockLayerProvider", imageCount: 2 } } });
     await runStudioDecomposition("request");
-    expect(row().status).toBe("FAILED"); expect(row().outputJson).toBeNull(); expect(f.put).not.toHaveBeenCalled(); expect(publishedAssets).toHaveLength(0);
+    expect(row().status).toBe("FAILED"); expect(row().outputJson).toMatchObject({ queue: ticket, result: null }); expect(f.put).not.toHaveBeenCalled(); expect(publishedAssets).toHaveLength(0);
     expect(String(row().error)).not.toContain("private-provider");
   });
   it("does not invoke a provider when actual source bytes fail the saved SHA", async () => {
@@ -319,6 +321,127 @@ describe("once-only worker claim and atomic publication", () => {
   });
 });
 
+describe("durable provider queue: restart recovery without paid resubmission", () => {
+  function queued(overrides: Record<string, unknown> = {}) {
+    return seed({ status: "RUNNING", providerStartedAt: new Date(), outputJson: { queue: ticket, result: null, publishedLayers: null },
+      archiveExpiresAt: new Date(Date.now() + 86_400_000), ...overrides });
+  }
+  it("persists the submission ticket before polling and resumes after a simulated worker restart", async () => {
+    vi.useFakeTimers(); seed(); f.poll.mockResolvedValueOnce({ status: "IN_QUEUE" });
+    await runStudioDecomposition("request");
+    expect(row()).toMatchObject({ status: "RUNNING", outputJson: { queue: ticket, result: null } });
+    const savedTicket = f.updateMany.mock.calls.findIndex(([args]) => args.data.outputJson?.queue && !args.data.outputJson.pollAfter);
+    expect(f.updateMany.mock.invocationCallOrder[savedTicket]).toBeLessThan(f.poll.mock.invocationCallOrder[0]!);
+    expect(publishedAssets).toHaveLength(0); expect(f.paid).toHaveBeenCalledOnce();
+    // Dispatch is the durable outbox; restarting needs only the database row.
+    await dispatchStudioDecompositions(); expect(f.queue).toHaveBeenCalledWith("request");
+    await runStudioDecomposition("request"); expect(f.poll).toHaveBeenCalledOnce();
+    vi.setSystemTime(Date.now() + 15_001);
+    await runStudioDecomposition("request");
+    expect(row().status).toBe("SUCCEEDED"); expect(f.paid).toHaveBeenCalledOnce(); expect(f.poll).toHaveBeenCalledTimes(2);
+    expect(f.poll.mock.calls[1]![0]).toEqual({ ...ticket, providerRetryPolicy: "never" });
+    expect(f.poll.mock.calls[1]![1].requestId).toMatch(/^sdr_[a-f0-9]{32}$/);
+  });
+  it("keeps the same ticket through status-read timeout and retries only safe reads", async () => {
+    vi.useFakeTimers(); queued(); const recoveryDeadline = row().archiveExpiresAt;
+    f.poll.mockRejectedValueOnce(new AiServiceFailure({ code: "PROVIDER_TIMEOUT", stage: "provider", upstreamStatus: null }));
+    await runStudioDecomposition("request");
+    expect(row().status).toBe("RUNNING"); expect(row().outputJson.queue).toEqual(ticket);
+    expect(row().archiveExpiresAt).toEqual(recoveryDeadline); expect(f.paid).not.toHaveBeenCalled();
+    vi.setSystemTime(Date.now() + 15_001); await runStudioDecomposition("request");
+    expect(row().status).toBe("SUCCEEDED"); expect(f.poll).toHaveBeenCalledTimes(2); expect(f.paid).not.toHaveBeenCalled();
+  });
+  it("allows status and result reads that each finish within 15s even when their combined time exceeds 20s", async () => {
+    vi.useFakeTimers(); queued();
+    // Native AbortSignal.timeout does not share Vitest's virtual clock. Route
+    // deadlines through timer-backed real AbortControllers for this timing test.
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation(milliseconds => {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(new DOMException("Deadline exceeded", "TimeoutError")), milliseconds);
+      return controller.signal;
+    });
+    f.poll.mockImplementationOnce(async (_request, options: { signal: AbortSignal }) => {
+      for (const _stage of ["status", "result"]) {
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(resolve, 12_000);
+          options.signal.addEventListener("abort", () => { clearTimeout(timer); reject(options.signal.reason); }, { once: true });
+        });
+        options.signal.throwIfAborted();
+      }
+      return { status: "COMPLETED", result };
+    });
+    try {
+      const running = runStudioDecomposition("request");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(f.poll).toHaveBeenCalledOnce();
+      await vi.advanceTimersByTimeAsync(24_000);
+      await running;
+      expect(row().status).toBe("SUCCEEDED"); expect(publishedAssets).toHaveLength(2);
+      expect(f.paid).not.toHaveBeenCalled();
+    } finally { timeout.mockRestore(); }
+  });
+  it("does not overlap duplicate deliveries while a status read is in flight", async () => {
+    queued(); let resolve!: (value: unknown) => void;
+    f.poll.mockImplementationOnce(() => new Promise(done => { resolve = done; }));
+    const first = runStudioDecomposition("request");
+    await vi.waitFor(() => expect(f.poll).toHaveBeenCalledOnce());
+    await runStudioDecomposition("request"); expect(f.poll).toHaveBeenCalledOnce();
+    resolve({ status: "IN_PROGRESS" }); await first;
+    expect(row().status).toBe("RUNNING"); expect(f.paid).not.toHaveBeenCalled();
+  });
+  it("recovers a timed-out task by GET only within its original fixed recovery window", async () => {
+    vi.useFakeTimers(); queued({ expiresAt: new Date(Date.now() + 1_000) });
+    const recoveryDeadline = row().archiveExpiresAt;
+    vi.setSystemTime(Date.now() + 1_001); await expireStudioDecompositions();
+    expect(row().status).toBe("FAILED");
+    expect(await readStudioDecompositions("w", "u", { projectId: "p", requestId: "request" })).toMatchObject({ canRetryArchive: true, layers: [] });
+    await retryStudioLayerArchive("w", "u", { projectId: "p", requestId: "request" });
+    expect(row().archiveExpiresAt).toEqual(recoveryDeadline);
+    await runStudioDecomposition("request");
+    expect(row().status).toBe("SUCCEEDED"); expect(f.poll).toHaveBeenCalledOnce(); expect(f.paid).not.toHaveBeenCalled();
+  });
+  it("never publishes a late poll response over an expired task or recovery attempt", async () => {
+    vi.useFakeTimers(); queued({ expiresAt: new Date(Date.now() + 1_000) });
+    f.poll.mockImplementationOnce(async () => {
+      vi.setSystemTime(Date.now() + 1_001); await expireStudioDecompositions();
+      await retryStudioLayerArchive("w", "u", { projectId: "p", requestId: "request" });
+      return { status: "COMPLETED", result };
+    });
+    await runStudioDecomposition("request");
+    expect(row().status).toBe("RUNNING"); expect(row().outputJson.result).toBeNull();
+    expect(publishedAssets).toHaveLength(0); expect(f.paid).not.toHaveBeenCalled();
+  });
+  it("retains a late submission receipt for explicit recovery without restarting it", async () => {
+    vi.useFakeTimers(); seed({ expiresAt: new Date(Date.now() + 1_000) });
+    f.paid.mockImplementationOnce(async () => { vi.setSystemTime(Date.now() + 1_001); await expireStudioDecompositions(); return ticket; });
+    await runStudioDecomposition("request");
+    expect(row()).toMatchObject({ status: "FAILED", outputJson: { queue: ticket, result: null } });
+    expect(f.poll).not.toHaveBeenCalled();
+    await retryStudioLayerArchive("w", "u", { projectId: "p", requestId: "request" });
+    await runStudioDecomposition("request");
+    expect(row().status).toBe("SUCCEEDED"); expect(f.paid).toHaveBeenCalledOnce();
+  });
+  it("does not re-POST an ambiguous lost submit response and does not invent a recovery ticket", async () => {
+    seed(); f.paid.mockRejectedValueOnce(new AiServiceFailure({ code: "PROVIDER_TIMEOUT", stage: "provider", upstreamStatus: null }));
+    await runStudioDecomposition("request"); await runStudioDecomposition("request");
+    expect(row().status).toBe("FAILED"); expect(row().outputJson).toBeNull(); expect(row().archiveExpiresAt).toBeNull();
+    expect(f.paid).toHaveBeenCalledOnce(); expect(f.poll).not.toHaveBeenCalled();
+    await expect(retryStudioLayerArchive("w", "u", { projectId: "p", requestId: "request" })).rejects.toMatchObject({ status: 409 });
+  });
+  it("blocks queued result checks and publication after actor or source access changes", async () => {
+    queued(); f.workspace.mockResolvedValue({ ownerId: "another" }); f.membership.mockResolvedValue({ role: "VIEWER" });
+    await runStudioDecomposition("request");
+    expect(row().status).toBe("FAILED"); expect(f.poll).not.toHaveBeenCalled(); expect(f.paid).not.toHaveBeenCalled();
+    expect(publishedAssets).toHaveLength(0);
+  });
+  it("retires expired tickets and refuses any further queue recovery", async () => {
+    queued({ status: "FAILED", expiresAt: new Date(0), archiveExpiresAt: new Date(0) });
+    await dispatchStudioDecompositions(); expect(row().outputJson).toBeNull();
+    await expect(retryStudioLayerArchive("w", "u", { projectId: "p", requestId: "request" })).rejects.toMatchObject({ status: 409 });
+    expect(f.paid).not.toHaveBeenCalled(); expect(f.poll).not.toHaveBeenCalled();
+  });
+});
+
 describe("private raw layers: real AES and simulated storage", () => {
   const key = "w/studio-layer-assets/p/request/attempt/0.bin";
   const asset = { id: "sdl_request_0", storageKey: key };
@@ -355,7 +478,7 @@ describe("semantic AUTO planning: simulated once-only paid boundaries, not model
   beforeEach(() => {
     f.settings.mockResolvedValue({ layer: { provider: "fal", apiKey: "synthetic-layer" }, vlm: { provider: "openai", apiKey: "synthetic-vision" } });
     f.plan.mockResolvedValue(plan());
-    f.paid.mockResolvedValue({ ...result, layers: [...result.layers, { imageUrl: "https://private-provider.invalid/layer-2", width: 8, height: 8 }] });
+    f.poll.mockResolvedValue({ status: "COMPLETED", result: { ...result, layers: [...result.layers, { imageUrl: "https://private-provider.invalid/layer-2", width: 8, height: 8 }] } });
   });
   it("chooses the actual count from a persisted image analysis before one decomposition call, independent of the placeholder", async () => {
     seed({ planningJson: newStudioLayerPlanning("AUTO") });

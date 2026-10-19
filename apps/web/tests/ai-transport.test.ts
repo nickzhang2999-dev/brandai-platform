@@ -59,6 +59,25 @@ it("never posts decomposition when service capability cannot be confirmed", asyn
   await expect(ai.decompose({} as never, { requireRealLayerProvider: true })).rejects.toThrow("Unsupported real-layer decomposition revision");
   expect(f.fetch).not.toHaveBeenCalled();
 });
+it.each(["decomposeSubmit", "decomposePoll"] as const)("requires queue capability and real layer settings for %s without lower-layer retries", async method => {
+  f.settings.mockResolvedValue({ image: {}, layer: { provider: "fal", apiKey: "fixture-layer" }, vlm: {} });
+  const request = method === "decomposeSubmit" ? { imageUrl: "data:image/png;base64,YQ==", layerCount: 2 }
+    : { requestId: "fixture-request", endpointId: "fal-ai/qwen-image-layered", providerRetryPolicy: "never" };
+  await ai[method](request as never);
+  expect(f.service).toHaveBeenCalledWith({ requireStudioDecompositionQueue: true, requireSingleAttempt: true });
+  expect(f.fetch).toHaveBeenCalledOnce();
+  expect(f.fetch.mock.calls[0][0]).toBe(`http://internal-ai.invalid/v1/decompose/${method === "decomposeSubmit" ? "submit" : "poll"}`);
+  expect(JSON.parse(f.fetch.mock.calls[0][1].body)).toEqual({ ...request, providerRetryPolicy: "never" });
+  expect(f.fetch.mock.calls[0][1].headers).toMatchObject({ "X-OV-Layer-Provider": "fal", "X-OV-Layer-Key": "fixture-layer" });
+});
+it("refuses queue submission without real credentials or when only the old service is available", async () => {
+  await expect(ai.decomposeSubmit({} as never)).rejects.toThrow("未调用演示模型");
+  expect(f.fetch).not.toHaveBeenCalled();
+  f.settings.mockResolvedValue({ image: {}, layer: { provider: "fal", apiKey: "fixture-layer" }, vlm: {} });
+  f.service.mockRejectedValue(new Error("durable layer queue tasks unavailable"));
+  await expect(ai.decomposeSubmit({} as never)).rejects.toThrow("durable layer queue tasks");
+  expect(f.fetch).not.toHaveBeenCalled();
+});
 it("requires single-attempt capability for legacy decomposition without requiring real layer setup", async () => {
   const request = { imageUrl: "data:image/png;base64,YQ==", layerCount: 2 } as Parameters<typeof ai.decompose>[0];
   await ai.decompose(request);

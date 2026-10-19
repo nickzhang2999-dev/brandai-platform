@@ -14,6 +14,7 @@ const {chromium} = require('playwright-core');
 const repo = path.resolve(__dirname, '..');
 const layersOnly = process.env.NOVART_OWNED_LAYERS_ONLY === '1';
 const layerFailureOnly = process.env.NOVART_OWNED_LAYERS_FAILURE_ONLY === '1';
+const layerQueueRecovery = process.env.NOVART_OWNED_LAYERS_QUEUE_RECOVERY === '1';
 const experienceOnly = process.env.NOVART_OWNED_EXPERIENCE_ONLY === '1';
 const temporaryRoot = path.join(repo, '.novart-build', 'temporary');
 fs.mkdirSync(temporaryRoot, {recursive: true});
@@ -36,6 +37,7 @@ const uploads = new Map(), generations = new Map(), taskReads = [], generationPo
 const decompositions = new Map(), decompositionPostInputs = [], layerTaskReads = [], layerDownloads = [];
 const experienceAssets = new Map(), failedExperienceAssets = new Set();
 let decompositionPosts = 0, failLayerDownload = layersOnly;
+let layerRecoveryPosts = 0;
 function pngChunk(type, value) {
   const payload=Buffer.concat([Buffer.from(type),value]), result=Buffer.alloc(value.length+12);let crc=0xffffffff;
   for(const byte of payload) {crc^=byte;for(let bit=0;bit<8;bit++) crc=(crc>>>1)^((crc&1)?0xedb88320:0);}
@@ -153,6 +155,13 @@ async function handle(req,res) {
     if(url.searchParams.has('requestId')) {const id=url.searchParams.get('requestId');taskReads.push({kind:'STUDIO_GENERATION',id});return generations.has(id)?json(res,contracts.StudioGenerationView.parse(generations.get(id))):json(res,{error:'任务不存在'},404);}
     return json(res,{requests:[...generations.values()].map(value=>contracts.StudioGenerationView.parse(value))});
   }
+  if(url.pathname==='/studio/decomposition/retry-archive' && req.method==='POST') {
+    const input=JSON.parse((await body(req)).toString()),value=decompositions.get(input.requestId);
+    assert.equal(input.projectId,fixture.projectId);assert.ok(layerQueueRecovery && value?.view.canRetryArchive);
+    layerRecoveryPosts++;value.reads=0;value.recovered=true;
+    value.view={...value.view,status:'RUNNING',error:null,canRetryArchive:false,expiresAt:new Date(Date.now()+360000).toISOString()};
+    return json(res,contracts.StudioDecompositionView.parse(value.view),202);
+  }
   if(url.pathname==='/studio/decomposition') {
     if(req.method==='POST') {
       decompositionPosts++;const input=JSON.parse((await body(req)).toString());decompositionPostInputs.push(input);
@@ -167,7 +176,8 @@ async function handle(req,res) {
       decompositions.set(view.requestId,{view,reads:0});layerTaskReads.push({requestId:view.requestId,status:'PENDING',method:'POST'});return json(res,view,202);
     }
     function read(value) {
-      if(['PENDING','RUNNING'].includes(value.view.status)) {value.reads++;value.view={...value.view,status:value.reads>=2?(layerFailureOnly?'FAILED':'SUCCEEDED'):'RUNNING',layers:value.reads>=2&&!layerFailureOnly?layerResults:[],error:value.reads>=2&&layerFailureOnly?'图片内容分析服务拒绝了请求。（上游 HTTP 400）未调用分层模型，原图片保留。':null};}
+      if(['PENDING','RUNNING'].includes(value.view.status)) {value.reads++;const failed=layerFailureOnly&&!value.recovered;value.view={...value.view,status:value.reads>=2?(failed?'FAILED':'SUCCEEDED'):'RUNNING',layers:value.reads>=2&&!failed?layerResults:[],error:value.reads>=2&&failed?(layerQueueRecovery?'分层等待超时，原任务已保留，可检查已有结果。':'图片内容分析服务拒绝了请求。（上游 HTTP 400）未调用分层模型，原图片保留。'):null,
+        canRetryArchive:value.reads>=2&&failed&&layerQueueRecovery,archiveExpiresAt:layerQueueRecovery?new Date(Date.now()+86400000).toISOString():null};}
       layerTaskReads.push({requestId:value.view.requestId,status:value.view.status,method:'GET',direct:url.searchParams.has('requestId')});
       return contracts.StudioDecompositionView.parse(value.view);
     }
@@ -224,8 +234,8 @@ async function fixtureSettled(condition) {const deadline=Date.now()+10000;while(
   }
   if(layersOnly) {
     await require('./check-owned-layer-interactions.cjs').runOwnedLayerChecks({page,surface,origin,fixture,png,material,layerResults,shapes,records,check,report,
-      setStage:value=>{stage=value;},allowLayerDownloads:()=>{failLayerDownload=false;},failureOnly:layerFailureOnly,
-      state:()=>({canvas,revision,writes,decompositionPosts,decompositionPostInputs,layerTaskReads,layerDownloads})});
+      setStage:value=>{stage=value;},allowLayerDownloads:()=>{failLayerDownload=false;},failureOnly:layerFailureOnly,queueRecovery:layerQueueRecovery,
+      state:()=>({canvas,revision,writes,decompositionPosts,decompositionPostInputs,layerTaskReads,layerDownloads,layerRecoveryPosts})});
     assert.deepEqual(report.externalRequests,[]);assert.deepEqual(report.errors,[]);report.passed=true;return;
   }
   if(process.env.NOVART_OWNED_TOOLS_ONLY==='1') {

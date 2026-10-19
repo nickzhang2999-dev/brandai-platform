@@ -530,6 +530,24 @@ export const DecomposeResponse = z.object({
 });
 export type DecomposeResponse = z.infer<typeof DecomposeResponse>;
 
+/** Private worker checkpoint. Provider URLs are never accepted from callers. */
+export const DecomposeQueueTicket = z.object({
+  requestId: z.string().max(128).regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/),
+  endpointId: z.string().max(200).regex(/^[a-z0-9][a-z0-9_-]*(\/[a-z0-9][a-z0-9_-]*)+$/),
+}).strict();
+export type DecomposeQueueTicket = z.infer<typeof DecomposeQueueTicket>;
+
+export const DecomposeQueuePollRequest = DecomposeQueueTicket.extend({
+  providerRetryPolicy: z.literal("never"),
+}).strict();
+export type DecomposeQueuePollRequest = z.infer<typeof DecomposeQueuePollRequest>;
+
+export const DecomposeQueuePollResponse = z.discriminatedUnion("status", [
+  z.object({ status: z.enum(["IN_QUEUE", "IN_PROGRESS"]) }).strict(),
+  z.object({ status: z.literal("COMPLETED"), result: DecomposeResponse }).strict(),
+]);
+export type DecomposeQueuePollResponse = z.infer<typeof DecomposeQueuePollResponse>;
+
 // POST /v1/compliance/check
 export const ComplianceCheckRequest = z.object({
   /** Server-only retry policy, never part of model instructions. */

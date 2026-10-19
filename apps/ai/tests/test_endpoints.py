@@ -11,6 +11,7 @@ def test_health(client):
         "studioEditRevision": "studio-whole-image-edit-r1",
         "studioImageToolsRevision": "studio-image-tools-r1",
         "studioDecompositionRevision": "studio-real-layer-single-attempt-r1",
+        "studioDecompositionQueueRevision": "studio-layer-queue-r1",
         "studioLayerPlanRevision": "semantic-layer-plan-r1",
         "studioConversationIntentRevision": "structured-conversation-intent-r2",
     }
