@@ -87,7 +87,7 @@
       if (path === '/api/workspaces') headers['X-Novart-Mutation'] = crypto.randomUUID();
       response = await originalFetch(path, {method:'POST', credentials:'same-origin', cache:'no-store', headers, body:JSON.stringify(value), signal:controller.signal});
       let result;
-      try { result = await response.json(); } catch (_) { throw new Error('操作回执暂时无法读取，请稍后确认。'); }
+      try { result = await response.json(); } catch (_) { throw new Error('操作结果暂时无法读取，请稍后检查。'); }
       if (!response.ok) throw new Error(result.error || '操作未完成，请稍后重试。');
       if (path === '/api/workspaces' && (!result || typeof result.id !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(result.id) || typeof result.name !== 'string' || !result.name.trim())) throw unknownCreation();
       return result;
@@ -133,7 +133,7 @@
   async function selectBrand(workspaceId, destination = 'home') {
     if (context.workspaceId) await prepareBrandSwitch();
     const selected = await brandRequest('/api/workbench/session', {workspaceId});
-    if (selected.user?.id !== context.user.id || selected.activeWorkspaceId !== workspaceId || !selected.workspaces?.some(workspace => workspace.id === workspaceId)) throw new Error('品牌切换回执无法确认，当前页面仍保留，请重试。');
+    if (selected.user?.id !== context.user.id || selected.activeWorkspaceId !== workspaceId || !selected.workspaces?.some(workspace => workspace.id === workspaceId)) throw new Error('品牌切换结果尚未确认，当前页面仍保留，请刷新后检查。');
     // Full navigation drops the old project route and recreates workspace-scoped storage.
     location.assign('/studio?workspaceId=' + encodeURIComponent(workspaceId) + (destination === 'brand' ? '#/brand' : '#/home'));
   }
@@ -151,7 +151,7 @@
         startup.replaceChildren(heading,note,list,status); return;
       }
       if (!created) created = await brandRequest('/api/workspaces', {name:input.value.trim()});
-      if (!created.id) throw new Error('品牌创建回执无法确认，请刷新品牌列表后重试。');
+      if (!created.id) throw new Error('品牌创建结果尚未确认，请刷新品牌列表后检查。');
       input.disabled = true; await selectBrand(created.id, 'brand');
     } catch(error) { creationUncertain ||= Boolean(error.creationUncertain);status.textContent=(created ? '品牌已创建，尚未切换。' : '') + error.message;submit.textContent=created?'进入已创建的品牌':creationUncertain?'检查品牌列表':'进入工作台'; }
     finally {saving=false;submit.disabled=false;} }; input.focus();
@@ -211,7 +211,7 @@
         event.preventDefault();if(saving||!input.value.trim())return;saving=true;submit.disabled=true;cancel.disabled=true;input.disabled=true;feedback.textContent='正在确认当前内容已保存…';
         try {
           if(creationUncertain){feedback.textContent='正在检查已有品牌，不会再次创建…';await refreshKnownBrands();render();dialog.close();status.textContent='创建结果尚未确认。请检查已有品牌并选择继续；若未看到新品牌，请稍后重新打开列表检查。';menu.showModal();trigger.setAttribute('aria-expanded','true');position();return;}
-          if(!created){await prepareBrandSwitch();created=await brandRequest('/api/workspaces',{name:input.value.trim()});if(!created.id)throw new Error('品牌创建回执无法确认，请刷新品牌列表后检查。');knownWorkspaces.unshift({id:created.id,name:created.name,role:'OWNER'});render();}
+          if(!created){await prepareBrandSwitch();created=await brandRequest('/api/workspaces',{name:input.value.trim()});if(!created.id)throw new Error('品牌创建结果尚未确认，请刷新品牌列表后检查。');knownWorkspaces.unshift({id:created.id,name:created.name,role:'OWNER'});render();}
           feedback.textContent='品牌已创建，正在打开规范…';await selectBrand(created.id, 'brand');
         } catch(error) {creationUncertain ||= Boolean(error.creationUncertain);feedback.textContent=(created?'品牌已创建，尚未切换。':'')+error.message;submit.textContent=created?'进入已创建的品牌':creationUncertain?'检查品牌列表':'重试创建';}
         finally {saving=false;submit.disabled=false;cancel.disabled=false;input.disabled=Boolean(created);}

@@ -925,7 +925,8 @@ class HttpVLMProvider(VLMProvider):
 
     @_retry
     async def _chat_json(
-        self, content: list[dict[str, Any]], *, system: str, max_tokens: int = 2048
+        self, content: list[dict[str, Any]], *, system: str, max_tokens: int = 2048,
+        diagnostics: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         body = {
             "model": self.model,
@@ -953,13 +954,36 @@ class HttpVLMProvider(VLMProvider):
                     headers={"Authorization": f"Bearer {self.api_key}"},
                     json=body,
                 )
+                if diagnostics is not None:
+                    diagnostics["httpStatus"] = r.status_code
                 r.raise_for_status()
         except httpx.HTTPError as exc:
             exc._novart_failure_stage = "provider"
             raise
         try:
             data = r.json()
+            if diagnostics is not None and isinstance(data, dict):
+                # Intent telemetry contains numeric usage/status only. Never
+                # copy provider content, prompts, headers or URLs into logs.
+                usage = data.get("usage")
+                if isinstance(usage, dict):
+                    for name, candidates in {
+                        "inputTokens": ("prompt_tokens", "input_tokens"),
+                        "outputTokens": ("completion_tokens", "output_tokens"),
+                        "totalTokens": ("total_tokens",),
+                    }.items():
+                        for candidate in candidates:
+                            value = usage.get(candidate)
+                            if type(value) is int and 0 <= value <= 2147483647:
+                                diagnostics[name] = value
+                                break
+                    details = usage.get("completion_tokens_details") or usage.get("output_tokens_details")
+                    value = details.get("reasoning_tokens") if isinstance(details, dict) else None
+                    if type(value) is int and 0 <= value <= 2147483647:
+                        diagnostics["reasoningTokens"] = value
             choice = (data.get("choices") or [{}])[0]
+            if diagnostics is not None and choice.get("finish_reason") in ("stop", "length", "content_filter", "tool_calls", "function_call"):
+                diagnostics["finishReason"] = choice["finish_reason"]
             if choice.get("finish_reason") in ("length", "content_filter"):
                 raise ValueError("Incomplete vision result")
             text = choice.get("message", {}).get("content", "")

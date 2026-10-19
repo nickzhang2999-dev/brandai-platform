@@ -18,7 +18,7 @@ const reportPath = process.env.NOVART_CONVERSATION_REPORT || path.join(repo, '.n
 const report = {isolated: true, realBackend: false, realProvider: false, realAuthentication: false, providerCalls: 0,
   fixtureScope: 'Actual React conversation and HTTP adapter; synthetic loopback receipts', checks: [], terminalStateEvidence: [], externalRequests: [], errors: []};
 let browser, server, contracts, page, stage = 'compile', reject = false, loseResponse = false, delayPut = 0;
-let draft = null, postInputs = [], putInputs = [], messages = [], receipts = new Map();
+let draft = null, postInputs = [], putInputs = [], messages = [], receipts = new Map(), decisions = new Map();
 let archiveRetries = [], generationPosts = 0, retryRelease = null, delayRetry = false;
 let delayedMessageRead = null, messageReadRelease = null;
 const messageReads = new Map();
@@ -67,11 +67,22 @@ async function handle(req, res) {
     if (reject) return json(res, {error: '只读或权限已变更'}, 403);
     const prior = receipts.get(input.mutationId);
     if (prior) {assert.deepEqual(input, prior.input); return json(res, prior.row, 202);}
-    const intent = contracts.parseStudioConversationIntent(input);
+    let intent = contracts.parseStudioConversationIntent(input);
+    if(input.decision) {
+      const choiceKey=input.decision.sourceMessageId, existing=decisions.get(choiceKey);
+      if(existing) {
+        if(existing.input.decision.kind!==input.decision.kind || existing.input.decision.optionId!==input.decision.optionId) return json(res,{error:'这条消息已经选择了其他操作，请查看原任务结果。'},409);
+        return json(res,existing.row,202);
+      }
+      const source=messages.find(message=>message.messageId===choiceKey); assert.ok(source?.originalInput);
+      const option=(input.decision.kind==='clarification'?source.intent.options:source.intent.correctionOptions).find(option=>option.id===input.decision.optionId);assert.ok(option);
+      for(const key of ['text','references','sizeSelection','quickEditTargetId','psdLayerMode','psdLayerCount','requestedSize'])assert.deepEqual(input[key],source.originalInput[key]);
+      intent={...source.intent,action:option.action,targetReferenceId:option.targetReferenceId,referenceIds:option.referenceIds,imagePrompt:option.imagePrompt,clarification:null,options:[],correctionOptions:[]};
+    }
     const row = {messageId: 'scm_' + crypto.randomBytes(10).toString('hex'), mutationId: input.mutationId, projectId: fixture.projectId,
-      text: input.text, references: input.references, status: intent.action === 'clarify' ? 'CLARIFICATION' : 'SUCCEEDED', intent, generation: null, error: null,
+      text: input.text, references: input.references, originalInput:input, status: intent.action === 'clarify' ? 'CLARIFICATION' : 'SUCCEEDED', intent, generation: null, error: null,
       clarification: intent.clarification, createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 360000).toISOString()};
-    messages.push(row); receipts.set(input.mutationId, {row, input});
+    messages.push(row); receipts.set(input.mutationId, {row, input}); if(input.decision)decisions.set(input.decision.sourceMessageId,{row,input});
     // A complete 202 header but truncated receipt avoids Chromium's automatic
     // transport replay of a reset reused connection, and reliably exercises
     // the UI's accepted-but-unreadable acknowledgement journal.
@@ -93,7 +104,7 @@ function Fixture(){const panel=useRef<any>(null),[selected,setSelected]=useState
  const run=(fn:any)=>{try{Promise.resolve(fn()).catch(e=>setNotice(e.message))}catch(e:any){setNotice(e.message)}};
  return <><fieldset><legend>交互测试夹具 · 非业务验收</legend><button onClick={()=>setSelected([refs[0]])}>选择图片1</button><button onClick={()=>setSelected([refs[1],refs[0]])}>选择图片2和1</button><button onClick={()=>run(()=>panel.current.addReferences(selected))}>加入当前选择</button><button onClick={()=>run(()=>panel.current.addReferences([refs[1]],refs[1].referenceId))}>固定快捷目标图片2</button><button onClick={()=>run(async()=>{await panel.current.flush();setNotice('离页草稿已确认')} )}>模拟品牌离页保存</button><p role="status">{notice}</p></fieldset>
  <button onClick={()=>setProjectId('fixture-other-project')}>切换另一个项目</button><button onClick={()=>run(()=>panel.current.startHome('首页生成一张海报','605a9288-8aae-4ccd-8ced-99c05e32b2bd',[Object.fromEntries(Object.entries(refs[0]).reverse())]))}>首页开始创作</button><button onClick={()=>run(()=>panel.current.quickEdit(refs[0],'后来的快捷编辑不应篡改原请求'))}>直接快捷修改图片1</button>
- <div className="fixture-panel"><OwnedConversationPanel ref={panel} {...${JSON.stringify(fixture)}} projectId={projectId} readOnly={readOnly} api={ownedApi} prepare={async()=>({documentRevision:1,workflowRevision:0})} onNotice={setNotice} onGeneration={()=>{}} onInsert={async()=>{}} onInsertLayers={async()=>{}} /></div></>}
+ <div className="fixture-panel"><OwnedConversationPanel ref={panel} {...${JSON.stringify(fixture)}} projectId={projectId} readOnly={readOnly} api={ownedApi} prepare={async()=>{(window as any).__conversationPrepareCalls=((window as any).__conversationPrepareCalls||0)+1;return {documentRevision:1,workflowRevision:0}}} selectedReferenceIds={references=>references.filter(ref=>selected.some(value=>value.shapeId===ref.shapeId)).map(ref=>ref.referenceId)} onNotice={setNotice} onGeneration={()=>{}} onInsert={async()=>{}} onInsertLayers={async()=>{}} /></div></>}
 createRoot(document.getElementById('root')!).render(<Fixture/>);`);
   await esbuild.build({entryPoints:[entry],outfile:path.join(directory,'app.js'),bundle:true,platform:'browser',format:'iife',jsx:'automatic',tsconfig:path.join(repo,'apps/web/tsconfig.json'),nodePaths:[path.join(repo,'apps/web/node_modules')],define:{'process.env.NODE_ENV':'"development"'},logLevel:'silent'});
   fs.writeFileSync(path.join(directory, 'schemas.ts'), `export {StudioConversationInput,StudioConversationDraftInput,StudioConversationMessage} from '${absolute('packages/contracts/src/studio-conversation')}';export {StudioGenerationView,StudioGenerationArchiveRetryInput} from '${absolute('packages/contracts/src/studio-generation')}';export {parseStudioConversationIntent} from '${absolute('apps/web/src/lib/studio-conversation-intent')}';`);
@@ -291,6 +302,40 @@ createRoot(document.getElementById('root')!).render(<Fixture/>);`);
   assert.equal(await button('恢复到画布').isVisible(),true);assert.equal(await button('读取品牌检查').isVisible(),false);
   await page.getByText('品牌检查',{exact:true}).click();assert.equal(await button('读取品牌检查').isVisible(),true);
   check('compact-result-hides-secondary-controls-without-removing-them');
+
+  stage='structured-r2-clarification';
+  const frozenInput=contracts.StudioConversationInput.parse({mutationId:crypto.randomUUID(),text:'用这两张图做一个春日方案',references,quickEditTargetId:null,sizeSelection:{ratioKey:'3:4',resolutionTier:'2K'},requestedSize:{width:1200,height:1600},documentRevision:4,workflowRevision:3,psdLayerMode:'MANUAL',psdLayerCount:4});
+  const modelOptions=[{id:'generate-spring',label:'用两张图创作海报',action:'generate',targetReferenceId:null,referenceIds:references.map(ref=>ref.referenceId),imagePrompt:'以两张参考图为视觉参考，设计春日海报'},
+    {id:'modify-first',label:'只修改第一张图片',action:'modify',targetReferenceId:references[0].referenceId,referenceIds:[references[1].referenceId],imagePrompt:'保持第一张构图，以第二张配色调整春日氛围'}];
+  const modelIntent={action:'clarify',targetReferenceId:null,referenceIds:[],prompt:frozenInput.text,clarification:'你希望怎样使用这两张图片？',requestedSize:frozenInput.requestedSize,sizeSource:'control',sizeSelection:frozenInput.sizeSelection,parser:'structured-model-v2',modelStatus:'SUCCEEDED',options:modelOptions};
+  const modelRow=row(null,{messageId:'model-options-message',mutationId:frozenInput.mutationId,text:frozenInput.text,references,originalInput:frozenInput,status:'CLARIFICATION',intent:modelIntent,clarification:modelIntent.clarification});
+  await show([modelRow]);await button('选择图片1').click();await input().fill('另一个未发送草稿必须保留');await saved();
+  const decisionPosts=postInputs.length;await page.waitForTimeout(150);assert.equal(postInputs.length,decisionPosts);
+  await button('只修改第一张图片').click();await until(()=>postInputs.length===decisionPosts+1);await button('发送').waitFor();await until(()=>messages.length===2);
+  const decisionInput=postInputs.at(-1);assert.notEqual(decisionInput.mutationId,frozenInput.mutationId);assert.deepEqual(decisionInput.decision,{sourceMessageId:modelRow.messageId,optionId:'modify-first',kind:'clarification'});
+  assert.deepEqual(decisionInput.references,references);assert.equal(decisionInput.text,frozenInput.text);assert.deepEqual(decisionInput.sizeSelection,frozenInput.sizeSelection);assert.equal(decisionInput.psdLayerCount,4);assert.deepEqual(decisionInput.selectedReferenceIds,[references[0].referenceId]);
+  assert.equal(await input().inputValue(),'另一个未发送草稿必须保留');assert.ok(await page.evaluate(()=>window.__conversationPrepareCalls)>0);
+  await page.locator('[data-message-id]').last().getByText('实际生成描述',{exact:true}).click();assert.equal(await page.getByText(modelOptions[1].imagePrompt,{exact:true}).isVisible(),true);
+  check('structured-choice-explicitly-submits-original-input-after-save-with-real-selection-and-keeps-unsent-draft');
+  const repeated=postInputs.length, acceptedCount=messages.length;await button('只修改第一张图片').click();await until(()=>postInputs.length===repeated+1);await page.waitForTimeout(120);
+  assert.equal(messages.length,acceptedCount);assert.equal(await button('检查上次提交').count(),0);assert.equal(await input().isEnabled(),true);check('same-structured-choice-accepts-prior-child-despite-new-mutation-without-second-job');
+  await button('用两张图创作海报').click();await page.getByRole('alert').filter({hasText:'这条消息已经选择了其他操作'}).waitFor();assert.equal(messages.length,acceptedCount);assert.equal(await input().isEnabled(),true);check('different-second-choice-is-definitively-rejected-with-draft-preserved');
+
+  stage='structured-r2-correction';
+  const completedRow=row(task({status:'SUCCEEDED',resultState:'READY',results:[result]}),{messageId:'model-result-message',mutationId:frozenInput.mutationId,text:frozenInput.text,references,originalInput:frozenInput,status:'SUCCEEDED',intent:{...modelIntent,action:'generate',clarification:null,options:[],correctionOptions:[modelOptions[1]],imagePrompt:'实际已经使用的春日生成描述'},clarification:null});
+  await show([completedRow]);const correctionPosts=postInputs.length;await page.getByText('判断错了',{exact:true}).click();await page.getByText(/会重新生成并消耗额度/).waitFor();assert.equal(postInputs.length,correctionPosts);
+  await input().fill('修正判断也不能覆盖新草稿');await saved();await button('只修改第一张图片').click();await until(()=>postInputs.length===correctionPosts+1);assert.equal(postInputs.at(-1).decision.kind,'correction');assert.equal(await input().inputValue(),'修正判断也不能覆盖新草稿');check('correction-discloses-cost-and-needs-explicit-choice-before-one-new-request');
+  await show([{...completedRow,intent:{...completedRow.intent,modelStatus:'UNKNOWN',options:modelOptions},status:'CLARIFICATION'}]);assert.equal(await page.getByTestId('conversation-correction-options').count(),0);assert.equal(await page.getByTestId('conversation-clarification-options').count(),0);assert.equal(await button('参考生成新图').count(),0);assert.equal(await button('只修改第一张图片').count(),0);check('unknown-model-result-never-offers-paid-clarification-or-correction');
+  await show([{...completedRow,status:'RUNNING',generation:task()}]);assert.equal(await page.getByTestId('conversation-correction-options').count(),0);check('running-generation-never-offers-paid-correction');
+  await show([{...modelRow,originalInput:undefined}]);assert.equal(await button('只修改第一张图片').count(),0);await page.getByText(/这条历史需求缺少原始设置/).waitFor();check('historical-options-without-frozen-input-do-not-guess-current-draft-settings');
+  await show([modelRow]);await page.goto(origin+'/?readonly=1');await ready();assert.equal(await button('只修改第一张图片').isDisabled(),true);check('read-only-structured-choice-remains-disabled');
+
+  stage='structured-choice-lost-response';
+  await show([{...modelRow,messageId:'lost-choice-message'}]);await input().fill('选择丢回复也保留当前草稿');await saved();loseResponse=true;const choiceUnknownPosts=postInputs.length;
+  await button('只修改第一张图片').click();await button('检查上次提交').waitFor();const unknownChoice=postInputs.at(-1), choiceAcceptedCount=messages.length;
+  assert.equal(unknownChoice.decision.sourceMessageId,'lost-choice-message');assert.equal(await button('用两张图创作海报').isDisabled(),true);
+  await button('检查上次提交').click();await button('检查上次提交').waitFor({state:'hidden'});assert.equal(postInputs.length,choiceUnknownPosts+2);assert.equal(postInputs.at(-1).mutationId,unknownChoice.mutationId);assert.equal(messages.length,choiceAcceptedCount);assert.equal(await input().inputValue(),'选择丢回复也保留当前草稿');
+  check('lost-structured-choice-replays-exact-mutation-on-explicit-check-without-erasing-composer');
 
   stage='responsive-composer';await show([recoverRow]);await button('重新编辑').click();await saved();
   for (const viewport of [{width:1100,height:900},{width:390,height:740},{width:1100,height:600}]) {

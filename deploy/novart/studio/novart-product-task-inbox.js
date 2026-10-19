@@ -84,7 +84,7 @@
       ids.add(item.requestId);
       const key = 'STUDIO_DECOMPOSITION:'+item.requestId;
       return {id:key,key,kind:'STUDIO_DECOMPOSITION',taskId:item.requestId,projectId:item.projectId,status:item.status,title:'图片分层',
-        detail:item.layerCount != null ? '请求 '+item.layerCount+' 层，实际结果以任务回执为准。是否加入画布由你确认。' : '',
+        detail:item.layerCount != null ? '请求 '+item.layerCount+' 层，实际层数以任务结果为准。是否加入画布由你确认。' : '',
         createdAt:item.createdAt,submittedAt:item.createdAt,expiresAt:item.expiresAt,terminal:false,
         href:'/canvas?'+new URLSearchParams({workspaceId:context.workspaceId,projectId:item.projectId,layerRequestId:item.requestId}),stamp:item.createdAt+'|'+item.status};
     });
@@ -101,10 +101,10 @@
   function elapsedText(item, now = Date.now()) {
     if (!item.submittedAt) return '';
     const active = ['PENDING','RUNNING'].includes(item.status);
-    if (!active && !item.terminal) return '耗时待完成回执';
+    if (!active && !item.terminal) return '用时待任务信息更新';
     const end = active ? now : Date.parse(item.createdAt), duration = Math.max(0,Math.floor((end-Date.parse(item.submittedAt))/1000));
     const elapsed = duration < 60 ? duration+'秒' : duration < 3600 ? Math.floor(duration/60)+'分'+duration%60+'秒' : Math.floor(duration/3600)+'小时'+Math.floor(duration%3600/60)+'分';
-    return (active?'提交后已过 ':'提交至回执用时 ')+elapsed;
+    return (active?'提交后已过 ':'提交至结果更新用时 ')+elapsed;
   }
   function markSeen() {
     for (const item of items) seen[item.key] = item.stamp;
@@ -195,7 +195,7 @@
       failures++;
       if (!denied && (error.retryable || error.name === 'AbortError' || error instanceof TypeError) && failures <= 3) {
         status.textContent = '部分任务暂未更新，正在重新读取（'+failures+'/3）'; schedule(Math.min(20000,2500*2**(failures-1)));
-      } else { paused = true; status.textContent = denied?error.message:'任务提醒暂未更新，请点“刷新”；服务器仍会继续处理已受理任务。'; }
+      } else { paused = true; status.textContent = denied?error.message:'任务提醒暂未更新，请点“刷新”；服务器仍会继续处理已提交的任务。'; }
       render();
     } finally {
       busy = false; refreshButton.disabled = denied;

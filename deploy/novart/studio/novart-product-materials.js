@@ -37,7 +37,7 @@
     if (!value || typeof value.assetId !== 'string' || !/^[a-f0-9]{64}$/.test(value.assetSha256 || '')
       || !['image/png', 'image/jpeg', 'image/webp'].includes(value.mimeType)
       || !Number.isSafeInteger(value.width) || !Number.isSafeInteger(value.height) || value.width <= 0 || value.height <= 0
-      || typeof value.url !== 'string') throw Error('图片回执不完整，请刷新任务');
+      || typeof value.url !== 'string') throw Error('图片信息不完整，请刷新任务');
     const url = new URL(value.url, location.origin);
     const expected = '/api/workspaces/' + encodeURIComponent(context.workspaceId) + '/assets/' + encodeURIComponent(value.assetId) + '/raw';
     if (url.origin !== location.origin || url.pathname !== expected || url.search || url.hash) throw Error('图片地址不属于当前品牌');
@@ -46,7 +46,7 @@
   function accept(value) {
     if (!value || value.projectId !== projectId || typeof value.taskId !== 'string'
       || !['PENDING', 'RUNNING', 'SUCCEEDED', 'FAILED'].includes(value.status)
-      || !Number.isFinite(value.progress) || !Number.isFinite(Date.parse(value.expiresAt))) throw Error('上传任务回执不完整，请刷新任务');
+      || !Number.isFinite(value.progress) || !Number.isFinite(Date.parse(value.expiresAt))) throw Error('上传任务信息不完整，请刷新任务');
     const task = {...value};
     if (task.status === 'SUCCEEDED') task.material = safeMaterial(task.material);
     tasks.set(task.taskId, task); return task;
@@ -68,7 +68,7 @@
       return value;
     } catch (error) {
       if (error.name === 'AbortError') {
-        const timeout = Error('网络响应超时。已受理的任务会继续处理，可刷新任务查看');
+        const timeout = Error('网络响应超时。任务状态尚未确认，请先刷新任务查看，避免重复上传');
         timeout.retryable = true; throw timeout;
       }
       if (error instanceof TypeError) error.retryable = true;
@@ -174,7 +174,7 @@
         schedule(Math.min(20000, 2500 * 2 ** (refreshFailures - 1)), true);
       } else {
         pollingPaused = true;
-        message(error.message + '。自动读取已暂停，可点击“刷新任务”；已受理的任务仍由服务器处理。');
+        message(error.message + '。自动读取已暂停，可点击“刷新任务”；已提交的任务仍由服务器处理。');
       }
       render();
     }
@@ -192,14 +192,14 @@
       try { accepted = await request(endpoint, {method:'POST', body:form}); }
       catch (error) {
         if (!error.retryable || stopped) throw error;
-        message('正在确认上传回执…');
+        message('正在检查上次上传…');
         // One bounded retry of exactly the same operation. A lost 202 must
         // never enqueue a second image using a freshly generated mutation ID.
         accepted = await request(endpoint, {method:'POST', body:form});
       }
       let task = accept(accepted);
       refreshFailures = 0; pollingPaused = false;
-      message('图片已受理，关闭页面后仍会继续处理'); render(); schedule();
+      message('图片已提交，关闭页面后仍会继续处理'); render(); schedule();
       let taskFailures = 0;
       while (!terminal.has(task.status) && !stopped) {
         if (Date.now() > Date.parse(task.expiresAt)) { message('处理时间较长，请刷新任务查看最终状态'); return []; }
@@ -216,7 +216,7 @@
           if (!error.retryable || taskFailures > MAX_TRANSIENT_RETRIES) {
             // Keep the durable receipt and the list/manual recovery path.
             // Never re-submit the file with a new mutation on a polling error.
-            message(error.message + '。任务已受理，可刷新任务后加入画布。');
+            message(error.message + '。任务已提交，可刷新任务后加入画布。');
             schedule(); return [];
           }
           message('网络暂时不稳定，正在确认图片处理结果（' + taskFailures + '/' + MAX_TRANSIENT_RETRIES + '）');
@@ -236,7 +236,7 @@
     if (stopped || !/^[a-zA-Z0-9_-]{1,128}$/.test(taskId)) throw Error('上传任务地址无效，请刷新任务');
     const value = await request(endpoint + '&taskId=' + encodeURIComponent(taskId));
     if (stopped) throw Error('画布已关闭，请重新打开任务');
-    if (value.taskId !== taskId) throw Error('上传任务回执不匹配，请刷新任务');
+    if (value.taskId !== taskId) throw Error('上传任务信息不匹配，请刷新任务');
     const task = accept(value); tasks.delete(taskId); tasks.set(taskId, task);
     render(); panel.hidden = false; panel.open = true;
     const row = list.querySelector('[data-task-id="' + taskId + '"]');

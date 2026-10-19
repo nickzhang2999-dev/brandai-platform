@@ -88,7 +88,7 @@
     if(key!==frameOptionsKey){frameOptionsKey=key;frameSelect.replaceChildren(...options.map(value=>{const option=new Option(value.text,value.id);option.disabled=Boolean(value.disabled);return option;}));}
     if(frameSelect.value!==chosen)frameSelect.value=chosen;
     const disabled=context.readOnly||submitting||Boolean(pending);if(frameSelect.disabled!==disabled)frameSelect.disabled=disabled;
-    const hint=pending?'先确认上一份受理，再更换输出画框':chosen&&!valid?'原画框已删除或不在当前页面，请重新选择':'按此画框中的位置保留原素材，框外部分不出图';
+    const hint=pending?'先检查上次生成，再更换输出画框':chosen&&!valid?'原画框已删除或不在当前页面，请重新选择':'按此画框中的位置保留原素材，框外部分不出图';
     if(frameNote.textContent!==hint)frameNote.textContent=hint;
   }
   function supported(form) {
@@ -121,7 +121,7 @@
       if (!response.ok || expectedStatus && response.status !== expectedStatus) { const error = Error(value.error || '任务暂时无法读取，请重试'); error.retryable = response.status >= 500; error.status = response.status; throw error; }
       return value;
     } catch (error) {
-      if (error.name === 'AbortError') { const timeout = Error('响应超时，已受理任务仍会继续。请确认回执后再提交'); timeout.retryable = true; throw timeout; }
+      if (error.name === 'AbortError') { const timeout = Error('响应超时，提交状态尚未确认。请先检查上次生成，避免重复提交'); timeout.retryable = true; throw timeout; }
       if (error instanceof TypeError) error.retryable = true;
       throw error;
     } finally { clearTimeout(timeout); }
@@ -130,7 +130,7 @@
   function result(value) {
     if (!value || !['versionId','assetId'].every(key => typeof value[key] === 'string' && /^[a-zA-Z0-9_-]{1,128}$/.test(value[key]))
       || !/^[a-f0-9]{64}$/.test(value.assetSha256 || '') || !['image/png','image/jpeg','image/webp'].includes(value.mimeType)
-      || !Number.isSafeInteger(value.width) || !Number.isSafeInteger(value.height) || value.width <= 0 || value.height <= 0 || typeof value.url !== 'string') throw Error('生成成果回执不完整，请刷新任务');
+      || !Number.isSafeInteger(value.width) || !Number.isSafeInteger(value.height) || value.width <= 0 || value.height <= 0 || typeof value.url !== 'string') throw Error('生成图片信息不完整，请刷新任务');
     const url = new URL(value.url,location.origin), expected = '/api/workspaces/' + encodeURIComponent(context.workspaceId) + '/assets/' + encodeURIComponent(value.assetId) + '/raw';
     if (url.origin !== location.origin || url.pathname !== expected || url.search || url.hash) throw Error('生成图片地址不属于当前品牌');
     return {...value,url:url.pathname};
@@ -140,7 +140,7 @@
       || !['PENDING','RUNNING','SUCCEEDED','FAILED'].includes(value.status) || !['NOT_REQUESTED','PENDING','RUNNING','READY','FAILED'].includes(value.resultState)
       || !Number.isFinite(Date.parse(value.expiresAt)) || value.progress !== null && !Number.isFinite(value.progress)
       || [value.archiveExpiresAt,value.archiveProcessingExpiresAt].some(date => date != null && !Number.isFinite(Date.parse(date)))
-      || !Array.isArray(value.results) || typeof value.canRetryArchive !== 'boolean') throw Error('生成任务回执不完整，请刷新确认');
+      || !Array.isArray(value.results) || typeof value.canRetryArchive !== 'boolean') throw Error('生成任务信息不完整，请刷新确认');
     const mode=value.mode??'generate';if(!['generate','modify'].includes(mode))throw Error('图片任务类型无法确认，请刷新任务');
     const task = {...value,mode,results:value.results.map(result)};
     if (task.resultState === 'READY' && (task.status !== 'SUCCEEDED' || !task.results.length)) throw Error('生成成果尚未确认，请刷新任务');
@@ -155,7 +155,7 @@
   function savePending(value) {
     pending = value;
     try { if (value) sessionStorage.setItem(retryKey,JSON.stringify(value)); else sessionStorage.removeItem(retryKey); }
-    catch { message('浏览器暂不能保存回执确认记录；请保持页面打开并先刷新任务确认受理情况'); }
+    catch { message('浏览器暂不能保存提交记录；请保持页面打开并先刷新任务，检查上次提交的状态'); }
     render();
   }
   function clearSubmitted(operation) {
@@ -171,7 +171,7 @@
       if (task.mode==='generate' && !stopped && operation.instance === instance && operation.pageId === bridge().editor.getCurrentPageId()) autoInsert.set(task.requestId,operation.pageId);
       savePending(null);
     }
-    message(task.mode==='modify'?'修改任务已受理，完成后请手动加入画布，原图保留':'生成任务已受理，关闭页面后仍会继续处理');
+    message(task.mode==='modify'?'修改任务已提交，完成后请手动加入画布，原图保留':'生成任务已提交，关闭页面后仍会继续处理');
     render(); finishReady(task); schedule(); refreshChecks();
   }
   async function savedContext() {
@@ -205,7 +205,7 @@
       if (!draft?.loaded || draft.restoring || draft.composing || draft.conflict || draft.pendingChoice) throw Error('请先完成草稿恢复或冲突处理，原稿仍保留');
       const selected = supported(inputForm), submittedSignature = signature(inputForm), editSequence = userRevision, pageId = editor.getCurrentPageId();
       let operation = pending;
-      if (operation && (operation.signature !== submittedSignature || operation.workflowIntent && operation.workflowIntent!==workflowIntent(window.NovartProductWorkflowSnapshot?.()))) throw Error('上一份需求的受理回执尚未确认。请先刷新生成任务，当前新输入仍保留');
+      if (operation && (operation.signature !== submittedSignature || operation.workflowIntent && operation.workflowIntent!==workflowIntent(window.NovartProductWorkflowSnapshot?.()))) throw Error('上次提交的状态尚未确认。请先检查上次生成，当前新输入仍保留');
       if (!operation) {
         message('正在确认画布与素材设置…');
         const saved = await savedContext();
@@ -217,9 +217,9 @@
       message(operation.mode==='modify'?'正在提交图片修改…':'正在提交图片生成…');
       let received;
       try { received = await post(endpoint,operation.payload); }
-      catch (error) { if (!error.retryable || stopped) throw error; message('正在确认生成回执…'); received = await post(endpoint,operation.payload); }
+      catch (error) { if (!error.retryable || stopped) throw error; message('正在检查上次生成…'); received = await post(endpoint,operation.payload); }
       const task = accept(received);
-      if (task.mutationId !== operation.payload.mutationId) throw Error('生成回执与本次需求不一致，请刷新任务确认');
+      if (task.mutationId !== operation.payload.mutationId) throw Error('生成任务信息与本次需求不一致，请刷新任务确认');
       onAccepted(task,operation); return true;
     } catch (error) {
       if (error.status >= 400 && error.status < 500) savePending(null);
@@ -230,7 +230,7 @@
   async function confirmPending() {
     if (!pending || submitting || stopped) return;
     const operation = pending;submitting=true;render();mount();
-    try { editable();const task=accept(await post(endpoint,operation.payload));if(task.mutationId!==operation.payload.mutationId)throw Error('回执与原需求不一致，请刷新任务');onAccepted(task,operation); }
+    try { editable();const task=accept(await post(endpoint,operation.payload));if(task.mutationId!==operation.payload.mutationId)throw Error('任务信息与原需求不一致，请刷新任务');onAccepted(task,operation); }
     catch(error){if(error.status>=400&&error.status<500)savePending(null);message(error.message);}
     finally{submitting=false;render();mount();}
   }
@@ -272,7 +272,7 @@
   async function retryArchive(task) {
     if (retrying.has(task.requestId)) return;
     retrying.add(task.requestId);render();
-    try { editable(); const updated=accept(await post('/studio/generation/retry-archive',{projectId,requestId:task.requestId}));archiveWatchStarted.set(updated.requestId,Date.now());message('已重新受理图片归档，不会再次生成');failures=0;paused=false;render();schedule(); }
+    try { editable(); const updated=accept(await post('/studio/generation/retry-archive',{projectId,requestId:task.requestId}));archiveWatchStarted.set(updated.requestId,Date.now());message('图片归档已重新提交，不会再次生成');failures=0;paused=false;render();schedule(); }
     catch(error){message(error.message);}finally{retrying.delete(task.requestId);render();}
   }
   function checkCurrent(epoch) { const query=new URLSearchParams(location.search);return !stopped && epoch===checkEpoch && query.get('projectId')===projectId && query.get('workspaceId')===context.workspaceId && window.__NOVART_PRODUCT__===context; }
@@ -280,7 +280,7 @@
     const statuses=['NOT_REQUESTED','PENDING','RUNNING','SUCCEEDED','FAILED'];
     if(!value || value.versionId!==material.versionId || !statuses.includes(value.status) || typeof value.canRetry!=='boolean'
       || !Number.isInteger(value.progress) || value.progress<0 || value.progress>100
-      || value.error!==null && typeof value.error!=='string') throw Error('品牌检查回执不完整，请刷新');
+      || value.error!==null && typeof value.error!=='string') throw Error('品牌检查信息不完整，请刷新');
     if(value.status==='NOT_REQUESTED' ? value.taskId!==null || value.expiresAt!==null
       : typeof value.taskId!=='string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(value.taskId) || !Number.isFinite(Date.parse(value.expiresAt))) throw Error('品牌检查任务或期限不完整，请刷新');
     if(value.status==='SUCCEEDED') {
@@ -380,7 +380,7 @@
       const value=await request(endpoint);if(!Array.isArray(value.requests))throw Error('生成任务列表不完整，请稍后刷新');
       for(const item of value.requests){const task=accept(item);if(pending?.payload.mutationId===task.mutationId)onAccepted(task,pending);finishReady(task);}
       failures=0;paused=false;render();schedule();refreshChecks(!automatic);
-    }catch(error){failures++;if(error.retryable&&failures<=4){message('暂时无法读取任务，正在重试（'+failures+'/4）');schedule(Math.min(20000,2500*2**(failures-1)),true);}else{paused=true;message(error.message+'。可手动刷新；已受理任务仍由服务器处理。');}render();}
+    }catch(error){failures++;if(error.retryable&&failures<=4){message('暂时无法读取任务，正在重试（'+failures+'/4）');schedule(Math.min(20000,2500*2**(failures-1)),true);}else{paused=true;message(error.message+'。可手动刷新；已提交的任务仍由服务器处理。');}render();}
     finally{refreshing=false;if(refreshButton)refreshButton.disabled=false;}
   }
   function mount() {
@@ -409,7 +409,7 @@
     if(panel)return;
     const style=node('style','');style.textContent='.np-generations{position:fixed;z-index:690;right:18px;top:72px;width:min(330px,calc(100vw - 36px));max-height:52vh;overflow:auto;background:var(--color-lo-bg-neutral-l0,#fff);color:var(--color-lo-text-neutral-l1,#39333f);border:1px solid var(--color-lo-border-neutral-l1,#e8e5ee);border-radius:18px;box-shadow:0 6px 24px #2820390d;font:12px/1.5 system-ui}.np-generations[hidden]{display:none}.np-generations summary{padding:12px 14px;font-weight:600;cursor:pointer}.np-generation-body{padding:0 14px 12px}.np-generation-row{display:grid;gap:6px;padding:10px 0;border-top:1px solid var(--color-lo-border-neutral-l1,#e8e5ee)}.np-generation-prompt{margin:0;overflow-wrap:anywhere;max-height:5em;overflow:auto}.np-generation-note,.np-generation-status{color:var(--color-lo-text-neutral-l2,#756d7f)}.np-generations button,.np-generation-settings select{border:1px solid var(--color-lo-border-neutral-l1,#e8e5ee);border-radius:10px;padding:5px 10px;background:var(--color-lo-bg-neutral-l0,#fff);color:inherit;cursor:pointer}.np-generations button{justify-self:start}.np-generations button:disabled{opacity:.5;cursor:default}.np-generation-settings{position:relative;font:12px/1.5 system-ui;white-space:nowrap}.np-generation-settings summary{cursor:pointer;list-style:none;border-radius:12px;padding:6px 8px;background:var(--color-lo-bg-overlay,#f6f4f9)}.np-generation-frame{flex-basis:100%;display:grid;gap:5px;min-width:220px;max-width:min(290px,70vw)}.np-generation-frame[hidden]{display:none}.np-generation-frame select{min-width:0;max-width:100%}.np-generation-frame-note{font-size:11px;white-space:normal;color:var(--color-lo-text-neutral-l2,#756d7f)}.np-generation-options{flex-wrap:wrap;position:absolute;bottom:calc(100% + 8px);right:0;display:flex;gap:6px;padding:10px;border:1px solid var(--color-lo-border-neutral-l1,#e8e5ee);border-radius:14px;background:var(--color-lo-bg-neutral-l0,#fff);z-index:710}';document.head.append(style);
     panel=node('details','','np-generations');panel.dataset.testid='product-generation-tasks';panel.open=true;panel.hidden=true;panel.append(node('summary','图片任务'));
-    const body=node('div','','np-generation-body');notice=node('p','','np-generation-note');notice.setAttribute('role','status');list=node('div','');refreshButton=node('button','刷新生成任务');refreshButton.type='button';refreshButton.onclick=()=>refresh();pendingPrompt=node('p','','np-generation-prompt');pendingButton=node('button','确认上一份受理');pendingButton.type='button';pendingButton.dataset.action='confirm-pending';pendingButton.onclick=confirmPending;pendingButton.hidden=true;pendingPrompt.hidden=true;body.append(notice,refreshButton,pendingPrompt,pendingButton,list);panel.append(body);document.body.append(panel);panel.addEventListener('pointerdown',event=>event.stopPropagation());
+    const body=node('div','','np-generation-body');notice=node('p','','np-generation-note');notice.setAttribute('role','status');list=node('div','');refreshButton=node('button','刷新生成任务');refreshButton.type='button';refreshButton.onclick=()=>refresh();pendingPrompt=node('p','','np-generation-prompt');pendingButton=node('button','检查上次生成');pendingButton.type='button';pendingButton.dataset.action='confirm-pending';pendingButton.onclick=confirmPending;pendingButton.hidden=true;pendingPrompt.hidden=true;body.append(notice,refreshButton,pendingPrompt,pendingButton,list);panel.append(body);document.body.append(panel);panel.addEventListener('pointerdown',event=>event.stopPropagation());
     try{const value=JSON.parse(sessionStorage.getItem(frameKey)||'null');if(value?.userId===context.user.id&&value.workspaceId===context.workspaceId&&value.projectId===projectId&&typeof value.pageId==='string'&&typeof value.frameId==='string'&&value.frameId.startsWith('shape:'))framePreference=value;}catch{}
     try{const value=JSON.parse(sessionStorage.getItem(retryKey)||'null');if(value?.payload?.projectId===projectId&&typeof value.payload.mutationId==='string'&&typeof value.signature==='string')pending=value;}catch{}
     try{bridge();unsubscribe=native.source.ow.subscribe(()=>queueMicrotask(mount));}catch{}
@@ -421,7 +421,7 @@
     if(stopped || !/^[a-zA-Z0-9_-]{1,128}$/.test(requestId))throw Error('生成任务地址无效，请刷新任务');
     const value=await request(endpoint+'&requestId='+encodeURIComponent(requestId));
     if(stopped)throw Error('画布已关闭，请重新打开任务');
-    if(value.requestId!==requestId)throw Error('生成任务回执不匹配，请刷新任务');
+    if(value.requestId!==requestId)throw Error('生成任务信息不匹配，请刷新任务');
     const task=accept(value);tasks.delete(requestId);tasks.set(requestId,task);
     render();panel.hidden=false;panel.open=true;refreshChecks();
     const row=list.querySelector('[data-request-id="'+requestId+'"]');

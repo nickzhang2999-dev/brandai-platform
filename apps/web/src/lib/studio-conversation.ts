@@ -12,6 +12,7 @@ import { workflowAssets } from "./studio-workflow-codec";
 import { readStudioGeneration } from "./studio-generation";
 import { enqueueStudioConversation } from "./studio-conversation-queue";
 import { freezeStudioConversationCanvas } from "./studio-conversation-snapshot";
+import { intentFromConversationOption } from "./studio-conversation-choices";
 
 type Message = Prisma.StudioConversationMessageGetPayload<{ include: { conversation: true } }>;
 const own = (workspaceId: string, userId: string, projectId: string) => ({ workspaceId, userId, projectId });
@@ -30,7 +31,7 @@ export async function validateConversationReferences(db: Prisma.TransactionClien
 }
 
 export function conversationGenerationInput(projectId: string, input: StudioConversationInput, intent: StudioConversationIntent) {
-  return StudioGenerationInput.parse({ projectId, mutationId: input.mutationId, prompt: intent.prompt,
+  return StudioGenerationInput.parse({ projectId, mutationId: input.mutationId, prompt: intent.imagePrompt ?? intent.prompt,
     sizeSelection: intent.sizeSelection, documentRevision: input.documentRevision, workflowRevision: input.workflowRevision,
     ...(input.psdLayerMode ? { psdLayerMode: input.psdLayerMode, ...(input.psdLayerCount ? { psdLayerCount: input.psdLayerCount } : {}) } : {}),
     ...(input.outputFrameId ? { outputFrameId: input.outputFrameId } : {}) });
@@ -74,7 +75,7 @@ async function receipt(original: Message) {
   const intent = row.intent as { clarification?: string } | null;
   return StudioConversationMessage.parse({ messageId: row.id, mutationId: row.mutationId, projectId: row.conversation.projectId,
     text: row.text, references: row.references, status, intent: row.intent, generation, error,
-    clarification: intent?.clarification ?? null, createdAt: row.createdAt.toISOString(), expiresAt: row.expiresAt.toISOString() });
+    clarification: intent?.clarification ?? null, originalInput: StudioConversationInput.parse(row.input), createdAt: row.createdAt.toISOString(), expiresAt: row.expiresAt.toISOString() });
 }
 
 export async function submitStudioConversation(workspaceId: string, userId: string, projectId: string, raw: unknown) {
@@ -92,9 +93,46 @@ export async function submitStudioConversation(workspaceId: string, userId: stri
         if (old) {
           // Home handoff may resume after the canvas has advanced. The same
           // explicit click retains its original accepted snapshot and job.
-          const stableHome = (value: unknown) => { const { documentRevision: _d, workflowRevision: _w, ...rest } = StudioConversationInput.parse(value); return hashStudioPayload(rest); };
+          const stableHome = (value: unknown) => { const { documentRevision: _d, workflowRevision: _w, selectedReferenceIds, ...rest } = StudioConversationInput.parse(value);
+            return hashStudioPayload({ ...rest, ...(selectedReferenceIds?.length ? { selectedReferenceIds } : {}) }); };
           if (old.payloadHash !== payloadHash && !(input.homeStart && StudioConversationInput.parse(old.input).homeStart && stableHome(old.input) === stableHome(input))) throw new ApiException(409, "同一次发送不能换成其他内容，请重新发送。");
           return old;
+        }
+        let chosenIntent: StudioConversationIntent | undefined;
+        if (input.decision) {
+          // Serialize all choices of one message, including different tabs and
+          // fresh mutation UUIDs. A clarification can launch only one request.
+          const sourceId = input.decision.sourceMessageId;
+          await tx.$queryRaw`SELECT "id" FROM "StudioConversationMessage" WHERE "id" = ${sourceId} AND "conversationId" = ${conversation.id} FOR UPDATE`;
+          const source = await tx.studioConversationMessage.findFirst({ where: { id: sourceId, conversationId: conversation.id } });
+          if (!source?.intent) throw new ApiException(404, "原消息不存在或尚未完成判断。");
+          const sourceInput = StudioConversationInput.parse(source.input), sourceIntent = StudioConversationIntent.parse(source.intent);
+          const stable = (value: StudioConversationInput) => { const { mutationId: _m, documentRevision: _d, workflowRevision: _w, decision: _c,
+            selectedReferenceIds: _s, homeStart: _h, ...rest } = value; return hashStudioPayload(rest); };
+          if (stable(sourceInput) !== stable(input)) throw new ApiException(409, "选项对应的原始需求已变化，请重新发送需求。");
+          if (sourceIntent.modelStatus === "UNKNOWN") throw new ApiException(409, "原模型调用结果尚未确认，不能通过选项重新调用。");
+          const options = input.decision.kind === "clarification" ? sourceIntent.options : sourceIntent.correctionOptions;
+          const option = options?.find(value => value.id === input.decision!.optionId);
+          if (!option) throw new ApiException(422, "这个选项已失效，请读取最新对话。");
+          const existingChoice = await tx.studioConversationMessage.findFirst({ where: { conversationId: conversation.id,
+            input: { path: ["decision", "sourceMessageId"], equals: sourceId } }, include: { conversation: true } });
+          if (existingChoice) {
+            const acceptedChoice = StudioConversationInput.parse(existingChoice.input).decision;
+            if (acceptedChoice?.optionId !== input.decision.optionId || acceptedChoice.kind !== input.decision.kind)
+              throw new ApiException(409, "这条消息已经选择了其他操作，请查看原任务结果。");
+            return existingChoice;
+          }
+          if (input.decision.kind === "clarification") {
+            if (source.status !== "CLARIFICATION" || source.generationRequestId || sourceIntent.action !== "clarify") throw new ApiException(409, "原消息已开始生成，不能再次选择。");
+          } else {
+            if (!source.generationRequestId || sourceIntent.action === "clarify") throw new ApiException(409, "请等待原生成完成后再纠正。");
+            const completed = await tx.studioGenerationRequest.findFirst({ where: { id: source.generationRequestId, workspaceId, userId, projectId, status: "SUCCEEDED" }, select: { id: true } });
+            const ready = await tx.studioGeneratedMaterial.count({ where: { requestId: source.generationRequestId, workspaceId, projectId, status: "SUCCEEDED" } });
+            const unfinished = await tx.studioGeneratedMaterial.count({ where: { requestId: source.generationRequestId, workspaceId, projectId, status: { not: "SUCCEEDED" } } });
+            if (!completed || !ready || unfinished) throw new ApiException(409, "请等待原生成和图片保存完成后再纠正。");
+          }
+          chosenIntent = intentFromConversationOption(input, option);
+          if (chosenIntent.action === "clarify") throw new ApiException(422, chosenIntent.clarification ?? "当前画布不满足该选项要求。");
         }
         const [document, workflow] = await Promise.all([tx.editorDocument.findUnique({ where: { projectId } }), tx.workbenchProjectState.findUnique({ where: { projectId } })]);
         if ((document?.revision ?? 0) !== input.documentRevision || (workflow?.workflowRevision ?? 0) !== input.workflowRevision) throw new ApiException(409, "画布或工作流已更新，请保存最新内容后发送。");
@@ -104,6 +142,7 @@ export async function submitStudioConversation(workspaceId: string, userId: stri
         if (pending >= 4) throw new ApiException(429, "待处理的消息较多，请稍后再发送。");
         return tx.studioConversationMessage.create({ data: { id: "scm_" + randomUUID().replace(/-/g, ""), conversationId: conversation.id,
           mutationId: input.mutationId, payloadHash, text: input.text, references: input.references as Prisma.InputJsonValue,
+          ...(chosenIntent ? { intent: chosenIntent as Prisma.InputJsonValue } : {}),
           input: input as unknown as Prisma.InputJsonValue, acceptedCanvas: freezeStudioConversationCanvas(document?.canvas ?? "", input.references, input.outputFrameId), expiresAt: new Date(Date.now() + STUDIO_CONVERSATION_TTL_MS) }, include: { conversation: true } });
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 10_000 });
       break;

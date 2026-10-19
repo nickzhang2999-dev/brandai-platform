@@ -7,6 +7,7 @@ import { NovartApiError } from "../../lib/novart-api-client";
 import { createOwnedConversationApi } from "./owned-conversation-api";
 import { mergeOwnedConversationReferences, ownedConversationDraftEqual } from "./owned-conversation-references";
 import { ownedConversationActive as active, ownedConversationDeadline as deadline, ownedConversationGeneration } from "./owned-conversation-state";
+import { ownedConversationChoices, ownedConversationDecisionInput, ownedConversationAcknowledges, type ConversationDecisionKind } from "./owned-conversation-decisions";
 import { OwnedGenerationCard } from "./OwnedGenerationCard";
 import type { createOwnedEditorApi, DecompositionTask, GenerationTask, PersistentImage } from "./owned-editor-api";
 
@@ -16,6 +17,7 @@ export type OwnedConversationHandle = { ready(): boolean; flush(): Promise<void>
 type Props = { workspaceId: string; projectId: string; userId: string; readOnly: boolean;
   api: ReturnType<typeof createOwnedEditorApi> | null;
   prepare(): Promise<{ documentRevision: number; workflowRevision: number; outputFrameId?: string }>;
+  selectedReferenceIds?(references: StudioConversationReference[]): string[];
   isImagePlaced?(image: PersistentImage): boolean; onNotice(message: string): void; onGeneration(task: GenerationTask): void; onInsert(image: PersistentImage, sourceShapeId?: string): Promise<void>;
   onInsertLayers(task: DecompositionTask, source: PersistentImage): Promise<void>; onAddReference?(): void; onAdvancedSettings?(): void; activity?: ReactNode };
 const button = "rounded-full border border-border px-3 py-2 text-xs disabled:opacity-40";
@@ -100,27 +102,34 @@ export const OwnedConversationPanel = forwardRef<OwnedConversationHandle, Props>
     } catch (failure) { if (mounted.current && api.current === context) setError(explain(failure)); throw failure; }
     finally { if (api.current === context) { saveBusy.current = false; setSaving(false); } }
   }, []);
-  const send = useCallback(async (home?: { mutationId: string }) => {
+  const send = useCallback(async (home?: { mutationId: string }, decision?: { messageId: string; optionId: string; kind: ConversationDecisionKind }) => {
     const context = api.current;
     if (!context || !readyRef.current || latest.current.readOnly || composing.current || sendBusy.current) return;
     sendBusy.current = true; setSending(true);
     try {
+      if (decision && pending.current) throw new Error("请先检查上次提交，再选择这条需求的处理方式。");
       let operation = pending.current;
       if (!operation) {
         await flush();
         if (!mounted.current || api.current !== context) return;
         const prepared = await latest.current.prepare();
         if (!mounted.current || api.current !== context) return;
-        operation = StudioConversationInput.parse({ ...structuredClone(draftRef.current), ...prepared, mutationId: home?.mutationId ?? crypto.randomUUID(), ...(home ? { homeStart: true } : {}) });
+        const source = decision ? messagesRef.current.find(message => message.messageId === decision.messageId) : undefined;
+        if (decision && !source) throw new Error("原任务暂不可用，请读取最新对话。");
+        const references = source?.originalInput?.references ?? draftRef.current.references;
+        const selectedReferenceIds = latest.current.selectedReferenceIds?.(references) ?? [];
+        operation = decision && source
+          ? ownedConversationDecisionInput(source, decision.optionId, decision.kind, prepared, crypto.randomUUID(), selectedReferenceIds)
+          : StudioConversationInput.parse({ ...structuredClone(draftRef.current), ...prepared, selectedReferenceIds, mutationId: home?.mutationId ?? crypto.randomUUID(), ...(home ? { homeStart: true } : {}) });
         // Persist before sending. A storage error must not lead to an untracked paid request.
         localStorage.setItem(keyRef.current, JSON.stringify(operation)); pending.current = operation; setUnknown(true);
       }
       const order = ++requestOrder.current;
       const message = StudioConversationMessage.parse(await context.send(operation));
       if (!mounted.current || api.current !== context) return;
-      if (message.mutationId !== operation.mutationId || message.text !== operation.text) throw new Error("对话提交结果与原请求不一致，原请求仍保留。");
+      if (!ownedConversationAcknowledges(operation, message)) throw new Error("对话提交结果与原请求不一致，原请求仍保留。");
       accept(message, order); localStorage.removeItem(keyRef.current); pending.current = null; setUnknown(false); setPaused(false); setError("");
-      updateDraft({ ...draftRef.current, text: "" });
+      if (!operation.decision) updateDraft({ ...draftRef.current, text: "" });
       return message;
     } catch (failure) {
       if (mounted.current && api.current === context) {
@@ -206,7 +215,7 @@ export const OwnedConversationPanel = forwardRef<OwnedConversationHandle, Props>
   useEffect(() => { const leaving = (event: BeforeUnloadEvent) => { if (readyRef.current && !same(draftRef.current, confirmedDraft.current!) || pending.current) { event.preventDefault(); event.returnValue = ""; } }; window.addEventListener("beforeunload", leaving); return () => window.removeEventListener("beforeunload", leaving); }, []);
   const locked = props.readOnly || !ready || sending || unknown;
   function clarify(message: Message, targetId?: string) {
-    if (locked) return;
+    if (locked || message.intent?.modelStatus === "UNKNOWN") return;
     if (draftRef.current.text.trim()) { props.onNotice("输入框还有未发送内容，请先保留或清空，再选择这条需求的处理方式。"); input.current?.focus(); return; }
     updateDraft({ ...draftRef.current, text: targetId ? message.text : `生成一张新图：${message.text}`, references: message.references, quickEditTargetId: targetId ?? null }); input.current?.focus();
   }
@@ -226,10 +235,15 @@ export const OwnedConversationPanel = forwardRef<OwnedConversationHandle, Props>
       {messages.map(message => <article key={message.messageId} className="space-y-2" data-message-id={message.messageId}>
         <div className="ml-5 rounded-2xl rounded-tr-md bg-accent-soft p-3 text-sm leading-6"><p className="whitespace-pre-wrap break-words">{message.text}</p>{message.references.length > 0 && <p className="mt-2 text-xs text-muted-foreground">{message.references.map(value => value.name).join("、")}</p>}</div>
         {message.clarification && <p className="rounded-xl border border-border p-3 text-xs leading-6">{message.clarification}</p>}
-        {message.status === "CLARIFICATION" && <div className="flex flex-wrap gap-2"><button className={button} disabled={locked} onClick={() => clarify(message)}>参考生成新图</button>{message.references.filter(value => value.shapeId).map(value => <button key={value.referenceId} className={button} disabled={locked} onClick={() => clarify(message, value.referenceId)}>修改{value.name}</button>)}</div>}
+        {ownedConversationChoices(message, "clarification").length > 0 && <div className="space-y-2" data-testid="conversation-clarification-options"><p className="text-xs text-muted-foreground">选择后会开始创作并消耗额度。</p><div className="flex flex-wrap gap-2">{ownedConversationChoices(message, "clarification").map(option => <button key={option.id} type="button" className={button} disabled={locked} onClick={() => void send(undefined, { messageId: message.messageId, optionId: option.id, kind: "clarification" }).catch(() => undefined)}>{option.label}</button>)}</div></div>}
+        {message.status === "CLARIFICATION" && message.intent?.modelStatus !== "UNKNOWN" && !message.intent?.options?.length && <div className="flex flex-wrap gap-2"><button className={button} disabled={locked} onClick={() => clarify(message)}>参考生成新图</button>{message.references.filter(value => value.shapeId).map(value => <button key={value.referenceId} className={button} disabled={locked} onClick={() => clarify(message, value.referenceId)}>修改{value.name}</button>)}</div>}
+        {message.intent?.modelStatus === "UNKNOWN" && <p className="text-xs leading-6 text-muted-foreground">这次判断结果尚未确认，请检查任务状态；不会再次调用模型。</p>}
+        {!!message.intent?.options?.length && !message.originalInput && message.intent.modelStatus !== "UNKNOWN" && <p className="text-xs text-muted-foreground">这条历史需求缺少原始设置，请重新选择图片并确认尺寸后提交。</p>}
+        {message.intent?.imagePrompt && <details className="rounded-xl border border-border p-3 text-xs" data-testid="conversation-image-prompt"><summary className="cursor-pointer">实际生成描述</summary><p className="mt-2 text-muted-foreground">生成使用此需求描述，并应用当前品牌和尺寸规则。</p><p className="mt-2 whitespace-pre-wrap break-words leading-6">{message.intent.imagePrompt}</p></details>}
         {message.error && !message.generation && <p role="alert" className="p-2 text-xs leading-6">{message.error}</p>}
         {active(message) && !message.generation && <p className="p-2 text-xs text-muted-foreground">{Date.now() >= deadline(message) ? "等待较久，请读取任务确认；不会重复调用模型。" : "需求已提交，正在核对图片和尺寸…"}</p>}
         {message.generation && <OwnedGenerationCard compact isImagePlaced={props.isImagePlaced} activityNotice={active(message) && Date.now() >= deadline(message) ? "等待较久，请读取任务确认；不会重复调用模型。" : undefined} task={message.generation} api={props.api} canEdit={!props.readOnly} recoveryDisabled={locked} onReedit={() => reedit(message)} onTask={task => acceptGeneration(message.messageId, task)} onNotice={props.onNotice} onInsert={image => props.onInsert(image, message.intent?.action === "modify" ? message.references.find(ref => ref.referenceId === message.intent?.targetReferenceId)?.shapeId : undefined)} onInsertLayers={props.onInsertLayers} />}
+        {ownedConversationChoices(message, "correction").length > 0 && <details className="rounded-xl border border-border p-3 text-xs" data-testid="conversation-correction-options"><summary className="cursor-pointer">判断错了</summary><p className="my-2 leading-6 text-muted-foreground">选择下面的处理方式会重新生成并消耗额度，原图和当前输入都会保留。</p><div className="flex flex-wrap gap-2">{ownedConversationChoices(message, "correction").map(option => <button key={option.id} type="button" className={button} disabled={locked} onClick={() => void send(undefined, { messageId: message.messageId, optionId: option.id, kind: "correction" }).catch(() => undefined)}>{option.label}</button>)}</div></details>}
       </article>)}
       {props.activity}
     </div>

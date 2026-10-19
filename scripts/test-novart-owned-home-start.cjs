@@ -11,6 +11,10 @@ class TestFile extends Blob { constructor(parts,name,options) { super(parts,opti
 const file = name => new TestFile(['synthetic-test-bytes'],name || 'fixture.png',{type:'image/png'});
 const material = {id:'material-fixture',assetId:'asset-fixture',assetSha256:'a'.repeat(64),kind:'image',mimeType:'image/png',fileName:'fixture.png',sizeBytes:20,width:80,height:60,url:'/api/workspaces/workspace-fixture/assets/asset-fixture/raw'};
 async function flush(condition = () => true) { for(let i=0;i<150;i++) { await new Promise(resolve => setImmediate(resolve)); if(condition()) return; } throw new Error('Synthetic boundary did not settle'); }
+function findControl(fixture,label) {
+  const visit = item => item.textContent===label || item['aria-label']===label ? item : (item.children||[]).map(visit).find(Boolean);
+  return [...fixture.elements.values()].map(visit).find(Boolean);
+}
 function harness(options = {}) {
   const elements = new Map(), events = new Map(), timers = new Set(), writes = [], posts = [], requests = [], creates = [], notices = [];
   let stored = options.stored || null, active = false, now = Date.parse('2026-10-10T00:00:00Z'), apiCalls = 0, refreshed = 0, module;
@@ -55,7 +59,7 @@ function harness(options = {}) {
   context.window=context;
   const fixture={entry,host,elements,events,timers,writes,posts,requests,creates,notices,task,dispatch,ack,get data(){return stored;},get module(){return module;},
     async ready(){await flush(()=>module.snapshot().loaded);},async add(files=[file()]){get('hs-file-input').listeners.change({target:{files,value:'selected'}});await flush(()=>stored?.items?.length===Math.min(files.length,4)||get('hs-draft-note').textContent);},
-    async create(){await module.create();},async resume(){return module.resume(entry,true);},activate(){active=true;},get,get refreshed(){return refreshed;},completeInSibling(){stored={version:1,items:[],submitted:null};},
+    async create(){await module.create();},async resume(){return module.resume(entry,true);},activate(){active=true;},get,get refreshed(){return refreshed;},completeInSibling(){stored={version:1,items:[],submitted:null};},replaceInSibling(value){stored=structuredClone(value);},
     fire(ms){const match=[...timers].find(value=>value.ms===ms);assert(match,'Expected bounded timer');clear(match);now+=ms;match.callback();},
   };
   vm.runInNewContext(source,context);module=context.createHomeStart(host);return fixture;
@@ -153,6 +157,58 @@ function harness(options = {}) {
   {
     const options={lockUnavailable:true};const f=harness(options);await f.ready();f.get('ns-home-brief').value='同一份跨页需求';await f.create();await f.resume();assert.equal(f.posts.length,0);
     f.completeInSibling();options.lockUnavailable=false;await f.resume();assert.equal(f.posts.length,0);assert.equal(f.refreshed,1);assert.equal(f.module.hasDraft(),false);count++;
+  }
+  {
+    const f=harness({respond:({task,mutationId})=>task(mutationId,'FAILED')});await f.ready();f.get('ns-home-brief').value='保留失败图片的原始需求';await f.add();await f.create();await f.resume();
+    const remove=findControl(f,'移除 fixture.png');assert(remove);assert.equal(remove.disabled,false);assert.equal(f.get('hs-attachments').children[0].dataset.state,'error');
+    await remove.click();await flush(()=>!f.module.snapshot().recoveryPending);assert.equal(f.module.snapshot().submittedRequestId,null);assert.equal(f.module.snapshot().attachmentCount,0);assert.equal(f.get('ns-create-blank').disabled,false);assert.equal(f.get('ns-home-brief').value,'保留失败图片的原始需求');assert.equal(f.creates.length,1);assert.equal(f.posts.length,0);count++;
+  }
+  {
+    const f=harness({respond:({task,mutationId})=>task(mutationId,'FAILED')});await f.ready();f.get('ns-home-brief').value='结束交接仍保留需求';await f.add();await f.create();await f.resume();const previous=f.data;
+    const end=findControl(f,'结束交接并进入项目');assert(end);assert.equal(end.disabled,false);await end.click();await flush(()=>!f.module.snapshot().recoveryPending);
+    assert.equal(f.module.snapshot().submittedRequestId,null);assert.equal(f.data.items.length,1);assert(f.data.items[0].file instanceof Blob);assert.notEqual(f.data.items[0].id,previous.items[0].id);assert.equal(f.get('ns-home-brief').value,previous.submitted.brief);assert.equal(f.entry.frame.inert,false);assert.equal(f.creates.length,1);assert.equal(f.posts.length,0);count++;
+  }
+  {
+    const options={respond:({task,mutationId})=>task(mutationId,'FAILED')};const f=harness(options);await f.ready();await f.add();await f.create();await f.resume();const previous=f.data;options.failWrites=true;
+    await findControl(f,'移除 fixture.png').click();await flush(()=>Boolean(f.module.snapshot().recoveryError));assert.equal(f.module.snapshot().attachmentCount,1);assert.equal(f.module.snapshot().submittedRequestId,previous.submitted.requestId);assert.equal(f.data.items[0].id,previous.items[0].id);assert.equal(f.data.submitted.requestId,previous.submitted.requestId);assert.equal(f.posts.length,0);
+    options.failWrites=false;await findControl(f,'移除 fixture.png').click();await flush(()=>!f.module.snapshot().recoveryPending);assert.equal(f.module.snapshot().attachmentCount,0);assert.equal(f.module.snapshot().submittedRequestId,null);count++;
+  }
+  {
+    const options={respond:({task,mutationId})=>task(mutationId,'FAILED')};const f=harness(options);await f.ready();await f.add();await f.create();await f.resume();const previous=f.data;options.failWrites=true;
+    await findControl(f,'重新上传失败图片').click();await flush(()=>Boolean(f.module.snapshot().recoveryError));assert.equal(f.requests.length,1);assert.equal(f.data.items[0].id,previous.items[0].id);assert.equal(f.data.items[0].taskId,previous.items[0].taskId);assert.equal(f.module.snapshot().submittedRequestId,previous.submitted.requestId);
+    options.failWrites=false;options.respond=({task,mutationId})=>task(mutationId);await findControl(f,'重新上传失败图片').click();await flush(()=>!f.module.hasDraft());assert.equal(f.requests.filter(r=>r.init.method==='POST').length,2);assert.notEqual(f.requests.at(-1).init.body.get('mutationId'),previous.items[0].id);assert.equal(f.creates.length,1);count++;
+  }
+  {
+    const options={respond:()=>{throw new TypeError('Synthetic lost upload response');}};const f=harness(options);await f.ready();f.get('ns-home-brief').value='未知上传必须先确认';await f.add();await f.create();await f.resume();const previous=f.data;
+    assert.equal(findControl(f,'移除 fixture.png').disabled,true);const end=findControl(f,'结束交接并进入项目');assert(!end||end.disabled);assert.equal(previous.items[0].uploadStarted,true);
+    options.respond=({task,mutationId})=>task(mutationId);await f.resume();const posts=f.requests.filter(r=>r.init.method==='POST');assert.equal(posts.length,2);assert.equal(posts[0].init.body.get('mutationId'),posts[1].init.body.get('mutationId'));assert.equal(f.creates.length,1);assert.equal(f.posts.filter(p=>p.value.action==='start-creation').length,1);assert.equal(f.module.hasDraft(),false);count++;
+  }
+  {
+    const f=harness({autoAck:false});await f.ready();f.get('ns-home-brief').value='首图结果未知不能结束交接';await f.create();const run=f.resume();await flush(()=>f.posts.length===1);assert.equal(f.data.submitted.creationStarted,true);const original=f.posts[0].value;
+    f.fire(30000);await run;const end=findControl(f,'结束交接并进入项目');assert(!end||end.disabled);const restored=harness({stored:f.data});await restored.ready();const homeEnd=findControl(restored,'结束交接，保留项目');assert(!homeEnd||homeEnd.disabled);await restored.create();await restored.resume();assert.equal(restored.posts[0].value.requestId,original.requestId);assert.equal(restored.creates.length,0);assert.equal(restored.module.hasDraft(),false);count++;
+  }
+  {
+    const f=harness({respond:({task,mutationId})=>task(mutationId,'FAILED')});await f.ready();await f.add();await f.create();await f.resume();let release;const held=new Promise(resolve=>{release=resolve;});const restored=harness({stored:f.data,respond:async({task,mutationId})=>{await held;return task(mutationId,'FAILED');}});await restored.ready();assert.equal(findControl(restored,'移除 fixture.png').disabled,true);
+    release();await flush(()=>!restored.module.snapshot().checkingRecovery);assert.equal(restored.requests.length,1);assert.notEqual(restored.requests[0].init.method,'POST');assert.equal(findControl(restored,'移除 fixture.png').disabled,false);assert.equal(restored.creates.length,0);count++;
+  }
+  {
+    const f=harness({respond:({task,mutationId})=>task(mutationId,'FAILED')});await f.ready();await f.add();await f.create();await f.resume();const previous=f.data;
+    f.replaceInSibling({...previous,submitted:{...previous.submitted,creationStarted:true}});await findControl(f,'结束交接并进入项目').click();await flush();assert.equal(f.module.snapshot().submittedRequestId,previous.submitted.requestId);assert.equal(f.module.snapshot().attachmentCount,1);assert.equal(f.data.submitted.creationStarted,true);assert.equal(f.module.snapshot().canEndHandoff,false);assert.equal(f.requests.length,1);count++;
+  }
+  {
+    const f=harness({respond:({task,mutationId})=>task(mutationId,'FAILED')});await f.ready();await f.add();await f.create();await f.resume();const draft={...f.data.items[0],id:randomUUID(),taskId:null,uploadStarted:false};f.replaceInSibling({version:1,items:[draft],submitted:null});await f.resume();assert.equal(f.module.snapshot().submittedRequestId,null);assert.equal(f.module.snapshot().attachmentCount,1);assert.equal(f.data.items[0].id,draft.id);assert(f.data.items[0].file instanceof Blob);assert.equal(f.requests.length,1);assert.equal(f.entry.frame.inert,false);count++;
+  }
+  {
+    const options={respond:({task,mutationId})=>task(mutationId,'FAILED')};const f=harness(options);await f.ready();await f.add();await f.create();await f.resume();const previous=f.data;options.lockUnavailable=true;await findControl(f,'结束交接并进入项目').click();await flush();assert.equal(f.module.snapshot().submittedRequestId,previous.submitted.requestId);assert.equal(f.data.items[0].id,previous.items[0].id);assert.equal(f.requests.length,1);assert(f.notices.some(text=>text.includes('另一页面')));count++;
+  }
+  {
+    const f=harness({respond:({task,mutationId})=>({...task(mutationId,'FAILED'),error:'图片损坏或格式不受支持。请上传 4000 万像素以内的静态 PNG、JPEG 或 WebP。'})});await f.ready();await f.add();await f.create();await f.resume();assert(findControl(f,'更换失败图片'));assert.equal(findControl(f,'重新上传失败图片'),undefined);assert.equal(findControl(f,'移除 fixture.png').disabled,false);assert.equal(f.requests.length,1);count++;
+  }
+  {
+    const raw='INTERNAL STORAGE ERROR https://secret.invalid/?token=not-a-real-secret';const f=harness({respond:({task,mutationId})=>({...task(mutationId,'FAILED'),error:raw})});await f.ready();await f.add();await f.create();await f.resume();const text=node=>[node.textContent,...(node.children||[]).map(text)].join(' ');assert(![...f.elements.values()].map(text).join(' ').includes(raw));assert(findControl(f,'重新上传失败图片'));assert.equal(f.module.snapshot().failedCount,1);count++;
+  }
+  {
+    const options={respond:({task,mutationId})=>task(mutationId,'FAILED')};const f=harness(options);await f.ready();await f.add([file('first.png'),file('second.png')]);await f.create();await f.resume();options.failWrites=true;await findControl(f,'移除失败图片').click();await flush(()=>Boolean(f.module.snapshot().recoveryError));assert.equal(f.module.snapshot().attachmentCount,2);assert.equal(findControl(f,'失败图片已移除'),undefined);options.failWrites=false;await findControl(f,'移除失败图片').click();await flush(()=>!f.module.snapshot().recoveryPending);assert.equal(f.module.snapshot().attachmentCount,1);assert.equal(f.data.items[0].name,'second.png');assert(findControl(f,'失败图片已移除'));assert.equal(f.posts.length,0);assert.equal(f.requests.length,1);count++;
   }
   assert(!source.includes('/studio/start/'));assert(!source.includes('webpack'));assert(!source.includes('/studio/generation'));
   console.log(`Owned homepage protocol boundary checks: ${count} passed; production services were not exercised.`);

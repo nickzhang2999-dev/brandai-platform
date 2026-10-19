@@ -11,6 +11,8 @@ import { validateConversationReferences, conversationGenerationInput, recoverStu
 import { enqueueStudioConversation } from "@/lib/studio-conversation-queue";
 import { ApiException } from "@/lib/api";
 import { studioConversationModelAvailable, resolveStudioConversationModel, unknownStudioConversationIntent } from "@/lib/studio-conversation-model";
+import { loadStudioConversationContext } from "@/lib/studio-conversation-context";
+import { withConversationChoices } from "@/lib/studio-conversation-choices";
 
 const CLAIM_MS = 60_000;
 export async function runStudioConversationJob(job: Job<{ messageId: string }>) {
@@ -53,19 +55,27 @@ export async function runStudioConversationJob(job: Job<{ messageId: string }>) 
     }
     else if (row.intent) intent = StudioConversationIntent.parse(row.intent);
     else if (row.intentModelStartedAt) intent = unknownStudioConversationIntent(input);
-    // The user already chose an editable target. Preserve uncertain prior calls
-    // above, but do not spend a new semantic-model call re-deciding this choice.
-    else if (input.quickEditTargetId) intent = parseStudioConversationIntent(input, previous);
     else if (await studioConversationModelAvailable()) {
+      const signal = AbortSignal.timeout(Math.max(1, Math.min(30_000, row.expiresAt.getTime() - Date.now())));
+      // Preparation can fail without a paid call. Claim only after authorized
+      // image reads and resizing succeed; never label that failure as UNKNOWN.
+      const context = await loadStudioConversationContext(workspaceId, projectId, row.conversationId, row.createdAt, input, signal);
+      signal.throwIfAborted();
       const claimed = await prisma.studioConversationMessage.updateMany({ where: { id: row.id, attemptToken: token, status: "RUNNING", intentModelStartedAt: null, intent: { equals: Prisma.DbNull }, expiresAt: { gt: new Date() } },
         data: { intentModelStartedAt: new Date() } });
       if (!claimed.count) intent = unknownStudioConversationIntent(input);
       else {
-        try { intent = await resolveStudioConversationModel(input, previous, AbortSignal.timeout(Math.max(1, Math.min(30_000, row.expiresAt.getTime() - Date.now())))); }
+        const started = Date.now();
+        try { intent = await resolveStudioConversationModel(input, previous, signal, context); }
         catch { intent = unknownStudioConversationIntent(input); }
+        console.info("[studio-intent]", JSON.stringify({ revision: "r2", status: intent.modelStatus, elapsedMs: Date.now() - started,
+          ...(intent.modelUsage ? { usage: intent.modelUsage } : {}) }));
       }
     } else intent = StudioConversationIntent.parse({ ...parseStudioConversationIntent(input, previous),
-      ...(process.env.STUDIO_CONVERSATION_INTENT_ENABLED === "1" ? { modelStatus: "UNAVAILABLE" } : {}) });
+      modelStatus: "UNAVAILABLE" });
+    // A saved intent is part of the generation's immutable payload hash.
+    // Do not enrich legacy/crash-recovered snapshots after accepting them.
+    if (!row.intent) intent = withConversationChoices(input, intent);
     const persisted = await prisma.studioConversationMessage.updateMany({ where: { id: row.id, attemptToken: token, status: "RUNNING", expiresAt: { gt: new Date() } }, data: { intent: intent as Prisma.InputJsonValue } });
     if (!persisted.count) return;
     if (intent.action === "clarify") {

@@ -6,7 +6,7 @@ import { studioConversationFeedback } from "./studio-conversation-feedback";
  * cannot incur a semantic-model charge before it is rejected by the parser.
  * Quoted image copy is not an instruction to the application. */
 export function studioConversationNonActionable(input: Pick<StudioConversationInput, "text">): boolean {
-  const text = input.text.replace(/“[^”]*”|"[^"]*"|「[^」]*」|『[^』]*』/g, "").trim();
+  const text = input.text.replace(/“[^”]*”|"[^"]*"|「[^」]*」|『[^』]*』|‘[^’]*’/g, "").trim();
   if (!text) return true;
   if (/(?:先别|暂时不要|暂不|不要|别|不用|无需)\s*(?:生成|生图|制作|创作|开始|执行)|(?:先|只是|仅供)\s*(?:看看|讨论|参考)|(?:do not|don't)\s+(?:generate|create)/i.test(text)) return true;
   if (/[？?]|(?:是不是|能不能|可不可以|是否|为什么|为啥|怎么回事|怎么会|咋回事)|(?:怎么样|如何评价|好不好|是什么|为什么|觉得如何|吗)\s*[。！!]?\s*$/.test(text)) return true;
@@ -37,6 +37,7 @@ export function parseStudioConversationIntent(input: StudioConversationInput, pr
   if (feedback) return clarify(feedback);
   if (studioConversationNonActionable(input)) return clarify("这次要参考图片创作，还是修改已有图片？确认后再开始。");
   if (forcedId && !forced) return clarify("指定的修改对象不在本次引用中，请重新选择修改对象。");
+  if (decision?.action === "modify" && !forced) return clarify("请选择可编辑的修改对象。");
   const explicitNew = decision?.action === "generate" || /(?:重新(?:生成|设计|制作)|新建|新做|全新|另做|另外|再生成|(?:生成|设计|制作)\s*(?:一|1)\s*(?:张|幅|个)|合成|融合|组合|结合|new\s+(?:image|design)|combine|compose)/i.test(text);
   const compositionPattern = "(?:构图\\s*(?:保持|维持)(?:不变|原样)|(?:保持|维持|保留)\\s*(?:原有|原|当前)?构图(?:不变|原样)?|不(?:改|改变|修改|调整)\\s*(?:原有|原|当前)?构图)";
   // Negation applies only to these new natural-language rules, not the legacy
@@ -53,7 +54,7 @@ export function parseStudioConversationIntent(input: StudioConversationInput, pr
   const sceneReplacement = sceneReplacementClauses.length > 0;
   // A comparative visual request is actionable without requiring a magic edit
   // verb or a composition constraint. Quotes, commentary and questions aren't.
-  const visualClauses = text.replace(/“[^”]*”|"[^"]*"|「[^」]*」/g, "").split(/[，,。；;\n]/)
+  const visualClauses = text.replace(/“[^”]*”|"[^"]*"|「[^」]*」|『[^』]*』|‘[^’]*’/g, "").split(/[，,。；;\n]/)
     .filter(clause => !/[“”"「」？?]|(?:参考|效果|觉得|是不是|能不能|可不可以|是否|吗|不要|不需要|无需|不用|不必|禁止|不想|不能|不准)|(?:不|别).{0,8}(?:更|一点|一些|阳光)/.test(clause));
   const visualAdjustment = (clause: string) => /(?:光影|光照|光线|灯光|色调|颜色|背景|场景|画面|环境)\s*(?:请|要|需要|变得|变为|显得)?\s*(?:(?:更|再)\s*(?:自然|真实|写实|逼真|明亮|柔和|温暖|清晰|暗|亮)(?:一些|一点)?|(?:自然|真实|写实|逼真|明亮|柔和|温暖|清晰|暗|亮)(?:一些|一点))(?:吧)?\s*[！!]?\s*$/.test(clause)
     || /(?:请|让|使)\s*阳光\s*(?:洒下|洒进|照进)/.test(clause);
@@ -61,7 +62,7 @@ export function parseStudioConversationIntent(input: StudioConversationInput, pr
   const edit = /(?:修改|改成|改为|改一下|改图|调整|换成|变成|去掉|删除|移除|背景.*(?:改|换)|(?:改|换).*背景|edit|change|remove)/i.test(text) || contextualEdit || sceneReplacement || naturalEditClauses.length > 0;
   const continuing = /(?:继续|上一张|刚才那张|上张|last\s+(?:image|result))/i.test(text);
   let target = forced;
-  if (!target && !explicitNew) {
+  if (!decision && !target && !explicitNew) {
     const named = refs.filter(ref => {
       const escaped = ref.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       return new RegExp(`(?:修改|调整|改|edit|change)\\s*(?:一下\\s*)?${escaped}(?![0-9])|${escaped}(?![0-9])\\s*(?:的)?[^，。;]{0,16}(?:改成|改为|换成|修改)`, "i").test(text)
@@ -79,12 +80,12 @@ export function parseStudioConversationIntent(input: StudioConversationInput, pr
     if (!target && edit && refs.length === 1) target = refs[0];
   }
   if (target && !target.shapeId) return clarify("快捷改图需要画布中的图片，请先将这张素材加入画布再选择它。");
-  if (!forced && !explicitNew && refs.length > 1 && !target) return clarify("你引用了多张图片：要合成一张新图，还是修改其中一张？请写明图片名称。");
-  if (!forced && edit && !target && !explicitNew) return clarify("请把要修改的图片加入对话，或明确说明需要设计一张新图。");
+  if (!decision && !forced && !explicitNew && refs.length > 1 && !target) return clarify("你引用了多张图片：要合成一张新图，还是修改其中一张？请写明图片名称。");
+  if (!decision && !forced && edit && !target && !explicitNew) return clarify("请把要修改的图片加入对话，或明确说明需要设计一张新图。");
   if (!target && refs.some(ref => ref.purpose === "EXACT") && !input.outputFrameId) return clarify("严格保留素材需要指定输出画框，请选择画框，或将素材用途改为参考后发送。");
 
   // Quoted/copywriting dimensions are poster content, not output settings.
-  const sizeText = text.replace(/[“"'「].*?[”"'」]/g, "").replace(/(?:写上|写着|文字为|文案为|标注|印上|标题为|text\s+(?:says|is))[^，。;]*/gi, "");
+  const sizeText = text.replace(/“[^”]*”|"[^"]*"|'[^']*'|「[^」]*」|『[^』]*』|‘[^’]*’/g, "").replace(/(?:写上|写着|文字为|文案为|标注|印上|标题为|text\s+(?:says|is))[^，。;]*/gi, "");
   const dimensions = [...sizeText.matchAll(/(\d{2,5})\s*(?:×|x|X|\*|乘)\s*(\d{2,5})(?:\s*(?:像素|px))?/g)].map(match => ({ width: Number(match[1]), height: Number(match[2]) }));
   if (/(?:\d+(?:\.\d+)?)\s*(?:厘米|毫米|英寸|cm|mm|inch)/i.test(sizeText)) return clarify("请用像素宽高指定图片尺寸，例如 1080×1920；印刷单位需要先确定 DPI。");
   if (dimensions.length > 1 && dimensions.some(value => value.width !== dimensions[0]!.width || value.height !== dimensions[0]!.height)) return clarify("对话里有不同的输出尺寸，请只保留这次需要的宽×高。");

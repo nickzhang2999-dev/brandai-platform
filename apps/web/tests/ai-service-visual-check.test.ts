@@ -20,8 +20,8 @@ describe("product visual-check service capability gate", () => {
     f.fetch.mockImplementation(async () => Response.json(current));
     const { resolveAiService } = await load();
     await expect(resolveAiService({ requireStudioConversationIntent: true })).rejects.toThrow("structured conversation intent");
-    f.fetch.mockImplementation(async () => Response.json({ ...current, studioConversationIntentRevision: "structured-conversation-intent-r1" }));
-    expect(await resolveAiService({ requireStudioConversationIntent: true })).toMatchObject({ studioConversationIntentRevision: "structured-conversation-intent-r1" });
+    f.fetch.mockImplementation(async () => Response.json({ ...current, studioConversationIntentRevision: "structured-conversation-intent-r2" }));
+    expect(await resolveAiService({ requireStudioConversationIntent: true })).toMatchObject({ studioConversationIntentRevision: "structured-conversation-intent-r2" });
   });
   it("requires the semantic analysis capability before an AUTO task can send a paid vision request", async () => {
     f.fetch.mockImplementation(async () => Response.json(layered));
