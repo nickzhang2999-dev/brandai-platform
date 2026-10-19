@@ -359,8 +359,8 @@ P1 local gates complete: e0725bd owned shell/export;6ce5de0 routes;601a3c1 exact
 - [x] 参数修复57c6795推送devUpdate1012，完整CI与CDS精确版本确认。
 - [x] 单次真实分析与Fal拆层完成，定位淡alpha被误判空白的第二处故障。
 - [x] 淡alpha修复完成全门禁并部署，恢复已有模型结果，真实9层保存/哈希通过（不重新调用模型）。
-- [ ] 修正PSD线程的生产模块路径，部署并通过真实文件下载与画布恢复验收。
-- [ ] 故障原图副本真实AUTO分析→分层→保存→PSD验收，补齐日志。
+- [x] 修正PSD线程的生产模块路径，部署并通过真实文件下载与画布恢复验收：2492b43，psdHttpStatus=200、9层，见 D:/coding/公司/DeepFlare-分层验收-2026-10-17/真实验收回执.json。
+- [x] 故障原图副本真实AUTO分析→分层→保存→PSD验收：同一回执 8 项检查全部通过（含原图 SHA 校验、真实分析与分层、保存恢复），见 D:/coding/公司/DeepFlare-分层验收-2026-10-17/真实验收回执.json。
 
 ## 2026-10-19 画布与对话体验统一改造（本地）
 起点 fix/layer-faint-and-model-prefix@24e92b0。用户确认按评审方案开发并统一报告；不推送、不部署、不运行付费模型。
