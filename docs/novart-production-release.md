@@ -1,9 +1,12 @@
 # NovartLab / DeepFlare production release
 
-The release target is `brandai-novartlab-local-prod`, using CDS `generated-compose`,
-with Compose project `brandai-prod` and file `deploy/novart/production/compose.yml`.
-CDS creates an isolated worktree at the requested commit and executes its generated
-script. There is no required `/opt/.../*.sh` publishing script.
+The release target is `brandai-novartlab-local-prod`. The standard project-owned
+entry is `cds-release.sh`, with CDS `project-script` and scriptFile `cds-release.sh`.
+CDS checks same-commit CI, creates an immutable worktree, verifies the script body
+hash, then executes check and deploy. The project script owns Compose project
+`brandai-prod`, the production Compose, migrations and public-resource checks.
+No independently edited `/opt/.../*.sh` release script is used. The 2026-10-20
+generated-compose migration was the preceding step, superseded by this contract.
 
 ## Stable production state
 
@@ -21,6 +24,8 @@ script. There is no required `/opt/.../*.sh` publishing script.
 ## Publishing from CDS
 
 1. Push the intended code normally, allow CI and immutable Web/AI images to finish.
+   PR CI and image CI both run `bash cds-release.sh check` and
+   `node --test scripts/test-project-release.mjs`. Do not skip either gate.
 2. Wait until the main preview runs that exact commit.
 3. Open CDS, select main, select NovartLab production, run preflight, then publish.
 4. A successful release means Compose waited for Postgres/Redis, completed the

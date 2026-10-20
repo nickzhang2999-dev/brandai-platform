@@ -48,7 +48,8 @@ jobs:
       - name: Unit tests (L1 web + contracts + ui)
         run: |
           pnpm test
-          node --test scripts/test-novart-production.mjs
+          bash cds-release.sh check
+          node --test scripts/test-project-release.mjs
 
       - name: Typecheck (web)
         run: pnpm -F web typecheck

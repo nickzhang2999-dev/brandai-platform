@@ -1,7 +1,7 @@
 # DeepFlare — 品牌项目视觉 AI 生成平台
 
 正式发布配置与操作方式见 [NovartLab 生产发布](docs/novart-production-release.md)。
-生产 Compose、资源校验和入口配置随项目版本保存；迁移执行结果见 `docs/worklog/progress.md`。
+默认发布入口为仓库根 `cds-release.sh`，PR CI 与镜像 CI 测试同一文件；CDS 只执行指定提交中的脚本，生产 Compose、资源校验和入口配置均由项目版本管理。执行回执见 `docs/worklog/progress.md`。
 
 > **2026-10-16 · P2 安全修复通过本地验收**：`fix/p2-security` 的代码 `5de6ffc` 完成素材归属、内部错误脱敏、生产注册权限、预检权限、上传限制和生产密钥启动校验。契约/服务 **1,737**、UI **34**、AI **500**、Web 类型及生产构建通过；新构建真实启动的三种不合格密钥均退出 1、不出现 Ready。用户要求仅保留本地，未推送或部署。P1 另存于 `fix/p1-remove-captured-bundle@97ed7fb`，两阶段尚未合并。[开发日志](docs/development-log-2026-10-16.md) · [逐项文件、验证与边界](docs/optimization-security-2026-10-16.md)。
 
