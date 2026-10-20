@@ -49,6 +49,21 @@ services:
       timeout: 5s
       retries: 40
 
+  migrate:
+    env_file: /opt/brandai-platform-prod/.env
+    image: ghcr.io/nickzhang2999-dev/brandai-platform/novart-product-web:sha-${CDS_COMMIT_SHA:?CDS release commit is required}
+    pull_policy: missing
+    working_dir: /app
+    restart: "no"
+    environment:
+      <<: *app-env
+      CDS_RELEASE_ID: ${CDS_RELEASE_ID:?CDS release id is required}
+    command: [sh, -c, 'node /release/verify.mjs artifacts && node apps/web/scripts/check-runtime-security.mjs && pnpm -F @brandai/db exec prisma migrate deploy']
+    volumes: [./verify.mjs:/release/verify.mjs:ro]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+
   worker:
     <<: *runtime
     stop_grace_period: 6m
@@ -63,6 +78,7 @@ services:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
       ai: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
     healthcheck:
       test: [CMD, node, /release/verify.mjs, worker]
       interval: 5s
@@ -80,7 +96,7 @@ services:
       <<: *app-env
       PORT: "3000"
     # No source install/build, no stale host resources, no legacy worker list.
-    command: [sh, -c, 'node /release/verify.mjs artifacts && exec sh /app/deploy/novart/start-web.sh']
+    command: [sh, -c, 'node /release/verify.mjs artifacts && node apps/web/scripts/check-runtime-security.mjs && exec pnpm -F web start']
     volumes: [./verify.mjs:/release/verify.mjs:ro]
     depends_on:
       postgres: {condition: service_healthy}

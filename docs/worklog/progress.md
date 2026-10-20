@@ -17,6 +17,10 @@
 - Read-only Prisma status found 11 unapplied existing migrations in production;
   database backup, ownership audit and isolated restore/migration rehearsal are
   required before enabling the normal image entry point's migrate-deploy step.
+- The real backup restored in isolation and all 11 pending migrations succeeded;
+  all 26 ownership and 6 cross-resource checks were zero. The actual production
+  Compose started successfully in an internal isolated network, validating 23
+  served resources. Migration is explicitly ordered before worker startup.
 - Operational specification: `docs/novart-production-release.md`.
 
 ## 2026-10-15 — final local bug batch verified

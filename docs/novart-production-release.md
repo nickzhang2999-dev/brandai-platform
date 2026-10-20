@@ -22,7 +22,8 @@ script. There is no required `/opt/.../*.sh` publishing script.
 1. Push the intended code normally, allow CI and immutable Web/AI images to finish.
 2. Wait until the main preview runs that exact commit.
 3. Open CDS, select main, select NovartLab production, run preflight, then publish.
-4. A successful release means Compose waited for Postgres, Redis, AI, Worker and
+4. A successful release means Compose waited for Postgres/Redis, completed the
+   one-shot schema migration **before** starting Worker, then waited for AI, Worker and
    Web readiness, then a one-shot check verified the served Studio manifest.
    Images are pinned to `CDS_COMMIT_SHA`; Worker reports the same commit and queue.
 5. Use CDS release history to roll back to a successful **dynamic** release. CDS
