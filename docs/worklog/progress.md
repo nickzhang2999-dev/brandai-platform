@@ -10,13 +10,13 @@
   public Studio manifest resource before the edge is started. Release ID forces
   same-commit verification to run again. Nginx resolves recreated Web containers.
 - Local gates passed: Web 1783, contracts 309, UI 39, AI 647; Web typecheck,
-  production build, lint (existing warnings only), deployment regressions 5.
+  production build, lint (existing warnings only), deployment regressions 6.
   Server-side Compose parsing, image artifact check (24 resources), Nginx
   configuration and deployment regressions also pass. Production migration,
   exact-image CI and real CDS publication/rollback remain pending execution.
 - Read-only Prisma status found 11 unapplied existing migrations in production;
   database backup, ownership audit and isolated restore/migration rehearsal are
-  required before enabling the normal image entry point's migrate-deploy step.
+  required before enabling the explicit migrate-deploy release dependency.
 - The real backup restored in isolation and all 11 pending migrations succeeded;
   all 26 ownership and 6 cross-resource checks were zero. The actual production
   Compose started successfully in an internal isolated network, validating 23

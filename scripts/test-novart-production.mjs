@@ -5,10 +5,16 @@ import { mkdtemp, writeFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createServer } from 'node:http';
-import { verifyArtifacts, verifyHealth, verifyServed } from '../deploy/novart/production/verify.mjs';
+import { verifyArtifacts, verifyHealth, verifyServed, verifyReleaseIdentity } from '../deploy/novart/production/verify.mjs';
 
 const sha = '1'.repeat(40);
 const hash = body => createHash('sha256').update(body).digest('hex');
+
+test('production publishing remains restricted to main and a full commit', () => {
+  assert.doesNotThrow(() => verifyReleaseIdentity({CDS_BRANCH_NAME:'main',CDS_COMMIT_SHA:sha}));
+  assert.throws(() => verifyReleaseIdentity({CDS_BRANCH_NAME:'feature',CDS_COMMIT_SHA:sha}), /Only main/);
+  assert.throws(() => verifyReleaseIdentity({CDS_BRANCH_NAME:'main',CDS_COMMIT_SHA:'1234567'}), /complete release commit/);
+});
 async function fixture(t) {
   const root = await mkdtemp(path.join(tmpdir(), 'novart-production-test-'));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -62,8 +68,11 @@ test('missing shell entry cannot pass manifest verification', async t => {
 test('served resources, worker commit and queue must all match the release', async t => {
   const f = await fixture(t);
   const previous = process.env.CDS_COMMIT_SHA;
+  const previousBranch = process.env.CDS_BRANCH_NAME;
   process.env.CDS_COMMIT_SHA = sha;
+  process.env.CDS_BRANCH_NAME = 'main';
   t.after(() => { if (previous === undefined) delete process.env.CDS_COMMIT_SHA; else process.env.CDS_COMMIT_SHA = previous; });
+  t.after(() => { if (previousBranch === undefined) delete process.env.CDS_BRANCH_NAME; else process.env.CDS_BRANCH_NAME = previousBranch; });
   const health = { web: 'ok', ai: 'ok', queuePrefix: 'brandai-prod',
     worker: { worker: 'ok', commit: sha.slice(0, 12), queuePrefix: 'brandai-prod' } };
   let served = f.bodies['/new-resource.js'];

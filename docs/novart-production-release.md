@@ -16,6 +16,7 @@ script. There is no required `/opt/.../*.sh` publishing script.
   `https://deepflare.cn`; `https://deepflare.com.cn` and `https://www.novartlab.com`
   redirect to it. AI/worker/database/Redis have no public host port.
 - The production queue is explicitly `brandai-prod`, separate from previews.
+- Production guards retain the previous main-only publishing restriction.
 
 ## Publishing from CDS
 
