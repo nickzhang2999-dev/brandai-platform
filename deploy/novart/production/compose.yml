@@ -1,0 +1,128 @@
+# CDS generated-compose entry point. All release logic is versioned here;
+# /opt retains only private settings and the existing persistent data volumes.
+x-runtime: &runtime
+  env_file: /opt/brandai-platform-prod/.env
+  restart: unless-stopped
+
+x-app-env: &app-env
+  NODE_ENV: production
+  CI: "true"
+  CDS_COMMIT_SHA: ${CDS_COMMIT_SHA:?CDS release commit is required}
+  AI_SERVICE_URL: http://ai:8000
+  WORKER_HEALTH_URL: http://worker:3001
+  BRANDAI_QUEUE_PREFIX: brandai-prod
+  BULLMQ_PREFIX: brandai-prod
+
+services:
+  postgres:
+    <<: *runtime
+    image: postgres:16-alpine
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  redis:
+    <<: *runtime
+    image: redis:7-alpine
+    command: [sh, -c, 'exec redis-server --requirepass "$${REDIS_PASSWORD:?Redis password is required}"']
+    volumes: [redisdata:/data]
+    healthcheck:
+      test: [CMD-SHELL, 'redis-cli -a "$$REDIS_PASSWORD" ping | grep -q PONG']
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  ai:
+    <<: *runtime
+    image: ghcr.io/nickzhang2999-dev/brandai-platform/novart-product-ai:sha-${CDS_COMMIT_SHA:?CDS release commit is required}
+    pull_policy: missing
+    environment:
+      CDS_COMMIT_SHA: ${CDS_COMMIT_SHA:?CDS release commit is required}
+      AI_HTTP_TIMEOUT_SECONDS: "240"
+      AI_MAX_RETRIES: "1"
+    healthcheck:
+      test: [CMD, python, -c, 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=3).read()']
+      interval: 5s
+      timeout: 5s
+      retries: 40
+
+  worker:
+    <<: *runtime
+    stop_grace_period: 6m
+    image: ghcr.io/nickzhang2999-dev/brandai-platform/novart-product-web:sha-${CDS_COMMIT_SHA:?CDS release commit is required}
+    pull_policy: missing
+    working_dir: /app
+    environment:
+      <<: *app-env
+      WORKER_HEALTH_PORT: "3001"
+    command: [pnpm, -F, web, worker]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      ai: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, node, /release/verify.mjs, worker]
+      interval: 5s
+      timeout: 10s
+      retries: 40
+    volumes: [./verify.mjs:/release/verify.mjs:ro]
+
+  web:
+    <<: *runtime
+    image: ghcr.io/nickzhang2999-dev/brandai-platform/novart-product-web:sha-${CDS_COMMIT_SHA:?CDS release commit is required}
+    pull_policy: missing
+    working_dir: /app
+    ports: [127.0.0.1:13002:3000]
+    environment:
+      <<: *app-env
+      PORT: "3000"
+    # No source install/build, no stale host resources, no legacy worker list.
+    command: [sh, -c, 'node /release/verify.mjs artifacts && exec sh /app/deploy/novart/start-web.sh']
+    volumes: [./verify.mjs:/release/verify.mjs:ro]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      ai: {condition: service_healthy}
+      worker: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, node, /release/verify.mjs, health]
+      interval: 5s
+      timeout: 15s
+      retries: 40
+
+  release-check:
+    env_file: /opt/brandai-platform-prod/.env
+    image: ghcr.io/nickzhang2999-dev/brandai-platform/novart-product-web:sha-${CDS_COMMIT_SHA:?CDS release commit is required}
+    pull_policy: missing
+    working_dir: /app
+    restart: "no"
+    environment:
+      <<: *app-env
+      CDS_RELEASE_ID: ${CDS_RELEASE_ID:?CDS release id is required}
+      NOVART_VERIFY_ORIGIN: http://web:3000
+    command: [node, /release/verify.mjs, served]
+    volumes: [./verify.mjs:/release/verify.mjs:ro]
+    depends_on:
+      web: {condition: service_healthy}
+
+  edge:
+    image: nginx@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
+    pull_policy: missing
+    restart: unless-stopped
+    ports: [127.0.0.1:13000:80]
+    volumes: [./edge.conf:/etc/nginx/nginx.conf:ro]
+    depends_on:
+      release-check: {condition: service_completed_successfully}
+
+# Explicit external names prevent a new worktree/project from creating an empty
+# production database. Missing existing volumes must stop the release.
+volumes:
+  pgdata:
+    external: true
+    name: brandai-prod_pgdata
+  redisdata:
+    external: true
+    name: brandai-prod_redisdata
