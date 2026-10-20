@@ -162,7 +162,10 @@ BrandAI 终态 = **多租户 SaaS 品牌视觉 AI 平台**：多客户 / 多用�
 | main 分支预览 | `main-brandai-platform.geole.me` | `brandai-main` | push/合并即自动部署 |
 | **正式版** | **`www.novartlab.com`** | `brandai-prod` | **只有点 CDS 的「发布」按钮才更新** |
 
-  正式版走 CDS 发布目标 `brandai-novartlab-local-prod`（SSH 跑 `./cds-release-novartlab.sh`），**不跟 main 自动走**。
+  正式版走 CDS 发布目标 `brandai-novartlab-local-prod`，迁移后的策略为 `generated-compose`，
+  使用仓库内 `deploy/novart/production/compose.yml` 和 Compose project `brandai-prod`；**不跟 main 自动走**。
+  私密环境与现有数据卷保留在生产机，发布逻辑随 Git 版本保存，不再依赖生产机独立 `.sh`。
+  就绪、镜像版本、Studio manifest 校验及首次迁移回退边界见 [生产发布说明](docs/novart-production-release.md)。
   所以「合并了」「main 预览上验过了」都**不代表用户手里那个站变了**——事故当天正式版还停在四天前的 commit，
   三个修复一个都没上，而我拿 main 预览的健康探针当"正式环境已修复"汇报了两次。
 

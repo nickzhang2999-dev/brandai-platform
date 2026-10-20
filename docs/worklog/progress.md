@@ -1,5 +1,24 @@
 # Integration progress
 
+## 2026-10-20 — NovartLab dynamic production release migration
+
+- E / R: versioned production Compose, external existing database/Redis volumes,
+  immutable same-commit Web/AI/Worker images and CDS-generated execution replace
+  the host-maintained release script. Manifest-driven integrity checks do not
+  require the retired Studio service worker.
+- Production gates cover actual worker commit/queue, AI/Web readiness and every
+  public Studio manifest resource before the edge is started. Release ID forces
+  same-commit verification to run again. Nginx resolves recreated Web containers.
+- Local gates passed: Web 1783, contracts 309, UI 39, AI 647; Web typecheck,
+  production build, lint (existing warnings only), deployment regressions 5.
+  Server-side Compose parsing, image artifact check (24 resources), Nginx
+  configuration and deployment regressions also pass. Production migration,
+  exact-image CI and real CDS publication/rollback remain pending execution.
+- Read-only Prisma status found 11 unapplied existing migrations in production;
+  database backup, ownership audit and isolated restore/migration rehearsal are
+  required before enabling the normal image entry point's migrate-deploy step.
+- Operational specification: `docs/novart-production-release.md`.
+
 ## 2026-10-15 — final local bug batch verified
 
 - Final delivery: normal push09fdf18, exact-SHA Branch Image38671917506 success through source/container validation and checked-image publication. CDS official dry-run/claim/deploy completed dr_a957bf6b5ec83514ab26a498; public health/current commit and real existing-account Studio access passed. Post-release logs remain local until the next code batch. No paid model, main or production operation.
