@@ -747,7 +747,64 @@
   async function getAssets(id, force = false) { if (!force && assetCache.has(id)) return assetCache.get(id); if (assetPending.has(id)) return assetPending.get(id); const task = api('/workflow/assets?projectId=' + encodeURIComponent(id)).then(value => { if (!Array.isArray(value.assets)) throw new Error('素材列表格式无法读取。'); assetCache.set(id, value); return value; }).finally(() => assetPending.delete(id)); assetPending.set(id, task); return task; }
   function assetURL(id, digest) { return '/workflow/image/' + encodeURIComponent(digest) + '?projectId=' + encodeURIComponent(id); }
   function previewProject(id, preview, placeholder) {
-    getAssets(id).then(value => { if (!preview.isConnected) return; const asset = value.assets.find(item => item.valid !== false && /^[a-f0-9]{64}$/.test(item.assetSha256)); if (!asset) return; const img = node('img'); img.alt = '项目中的真实画布图片'; img.loading = 'lazy'; img.src = assetURL(id, asset.assetSha256); img.addEventListener('load', () => { placeholder.hidden = true; }); img.addEventListener('error', () => { img.remove(); placeholder.hidden = false; }); preview.prepend(img); }).catch(() => { if (preview.isConnected) placeholder.querySelector('span').textContent = '已保存画布 · 预览暂不可读'; });
+    getAssets(id).then(value => {
+      if (!preview.isConnected) return;
+      const asset = value.assets.find(item => item.valid !== false && /^[a-f0-9]{64}$/.test(item.assetSha256));
+      if (!asset) return;
+      const img = node('img');
+      img.alt = '项目中的完整画布图片'; img.loading = 'lazy'; img.decoding = 'async';
+      const originalURL = assetURL(id, asset.assetSha256);
+      let originalFallback = false;
+      preview.dataset.previewState = 'loading';
+      placeholder.querySelector('span').textContent = '正在加载完整预览';
+      // Keep layout/lazy-loading intact, but do not paint progressive image
+      // chunks over the placeholder while the original asset is downloading.
+      let settled = false;
+      let retry = null;
+      function offerRetry() {
+        if (retry || !preview.isConnected) return;
+        // A sibling control avoids nesting a button inside the open-project
+        // button. Retrying a thumbnail must never navigate or start AI work.
+        retry = button('重试预览', 'ns-preview-retry', () => {
+          settled = true; clearTimeout(slow); img.remove(); retry.remove();
+          placeholder.hidden = false; previewProject(id, preview, placeholder);
+        });
+        preview.closest('.ns-project-card')?.append(retry);
+      }
+      const slow = setTimeout(() => {
+        if (!settled && preview.isConnected) {
+          preview.dataset.previewState = 'slow';
+          placeholder.querySelector('span').textContent = '预览加载较慢 · 可直接打开项目';
+          offerRetry();
+        }
+      }, 20000);
+      function failed() {
+        if (settled) return;
+        settled = true; clearTimeout(slow); img.remove();
+        preview.dataset.previewState = 'error'; placeholder.hidden = false;
+        placeholder.querySelector('span').textContent = '预览暂不可读 · 可直接打开项目';
+        offerRetry();
+      }
+      img.addEventListener('load', async () => {
+        try {
+          await img.decode();
+          if (settled) return;
+          settled = true; clearTimeout(slow);
+          if (!preview.isConnected) return;
+          retry?.remove(); preview.dataset.previewState = 'ready'; placeholder.hidden = true;
+        } catch (_) { failed(); }
+      });
+      img.addEventListener('error', () => {
+        // The preview endpoint may return 202 while its worker prepares the
+        // first thumbnail. Show the original this time; later visits use the
+        // cached compact preview. No repeated polling or model invocation.
+        if (!originalFallback && !settled) {
+          originalFallback = true; img.src = originalURL; return;
+        }
+        failed();
+      });
+      img.src = originalURL + '&preview=1'; preview.prepend(img);
+    }).catch(() => { if (preview.isConnected) placeholder.querySelector('span').textContent = '已保存画布 · 预览暂不可读'; });
   }
   $('ns-project-search').addEventListener('input', renderProjects); $('ns-project-sort').addEventListener('change', renderProjects); $('ns-project-favorites').addEventListener('click', () => { favoriteFilter = !favoriteFilter; $('ns-project-favorites').setAttribute('aria-pressed', String(favoriteFilter)); renderProjects(); }); $('ns-project-refresh').addEventListener('click', () => { assetCache.clear(); loadProjects(true); }); $('ns-project-new').addEventListener('click', () => { go('/home'); requestAnimationFrame(() => $('ns-home-brief').focus()); });
 

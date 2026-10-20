@@ -726,8 +726,11 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
   const saveLabel = saveState === "loading" ? "正在打开…" : saveState === "saving" ? "正在保存…" : saveState === "dirty" ? "有未保存修改" : saveState === "conflict" ? "保存冲突" : saveState === "error" ? "保存未确认" : view?.updatedAt ? "已保存 " + new Date(view.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "已打开";
   return <div className="flex h-dvh min-h-0 flex-col overflow-hidden bg-background text-foreground" data-testid="owned-editor" data-save-state={saveState} data-document-revision={view?.revision}>
     <header className="flex min-h-14 shrink-0 flex-wrap items-center gap-1 border-b border-border bg-card px-2 sm:gap-3 sm:px-5">
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src="/brand/deepflare-mark.svg" alt="DeepFlare · 曜影深蓝" className="h-6 w-6 shrink-0 object-contain sm:h-7 sm:w-7" />
+      <picture className="shrink-0">
+        <source media="(min-width: 640px)" srcSet="/brand/deepflare-logo.svg" />
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/brand/deepflare-mark.svg" alt="DeepFlare · 曜影深蓝" className="h-6 w-6 object-contain sm:h-9 sm:w-32" />
+      </picture>
       <button type="button" className={headerButton} onClick={() => void back()} aria-label="返回项目库">←<span className="hidden sm:inline"> 项目</span></button>
       <strong className="min-w-0 flex-1 truncate text-sm">{visibleName}</strong>
       <span className="max-w-24 shrink-0 truncate text-xs text-muted-foreground sm:max-w-none" title={saveLabel} role="status" data-testid="owned-save-status">{saveLabel}</span>

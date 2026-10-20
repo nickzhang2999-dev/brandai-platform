@@ -180,6 +180,16 @@ describe("authenticated workflow and material routes", () => {
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(f.image).toHaveBeenCalledWith("server-workspace", "server-user", { projectId: "p" }, sha);
   });
+  it("opts project thumbnails into a fixed compact preview after project authorization", async () => {
+    const response = await studioRoute(request(`/workflow/image/${sha}?projectId=p&preview=1&w=999999`));
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe("/api/workspaces/server-workspace/assets/a/raw?w=320");
+    expect(f.image).toHaveBeenCalledWith("server-workspace", "server-user", { projectId: "p" }, sha);
+    f.image.mockRejectedValueOnce(new Error("private detail"));
+    const denied = await studioRoute(request(`/workflow/image/${sha}?projectId=p&preview=1`));
+    expect(denied.status).toBe(503);
+    expect(denied.headers.get("location")).toBeNull();
+  });
   it("keeps input/authorization/availability failures visible and does not turn unknown actions into success", async () => {
     f.read.mockRejectedValueOnce(new ZodError([]));
     expect((await studioRoute(request("/workflow?projectId=p"))).status).toBe(422);

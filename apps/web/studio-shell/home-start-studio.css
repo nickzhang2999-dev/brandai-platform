@@ -17,6 +17,11 @@
 @media(max-width:600px){.hs-attachments{grid-template-columns:1fr}.hs-handoff{left:50%;width:calc(100vw - 40px)}.hs-pick{font-size:12px}.ns-composer-footer .ns-keyboard-hint{display:none}}
 @media(prefers-reduced-motion:no-preference){.hs-attachment{animation:hs-enter .18s ease-out}@keyframes hs-enter{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}}
 .ns-brand-layout[hidden],.ns-knowledge-panel[hidden]{display:none}
+/* Never show a half-decoded original image. Keep the full artwork in frame. */
+.ns-project-preview img{object-fit:contain;object-position:center}
+.ns-project-preview[data-preview-state] img{opacity:0}
+.ns-project-preview[data-preview-state=ready] img{opacity:1}
+.ns-preview-retry{position:absolute;top:18px;left:18px;z-index:2;padding:6px 10px;border:1px solid var(--ns-border);border-radius:999px;background:var(--ns-surface,#fff);color:var(--ns-text);font:inherit;font-size:12px}
 .ns-wordmark .ns-brand-emblem{height:28px}
 .ns-wordmark .ns-brand-emblem img{display:block;position:static;transform:none;width:100%;height:100%;object-fit:contain}
 .ns-knowledge-panel{margin-top:20px;min-width:0}

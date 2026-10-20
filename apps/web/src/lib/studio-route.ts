@@ -55,7 +55,10 @@ export async function studioRoute(req: Request) {
     const project = { projectId: url.searchParams.get("projectId") ?? "" };
     if (req.method === "GET") {
       if (pathname.startsWith("/workflow/image/")) {
-        const location = await studioWorkflowImage(workspaceId, user.id, project, pathname.slice("/workflow/image/".length));
+        const original = await studioWorkflowImage(workspaceId, user.id, project, pathname.slice("/workflow/image/".length));
+        // Project cards opt into the existing bounded asset-preview pipeline.
+        // Editor/download callers continue to receive the original bytes.
+        const location = url.searchParams.get("preview") === "1" ? original + "?w=320" : original;
         return new Response(null, { status: 307, headers: { ...headers, Location: location } });
       }
       switch (pathname) {

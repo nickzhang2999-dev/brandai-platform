@@ -16,6 +16,7 @@ const layersOnly = process.env.NOVART_OWNED_LAYERS_ONLY === '1';
 const layerFailureOnly = process.env.NOVART_OWNED_LAYERS_FAILURE_ONLY === '1';
 const layerQueueRecovery = process.env.NOVART_OWNED_LAYERS_QUEUE_RECOVERY === '1';
 const experienceOnly = process.env.NOVART_OWNED_EXPERIENCE_ONLY === '1';
+const brandOnly = process.env.NOVART_OWNED_BRAND_ONLY === '1';
 const temporaryRoot = path.join(repo, '.novart-build', 'temporary');
 fs.mkdirSync(temporaryRoot, {recursive: true});
 const directory = fs.mkdtempSync(path.join(temporaryRoot, 'owned-browser-'));
@@ -67,6 +68,7 @@ async function handle(req,res) {
   const url = new URL(req.url,'http://127.0.0.1');
   if (/^\/brand\/deepflare-(?:logo(?:-dark)?|mark|icon)\.svg$/.test(url.pathname)) {res.setHeader('content-type', 'image/svg+xml'); return res.end(fs.readFileSync(path.join(repo, 'apps/web/public', url.pathname)));}
   if(url.pathname==='/app.js'||url.pathname==='/app.css') {res.setHeader('Content-Type',url.pathname.endsWith('.js')?'application/javascript':'text/css');return res.end(url.pathname.endsWith('.css')?Buffer.concat([fs.readFileSync(path.join(directory,'tokens.css')),fs.readFileSync(path.join(directory,'app.css'))]):fs.readFileSync(path.join(directory,'app.js')));}
+  if(url.pathname.startsWith('/brand/')) {const file=path.resolve(repo,'apps/web/public',url.pathname.slice(1));if(file.startsWith(path.join(repo,'apps/web/public/brand')+path.sep)&&fs.existsSync(file)){res.setHeader('Content-Type','image/svg+xml');return res.end(fs.readFileSync(file));}res.writeHead(404);return res.end();}
   if(url.pathname.startsWith('/fonts/')) {const file=path.resolve(repo,'apps/web/public',url.pathname.slice(1));if(file.startsWith(path.join(repo,'apps/web/public/fonts')+path.sep)&&fs.existsSync(file))return res.end(fs.readFileSync(file));res.writeHead(404);return res.end();}
   if(url.pathname==='/shell'||url.pathname==='/studio') {res.setHeader('Content-Type','text/html');return res.end(`<html><head><meta charset="utf-8"></head><body style="margin:0"><div class="ns-sidebar-bottom" style="position:fixed;bottom:20px;left:12px;z-index:1000;background:white"></div><div class="ns-frame-slot" data-active="true"><iframe data-testid="studio-canvas-frame" data-project-id="${fixture.projectId}" data-ready="false" style="width:100vw;height:100vh;border:0" src="/studio-editor"></iframe></div><script>window.__NOVART_PRODUCT__={workspaceId:${JSON.stringify(fixture.workspaceId)},user:{id:${JSON.stringify(fixture.userId)}}};window.receipts=[];addEventListener('message',e=>{const frame=document.querySelector('iframe');if(e.origin===location.origin&&e.source===frame.contentWindow){receipts.push(e.data);if(e.data?.type==='nv-studio'&&e.data.action==='ready')frame.dataset.ready='true';}});</script><script src="/product-task-inbox.js"></script><script>NovartProductTaskInbox.start();</script></body></html>`);}
   if(url.pathname==='/product-task-inbox.js') {res.setHeader('Content-Type','application/javascript');return res.end(fs.readFileSync(path.join(repo,'deploy/novart/studio/novart-product-task-inbox.js')));}
@@ -222,6 +224,23 @@ async function fixtureSettled(condition) {const deadline=Date.now()+10000;while(
   stage='open-owned-editor';await page.goto(origin+'/studio-editor');
   await page.getByTestId('owned-canvas').waitFor();
   const surface=page.getByTestId('owned-canvas');
+  if(brandOnly) {
+    const output=path.join(repo,'.novart-build/home-thumbnail-logo-1020');fs.mkdirSync(output,{recursive:true});
+    for(const width of [1440,768,390]) {
+      await page.setViewportSize({width,height:900});
+      const logo=page.locator('header img[alt="DeepFlare · 曜影深蓝"]');
+      await page.waitForFunction(()=>{const img=document.querySelector('header picture img');return img?.complete&&img.naturalWidth>0;});
+      assert.ok((await logo.getAttribute('src'))?.includes('deepflare-mark.svg'));
+      assert.ok((await logo.evaluate(img=>img.currentSrc)).includes(width>=640?'deepflare-logo.svg':'deepflare-mark.svg'));
+      const box=await logo.boundingBox();assert.ok(box&&box.width>0&&box.height>0);
+      assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+      await page.getByRole('button',{name:'创作',exact:true}).click();
+      await page.getByRole('button',{name:'创作',exact:true}).click();
+      await page.screenshot({path:path.join(output,'local-fixture-editor-brand-'+width+'.png')});
+      check('official Chinese-English logo at '+width+' with responsive toolbar interaction');
+    }
+    assert.deepEqual(report.errors,[]);assert.deepEqual(report.externalRequests,[]);report.passed=true;return;
+  }
   if(experienceOnly) {
     await require('./check-owned-experience-interactions.cjs').runOwnedExperienceChecks({page,surface,origin,fixture,check,shapes,
       setStage:value=>{stage=value;},state:()=>({canvas,revision,generationPosts}),
