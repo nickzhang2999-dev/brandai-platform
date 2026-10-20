@@ -36,14 +36,25 @@ test('deploy uses the reviewed Compose only after check and stops on a failed pr
   const root = mkdtempSync(path.join(tmpdir(), 'novart-release-run-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const log = path.join(root, 'docker-args');
-  writeFileSync(path.join(root, 'docker'), '#!/bin/sh\nprintf "%s\\n" "$*" >> "$CLI_LOG"\nexit "${CLI_EXIT:-0}"\n', { mode: 0o755 });
+  writeFileSync(path.join(root, 'docker'), '#!/bin/sh\nprintf "%s\\n" "$*" >> "$CLI_LOG"\nif [ "$1 $2" = "image inspect" ]; then printf \'["CDS_COMMIT_SHA=%s"]\\n\' "${CLI_IMAGE_SHA:-$CDS_COMMIT_SHA}"; fi\nexit "${CLI_EXIT:-0}"\n', { mode: 0o755 });
   const env = { ...process.env, PATH: root + path.delimiter + process.env.PATH, CLI_LOG: log, CDS_BRANCH_NAME: 'main', CDS_COMMIT_SHA: sha, CDS_RELEASE_ID: 'rel-test', CDS_TARGET_ID: 'brandai-novartlab-local-prod' };
   const ok = spawnSync('bash', ['cds-release.sh', 'deploy'], { env, encoding: 'utf8' });
   assert.equal(ok.status, 0, ok.stderr + ok.stdout);
   const commands = readFileSync(log, 'utf8').trim().split('\n').map(line => line.replace('compose -p brandai-prod -f deploy/novart/production/compose.yml ', ''));
-  assert.deepEqual(commands.slice(0, 3), ['config --quiet', 'up -d --remove-orphans', 'logs --no-color release-check']);
-  assert.equal(commands.length, 6);
-  for (const [index, origin] of ['https://deepflare.cn', 'https://deepflare.com.cn', 'https://www.novartlab.com'].entries()) assert.equal(commands[index + 3], `exec -T -e NOVART_VERIFY_ORIGIN=${origin} -e CDS_RELEASE_ID=rel-test web node /release/verify.mjs served`);
+  assert.equal(commands[0], 'config --quiet');
+  for (const [index, service] of ['web', 'ai'].entries()) {
+    const image = `ghcr.io/nickzhang2999-dev/brandai-platform/novart-product-${service}:sha-${sha}`;
+    assert.equal(commands[1 + index*2], `pull ${image}`);
+    assert.equal(commands[2 + index*2], `image inspect ${image} --format {{json .Config.Env}}`);
+  }
+  assert.deepEqual(commands.slice(5, 7), ['up -d --remove-orphans', 'logs --no-color release-check']);
+  assert.equal(commands.length, 10);
+  for (const [index, origin] of ['https://deepflare.cn', 'https://deepflare.com.cn', 'https://www.novartlab.com'].entries()) assert.equal(commands[index + 7], `exec -T -e NOVART_VERIFY_ORIGIN=${origin} -e CDS_RELEASE_ID=rel-test web node /release/verify.mjs served`);
+  writeFileSync(log, '');
+  const stale = spawnSync('bash', ['cds-release.sh', 'deploy'], { env: { ...env, CLI_IMAGE_SHA: '2'.repeat(40) }, encoding: 'utf8' });
+  assert.notEqual(stale.status, 0);
+  assert.match(stale.stderr, /Image baked commit/);
+  assert.doesNotMatch(readFileSync(log, 'utf8'), /up -d/);
   writeFileSync(log, '');
   const failed = spawnSync('bash', ['cds-release.sh', 'deploy'], { env: { ...env, CLI_EXIT: '17' }, encoding: 'utf8' });
   assert.equal(failed.status, 17);

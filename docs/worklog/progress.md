@@ -2,6 +2,8 @@
 
 ## 2026-10-21 — Project-owned release contract
 
+- Review follow-up: pull Web/AI images and verify their baked full commit before
+  Compose changes production; stale image/runtime-override regressions fail closed.
 - R / E: standard `cds-release.sh` owns check/deploy, immutable commit/main/target
   guards, production Compose and HTTPS manifest validation on all three origins.
 - PR CI and checked-image CI run that exact script and its CLI/wiring regression.

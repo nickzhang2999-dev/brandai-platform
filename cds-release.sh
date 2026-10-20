@@ -19,6 +19,12 @@ case "${1:-}" in
     test "$CDS_TARGET_ID" = 'brandai-novartlab-local-prod' || { echo 'Unexpected production target' >&2; exit 1; }
     check
     docker compose -p brandai-prod -f deploy/novart/production/compose.yml config --quiet
+    # Verify baked identities before touching production. Runtime env is not proof.
+    for service in web ai; do
+      image="ghcr.io/nickzhang2999-dev/brandai-platform/novart-product-${service}:sha-${CDS_COMMIT_SHA}"
+      docker pull "$image"
+      docker image inspect "$image" --format '{{json .Config.Env}}' | node --input-type=module -e 'import fs from "node:fs"; import {verifyImageIdentity} from "./deploy/novart/production/verify.mjs"; verifyImageIdentity(JSON.parse(fs.readFileSync(0,"utf8")),process.env.CDS_COMMIT_SHA)'
+    done
     docker compose -p brandai-prod -f deploy/novart/production/compose.yml up -d --remove-orphans
     docker compose -p brandai-prod -f deploy/novart/production/compose.yml logs --no-color release-check
     for origin in https://deepflare.cn https://deepflare.com.cn https://www.novartlab.com; do
