@@ -1,30 +1,27 @@
-"""Verify exact approved branch coverage and retain product image acceptance gates."""
+"""Every development branch gets CI; only the project script may publish production."""
 from pathlib import Path
 import re
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-APPROVED = {
-    'main', 'devUpdate1012', 'claude/novart-product-integration',
-    'fix/p1-remove-captured-bundle', 'fix/p2-security',
-    'fix/p3-ai-reliability', 'fix/p4-frontend', 'chore/p5-engineering',
-}
 
 
 class ProductWorkflowTests(unittest.TestCase):
-    def test_push_and_both_dispatch_guards_allow_exactly_approved_branches(self):
+    def test_push_and_dispatch_verify_every_branch_without_a_hidden_whitelist(self):
         wrapper = (ROOT / '.github/workflows/branch-image.yml').read_text(encoding='utf-8')
         product = (ROOT / '.github/workflows/novart-integration.yml').read_text(encoding='utf-8')
         values = re.search(r'^    branches: \[([^\]]+)\]$', wrapper, re.MULTILINE)
         self.assertIsNotNone(values)
-        self.assertEqual({v.strip().strip("'\"") for v in values[1].split(',')}, APPROVED)
+        self.assertEqual({v.strip().strip("'\"") for v in values[1].split(',')}, {'**'})
         for source in (wrapper, product):
             guards = re.findall(r'^    if: (.+)$', source, re.MULTILINE)
-            self.assertEqual(len(guards), 1)
-            predicates = guards[0].split(' || ')
-            self.assertEqual(set(predicates), {"github.ref == 'refs/heads/" + name + "'" for name in APPROVED})
-            self.assertEqual(len(predicates), len(APPROVED))
-            self.assertNotIn('previews/novart-workbench', source)
+            self.assertEqual(guards, [], 'CI must not silently skip a normal development branch')
+        release = (ROOT / 'cds-release.sh').read_text(encoding='utf-8')
+        self.assertIn('verifyReleaseIdentity()', release)
+        self.assertIn('git rev-parse HEAD', release)
+        self.assertIn('brandai-novartlab-local-prod', release)
+        verifier = (ROOT / 'deploy/novart/production/verify.mjs').read_text(encoding='utf-8')
+        self.assertIn("env.CDS_BRANCH_NAME !== 'main'", verifier)
 
     def test_only_verified_product_images_are_published(self):
         source = (ROOT / '.github/workflows/novart-integration.yml').read_text(encoding='utf-8')
