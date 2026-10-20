@@ -5,6 +5,11 @@ import { pathToFileURL } from 'node:url';
 
 const digest = body => createHash('sha256').update(body).digest('hex');
 
+export function verifyReleaseIdentity(env = process.env) {
+  if (!/^[a-f0-9]{40}$/.test(env.CDS_COMMIT_SHA ?? '')) throw new Error('A complete release commit is required');
+  if (env.CDS_BRANCH_NAME !== 'main') throw new Error('Only main may publish to NovartLab production');
+}
+
 export async function verifyArtifacts(directory = '/app/.novart-build/studio') {
   const root = await realpath(directory);
   const manifest = JSON.parse(await readFile(path.join(root, 'manifest.json'), 'utf8'));
@@ -32,8 +37,8 @@ async function request(url) {
 }
 
 export async function verifyHealth(origin, workerOnly = false) {
+  verifyReleaseIdentity();
   const expected = process.env.CDS_COMMIT_SHA;
-  if (!/^[a-f0-9]{40}$/.test(expected ?? '')) throw new Error('A complete release commit is required');
   const body = await (await request(origin + (workerOnly ? '/' : '/api/health'))).json();
   const worker = workerOnly ? body : body.worker;
   if (worker?.worker !== 'ok' || worker.commit !== expected.slice(0, 12) ||
@@ -63,6 +68,7 @@ export async function verifyServed(origin, directory) {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   try {
+    verifyReleaseIdentity();
     const mode = process.argv[2];
     if (mode === 'artifacts') {
       const manifest = await verifyArtifacts();
