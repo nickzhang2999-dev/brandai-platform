@@ -57,9 +57,10 @@ test('both PR CI and immutable image CI execute the same project script contract
     assert.match(source, /node --test scripts\/test-project-release\.mjs/);
   }
   assert.match(readFileSync('.github/workflows/branch-image.yml', 'utf8'), /'cds-release\.sh'/);
-  assert.match(readFileSync('.github/workflows/branch-image.yml', 'utf8'), /branches: \['\*\*'\]/);
-  assert.doesNotMatch(readFileSync('.github/workflows/branch-image.yml', 'utf8'), /if: github\.ref ==/);
-  assert.doesNotMatch(readFileSync('.github/workflows/novart-integration.yml', 'utf8'), /if: github\.ref ==/);
+  assert.doesNotMatch(readFileSync('.github/workflows/branch-image.yml', 'utf8'), /branches: \['\*\*'\]/);
+  for (const file of ['.github/workflows/branch-image.yml', '.github/workflows/novart-integration.yml']) {
+    assert.match(readFileSync(file, 'utf8'), /if: github\.ref == 'refs\/heads\/main'/);
+  }
   assert.match(readFileSync('CLAUDE.md', 'utf8'), /策略为 `project-script`/);
   assert.doesNotMatch(readFileSync('CLAUDE.md', 'utf8'), /策略为 `generated-compose`/);
 });
