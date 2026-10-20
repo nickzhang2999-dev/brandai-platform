@@ -57,4 +57,6 @@ test('both PR CI and immutable image CI execute the same project script contract
     assert.match(source, /node --test scripts\/test-project-release\.mjs/);
   }
   assert.match(readFileSync('.github/workflows/branch-image.yml', 'utf8'), /'cds-release\.sh'/);
+  assert.match(readFileSync('.github/workflows/branch-image.yml', 'utf8'), /branches: \['\*\*'\]/);
+  assert.doesNotMatch(readFileSync('.github/workflows/branch-image.yml', 'utf8'), /if: github\.ref ==/);
 });

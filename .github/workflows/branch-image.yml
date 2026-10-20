@@ -1,9 +1,9 @@
 name: Branch Image
 
-# Publish immutable images for main and the isolated Novart branches. Deployment is a separate gate.
+# Every project branch must pass the same immutable-image gate. Production remains main-only.
 on:
   push:
-    branches: [main, devUpdate1012, claude/novart-product-integration, fix/p1-remove-captured-bundle, fix/p2-security, fix/p3-ai-reliability, fix/p4-frontend, chore/p5-engineering]
+    branches: ['**']
     paths:
       - 'cds-release.sh'
       - 'scripts/test-project-release.mjs'
@@ -31,5 +31,4 @@ concurrency:
 
 jobs:
   product:
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/devUpdate1012' || github.ref == 'refs/heads/claude/novart-product-integration' || github.ref == 'refs/heads/fix/p1-remove-captured-bundle' || github.ref == 'refs/heads/fix/p2-security' || github.ref == 'refs/heads/fix/p3-ai-reliability' || github.ref == 'refs/heads/fix/p4-frontend' || github.ref == 'refs/heads/chore/p5-engineering'
     uses: ./.github/workflows/novart-integration.yml
