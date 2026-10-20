@@ -14,6 +14,7 @@ concurrency:
 
 jobs:
   backend:
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/devUpdate1012' || github.ref == 'refs/heads/claude/novart-product-integration' || github.ref == 'refs/heads/fix/p1-remove-captured-bundle' || github.ref == 'refs/heads/fix/p2-security' || github.ref == 'refs/heads/fix/p3-ai-reliability' || github.ref == 'refs/heads/fix/p4-frontend' || github.ref == 'refs/heads/chore/p5-engineering'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     services:
