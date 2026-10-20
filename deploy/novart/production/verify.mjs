@@ -10,6 +10,14 @@ export function verifyReleaseIdentity(env = process.env) {
   if (env.CDS_BRANCH_NAME !== 'main') throw new Error('Only main may publish to NovartLab production');
 }
 
+/** Inspect image configuration, not container environment supplied by Compose. */
+export function verifyImageIdentity(imageEnv, expected) {
+  if (!/^[a-f0-9]{40}$/.test(expected ?? '') || !Array.isArray(imageEnv) ||
+      !imageEnv.includes(`CDS_COMMIT_SHA=${expected}`)) {
+    throw new Error('Image baked commit does not match the expected release');
+  }
+}
+
 export async function verifyArtifacts(directory = '/app/.novart-build/studio') {
   const root = await realpath(directory);
   const manifest = JSON.parse(await readFile(path.join(root, 'manifest.json'), 'utf8'));

@@ -5,7 +5,7 @@ import { mkdtemp, writeFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createServer } from 'node:http';
-import { verifyArtifacts, verifyHealth, verifyServed, verifyReleaseIdentity } from '../deploy/novart/production/verify.mjs';
+import { verifyArtifacts, verifyHealth, verifyServed, verifyReleaseIdentity, verifyImageIdentity } from '../deploy/novart/production/verify.mjs';
 
 const sha = '1'.repeat(40);
 const hash = body => createHash('sha256').update(body).digest('hex');
@@ -14,6 +14,12 @@ test('production publishing remains restricted to main and a full commit', () =>
   assert.doesNotThrow(() => verifyReleaseIdentity({CDS_BRANCH_NAME:'main',CDS_COMMIT_SHA:sha}));
   assert.throws(() => verifyReleaseIdentity({CDS_BRANCH_NAME:'feature',CDS_COMMIT_SHA:sha}), /Only main/);
   assert.throws(() => verifyReleaseIdentity({CDS_BRANCH_NAME:'main',CDS_COMMIT_SHA:'1234567'}), /complete release commit/);
+});
+test('a requested SHA or runtime override cannot disguise a stale image', () => {
+  assert.doesNotThrow(() => verifyImageIdentity(['NODE_ENV=production', `CDS_COMMIT_SHA=${sha}`], sha));
+  for (const env of [undefined, [], [`CDS_COMMIT_SHA=${'2'.repeat(40)}`], [`CDS_COMMIT_SHA=${sha.slice(0,12)}`]]) {
+    assert.throws(() => verifyImageIdentity(env, sha), /Image baked commit/);
+  }
 });
 async function fixture(t) {
   const root = await mkdtemp(path.join(tmpdir(), 'novart-production-test-'));
