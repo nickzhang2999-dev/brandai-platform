@@ -190,7 +190,8 @@ jobs:
       - name: Repository gates
         run: |
           pnpm test
-          node --test scripts/test-novart-production.mjs
+          bash cds-release.sh check
+          node --test scripts/test-project-release.mjs
           pnpm test:ai
           pnpm -F web typecheck
           pnpm -F web build

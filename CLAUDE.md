@@ -39,6 +39,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## §1 · 四个 canonical 操作
 
+正式生产发布合同见 `AGENTS.md` 的 G-RELEASE：项目维护 `cds-release.sh`，
+PR CI 与镜像 CI 均执行同一文件的 `check`；CDS 只执行指定提交的 `check / deploy`。
+不得通过服务器脚本热改、跳过检查或换发布方式掩盖代码与产物不兼容。
+
 ### 本地起栈
 ```bash
 cp .env.example .env

@@ -1,5 +1,15 @@
 # Integration progress
 
+## 2026-10-21 — Project-owned release contract
+
+- R / E: standard `cds-release.sh` owns check/deploy, immutable commit/main/target
+  guards, production Compose and HTTPS manifest validation on all three origins.
+- PR CI and checked-image CI run that exact script and its CLI/wiring regression.
+  AGENTS.md G-RELEASE makes publication compatibility part of every code change;
+  no server-script hotfix, skipped guard or legacy-type fallback counts as delivery.
+- Publication, PR merge and active maintenance branch sync receipts are recorded
+  only after actual execution; this section does not predeclare remote success.
+
 ## 2026-10-20 — NovartLab dynamic production release migration
 
 - E / R: versioned production Compose, external existing database/Redis volumes,

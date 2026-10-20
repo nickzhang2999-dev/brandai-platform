@@ -5,6 +5,9 @@ on:
   push:
     branches: [main, devUpdate1012, claude/novart-product-integration, fix/p1-remove-captured-bundle, fix/p2-security, fix/p3-ai-reliability, fix/p4-frontend, chore/p5-engineering]
     paths:
+      - 'cds-release.sh'
+      - 'scripts/test-project-release.mjs'
+      - 'scripts/test-novart-production.mjs'
       - 'scripts/*novart*.py'
       - 'scripts/*novart*.cjs'
       - '.github/workflows/branch-image.yml'
