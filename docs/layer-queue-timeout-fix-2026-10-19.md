@@ -42,3 +42,17 @@
 - [Qwen Image Layered 官方接口及输出格式](https://fal.ai/models/fal-ai/qwen-image-layered/api)
 
 归因：I（同步调用和异常分类实现缺口）；E（已成功构建未被 CDS 接续，运行时版本已实测）；O（原先通用错误不足以定位）。
+
+## 本次发布记录
+
+- 修复提交：`c71ff6a6ac52f8364a96b4a20725af7002f1ab8b`，已推送 `devUpdate1012`，未修改 main。
+- GitHub Branch Image：run `39227412995`。首轮于 2026-10-19 17:17（北京时间）完成产品门禁、真实临时数据库/存储联调、实际浏览器检查、镜像构建和成品容器检查。
+- 首轮失败位于 `Publish checked Garage storage image`：Docker 连接 `https://ghcr.io/v2/` 约 15 秒后返回 `context deadline exceeded`。产品镜像发布步骤随后跳过。因此不能认领或部署这次尚未发布的镜像。
+- 此故障发生在 GitHub Runner → GHCR 的网络连接阶段，不是分层模型故障，也没有证据证明是 CDS 服务端故障。使用 GitHub 原生 `rerun-failed-jobs` 重跑同一提交；没有跳过门禁、伪造成功回执或改变镜像标签。
+- 真实模型验收预算：最多 1 次手动 7 层请求，0 次新生图、0 次额外视觉分析；通过隔离验收项目使用原图副本。部署实际版本核验通过之前不提交付费任务。
+- 第二次运行于 17:31 成功，完整门禁记录为 Web 1779、AI 647、contracts 309、UI 39 全部通过，镜像发布完成。CDS 仍未关联本次成功回执，原生 `claim-prebuilt --dry-run` 校验成功后认领并部署。
+- 部署 `dr_b9f90e73d4972f40a206fea7` 于 17:33:51 完成。随后读到三服务镜像标签、三个容器 `CDS_COMMIT_SHA` 均为 `c71ff6a…`；AI 的 `studioDecompositionQueueRevision=studio-layer-queue-r1`；公网健康检查 Web/AI/Worker 均正常，Worker 提交匹配。证据：`.novart-build/layer-queue-runtime-1019.json`。
+- 已通过合法登录创建独立验收项目并上传原图副本，图片 SHA256 与失败原图一致。首次验收脚本仍使用旧按钮名称，停在付费提交前；脚本已对齐“选图AI分层”弹窗、任务深链、可见原图与图层组并列布局。没有为此修改已发布产品代码。
+- 后续公网 `/api/auth/csrf` 返回非 JSON；只读探测 `/api/health`、`/api/auth/csrf`、`/login` 返回 Cloudflare 403 / `error code: 1010`，真实 Chrome 导航 `/login` 返回 522 / `Connection timed out`，页面无登录表单。同时 CDS 分支列表查询未得到 200。此前通过的部署核验不等于此刻公网仍正常，也不能从这些响应推断容器内部崩溃或具体网关配置。
+- 截至 17:44，本轮真实模型调用仍为 **0**：checkpoint 仅有验收项目与 `uploaded:true`，没有 `submissionStarted` 或 `requestId`。真实分层、实际 PSD 导出和真实图层保存重开尚未验收，不能以本地夹具/CI 成功替代。保留已有项目和图片；入口恢复后继续同一项目的有界验收。
+- 17:44:48 追加一次官方 CDS CLI 只读分支列表请求，15 秒后 `status=0 / errorCategory=timeout`，首读失败即停止，未请求容器内部日志。证据 `.novart-build/preview-outage-readonly-1019.json`。目前无法细分 CDS 主机、前置网关或本机出口；没有重启共享服务、修改安全配置或尝试绕过入口。

@@ -38,6 +38,7 @@ import { submitStudioDecomposition, submitGeneratedStudioDecomposition, readStud
 import { encryptStudioBase, decryptStudioBase } from "../src/lib/studio-generation-base";
 import { newStudioLayerPlanning } from "../src/lib/studio-decomposition-planning";
 import { AiServiceFailure } from "../src/lib/ai-failure";
+import { matchesOwnedDecomposition } from "../src/components/owned-canvas/owned-layer-options";
 
 // This suite proves service decisions with simulated persistence, not a real
 // database/provider acceptance. Only the envelope crypto below runs unmocked.
@@ -223,6 +224,16 @@ describe("Studio decomposition intake: simulated DB, never a provider call", () 
 });
 
 describe("private receipts and archive-only retry", () => {
+  it("keeps the accepted count when the model publishes fewer layers and an uncertain submit is replayed", async () => {
+    const requested = { ...input, layerCount: 3 };
+    seed({ layerCount: 3, payloadHash: createHash("sha256").update(JSON.stringify(requested)).digest("hex") });
+    await runStudioDecomposition("request");
+    const received = await submitStudioDecomposition("w", "u", requested);
+    expect(received).toMatchObject({ status: "SUCCEEDED", layerCount: 2, requestedLayerCount: 3 });
+    expect(received.layers).toHaveLength(2);
+    expect(matchesOwnedDecomposition(requested, received)).toBe(true);
+    expect(f.paid).toHaveBeenCalledOnce();
+  });
   it("allows a viewer to read public state without returning private provider URLs or original intent", async () => {
     seed({ status: "FAILED", providerStartedAt: new Date(), outputJson: { result, publishedLayers: null }, intent: "private synthetic intent", archiveExpiresAt: new Date(Date.now() + 60_000) });
     const view = await readStudioDecompositions("w", "reader", { projectId: "p", requestId: "request" });

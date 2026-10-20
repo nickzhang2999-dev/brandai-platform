@@ -38,6 +38,7 @@ const decompositions = new Map(), decompositionPostInputs = [], layerTaskReads =
 const experienceAssets = new Map(), failedExperienceAssets = new Set();
 let decompositionPosts = 0, failLayerDownload = layersOnly;
 let layerRecoveryPosts = 0;
+let layerReadFailures = 0;
 function pngChunk(type, value) {
   const payload=Buffer.concat([Buffer.from(type),value]), result=Buffer.alloc(value.length+12);let crc=0xffffffff;
   for(const byte of payload) {crc^=byte;for(let bit=0;bit<8;bit++) crc=(crc>>>1)^((crc&1)?0xedb88320:0);}
@@ -175,6 +176,9 @@ async function handle(req,res) {
       const view=contracts.StudioDecompositionView.parse({requestId:'fixture-decomposition',...snapshot,sourceWidth:12,sourceHeight:8,status:'PENDING',error:null,createdAt:new Date().toISOString(),expiresAt:new Date(Date.now()+6*60000).toISOString(),archiveExpiresAt:null,canRetryArchive:false,layers:[]});
       decompositions.set(view.requestId,{view,reads:0});layerTaskReads.push({requestId:view.requestId,status:'PENDING',method:'POST'});return json(res,view,202);
     }
+    if(layerQueueRecovery && !layerReadFailures && [...decompositions.values()].some(value=>value.view.status==='RUNNING')) {
+      layerReadFailures++;return json(res,{error:'状态查询暂时中断，请稍后查看'},503);
+    }
     function read(value) {
       if(['PENDING','RUNNING'].includes(value.view.status)) {value.reads++;const failed=layerFailureOnly&&!value.recovered;value.view={...value.view,status:value.reads>=2?(failed?'FAILED':'SUCCEEDED'):'RUNNING',layers:value.reads>=2&&!failed?layerResults:[],error:value.reads>=2&&failed?(layerQueueRecovery?'分层等待超时，原任务已保留，可检查已有结果。':'图片内容分析服务拒绝了请求。（上游 HTTP 400）未调用分层模型，原图片保留。'):null,
         canRetryArchive:value.reads>=2&&failed&&layerQueueRecovery,archiveExpiresAt:layerQueueRecovery?new Date(Date.now()+86400000).toISOString():null};}
@@ -235,7 +239,7 @@ async function fixtureSettled(condition) {const deadline=Date.now()+10000;while(
   if(layersOnly) {
     await require('./check-owned-layer-interactions.cjs').runOwnedLayerChecks({page,surface,origin,fixture,png,material,layerResults,shapes,records,check,report,
       setStage:value=>{stage=value;},allowLayerDownloads:()=>{failLayerDownload=false;},failureOnly:layerFailureOnly,queueRecovery:layerQueueRecovery,
-      state:()=>({canvas,revision,writes,decompositionPosts,decompositionPostInputs,layerTaskReads,layerDownloads,layerRecoveryPosts})});
+      state:()=>({canvas,revision,writes,decompositionPosts,decompositionPostInputs,layerTaskReads,layerDownloads,layerRecoveryPosts,layerReadFailures})});
     assert.deepEqual(report.externalRequests,[]);assert.deepEqual(report.errors,[]);report.passed=true;return;
   }
   if(process.env.NOVART_OWNED_TOOLS_ONLY==='1') {

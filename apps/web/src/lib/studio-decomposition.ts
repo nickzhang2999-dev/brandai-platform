@@ -82,7 +82,7 @@ function receipt(row: ReceiptRow) {
   const layers = row.status === "SUCCEEDED" ? z.array(StudioDecompositionLayer).parse(row.publishedLayers) : [];
   return StudioDecompositionView.parse({ requestId: row.id, mutationId: row.mutationId, projectId: row.projectId,
     sourceShapeId: row.sourceShapeId, assetId: row.assetId, assetSha256: row.assetSha256,
-    documentRevision: row.documentRevision, layerCount: layers.length || row.layerCount, sourceWidth: row.sourceWidth, sourceHeight: row.sourceHeight,
+    documentRevision: row.documentRevision, layerCount: layers.length || row.layerCount, requestedLayerCount: row.layerCount, sourceWidth: row.sourceWidth, sourceHeight: row.sourceHeight,
     layerMode: planning.mode, analysisStatus: planning.mode === "AUTO" && row.status === "FAILED" && !planning.result ? "FAILED" : planning.status, analysisSummary: planning.result?.plan.summary ?? null,
     status: row.status, error: row.error, createdAt: row.createdAt.toISOString(), expiresAt: row.expiresAt.toISOString(),
     archiveExpiresAt: row.archiveExpiresAt?.toISOString() ?? null, canRetryArchive: canRetry(row),

@@ -76,7 +76,17 @@ export function OwnedLayerPanel({ api, workspaceId, projectId, userId, document,
   }, [workspaceId, projectId, userId, api, refresh]);
   useEffect(() => {
     if (!tasks.some(task => ["PENDING", "RUNNING"].includes(task.status) && Date.parse(task.expiresAt) > Date.now())) return;
-    const timer = setTimeout(() => void refresh(), 2500); return () => clearTimeout(timer);
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      await refresh();
+      // Failed reads leave tasks unchanged, so React will not re-arm this
+      // effect. Continue safe reads until the existing task's own deadline.
+      if (!stopped && tasks.some(task => ["PENDING", "RUNNING"].includes(task.status) && Date.parse(task.expiresAt) > Date.now()))
+        timer = setTimeout(() => void poll(), 2500);
+    };
+    timer = setTimeout(() => void poll(), 2500);
+    return () => { stopped = true; clearTimeout(timer); };
   }, [tasks, refresh]);
   useEffect(() => {
     const task = tasks.find(value => value.requestId === noticeTask.current);

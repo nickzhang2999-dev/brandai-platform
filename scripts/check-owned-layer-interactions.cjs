@@ -30,6 +30,8 @@ async function runOwnedLayerChecks({page,surface,origin,fixture,png,material,lay
     await page.locator('[data-testid="owned-layer-task"][data-status="FAILED"]').waitFor();
     const notice=page.getByTestId('owned-layer-task');
     if(queueRecovery) {
+      assert.equal(state().layerReadFailures,1);assert.equal(state().decompositionPosts,1);
+      check('transient-status-read-failure-resumes-without-focus-reload-or-paid-resubmit');
       await notice.filter({hasText:'分层等待超时'}).waitFor();
       assert.equal(await button('用同样设置重新分层').count(),0);
       await page.reload();await surface.waitFor();await page.getByTestId('owned-canvas-item').click();await button('选图AI分层').click();

@@ -20,7 +20,7 @@ export function matchesOwnedDecomposition(input: DecompositionInput, task: Decom
   return input.mutationId === task.mutationId && input.projectId === task.projectId
     && input.assetId === task.assetId && input.assetSha256 === task.assetSha256 && input.sourceShapeId === task.sourceShapeId
     && input.documentRevision === task.documentRevision && mode === (task.layerMode ?? "MANUAL")
-    && (mode === "AUTO" || input.layerCount === task.layerCount);
+    && (mode === "AUTO" || input.layerCount === (task.requestedLayerCount ?? task.layerCount));
 }
 export function ownedLayerTaskTitle(task: DecompositionTask) {
   if (task.status === "SUCCEEDED") return `${task.layers.length} 个可编辑图层`;

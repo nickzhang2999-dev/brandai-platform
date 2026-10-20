@@ -47,6 +47,9 @@ export const StudioDecompositionView = z.object({
   requestId: id, mutationId: z.string().uuid(), projectId: id,
   sourceShapeId: z.string().regex(/^shape:[A-Za-z0-9_-]{1,128}$/), assetId: id, assetSha256: sha,
   documentRevision: z.number().int().nonnegative(), layerCount: z.number().int().min(2).max(10),
+  // Preserve the accepted/model-plan count when a completed provider returns
+  // a different actual layer count. Optional for older server receipts.
+  requestedLayerCount: z.number().int().min(2).max(10).optional(),
   layerMode: StudioLayerMode.default("MANUAL"),
   analysisStatus: z.enum(["NOT_REQUESTED", "PENDING", "RUNNING", "SUCCEEDED", "FAILED"]).default("NOT_REQUESTED"),
   analysisSummary: z.string().max(600).nullable().default(null),
@@ -56,6 +59,8 @@ export const StudioDecompositionView = z.object({
   archiveExpiresAt: z.string().datetime().nullable(), canRetryArchive: z.boolean(),
   layers: z.array(StudioDecompositionLayer).max(10),
 }).strict().superRefine((view, context) => {
+  if (view.status !== "SUCCEEDED" && view.requestedLayerCount !== undefined && view.requestedLayerCount !== view.layerCount)
+    context.addIssue({ code: "custom", message: "Unfinished layer receipts must retain the accepted count" });
   if (view.layerMode === "AUTO" && ((view.status === "SUCCEEDED" && (view.analysisStatus !== "SUCCEEDED" || !view.analysisSummary)) || view.analysisStatus === "NOT_REQUESTED"))
     context.addIssue({ code: "custom", message: "AUTO requires real semantic analysis before publishing layers" });
   if (view.status !== "SUCCEEDED" && view.layers.length) context.addIssue({ code: "custom", message: "Unpublished layers must stay private" });

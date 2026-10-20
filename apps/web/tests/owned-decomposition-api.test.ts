@@ -4,7 +4,20 @@ const input = { projectId: "p", mutationId: "00000000-0000-4000-8000-00000000000
 const pending = { ...input, layerMode: "MANUAL", analysisStatus: "NOT_REQUESTED", analysisSummary: null, requestId: "r", sourceWidth: 100, sourceHeight: 100, status: "PENDING", error: null, createdAt: "2026-10-12T00:00:00.000Z", expiresAt: "2026-10-12T00:06:00.000Z", archiveExpiresAt: null, canRetryArchive: false, layers: [] };
 const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json" } });
 const setup = (fetcher: typeof fetch) => createOwnedEditorApi("w", "p", "u", { fetcher, origin: "https://novart.test" });
+const complete = (requestedLayerCount: number) => ({ ...pending, requestedLayerCount, layerCount: 2, status: "SUCCEEDED",
+  layers: [0, 1].map(order => ({ order, assetId: `layer-${order}`, assetSha256: "b".repeat(64), mimeType: "image/png",
+    width: 100, height: 100, sizeBytes: 100, url: `/api/workspaces/w/assets/layer-${order}/raw`,
+    alphaBounds: { left: 0, top: 0, width: 100, height: 100 }, inkCoverage: .5 })) });
 describe("owned decomposition API", () => {
+  it("confirms a completed replay using the accepted count, not the model's output count", async () => {
+    const value = complete(4), fetcher = vi.fn().mockResolvedValue(response(value, 202));
+    expect(await setup(fetcher).submitDecomposition(input)).toEqual(value);
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
+  it("still rejects a completed receipt for a different requested count", async () => {
+    await expect(setup(vi.fn().mockResolvedValue(response(complete(5), 202))).submitDecomposition(input))
+      .rejects.toMatchObject({ uncertain: true, code: "INVALID_RECEIPT" });
+  });
   it("pins the requested workspace/account, source identity and immutable mutation", async () => {
     const fetcher = vi.fn().mockResolvedValue(response(pending, 202));
     expect(await setup(fetcher).submitDecomposition(input)).toEqual(pending);
