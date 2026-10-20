@@ -39,6 +39,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## §1 · 四个 canonical 操作
 
+正式生产发布合同见 `AGENTS.md` 的 G-RELEASE：项目维护 `cds-release.sh`，
+PR CI 与镜像 CI 均执行同一文件的 `check`；CDS 只执行指定提交的 `check / deploy`。
+不得通过服务器脚本热改、跳过检查或换发布方式掩盖代码与产物不兼容。
+
 ### 本地起栈
 ```bash
 cp .env.example .env
@@ -162,13 +166,16 @@ BrandAI 终态 = **多租户 SaaS 品牌视觉 AI 平台**：多客户 / 多用�
 | main 分支预览 | `main-brandai-platform.geole.me` | `brandai-main` | push/合并即自动部署 |
 | **正式版** | **`www.novartlab.com`** | `brandai-prod` | **只有点 CDS 的「发布」按钮才更新** |
 
-  正式版走 CDS 发布目标 `brandai-novartlab-local-prod`（SSH 跑 `./cds-release-novartlab.sh`），**不跟 main 自动走**。
+  正式版走 CDS 发布目标 `brandai-novartlab-local-prod`，策略为 `project-script`，默认文件 `cds-release.sh`，
+  项目脚本自行使用 `deploy/novart/production/compose.yml` 和 Compose project `brandai-prod`；CDS 不猜部署类型，**不跟 main 自动走**。
+  私密环境与现有数据卷保留在生产机，发布逻辑随 Git 版本保存，不再依赖生产机独立 `.sh`。
+  就绪、镜像版本、Studio manifest 校验及首次迁移回退边界见 [生产发布说明](docs/novart-production-release.md)。
   所以「合并了」「main 预览上验过了」都**不代表用户手里那个站变了**——事故当天正式版还停在四天前的 commit，
   三个修复一个都没上，而我拿 main 预览的健康探针当"正式环境已修复"汇报了两次。
 
   判据（拿得到、不靠猜）：`curl https://www.novartlab.com/api/health` 与 `.../main-…/api/health` 比**字段**——
   新增字段没出现就是没发布。发布链路（用 `AI_ACCESS_KEY` 打 `https://cds.geole.me`，头是 `X-AI-Access-Key`）：
-  `GET /api/releases/targets` 找目标 → `POST /api/releases/branches/brandai-platform-main/preflight` 九项全绿
+  `GET /api/releases/targets` 找目标 → `POST /api/releases/branches/brandai-platform-main/preflight` 所有阻塞项通过（含同提交 CI 与脚本正文）
   → `POST .../runs`（带 `expectedCommitSha`）→ 轮 `GET /api/releases/runs/:id` 到 `success`。
   发布期间正式站会 502 几分钟（`next build`），属正常；`preflight` 会告诉你可回滚版本是哪个。
   **未经用户明确指示不得发布正式版。**

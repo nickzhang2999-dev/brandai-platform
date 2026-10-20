@@ -1,5 +1,40 @@
 # Integration progress
 
+## 2026-10-21 — Project-owned release contract
+
+- Review follow-up: pull Web/AI images and verify their baked full commit before
+  Compose changes production; stale image/runtime-override regressions fail closed.
+- R / E: standard `cds-release.sh` owns check/deploy, immutable commit/main/target
+  guards, production Compose and HTTPS manifest validation on all three origins.
+- PR CI and checked-image CI run that exact script and its CLI/wiring regression.
+  AGENTS.md G-RELEASE makes publication compatibility part of every code change;
+  no server-script hotfix, skipped guard or legacy-type fallback counts as delivery.
+- Publication, PR merge and active maintenance branch sync receipts are recorded
+  only after actual execution; this section does not predeclare remote success.
+
+## 2026-10-20 — NovartLab dynamic production release migration
+
+- E / R: versioned production Compose, external existing database/Redis volumes,
+  immutable same-commit Web/AI/Worker images and CDS-generated execution replace
+  the host-maintained release script. Manifest-driven integrity checks do not
+  require the retired Studio service worker.
+- Production gates cover actual worker commit/queue, AI/Web readiness and every
+  public Studio manifest resource before the edge is started. Release ID forces
+  same-commit verification to run again. Nginx resolves recreated Web containers.
+- Local gates passed: Web 1783, contracts 309, UI 39, AI 647; Web typecheck,
+  production build, lint (existing warnings only), deployment regressions 6.
+  Server-side Compose parsing, image artifact check (24 resources), Nginx
+  configuration and deployment regressions also pass. Production migration,
+  exact-image CI and real CDS publication/rollback remain pending execution.
+- Read-only Prisma status found 11 unapplied existing migrations in production;
+  database backup, ownership audit and isolated restore/migration rehearsal are
+  required before enabling the explicit migrate-deploy release dependency.
+- The real backup restored in isolation and all 11 pending migrations succeeded;
+  all 26 ownership and 6 cross-resource checks were zero. The actual production
+  Compose started successfully in an internal isolated network, validating 23
+  served resources. Migration is explicitly ordered before worker startup.
+- Operational specification: `docs/novart-production-release.md`.
+
 ## 2026-10-15 — final local bug batch verified
 
 - Final delivery: normal push09fdf18, exact-SHA Branch Image38671917506 success through source/container validation and checked-image publication. CDS official dry-run/claim/deploy completed dr_a957bf6b5ec83514ab26a498; public health/current commit and real existing-account Studio access passed. Post-release logs remain local until the next code batch. No paid model, main or production operation.

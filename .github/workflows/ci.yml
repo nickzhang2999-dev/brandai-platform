@@ -46,7 +46,10 @@ jobs:
         run: pnpm -F web lint
 
       - name: Unit tests (L1 web + contracts + ui)
-        run: pnpm test
+        run: |
+          pnpm test
+          bash cds-release.sh check
+          node --test scripts/test-project-release.mjs
 
       - name: Typecheck (web)
         run: pnpm -F web typecheck

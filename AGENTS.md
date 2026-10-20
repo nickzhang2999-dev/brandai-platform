@@ -31,6 +31,14 @@ pnpm -F web build      # 生产 build
 - 推送前可运行 `node scripts/cds-pre-push.cjs --check-head`；不得使用 `--no-verify` 绕过。安装器遇到已有非本项目钩子或自定义 `core.hooksPath` 会保留原设置并停止，需完成钩子整合后再推送。
 - Git 历史不重写。文档可以保留历史标记，提交信息中不要引用这些字面量。具体边界见 [CDS 提交规则](docs/cds-push-policy.md)。
 
+### G-RELEASE · 项目发布合同不可绕过
+
+- 正式发布唯一入口为仓库根 `cds-release.sh`，项目自行维护发布逻辑，CDS 默认只执行目标提交中的该文件。
+- 改代码或资源产物时，必须同步确认 `bash cds-release.sh check` 和 `node --test scripts/test-project-release.mjs` 通过；两者均在 PR CI 和镜像 CI 执行。
+- 禁止改服务器独立脚本、换成 CDS 自动推断的部署类型、删掉/跳过发布检查来伪造成功；脚本退役资源时按当前 manifest 校验，不维护旧文件白名单。
+- 发布必须同一完整 SHA 的 CI/镜像通过，再用 CDS 发布；核对实际 Web/AI/Worker 版本、生产数据卷、最终 HTTPS 页面和资源。只看 running 或健康接口不算完成。
+- 发布失败先修项目合同并经 PR/CI 验证，不以 SSH 临时补丁取代正常交付。CDS 独立脚本仅是明确选择的备选，不能自动兜底。
+
 ### G-AUTHORITATIVE · 服务端权威（CLAUDE.md §0.3）
 - **租户 / 品牌 / 当前项目等"会被刷新和分享的状态"必须服务端权威**：落 cookie 或进 URL，
   让 SSR / 刷新 / 深链 / 分享链接解析到同一个值。**只存 `localStorage` = 双事实源**（客户端一套、
