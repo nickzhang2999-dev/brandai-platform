@@ -17,6 +17,8 @@ const layerFailureOnly = process.env.NOVART_OWNED_LAYERS_FAILURE_ONLY === '1';
 const layerQueueRecovery = process.env.NOVART_OWNED_LAYERS_QUEUE_RECOVERY === '1';
 const experienceOnly = process.env.NOVART_OWNED_EXPERIENCE_ONLY === '1';
 const brandOnly = process.env.NOVART_OWNED_BRAND_ONLY === '1';
+const copywritingOnly = process.env.NOVART_OWNED_COPYWRITING_ONLY === '1';
+const copywritingTasks = []; let copywritingPosts = 0;
 const temporaryRoot = path.join(repo, '.novart-build', 'temporary');
 fs.mkdirSync(temporaryRoot, {recursive: true});
 const directory = fs.mkdtempSync(path.join(temporaryRoot, 'owned-browser-'));
@@ -66,6 +68,11 @@ function workflowView() {const assets=currentWorkflowAssets();return contracts.S
 async function body(req) {const chunks=[];for await(const c of req) chunks.push(c);return Buffer.concat(chunks);}
 async function handle(req,res) {
   const url = new URL(req.url,'http://127.0.0.1');
+  if(url.pathname.endsWith('/studio-copywriting')) {
+    if(req.method==='POST') {const input=JSON.parse((await body(req)).toString());copywritingPosts++;let task=copywritingTasks.find(t=>t.mutationId===input.mutationId);
+      if(!task){task={id:'copy-fixture-'+copywritingPosts,mutationId:input.mutationId,prompt:input.prompt,status:'SUCCEEDED',createdAt:new Date().toISOString(),error:null,result:{candidates:[{title:'交互测试标题',body:'测试夹具正文，仅用于编辑、撤销和刷新恢复检查。'}],model:'fixture',inputTokens:0,outputTokens:0,latencyMs:0}};copywritingTasks.unshift(task);}return json(res,task,202);}
+    return json(res,{enabled:copywritingOnly,tasks:copywritingTasks});
+  }
   if (/^\/brand\/deepflare-(?:logo(?:-dark)?|mark|icon)\.svg$/.test(url.pathname)) {res.setHeader('content-type', 'image/svg+xml'); return res.end(fs.readFileSync(path.join(repo, 'apps/web/public', url.pathname)));}
   if(url.pathname==='/app.js'||url.pathname==='/app.css') {res.setHeader('Content-Type',url.pathname.endsWith('.js')?'application/javascript':'text/css');return res.end(url.pathname.endsWith('.css')?Buffer.concat([fs.readFileSync(path.join(directory,'tokens.css')),fs.readFileSync(path.join(directory,'app.css'))]):fs.readFileSync(path.join(directory,'app.js')));}
   if(url.pathname.startsWith('/brand/')) {const file=path.resolve(repo,'apps/web/public',url.pathname.slice(1));if(file.startsWith(path.join(repo,'apps/web/public/brand')+path.sep)&&fs.existsSync(file)){res.setHeader('Content-Type','image/svg+xml');return res.end(fs.readFileSync(file));}res.writeHead(404);return res.end();}
@@ -224,6 +231,27 @@ async function fixtureSettled(condition) {const deadline=Date.now()+10000;while(
   stage='open-owned-editor';await page.goto(origin+'/studio-editor');
   await page.getByTestId('owned-canvas').waitFor();
   const surface=page.getByTestId('owned-canvas');
+  if(copywritingOnly) {
+    await page.getByRole('button',{name:'AI 文案',exact:true}).click();
+    const panel=page.getByTestId('copywriting-panel');await panel.waitFor();
+    await panel.getByRole('textbox',{name:'文案需求',exact:true}).fill('写一组短标题和正文');
+    await panel.getByRole('button',{name:'生成文案',exact:true}).last().click();
+    await panel.getByRole('button',{name:'加入画布',exact:true}).click();await fixtureSettled(()=>shapes().length===1&&writes>0);
+    assert.equal(shapes()[0].props.text.replaceAll('\n',''),'交互测试标题测试夹具正文，仅用于编辑、撤销和刷新恢复检查。');check('copywriting-inserts-native-editable-text');
+    await panel.getByRole('button',{name:'加入画布',exact:true}).click();await page.waitForTimeout(350);assert.equal(shapes().length,1);check('same-result-insertion-is-idempotent');
+    await page.getByRole('button',{name:'关闭工具窗口'}).click();await page.getByRole('button',{name:'撤销',exact:true}).click();await fixtureSettled(()=>shapes().length===0);check('copywriting-insertion-can-be-undone');
+    await page.getByRole('button',{name:'重做',exact:true}).click();await fixtureSettled(()=>shapes().length===1);check('copywriting-insertion-can-be-redone');
+    await page.reload();await page.getByTestId('owned-canvas-item').waitFor();assert.equal(shapes().length,1);check('copywriting-text-restores-after-refresh');
+    await page.getByRole('button',{name:'AI 文案',exact:true}).click();await page.getByTestId('copywriting-task').waitFor();assert.equal(copywritingPosts,1);check('task-history-recovers-without-repeating-post');
+    await page.getByRole('button',{name:'关闭工具窗口'}).click();await page.getByTestId('owned-canvas-item').dblclick();
+    const nativeEditor=page.getByRole('textbox',{name:'编辑画布文字',exact:true});
+    await nativeEditor.fill('已编辑的文案');await nativeEditor.press('Escape');await fixtureSettled(()=>shapes()[0]?.props.text==='已编辑的文案');check('inserted-copy-can-be-edited-in-canvas');
+    await page.getByTestId('owned-canvas-item').click();await page.getByRole('button',{name:'AI 文案',exact:true}).click();await panel.getByRole('button',{name:'改写文字',exact:true}).click();await panel.getByRole('button',{name:'使用选中文字',exact:true}).click();assert.equal(await panel.getByRole('textbox',{name:'待改写原文',exact:true}).inputValue(),'已编辑的文案');check('rewrite-picks-selected-native-text');
+    await page.getByRole('button',{name:'关闭工具窗口'}).click();
+    await page.getByRole('button',{name:'AI 文案',exact:true}).click();await page.setViewportSize({width:390,height:844});
+    assert.ok(await panel.isVisible());assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);check('copywriting-panel-fits-mobile-width');
+    assert.deepEqual(report.externalRequests,[]);assert.deepEqual(report.errors,[]);report.passed=true;return;
+  }
   if(brandOnly) {
     const output=path.join(repo,'.novart-build/home-thumbnail-logo-1020');fs.mkdirSync(output,{recursive:true});
     for(const width of [1440,768,390]) {

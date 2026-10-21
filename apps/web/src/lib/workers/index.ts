@@ -13,6 +13,7 @@
  * rejects it before any connection, consumer or health listener is created.
  */
 import "./runtime-env";
+import { createStudioCopywritingWorker } from "./studio-copywriting.worker";
 import http from "node:http";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -84,6 +85,7 @@ http
 
 try {
   workers.push(
+    createStudioCopywritingWorker(),
     createRecognizeWorker(),
     createParseManualWorker(),
     createGenerateWorker(),
