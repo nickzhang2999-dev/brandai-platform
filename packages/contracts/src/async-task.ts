@@ -2,6 +2,7 @@ import { z } from "zod";
 import { JobStatus } from "./enums";
 import { ComplianceCheckResponse } from "./ai";
 import { GenerationVersion } from "./entities";
+import { StudioCopywritingResult } from "./studio-copywriting";
 
 /**
  * H-async — server-authoritative async task state (web-BFF-only). Lets
@@ -32,6 +33,7 @@ export const AsyncTaskKind = z.enum([
   "STUDIO_COMPLIANCE",
   "STUDIO_MATERIAL_VERIFY",
   "STUDIO_CONVERSATION",
+  "STUDIO_COPYWRITING",
   "COMPLIANCE_PRECHECK",
   "GENERATION_PRECHECK",
   "COMPLIANCE_RECHECK",
@@ -45,10 +47,10 @@ export const GenerationPrecheckResult = ComplianceCheckResponse.extend({
   latencyMs: z.number().nonnegative().optional(),
 });
 export type GenerationPrecheckResult = z.infer<typeof GenerationPrecheckResult>;
-export const AsyncTaskResult = z.union([GenerationPrecheckResult, ComplianceCheckResponse, GenerationVersion]);
+export const AsyncTaskResult = z.union([GenerationPrecheckResult, ComplianceCheckResponse, GenerationVersion, StudioCopywritingResult]);
 export type AsyncTaskResult = z.infer<typeof AsyncTaskResult>;
 export function parseAsyncTaskResult(kind: string, value: unknown): AsyncTaskResult | undefined {
-  const schema = kind === "GENERATION_PRECHECK" ? GenerationPrecheckResult
+  const schema = kind === "STUDIO_COPYWRITING" ? StudioCopywritingResult : kind === "GENERATION_PRECHECK" ? GenerationPrecheckResult
     : kind === "COMPLIANCE_PRECHECK" ? ComplianceCheckResponse
     : kind === "COMPLIANCE_RECHECK" ? GenerationVersion : null;
   const parsed = schema?.safeParse(value);
