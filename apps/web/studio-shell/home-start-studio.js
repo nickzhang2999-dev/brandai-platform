@@ -510,7 +510,7 @@
     'ns-brand-notes': {limit: 2000, label: '使用说明', status: 'ns-brand-status'}
   };
   function validateText(id) {
-    const field = $(id), rule = textRules[id], length = rule.codeUnits ? field.value.length : textLength(field.value), error = length > rule.limit ? rule.label + '最多 ' + rule.limit + ' 个字符（当前 ' + length + ' 个），请调整后再保存。' : '';
+    const field = $(id), rule = id === 'ns-home-brief' && $('ns-mode-copywriting')?.getAttribute('aria-pressed') === 'true' ? {...textRules[id],limit:2000,label:'文案需求'} : textRules[id], length = rule.codeUnits ? field.value.length : textLength(field.value), error = length > rule.limit ? rule.label + '最多 ' + rule.limit + ' 个字符（当前 ' + length + ' 个），请调整后再保存。' : '';
     const counter = $(id + '-count'); if (counter) { counter.textContent = length + ' / ' + rule.limit; counter.dataset.invalid = String(Boolean(error)); }
     field.setCustomValidity(error); field.setAttribute('aria-invalid', String(Boolean(error))); if (error) $(rule.status).textContent = error; return !error;
   }
@@ -979,7 +979,8 @@
     if (homeStart.busy() || homeStart.snapshot().submittedRequestId) { notify('这份需求已提交，请先继续已创建的项目。'); return; }
     const current = $('ns-home-brief').value, combined = current.trim() ? current + '\n\n' + prompt : prompt;
     go('/home'); requestAnimationFrame(() => { $('ns-home-brief').focus(); $('ns-home-brief').selectionStart = $('ns-home-brief').selectionEnd = $('ns-home-brief').value.length; });
-    if (combined.length > 4000) { const message = '加入这个需求起点会超过 4000 个字符，当前草稿保持完整。请先缩短内容，再加入模板。'; $('ns-create-status').textContent = message; notify(message); return; }
+    const limit = homeStart.snapshot().creationMode === 'copywriting' ? 2000 : 4000;
+    if (combined.length > limit) { const message = '加入这个需求起点会超过 ' + limit + ' 个字符，当前草稿保持完整。请先缩短内容，再加入模板。'; $('ns-create-status').textContent = message; notify(message); return; }
     $('ns-home-brief').value = combined; const stored = storage.set(briefKey, combined);
     if (!stored) $('ns-create-status').textContent = '无法暂存需求，请保留当前页面。'; else if (validateText('ns-home-brief')) $('ns-create-status').textContent = createBusy ? '当前项目正在创建，新的需求草稿已保留。' : '';
     notify(current.trim() ? '需求起点已追加到现有草稿，可继续编辑。' : '需求起点已带回首页，可继续编辑。');

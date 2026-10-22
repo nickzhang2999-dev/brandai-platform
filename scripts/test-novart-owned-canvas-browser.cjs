@@ -82,7 +82,7 @@ async function handle(req,res) {
   if(url.pathname==='/owned-home-start.js') {res.setHeader('Content-Type','application/javascript');return res.end(fs.readFileSync(path.join(repo,'deploy/novart/studio/novart-owned-home-start.js')));}
   if(url.pathname==='/home-fixture') {
     res.setHeader('Content-Type','text/html');return res.end(`<html><head><meta charset="utf-8"></head><body>
-      <div id="ns-composer"><textarea id="ns-home-brief"></textarea><button id="hs-pick">添加图片</button><input id="hs-file-input" type="file" multiple><button id="ns-create"><span>创建项目</span></button><button id="ns-create-blank">空白</button></div>
+      <button id="ns-mode-image">图片创作</button><button id="ns-mode-copywriting">文案创作</button><div id="ns-composer"><textarea id="ns-home-brief"></textarea><button id="hs-pick">添加图片</button><input id="hs-file-input" type="file" multiple><button id="ns-create"><span>创建项目</span></button><button id="ns-create-blank">空白</button></div>
       <div id="hs-attachments"></div><div id="hs-draft-note"></div><div id="hs-recovery"></div><div id="ns-create-status"></div><div id="hs-handoff" hidden></div><div id="ns-frames"></div>
       <script>window.__NOVART_PRODUCT__=${JSON.stringify(fixture)};</script><script src="/owned-home-start.js"></script><script>
       const entry={id:${JSON.stringify(fixture.projectId)},ready:false,frame:document.createElement('iframe')};entry.frame.style='width:100%;height:750px';document.getElementById('ns-frames').append(entry.frame);let created=false;
@@ -250,6 +250,24 @@ async function fixtureSettled(condition) {const deadline=Date.now()+10000;while(
     await page.getByRole('button',{name:'关闭工具窗口'}).click();
     await page.getByRole('button',{name:'AI 文案',exact:true}).click();await page.setViewportSize({width:390,height:844});
     assert.ok(await panel.isVisible());assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);check('copywriting-panel-fits-mobile-width');
+    await page.setViewportSize({width:1366,height:850});
+    const initialCopyPosts=copywritingPosts, initialImagePosts=conversationPosts.length;
+    await page.goto(origin+'/home-fixture');await page.waitForFunction(()=>homeStart.snapshot().loaded);
+    await page.locator('#ns-mode-copywriting').click();await page.locator('#ns-home-brief').fill('为新品写一句品牌口号');
+    await page.locator('#hs-file-input').setInputFiles({name:'reference.png',mimeType:'image/png',buffer:png});
+    await page.waitForFunction(()=>homeStart.snapshot().attachmentCount===1);
+    await page.locator('#ns-create').click();
+    await page.waitForFunction(()=>homeStart.snapshot().submittedRequestId===null && document.querySelector('iframe')?.contentDocument?.querySelector('[data-testid="copywriting-panel"] textarea')?.value==='为新品写一句品牌口号',undefined,{timeout:45000});
+    const homeFrame=page.frames().find(frame=>new URL(frame.url()).pathname==='/studio-editor');assert.ok(homeFrame);
+    const homePanel=homeFrame.getByTestId('copywriting-panel');assert.ok(await homePanel.isVisible());
+    assert.ok(await homePanel.getByText('参考所选图片',{exact:false}).isVisible());
+    assert.equal(copywritingPosts,initialCopyPosts);assert.equal(conversationPosts.length,initialImagePosts);
+    check('homepage-copy-opens-panel-with-reference-without-model-submission');
+    await homePanel.getByRole('textbox',{name:'文案需求',exact:true}).fill('调整后的品牌口号需求');
+    await homeFrame.goto(origin+'/studio-editor');await homeFrame.getByRole('button',{name:'AI 文案',exact:true}).click();
+    assert.equal(await homeFrame.getByRole('textbox',{name:'文案需求',exact:true}).inputValue(),'调整后的品牌口号需求');
+    assert.equal(copywritingPosts,initialCopyPosts);assert.equal(conversationPosts.length,initialImagePosts);
+    check('homepage-copy-draft-survives-refresh-without-paying');
     assert.deepEqual(report.externalRequests,[]);assert.deepEqual(report.errors,[]);report.passed=true;return;
   }
   if(brandOnly) {
