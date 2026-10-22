@@ -38,6 +38,7 @@ function handle(req,res) {
   if (url.pathname === '/api/workspaces') return json(res,{workspaces:context.workspaces});
   if (url.pathname === '/api/workbench/session') return json(res,{...context,activeWorkspaceId:context.workspaceId});
   if (url.pathname.endsWith('/notifications')) return json(res,{items:[]});
+  if (url.pathname.endsWith('/inspiration/activity')) return json(res,{enabled:false,items:[]});
   if (url.pathname.endsWith('/studio-layer-activity')) return json(res,{requests:Array.from({length:12},(_,i)=>({requestId:'layout-task-'+i,projectId:project.projectId,status:'RUNNING',createdAt:'2026-10-13T08:00:00Z',expiresAt:'2026-10-14T08:00:00Z',layerCount:4}))});
   if (url.pathname === '/canvas') {res.writeHead(307,{Location:'/studio-editor'+url.search});return res.end();}
   if (url.pathname === '/studio-editor') {res.setHeader('Content-Type','text/html; charset=utf-8');return res.end(`<!doctype html><html data-nv-studio-canvas-ready="true"><head><meta charset="utf-8"></head><body style="margin:0;height:100vh;background:#fafafc"><div data-testid="owned-editor">布局用 iframe 协议测试件</div><section data-testid="fixture-materials" hidden>素材面板协议测试件</section><script>const projectId=${JSON.stringify(project.projectId)};window.panelReceipts=[];addEventListener('message',e=>{const d=e.data;if(e.origin!==location.origin||e.source!==parent||d.type!=='nv-studio'||d.action!=='open-panel'||d.projectId!==projectId)return;panelReceipts.push(d);if(d.panel==='materials')document.querySelector('[data-testid="fixture-materials"]').hidden=false;});parent.postMessage({type:'nv-studio',action:'ready',projectId},location.origin);</script></body></html>`);}
@@ -136,6 +137,51 @@ async function verifyViewport(browser,spec,origin) {
     check(spec.name,{viewport:spec,dpr:spec.dpr||1,homeMeasurements:home,measurements:values,screenshot:shot,uploadDeepLink:'owned-materials-panel-once-with-retained-workspace'});
   } finally {await ctx.close();}
 }
+async function verifyModeRecovery(browser,origin) {
+  stage='mode-recovery';
+  const ctx=await browser.newContext({viewport:{width:1440,height:900},serviceWorkers:'block'});
+  const page=await ctx.newPage();page.setDefaultTimeout(9000);
+  const ready=()=>page.waitForFunction(()=>window.NovartStudio?.snapshot().homeStart.loaded&&!window.NovartStudio.snapshot().homeStart.checkingRecovery&&!document.querySelector('.np-startup'));
+  async function seed(started) {
+    await page.evaluate(async({workspaceId,projectId,started})=>{
+      const db=await new Promise((resolve,reject)=>{const r=indexedDB.open('novart-owned-home-start',1);r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});
+      const requestId=crypto.randomUUID();window.testOriginalRequestId=requestId;
+      await new Promise((resolve,reject)=>{const tx=db.transaction('draft','readwrite');tx.objectStore('draft').put({version:1,creationMode:'image',items:[],submitted:{requestId,projectId,brief:'旧需求和原项目必须保留',projectName:'原项目',startCreation:true,creationStarted:started,creationAccepted:false}},'owned-home-start-v1:'+workspaceId);tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);});db.close();
+    },{workspaceId:context.workspaceId,projectId:project.projectId,started});
+    await page.reload();await ready();
+  }
+  try {
+    await page.goto(origin+'/studio?workspaceId='+context.workspaceId+'#/home');await ready();
+    await seed(false);
+    const original=await page.evaluate(()=>window.NovartStudio.snapshot().homeStart.submittedRequestId);
+    assert.equal(await page.locator('#ns-mode-copywriting').evaluate(node=>node.disabled),false,'Blocked mode must remain focusable to explain the recovery action');
+    await page.locator('#ns-mode-copywriting').click({force:true});
+    assert.match(await page.locator('#ns-home-mode-status').textContent(),/上次项目尚未交接完成/);
+    assert.equal(await page.evaluate(()=>window.NovartStudio.snapshot().homeStart.submittedRequestId),original);
+    await page.locator('#ns-home-mode-status').getByRole('button',{name:'保留原项目并切换文案',exact:true}).click();
+    await page.waitForFunction(()=>window.NovartStudio.snapshot().homeStart.creationMode==='copywriting'&&!window.NovartStudio.snapshot().homeStart.submittedRequestId);
+    assert.equal(await page.locator('#ns-home-brief').inputValue(),'旧需求和原项目必须保留');
+    check('safe old handoff exposes explicit mode recovery without creating another project');
+    await seed(true);await page.locator('#ns-mode-copywriting').click({force:true});
+    assert.match(await page.locator('#ns-home-mode-status').textContent(),/提交结果还未确认/);
+    assert.equal(await page.locator('#ns-home-mode-status').getByRole('button',{name:'保留原项目并切换文案',exact:true}).count(),0);
+    assert.equal(await page.locator('#ns-home-mode-status').getByRole('button',{name:'继续原项目',exact:true}).count(),1);
+    assert.equal(await page.locator('#ns-mode-image').getAttribute('aria-pressed'),'true');
+    check('unknown submission keeps original request and only offers its continuation');
+  } finally {await ctx.close();}
+  const failing=await browser.newContext({viewport:{width:1440,height:900},serviceWorkers:'block'});
+  try {
+    const page=await failing.newPage();await page.goto(origin+'/studio?workspaceId='+context.workspaceId+'#/home');
+    await page.waitForFunction(()=>window.NovartStudio?.snapshot().homeStart.loaded&&!document.querySelector('.np-startup'));
+    await page.locator('#ns-home-brief').fill('存储故障也保留这份需求');
+    await page.evaluate(()=>{IDBObjectStore.prototype.put=function(){throw new DOMException('Isolated quota failure','QuotaExceededError');};});
+    await page.locator('#ns-mode-copywriting').click();
+    await page.waitForFunction(()=>document.querySelector('#ns-home-mode-status').textContent.includes('创作类型未能保存'));
+    assert.equal(await page.locator('#ns-mode-image').getAttribute('aria-pressed'),'true');assert.equal(await page.locator('#ns-home-brief').inputValue(),'存储故障也保留这份需求');
+    assert.match(await page.locator('#ns-home-mode-status').textContent(),/仍保持图片创作/);
+    check('storage failure reports unchanged mode beside the controls and preserves text');
+  } finally {await failing.close();}
+}
 (async()=>{
   assert.ok(fs.existsSync(path.join(exported,'studio.html')),'Build Studio export before this interaction regression');
   report.webkitAvailable = fs.existsSync(webkit.executablePath());
@@ -145,6 +191,7 @@ async function verifyViewport(browser,spec,origin) {
   browser=await chromium.launch({executablePath:process.env.NOVART_CHROMIUM_EXECUTABLE || 'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true,args:['--disable-background-networking','--no-proxy-server']});
   const specs=[{name:'desktop-1440',width:1440,height:900},{name:'retina-1280',width:1280,height:800,dpr:2},{name:'compact-1024',width:1024,height:768},{name:'tablet-768',width:768,height:1024},{name:'phone-390',width:390,height:844},{name:'effective-zoom-125',width:1152,height:720,dpr:2,equivalentDesktopZoom:1.25},{name:'effective-zoom-150',width:960,height:600,dpr:1.5,equivalentDesktopZoom:1.5},{name:'short-viewport',width:1024,height:420}];
   for (const spec of specs) await verifyViewport(browser,spec,origin);
+  await verifyModeRecovery(browser,origin);
   assert.deepEqual(report.externalRequests,[]);assert.deepEqual(report.errors,[]);assert.equal(report.writeRequests,0);report.passed=true;
 })().catch(e=>{report.fatal={stage,message:e.message,stack:e.stack};process.exitCode=1;}).finally(async()=>{
   await browser?.close();if(server)await new Promise(resolve=>server.close(resolve));

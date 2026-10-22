@@ -50,7 +50,7 @@ class OwnedStudioExportTests(unittest.TestCase):
                     # A navigation href is served by Next, not the static asset exporter.
                     # Keep this narrow: src references and every other URL still need a manifest entry.
                     if attribute == b'href' and reference == b'/inspiration':
-                        self.assertTrue((ROOT / 'apps/web/src/app/(brandai)/inspiration/page.tsx').is_file())
+                        self.assertTrue((ROOT / 'apps/web/src/app/inspiration/page.tsx').is_file())
                         continue
                     self.assertIn(reference.decode('utf-8'), manifest['files'], route)
                 for reference in re.findall(rb'url\(["\']?(/[^)"\'?#]+)', content):

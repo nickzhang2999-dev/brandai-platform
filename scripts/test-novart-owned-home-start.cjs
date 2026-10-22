@@ -81,7 +81,29 @@ function harness(options = {}) {
   {
     const f=harness({failWrites:true});await f.ready();
     await f.get('ns-mode-copywriting').listeners.click();
-    assert.equal(f.module.snapshot().creationMode,'image','Failed preference save must roll back');count++;
+    assert.equal(f.module.snapshot().creationMode,'image','Failed preference save must roll back');
+    assert.match(f.get('ns-home-mode-status').children[0].textContent,/创作类型未能保存，仍保持图片创作/);
+    assert.ok(f.notices.some(value=>value.includes('创作类型未能保存')));count++;
+  }
+  {
+    const requestId=randomUUID(),originalFile=file(),record={version:1,creationMode:'image',items:[{id:randomUUID(),file:originalFile,name:'fixture.png',taskId:null,uploadStarted:false}],submitted:{requestId,projectId:'project-fixture',brief:'保留原需求',projectName:'原项目',startCreation:true,creationStarted:false,creationAccepted:false}};
+    const f=harness({stored:record});await f.ready();await flush(()=>!f.module.snapshot().checkingRecovery);
+    await f.get('ns-mode-copywriting').listeners.click();
+    assert.equal(f.data.submitted.requestId,requestId,'Selecting a mode cannot discard the original request');
+    assert.match(f.get('ns-home-mode-status').children[0].textContent,/上次项目尚未交接完成/);
+    await findControl(f,'保留原项目并切换文案').onclick();
+    assert.equal(f.module.snapshot().creationMode,'copywriting');assert.equal(f.data.submitted,null);assert.equal(f.get('ns-home-brief').value,'保留原需求');
+    assert.equal(f.data.items.length,1);assert.equal(await f.data.items[0].file.text(),await originalFile.text());
+    assert.equal(f.creates.length,0);assert.equal(f.posts.length,0);assert.equal(f.requests.length,0);count++;
+  }
+  {
+    const requestId=randomUUID(),record={version:1,creationMode:'image',items:[],submitted:{requestId,projectId:'project-fixture',brief:'结果还未确认',projectName:'原项目',startCreation:true,creationStarted:true,creationAccepted:false}};
+    const f=harness({stored:record});await f.ready();await flush(()=>!f.module.snapshot().checkingRecovery);
+    await f.get('ns-mode-copywriting').listeners.click();
+    assert.equal(f.data.submitted.requestId,requestId);assert.equal(f.module.snapshot().creationMode,'image');
+    assert.match(f.get('ns-home-mode-status').children[0].textContent,/提交结果还未确认/);
+    assert.ok(findControl(f,'继续原项目'));assert.equal(findControl(f,'保留原项目并切换文案'),undefined);
+    assert.equal(f.creates.length,0);assert.equal(f.posts.length,0);count++;
   }
   {
     const f=harness();await f.ready();f.get('ns-home-brief').value='写标题';

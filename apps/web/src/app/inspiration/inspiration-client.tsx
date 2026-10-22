@@ -6,8 +6,7 @@ import { useSearchParams } from "next/navigation";
 import type { InspirationCaseCard, InspirationListResponse, InspirationChatState, InspirationBookmark, InspirationFeedbackList } from "@brandai/contracts";
 import { Button } from "@brandai/ui";
 import { apiFetch } from "@/lib/client";
-import { useBrand } from "../brand-context";
-import { PageHeader } from "../_ui";
+import { PageHeader } from "@/app/(brandai)/_ui";
 
 const evidenceLabels: Record<string, string> = { author_statement: "作者自述", media_statement: "媒体观点", visual_observation: "图像观察", analysis_inference: "分析推断" };
 const inputClass = "w-full rounded-xl border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring";
@@ -15,8 +14,7 @@ const errorText = (error: unknown) => error instanceof Error ? error.message : "
 type SelectedImage = { caseId: string; imageId: string; revision: number; title: string };
 function sourceLink(value: string) { try { const url = new URL(value); return ["https:", "http:"].includes(url.protocol) ? url.href : null; } catch { return null; } }
 
-export default function InspirationPage() {
-  const { wsId } = useBrand();
+export default function InspirationClient({ wsId }: { wsId: string }) {
   return <InspirationWorkspace key={wsId} wsId={wsId} />;
 }
 
@@ -84,7 +82,7 @@ function InspirationWorkspace({ wsId }: { wsId: string }) {
     catch (error) { if (alive.current) setMessage(errorText(error)); }
     finally { if (alive.current) setCancelling(null); }
   }
-  return <div className="mx-auto max-w-7xl p-5 md:p-8" data-testid="inspiration-page">
+  return <div data-testid="inspiration-page">
     <PageHeader title="设计灵感" subtitle="从真实案例找参考，用图片和来源理解设计方法。" />
     {list.isPending && <p role="status" className="py-10 text-muted-foreground">正在读取灵感库…</p>}
     {list.isError && <div role="alert" className="rounded-2xl border border-border p-5"><p>{errorText(list.error)}</p><Button className="mt-3" onClick={() => void list.refetch()}>重新读取</Button></div>}

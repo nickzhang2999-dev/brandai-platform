@@ -106,7 +106,7 @@ jobs:
           assert {'zoomed-hit-testing-drag-and-history-share-the-current-camera',
                   'engine-export-includes-offscreen-images-from-the-full-document',
                   'gzip-save-reopen-retains-all-226-records-camera-stacking-text-and-brush'} <= set(engine['checks'])
-          for name, expected in (('owned-layer-fixture.json', 10), ('brand-knowledge-fixture.json', 14), ('layer-inbox-fixture.json', 16), ('studio-layout-fixture.json', 8), ('brand-switch-fixture.json', 9), ('home-brand-leave-fixture.json', 9), ('brand-creation-recovery-fixture.json', 15), ('image-context-fixture.json', 19)):
+          for name, expected in (('owned-layer-fixture.json', 10), ('brand-knowledge-fixture.json', 14), ('layer-inbox-fixture.json', 16), ('studio-layout-fixture.json', 11), ('brand-switch-fixture.json', 9), ('home-brand-leave-fixture.json', 9), ('brand-creation-recovery-fixture.json', 15), ('image-context-fixture.json', 19)):
               report = json.loads((root / name).read_text())
               assert report['passed'] is True and report['isolated'] is True, name
               assert report['realBackend'] is False and report['realProvider'] is False, name
