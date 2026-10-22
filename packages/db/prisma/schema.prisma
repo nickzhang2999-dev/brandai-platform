@@ -194,6 +194,14 @@ model Membership {
 }
 
 model BrandWorkspace {
+  inspirationState InspirationState?
+  inspirationReleases InspirationRelease[]
+  inspirationRecords InspirationRecord[]
+  inspirationImages InspirationImage[]
+  inspirationChats InspirationChat[]
+  inspirationBookmarks InspirationBookmark[]
+  inspirationEmbeddings InspirationEmbedding[]
+  inspirationFeedback InspirationFeedback[]
   id           String            @id @default(cuid())
   ownerId      String
   owner        User              @relation(fields: [ownerId], references: [id], onDelete: Cascade)
@@ -1006,4 +1014,133 @@ model WorkbenchKnowledgeImport {
   createdAt DateTime @default(now())
   @@unique([workspaceId, userId, mutationId], map: "WorkbenchKnowledgeImport_scope_key")
   @@index([workspaceId, createdAt])
+}
+
+// Nova local knowledge replica. All content and user state are tenant scoped.
+model InspirationState {
+  workspaceId        String         @id
+  workspace          BrandWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  activeRelease      String?
+  releaseSequence    Int            @default(0)
+  withdrawalSequence Int            @default(0)
+  withdrawalHash     String?
+  withdrawn          Json           @default("[]")
+  lastSyncAt         DateTime?
+  lastError          String?
+  updatedAt          DateTime       @updatedAt
+}
+
+model InspirationRelease {
+  id           String         @id @default(cuid())
+  workspaceId  String
+  workspace    BrandWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  releaseId    String
+  sequence     Int
+  manifestHash String
+  manifest     Json
+  snapshot     Json
+  createdAt    DateTime       @default(now())
+
+  @@unique([workspaceId, releaseId])
+  @@unique([workspaceId, sequence])
+}
+
+model InspirationRecord {
+  id          String         @id @default(cuid())
+  workspaceId String
+  workspace   BrandWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  caseId      String
+  revision    Int
+  contentHash String
+  imageHash   String
+  releaseId   String
+  deleted     Boolean        @default(false)
+  body        Json
+  createdAt   DateTime       @default(now())
+
+  @@unique([workspaceId, caseId, revision])
+  @@index([workspaceId, caseId])
+}
+
+model InspirationImage {
+  id          String         @id @default(cuid())
+  workspaceId String
+  workspace   BrandWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  releaseId   String
+  path        String
+  sha256      String
+  mimeType    String
+  bytes       Bytes
+
+  @@unique([workspaceId, releaseId, path])
+}
+
+model InspirationChat {
+  selectedImages Json @default("[]")
+  latencyMs Int @default(0)
+  requestId      String
+  id             String         @id @default(cuid())
+  workspaceId    String
+  workspace      BrandWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  userId         String
+  conversationId String
+  question       String
+  caseIds        Json
+  status         JobStatus      @default(PENDING)
+  answer         String?
+  citations      Json           @default("[]")
+  error          String?
+  model          String?
+  inputTokens    Int            @default(0)
+  outputTokens   Int            @default(0)
+  expiresAt      DateTime
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@unique([workspaceId, userId, requestId])
+  @@index([workspaceId, userId, conversationId, createdAt])
+  @@index([status, expiresAt])
+}
+
+model InspirationBookmark {
+  id          String         @id @default(cuid())
+  workspaceId String
+  workspace   BrandWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  userId      String
+  caseId      String
+  revision    Int
+  projectId   String         @default("")
+  note        String         @default("")
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@unique([workspaceId, userId, caseId, projectId])
+  @@index([workspaceId, projectId])
+}
+
+model InspirationEmbedding {
+  id          String         @id @default(cuid())
+  workspaceId String
+  workspace   BrandWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  key         String
+  payloadJson Json
+  createdAt   DateTime       @default(now())
+
+  @@unique([workspaceId, key])
+}
+
+model InspirationFeedback {
+  id String @id @default(cuid())
+  workspaceId String
+  workspace BrandWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  userId String
+  caseId String
+  revision Int
+  kind String
+  note String @default("")
+  status String @default("OPEN")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([workspaceId, userId, createdAt])
+  @@index([workspaceId, status, createdAt])
 }

@@ -29,6 +29,7 @@ export const NotificationKind = z.enum([
   "STUDIO_MATERIAL_VERIFY",
   "STUDIO_CONVERSATION",
   "STUDIO_COPYWRITING",
+  "INSPIRATION_CHAT",
 ]);
 export type NotificationKind = z.infer<typeof NotificationKind>;
 

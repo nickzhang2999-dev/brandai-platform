@@ -1,0 +1,2 @@
+ALTER TABLE "InspirationChat" ADD COLUMN "selectedImages" JSONB NOT NULL DEFAULT '[]';
+ALTER TABLE "InspirationChat" ADD COLUMN "latencyMs" INTEGER NOT NULL DEFAULT 0;

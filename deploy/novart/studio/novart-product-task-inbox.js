@@ -50,16 +50,34 @@
     }
   }
 
-  let trigger, panel, list, status, refreshButton, openElsewhere, items = [], terminalItems = [], activityItems = [], seen = {}, sequence = 0;
+  let trigger, panel, list, status, refreshButton, openElsewhere, items = [], terminalItems = [], activityItems = [], inspirationItems = [], seen = {}, sequence = 0;
   let timer, elapsedTimer, busy = false, failures = 0, paused = false, denied = false, pending = null, handoffTimer;
   const controllers = new Set();
   const seenKey = 'task-inbox-seen:' + encodeURIComponent(context.user.id) + ':' + encodeURIComponent(context.workspaceId);
   const endpoint = '/api/workspaces/' + encodeURIComponent(context.workspaceId) + '/notifications?scope=studio';
   const activityEndpoint = '/api/workspaces/' + encodeURIComponent(context.workspaceId) + '/studio-layer-activity';
+  const inspirationEndpoint = '/api/workspaces/' + encodeURIComponent(context.workspaceId) + '/inspiration/activity';
+  const supportedTerminalKinds = new Set([...Object.keys(taskParameters),'INSPIRATION_CHAT','STUDIO_COPYWRITING']);
   function parse(value) {
     if (!value || !Array.isArray(value.items) || value.items.length > 50) throw Error('任务列表响应不完整，请刷新');
     const ids = new Set();
-    return value.items.map(item => {
+    // Other product workflows keep their own entry points. An unsupported kind
+    // must not discard all supported task receipts in this shared inbox.
+    return value.items.filter(item => !(item && typeof item.kind==='string' && !supportedTerminalKinds.has(item.kind))).map(item => {
+      if (item?.kind === 'STUDIO_COPYWRITING') {
+        if(typeof item.id!=='string'||!item.id.startsWith('copywriting:')||ids.has(item.id)||!validId(item.id.slice(12))||!['SUCCEEDED','FAILED'].includes(item.status)||typeof item.createdAt!=='string'||!Number.isFinite(Date.parse(item.createdAt))||typeof item.href!=='string')throw Error('文案任务响应不完整，请刷新');
+        const url=new URL(item.href,location.origin),project=url.searchParams.get('projectId');
+        if(url.origin!==location.origin||url.pathname!=='/canvas'||url.hash||url.searchParams.get('workspaceId')!==context.workspaceId||url.searchParams.getAll('workspaceId').length!==1||url.searchParams.getAll('projectId').length!==1||!validId(project)||[...url.searchParams.keys()].some(k=>!['workspaceId','projectId'].includes(k)))throw Error('文案任务地址不属于当前品牌');
+        ids.add(item.id);const taskId=item.id.slice(12),key='STUDIO_COPYWRITING:'+taskId;
+        return {id:item.id,key,kind:item.kind,taskId,projectId:project,status:item.status,title:item.status==='SUCCEEDED'?'文案已生成':'文案生成未完成',detail:'打开项目画布，点击文案查看记录。',createdAt:item.createdAt,href:'/canvas?'+new URLSearchParams({workspaceId:context.workspaceId,projectId:project}),terminal:true,stamp:item.createdAt+'|'+item.status};
+      }
+      if (item?.kind === 'INSPIRATION_CHAT') {
+        if(typeof item.id!=='string'||!item.id.startsWith('inspiration-chat:')||ids.has(item.id)||!validId(item.id.slice(17))||!['SUCCEEDED','FAILED'].includes(item.status)||typeof item.createdAt!=='string'||!Number.isFinite(Date.parse(item.createdAt))||typeof item.href!=='string')throw Error('灵感任务响应不完整，请刷新');
+        const url=new URL(item.href,location.origin),conversationId=url.searchParams.get('conversationId');
+        if(url.origin!==location.origin||url.pathname!=='/inspiration'||url.hash||url.searchParams.get('workspaceId')!==context.workspaceId||url.searchParams.getAll('workspaceId').length!==1||url.searchParams.getAll('conversationId').length!==1||!validId(conversationId))throw Error('灵感任务地址不属于当前品牌');
+        ids.add(item.id);const taskId=item.id.slice(17),key='INSPIRATION_CHAT:'+taskId;
+        return {id:item.id,key,kind:item.kind,taskId,projectId:'',status:item.status,title:'灵感问答',detail:'返回灵感库查看自己的对话记录。',createdAt:item.createdAt,href:'/inspiration?'+new URLSearchParams({workspaceId:context.workspaceId,conversationId}),terminal:true,stamp:item.createdAt+'|'+item.status};
+      }
       if (!item || !Object.hasOwn(taskParameters,item.kind) || !['SUCCEEDED','FAILED'].includes(item.status) || typeof item.id !== 'string' || item.id.length > 180
         || ids.has(item.id) || typeof item.title !== 'string' || item.title.length > 500 || item.detail != null && (typeof item.detail !== 'string' || item.detail.length > 5000)
         || typeof item.createdAt !== 'string' || !Number.isFinite(Date.parse(item.createdAt)) || typeof item.href !== 'string') throw Error('任务列表响应不完整，请刷新');
@@ -87,6 +105,15 @@
         detail:item.layerCount != null ? '请求 '+item.layerCount+' 层，实际层数以任务结果为准。是否加入画布由你确认。' : '',
         createdAt:item.createdAt,submittedAt:item.createdAt,expiresAt:item.expiresAt,terminal:false,
         href:'/canvas?'+new URLSearchParams({workspaceId:context.workspaceId,projectId:item.projectId,layerRequestId:item.requestId}),stamp:item.createdAt+'|'+item.status};
+    });
+  }
+  function parseInspiration(value) {
+    if(!value||typeof value.enabled!=='boolean'||!Array.isArray(value.items)||value.items.length>20)throw Error('灵感任务响应不完整，请刷新');
+    if(!value.enabled)return [];
+    const ids=new Set();return value.items.map(item=>{
+      if(!item||!validId(item.id)||!validId(item.conversationId)||ids.has(item.id)||!Object.hasOwn(statusLabels,item.status)||typeof item.expired!=='boolean'||![item.createdAt,item.updatedAt,item.expiresAt].every(s=>typeof s==='string'&&Number.isFinite(Date.parse(s))))throw Error('灵感任务响应不完整，请刷新');
+      ids.add(item.id);const key='INSPIRATION_CHAT:'+item.id,terminal=['SUCCEEDED','FAILED'].includes(item.status);
+      return {id:'inspiration-chat:'+item.id,key,kind:'INSPIRATION_CHAT',taskId:item.id,projectId:'',status:item.status,title:'灵感问答',detail:item.expired?'已超时，请返回对话查看并重试。':'后台任务不会因离开页面而取消。',submittedAt:item.createdAt,createdAt:item.expired?item.expiresAt:terminal?item.updatedAt:item.createdAt,expiresAt:item.expiresAt,terminal,href:'/inspiration?'+new URLSearchParams({workspaceId:context.workspaceId,conversationId:item.conversationId}),stamp:item.updatedAt+'|'+item.status};
     });
   }
   function mergeItems(activity, terminal) {
@@ -119,7 +146,7 @@
   }
   function close(returnFocus = true) { panel.hidden = true; trigger.setAttribute('aria-expanded','false'); if (returnFocus) trigger.focus(); }
   function updateBadge() {
-    const unread = items.filter(item => seen[item.key] !== item.stamp).length, active = items.filter(item => ['PENDING','RUNNING'].includes(item.status)).length;
+    const unread = items.filter(item => seen[item.key] !== item.stamp).length, active = items.filter(item => ['PENDING','RUNNING'].includes(item.status)&&!(item.kind==='INSPIRATION_CHAT'&&Date.parse(item.expiresAt)<=Date.now())).length;
     const count = active || unread;
     // The workspace rail is compact even on a wide Retina display. Keep the
     // badge numeric; the accessible name and tooltip retain its full meaning.
@@ -136,10 +163,11 @@
     for (const item of items) {
       const row = node('li','','np-inbox-row'); row.dataset.notificationId = item.id; row.dataset.status = item.status; row.dataset.kind = item.kind; row.dataset.taskId = item.taskId; row.dataset.projectId = item.projectId;
       row.append(node('strong',item.title));
-      const state = node('span',statusLabels[item.status]+(elapsedText(item)?' · '+elapsedText(item):''),'np-inbox-task-state'); state.dataset.taskStatus = item.status; row.append(state);
+      const inspirationExpired=item.kind==='INSPIRATION_CHAT'&&['PENDING','RUNNING'].includes(item.status)&&Date.parse(item.expiresAt)<=Date.now();
+      const state = node('span',(inspirationExpired?'已超时，请返回对话核对':statusLabels[item.status])+(elapsedText(item)?' · '+elapsedText(item):''),'np-inbox-task-state'); state.dataset.taskStatus = item.status; row.append(state);
       if (item.detail) row.append(node('p',item.detail));
       const when = node('time',new Date(item.createdAt).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})); when.dateTime = item.createdAt;
-      const action = node('button','返回项目'); action.type = 'button'; action.dataset.action = 'open-task'; action.onclick = () => openTask(item); action.disabled = denied;
+      const action = node('button',item.kind==='INSPIRATION_CHAT'?'查看灵感对话':item.kind==='STUDIO_COPYWRITING'?'查看文案记录':'返回项目'); action.type = 'button'; action.dataset.action = 'open-task'; action.onclick = () => openTask(item); action.disabled = denied;
       row.append(when,action); list.append(row);
       if (focused === item.id) action.focus({preventScroll:true});
     }
@@ -158,7 +186,7 @@
     },5000);
   }
   function deny() {
-    denied = true; items = []; terminalItems = []; activityItems = []; pending = null;
+    denied = true; items = []; terminalItems = []; activityItems = []; inspirationItems = []; pending = null;
     clearTimeout(timer); clearTimeout(handoffTimer); clearInterval(elapsedTimer); openElsewhere.hidden = true; refreshButton.disabled = true;
     for (const controller of controllers) controller.abort();
     status.textContent = '登录或品牌权限已变化，请刷新页面后查看任务'; render();
@@ -181,12 +209,13 @@
     busy = true; clearTimeout(timer); refreshButton.disabled = true;
     const epoch = sequence;
     try {
-      const results = await Promise.allSettled([readSource(endpoint,parse,epoch),readSource(activityEndpoint,parseActivity,epoch)]);
+      const results = await Promise.allSettled([readSource(endpoint,parse,epoch),readSource(activityEndpoint,parseActivity,epoch),readSource(inspirationEndpoint,parseInspiration,epoch)]);
       if (epoch !== sequence || stopped || denied) return;
       if (!currentIdentity()) { deny(); return; }
       if (results[0].status === 'fulfilled') terminalItems = results[0].value;
       if (results[1].status === 'fulfilled') activityItems = results[1].value;
-      items = mergeItems(activityItems,terminalItems); render();
+      if (results[2].status === 'fulfilled') inspirationItems = results[2].value;
+      items = mergeItems([...activityItems,...inspirationItems],terminalItems); render();
       const failure = results.find(result => result.status === 'rejected');
       if (failure) throw failure.reason;
       failures = 0; paused = false; if (!pending && openElsewhere.hidden) status.textContent = ''; schedule();
@@ -207,6 +236,7 @@
   function openTask(item) {
     if (denied || stopped) return;
     if (!currentIdentity()) { deny(); return; }
+    if(item.kind==='INSPIRATION_CHAT'||item.kind==='STUDIO_COPYWRITING'){window.open(item.href,'_blank','noopener');return;}
     clearTimeout(handoffTimer);
     pending = {...item,token:crypto.randomUUID(),deadline:Date.now()+25000,frame:null,sent:false};
     status.textContent = '正在打开对应项目…'; openElsewhere.hidden = true; openElsewhere.href = item.href;

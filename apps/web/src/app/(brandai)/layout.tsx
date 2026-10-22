@@ -7,6 +7,8 @@ import { getOrCreateActiveBrand } from "@/lib/brandai";
 import { ACTIVE_BRAND_COOKIE } from "@/lib/brand-cookie";
 import { BrandProvider } from "./brand-context";
 import { BrandSidebar } from "./brand-sidebar";
+import { InspirationActivity } from "@/components/inspiration-activity";
+import { inspirationEnabled } from "@/lib/inspiration/config";
 
 /**
  * BrandAI 产品页路由组布局：核心页面（首页 / 项目 / 品牌套件 /
@@ -67,6 +69,7 @@ export default async function BrandaiLayout({
     <BrandProvider value={{ wsId: brand.id, brandName: brand.name, user }}>
       <BrandSidebar user={user} isAdmin={isAdmin}>
         {children}
+        {inspirationEnabled() && <InspirationActivity />}
       </BrandSidebar>
     </BrandProvider>
   );

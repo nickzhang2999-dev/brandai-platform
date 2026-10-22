@@ -11,7 +11,7 @@ import { studioEditorHref } from "@/lib/studio-navigation";
 import { NotificationCenter } from "./notification-center";
 import { useBrand } from "./brand-context";
 
-const icons = { home: Home, campaigns: Folder, "brand-knowledge": FileImage, assets: ImageIcon, workspace: Sparkles, generated: ImageIcon, templates: Shapes, members: Users };
+const icons = { home: Home, campaigns: Folder, "brand-knowledge": FileImage, assets: ImageIcon, inspiration: Sparkles, workspace: Sparkles, generated: ImageIcon, templates: Shapes, members: Users };
 
 /** One DeepFlare shell across projects, knowledge and assets. The narrow rail
  * keeps accessible labels while desktop uses the reviewed round navigation. */

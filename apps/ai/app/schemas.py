@@ -780,8 +780,8 @@ class StudioMaterialUploadView(StudioMaterialUploadInput):
 from .studio_workflow_schemas import StudioWorkflowSaveInput, StudioWorkflowView, StudioWorkflowAssets
 
 # Mirrored BFF notification kind; upload events remain scoped to the initiator.
-NotificationKind = Literal["GENERATE", "EDIT", "RECOGNIZE", "PARSE_MANUAL", "DESCRIBE", "INGEST", "SUMMARIZE", "DECOMPOSE", "STUDIO_UPLOAD", "STUDIO_GENERATION", "STUDIO_DECOMPOSITION", "STUDIO_MATERIAL_VERIFY", "STUDIO_CONVERSATION", "STUDIO_COPYWRITING"]
-AsyncTaskKind = Literal["RECOGNIZE", "PARSE_MANUAL", "EDIT", "DESCRIBE", "INGEST", "SUMMARIZE", "DECOMPOSE", "STUDIO_UPLOAD", "STUDIO_COMPLIANCE", "STUDIO_MATERIAL_VERIFY", "STUDIO_CONVERSATION", "STUDIO_COPYWRITING", "COMPLIANCE_PRECHECK", "GENERATION_PRECHECK", "COMPLIANCE_RECHECK"]
+NotificationKind = Literal["GENERATE", "EDIT", "RECOGNIZE", "PARSE_MANUAL", "DESCRIBE", "INGEST", "SUMMARIZE", "DECOMPOSE", "STUDIO_UPLOAD", "STUDIO_GENERATION", "STUDIO_DECOMPOSITION", "STUDIO_MATERIAL_VERIFY", "STUDIO_CONVERSATION", "STUDIO_COPYWRITING", "INSPIRATION_CHAT"]
+AsyncTaskKind = Literal["RECOGNIZE", "PARSE_MANUAL", "EDIT", "DESCRIBE", "INGEST", "SUMMARIZE", "DECOMPOSE", "STUDIO_UPLOAD", "STUDIO_COMPLIANCE", "STUDIO_MATERIAL_VERIFY", "STUDIO_CONVERSATION", "STUDIO_COPYWRITING", "INSPIRATION_SYNC", "INSPIRATION_CHAT", "COMPLIANCE_PRECHECK", "GENERATION_PRECHECK", "COMPLIANCE_RECHECK"]
 
 from .studio_generation_schemas import StudioGenerationInput, StudioGenerationQuery, StudioGenerationRetryInput, StudioGenerationArchiveRetryInput, StudioGenerationView
 from .studio_generated_psd_schemas import StudioGeneratedPsdQuery, StudioGeneratedPsdView
@@ -789,3 +789,4 @@ from .studio_compliance_schemas import StudioGenerationComplianceInput, StudioGe
 from .studio_decomposition_schemas import StudioDecompositionInput, StudioDecompositionQuery, StudioDecompositionRetryInput, StudioDecompositionLayer, StudioDecompositionView
 
 from .studio_copywriting_schemas import StudioCopywritingInput, StudioCopywritingResult
+from .inspiration_schemas import InspirationCaseCard, InspirationListResponse, InspirationChatInput, InspirationChatState, InspirationBookmarkInput, InspirationBookmark
