@@ -44,6 +44,7 @@ function handle(req,res){
   reads.push({path:url.pathname,method:req.method,user:req.headers['x-novart-user']});
   assert.equal(req.method,'GET','Inbox cannot submit a provider or editor mutation');assert.equal(req.headers['x-novart-user'],fixture.userId);
   if(url.pathname===`/api/workspaces/${fixture.workspaceId}/notifications`){assert.equal(url.searchParams.get('scope'),'studio');return json(res,{items:terminal});}
+  if(url.pathname===`/api/workspaces/${fixture.workspaceId}/inspiration/activity`)return json(res,{enabled:false,items:[]});
   assert.equal(url.pathname,`/api/workspaces/${fixture.workspaceId}/studio-layer-activity`);
   if(mode==='denied')return json(res,{error:'Fixture actor changed'},409);
   if(mode==='malformed')return json(res,{requests:[{...live[0],status:'INVENTED'}]});
