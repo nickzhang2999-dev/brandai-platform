@@ -60,7 +60,7 @@ function harness(options = {}) {
     legacyBlocked:()=>false,composing:()=>false,reloadProjects:async()=>{options.onReload?.(fixture);},project:id=>id===entry.id?{projectId:id}:null,
     openProject(){active=true;context.location.hash='#/workspace/'+entry.id;},current:value=>active&&value===entry,goProjects(){active=false;context.location.hash='#/projects';},invalidateAssets(){},showRequirements(){},refreshImportedFrame(){refreshed++;},
   };
-  const context={window:null,document:{getElementById:get,querySelectorAll:()=>[entry.frame]},indexedDB,Blob,File:TestFile,FormData,AbortController,Error,TypeError,Number,Promise,Map,Set,Date:class extends Date{static now(){return now;}},
+  const context={window:null,document:{getElementById:get,querySelectorAll:selector=>selector==='[data-prompt]'?[]:[entry.frame]},indexedDB,Blob,File:TestFile,FormData,AbortController,Error,TypeError,Number,Promise,Map,Set,Date:class extends Date{static now(){return now;}},
     location:{origin:'https://novart.test',hash:'#/home'},URL:{createObjectURL:()=> 'blob:synthetic',revokeObjectURL(){}},localStorage:{removeItem(){}},crypto:{randomUUID},
     navigator: options.noLocks?{}:{locks:{request:async(_name,_options,callback)=>callback(options.lockUnavailable?null:{})}},
     setTimeout:timer,clearTimeout:clear,__NOVART_PRODUCT__:{workspaceId:'workspace-fixture'},
@@ -78,6 +78,33 @@ function harness(options = {}) {
 
 (async()=>{
   let count=0;
+  {
+    const f=harness({failWrites:true});await f.ready();
+    await f.get('ns-mode-copywriting').listeners.click();
+    assert.equal(f.module.snapshot().creationMode,'image','Failed preference save must roll back');count++;
+  }
+  {
+    const f=harness();await f.ready();f.get('ns-home-brief').value='写标题';
+    const changing=f.get('ns-mode-copywriting').listeners.click();await f.create();
+    assert.equal(f.creates.length,0,'Creation must wait for mode persistence');await changing;
+    await f.create();assert.equal(f.data.submitted.creationMode,'copywriting');count++;
+  }
+  {
+    const f=harness();await f.ready();
+    await f.get('ns-mode-copywriting').listeners.click();
+    assert.equal(f.data.creationMode,'copywriting');
+    await f.create();assert.equal(f.creates.length,0,'Empty copy cannot create');
+    f.get('ns-home-brief').value='写一句新品标题';await f.create();await f.resume();
+    assert.equal(f.posts.length,1);assert.equal(f.posts[0].value.creationMode,'copywriting');
+    assert.equal(f.posts[0].value.text,'写一句新品标题');assert.equal(f.data.submitted,null);count++;
+  }
+  {
+    const f=harness({stored:{version:1,creationMode:'copywriting',items:[],submitted:null}});await f.ready();
+    assert.equal(f.get('ns-mode-copywriting')['aria-pressed'],'true');
+    f.get('ns-home-brief').value='长'.repeat(2001);await f.create();assert.equal(f.creates.length,0);
+    await f.get('ns-mode-image').listeners.click();await f.create();await f.resume();
+    assert.equal(f.posts[0].value.creationMode,undefined,'Image wire retains old behavior');count++;
+  }
   {
     const f=harness();await f.ready();await f.add(Array.from({length:5},(_,i)=>file('image'+i+'.png')));
     assert.equal(f.module.snapshot().attachmentCount,4);assert.equal(f.requests.length,0);assert.equal(f.creates.length,0);assert(f.notices.some(value=>value.includes('4')));count++;

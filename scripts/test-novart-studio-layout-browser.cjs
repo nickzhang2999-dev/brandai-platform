@@ -67,6 +67,20 @@ async function verifyViewport(browser,spec,origin) {
   try {
     await page.goto(origin+'/studio?workspaceId='+context.workspaceId+'#/home');
     await page.waitForFunction(()=>window.NovartStudio?.snapshot().stateLoaded && window.NovartStudio?.snapshot().projectCount===1 && !document.querySelector('.np-startup'));
+    await page.locator('#ns-mode-copywriting').click();
+    await page.waitForFunction(()=>document.querySelector('#ns-mode-copywriting').getAttribute('aria-pressed')==='true');
+    assert.equal(await page.locator('#ns-create span').textContent(),'进入文案创作');
+    await page.locator('#ns-home-brief').fill('保留这份草稿');
+    await page.getByRole('button',{name:'品牌口号',exact:true}).click();
+    assert.match(await page.locator('#ns-home-brief').inputValue(),/保留这份草稿/);
+    assert.match(await page.locator('#ns-home-brief').inputValue(),/口号/);
+    const switchBox=await page.locator('.ns-creation-switch').boundingBox();
+    assert.ok(switchBox.x>=0 && switchBox.x+switchBox.width<=spec.width+1);
+    if(spec.width===1440) await page.screenshot({path:reportPath.replace(/\.json$/i,'')+'-home-copywriting.png'});
+    await page.reload();await page.waitForFunction(()=>document.querySelector('#ns-mode-copywriting').getAttribute('aria-pressed')==='true');
+    await page.locator('#ns-mode-image').click();
+    assert.equal(await page.locator('#ns-create span').textContent(),'开始创作');
+    assert.match(await page.locator('#ns-home-brief').inputValue(),/保留这份草稿/);
     const home = await measure(page,['.ns-sidebar','.np-brand-trigger','.np-brand-label','.np-brand-initial','.np-brand-chevron','.np-inbox-trigger','.np-inbox-label']);
     assert.ok(home['.np-brand-trigger'].scrollWidth<=home['.np-brand-trigger'].clientWidth+1,'Long brand names must fit the home switcher');
     for (const selector of ['.np-brand-trigger','.np-brand-initial','.np-brand-chevron','.np-inbox-trigger']) {
