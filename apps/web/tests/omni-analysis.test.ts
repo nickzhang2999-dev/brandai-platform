@@ -8,7 +8,8 @@ vi.mock('@/lib/settings',()=>({getEffectiveAiSettings:settings}));
 import { OmniAnalysisInput, OmniAnalysisResult } from '@brandai/contracts';
 import { checkToken, checkedInput, jobView, payloadHash, providerReady, readInput, requestRef, serviceConfig } from '@/lib/omni-analysis/policy';
 import { activeScope, authenticate, configuration, getJob, getJobByRequest, submit } from '@/lib/omni-analysis/service';
-import { analyzeImage } from '@/lib/omni-analysis/provider';
+import { analyzeImage, visionTokenOptions } from '@/lib/omni-analysis/provider';
+import { AnalysisFailure, safeAnalysisFailure } from '@/lib/omni-analysis/failure';
 import { processAnalysis, sweepAnalysis } from '@/lib/omni-analysis/worker';
 import { POST } from '@/app/api/internal/inspiration-analysis/jobs/route';
 
@@ -110,8 +111,14 @@ describe('Omni durable admission',()=>{
 describe('Omni paid execution',()=>{
   async function realJpeg(){return {...input,image_base64:(await sharp({create:{width:8,height:8,channels:3,background:'#777'}}).jpeg().toBuffer()).toString('base64')};}
   const success=()=>new Response(JSON.stringify({choices:[{finish_reason:'stop',message:{content:JSON.stringify(suggestion)}}]}));
+  it.each(['gpt-5.6-sol','gpt-5','gpt-5-mini','o3','o4-mini','openai/gpt-5.6-sol','OpenAI/O4-mini'])('uses existing VLM reasoning token wire shape for %s',model=>{
+    expect(visionTokenOptions(model)).toEqual({max_completion_tokens:4000,reasoning_effort:'low'});
+  });
+  it.each(['custom-vision','openai/gpt-4o','vendor/gpt-50-vision'])('preserves nonreasoning wire shape for %s',model=>{
+    expect(visionTokenOptions(model)).toEqual({max_tokens:4000,temperature:0.2});
+  });
   it('validates actual JPEG bytes before any provider request',async()=>{
-    const fetcher=vi.fn();vi.stubGlobal('fetch',fetcher);await expect(analyzeImage(input,vlm,new AbortController().signal)).rejects.toThrow();expect(fetcher).not.toHaveBeenCalled();
+    const fetcher=vi.fn();vi.stubGlobal('fetch',fetcher);await expect(analyzeImage(input,vlm,new AbortController().signal)).rejects.toThrow('invalid_jpeg');expect(fetcher).not.toHaveBeenCalled();
   });
   it('uses shared model exactly once with inline image, no redirects and validated design result',async()=>{
     const fetcher=vi.fn().mockResolvedValue(success());vi.stubGlobal('fetch',fetcher);
@@ -120,7 +127,36 @@ describe('Omni paid execution',()=>{
   });
   it('fails malformed or oversized upstream responses without fallback paid retry',async()=>{
     const fetcher=vi.fn().mockResolvedValue(new Response('x'.repeat(256*1024+1)));vi.stubGlobal('fetch',fetcher);
-    await expect(analyzeImage(await realJpeg(),vlm,new AbortController().signal)).rejects.toThrow();expect(fetcher).toHaveBeenCalledOnce();
+    await expect(analyzeImage(await realJpeg(),vlm,new AbortController().signal)).rejects.toThrow('provider_response_too_large');expect(fetcher).toHaveBeenCalledOnce();
+  });
+  it('sends reasoning parameters and JSON output mode in one request without paid probing',async()=>{
+    const fetcher=vi.fn().mockResolvedValue(success());vi.stubGlobal('fetch',fetcher);
+    await analyzeImage(await realJpeg(),{...vlm,model:'openai/gpt-5.6-sol'},new AbortController().signal);
+    const body=JSON.parse(fetcher.mock.calls[0][1].body);
+    expect(body).toMatchObject({model:'openai/gpt-5.6-sol',max_completion_tokens:4000,reasoning_effort:'low',response_format:{type:'json_object'}});
+    expect(body).not.toHaveProperty('max_tokens');expect(body).not.toHaveProperty('temperature');expect(fetcher).toHaveBeenCalledOnce();
+  });
+  it.each([
+    ['response-json',()=>new Response('<html>private-upstream-body</html>'),'provider_response_json_invalid'],
+    ['output-json',()=>new Response(JSON.stringify({choices:[{message:{content:'private-upstream-body'}}]})),'provider_output_json_invalid'],
+    ['missing-content',()=>new Response(JSON.stringify({private:'upstream-body'})),'provider_content_missing'],
+    ['truncated',()=>new Response(JSON.stringify({choices:[{finish_reason:'length',message:{content:'private-upstream-body'}}]})),'provider_output_truncated'],
+    ['schema',()=>new Response(JSON.stringify({choices:[{message:{content:JSON.stringify({...suggestion,design:{...suggestion.design,palette:null},'private-secret-key':'private-secret-value'})}}]})),'provider_schema_invalid:design.palette,root'],
+  ])('reports safe %s failure without raw values or diagnostics',async(_name,makeResponse,expected)=>{
+    const fetcher=vi.fn().mockResolvedValue((makeResponse as ()=>Response)());vi.stubGlobal('fetch',fetcher);
+    let failure;try{await analyzeImage(await realJpeg(),vlm,new AbortController().signal);}catch(error){failure=error;}
+    expect(safeAnalysisFailure(failure)).toBe(expected);expect(JSON.stringify(failure)).not.toContain('private-');expect(fetcher).toHaveBeenCalledOnce();
+  });
+  it('persists only HTTP status when provider rejects and strips image bytes',async()=>{
+    const current=task();current.inputJson.request=await realJpeg();db.asyncTask.findFirst.mockResolvedValue(current);
+    vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response('private-key/prompt/provider error',{status:400})));
+    await processAnalysis('job1');const data=db.asyncTask.updateMany.mock.calls.at(-1)?.[0].data;
+    expect(data.error).toBe('provider_http_400');expect(data.inputJson).not.toHaveProperty('request');expect(JSON.stringify(data)).not.toContain('private-key');
+  });
+  it('never serializes unexpected exception messages or arbitrary schema paths',()=>{
+    expect(safeAnalysisFailure(new Error('private-url-key'))).toBe('analysis_failed');
+    expect(safeAnalysisFailure(new AnalysisFailure('provider_schema_invalid',undefined,[['private-key'],['design','palette']]))).toBe('provider_schema_invalid:root,design.palette');
+    expect(safeAnalysisFailure(new AnalysisFailure('provider_request_failed'),true)).toBe('analysis_timeout');
   });
   it('does not rerun an already claimed job',async()=>{
     db.asyncTask.findFirst.mockResolvedValue({...task(),status:'RUNNING'});const fetcher=vi.fn();vi.stubGlobal('fetch',fetcher);await processAnalysis('job1');expect(fetcher).not.toHaveBeenCalled();expect(db.asyncTask.updateMany).not.toHaveBeenCalled();

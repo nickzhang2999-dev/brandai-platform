@@ -4,6 +4,7 @@ import { getEffectiveAiSettings } from '../settings';
 import { activeScope } from './service';
 import { OMNI_KIND, serviceConfig, providerReady } from './policy';
 import { analyzeImage } from './provider';
+import { AnalysisFailure, safeAnalysisFailure } from './failure';
 
 export async function processAnalysis(id:string) {
   const c=serviceConfig(),where={id,workspaceId:c.workspaceId,kind:OMNI_KIND};
@@ -21,15 +22,15 @@ export async function processAnalysis(id:string) {
     if(!c.dailyLimit||meta?.user_id!==c.userId)throw new Error('scope_unavailable');
     const input=OmniAnalysisInput.parse(meta?.request);
     const provider=(await getEffectiveAiSettings()).vlm;
-    if(!providerReady(provider))throw new Error('visual_model_not_configured');
+    if(!providerReady(provider))throw new AnalysisFailure('visual_model_not_configured');
     if(controller.signal.aborted)throw new Error('deadline');
     const result=OmniAnalysisResult.parse(await analyzeImage(input,provider,controller.signal));
     await activeScope();
     if(controller.signal.aborted||!serviceConfig().dailyLimit)throw new Error('deadline');
     await prisma.asyncTask.updateMany({where:{...where,status:'RUNNING',expiresAt:{gt:new Date()}},data:{status:'SUCCEEDED',progress:100,error:null,resultJson:result,inputJson:stripped}});
-  } catch {
+  } catch(error) {
     // Never persist provider exception text: it can contain headers, keys or image bytes.
-    await prisma.asyncTask.updateMany({where:{...where,status:'RUNNING'},data:{status:'FAILED',error:controller.signal.aborted?'analysis_timeout':'analysis_failed',inputJson:stripped}});
+    await prisma.asyncTask.updateMany({where:{...where,status:'RUNNING'},data:{status:'FAILED',error:safeAnalysisFailure(error,controller.signal.aborted),inputJson:stripped}});
   } finally {clearTimeout(timer);}
 }
 
