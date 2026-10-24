@@ -116,6 +116,16 @@ async function verifyFreshOldCssCache(browser,origin) {
   stage='fresh-old-css-cache';cacheScenario={unversionedRequests:0,versionedRequests:[]};
   const ctx=await browser.newContext({viewport:{width:1440,height:900},serviceWorkers:'block'});
   const page=await ctx.newPage();page.setDefaultTimeout(9000);
+  // Expose the real mode-save/focus handoff even on fast local disks. Only
+  // delay completion delivery; the browser still performs actual IndexedDB IO.
+  await page.addInitScript(()=>{
+    const descriptor=Object.getOwnPropertyDescriptor(IDBTransaction.prototype,'oncomplete');
+    Object.defineProperty(IDBTransaction.prototype,'oncomplete',{...descriptor,set(handler){
+      descriptor.set.call(this,typeof handler==='function'?function(event){
+        setTimeout(()=>handler.call(this,event),500);
+      }:handler);
+    }});
+  });
   // Do not add ctx.route/page.route here: real fresh-cache reuse is the subject.
   page.on('request',request=>{if(new URL(request.url()).origin!==origin)report.externalRequests.push(request.url());});
   page.on('pageerror',e=>report.errors.push({stage,message:e.message}));
@@ -136,11 +146,16 @@ async function verifyFreshOldCssCache(browser,origin) {
     await page.locator('#ns-mode-copywriting').click();
     await page.waitForFunction(()=>document.querySelector('#ns-mode-copywriting').getAttribute('aria-pressed')==='true');
     await verifyModeAppearance(page,'ns-mode-copywriting');
+    // aria-pressed updates before IndexedDB commits. changeMode then focuses
+    // the composer; let that real handoff finish before testing keyboard Tab,
+    // otherwise slow CI storage can steal focus after this test sets it.
+    await page.waitForFunction(()=>document.querySelector('#ns-mode-copywriting').getAttribute('aria-disabled')==='false'
+      && document.activeElement===document.querySelector('#ns-home-brief'));
     // The focus ring remains visible and follows the rounded button after the
     // cache fix; keyboard accessibility must not be removed to hide the square.
     await page.locator('#ns-mode-image').focus();await page.keyboard.press('Tab');
     const focus=await page.locator('#ns-mode-copywriting').evaluate(node=>{const style=getComputedStyle(node);return {active:document.activeElement===node,visible:node.matches(':focus-visible'),outline:parseFloat(style.outlineWidth),radius:parseFloat(style.borderRadius)};});
-    assert.ok(focus.active && focus.visible && focus.outline>=2 && focus.radius>=22,'Keyboard focus must remain visibly rounded');
+    assert.ok(focus.active && focus.visible && focus.outline>=2 && focus.radius>=22,'Keyboard focus must remain visibly rounded: '+JSON.stringify(focus));
     report.freshOldCssCache={passed:true,...cacheScenario,appearance,keyboardFocus:focus};
   } finally {await ctx.close();cacheScenario=undefined;}
 }
