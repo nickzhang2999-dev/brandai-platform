@@ -37,3 +37,4 @@ export * from "./studio-image-tools";
 export * from "./ai-failure";
 export * from "./studio-copywriting";
 export * from "./inspiration";
+export * from "./omni-analysis";

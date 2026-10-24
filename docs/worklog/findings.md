@@ -277,3 +277,9 @@ CDS preflight directly confirms push automatic deployment and default shared bra
 - layer配置无自定义覆盖，默认官方fal-ai/qwen-image-layered；采用其持久队列，无需改密钥或新增配置。
 - GitHub84fa5e4成功run39220851878；CDS timed_out_no_run、workflow URL空，实际deployedImage及health仍2492b43。正常恢复入口为claim-prebuilt先dry-run再deploy，不修改平台结果。
 - 安全边界：POST无编号不重发；有编号查询可重试。6分钟退出后只显式查询原任务，24小时恢复期限不延长。旧失败任务无编号不能凭空恢复。
+
+## 2026-10-24 Omni 视觉分析服务接入
+
+- 代码默认 gpt-4o 不代表实际配置；只读查询开发预览确认 VLM 为 gpt-5.6-sol、凭据存在。用户选择沿用后台当前模型并先验图片能力。
+- 模型凭据留在 Nova；Omni 仅持服务令牌。图片分析使用现有 AsyncTask 异步处理、固定工作区权限与独立额度；不改变原产品模型配置。
+- 服务器 POTW 四个采集文件与本地现有改动哈希一致；本轮部署保留这些未提交的用户改动。

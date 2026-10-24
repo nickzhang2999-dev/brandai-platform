@@ -19,6 +19,12 @@ const PUBLIC_PREFIXES = ["/login", "/api/auth", "/api/health"];
 export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
+  // This narrow service boundary authenticates SHA256 bearer + active fixed
+  // workspace editor in every route; it must not depend on browser cookies.
+  if (/^\/api\/internal\/inspiration-analysis\/(?:config|jobs(?:\/(?:by-request\/[0-9a-fA-F-]{16,64}|[A-Za-z0-9_-]{1,128}))?)$/.test(pathname)) {
+    return NextResponse.next();
+  }
+
   if (
     PUBLIC_PREFIXES.some(
       (p) => pathname === p || pathname.startsWith(p + "/"),

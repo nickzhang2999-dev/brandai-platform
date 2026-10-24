@@ -94,6 +94,8 @@ export async function getTask(
 ): Promise<TaskState | null> {
   const t = await prisma.asyncTask.findUnique({ where: { id: taskId } });
   if (!t || t.workspaceId !== workspaceId) return null;
+  // Service-only image analysis is polled through its fixed bearer scope.
+  if (t.kind === "OMNI_INSPIRATION_ANALYSIS") return null;
   // Inspiration conversations remain private even inside a shared workspace.
   // Generic task polling must not bypass the dedicated conversation endpoint.
   if (t.kind === "INSPIRATION_CHAT") {

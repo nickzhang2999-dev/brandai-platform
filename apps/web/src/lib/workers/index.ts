@@ -14,6 +14,7 @@
  */
 import "./runtime-env";
 import { createInspirationWorker } from "../inspiration/worker";
+import { createOmniAnalysisWorker } from "../omni-analysis/worker";
 import { createStudioCopywritingWorker } from "./studio-copywriting.worker";
 import http from "node:http";
 import { execFile } from "node:child_process";
@@ -87,6 +88,7 @@ http
 try {
   workers.push(
     createInspirationWorker(),
+    createOmniAnalysisWorker(),
     createStudioCopywritingWorker(),
     createRecognizeWorker(),
     createParseManualWorker(),
