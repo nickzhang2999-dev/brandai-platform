@@ -7,6 +7,7 @@ import { answerEvidence } from './provider';
 import { loadSelectedImages } from './selected-images';
 import { requireActiveEditor, requireCurrentEvidence } from './access';
 import { retrieveInspirationCases } from './retrieval';
+import { inspirationFailureDiagnostic } from './failure';
 
 const terminalError='灵感任务未完成，请检查接入配置或稍后重试。';
 const safeMessages=new Set(['案例已撤回或更新。','历史引用已撤回或更新，请重新选择案例。','历史对话中没有这个序号的案例，请重新选择。','引用内容已更新，请重新提问。','灵感问答模型未配置。','请先在 Nova 后台配置支持 OpenAI 协议的问答模型。','模型地址需为受信任 HTTPS 接口。','模型回答被截断，请缩小问题范围。','模型引用了未检索到的证据，回答未保存。','引用上下文过大，请减少选定案例。','所选案例未授权外部模型分析，可继续本地浏览。']);
@@ -55,7 +56,10 @@ export async function runInspirationChat(id:string,stopSignal?:AbortSignal) {
     // A revocation may arrive during inference: never persist an answer against stale evidence.
     const now=await listCases(row.workspaceId);if(result.citations.some(c=>!now.cases.some(n=>n.caseId===c.caseId&&n.revision===c.revision)))throw new Error('引用内容已更新，请重新提问。');
     await prisma.inspirationChat.updateMany({where:{id,status:'RUNNING',expiresAt:{gt:new Date()}},data:{status:'SUCCEEDED',answer:result.answer,citations:result.citations.map(c=>({caseId:c.caseId,revision:c.revision})),model:result.model,inputTokens:result.inputTokens,outputTokens:result.outputTokens}});
-  } catch(error) {await prisma.inspirationChat.updateMany({where:{id,status:'RUNNING'},data:{status:'FAILED',error:error instanceof Error && safeMessages.has(error.message)?error.message:terminalError}});}
+  } catch(error) {
+    console.warn('[inspiration-chat] failed',inspirationFailureDiagnostic(error,signal.aborted));
+    await prisma.inspirationChat.updateMany({where:{id,status:'RUNNING'},data:{status:'FAILED',error:error instanceof Error && safeMessages.has(error.message)?error.message:terminalError}});
+  }
   finally {clearInterval(cancellationTimer);await prisma.inspirationChat.updateMany({where:{id},data:{latencyMs:Date.now()-startedAt}});const current=await prisma.inspirationChat.findUnique({where:{id}});if(current)await prisma.asyncTask.updateMany({where:{id,kind:'INSPIRATION_CHAT',status:{in:['PENDING','RUNNING']}},data:{status:current.status,progress:current.status==='SUCCEEDED'?100:10,error:current.error}});}
 }
 export function createInspirationWorker() {

@@ -2,15 +2,18 @@ import { z } from 'zod';
 import type { InspirationCaseCard } from '@brandai/contracts';
 import { getEffectiveAiSettings } from '../settings';
 import { copywritingConfig, copywritingEndpoint } from '../studio-copywriting-provider';
-import { boundedBody } from './config';
+import { openAiTokenOptions } from '../openai-model-options';
+import { InspirationFailure, readInspirationResponse } from './failure';
 import type { ModelImage } from './selected-images';
 
 export const EvidenceAnswer = z.object({ sections:z.array(z.object({text:z.string().min(1).max(3000),caseId:z.string(),claimIds:z.array(z.string()).min(1).max(20)}).strict()).min(1).max(12),limitations:z.string().max(1000) }).strict();
 // Upstream usage is advisory metadata; malformed values must not break a valid answer's DB write.
 export function safeUsageCount(value:unknown):number {return typeof value==='number'&&Number.isSafeInteger(value)&&value>=0&&value<=2147483647?value:0;}
 export function validateAnswer(raw:unknown,cases:InspirationCaseCard[]) {
-  const result=EvidenceAnswer.parse(raw);
-  for(const section of result.sections) { const c=cases.find(c=>c.caseId===section.caseId); if(!c || section.claimIds.some(id=>!c.claims.some(claim=>claim.claimId===id))) throw new Error('模型引用了未检索到的证据，回答未保存。'); }
+  const parsed=EvidenceAnswer.safeParse(raw);
+  if(!parsed.success)throw new InspirationFailure('provider_schema_invalid');
+  const result=parsed.data;
+  for(const section of result.sections) { const c=cases.find(c=>c.caseId===section.caseId); if(!c || section.claimIds.some(id=>!c.claims.some(claim=>claim.claimId===id))) throw new InspirationFailure('provider_citation_invalid'); }
   const ids=[...new Set(result.sections.map(s=>s.caseId))];
   return {answer:result.sections.map(s=>`${s.text} [${s.caseId}:${s.claimIds.join(',')}]`).join('\n\n')+(result.limitations?`\n\n局限：${result.limitations}`:''),citations:cases.filter(c=>ids.includes(c.caseId))};
 }
@@ -34,13 +37,20 @@ export async function answerEvidence(question:string,cases:InspirationCaseCard[]
     const url=new URL(c.baseUrl);if(url.protocol!=='https:' || url.username || url.password || url.hash || url.search) throw new Error('模型地址需为受信任 HTTPS 接口。');
     url.pathname=url.pathname.replace(/\/+$/,'').replace(/\/chat\/completions$/,'')+'/chat/completions';endpoint=url.toString();model=c.model;
     const blocks:unknown[]=[{type:'text',text:content}];for(const image of images){blocks.push({type:'text',text:`选定图片 ${image.caseId} / ${image.imageId}，修订 ${image.revision}`},{type:'image_url',image_url:{url:`data:${image.mimeType};base64,${image.base64}`,detail:'low'}});}
-    headers={Authorization:`Bearer ${c.apiKey}`};body={model,messages:[{role:'system',content:system},{role:'user',content:images.length?blocks:content}],max_tokens:3000,stream:false};
+    headers={Authorization:`Bearer ${c.apiKey}`};body={model,messages:[{role:'system',content:system},{role:'user',content:images.length?blocks:content}],...openAiTokenOptions(model,3000),response_format:{type:'json_object'},stream:false};
   }
-  const response=await fetch(endpoint,{method:'POST',redirect:'error',signal,headers:{...headers,'Content-Type':'application/json'},body:JSON.stringify(body)});
-  const raw=JSON.parse((await boundedBody(response,256*1024)).toString('utf8'));
-  if((anthropic && raw.stop_reason==='max_tokens') || (!anthropic && raw.choices?.[0]?.finish_reason==='length')) throw new Error('模型回答被截断，请缩小问题范围。');
-  const text:string=anthropic ? raw.content?.filter((c:{type:string})=>c.type==='text').map((c:{text:string})=>c.text).join('\n') : raw.choices?.[0]?.message?.content;
-  if(typeof text!=='string') throw new Error('模型未返回有效文字。');
-  const result=validateAnswer(JSON.parse(text.trim().replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'')),evidence);
+  let response:Response;
+  try {response=await fetch(endpoint,{method:'POST',redirect:'error',signal,headers:{...headers,'Content-Type':'application/json'},body:JSON.stringify(body)});}
+  catch {throw new InspirationFailure('provider_request_failed');}
+  const bytes=await readInspirationResponse(response);
+  let raw;
+  try {raw=JSON.parse(bytes.toString('utf8'));}catch {throw new InspirationFailure('provider_response_json_invalid');}
+  if((anthropic && raw?.stop_reason==='max_tokens') || (!anthropic && raw?.choices?.[0]?.finish_reason==='length')) throw new InspirationFailure('provider_output_truncated');
+  if(!anthropic && raw?.choices?.[0]?.finish_reason==='content_filter')throw new InspirationFailure('provider_content_filtered');
+  const text:unknown=anthropic ? (Array.isArray(raw?.content)?raw.content.filter((c:{type:string}|null)=>c?.type==='text').map((c:{text:unknown})=>c.text).join('\n'):undefined) : raw?.choices?.[0]?.message?.content;
+  if(typeof text!=='string' || !text.trim()) throw new InspirationFailure('provider_content_missing');
+  let output;
+  try {output=JSON.parse(text.trim().replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,''));}catch {throw new InspirationFailure('provider_output_json_invalid');}
+  const result=validateAnswer(output,evidence);
   return {...result,model,inputTokens:safeUsageCount(anthropic?raw.usage?.input_tokens:raw.usage?.prompt_tokens),outputTokens:safeUsageCount(anthropic?raw.usage?.output_tokens:raw.usage?.completion_tokens)};
 }

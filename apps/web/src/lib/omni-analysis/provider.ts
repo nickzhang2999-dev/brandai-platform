@@ -3,12 +3,11 @@ import { OmniAnalysisSuggestion, type OmniAnalysisInput } from '@brandai/contrac
 import type { ProviderConfig } from '../settings';
 import { providerReady } from './policy';
 import { AnalysisFailure } from './failure';
+import { openAiTokenOptions } from '../openai-model-options';
 
 /** Match the existing Python HttpVLMProvider wire contract before the single paid POST. */
 export function visionTokenOptions(model:string) {
-  const name=model.trim().split('/').at(-1)?.toLowerCase() || '';
-  return /^(?:gpt-5(?:[.-]|$)|o[134](?:-|$))/.test(name)
-    ? {max_completion_tokens:4000,reasoning_effort:'low'} : {max_tokens:4000,temperature:0.2};
+  return openAiTokenOptions(model,4000,0.2);
 }
 async function responseBytes(response:Response) {
   if(!response.ok){await response.body?.cancel().catch(()=>undefined);throw new AnalysisFailure('provider_http_error',response.status);}
