@@ -50,7 +50,10 @@ export async function runInspirationChat(id:string,stopSignal?:AbortSignal) {
     // Image conversion/cache work may take time: perform the final gate afterwards.
     await requireCurrentEvidence(row.workspaceId,row.userId,selected);
     const historyCurrent=await listCases(row.workspaceId);
-    const history=previous.reverse().filter(p=>(p.citations as Array<{caseId:string;revision:number}>).every(ref=>historyCurrent.cases.some(c=>c.caseId===ref.caseId && c.revision===ref.revision&&c.analysisAllowed))).map(p=>({question:p.question,answer:p.answer}));
+    // Old answers may repeat the historic fabricated taxonomy defaults. Keep
+    // stored/UI history and ordinal references, but do not reuse those answers
+    // as model context even when their signed case revision is unchanged.
+    const history=previous.reverse().filter(p=>(p.citations as Array<{caseId:string;revision:number}>).every(ref=>historyCurrent.cases.some(c=>c.caseId===ref.caseId && c.revision===ref.revision&&c.analysisAllowed&&c.taxonomyStatus!=='legacy'))).map(p=>({question:p.question,answer:p.answer}));
     const result=await answerEvidence(row.question,selected,history,signal,images);signal.throwIfAborted();
     await requireActiveEditor(row.workspaceId,row.userId);
     // A revocation may arrive during inference: never persist an answer against stale evidence.
@@ -73,7 +76,7 @@ export function createInspirationWorker() {
       const task=await prisma.asyncTask.findFirst({where:{kind:'INSPIRATION_SYNC',status:'PENDING',expiresAt:{gt:new Date()}},orderBy:{createdAt:'asc'}});
       if(task && (await prisma.asyncTask.updateMany({where:{id:task.id,status:'PENDING',expiresAt:{gt:new Date()}},data:{status:'RUNNING',progress:10}})).count) {
         try {await syncReplica(task.workspaceId,AbortSignal.any([abort.signal,AbortSignal.timeout(Math.max(1,Math.min(240000,task.expiresAt!.getTime()-Date.now())))]));await prisma.asyncTask.updateMany({where:{id:task.id,status:'RUNNING',expiresAt:{gt:new Date()}},data:{status:'SUCCEEDED',progress:100}});}
-        catch {await prisma.asyncTask.updateMany({where:{id:task.id,status:'RUNNING'},data:{status:'FAILED',error:terminalError}});await prisma.inspirationState.updateMany({where:{workspaceId:task.workspaceId},data:{lastError:terminalError}});}
+        catch {await prisma.asyncTask.updateMany({where:{id:task.id,status:'RUNNING'},data:{status:'FAILED',error:terminalError}});}
       }
       await prisma.asyncTask.updateMany({where:{kind:'INSPIRATION_SYNC',status:{in:['PENDING','RUNNING']},expiresAt:{lte:new Date()}},data:{status:'FAILED',error:'同步任务已超时，请重试。'}});
       if(syncConfigured()) {
@@ -85,7 +88,7 @@ export function createInspirationWorker() {
   }
   const timer=setInterval(()=>{void tick().catch(()=>console.error('[inspiration] background dispatcher failed'));},5000);timer.unref();
   async function withdrawals(){if(stopped||withdrawalBusy||!inspirationEnabled()||!syncConfigured())return;withdrawalBusy=true;
-    try{const states=await prisma.inspirationState.findMany({take:200,select:{workspaceId:true}});for(const state of states){if(stopped)break;try{await syncWithdrawals(state.workspaceId,AbortSignal.any([abort.signal,AbortSignal.timeout(15000)]));}catch{await prisma.inspirationState.updateMany({where:{workspaceId:state.workspaceId},data:{lastError:'撤回清单检查失败，请管理员检查同步连接。'}});}}}finally{withdrawalBusy=false;}}
+    try{const states=await prisma.inspirationState.findMany({take:200,select:{workspaceId:true}});for(const state of states){if(stopped)break;try{await syncWithdrawals(state.workspaceId,AbortSignal.any([abort.signal,AbortSignal.timeout(15000)]));}catch{console.warn('[inspiration] withdrawal check failed');}}}finally{withdrawalBusy=false;}}
   const withdrawalTimer=setInterval(()=>{void withdrawals().catch(()=>console.error('[inspiration] withdrawal check failed'));},60000);withdrawalTimer.unref();void withdrawals().catch(()=>undefined);
   void tick().catch(()=>undefined);
   return {close:async()=>{stopped=true;abort.abort();clearInterval(timer);clearInterval(withdrawalTimer);}};

@@ -7,11 +7,15 @@ import type { InspirationCaseCard, InspirationListResponse, InspirationChatState
 import { Button } from "@brandai/ui";
 import { apiFetch } from "@/lib/client";
 import { PageHeader } from "@/app/(brandai)/_ui";
+import { taxonomy, contentTypes, tagLabel } from "@/lib/inspiration/catalog";
+import InspirationSyncStatus from "./inspiration-sync-status";
 
 const evidenceLabels: Record<string, string> = { author_statement: "作者自述", media_statement: "媒体观点", visual_observation: "图像观察", analysis_inference: "分析推断" };
 const inputClass = "w-full rounded-xl border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring";
 const errorText = (error: unknown) => error instanceof Error ? error.message : "暂时无法读取，请重试。";
 type SelectedImage = { caseId: string; imageId: string; revision: number; title: string };
+type Filters = { q: string; kind: string; industry: string; medium: string; task: string };
+const emptyFilters: Filters = { q: "", kind: "", industry: "", medium: "", task: "" };
 function sourceLink(value: string) { try { const url = new URL(value); return ["https:", "http:"].includes(url.protocol) ? url.href : null; } catch { return null; } }
 
 export default function InspirationClient({ wsId }: { wsId: string }) {
@@ -22,10 +26,10 @@ function InspirationWorkspace({ wsId }: { wsId: string }) {
   const params = useSearchParams();
   const cache = useQueryClient();
   const base = `/api/workspaces/${encodeURIComponent(wsId)}/inspiration`;
-  const [draft, setDraft] = useState(params.get("q") ?? "");
-  const [query, setQuery] = useState(params.get("q") ?? "");
-  const [industry, setIndustry] = useState(params.get("industry") ?? "");
-  const [medium, setMedium] = useState(params.get("medium") ?? "");
+  const urlFilters = JSON.stringify(Object.fromEntries(Object.keys(emptyFilters).map(key => [key, params.get(key) ?? ""])));
+  const [filters, setFilters] = useState<Filters>(() => JSON.parse(urlFilters));
+  const [applied, setApplied] = useState<Filters>(() => JSON.parse(urlFilters));
+  useEffect(() => { const restored: Filters = JSON.parse(urlFilters); setFilters(restored); setApplied(restored); }, [urlFilters]);
   const [selected, setSelected] = useState<string | null>(null);
   const [view, setView] = useState<"cases" | "saved" | "feedback">("cases");
   const [conversationId, setConversationId] = useState<string | null>(params.get("conversationId"));
@@ -35,15 +39,27 @@ function InspirationWorkspace({ wsId }: { wsId: string }) {
   const [sending, setSending] = useState(false);
   const [cancelling, setCancelling] = useState<string | null>(null);
   const dialogRef = useRef<HTMLDialogElement>(null);
-  useEffect(() => { if (selected) dialogRef.current?.showModal(); else dialogRef.current?.close(); }, [selected]);
   const pendingRequest = useRef<{ payloadKey: string; requestId: string } | null>(null);
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
-  const key = ["inspiration", wsId, query, industry, medium];
-  const list = useQuery({ queryKey: key, queryFn: ({ signal }) => apiFetch<InspirationListResponse>(`${base}?${new URLSearchParams({ q: query, industry, medium })}`, { signal, cache: "no-store" }), retry: false, refetchInterval: 60000 });
+  const key = ["inspiration", wsId, applied];
+  const list = useQuery({ queryKey: key, queryFn: ({ signal }) => apiFetch<InspirationListResponse>(`${base}?${new URLSearchParams(applied)}`, { signal, cache: "no-store" }), placeholderData: previous => previous, retry: false, refetchInterval: 60000 });
+  const enabled = list.data?.enabled === true;
+  useEffect(() => { if (enabled && selected) dialogRef.current?.showModal(); else dialogRef.current?.close(); }, [enabled, selected]);
+  useEffect(() => {
+    if (list.data?.enabled !== false) return;
+    setSelected(null); setSelectedImages([]); pendingRequest.current = null; setMessage("");
+    // Other filter keys may still hold previously enabled lists. Preserve only
+    // disabled status responses, so a URL change cannot revive cached cards.
+    cache.removeQueries({ queryKey: ["inspiration", wsId], predicate: query => (query.state.data as InspirationListResponse | undefined)?.enabled !== false });
+    for (const prefix of ["inspiration-detail", "inspiration-chat", "inspiration-bookmarks", "inspiration-feedback", "inspiration-projects"]) {
+      void cache.cancelQueries({ queryKey: [prefix, wsId] });
+      cache.removeQueries({ queryKey: [prefix, wsId] });
+    }
+  }, [list.data?.enabled, cache, wsId]);
   const bookmarks = useQuery({ queryKey: ["inspiration-bookmarks", wsId], queryFn: ({ signal }) => apiFetch<{ items: InspirationBookmark[] }>(`${base}/bookmarks`, { signal, cache: "no-store" }), retry: false, enabled: list.data?.enabled === true });
-  const detail = useQuery({ queryKey: ["inspiration-detail", wsId, selected, list.data?.activeRelease?.id, list.data?.withdrawalSequence], queryFn: ({ signal }) => apiFetch<InspirationCaseCard>(`${base}/cases/${encodeURIComponent(selected!)}`, { signal, cache: "no-store" }), enabled: Boolean(selected), retry: false });
-  const history = useQuery({ queryKey: ["inspiration-chat", wsId, conversationId], queryFn: ({ signal }) => apiFetch<{ items: InspirationChatState[] }>(`${base}/chat?conversationId=${encodeURIComponent(conversationId!)}`, { signal, cache: "no-store" }), enabled: Boolean(conversationId), retry: false,
+  const detail = useQuery({ queryKey: ["inspiration-detail", wsId, selected, list.data?.activeRelease?.id, list.data?.withdrawalSequence], queryFn: ({ signal }) => apiFetch<InspirationCaseCard>(`${base}/cases/${encodeURIComponent(selected!)}`, { signal, cache: "no-store" }), enabled: enabled && Boolean(selected), retry: false });
+  const history = useQuery({ queryKey: ["inspiration-chat", wsId, conversationId], queryFn: ({ signal }) => apiFetch<{ items: InspirationChatState[] }>(`${base}/chat?conversationId=${encodeURIComponent(conversationId!)}`, { signal, cache: "no-store" }), enabled: enabled && Boolean(conversationId), retry: false,
     refetchInterval: (q) => q.state.data?.items.some((item) => ["PENDING", "RUNNING"].includes(item.status)) ? 2000 : false });
   const contentEpoch = list.data ? `${list.data.activeRelease?.id ?? "empty"}:${list.data.withdrawalSequence}` : null;
   const previousEpoch = useRef<string | null>(null);
@@ -58,8 +74,9 @@ function InspirationWorkspace({ wsId }: { wsId: string }) {
   // React Query scopes every response by workspace; no case or conversation is stored in browser persistence.
   const busy = sending || Boolean(history.data?.items.some((item) => ["PENDING", "RUNNING"].includes(item.status)));
   function setUrl(values: Record<string, string | null>) { const url = new URL(window.location.href); url.searchParams.set("workspaceId", wsId); for (const [key, value] of Object.entries(values)) { if (value) url.searchParams.set(key, value); else url.searchParams.delete(key); } window.history.replaceState(null, "", url); }
+  function applyFilters(next: Filters) { const clean = { ...next, q: next.q.trim() }; setFilters(clean); setApplied(clean); setUrl(clean); }
   async function ask() {
-    const text = question.trim(); if (!text || busy) return;
+    const text = question.trim(); if (!enabled || !text || busy) return;
     const images = selectedImages.map(({ caseId, imageId, revision }) => ({ caseId, imageId, revision }));
     const payload = { question: text, ...(conversationId ? { conversationId } : {}), ...(images.length ? { selectedImages: images } : {}) };
     const payloadKey = JSON.stringify(payload);
@@ -88,17 +105,21 @@ function InspirationWorkspace({ wsId }: { wsId: string }) {
     {list.isError && <div role="alert" className="rounded-2xl border border-border p-5"><p>{errorText(list.error)}</p><Button className="mt-3" onClick={() => void list.refetch()}>重新读取</Button></div>}
     {list.data?.enabled === false && <div role="status" className="rounded-2xl border border-border bg-card p-8"><h2 className="text-lg font-semibold">灵感库尚未开放</h2><p className="mt-2 text-sm text-muted-foreground">接通审核案例后，这里会显示可浏览和引用的设计内容。</p></div>}
     {list.data?.enabled && <>
-      <div className="mb-5 flex flex-wrap items-center gap-3 text-xs text-muted-foreground"><span>{list.data.caseCount} 个案例</span><span>{list.data.activeRelease ? `版本 ${list.data.activeRelease.id}` : "尚无发布版本"}</span><span>{list.data.searchMode === "hybrid" ? "关键词与语义检索" : "关键词与标签检索"}</span><span>{list.data.lastSyncAt ? `同步于 ${new Date(list.data.lastSyncAt).toLocaleString("zh-CN")}` : "尚未同步"}</span><button className="text-primary underline" onClick={() => { void list.refetch(); void bookmarks.refetch(); void history.refetch(); }}>刷新</button></div>
-      {list.data.error && <p role="status" className="mb-4 rounded-xl bg-muted p-3 text-sm">同步暂未完成，继续展示已有案例。{list.data.error}</p>}
+      <div className="mb-3 flex flex-wrap items-center gap-3 text-xs text-muted-foreground"><span>库内 {list.data.caseCount} 个案例</span><span>{list.data.searchMode === "hybrid" ? "关键词与语义检索" : "关键词与标签检索"}</span><button className="text-primary underline" onClick={() => { void list.refetch(); void bookmarks.refetch(); if (conversationId) void history.refetch(); }}>刷新状态</button><span>读取已同步内容，不会触发新的模型分析。</span></div>
+      <InspirationSyncStatus data={list.data} />
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
         <section aria-label="案例浏览" className="min-w-0">
           <div className="mb-4 flex flex-wrap gap-2"><Button variant={view === "cases" ? "primary" : "outline"} onClick={() => setView("cases")}>全部案例</Button><Button variant={view === "saved" ? "primary" : "outline"} onClick={() => setView("saved")}>我的收藏</Button><Button variant={view === "feedback" ? "primary" : "outline"} onClick={() => setView("feedback")}>案例反馈</Button></div>
           {view === "cases" ? <>
-            <form className="mb-5 grid gap-2 sm:grid-cols-[1fr_120px_120px_auto]" onSubmit={(e) => { e.preventDefault(); setQuery(draft.trim()); setUrl({ q: draft.trim(), industry, medium }); }}>
-              <input aria-label="搜索案例" className={inputClass} value={draft} maxLength={300} placeholder="搜索字体、包装、系列设计…" onChange={(e) => setDraft(e.target.value)} />
-              <input aria-label="行业筛选" className={inputClass} value={industry} maxLength={80} placeholder="行业标签" onChange={(e) => setIndustry(e.target.value)} />
-              <input aria-label="载体筛选" className={inputClass} value={medium} maxLength={80} placeholder="载体标签" onChange={(e) => setMedium(e.target.value)} />
-              <Button type="submit">查找</Button>
+            <form aria-label="筛选灵感案例" className="mb-4 space-y-3" onSubmit={(e) => { e.preventDefault(); applyFilters(filters); }}>
+              <div className="flex gap-2"><input aria-label="搜索案例" className={`${inputClass} min-w-0`} value={filters.q} maxLength={300} placeholder="搜索字体、包装、系列设计…" onChange={(e) => setFilters(previous => ({ ...previous, q: e.target.value }))} /><Button type="submit">查找</Button></div>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                <CatalogSelect label="案例类型" all="全部类型" values={contentTypes} value={filters.kind} onChange={kind => setFilters(previous => ({ ...previous, kind }))} />
+                <CatalogSelect label="行业筛选" all="全部行业" values={taxonomy.industry} value={filters.industry} onChange={industry => setFilters(previous => ({ ...previous, industry }))} />
+                <CatalogSelect label="媒介筛选" all="全部媒介" values={taxonomy.medium} value={filters.medium} onChange={medium => setFilters(previous => ({ ...previous, medium }))} />
+                <CatalogSelect label="设计任务" all="全部任务" values={taxonomy.task} value={filters.task} onChange={task => setFilters(previous => ({ ...previous, task }))} />
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground"><span role="status">{list.isFetching ? "正在更新筛选结果…" : `当前显示 ${items.length} 个案例`}</span><button type="button" className="text-primary underline" onClick={() => applyFilters(emptyFilters)}>清除筛选</button></div>
             </form>
             {!items.length && <div className="rounded-2xl border border-dashed border-border p-10 text-center" role="status"><h2 className="font-medium">{list.data.caseCount ? "没有符合这些条件的案例" : "等待第一批审核案例"}</h2><p className="mt-2 text-sm text-muted-foreground">{list.data.caseCount ? "试着减少筛选条件，或换一个关键词。" : "案例完成审核并同步后，会在这里出现图片、中文分析和原始出处。"}</p></div>}
             <div className="grid gap-4 sm:grid-cols-2">{items.map((item) => <CaseTile key={item.caseId} item={item} onOpen={() => setSelected(item.caseId)} />)}</div>
@@ -125,15 +146,21 @@ function InspirationWorkspace({ wsId }: { wsId: string }) {
         </section>
       </div>
     </>}
-    <dialog ref={dialogRef} aria-label="案例详情" className="m-auto max-h-[90vh] w-[calc(100%-2rem)] max-w-3xl overflow-y-auto rounded-2xl border border-border bg-card p-6 text-foreground backdrop:bg-foreground/30" onCancel={() => setSelected(null)} onClose={() => setSelected(null)}><button autoFocus className="mb-4 text-sm text-primary underline" onClick={() => setSelected(null)}>关闭详情</button>
+    {enabled && <dialog ref={dialogRef} aria-label="案例详情" className="m-auto max-h-[90vh] w-[calc(100%-2rem)] max-w-3xl overflow-y-auto rounded-2xl border border-border bg-card p-6 text-foreground backdrop:bg-foreground/30" onCancel={() => setSelected(null)} onClose={() => setSelected(null)}><button autoFocus className="mb-4 text-sm text-primary underline" onClick={() => setSelected(null)}>关闭详情</button>
       {detail.isPending && <p role="status">正在读取案例…</p>}{detail.isError && <p role="alert">{errorText(detail.error)}</p>}
       {detail.data && <CaseDetail key={`${detail.data.caseId}:${detail.data.revision}`} base={base} wsId={wsId} item={detail.data} onSaved={() => void bookmarks.refetch()} selectedImages={selectedImages} onImages={setSelectedImages} />}
-    </dialog>
+    </dialog>}
   </div>;
 }
 
+function CatalogSelect({ label, all, values, value, onChange }: { label: string; all: string; values: Record<string, string>; value: string; onChange: (value: string) => void }) {
+  return <label className="min-w-0 text-xs text-muted-foreground">{label}<select aria-label={label} className={`${inputClass} mt-1 text-foreground`} value={value} onChange={event => onChange(event.target.value)}><option value="">{all}</option>{value && !Object.hasOwn(values, value) && <option value={value}>未识别的筛选条件</option>}{Object.entries(values).map(([id, text]) => <option key={id} value={id}>{text}</option>)}</select></label>;
+}
+function CaseLabels({ item }: { item: InspirationCaseCard }) {
+  return <div className="mt-3 flex flex-wrap gap-1 text-xs"><span className="rounded-full bg-muted px-2 py-1 text-muted-foreground">{contentTypes[item.contentType ?? "unknown"]}</span>{item.taxonomyStatus === "legacy" ? <span className="rounded-full bg-muted px-2 py-1 text-muted-foreground">分类待补审</span> : Object.entries(item.tags).flatMap(([group, tags]) => tags.map(tag => ({ group, tag }))).slice(0, 5).map(({ group, tag }) => <span key={`${group}:${tag}`} className="rounded-full bg-accent-soft px-2 py-1 text-primary">{tagLabel(group, tag)}</span>)}</div>;
+}
 function CaseTile({ item, onOpen }: { item: InspirationCaseCard; onOpen: () => void }) {
-  return <button onClick={onOpen} className="overflow-hidden rounded-2xl border border-border bg-card text-left transition-shadow hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><CaseImage url={item.images[0]?.url} title={item.title} /><div className="p-4"><p className="text-xs text-muted-foreground">{item.brandOrTeam}</p><h3 className="mt-1 font-semibold">{item.title}</h3><p className="mt-2 line-clamp-3 text-sm leading-6 text-muted-foreground">{item.summary}</p><div className="mt-3 flex flex-wrap gap-1">{Object.values(item.tags).flat().slice(0, 5).map((tag, i) => <span key={`${tag}:${i}`} className="rounded-full bg-accent-soft px-2 py-1 text-xs text-primary">{tag}</span>)}</div></div></button>;
+  return <button onClick={onOpen} data-testid="inspiration-case" className="min-w-0 overflow-hidden rounded-2xl border border-border bg-card text-left transition-shadow hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><CaseImage url={item.images[0]?.url} title={item.title} /><div className="p-4"><p className="text-xs text-muted-foreground">{item.brandOrTeam}</p><h3 className="mt-1 font-semibold">{item.title}</h3><p className="mt-2 line-clamp-3 text-sm leading-6 text-muted-foreground">{item.summary}</p><CaseLabels item={item} /></div></button>;
 }
 function CaseImage({ url, title }: { url?: string; title: string }) {
   const [failed, setFailed] = useState(false);
@@ -144,6 +171,8 @@ function CaseDetail({ base, wsId, item, onSaved, selectedImages, onImages }: { b
   const projects = useQuery({ queryKey: ["inspiration-projects", wsId], queryFn: ({ signal }) => apiFetch<{ id: string; name: string }[]>(`/api/workspaces/${encodeURIComponent(wsId)}/projects`, { signal }), retry: false });
   async function save() { setSaving(true); setNotice(""); try { await apiFetch(`${base}/bookmarks`, { method: "POST", body: JSON.stringify({ caseId: item.caseId, revision: item.revision, note, ...(projectId ? { projectId } : {}) }) }); setNotice("已保存案例与借鉴点。"); onSaved(); } catch (error) { setNotice(errorText(error)); } finally { setSaving(false); } }
   return <><h2 className="text-2xl font-semibold">{item.title}</h2><p className="mt-1 text-sm text-muted-foreground">{item.brandOrTeam} · 修订 {item.revision}</p><p className="my-4 whitespace-pre-wrap text-sm leading-7">{item.summary}</p><div className="grid gap-3 sm:grid-cols-2">{item.images.map((image) => <CaseImage key={image.imageId} url={image.url} title={item.title} />)}</div>
+    <CaseLabels item={item} />
+    {item.taxonomyStatus === "legacy" && <p className="mt-2 text-xs text-muted-foreground">这是尚未补充分类审核的旧案例，原图、分析与来源仍可查看。</p>}
     {!item.analysisAllowed && <p className="mt-3 text-xs text-muted-foreground">本案例尚未授权模型分析，可以浏览与收藏，暂不用于助手回答。</p>}
     <CaseFeedback base={base} item={item} />
     {item.analysisAllowed && <fieldset className="mt-4 rounded-xl border border-border p-3"><legend className="px-1 text-sm font-medium">选图追问</legend><p className="mb-2 text-xs text-muted-foreground">选择后关闭详情，在右侧提问；本次所选图片会发送给模型分析。</p>{item.images.map((image) => { const checked = selectedImages.some((entry) => entry.caseId === item.caseId && entry.imageId === image.imageId && entry.revision === item.revision); return <label key={image.imageId} className="mr-4 inline-flex items-center gap-2 text-sm"><input type="checkbox" checked={checked} disabled={!checked && selectedImages.length >= 2} onChange={() => onImages(checked ? selectedImages.filter((entry) => !(entry.caseId === item.caseId && entry.imageId === image.imageId)) : [...selectedImages, { caseId: item.caseId, revision: item.revision, imageId: image.imageId, title: item.title }])} />{image.imageId}</label>; })}</fieldset>}

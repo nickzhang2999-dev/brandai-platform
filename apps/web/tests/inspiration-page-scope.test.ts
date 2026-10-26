@@ -55,13 +55,13 @@ describe("standalone inspiration page session and workspace boundary", () => {
 
   it("preserves the allowed deep-link query through an anonymous login redirect", async () => {
     f.user.mockRejectedValue(new ApiException(401, "Unauthorized"));
-    const params = { workspaceId: "shared-brand", conversationId: "conversation-1", q: "包装 + 标签 & 字体", industry: "茶饮", medium: "包装", ignored: "discard" };
+    const params = { workspaceId: "shared-brand", conversationId: "conversation-1", q: "包装 + 标签 & 字体", kind: "reference", industry: "food-beverage", medium: "packaging", task: "series", ignored: "discard" };
     await expect(page(params)).rejects.toThrow("REDIRECT:");
     const target = new URL(f.redirect.mock.calls[0][0], "https://app.invalid");
     const callback = new URL(target.searchParams.get("callbackUrl")!, "https://app.invalid");
     expect(target.pathname).toBe("/login");
     expect(callback.pathname).toBe("/inspiration");
-    expect(Object.fromEntries(callback.searchParams)).toEqual({ workspaceId: params.workspaceId, conversationId: params.conversationId, q: params.q, industry: params.industry, medium: params.medium });
+    expect(Object.fromEntries(callback.searchParams)).toEqual({ workspaceId: params.workspaceId, conversationId: params.conversationId, q: params.q, kind: params.kind, industry: params.industry, medium: params.medium, task: params.task });
     expect(f.workspaces).not.toHaveBeenCalled();
     expect(f.workspace).not.toHaveBeenCalled();
   });

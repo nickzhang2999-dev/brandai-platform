@@ -1027,6 +1027,13 @@ model InspirationState {
   withdrawn          Json           @default("[]")
   lastSyncAt         DateTime?
   lastError          String?
+  lastSyncAttemptAt  DateTime?
+  lastSyncFailedAt   DateTime?
+  syncError          String?
+  lastWithdrawalAttemptAt DateTime?
+  lastWithdrawalAt   DateTime?
+  lastWithdrawalFailedAt DateTime?
+  withdrawalError    String?
   updatedAt          DateTime       @updatedAt
 }
 

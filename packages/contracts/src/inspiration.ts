@@ -4,15 +4,30 @@ export const InspirationId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}
 export const InspirationCaseCard = z.object({
   caseId: InspirationId, revision: z.number().int().positive(), title: z.string(), summary: z.string(), brandOrTeam: z.string(), analysisAllowed: z.boolean(),
   tags: z.record(z.array(z.string())),
+  contentType: z.enum(['advertisement','reference','unknown']).optional(),
+  taxonomyStatus: z.enum(['reviewed','provided','legacy']).optional(),
   images: z.array(z.object({ imageId: InspirationId, url: z.string() })),
   sources: z.array(z.object({ sourceId: InspirationId, url: z.string() })),
   claims: z.array(z.object({ claimId: InspirationId, kind: z.enum(['author_statement','media_statement','visual_observation','analysis_inference']), text: z.string(), sourceIds: z.array(InspirationId), imageIds: z.array(InspirationId) })),
 });
 export type InspirationCaseCard = z.infer<typeof InspirationCaseCard>;
+export const InspirationSyncChannel = z.object({
+  state: z.enum(['disabled','unconfigured','unknown','healthy','stale','error']),
+  lastAttemptAt: z.string().datetime().nullable(), lastSuccessAt: z.string().datetime().nullable(), lastFailureAt: z.string().datetime().nullable(),
+  error: z.string().nullable(),
+});
+export type InspirationSyncChannel = z.infer<typeof InspirationSyncChannel>;
+export const InspirationSyncStatus = z.object({
+  content: InspirationSyncChannel, withdrawals: InspirationSyncChannel,
+  activeManifestHash: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
+  withdrawalHash: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
+});
+export type InspirationSyncStatus = z.infer<typeof InspirationSyncStatus>;
 export const InspirationListResponse = z.object({
   enabled: z.boolean(), syncConfigured: z.boolean(), activeRelease: z.object({ id: InspirationId, sequence: z.number().int(), createdAt: z.string() }).nullable(),
   caseCount: z.number().int(), withdrawalSequence: z.number().int(), lastSyncAt: z.string().nullable(), error: z.string().nullable(),
   cases: z.array(InspirationCaseCard), searchMode: z.enum(['keyword-tags','hybrid']),
+  syncStatus: InspirationSyncStatus.optional(),
 });
 export type InspirationListResponse = z.infer<typeof InspirationListResponse>;
 export const InspirationSelectedImage = z.object({caseId:InspirationId,imageId:InspirationId,revision:z.number().int().positive()}).strict();

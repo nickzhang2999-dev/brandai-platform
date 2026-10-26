@@ -2,6 +2,8 @@
 from typing import Literal, Annotated
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from uuid import UUID
+from datetime import datetime
+import re
 InspirationId = Annotated[str, Field(pattern=r'^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$')]
 
 class InspirationImage(BaseModel):
@@ -27,14 +29,45 @@ class InspirationCaseCard(BaseModel):
     brandOrTeam: str
     analysisAllowed: bool
     tags: dict[str, list[str]]
+    contentType: Literal['advertisement', 'reference', 'unknown'] | None = None
+    taxonomyStatus: Literal['reviewed', 'provided', 'legacy'] | None = None
     images: list[InspirationImage]
     sources: list[InspirationSource]
     claims: list[InspirationClaim]
+
+    @model_validator(mode='before')
+    @classmethod
+    def omit_optional_taxonomy_fields(cls, value):
+        if isinstance(value, dict) and any(k in value and value[k] is None for k in ('contentType', 'taxonomyStatus')):
+            raise ValueError('Omit optional fields instead of null')
+        return value
 
 class InspirationReleaseView(BaseModel):
     id: str
     sequence: int
     createdAt: str
+
+class InspirationSyncChannel(BaseModel):
+    state: Literal['disabled', 'unconfigured', 'unknown', 'healthy', 'stale', 'error']
+    lastAttemptAt: str | None
+    lastSuccessAt: str | None
+    lastFailureAt: str | None
+    error: str | None
+
+    @field_validator('lastAttemptAt', 'lastSuccessAt', 'lastFailureAt')
+    @classmethod
+    def valid_timestamp(cls, value):
+        if value is not None:
+            if not re.fullmatch(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z', value):
+                raise ValueError('Expected UTC timestamp')
+            datetime.fromisoformat(value.replace('Z', '+00:00'))
+        return value
+
+class InspirationSyncStatus(BaseModel):
+    content: InspirationSyncChannel
+    withdrawals: InspirationSyncChannel
+    activeManifestHash: Annotated[str, Field(pattern=r'^[a-f0-9]{64}$')] | None
+    withdrawalHash: Annotated[str, Field(pattern=r'^[a-f0-9]{64}$')] | None
 
 class InspirationListResponse(BaseModel):
     enabled: bool
@@ -46,6 +79,14 @@ class InspirationListResponse(BaseModel):
     error: str | None
     cases: list[InspirationCaseCard]
     searchMode: Literal['keyword-tags', 'hybrid']
+    syncStatus: InspirationSyncStatus | None = None
+
+    @model_validator(mode='before')
+    @classmethod
+    def omit_missing_sync_status(cls, value):
+        if isinstance(value, dict) and 'syncStatus' in value and value['syncStatus'] is None:
+            raise ValueError('Omit optional fields instead of null')
+        return value
 
 class InspirationSelectedImage(BaseModel):
     model_config = ConfigDict(extra='forbid')

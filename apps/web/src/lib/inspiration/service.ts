@@ -1,30 +1,34 @@
 import { Prisma, prisma } from '@brandai/db';
-import type { InspirationCaseCard, InspirationChatState } from '@brandai/contracts';
+import type { InspirationCaseCard, InspirationChatState, InspirationListResponse } from '@brandai/contracts';
 import { ApiException } from '../api';
 import { activeRecords } from './replica';
 import { inspirationEnabled, syncConfigured } from './config';
 import { PublishedCase } from './protocol';
+import { catalogMetadata, catalogKeywordScore, filterCatalog, type CatalogFilters } from './catalog';
+import { inspirationSyncStatus } from './sync-status';
 
 export function requireEnabled() { if(!inspirationEnabled()) throw new ApiException(503,'灵感库尚未启用，请联系管理员完成接入。'); }
 export function card(workspaceId:string, value:unknown): InspirationCaseCard {
   const c=PublishedCase.parse(value);
   const analysisAllowed=[c,...c.sources,...c.images].every(entity=>(entity.permissions as {analysis?:string}|undefined)?.analysis==='allowed');
-  return {caseId:c.case_id,revision:c.revision,title:c.title,summary:c.summary_zh,brandOrTeam:c.brand_or_team,analysisAllowed,tags:c.tags,
+  return {caseId:c.case_id,revision:c.revision,title:c.title,summary:c.summary_zh,brandOrTeam:c.brand_or_team,analysisAllowed,...catalogMetadata(c),
     images:c.images.map(i=>({imageId:i.image_id,url:`/api/workspaces/${encodeURIComponent(workspaceId)}/inspiration/cases/${encodeURIComponent(c.case_id)}/images/${encodeURIComponent(i.image_id)}?revision=${c.revision}`})),
     sources:c.sources.map(s=>({sourceId:s.source_id,url:s.url})),claims:c.claims.map(x=>({claimId:x.claim_id,kind:x.kind,text:x.text,sourceIds:x.source_ids,imageIds:x.image_ids}))};
 }
 export function keywordScore(c:InspirationCaseCard, query:string) {
-  const text=[c.title,c.summary,c.brandOrTeam,...Object.values(c.tags).flat(),...c.claims.map(c=>c.text)].join(' ').toLocaleLowerCase();
-  const words=query.toLocaleLowerCase().match(/[a-z0-9]+|[\u3400-\u9fff]+/gu) ?? [];
-  const terms=words.flatMap(w=>/[\u3400-\u9fff]/u.test(w) && w.length>2 ? [w,...Array.from({length:w.length-1},(_,i)=>w.slice(i,i+2))] : [w]);
-  return [...new Set(terms)].reduce((n,t)=>n+(text.includes(t)?t.length:0),0);
+  return catalogKeywordScore(c,query);
 }
-export async function listCases(workspaceId:string, filters:{q?:string;industry?:string;medium?:string}={}) {
+export async function listCases(workspaceId:string, filters:CatalogFilters={}): Promise<InspirationListResponse> {
+  const enabled=inspirationEnabled(), configured=syncConfigured();
+  // A disabled response exposes status only: do not read stored content or history.
+  if(!enabled) return {enabled:false,syncConfigured:configured,activeRelease:null,caseCount:0,
+    withdrawalSequence:0,lastSyncAt:null,error:null,cases:[],searchMode:'keyword-tags',
+    syncStatus:inspirationSyncStatus(null,null,false,configured)};
   const {state,release,records}=await activeRecords(workspaceId);
   const all=records.map(r=>card(workspaceId,r.body));
-  const cases=all.filter(c=>(!filters.industry || c.tags.industry?.includes(filters.industry)) && (!filters.medium || c.tags.medium?.includes(filters.medium)))
-    .map(c=>({c,score:keywordScore(c,filters.q ?? '')})).filter(r=>!filters.q || r.score>0).sort((a,b)=>b.score-a.score || a.c.caseId.localeCompare(b.c.caseId)).slice(0,200).map(r=>r.c);
-  return {enabled:inspirationEnabled(),syncConfigured:syncConfigured(),activeRelease:release?{id:release.releaseId,sequence:release.sequence,createdAt:release.createdAt.toISOString()}:null,caseCount:all.length,withdrawalSequence:state?.withdrawalSequence ?? 0,lastSyncAt:state?.lastSyncAt?.toISOString() ?? null,error:state?.lastError ?? null,cases,searchMode:'keyword-tags' as const};
+  const cases=filterCatalog(all,filters);
+  const syncStatus=inspirationSyncStatus(state,release?.manifestHash ?? null,enabled,configured);
+  return {enabled,syncConfigured:configured,activeRelease:release?{id:release.releaseId,sequence:release.sequence,createdAt:release.createdAt.toISOString()}:null,caseCount:all.length,withdrawalSequence:state?.withdrawalSequence ?? 0,lastSyncAt:state?.lastSyncAt?.toISOString() ?? null,error:[syncStatus.content.error,syncStatus.withdrawals.error].filter(Boolean).join(' ') || null,cases,searchMode:'keyword-tags' as const,syncStatus};
 }
 export async function getCase(workspaceId:string, caseId:string, revision?:number) {
   const {records}=await activeRecords(workspaceId); const row=records.find(r=>r.caseId===caseId && (revision===undefined || r.revision===revision));

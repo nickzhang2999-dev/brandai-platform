@@ -1,5 +1,7 @@
 /** Explicit local integration test. Never run against a shared/remote DB.
- * INSPIRATION_DB_TEST=1 node --env-file=.env.local apps/web/node_modules/tsx/dist/cli.mjs --tsconfig apps/web/tsconfig.json scripts/test-inspiration-db.ts
+ * Set DATABASE_URL to a dedicated loopback test database; never reuse a shared .env file.
+ * INSPIRATION_DB_TEST=1 INSPIRATION_ENABLED=true node apps/web/node_modules/tsx/dist/cli.mjs --tsconfig apps/web/tsconfig.json scripts/test-inspiration-db.ts
+ * OMNI_TEST_ROOT may override the local ad-workbench source; OMNI_TEST_PYTHON selects its compatible Python environment.
  * Fixtures are synthetic test evidence only, never published content or model acceptance.
  */
 import assert from 'node:assert/strict';
@@ -15,12 +17,14 @@ async function main() {
   if(!['127.0.0.1','localhost','[::1]'].includes(dbUrl.hostname)||!dbUrl.pathname.includes('nova'))throw new Error('Only isolated local Nova test DB allowed');
   const fixture=resolve('.novart-build/inspiration-integration',randomUUID());mkdirSync(fixture,{recursive:true});
   const python=process.env.OMNI_TEST_PYTHON||'D:/coding/OmniSignal/.venv/Scripts/python.exe';
-  const omni=process.env.OMNI_TEST_ROOT||'D:/coding/OmniSignal';
+  const omni=process.env.OMNI_TEST_ROOT||'D:/coding/OmniSignal-ad-workbench';
   const generator=String.raw`
 import sys,json
 from pathlib import Path
 sys.path.insert(0,str(Path(sys.argv[2])/'src'))
 from omnisignal.knowledge.release import publish_release,publish_withdrawals,make_record as upsert_record,delete_record
+from omnisignal.workbench.publishing import _prepare_asset
+from omnisignal.workbench.taxonomy import bind_reviewed_taxonomy
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives import serialization
 from PIL import Image
@@ -37,24 +41,43 @@ release('r1',1,[upsert_record(case('a',1)),upsert_record(case('b',1))])
 release('r2',2,[upsert_record(case('a',2))],'delta','r1')
 release('r3',3,[delete_record('b',2)],'delta','r2')
 release('r4',4,[upsert_record(case('a',2))])
+def reviewed_case(cid,kind,tags):
+ import hashlib
+ image=assets/'images/a.png'
+ asset={'id':cid,'revision':1,'status':'accepted','kind':kind,'purposes':['brand'] if kind=='advertisement' else [],'permissions':{'display':'allowed','export':'allowed','analysis':'denied'},'source_url':'https://example.com/test-only','title':'Synthetic taxonomy fixture','brand':'Synthetic team','image_path':str(image.resolve()),'sha256':hashlib.sha256(image.read_bytes()).hexdigest(),'width':2,'height':2}
+ asset['reviewed_taxonomy']=bind_reviewed_taxonomy(asset,{'tags':tags,'note':'Synthetic test evidence only'},'integration-fixture',1)
+ return _prepare_asset(asset,assets)
+legacy=case('catalog-legacy',1);legacy['tags']={'industry':['other'],'medium':['digital']};legacy['editorial']={'material_kind':'reference','legacy_medium_fallback':True}
+release('r5',5,[upsert_record(reviewed_case('catalog-reference','reference',{'industry':['food-beverage'],'medium':['packaging'],'task':['series']})),upsert_record(reviewed_case('catalog-ad','advertisement',{'industry':['technology'],'medium':['poster'],'task':['campaign']})),upsert_record(legacy)])
 publish_withdrawals(root=root,sequence=1,case_ids=['a'],private_key=key,key_id='test')
 print('test fixtures created')
 `;
   execFileSync(python,['-X','utf8','-c',generator,fixture,omni],{stdio:['ignore','pipe','pipe']});
   const {prisma}=await import('../packages/db/src/index');
-  const {installPackage,applyWithdrawal,activeRecords,rollbackReplica,syncReplica}=await import('../apps/web/src/lib/inspiration/replica');
+  const {installPackage,applyWithdrawal,activeRecords,rollbackReplica,syncReplica,syncWithdrawals}=await import('../apps/web/src/lib/inspiration/replica');
+  const {canonical,sha256}=await import('../apps/web/src/lib/inspiration/protocol');
   const {getCase,getChat,createChat,listCases}=await import('../apps/web/src/lib/inspiration/service');
   const {submitInspirationFeedback,listInspirationFeedback,reviewInspirationFeedback}=await import('../apps/web/src/lib/inspiration/feedback');
   const {requireWorkspaceRole}=await import('../apps/web/src/lib/workspace');
   const keys={test:readFileSync(join(fixture,'public.pem'),'utf8')};
   const load=(id:string)=>{const root=join(fixture,'publisher','releases',id),raw=readFileSync(join(root,'manifest.json'));const manifest=JSON.parse(raw.toString());return {raw,files:new Map<string,Buffer>(manifest.files.map((f:{path:string})=>[f.path,readFileSync(join(root,f.path))]))};};
   const install=async(ws:string,id:string)=>{const p=load(id);await installPackage(ws,p.raw,p.files,keys);};
-  const run=randomUUID();const userId=`inspiration-test-${run}`,otherId=`inspiration-other-${run}`;const ws1=`inspiration-ws1-${run}`,ws2=`inspiration-ws2-${run}`;
+  const run=randomUUID();const userId=`inspiration-test-${run}`,otherId=`inspiration-other-${run}`;const ws1=`inspiration-ws1-${run}`,ws2=`inspiration-ws2-${run}`,wsCatalog=`inspiration-catalog-${run}`;
   const results:string[]=[];
   const pass=(s:string)=>{results.push(s);console.log(`PASS ${s}`);};
   try {
     await prisma.user.createMany({data:[{id:userId,email:`${run}@integration.invalid`,name:'Integration fixture'},{id:otherId,email:`other-${run}@integration.invalid`,name:'Integration isolation'}]});
-    await prisma.brandWorkspace.createMany({data:[{id:ws1,ownerId:userId,name:'Synthetic integration fixture'},{id:ws2,ownerId:otherId,name:'Synthetic isolation fixture'}]});
+    await prisma.brandWorkspace.createMany({data:[{id:ws1,ownerId:userId,name:'Synthetic integration fixture'},{id:ws2,ownerId:otherId,name:'Synthetic isolation fixture'},{id:wsCatalog,ownerId:userId,name:'Synthetic taxonomy fixture'}]});
+    await install(wsCatalog,'r5');
+    const references=await listCases(wsCatalog,{kind:'reference',industry:'food-beverage',medium:'packaging',task:'series'});
+    assert.deepEqual(references.cases.map(c=>c.caseId),['catalog-reference']);assert.equal(references.cases[0]?.taxonomyStatus,'reviewed');assert.equal(references.cases[0]?.analysisAllowed,false);
+    assert.deepEqual((await listCases(wsCatalog,{kind:'advertisement',industry:'technology',medium:'poster',task:'campaign'})).cases.map(c=>c.caseId),['catalog-ad']);
+    pass('real Omni reviewed taxonomy adapter survives signing, database installation, and combined B-side filters');
+    assert.deepEqual((await listCases(wsCatalog,{q:'食品饮料 系列扩展'})).cases.map(c=>c.caseId),['catalog-reference']);assert.equal((await listCases(wsCatalog,{kind:'advertisement',medium:'packaging'})).cases.length,0);
+    pass('Chinese taxonomy search and advertisement versus reference filtering use the stored signed case');
+    const legacyCard=(await getCase(wsCatalog,'catalog-legacy')).case;assert.equal(legacyCard.taxonomyStatus,'legacy');assert.deepEqual(legacyCard.tags,{industry:[],medium:[],task:[]});assert.equal((await listCases(wsCatalog,{medium:'digital'})).cases.length,0);
+    const legacyBody=(await activeRecords(wsCatalog)).records.find(r=>r.caseId==='catalog-legacy')!.body as {tags:{medium:string[]}};assert.deepEqual(legacyBody.tags.medium,['digital']);
+    pass('legacy fallback labels remain absent from catalog while original signed record is preserved');
     await install(ws1,'r1');assert.equal((await activeRecords(ws1)).records.length,2);assert.equal((await getCase(ws1,'a')).case.title,' 测试包装 1 ');pass('actual Python signed full package and Unicode/whitespace interoperability');
     await install(ws1,'r1');assert.equal(await prisma.inspirationRelease.count({where:{workspaceId:ws1}}),1);pass('immutable replay is idempotent');
     const bad=load('r2');bad.files.set('images/a.png',Buffer.from('tampered'));await assert.rejects(installPackage(ws1,bad.raw,bad.files,keys));assert.equal((await activeRecords(ws1)).state?.activeRelease,'r1');pass('bad image hash preserves active release');
@@ -91,6 +114,25 @@ print('test fixtures created')
       await syncReplica(ws2,AbortSignal.timeout(10000));assert.equal((await activeRecords(ws2)).state?.activeRelease,'r3');assert.equal((await getCase(ws2,'a')).case.revision,2);await assert.rejects(getCase(ws2,'b'));pass('real loopback HTTP sync catches up two missed signed deltas');
       fetched.length=0;await syncReplica(ws2,AbortSignal.timeout(10000));assert.ok(!fetched.some(path=>path.includes('/files/')||path.includes('/r2/')));pass('already installed latest skips ancestor and asset redownload');
       paths.set('/latest',Buffer.from(JSON.stringify({status:'published',release:{...pointer,manifest_sha256:'0'.repeat(64)}})));await assert.rejects(syncReplica(ws2,AbortSignal.timeout(10000)));assert.equal((await activeRecords(ws2)).state?.activeRelease,'r3');pass('untrusted discovery hash mismatch cannot activate a release');
+      let status=await listCases(ws2);
+      assert.equal(status.syncStatus.activeManifestHash,pointer.manifest_sha256);assert.ok(status.syncStatus.content.error);assert.ok(status.syncStatus.content.lastFailureAt);assert.ok(status.syncStatus.withdrawals.lastSuccessAt);assert.equal(status.syncStatus.withdrawals.error,null);
+      pass('content failure exposes active manifest evidence without clearing successful withdrawal history');
+      paths.delete('/withdrawals/latest');await assert.rejects(syncWithdrawals(ws2,AbortSignal.timeout(10000)));
+      status=await listCases(ws2);assert.ok(status.syncStatus.content.error);assert.ok(status.syncStatus.withdrawals.error);assert.ok(status.syncStatus.withdrawals.lastFailureAt);
+      const signedWithdrawal=JSON.parse(readFileSync(join(fixture,'publisher','withdrawals','1.json'),'utf8'));
+      paths.set('/withdrawals/latest',Buffer.from(JSON.stringify({withdrawal:signedWithdrawal})));
+      await syncWithdrawals(ws2,AbortSignal.timeout(10000));const firstCheck=(await activeRecords(ws2)).state!.lastWithdrawalAttemptAt!;
+      await syncWithdrawals(ws2,AbortSignal.timeout(10000));const secondCheck=(await activeRecords(ws2)).state!.lastWithdrawalAttemptAt!;
+      status=await listCases(ws2);assert.ok(secondCheck>firstCheck);assert.ok(status.syncStatus.content.error);assert.equal(status.syncStatus.withdrawals.error,null);assert.equal(status.syncStatus.withdrawalHash,sha256(canonical(signedWithdrawal)));assert.equal(status.withdrawalSequence,1);
+      pass('same signed withdrawal refreshes observations, preserves content error, and hashes canonical signed bytes');
+      assert.equal((await listCases(ws1)).syncStatus.withdrawals.lastSuccessAt,null);
+      pass('a successful check on another workspace never invents a withdrawal observation for this tenant');
+      paths.set('/latest',Buffer.from(JSON.stringify({status:'published',release:pointer})));
+      await syncReplica(ws2,AbortSignal.timeout(10000));status=await listCases(ws2);assert.equal(status.error,null);assert.equal(status.syncStatus.content.error,null);assert.ok(status.syncStatus.content.lastSuccessAt);assert.ok(status.syncStatus.content.lastFailureAt);
+      pass('known release recovery clears only its current error and retains historical failure evidence');
+      paths.set('/withdrawals/latest',Buffer.from(JSON.stringify({status:'empty',withdrawal:null})));
+      await assert.rejects(syncWithdrawals(ws2,AbortSignal.timeout(10000)));assert.equal((await activeRecords(ws2)).state?.withdrawalSequence,1);
+      pass('unsigned empty withdrawal discovery cannot reset accepted withdrawal evidence');
     }finally{
       await new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve()));
       for(const [key,value]of Object.entries({INSPIRATION_PUBLISHER_URL:prior.url,INSPIRATION_READ_TOKEN:prior.token,INSPIRATION_TRUSTED_KEYS_JSON:prior.keys})){if(value===undefined)delete process.env[key];else process.env[key]=value;}
@@ -98,7 +140,7 @@ print('test fixtures created')
     writeFileSync(join(fixture,'result.json'),JSON.stringify({synthetic:true,realDatabase:true,realPythonPublisher:true,paidModelCalls:0,checks:results},null,2));
   } finally {
     // IDs are freshly generated here, never taken from external input or broad prefixes.
-    await prisma.$transaction(async tx=>{await tx.brandWorkspace.deleteMany({where:{id:{in:[ws1,ws2]},ownerId:{in:[userId,otherId]}}});await tx.user.deleteMany({where:{id:{in:[userId,otherId]}}});});
+    await prisma.$transaction(async tx=>{await tx.brandWorkspace.deleteMany({where:{id:{in:[ws1,ws2,wsCatalog]},ownerId:{in:[userId,otherId]}}});await tx.user.deleteMany({where:{id:{in:[userId,otherId]}}});});
     await prisma.$disconnect();
   }
   console.log(JSON.stringify({passed:results.length,syntheticFixtures:true,retainedFixturePath:fixture,cleanup:'only created test users/workspaces'}));

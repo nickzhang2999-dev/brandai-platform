@@ -13,7 +13,7 @@ export default async function InspirationPage({ searchParams }: {
 }) {
   const params = await searchParams;
   const query = new URLSearchParams();
-  for (const key of ["workspaceId", "conversationId", "q", "industry", "medium"]) {
+  for (const key of ["workspaceId", "conversationId", "q", "kind", "industry", "medium", "task"]) {
     const value = params[key];
     if (typeof value === "string") query.set(key, value);
   }
