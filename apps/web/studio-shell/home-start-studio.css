@@ -95,3 +95,16 @@ body[data-page=workspace] .ns-sidebar .np-brand-trigger{width:44px;min-height:44
   .ns-brand-colors .ns-color-field{min-width:0}
   .ns-brand-colors .ns-color-hex{width:100%;min-width:0;font-size:11px}
 }
+
+/* One compact mode selector shares the existing homepage composer. */
+.ns-creation-switch{display:flex;gap:6px;width:fit-content;max-width:100%;margin:24px auto 18px;padding:5px;border:1px solid var(--ns-border);border-radius:999px;background:var(--ns-surface)}
+.ns-creation-switch button{display:flex;align-items:center;justify-content:center;gap:8px;min-height:44px;padding:10px 22px;border:0;border-radius:999px;background:transparent;color:var(--ns-muted);font:inherit;font-size:14px;cursor:pointer}
+.ns-creation-switch button[aria-pressed="true"]{background:var(--ns-purple-soft);color:var(--ns-purple)}
+.ns-creation-switch button[aria-disabled="true"]{opacity:.65;cursor:help}
+.ns-home-mode-status{max-width:760px;margin:-6px auto 16px;padding:10px 14px;border:1px solid var(--ns-border);border-radius:12px;background:var(--ns-surface);color:var(--ns-muted);font-size:13px;line-height:1.65;text-align:left}
+.ns-home-mode-status .ns-text-button{margin-left:12px;white-space:normal}
+.ns-creation-switch svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.7}
+.ns-copy-icon{font-size:17px;line-height:1;font-weight:600}
+@media(max-width:650px){.ns-creation-switch{margin-top:16px}.ns-creation-switch button{padding:10px 17px}}
+
+.ns-creation-switch button:focus-visible{outline:2px solid var(--ns-purple);outline-offset:2px}

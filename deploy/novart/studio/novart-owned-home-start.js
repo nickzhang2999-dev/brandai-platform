@@ -12,7 +12,7 @@ window.createHomeStart = function createHomeStart(host) {
   const key = identity(homeWorkspace) ? legacyKey + ':' + homeWorkspace : legacyKey;
   const types = ['image/png','image/jpeg','image/webp'];
   let items = [], submitted = null, busy = false, loaded = false, draftError = '', latestEntry = null, recoveryBlocked = false;
-  let checkingRecovery = false;
+  let checkingRecovery = false, modeSwitching = false, creationMode = 'image', modeError = '', requestedMode = null;
   let saveQueue = Promise.resolve(), recoveryWrites = 0, recoveryRevision = 0, recoverySavedRevision = 0;
   const runs = new Map(), states = new Map(), waiters = new Map();
   const dbPromise = new Promise((resolve, reject) => {
@@ -35,7 +35,7 @@ window.createHomeStart = function createHomeStart(host) {
   function persist() {
     // Cache only recoverable input and stable identities. Material readiness
     // and saved status are rechecked with the backend/editor on every resume.
-    const value = {version:1, items:items.map(({id,file,name,taskId,uploadStarted}) => ({id,file,name,taskId,uploadStarted})), submitted:submitted ? {...submitted} : null};
+    const value = {version:1, creationMode, items:items.map(({id,file,name,taskId,uploadStarted}) => ({id,file,name,taskId,uploadStarted})), submitted:submitted ? {...submitted} : null};
     const revision = ++recoveryRevision; recoveryWrites++;
     saveQueue = saveQueue.catch(() => {}).then(() => dbTask('readwrite', value)).finally(() => { recoveryWrites--; });
     return saveQueue.then(() => { recoverySavedRevision = revision; draftError = ''; render(); }, () => { draftError = '恢复记录未能保存。请保留本页和原图，恢复存储空间后继续。'; render(); throw new Error(draftError); });
@@ -191,13 +191,54 @@ window.createHomeStart = function createHomeStart(host) {
     } catch (error) { $('ns-create-status').textContent = error.message; }
     finally { checkingRecovery = false; render(); }
   }
+  function modeBlockReason() {
+    if (!loaded) return '正在读取上次草稿，请稍候再切换创作类型。';
+    if (recoveryBlocked) return '上次草稿暂时无法读取。请保留原需求和图片，恢复浏览器存储后刷新重试。';
+    if (modeSwitching) return '正在保存创作类型，请稍候。';
+    if (busy || checkingRecovery || runs.size) return '上次创作正在交接，请等待处理完成。';
+    if (submitted) return canEndHandoff()
+      ? '上次项目尚未交接完成。可以继续原项目，或保留原项目和首页草稿后切换类型。'
+      : '上次创作的提交结果还未确认。请先继续原项目核对，避免重复提交。';
+    return '';
+  }
+  function renderModeStatus(reason) {
+    const status = $('ns-home-mode-status'); if (!status) return;
+    status.replaceChildren();
+    const message = modeError || reason;
+    status.hidden = !message;
+    if (message) status.append(node('span','',message));
+    if (submitted && !busy && !checkingRecovery && !modeSwitching && !runs.size && !recoveryBlocked) {
+      status.append(button('继续原项目','ns-text-button',create));
+      if (requestedMode && requestedMode !== creationMode && canEndHandoff()) {
+        const target = requestedMode;
+        status.append(button('保留原项目并切换' + (target === 'copywriting' ? '文案' : '图片'),'ns-text-button',async () => {
+          if (await endHandoff()) await changeMode(target);
+        }));
+      }
+    }
+  }
   function controls() {
-    const frozen = busy || checkingRecovery || Boolean(submitted);
+    const frozen = busy || checkingRecovery || modeSwitching || Boolean(submitted);
     $('hs-pick').disabled = frozen || !loaded || recoveryBlocked || items.length >= 4;
     $('ns-home-brief').readOnly = frozen;
+    const modeReason = modeBlockReason();
+    for (const value of ['image','copywriting']) { const tab = $('ns-mode-' + value); if (tab) { tab.disabled = false; tab.setAttribute('aria-disabled',String(Boolean(modeReason))); tab.setAttribute('aria-pressed',String(creationMode === value)); tab.setAttribute('aria-describedby','ns-home-mode-status'); tab.title = modeReason; } }
+    renderModeStatus(modeReason);
+    $('ns-home-brief').placeholder = creationMode === 'copywriting' ? '描述你想写的内容，例如：为新品写一句标题和一段介绍…' : '描述你的设计想法，也可以带上图片…';
+    const help = $('ns-home-brief-help'); if (help) help.textContent = creationMode === 'copywriting' ? '最多 2000 个字符。先进入文案面板，再确认生成；附图会保存在画布。' : '最多 4000 个字符。开始创作后会提交一次生成；只添加图片时先放入画布。';
+    const examples = [
+      ['品牌口号','为品牌写三句简洁有记忆点的口号，突出品牌特点。'],
+      ['产品介绍','写一段清晰自然的产品介绍，突出使用场景，不编造功能和功效。'],
+    ];
+    document.querySelectorAll('[data-prompt]').forEach((chip,index) => {
+      if (!chip.dataset.imagePrompt) { chip.dataset.imagePrompt = chip.dataset.prompt; chip.dataset.imageLabel = chip.textContent; }
+      const sample = examples[index % examples.length];
+      chip.dataset.prompt = creationMode === 'copywriting' ? sample[1] : chip.dataset.imagePrompt;
+      chip.textContent = creationMode === 'copywriting' ? sample[0] : chip.dataset.imageLabel;
+    });
     $('ns-create-blank').disabled = frozen || recoveryBlocked || host.legacyBlocked();
-    $('ns-create').disabled = busy || checkingRecovery || !loaded || recoveryBlocked || host.legacyBlocked() || (!submitted && items.some(item => !validFile(item.file)));
-    $('ns-create').querySelector('span').textContent = busy ? '正在创建…' : submitted ? '继续这个项目' : items.length && !$('ns-home-brief').value.trim() ? '放入画布' : '开始创作';
+    $('ns-create').disabled = busy || checkingRecovery || modeSwitching || !loaded || recoveryBlocked || host.legacyBlocked() || (!submitted && items.some(item => !validFile(item.file)));
+    $('ns-create').querySelector('span').textContent = busy ? '正在创建…' : submitted ? '继续这个项目' : creationMode === 'copywriting' ? '进入文案创作' : items.length && !$('ns-home-brief').value.trim() ? '放入画布' : '开始创作';
   }
   function render() {
     const list = $('hs-attachments'); list.hidden = !items.length; list.replaceChildren();
@@ -224,8 +265,9 @@ window.createHomeStart = function createHomeStart(host) {
     render(); await persist().catch(() => {});
   }
   async function create() {
-    if (busy || checkingRecovery || !loaded || recoveryBlocked || host.legacyBlocked() || host.composing()) return;
+    if (busy || checkingRecovery || modeSwitching || !loaded || recoveryBlocked || host.legacyBlocked() || host.composing()) return;
     const brief = $('ns-home-brief').value;
+    if (!submitted && creationMode === 'copywriting' && (!brief.trim() || brief.length > 2000)) { $('ns-create-status').textContent = '请填写 1–2000 个字符的文案需求，原草稿仍保留。'; $('ns-home-brief').focus(); return; }
     if (!submitted && brief.length > 4000) { $('ns-create-status').textContent = '创作需求最多 4000 个字符，完整草稿仍保留。请缩短后再开始。'; $('ns-home-brief').focus(); return; }
     if (!submitted && !items.length && !brief.trim()) { $('ns-create-status').textContent = '先写一句需求，或打开空白画布。'; $('ns-home-brief').focus(); return; }
     if (!submitted && items.some(item => !validFile(item.file))) return;
@@ -233,7 +275,7 @@ window.createHomeStart = function createHomeStart(host) {
     try {
       // Only a new explicit click opts into first creation. Historical saved
       // handoffs without this flag keep their original upload-only meaning.
-      if (!submitted) submitted = {requestId:crypto.randomUUID(),brief,projectName:Array.from(brief.trim().split('\n')[0] || '图片创作').slice(0,32).join(''),projectId:null,startCreation:Boolean(brief.trim()),creationStarted:false,creationAccepted:false};
+      if (!submitted) submitted = {requestId:crypto.randomUUID(),brief,creationMode,projectName:Array.from(brief.trim().split('\n')[0] || '图片创作').slice(0,32).join(''),projectId:null,startCreation:Boolean(brief.trim()),creationStarted:false,creationAccepted:false};
       // Persist both creation identity and every upload identity before writes.
       await persist(); $('ns-create-status').textContent = '正在创建项目并保存需求…';
       if (!submitted.projectId) {
@@ -327,7 +369,7 @@ window.createHomeStart = function createHomeStart(host) {
       const requestId = submission.requestId;
       const timer = setTimeout(() => { waiters.delete(requestId); reject(new Error('创作的提交结果还没确认。需求已保留，继续只会核对同一次请求，不会重复扣费。')); }, Math.min(30000,remaining(deadline)));
       waiters.set(requestId,{entry,resolve,reject,timer,action:'start-creation-result'});
-      try { entry.frame.contentWindow.postMessage({type:'nv-studio',action:'start-creation',projectId:entry.id,requestId,text:submission.brief,referenceShapeIds:items.map(item => 'shape:home-' + item.id)},location.origin); }
+      try { entry.frame.contentWindow.postMessage({type:'nv-studio',action:'start-creation',projectId:entry.id,requestId,text:submission.brief,...(submission.creationMode === 'copywriting' ? {creationMode:'copywriting'} : {}),referenceShapeIds:items.map(item => 'shape:home-' + item.id)},location.origin); }
       catch { clearTimeout(timer); waiters.delete(requestId); reject(new Error('画布尚未接收创作需求，请重新打开项目后继续。')); }
     });
   }
@@ -384,7 +426,7 @@ window.createHomeStart = function createHomeStart(host) {
       if (submitted.startCreation === true && !submitted.creationAccepted) {
         if (!submitted.brief.trim() || submitted.brief.length > 4000) throw new Error('创作需求长度不符合要求，请保留原始需求并在项目中继续编辑。');
         if (!current(entry) || !entry.ready) throw new Error('画布暂时不可用，需求和已保存素材仍保留。');
-        paint(entry,{kind:'loading',title:'正在开始创作',detail:'需求和参考图已保存，正在提交这次创作。'});
+        paint(entry,{kind:'loading',title:submitted.creationMode === 'copywriting' ? '正在打开文案创作' : '正在开始创作',detail:submitted.creationMode === 'copywriting' ? '需求已保存，正在带入文案面板。' : '需求和参考图已保存，正在提交这次创作。'});
         submitted.creationStarted = true; await persist();
         await waitForCreation(entry,submitted,deadline);
         submitted.creationAccepted = true; await persist();
@@ -395,7 +437,7 @@ window.createHomeStart = function createHomeStart(host) {
       completed.forEach(item => { if (item.url) URL.revokeObjectURL(item.url); });
       if ($('ns-home-brief').value === previous.brief) { $('ns-home-brief').value = ''; try { localStorage.removeItem('novart-m24-home-brief'); } catch {} }
       states.delete(entry.id); host.invalidateAssets(entry.id); render();
-      if (current(entry)) { hide(); notify(previous.startCreation ? '创作已提交，可以在对话中查看进度。' : '图片和需求已保存，可以继续编辑。'); if (!previous.startCreation) host.showRequirements(entry); }
+      if (current(entry)) { hide(); notify(previous.creationMode === 'copywriting' ? '需求已带入文案面板，确认后即可生成。' : previous.startCreation ? '创作已提交，可以在对话中查看进度。' : '图片和需求已保存，可以继续编辑。'); if (!previous.startCreation) host.showRequirements(entry); }
     } catch (error) {
       paint(entry,{kind:'error',title:submitted?.startCreation ? '创作交接尚未完成' : '图片交接尚未完成',detail:(typeof error?.message === 'string' ? error.message.slice(0,300) : '请稍后继续确认。') + ' 需求和原图仍保留。',failedId:error.failedId});
     }
@@ -422,6 +464,16 @@ window.createHomeStart = function createHomeStart(host) {
   }
   $('hs-file-input').addEventListener('change',event => { void addFiles([...event.target.files]); event.target.value = ''; });
   $('hs-pick').addEventListener('click',() => $('hs-file-input').click());
+  async function changeMode(value) {
+    const reason = modeBlockReason();
+    if (reason) { requestedMode = value; modeError = ''; renderModeStatus(reason); notify(reason); return; }
+    if (host.composing()) { modeError = '请先确认正在输入的文字，再切换创作类型。'; renderModeStatus(''); notify(modeError); return; }
+    if (value === creationMode) { modeError = ''; requestedMode = null; render(); $('ns-home-brief').focus(); return; }
+    const before = creationMode; modeSwitching = true; creationMode = value; modeError = ''; requestedMode = null; render();
+    try { await persist(); $('ns-home-brief').focus(); } catch { creationMode = before; modeError = '创作类型未能保存，仍保持' + (before === 'copywriting' ? '文案创作' : '图片创作') + '。原需求和图片仍保留，请恢复浏览器存储后再试。'; notify(modeError); }
+    finally { modeSwitching = false; render(); }
+  }
+  for (const value of ['image','copywriting']) $('ns-mode-' + value)?.addEventListener('click', () => changeMode(value));
   $('ns-home-brief').addEventListener('input',controls);
   const composer = $('ns-composer');
   composer.addEventListener('dragover',event => { if (event.dataTransfer.types.includes('Files')) { event.preventDefault(); composer.classList.add('hs-drag'); } });
@@ -467,10 +519,12 @@ window.createHomeStart = function createHomeStart(host) {
     });
   }
   function validateRecovery(value) {
+    if (value.creationMode !== undefined && !['image','copywriting'].includes(value.creationMode)) throw new Error('创作类型无法恢复');
     if (value.version !== 1 || !Array.isArray(value.items) || value.items.length > 4 || new Set(value.items.map(item => item.id)).size !== value.items.length
       || value.items.some(item => !uuid(item.id) || typeof item.name !== 'string' || !validFile(item.file) || item.taskId && !identity(item.taskId))) throw new Error('恢复记录无法读取');
     if (value.submitted && (!uuid(value.submitted.requestId) || typeof value.submitted.brief !== 'string' || typeof value.submitted.projectName !== 'string'
       || value.submitted.projectId !== null && !identity(value.submitted.projectId)
+      || value.submitted.creationMode !== undefined && !['image','copywriting'].includes(value.submitted.creationMode)
       || value.submitted.startCreation !== undefined && typeof value.submitted.startCreation !== 'boolean'
       || value.submitted.creationStarted !== undefined && typeof value.submitted.creationStarted !== 'boolean'
       || value.submitted.creationAccepted !== undefined && typeof value.submitted.creationAccepted !== 'boolean')) throw new Error('恢复记录无法读取');
@@ -478,11 +532,12 @@ window.createHomeStart = function createHomeStart(host) {
   loadRecovery().then(value => {
     if (!value) return;
     validateRecovery(value);
+    creationMode = value.submitted?.creationMode || value.creationMode || 'image';
     items = value.items.map(item => ({id:item.id,file:item.file,name:item.name,taskId:item.taskId || null,taskStatus:null,uploadStarted:typeof item.uploadStarted === 'boolean' ? item.uploadStarted : Boolean(value.submitted),material:null,saved:false,url:URL.createObjectURL(item.file),error:''})); submitted = value.submitted || null;
     if (submitted) $('ns-home-brief').value = submitted.brief;
   }).catch(() => { recoveryBlocked = true; draftError = '原图恢复记录暂不可用，请保留本页和原文件，检查存储空间后刷新。'; })
     .finally(async () => { loaded = true; render(); await inspectRecovery(); if (latestEntry) void resume(latestEntry); });
   render();
-  return {create,hasDraft:() => Boolean(items.length || submitted),resume,canvasUnavailable,confirmLeave,routeChanged() { hide(); },busy:() => busy,
-    snapshot:() => ({loaded,busy,recoveryPending:recoveryWrites > 0,recoveryError:draftError,recoveryBlocked,attachmentCount:items.length,readyCount:items.filter(item=>item.material).length,failedCount:items.filter(failedItem).length,checkingRecovery,canEndHandoff:canEndHandoff(),submittedRequestId:submitted?.requestId || null,running:[...runs.keys()]})};
+  return {create,hasDraft:() => Boolean(items.length || submitted),resume,canvasUnavailable,confirmLeave,routeChanged() { hide(); },busy:() => busy || modeSwitching,
+    snapshot:() => ({loaded,busy,creationMode,recoveryPending:recoveryWrites > 0,recoveryError:draftError,recoveryBlocked,attachmentCount:items.length,readyCount:items.filter(item=>item.material).length,failedCount:items.filter(failedItem).length,checkingRecovery,canEndHandoff:canEndHandoff(),submittedRequestId:submitted?.requestId || null,running:[...runs.keys()]})};
 };

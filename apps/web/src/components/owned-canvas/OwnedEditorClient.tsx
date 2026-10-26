@@ -9,6 +9,8 @@ import { ownedCanvasEngine } from "../../lib/owned-canvas-engine";
 import { assignOwnedImageNames, type OwnedCanvasDocument, type OwnedCanvasItem } from "../../lib/owned-canvas-model";
 import type { OwnedExportOptions } from "../../lib/owned-canvas-export";
 import { OwnedCanvas } from "./OwnedCanvas";
+import { OwnedCopywritingPanel, type OwnedCopywritingHandle } from "./OwnedCopywritingPanel";
+import { placeCopywriting } from "./owned-copywriting-placement";
 import { OwnedWorkflowPanel } from "./OwnedWorkflowPanel";
 import { OwnedGenerationCard } from "./OwnedGenerationCard";
 import { OwnedLayerPanel } from "./OwnedLayerPanel";
@@ -50,6 +52,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
   const [visibleName, setVisibleName] = useState(projectName);
   useEffect(() => setVisibleName(projectName), [projectName, projectId]);
   useEffect(() => { window.document.title = `${visibleName} · DeepFlare`; }, [visibleName]);
+  const copywritingRef = useRef<OwnedCopywritingHandle | null>(null);
   const conversationRef = useRef<OwnedConversationHandle | null>(null);
   const [resizingImage, setResizingImage] = useState<OwnedCanvasItem | null>(null);
   const [maskingImage, setMaskingImage] = useState<{ item: OwnedCanvasItem; material: PersistentImage } | null>(null);
@@ -59,7 +62,8 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
   const imageToolJournal = `deepflare:image-tool-pending:${JSON.stringify([userId, workspaceId, projectId])}`;
   const readOnlyRef = useRef(readOnly); readOnlyRef.current = readOnly;
   const initialTaskKind = initialTask?.kind, initialTaskId = initialTask?.id;
-  const [panel, setPanel] = useState<"generate" | "materials" | "tasks" | "layers" | "settings" | null>("generate");
+  const [panel, setPanel] = useState<"generate" | "materials" | "tasks" | "layers" | "settings" | "copywriting" | null>("generate");
+  const [copywritingBusy, setCopywritingBusy] = useState(false);
   const toolDialog = useRef<HTMLElement | null>(null);
   useEffect(() => {
     if (!panel || panel === "generate") return;
@@ -366,8 +370,10 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
         handoffBusy.current = true;
         void (async () => {
           try {
+            if (data.creationMode !== undefined && !["image", "copywriting"].includes(data.creationMode)) throw new Error("创作类型无法确认，原需求仍保留。");
+            const copywriting = data.creationMode === "copywriting";
             const deadline = Date.now() + 20_000;
-            while (alive.current && apiRef.current === api && (!conversationRef.current?.ready() || workflowRef.current?.snapshot().busy || workflowRef.current?.snapshot().status === "loading" || saveBusy.current)) {
+            while (alive.current && apiRef.current === api && (!(copywriting ? copywritingRef.current?.ready() : conversationRef.current?.ready()) || workflowRef.current?.snapshot().busy || workflowRef.current?.snapshot().status === "loading" || saveBusy.current)) {
               if (Date.now() >= deadline) throw new Error("创作页面准备较久，原需求仍保留，可稍后继续。");
               await new Promise(resolve => setTimeout(resolve, 100));
             }
@@ -376,6 +382,12 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
             if (typeof data.text !== "string" || !data.text.trim() || data.text.length > 4000 || !Array.isArray(data.referenceShapeIds) || data.referenceShapeIds.length > 8 || data.referenceShapeIds.some((id: unknown) => typeof id !== "string" || !/^shape:home-[a-f0-9-]{36}$/i.test(id))) throw new Error("首页创作内容无法确认，原需求仍保留。");
             const saved = await saveSettled();
             if (!saved || sequence.current !== savedSequence.current || pendingSave.current || saveBlocked.current) throw new Error("请先确认画布已保存，再继续创作。");
+            if (copywriting) {
+              if (!copywritingRef.current) throw new Error("文案面板尚未准备好，需求仍保留。");
+              copywritingRef.current.restoreHome(data.text, requestId);
+              setSelectedIds(data.referenceShapeIds);
+              setPanel("copywriting"); reply("accepted"); return;
+            }
             const refs = selectedOwnedConversationReferences(docRef.current, data.referenceShapeIds, await api.listMaterials());
             if (!alive.current || apiRef.current !== api) return;
             await conversationRef.current.startHome(data.text, requestId, refs);
@@ -736,6 +748,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
       <span className="max-w-24 shrink-0 truncate text-xs text-muted-foreground sm:max-w-none" title={saveLabel} role="status" data-testid="owned-save-status">{saveLabel}</span>
       {canEdit && <button type="button" className={headerButton} disabled={saveState === "saving" || saveState === "saved"} onClick={() => void save().catch(() => undefined)}>{saveState === "error" ? "确认保存" : "保存"}</button>}
       <button type="button" className={headerButton} onClick={() => setPanel(current => current ? null : "generate")} aria-expanded={!!panel}>创作</button>
+      <button type="button" className={headerButton} onClick={() => setPanel("copywriting")} aria-label="AI 文案">文案{copywritingBusy ? " ·" : ""}</button>
       <button type="button" className={headerButton} onClick={() => setPanel("tasks")} aria-label="任务记录">任务{generations.some(activeGeneration) || uploads.some(task => ["PENDING", "RUNNING"].includes(task.status)) ? " ·" : ""}</button>
       <details className="relative"><summary className={headerButton + " cursor-pointer list-none"}>导出</summary><div className="absolute right-0 top-full z-30 flex gap-2 rounded-2xl border border-border bg-card p-3 shadow-lg">{(["png", "svg", "json"] as const).map(format => <button key={format} className={button} disabled={!document || !!document.warnings.length} onClick={() => void exportDocument(format).catch(() => undefined)}>{format.toUpperCase()}</button>)}</div></details>
     </header>
@@ -757,9 +770,15 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
         </div>
       </aside>
       {<div hidden={!panel || panel === "generate"} style={{ display: !panel || panel === "generate" ? "none" : "flex" }} className="absolute inset-0 z-40 items-center justify-center bg-foreground/15 p-3" onPointerDown={event => event.stopPropagation()}>
-        <section ref={toolDialog} role="dialog" aria-modal="true" aria-label={panel === "layers" ? "图片分层" : panel === "materials" ? "品牌素材" : panel === "settings" ? "素材与画框" : "任务记录"} className="flex max-h-[90%] w-full max-w-md flex-col rounded-3xl border border-border bg-card shadow-lg">
-          <header className="flex shrink-0 items-center justify-between border-b border-border p-4"><h2 className="text-sm font-semibold">{panel === "layers" ? "图片分层" : panel === "materials" ? "品牌素材" : panel === "settings" ? "素材与画框" : "任务记录"}</h2><button aria-label="关闭工具窗口" onClick={() => setPanel("generate")}>×</button></header>
+        <section ref={toolDialog} role="dialog" aria-modal="true" aria-label={panel === "copywriting" ? "AI 文案" : panel === "layers" ? "图片分层" : panel === "materials" ? "品牌素材" : panel === "settings" ? "素材与画框" : "任务记录"} className="flex max-h-[90%] w-full max-w-md flex-col rounded-3xl border border-border bg-card shadow-lg">
+          <header className="flex shrink-0 items-center justify-between border-b border-border p-4"><h2 className="text-sm font-semibold">{panel === "copywriting" ? "AI 文案" : panel === "layers" ? "图片分层" : panel === "materials" ? "品牌素材" : panel === "settings" ? "素材与画框" : "任务记录"}</h2><button aria-label="关闭工具窗口" onClick={() => setPanel("generate")}>×</button></header>
           <div className="min-h-0 space-y-3 overflow-y-auto p-4">
+            <div hidden={panel !== "copywriting"}><OwnedCopywritingPanel ref={copywritingRef} key={JSON.stringify([workspaceId, projectId, userId])} workspaceId={workspaceId} projectId={projectId} userId={userId} readOnly={!canEdit} selected={document?.items.filter(item => selectedIds.includes(item.id)) ?? []} onActivity={setCopywritingBusy} onInsert={async (text, receiptId, anchorId) => {
+              if (!writableRef.current || !docRef.current || saveBlocked.current) throw new Error("画布尚未准备好或保存冲突，请先恢复画布。");
+              const next = placeCopywriting(docRef.current, text, receiptId, anchorId);
+              if (next !== docRef.current) changeDocument(next);
+              await saveSettled();
+            }} /></div>
             {!!notice && panel && panel !== "generate" && <p role="status" className="text-xs leading-6" data-testid="owned-notice">{notice}</p>}
             {<div hidden={panel !== "layers"}><OwnedLayerPanel key={projectId} api={apiRef.current} workspaceId={workspaceId} projectId={projectId} userId={userId} document={document} selectedIds={selectedIds} readOnly={!canEdit} onPrepare={prepareLayers} onPlace={insertLayers} onTasks={setLayerTasks} /></div>}
             <span className="sr-only" data-testid="owned-draft-status" data-draft-state={draft.state}>{draft.error || draft.state}</span>

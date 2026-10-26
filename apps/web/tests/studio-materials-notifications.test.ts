@@ -5,6 +5,7 @@ vi.mock("../src/lib/brand-preview", () => ({ BRAND_PREVIEW_PROJECT_NAME: "hidden
 vi.mock("../src/lib/studio-notifications", () => ({ listStudioGenerationNotifications: f.studio }));
 vi.mock("../src/lib/studio-layer-notifications", () => ({ listStudioLayerNotifications: f.layers }));
 vi.mock("../src/lib/studio-workflow-notifications", () => ({ listStudioWorkflowNotifications: async () => [] }));
+vi.mock("../src/lib/studio-copywriting-notifications", () => ({ listCopywritingNotifications: async () => [] }));
 import { listWorkspaceNotifications } from "../src/lib/notifications";
 const upload = { taskId: "upload-task", projectId: "p", fileName: "my image.png", task: { status: "SUCCEEDED", error: null, updatedAt: new Date("2026-10-09T00:00:00Z") } };
 beforeEach(() => { vi.resetAllMocks(); f.generations.mockResolvedValue([]); f.tasks.mockResolvedValue([]); f.uploads.mockResolvedValue([upload]); f.projects.mockResolvedValue([{ id: "p" }]); f.studio.mockResolvedValue([]); f.layers.mockResolvedValue([]); });

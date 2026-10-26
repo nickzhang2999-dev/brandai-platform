@@ -8,6 +8,7 @@ import { BRAND_PREVIEW_PROJECT_NAME } from "./brand-preview";
 import { listStudioGenerationNotifications } from "./studio-notifications";
 import { listStudioLayerNotifications } from "./studio-layer-notifications";
 import { listStudioWorkflowNotifications } from "./studio-workflow-notifications";
+import { listCopywritingNotifications } from "./studio-copywriting-notifications";
 
 /**
  * A3 / L3 — derive the in-app notification inbox from REAL server state. There
@@ -64,7 +65,7 @@ export async function listWorkspaceNotifications(
   userId?: string,
   scope: "all" | "studio" = "all",
 ): Promise<NotificationItem[]> {
-  const [gens, tasks, uploads, studioGenerations, studioLayers, studioWorkflow] = await Promise.all([
+  const [gens, tasks, uploads, studioGenerations, studioLayers, studioWorkflow, copywriting] = await Promise.all([
     scope === "studio" ? Promise.resolve([]) : prisma.generation.findMany({
       where: {
         workspaceId,
@@ -118,9 +119,10 @@ export async function listWorkspaceNotifications(
     userId ? listStudioGenerationNotifications(workspaceId, userId, limit) : Promise.resolve([]),
     userId ? listStudioLayerNotifications(workspaceId, userId, limit) : Promise.resolve([]),
     userId ? listStudioWorkflowNotifications(workspaceId, userId, limit) : Promise.resolve([]),
+    userId ? listCopywritingNotifications(workspaceId, userId, limit) : Promise.resolve([]),
   ]);
 
-  const items: NotificationItem[] = [...studioGenerations, ...studioLayers, ...studioWorkflow];
+  const items: NotificationItem[] = [...studioGenerations, ...studioLayers, ...studioWorkflow, ...copywriting];
 
   for (const g of gens) {
     const succeeded = g.status === "SUCCEEDED";

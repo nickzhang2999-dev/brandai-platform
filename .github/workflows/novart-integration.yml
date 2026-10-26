@@ -15,7 +15,8 @@ concurrency:
 jobs:
   backend:
     if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/devUpdate1012' || github.ref == 'refs/heads/claude/novart-product-integration' || github.ref == 'refs/heads/fix/p1-remove-captured-bundle' || github.ref == 'refs/heads/fix/p2-security' || github.ref == 'refs/heads/fix/p3-ai-reliability' || github.ref == 'refs/heads/fix/p4-frontend' || github.ref == 'refs/heads/chore/p5-engineering'
-    runs-on: ubuntu-latest
+    # Keep the locked Playwright browser/dependency installer on its supported OS.
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     services:
       postgres:
@@ -106,7 +107,7 @@ jobs:
           assert {'zoomed-hit-testing-drag-and-history-share-the-current-camera',
                   'engine-export-includes-offscreen-images-from-the-full-document',
                   'gzip-save-reopen-retains-all-226-records-camera-stacking-text-and-brush'} <= set(engine['checks'])
-          for name, expected in (('owned-layer-fixture.json', 10), ('brand-knowledge-fixture.json', 14), ('layer-inbox-fixture.json', 16), ('studio-layout-fixture.json', 8), ('brand-switch-fixture.json', 9), ('home-brand-leave-fixture.json', 9), ('brand-creation-recovery-fixture.json', 15), ('image-context-fixture.json', 19)):
+          for name, expected in (('owned-layer-fixture.json', 10), ('brand-knowledge-fixture.json', 14), ('layer-inbox-fixture.json', 19), ('studio-layout-fixture.json', 11), ('brand-switch-fixture.json', 9), ('home-brand-leave-fixture.json', 9), ('brand-creation-recovery-fixture.json', 15), ('image-context-fixture.json', 19)):
               report = json.loads((root / name).read_text())
               assert report['passed'] is True and report['isolated'] is True, name
               assert report['realBackend'] is False and report['realProvider'] is False, name
