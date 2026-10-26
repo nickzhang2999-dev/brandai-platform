@@ -12,7 +12,7 @@ window.createHomeStart = function createHomeStart(host) {
   const key = identity(homeWorkspace) ? legacyKey + ':' + homeWorkspace : legacyKey;
   const types = ['image/png','image/jpeg','image/webp'];
   let items = [], submitted = null, busy = false, loaded = false, draftError = '', latestEntry = null, recoveryBlocked = false;
-  let checkingRecovery = false, modeSwitching = false, creationMode = 'image';
+  let checkingRecovery = false, modeSwitching = false, creationMode = 'image', modeError = '', requestedMode = null;
   let saveQueue = Promise.resolve(), recoveryWrites = 0, recoveryRevision = 0, recoverySavedRevision = 0;
   const runs = new Map(), states = new Map(), waiters = new Map();
   const dbPromise = new Promise((resolve, reject) => {
@@ -191,11 +191,39 @@ window.createHomeStart = function createHomeStart(host) {
     } catch (error) { $('ns-create-status').textContent = error.message; }
     finally { checkingRecovery = false; render(); }
   }
+  function modeBlockReason() {
+    if (!loaded) return '正在读取上次草稿，请稍候再切换创作类型。';
+    if (recoveryBlocked) return '上次草稿暂时无法读取。请保留原需求和图片，恢复浏览器存储后刷新重试。';
+    if (modeSwitching) return '正在保存创作类型，请稍候。';
+    if (busy || checkingRecovery || runs.size) return '上次创作正在交接，请等待处理完成。';
+    if (submitted) return canEndHandoff()
+      ? '上次项目尚未交接完成。可以继续原项目，或保留原项目和首页草稿后切换类型。'
+      : '上次创作的提交结果还未确认。请先继续原项目核对，避免重复提交。';
+    return '';
+  }
+  function renderModeStatus(reason) {
+    const status = $('ns-home-mode-status'); if (!status) return;
+    status.replaceChildren();
+    const message = modeError || reason;
+    status.hidden = !message;
+    if (message) status.append(node('span','',message));
+    if (submitted && !busy && !checkingRecovery && !modeSwitching && !runs.size && !recoveryBlocked) {
+      status.append(button('继续原项目','ns-text-button',create));
+      if (requestedMode && requestedMode !== creationMode && canEndHandoff()) {
+        const target = requestedMode;
+        status.append(button('保留原项目并切换' + (target === 'copywriting' ? '文案' : '图片'),'ns-text-button',async () => {
+          if (await endHandoff()) await changeMode(target);
+        }));
+      }
+    }
+  }
   function controls() {
     const frozen = busy || checkingRecovery || modeSwitching || Boolean(submitted);
     $('hs-pick').disabled = frozen || !loaded || recoveryBlocked || items.length >= 4;
     $('ns-home-brief').readOnly = frozen;
-    for (const value of ['image','copywriting']) { const tab = $('ns-mode-' + value); if (tab) { tab.disabled = frozen || !loaded || recoveryBlocked; tab.setAttribute('aria-pressed',String(creationMode === value)); } }
+    const modeReason = modeBlockReason();
+    for (const value of ['image','copywriting']) { const tab = $('ns-mode-' + value); if (tab) { tab.disabled = false; tab.setAttribute('aria-disabled',String(Boolean(modeReason))); tab.setAttribute('aria-pressed',String(creationMode === value)); tab.setAttribute('aria-describedby','ns-home-mode-status'); tab.title = modeReason; } }
+    renderModeStatus(modeReason);
     $('ns-home-brief').placeholder = creationMode === 'copywriting' ? '描述你想写的内容，例如：为新品写一句标题和一段介绍…' : '描述你的设计想法，也可以带上图片…';
     const help = $('ns-home-brief-help'); if (help) help.textContent = creationMode === 'copywriting' ? '最多 2000 个字符。先进入文案面板，再确认生成；附图会保存在画布。' : '最多 4000 个字符。开始创作后会提交一次生成；只添加图片时先放入画布。';
     const examples = [
@@ -436,12 +464,16 @@ window.createHomeStart = function createHomeStart(host) {
   }
   $('hs-file-input').addEventListener('change',event => { void addFiles([...event.target.files]); event.target.value = ''; });
   $('hs-pick').addEventListener('click',() => $('hs-file-input').click());
-  for (const value of ['image','copywriting']) $('ns-mode-' + value)?.addEventListener('click', async () => {
-    if (busy || checkingRecovery || modeSwitching || submitted || !loaded || recoveryBlocked || host.composing()) return;
-    const before = creationMode; modeSwitching = true; creationMode = value; render();
-    try { await persist(); $('ns-home-brief').focus(); } catch { creationMode = before; }
+  async function changeMode(value) {
+    const reason = modeBlockReason();
+    if (reason) { requestedMode = value; modeError = ''; renderModeStatus(reason); notify(reason); return; }
+    if (host.composing()) { modeError = '请先确认正在输入的文字，再切换创作类型。'; renderModeStatus(''); notify(modeError); return; }
+    if (value === creationMode) { modeError = ''; requestedMode = null; render(); $('ns-home-brief').focus(); return; }
+    const before = creationMode; modeSwitching = true; creationMode = value; modeError = ''; requestedMode = null; render();
+    try { await persist(); $('ns-home-brief').focus(); } catch { creationMode = before; modeError = '创作类型未能保存，仍保持' + (before === 'copywriting' ? '文案创作' : '图片创作') + '。原需求和图片仍保留，请恢复浏览器存储后再试。'; notify(modeError); }
     finally { modeSwitching = false; render(); }
-  });
+  }
+  for (const value of ['image','copywriting']) $('ns-mode-' + value)?.addEventListener('click', () => changeMode(value));
   $('ns-home-brief').addEventListener('input',controls);
   const composer = $('ns-composer');
   composer.addEventListener('dragover',event => { if (event.dataTransfer.types.includes('Files')) { event.preventDefault(); composer.classList.add('hs-drag'); } });

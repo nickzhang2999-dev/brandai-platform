@@ -56,10 +56,20 @@
   const seenKey = 'task-inbox-seen:' + encodeURIComponent(context.user.id) + ':' + encodeURIComponent(context.workspaceId);
   const endpoint = '/api/workspaces/' + encodeURIComponent(context.workspaceId) + '/notifications?scope=studio';
   const activityEndpoint = '/api/workspaces/' + encodeURIComponent(context.workspaceId) + '/studio-layer-activity';
+  const supportedTerminalKinds = new Set([...Object.keys(taskParameters),'STUDIO_COPYWRITING']);
   function parse(value) {
     if (!value || !Array.isArray(value.items) || value.items.length > 50) throw Error('任务列表响应不完整，请刷新');
     const ids = new Set();
-    return value.items.map(item => {
+    // Other workflows own their entry points. They must not hide supported
+    // task receipts in this shared inbox; malformed supported items still fail.
+    return value.items.filter(item => !(item && typeof item.kind==='string' && !supportedTerminalKinds.has(item.kind))).map(item => {
+      if (item?.kind === 'STUDIO_COPYWRITING') {
+        if(typeof item.id!=='string'||!item.id.startsWith('copywriting:')||ids.has(item.id)||!validId(item.id.slice(12))||!['SUCCEEDED','FAILED'].includes(item.status)||typeof item.createdAt!=='string'||!Number.isFinite(Date.parse(item.createdAt))||typeof item.href!=='string')throw Error('文案任务响应不完整，请刷新');
+        const url=new URL(item.href,location.origin),project=url.searchParams.get('projectId');
+        if(url.origin!==location.origin||url.pathname!=='/canvas'||url.hash||url.searchParams.get('workspaceId')!==context.workspaceId||url.searchParams.getAll('workspaceId').length!==1||url.searchParams.getAll('projectId').length!==1||!validId(project)||[...url.searchParams.keys()].some(k=>!['workspaceId','projectId'].includes(k)))throw Error('文案任务地址不属于当前品牌');
+        ids.add(item.id);const taskId=item.id.slice(12),key='STUDIO_COPYWRITING:'+taskId;
+        return {id:item.id,key,kind:item.kind,taskId,projectId:project,status:item.status,title:item.status==='SUCCEEDED'?'文案已生成':'文案生成未完成',detail:'打开项目画布，点击文案查看记录。',createdAt:item.createdAt,href:'/canvas?'+new URLSearchParams({workspaceId:context.workspaceId,projectId:project}),terminal:true,stamp:item.createdAt+'|'+item.status};
+      }
       if (!item || !Object.hasOwn(taskParameters,item.kind) || !['SUCCEEDED','FAILED'].includes(item.status) || typeof item.id !== 'string' || item.id.length > 180
         || ids.has(item.id) || typeof item.title !== 'string' || item.title.length > 500 || item.detail != null && (typeof item.detail !== 'string' || item.detail.length > 5000)
         || typeof item.createdAt !== 'string' || !Number.isFinite(Date.parse(item.createdAt)) || typeof item.href !== 'string') throw Error('任务列表响应不完整，请刷新');
@@ -139,7 +149,7 @@
       const state = node('span',statusLabels[item.status]+(elapsedText(item)?' · '+elapsedText(item):''),'np-inbox-task-state'); state.dataset.taskStatus = item.status; row.append(state);
       if (item.detail) row.append(node('p',item.detail));
       const when = node('time',new Date(item.createdAt).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})); when.dateTime = item.createdAt;
-      const action = node('button','返回项目'); action.type = 'button'; action.dataset.action = 'open-task'; action.onclick = () => openTask(item); action.disabled = denied;
+      const action = node('button',item.kind==='STUDIO_COPYWRITING'?'查看文案记录':'返回项目'); action.type = 'button'; action.dataset.action = 'open-task'; action.onclick = () => openTask(item); action.disabled = denied;
       row.append(when,action); list.append(row);
       if (focused === item.id) action.focus({preventScroll:true});
     }
@@ -207,6 +217,7 @@
   function openTask(item) {
     if (denied || stopped) return;
     if (!currentIdentity()) { deny(); return; }
+    if(item.kind==='STUDIO_COPYWRITING'){window.open(item.href,'_blank','noopener');return;}
     clearTimeout(handoffTimer);
     pending = {...item,token:crypto.randomUUID(),deadline:Date.now()+25000,frame:null,sent:false};
     status.textContent = '正在打开对应项目…'; openElsewhere.hidden = true; openElsewhere.href = item.href;

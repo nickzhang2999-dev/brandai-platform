@@ -277,3 +277,7 @@ CDS preflight directly confirms push automatic deployment and default shared bra
 - layer配置无自定义覆盖，默认官方fal-ai/qwen-image-layered；采用其持久队列，无需改密钥或新增配置。
 - GitHub84fa5e4成功run39220851878；CDS timed_out_no_run、workflow URL空，实际deployedImage及health仍2492b43。正常恢复入口为claim-prebuilt先dry-run再deploy，不修改平台结果。
 - 安全边界：POST无编号不重发；有编号查询可重试。6分钟退出后只显式查询原任务，24小时恢复期限不延长。旧失败任务无编号不能凭空恢复。
+
+## 2026-10-26 B2B 交付范围
+
+main 为 d896d7c，开发版为 c13a7c0。独立工作区以 main 为基线迁移非灵感功能，避免将灵感导航、后端与数据库迁移带入本次交付。原工作区改动全部保留。
