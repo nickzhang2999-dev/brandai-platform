@@ -55,3 +55,32 @@
 - `scripts/test-inspiration-db.ts` 实测 **28 PASS**。使用当前 `D:/coding/OmniSignal-ad-workbench` 的真实 Python 审核适配器和 Ed25519 发布器生成合成测试包，再由 Nova 真实协议校验、事务和数据库消费。新增覆盖人工分类贯通、中文检索、广告/参考筛选、旧默认标签不污染检索且原始签名记录保持不变，以及两通道错误隔离、相同撤回版本刷新、摘要核验、租户隔离和恢复检查。
 - 机器可读结果：`.novart-build/inspiration-integration/cc74526c-82db-4d5f-8616-c5f72a0b62e5/result.json`。这些素材均为合成技术测试样本，付费模型调用为 0，不代表正式案例质量或模型效果验收。
 - 测试脚本清理本轮精确创建的用户与工作空间后，SQL 核验 `User`、`BrandWorkspace`、`InspirationState` 均为 0；48 条迁移记录保留。临时 Postgres 已正常关闭，55432 端口已关闭，为兼容 Windows 中文路径建立的临时 ASCII junction 已核对目标后移除。发行包和空测试库保留在忽略目录，未加入 Git。
+
+## 本轮体验范围
+
+本轮只更新灵感独立开发版，主产品 main 与正式站不随之发布。使用已有账号打开灵感页，先查看“内容更新 / 撤回检查”，再按案例类型、行业、媒介、设计任务和关键词查找；筛选链接可以刷新恢复。需要追踪版本时展开“查看更新详情”。
+
+现有正式用途仍未确认，Nova 保留的是一个自有 TEST 包装参考案例。它的历史发布包没有人工分类，应显示“分类待补审”，不会命中行业/媒介/任务筛选；这是刻意拒绝使用旧默认标签。Omni 以后审核素材时需确认真实分类，必要时同时复核因 revision 变化而过期的设计分析，再发布新不可变版本。不会为了演示筛选而修改旧签名包或放行第三方候选。
+
+广告与设计参考两类的技术筛选已用合成包完整验收；真实业务内容质量、20 个以上案例评测和持续运行验收仍需要后续正式试点材料，不把本轮工程结果替代为业务结论。
+
+## 开发版部署回执
+
+- Nova 代码 `75e5f2a9a819c2703331bae2964d9ade25d12f79` 已推至 `devUpdate1012`，未并入 main。
+- 同 SHA 的 [CI 40278124891](https://github.com/nickzhang2999-dev/brandai-platform/actions/runs/40278124891) 与 [Branch Image 40278077378](https://github.com/nickzhang2999-dev/brandai-platform/actions/runs/40278077378) 均成功后，通过 CDS canonical deploy 执行；部署运行 `dr_d250d70d1981b90f80459637` 到达 deployed。
+- web、worker、ai 的实际运行 SHA 与提交文件 hash 均已核对；七字段迁移成功、无回滚；web 和 worker 的 `/knowledge/v1/latest` 与 `/withdrawals/latest` 均为 200。保持 prebuilt=true，分支 profileOverrides 与 extraProfiles 不变。
+- canonical 预览地址：[灵感独立开发版](https://devupdate1012-brandai-platform.geole.me/inspiration?workspaceId=cmvg9rcdg0008o22loor14oln)。公网真实账号浏览器结果另记下方。
+- Omni 使用 `omnisignal-ad-workbench:20261026-reviewed-taxonomy-246a1e8`。第一次切换被验收脚本把构建专用文件误列为运行文件而触发回退；旧版健康恢复后，修正检查为 Docker 实际复制的 143 个运行文件，用同一镜像重试成功，未修改运行代码规避检查。
+- Omni 新版 healthy，认证 taxonomy API、新前端资源、POTW 可用；31 个素材与 assets/releases/plans/analysis_jobs、图片、发布目录、账号、签名密钥及四个挂载核对保持一致。缺分类/过期分类的发布 409 使用同镜像隔离合成库验收，没有改真实素材审核。
+- Omni 回退备份：`/opt/omnisignal/backups/reviewed-taxonomy-20261026-246a1e8-retry1`；首轮自动回退证据单独保留。部署产物及私密运维记录未加入 Git。
+- CDS 镜像事件关联曾显示 `timed_out_no_run`，但同 SHA GitHub 实际成功。通过 canonical `claim-prebuilt` 的服务端 dry-run 验证后正式认领，状态恢复 ready/success；没有手工改写状态、重复部署或切换模式。
+
+## 真实登录验收追加修复
+
+真实 Chrome 正常登录发现早期 SSR 表单缺少 method 且输入/提交按钮已可用，React 的 submit handler 尚未接管时会按浏览器默认 GET 导航。只读复核确认：首屏 nativeMethod=get、控件未禁用、handler 未附着，约 3.8 秒后 handler 附着；没有脚本加载错误。CDS 的常驻 EventSource 使 networkidle 不适合作为页面就绪条件。
+
+该问题按真实缺陷处理，未以测试等待或 API 直登绕过：登录表单设置 `method=post`，客户端就绪之前禁止输入/提交，显示准备状态与无 JavaScript 提示；原有正常鉴权与 callback 范围规则保持。新增真实 SSR→延迟 hydration 浏览器回归，使用合成账号；真实验收失败记录中的导航字段已脱敏，未在日志保存凭据。修复交付回执待下方补录。
+
+- 新增 `scripts/test-login-hydration-browser.cjs`：真实组件 SSR 与 hydrateRoot 同节点接管、脚本延迟/关闭、正常提交、失败重试、callback 保留、原生 POST 后备共 13 项通过；4 次合成登录 POST、1 次强制原生 POST、0 凭据 GET、0 外网/浏览器异常/React hydration 告警。接入已有 CI 交互步骤。
+- 登录修复后的完整门禁再次通过：L1 2,354、AI 677、typecheck、生产 build、两个发布检查。
+- 初版 75e5f2a 的真实账号灵感页子集检查 106 项通过（1440/390px，30 业务 GET、0 业务写）。登录早期提交失败单独保留，不能被这次子集通过覆盖；中途一次健康检查超时后恢复，未推断网络根因。

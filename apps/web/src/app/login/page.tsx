@@ -9,6 +9,7 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [ready, setReady] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [providers, setProviders] = useState<string[]>([]);
@@ -25,6 +26,9 @@ export default function LoginPage() {
   }
 
   useEffect(() => {
+    // The server-rendered form must not accept credentials until React owns
+    // its submit handler. A native fallback must never put them in a GET URL.
+    setReady(true);
     const controller = new AbortController();
     fetch("/api/auth/providers")
       .then((r) => r.json())
@@ -39,6 +43,7 @@ export default function LoginPage() {
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    if (!ready || loading) return;
     setError(null);
     setLoading(true);
     try {
@@ -115,7 +120,7 @@ export default function LoginPage() {
           </div>
         )}
 
-        <form className="mt-7 flex flex-col gap-5" onSubmit={submit} aria-busy={loading}>
+        <form method="post" className="mt-7 flex flex-col gap-5" onSubmit={submit} aria-busy={!ready || loading}>
           <div className="flex flex-col gap-2">
             <Label htmlFor="login-email" className="text-sm font-medium">邮箱</Label>
             <Input
@@ -129,7 +134,7 @@ export default function LoginPage() {
               spellCheck={false}
               placeholder="输入邮箱地址"
               className="h-12 rounded-2xl px-4 text-[15px]"
-              disabled={loading}
+              disabled={!ready || loading}
               required
             />
           </div>
@@ -145,7 +150,7 @@ export default function LoginPage() {
                 autoComplete={mode === "login" ? "current-password" : "new-password"}
                 placeholder={mode === "login" ? "输入密码" : "设置密码，至少 8 位"}
                 className="h-12 rounded-2xl pl-4 pr-12 text-[15px]"
-                disabled={loading}
+                disabled={!ready || loading}
                 required
                 minLength={8}
               />
@@ -154,7 +159,7 @@ export default function LoginPage() {
                 aria-label={showPassword ? "隐藏密码" : "显示密码"}
                 aria-pressed={showPassword}
                 aria-controls="login-password"
-                disabled={loading}
+                disabled={!ready || loading}
                 className="absolute right-1 top-1 flex h-10 w-10 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-accent-soft hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => setShowPassword((value) => !value)}
@@ -166,10 +171,11 @@ export default function LoginPage() {
             </div>
           </div>
           {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-          <Button type="submit" disabled={loading} className="h-12 w-full rounded-2xl text-sm font-semibold">
-            {loading ? "处理中…" : mode === "login" ? "登录" : "注册并登录"}
+          <Button type="submit" disabled={!ready || loading} className="h-12 w-full rounded-2xl text-sm font-semibold">
+            {!ready ? "正在准备登录…" : loading ? "处理中…" : mode === "login" ? "登录" : "注册并登录"}
           </Button>
         </form>
+        <noscript><p className="mt-4 text-sm text-muted-foreground">登录需要启用 JavaScript。请启用后刷新页面。</p></noscript>
 
         {registrationOpen && <button
           type="button"

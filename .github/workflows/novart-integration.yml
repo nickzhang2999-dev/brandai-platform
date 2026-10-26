@@ -83,6 +83,7 @@ jobs:
           export NOVART_CHROMIUM_EXECUTABLE="$(pnpm -F web exec node -e 'process.stdout.write(require("playwright/test").chromium.executablePath())')"
           test -f "$NOVART_CHROMIUM_EXECUTABLE"
           mkdir -p apps/web/.novart-ui-artifacts
+          NOVART_LOGIN_HYDRATION_REPORT=apps/web/.novart-ui-artifacts/login-hydration.json node scripts/test-login-hydration-browser.cjs
           NOVART_OWNED_REPORT=apps/web/.novart-ui-artifacts/owned-react-fixture.json node scripts/test-novart-owned-canvas-browser.cjs
           NOVART_ENGINE_REPORT=apps/web/.novart-ui-artifacts/owned-engine-fixture.json node scripts/test-novart-engine-browser.cjs
           NOVART_OWNED_LAYERS_ONLY=1 NOVART_OWNED_REPORT=apps/web/.novart-ui-artifacts/owned-layer-fixture.json node scripts/test-novart-owned-canvas-browser.cjs
