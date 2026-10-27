@@ -1,6 +1,6 @@
 # 画布 AI 文案
 
-本地实现日期：2026-10-21。分支 `claude/canvas-copywriting`，基于 `devUpdate1012` 的 `d049a46`，尚未发布。
+最初实现于 2026-10-21，分支 `claude/canvas-copywriting`，基于 `devUpdate1012` 的 `d049a46`。预览验收后，正式环境已于 2026-10-27 完成独立文案配置同步和真实生成验收。
 
 ## 用户操作
 
@@ -57,3 +57,10 @@ Web 和独立 Worker 进程都要注入以下服务端环境变量：
 - 附图保存进画布并选中，文案面板沿用「参考所选图片」行为（多图时只取第一张合格图片）。本次未扩展多图文案模型输入。
 
 本地验证及边界见 [首页模式分离日志](worklog/2026-10-22-home-creation-modes.md)。
+
+
+## 正式环境配置（2026-10-27）
+
+正式 Web、Worker 共用 `/opt/brandai-platform-prod/.env` 中的三项 `COPYWRITING_*` 变量，模型为 `qwen3.7-plus`。预览分支的服务覆盖变量不会随代码合并自动进入该文件；更新后需要重新创建 Web、Worker 容器。
+
+本次保持生产 `632ac2f` 镜像，完成配置备份、三键差异检查、双服务重建、公网健康、真实生成三组结果及刷新恢复验收。密钥和接口地址不进入 Git。详见 [正式同步记录](worklog/2026-10-27-copywriting-production-sync.md)。

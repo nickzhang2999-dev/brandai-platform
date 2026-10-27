@@ -1,0 +1,70 @@
+{
+  "date": "2026-10-27",
+  "projectId": "a8a098f7193a",
+  "targetId": "brandai-novartlab-local-prod",
+  "operatorRequestId": "req-mvqdjmxn-fabdec",
+  "maintenanceResult": {
+    "operation": "sync-production-copywriting",
+    "expectedCommit": "632ac2fa8abdb6bc535ff4df12f3232719b2af83",
+    "changedKeys": [
+      "COPYWRITING_BASE_URL",
+      "COPYWRITING_MODEL",
+      "COPYWRITING_API_KEY"
+    ],
+    "backupDirectory": "/opt/brandai-platform-prod/config-backups/copywriting-20261027T074008Z-eeeab990",
+    "sourceWebWorkerSettingsEqual": true,
+    "model": "qwen3.7-plus",
+    "sameImages": true,
+    "planValidated": true,
+    "productionReleaseId": "rel_ccbb7b6ac27fb9b7",
+    "status": "success",
+    "applied": true,
+    "webWorkerReady": true,
+    "unrelatedContainersUnchanged": true,
+    "publicHealthVerified": true
+  },
+  "browserVerification": {
+    "origin": "https://deepflare.cn",
+    "workspaceId": "cmra9orxw000vqtwz1xayngki",
+    "projectId": "cmvqdmyly0001pk111nmzpwoz",
+    "createdIndependentBlankProject": true,
+    "existingHomeDraftPreserved": true,
+    "liveGenerationSubmittedOnce": true,
+    "candidateCount": 3,
+    "titles": [
+      "让每一张静图，生动起来",
+      "静止太无聊？试试让图片动起来",
+      "一键激活图片生命力"
+    ],
+    "historyRestoredAfterReload": true
+  },
+  "ciDiagnosis": {
+    "commit": "632ac2fa8abdb6bc535ff4df12f3232719b2af83",
+    "ciRun": 40447600956,
+    "ciConclusion": "success",
+    "imageRun": 40447600977,
+    "imageConclusion": "success",
+    "cdsCheckRun": 122007290016,
+    "cdsConclusion": "failure",
+    "cdsReason": "CI image wait timed out; no matching build completion was recorded",
+    "deploymentStateNotRepairedByThisConfigurationSync": true
+  },
+  "earlierAttempts": [
+    {
+      "requestId": "req-mvqcl3j1-08157a",
+      "result": "failed before production write: read-only production directory in execution environment"
+    },
+    {
+      "requestId": "req-mvqcy98o-e24764",
+      "result": "failed before production write: staged temporary file not found at execution endpoint"
+    },
+    {
+      "requestId": "req-mvqd4o5m-5f10cf",
+      "result": "failed before production write: assumed CDS state file absent"
+    },
+    {
+      "requestId": "req-mvqd7tw4-519048",
+      "result": "failed before production write: SSH record unavailable in candidate state files"
+    }
+  ]
+}
