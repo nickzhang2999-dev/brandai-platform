@@ -45,6 +45,13 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
+      - name: Verify committed production release entry
+        run: |
+          git cat-file -e HEAD:cds-release.sh
+          test -f cds-release.sh && test -x cds-release.sh
+          bash -n cds-release.sh
+          git ls-tree HEAD -- cds-release.sh
+          sha256sum cds-release.sh
       - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0

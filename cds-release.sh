@@ -4,8 +4,16 @@ set -Eeuo pipefail
 cd "$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 check() {
+  # Detect an incomplete/stale release checkout before any production command.
+  test -f ./cds-release.sh && test -x ./cds-release.sh
+  git cat-file -e HEAD:cds-release.sh
+  git diff --quiet HEAD -- cds-release.sh || {
+    echo 'Release script differs from the selected Git commit' >&2
+    exit 1
+  }
   bash -n ./cds-release.sh
   node --test scripts/test-novart-production.mjs
+  node --input-type=module -e 'import fs from "node:fs"; import {createHash} from "node:crypto"; import {execFileSync} from "node:child_process"; console.log(JSON.stringify({scriptFile:"cds-release.sh",commit:execFileSync("git",["rev-parse","HEAD"],{encoding:"utf8"}).trim(),sha256:createHash("sha256").update(fs.readFileSync("cds-release.sh")).digest("hex")}))'
 }
 
 case "${1:-}" in
