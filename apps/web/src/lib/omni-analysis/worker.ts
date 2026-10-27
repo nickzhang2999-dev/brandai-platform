@@ -1,6 +1,6 @@
 import { prisma } from '@brandai/db';
 import { OmniAnalysisInput, OmniAnalysisResult } from '@brandai/contracts';
-import { getEffectiveAiSettings } from '../settings';
+import { getOmniAnalysisProvider } from './configuration';
 import { activeScope } from './service';
 import { OMNI_KIND, serviceConfig, providerReady } from './policy';
 import { analyzeImage } from './provider';
@@ -19,14 +19,14 @@ export async function processAnalysis(id:string) {
   const timer=setTimeout(()=>controller.abort(),Math.max(1,deadline));
   try {
     await activeScope();
-    if(!c.dailyLimit||meta?.user_id!==c.userId)throw new Error('scope_unavailable');
+    if(c.dailyLimit===0||meta?.user_id!==c.userId)throw new Error('scope_unavailable');
     const input=OmniAnalysisInput.parse(meta?.request);
-    const provider=(await getEffectiveAiSettings()).vlm;
+    const provider=await getOmniAnalysisProvider();
     if(!providerReady(provider))throw new AnalysisFailure('visual_model_not_configured');
     if(controller.signal.aborted)throw new Error('deadline');
     const result=OmniAnalysisResult.parse(await analyzeImage(input,provider,controller.signal));
     await activeScope();
-    if(controller.signal.aborted||!serviceConfig().dailyLimit)throw new Error('deadline');
+    if(controller.signal.aborted||serviceConfig().dailyLimit===0)throw new Error('deadline');
     await prisma.asyncTask.updateMany({where:{...where,status:'RUNNING',expiresAt:{gt:new Date()}},data:{status:'SUCCEEDED',progress:100,error:null,resultJson:result,inputJson:stripped}});
   } catch(error) {
     // Never persist provider exception text: it can contain headers, keys or image bytes.
@@ -49,7 +49,7 @@ export function createOmniAnalysisWorker() {
     if(stopped||flight)return;
     flight=(async()=>{
       await sweepAnalysis();
-      const c=serviceConfig();if(!c.workspaceId||!c.userId||!c.dailyLimit)return;
+      const c=serviceConfig();if(!c.workspaceId||!c.userId||c.dailyLimit===0)return;
       const task=await prisma.asyncTask.findFirst({where:{workspaceId:c.workspaceId,kind:OMNI_KIND,status:'PENDING',expiresAt:{gt:new Date()}},orderBy:{createdAt:'asc'},select:{id:true}});
       if(task)await processAnalysis(task.id);
     })().catch(()=>{console.error('[omni-analysis] worker unavailable; pending work retained');}).finally(()=>{flight=null;});

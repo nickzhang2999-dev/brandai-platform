@@ -4,13 +4,20 @@ import type { ProviderConfig } from '../settings';
 
 export const OMNI_KIND = 'OMNI_INSPIRATION_ANALYSIS';
 export const OMNI_TTL_MS = 6 * 60_000;
+export const OMNI_FAL_OPENROUTER_BASE = 'https://fal.run/openrouter/router/openai/v1';
+export function validModelId(model:string) {
+  return model.length>0&&model.length<=200&&/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/.test(model)
+    &&!model.includes('..')&&!model.includes('//');
+}
+export function falQwenModel(model:string) {return validModelId(model)&&/^qwen\/qwen[a-z0-9._:-]+$/i.test(model);}
 export class OmniError extends Error { constructor(public status:number, public reason:string) { super(reason); } }
 export function serviceConfig() {
   const tokenHash=process.env.OMNI_ANALYSIS_TOKEN_SHA256 || '';
   const workspaceId=process.env.OMNI_ANALYSIS_WORKSPACE_ID || '';
   const userId=process.env.OMNI_ANALYSIS_USER_ID || '';
   const raw=process.env.OMNI_ANALYSIS_DAILY_LIMIT || '0';
-  const dailyLimit=/^\d{1,5}$/.test(raw) ? Number(raw) : 0;
+  // Only this explicit value removes the daily cap. Zero/missing/invalid stays off.
+  const dailyLimit=raw==='unlimited' ? null : /^\d{1,5}$/.test(raw) ? Number(raw) : 0;
   return {tokenHash,workspaceId,userId,dailyLimit};
 }
 export function checkToken(headers:Headers) {
@@ -22,7 +29,10 @@ export function checkToken(headers:Headers) {
   return c;
 }
 export function providerReady(c:ProviderConfig) {
-  if(!c.apiKey || !c.model.trim() || c.model.length>200 || !c.baseUrl || !['http','openai','qwen','dashscope'].includes(c.provider)) return false;
+  if(!c.apiKey || !c.model.trim() || c.model.length>200 || !c.baseUrl) return false;
+  // The fal credential is only allowed at this official, fixed compatibility URL.
+  if(c.provider==='fal-openrouter')return c.baseUrl===OMNI_FAL_OPENROUTER_BASE&&falQwenModel(c.model);
+  if(!['http','openai','qwen','dashscope'].includes(c.provider))return false;
   try {const u=new URL(c.baseUrl);return u.protocol==='https:'&&!u.username&&!u.password&&!u.search&&!u.hash;} catch {return false;}
 }
 export function checkedInput(raw:unknown) {

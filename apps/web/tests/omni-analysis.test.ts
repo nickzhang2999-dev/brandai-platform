@@ -5,16 +5,18 @@ const db=vi.hoisted(()=>({user:{findFirst:vi.fn()},brandWorkspace:{findFirst:vi.
 const settings=vi.hoisted(()=>vi.fn());
 vi.mock('@brandai/db',()=>({prisma:db}));
 vi.mock('@/lib/settings',()=>({getEffectiveAiSettings:settings}));
-import { OmniAnalysisInput, OmniAnalysisResult } from '@brandai/contracts';
-import { checkToken, checkedInput, jobView, payloadHash, providerReady, readInput, requestRef, serviceConfig } from '@/lib/omni-analysis/policy';
+import { OmniAnalysisConfig, OmniAnalysisInput, OmniAnalysisResult } from '@brandai/contracts';
+import { checkToken, checkedInput, jobView, OMNI_FAL_OPENROUTER_BASE, payloadHash, providerReady, readInput, requestRef, serviceConfig } from '@/lib/omni-analysis/policy';
 import { activeScope, authenticate, configuration, getJob, getJobByRequest, submit } from '@/lib/omni-analysis/service';
 import { analyzeImage, visionTokenOptions } from '@/lib/omni-analysis/provider';
 import { AnalysisFailure, safeAnalysisFailure } from '@/lib/omni-analysis/failure';
 import { processAnalysis, sweepAnalysis } from '@/lib/omni-analysis/worker';
+import { getOmniAnalysisProvider } from '@/lib/omni-analysis/configuration';
 import { POST } from '@/app/api/internal/inspiration-analysis/jobs/route';
 
 const token='unit-test-service-token-1234567890';
 const vlm={provider:'openai',model:'configured-model',apiKey:'unit-provider-secret',baseUrl:'https://model.example.test/v1'};
+const layer={provider:'fal',model:'fal-ai/qwen-image-layered',apiKey:'unit-fal-secret',baseUrl:'https://fal.run/fal-ai/qwen-image-layered'};
 const input={request_id:'1234567890abcdef',source_image_id:'image-1',revision:1,image_sha256:'a'.repeat(64),image_base64:'/9j/AA==',title:'素材',description:'项目说明'};
 const suggestion={kind:'reference',purposes:[],reason:'【图像观察】包装',description:'【图像观察】蓝色',ocr_text:'',brand:'',design:{palette:'【图像观察】蓝色',typography:'不确定',composition:'居中',hierarchy:'标题突出',imagery:'摄影',reusable_ideas:'【分析推断】色彩分组',applicability:'包装',limitations:'单图无法核验来源说明'}};
 const task=()=>({id:'job1',workspaceId:'workspace1',kind:'OMNI_INSPIRATION_ANALYSIS',status:'PENDING',error:null,resultJson:null,expiresAt:new Date(Date.now()+300000),inputJson:{payload_hash:payloadHash(input),user_id:'user1',request:input}});
@@ -22,6 +24,8 @@ beforeEach(()=>{
   vi.resetAllMocks();
   vi.stubEnv('OMNI_ANALYSIS_TOKEN_SHA256',createHash('sha256').update(token).digest('hex'));
   vi.stubEnv('OMNI_ANALYSIS_WORKSPACE_ID','workspace1');vi.stubEnv('OMNI_ANALYSIS_USER_ID','user1');vi.stubEnv('OMNI_ANALYSIS_DAILY_LIMIT','5');
+  vi.stubEnv('OMNI_ANALYSIS_MODEL','');
+  vi.stubEnv('OMNI_ANALYSIS_PROVIDER','');
   db.user.findFirst.mockResolvedValue({id:'user1'});db.brandWorkspace.findFirst.mockResolvedValue({ownerId:'user1'});db.membership.findUnique.mockResolvedValue(null);
   db.$transaction.mockImplementation((fn:(db:unknown)=>unknown)=>fn(db));db.$executeRaw.mockResolvedValue(1);
   db.asyncTask.findFirst.mockResolvedValue(null);db.asyncTask.findMany.mockResolvedValue([]);db.asyncTask.count.mockResolvedValue(0);db.asyncTask.create.mockResolvedValue(task());db.asyncTask.updateMany.mockResolvedValue({count:1});
@@ -44,6 +48,58 @@ describe('Omni service auth and contracts',()=>{
     expect(await configuration()).toEqual({ready:true,state:'ready',model:'configured-model',daily_limit:5});
     vi.stubEnv('OMNI_ANALYSIS_DAILY_LIMIT','');expect(serviceConfig().dailyLimit).toBe(0);expect((await configuration()).ready).toBe(false);
     expect(providerReady({...vlm,provider:'mock'})).toBe(false);expect(providerReady({...vlm,baseUrl:'http://model.test'})).toBe(false);expect(providerReady({...vlm,baseUrl:'https://a:b@model.test'})).toBe(false);
+  });
+  it('represents explicit unlimited as required null without treating it as disabled',async()=>{
+    vi.stubEnv('OMNI_ANALYSIS_DAILY_LIMIT','unlimited');
+    expect(serviceConfig().dailyLimit).toBeNull();
+    expect(OmniAnalysisConfig.parse(await configuration())).toEqual({ready:true,state:'ready',model:vlm.model,daily_limit:null});
+    for(const value of [-1,1.5,'unlimited',true,undefined])expect(OmniAnalysisConfig.safeParse({ready:true,state:'ready',model:vlm.model,daily_limit:value}).success).toBe(false);
+  });
+  it.each(['','0','-1','Infinity','NaN','3.5','999999','UNLIMITED',' unlimited '])('keeps invalid or disabled daily limit %s closed',async raw=>{
+    vi.stubEnv('OMNI_ANALYSIS_DAILY_LIMIT',raw);expect(serviceConfig().dailyLimit).toBe(0);
+    expect((await configuration()).state).toBe('daily_limit_disabled');
+  });
+  it('overrides only the Omni model while reusing unchanged gateway settings',async()=>{
+    settings.mockResolvedValue({vlm:Object.freeze({...vlm})});
+    vi.stubEnv('OMNI_ANALYSIS_MODEL',' qwen3-vl-flash ');
+    expect(await getOmniAnalysisProvider()).toEqual({...vlm,model:'qwen3-vl-flash'});
+    expect(await configuration()).toMatchObject({ready:true,model:'qwen3-vl-flash'});
+    expect((await settings()).vlm).toEqual(vlm);
+    vi.stubEnv('OMNI_ANALYSIS_MODEL',' ');expect(await getOmniAnalysisProvider()).toEqual(vlm);
+  });
+  it.each(['https://model.test/v1','qwen3-vl-flash?key=private','qwen model','qwen\nmodel','../qwen','m'.repeat(201)])('rejects malformed model override without global fallback: %s',async raw=>{
+    vi.stubEnv('OMNI_ANALYSIS_MODEL',raw);
+    expect(await configuration()).toMatchObject({ready:false,state:'visual_model_not_configured',model:''});
+    await expect(submit(input)).rejects.toThrow('visual_model_not_configured');expect(db.asyncTask.create).not.toHaveBeenCalled();
+  });
+  it('uses only the configured fal key for the explicitly selected Qwen gateway',async()=>{
+    settings.mockResolvedValue({vlm:Object.freeze({...vlm}),layer:Object.freeze({...layer})});
+    vi.stubEnv('OMNI_ANALYSIS_PROVIDER','fal-openrouter');vi.stubEnv('OMNI_ANALYSIS_MODEL','qwen/qwen3-vl-flash');
+    vi.stubEnv('OMNI_ANALYSIS_BASE_URL','https://untrusted.example.test');
+    expect(await getOmniAnalysisProvider()).toEqual({provider:'fal-openrouter',apiKey:layer.apiKey,baseUrl:OMNI_FAL_OPENROUTER_BASE,model:'qwen/qwen3-vl-flash'});
+    expect(await configuration()).toMatchObject({ready:true,model:'qwen/qwen3-vl-flash'});
+    expect((await settings()).layer).toEqual(layer);expect((await settings()).vlm).toEqual(vlm);
+    expect(JSON.stringify(await configuration())).not.toContain('unit-');
+  });
+  it.each([undefined,{...layer,provider:'mock'},{...layer,provider:'openai'},{...layer,apiKey:''}])('requires an existing matching fal configuration without borrowing VLM credentials',async unavailable=>{
+    settings.mockResolvedValue({vlm,layer:unavailable});vi.stubEnv('OMNI_ANALYSIS_PROVIDER','fal-openrouter');vi.stubEnv('OMNI_ANALYSIS_MODEL','qwen/qwen3-vl-flash');
+    const resolved=await getOmniAnalysisProvider();expect(resolved.apiKey).toBe('');expect(providerReady(resolved)).toBe(false);
+    await expect(submit(input)).rejects.toThrow('visual_model_not_configured');expect(db.asyncTask.create).not.toHaveBeenCalled();
+  });
+  it.each(['','gpt-4o','openai/gpt-4o','qwen model','qwen/qwen3-vl-flash?token=secret'])('requires an explicit valid Qwen model for fal: %s',async model=>{
+    settings.mockResolvedValue({vlm,layer});vi.stubEnv('OMNI_ANALYSIS_PROVIDER','fal-openrouter');vi.stubEnv('OMNI_ANALYSIS_MODEL',model);
+    expect(await configuration()).toMatchObject({ready:false,state:'visual_model_not_configured',model:''});
+  });
+  it('fails an unknown Omni backend closed without selecting either configured credential',async()=>{
+    settings.mockResolvedValue({vlm,layer});vi.stubEnv('OMNI_ANALYSIS_PROVIDER','unknown');
+    expect(await getOmniAnalysisProvider()).toEqual({provider:'',apiKey:'',baseUrl:'',model:''});
+    expect((await configuration()).ready).toBe(false);
+  });
+  it('restricts fal credentials to the exact fixed official URL and explicit Qwen IDs',()=>{
+    const c={provider:'fal-openrouter',apiKey:layer.apiKey,baseUrl:OMNI_FAL_OPENROUTER_BASE,model:'qwen/qwen3-vl-flash'};
+    expect(providerReady(c)).toBe(true);
+    for(const baseUrl of ['https://other.example.test/v1',OMNI_FAL_OPENROUTER_BASE+'/',OMNI_FAL_OPENROUTER_BASE+'?x=1',OMNI_FAL_OPENROUTER_BASE+'#part','http://fal.run/openrouter/router/openai/v1','https://fal.run:444/openrouter/router/openai/v1','https://user:secret@fal.run/openrouter/router/openai/v1'])expect(providerReady({...c,baseUrl})).toBe(false);
+    expect(providerReady({...c,model:'openai/gpt-4o'})).toBe(false);expect(providerReady({...c,apiKey:''})).toBe(false);
   });
   it('rejects URLs, client model overrides, unknown rights, invalid JPEG and oversized data',()=>{
     for(const change of [{image_url:'https://image.test/a.jpg'},{model:'other'},{rights:'allowed'},{revision:0},{image_sha256:'x'}])expect(OmniAnalysisInput.safeParse({...input,...change}).success).toBe(false);
@@ -87,6 +143,15 @@ describe('Omni durable admission',()=>{
     db.asyncTask.count.mockResolvedValueOnce(0).mockResolvedValueOnce(20);await expect(submit(input)).rejects.toThrow('queue_full');
     vi.stubEnv('OMNI_ANALYSIS_DAILY_LIMIT','0');await expect(submit(input)).rejects.toThrow('daily_limit_disabled');
   });
+  it('removes only daily cap while retaining admission ledger and queue bound',async()=>{
+    vi.stubEnv('OMNI_ANALYSIS_DAILY_LIMIT','unlimited');
+    db.asyncTask.count.mockResolvedValueOnce(1000000).mockResolvedValueOnce(19);
+    expect(await submit(input)).toMatchObject({created:true,job:{status:'queued'}});
+    expect(db.asyncTask.count).toHaveBeenCalledTimes(2);expect(db.asyncTask.create).toHaveBeenCalledOnce();
+    db.asyncTask.count.mockResolvedValueOnce(1000001).mockResolvedValueOnce(20);
+    await expect(submit({...input,request_id:'abcdef1234567890'})).rejects.toThrow('queue_full');
+    expect(db.asyncTask.create).toHaveBeenCalledOnce();
+  });
   it('does not disclose a job owned by another fixed service actor',async()=>{
     db.asyncTask.findFirst.mockResolvedValue({...task(),inputJson:{user_id:'other'}});await expect(getJob('job1')).rejects.toThrow('job_not_found');
     expect(db.asyncTask.findFirst.mock.calls[0][0].where).toEqual({id:'job1',workspaceId:'workspace1',kind:'OMNI_INSPIRATION_ANALYSIS'});
@@ -117,6 +182,16 @@ describe('Omni paid execution',()=>{
   it.each(['custom-vision','openai/gpt-4o','vendor/gpt-50-vision'])('preserves nonreasoning wire shape for %s',model=>{
     expect(visionTokenOptions(model)).toEqual({max_tokens:4000,temperature:0.2});
   });
+  it.each(['qwen3-vl-plus','qwen3-vl-flash','qwen3-vl-plus-2025-12-19','qwen/qwen3-vl-flash-2026-01-22'])('disables thinking for supported Qwen3 VL JSON mode: %s',model=>{
+    expect(visionTokenOptions(model)).toEqual({max_tokens:4000,temperature:0.2,enable_thinking:false});
+  });
+  it.each(['qwen3.7-plus','qwen3-vl-235b-a22b-thinking','qwen-vl-plus','qwen3-vl-plus-custom'])('does not guess thinking controls for %s',model=>{
+    expect(visionTokenOptions(model)).not.toHaveProperty('enable_thinking');
+  });
+  it('does not send Dashscope-specific thinking controls through fal OpenRouter',()=>{
+    expect(visionTokenOptions('qwen/qwen3-vl-plus','fal-openrouter')).toEqual({max_tokens:4000,temperature:0.2});
+    expect(visionTokenOptions('qwen/qwen3-vl-30b-a3b-instruct','fal-openrouter')).toEqual({max_tokens:4000,temperature:0.2});
+  });
   it('validates actual JPEG bytes before any provider request',async()=>{
     const fetcher=vi.fn();vi.stubGlobal('fetch',fetcher);await expect(analyzeImage(input,vlm,new AbortController().signal)).rejects.toThrow('invalid_jpeg');expect(fetcher).not.toHaveBeenCalled();
   });
@@ -124,6 +199,17 @@ describe('Omni paid execution',()=>{
     const fetcher=vi.fn().mockResolvedValue(success());vi.stubGlobal('fetch',fetcher);
     const result=await analyzeImage(await realJpeg(),vlm,new AbortController().signal);expect(result.model_version).toBe('configured-model');expect(result.design.palette).toContain('图像观察');
     const [url,init]=fetcher.mock.calls[0];expect(String(url)).toBe('https://model.example.test/v1/chat/completions');expect(init.redirect).toBe('error');expect(JSON.parse(init.body).model).toBe('configured-model');expect(fetcher).toHaveBeenCalledOnce();
+    expect(init.headers.Authorization).toBe('Bearer '+vlm.apiKey);
+  });
+  it('uses fal Key authentication only at its fixed endpoint and returns the requested Qwen model',async()=>{
+    settings.mockResolvedValue({vlm,layer});vi.stubEnv('OMNI_ANALYSIS_PROVIDER','fal-openrouter');vi.stubEnv('OMNI_ANALYSIS_MODEL','qwen/qwen3-vl-flash');
+    const fetcher=vi.fn().mockResolvedValue(success());vi.stubGlobal('fetch',fetcher);
+    const result=await analyzeImage(await realJpeg(),await getOmniAnalysisProvider(),new AbortController().signal);
+    const [url,options]=fetcher.mock.calls[0];expect(String(url)).toBe(OMNI_FAL_OPENROUTER_BASE+'/chat/completions');
+    expect(options.headers.Authorization).toBe('Key '+layer.apiKey);expect(options.headers.Authorization).not.toContain(vlm.apiKey);
+    expect(JSON.parse(options.body)).toMatchObject({model:'qwen/qwen3-vl-flash',stream:false,response_format:{type:'json_object'}});
+    expect(JSON.parse(options.body)).not.toHaveProperty('enable_thinking');
+    expect(result.model_version).toBe('qwen/qwen3-vl-flash');expect(fetcher).toHaveBeenCalledOnce();
   });
   it('fails malformed or oversized upstream responses without fallback paid retry',async()=>{
     const fetcher=vi.fn().mockResolvedValue(new Response('x'.repeat(256*1024+1)));vi.stubGlobal('fetch',fetcher);
@@ -175,6 +261,30 @@ describe('Omni paid execution',()=>{
     const current=task();current.inputJson.request=await realJpeg();db.asyncTask.findFirst.mockResolvedValue(current);vi.stubGlobal('fetch',vi.fn().mockResolvedValue(success()));
     await processAnalysis('job1');const data=db.asyncTask.updateMany.mock.calls.at(-1)?.[0].data;
     expect(data.status).toBe('SUCCEEDED');expect(data.resultJson.model_version).toBe(vlm.model);expect(data.inputJson).not.toHaveProperty('request');
+  });
+  it('uses the same Omni override in config and unlimited worker execution',async()=>{
+    vi.stubEnv('OMNI_ANALYSIS_MODEL','qwen3-vl-flash');vi.stubEnv('OMNI_ANALYSIS_DAILY_LIMIT','unlimited');
+    const current=task();current.inputJson.request=await realJpeg();db.asyncTask.findFirst.mockResolvedValue(current);
+    const fetcher=vi.fn().mockResolvedValue(success());vi.stubGlobal('fetch',fetcher);
+    expect((await configuration()).model).toBe('qwen3-vl-flash');
+    await processAnalysis('job1');const data=db.asyncTask.updateMany.mock.calls.at(-1)?.[0].data;
+    expect(data.status).toBe('SUCCEEDED');expect(data.resultJson.model_version).toBe('qwen3-vl-flash');
+    const [url,options]=fetcher.mock.calls[0];expect(String(url)).toBe(vlm.baseUrl+'/chat/completions');
+    expect(options.headers.Authorization).toBe('Bearer '+vlm.apiKey);
+    expect(JSON.parse(options.body)).toMatchObject({model:'qwen3-vl-flash',enable_thinking:false,response_format:{type:'json_object'}});
+    expect(fetcher).toHaveBeenCalledOnce();expect(vlm.model).toBe('configured-model');
+  });
+  it('does not call a global fallback when the worker override is invalid',async()=>{
+    vi.stubEnv('OMNI_ANALYSIS_MODEL','bad model');
+    const current=task();current.inputJson.request=await realJpeg();db.asyncTask.findFirst.mockResolvedValue(current);
+    const fetcher=vi.fn();vi.stubGlobal('fetch',fetcher);await processAnalysis('job1');
+    expect(fetcher).not.toHaveBeenCalled();expect(db.asyncTask.updateMany.mock.calls.at(-1)?.[0].data.error).toBe('visual_model_not_configured');
+  });
+  it('discards the result if unlimited is disabled during model execution',async()=>{
+    vi.stubEnv('OMNI_ANALYSIS_DAILY_LIMIT','unlimited');
+    const current=task();current.inputJson.request=await realJpeg();db.asyncTask.findFirst.mockResolvedValue(current);
+    vi.stubGlobal('fetch',vi.fn().mockImplementation(async()=>{vi.stubEnv('OMNI_ANALYSIS_DAILY_LIMIT','0');return success();}));
+    await processAnalysis('job1');expect(db.asyncTask.updateMany.mock.calls.at(-1)?.[0].data.status).toBe('FAILED');
   });
   it('expires abandoned jobs without retrying and strips retained image bytes',async()=>{
     db.asyncTask.findMany.mockResolvedValue([task()]);await sweepAnalysis();const data=db.asyncTask.updateMany.mock.calls.at(-1)?.[0].data;expect(data.error).toBe('analysis_expired_no_retry');expect(data.inputJson).not.toHaveProperty('request');

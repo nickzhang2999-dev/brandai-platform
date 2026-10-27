@@ -1,6 +1,6 @@
 import pytest
 from pydantic import ValidationError
-from app.omni_analysis_schemas import OmniAnalysisInput, OmniAnalysisJob, OmniAnalysisResult
+from app.omni_analysis_schemas import OmniAnalysisConfig, OmniAnalysisInput, OmniAnalysisJob, OmniAnalysisResult
 
 
 def test_input_is_service_data_not_provider_configuration():
@@ -26,3 +26,14 @@ def test_job_omits_result_until_completed():
     assert OmniAnalysisJob(id='job', status='queued', reason='').model_dump(exclude_none=True) == dict(id='job', status='queued', reason='')
     with pytest.raises(ValidationError):
         OmniAnalysisJob(id='job', status='queued', reason='', result=None)
+
+
+def test_config_null_is_unlimited_but_missing_and_invalid_limits_are_rejected():
+    body = dict(ready=True, state='ready', model='qwen3-vl-flash')
+    for limit in (None, 0, 3):
+        assert OmniAnalysisConfig(**body, daily_limit=limit).model_dump()['daily_limit'] == limit
+    with pytest.raises(ValidationError):
+        OmniAnalysisConfig(**body)
+    for limit in (-1, 1.5, 'unlimited', True):
+        with pytest.raises(ValidationError):
+            OmniAnalysisConfig(**body, daily_limit=limit)

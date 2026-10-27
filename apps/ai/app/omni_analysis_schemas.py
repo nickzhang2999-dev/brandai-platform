@@ -81,4 +81,5 @@ class OmniAnalysisConfig(StrictModel):
     ready: bool
     state: str
     model: str
-    daily_limit: int = Field(ge=0)
+    # Required nullable field: null is unlimited, zero is disabled.
+    daily_limit: int | None = Field(ge=0)

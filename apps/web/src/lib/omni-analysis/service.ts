@@ -1,6 +1,6 @@
 import { prisma, type Prisma } from '@brandai/db';
 import { OmniAnalysisInput } from '@brandai/contracts';
-import { getEffectiveAiSettings } from '../settings';
+import { getOmniAnalysisProvider } from './configuration';
 import { checkToken, serviceConfig, providerReady, OmniError, OMNI_KIND, OMNI_TTL_MS, payloadHash, requestRef, jobView } from './policy';
 
 type Db = Pick<Prisma.TransactionClient,'membership'|'brandWorkspace'|'user'>;
@@ -17,8 +17,8 @@ export async function activeScope(db:Db=prisma) {
 }
 export async function authenticate(request:Request) {checkToken(request.headers);return activeScope();}
 export async function configuration() {
-  const c=serviceConfig(),vlm=(await getEffectiveAiSettings()).vlm;
-  const state=!c.dailyLimit?'daily_limit_disabled':!providerReady(vlm)?'visual_model_not_configured':'ready';
+  const c=serviceConfig(),vlm=await getOmniAnalysisProvider();
+  const state=c.dailyLimit===0?'daily_limit_disabled':!providerReady(vlm)?'visual_model_not_configured':'ready';
   return {ready:state==='ready',state,model:vlm.model,daily_limit:c.dailyLimit};
 }
 export async function submit(input:OmniAnalysisInput) {
@@ -29,13 +29,13 @@ export async function submit(input:OmniAnalysisInput) {
     await activeScope(tx);
     const existing=await tx.asyncTask.findFirst({where:{workspaceId:c.workspaceId,kind:OMNI_KIND,refId}});
     if(existing){const meta=existing.inputJson as {payload_hash?:string;user_id?:string}|null;if(meta?.payload_hash!==hash||meta?.user_id!==c.userId)throw new OmniError(409,'request_id_conflict');return {created:false,job:jobView(existing)};}
-    if(!c.dailyLimit)throw new OmniError(503,'daily_limit_disabled');
+    if(c.dailyLimit===0)throw new OmniError(503,'daily_limit_disabled');
     // Local DB/settings only: no model or network work in the HTTP handler.
-    if(!providerReady((await getEffectiveAiSettings()).vlm))throw new OmniError(503,'visual_model_not_configured');
+    if(!providerReady(await getOmniAnalysisProvider()))throw new OmniError(503,'visual_model_not_configured');
     const start=new Date();start.setUTCHours(0,0,0,0);
     const used=await tx.asyncTask.count({where:{workspaceId:c.workspaceId,kind:OMNI_KIND,createdAt:{gte:start}}});
     const pending=await tx.asyncTask.count({where:{workspaceId:c.workspaceId,kind:OMNI_KIND,status:{in:['PENDING','RUNNING']}}});
-    if(used>=c.dailyLimit)throw new OmniError(429,'daily_limit_reached');
+    if(c.dailyLimit!==null&&used>=c.dailyLimit)throw new OmniError(429,'daily_limit_reached');
     if(pending>=20)throw new OmniError(429,'queue_full');
     const task=await tx.asyncTask.create({data:{workspaceId:c.workspaceId,kind:OMNI_KIND,refId,status:'PENDING',
       expiresAt:new Date(Date.now()+OMNI_TTL_MS),inputJson:{payload_hash:hash,user_id:c.userId,request:input}}});

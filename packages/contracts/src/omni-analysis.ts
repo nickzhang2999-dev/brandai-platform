@@ -27,4 +27,5 @@ export const OmniAnalysisResult = SuggestionFields.extend({ model_version:z.stri
 export type OmniAnalysisResult = z.infer<typeof OmniAnalysisResult>;
 export const OmniAnalysisJob = z.object({ id:z.string(), status:z.enum(['queued','running','completed','failed']),
   reason:z.string(), result:OmniAnalysisResult.optional() }).strict();
-export const OmniAnalysisConfig = z.object({ready:z.boolean(),state:z.string(),model:z.string(),daily_limit:z.number().int().nonnegative()}).strict();
+// null explicitly means unlimited; zero disables admission. The field is required.
+export const OmniAnalysisConfig = z.object({ready:z.boolean(),state:z.string(),model:z.string(),daily_limit:z.number().int().nonnegative().nullable()}).strict();
