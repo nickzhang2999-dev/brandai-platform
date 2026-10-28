@@ -192,17 +192,22 @@ jobs:
           report = json.loads(Path('.novart-build/writing-workbench-integration/summary.json').read_text())
           assert report['passed'] is True and report['isolated'] is True
           assert report['realBackend'] is False and report['realProvider'] is False and report['realAuthentication'] is False
-          assert report['providerCalls'] == 0 and len(report['checks']) == 17
+          assert report['providerCalls'] == 0 and len(report['checks']) == 21
           assert not report['externalRequests'] and not report['errors']
           assert all(isinstance(check, str) for check in report['checks'])
-          assert {'writing-current-draft-inserts-native-editable-text',
+          assert {'writing-opens-beside-visible-canvas',
+                  'suggestion-inserts-directly-without-adopting-draft-or-extra-model-call',
+                  'direct-suggestion-insertion-is-idempotent',
+                  'expand-and-dock-preserve-unsent-composer-without-model-call',
+                  'current-draft-insert-is-visible-without-scrolling-to-bottom',
+                  'writing-current-draft-inserts-native-editable-text',
                   'same-document-revision-handoff-is-idempotent',
                   'writing-insertion-can-be-undone', 'writing-insertion-can-be-redone',
                   'embedded-long-document-tail-edit-ctrl-s-save-and-bottom-canvas-handoff-remain-reachable',
                   'long-draft-handoff-is-idempotent-and-entire-chunk-group-undoes-in-one-step',
                   'homepage-writing-opens-real-iframe-with-reference-without-model-post',
                   'five-selected-canvas-images-all-imported-four-explicitly-selected-with-visible-limit'} <= set(report['checks'])
-          print('PASS writing-to-canvas: 17 isolated interactions; no real model or database acceptance claimed')
+          print('PASS writing-to-canvas: 21 isolated interactions; no real model or database acceptance claimed')
           report = json.loads((root / 'target-fixture.json').read_text())
           assert report['realAuthentication'] is False
           assert {'explicit-image-click-locks-composer-during-material-lookup',
