@@ -236,18 +236,23 @@ createRoot(document.getElementById('root')).render(<QueryClientProvider client={
   const fileA={name:'synthetic-a.png',mimeType:'image/png',buffer:Buffer.from('synthetic A bytes')},fileB={name:'synthetic-b.png',mimeType:'image/png',buffer:Buffer.from('synthetic B bytes')};
   await uploadDialog.locator('input[type=file]').setInputFiles([fileA,fileB,{...fileA,name:'same-a-another-name.png'}]);
   await page.getByText('已跳过 1 个内容相同的重复文件。',{exact:true}).waitFor();await page.getByText('合成故障：解析已受理，回执丢失',{exact:true}).waitFor();
-  await settled(()=>recognitionReceipts.size===2);const beforeReload=writes.length;
+  await settled(()=>recognitionReceipts.size===2);
+  // The server receipt precedes React consuming it and retaining the task.
+  await page.getByRole('region',{name:'品牌素材上传进度',exact:true}).getByText('AI 正在分析素材…',{exact:true}).waitFor();const beforeReload=writes.length;
   const batchWrites=writes.filter(item=>item.path.endsWith('/rules/recognize'));assert.equal(batchWrites.length,2);assert.ok(batchWrites.every(item=>item.body.targetType==='logo'));
   assert.equal(uploadedByHash.size,2);check('multiple-files-deduplicate-by-bytes-and-preserve-explicit-logo',{files:3,uploaded:2,accepted:2});
-  stage='batch-lost-receipt-reload';await page.reload();await page.getByRole('button',{name:'重试原请求',exact:true}).waitFor();await page.getByText('正在分析图片…',{exact:false}).count();
+  stage='batch-lost-receipt-reload';await page.reload();await page.getByRole('button',{name:'重试原请求',exact:true}).waitFor();await page.getByRole('region',{name:'品牌素材上传进度',exact:true}).getByText('AI 正在分析素材…',{exact:true}).waitFor();
   assert.equal(writes.length,beforeReload,'Reload only reads retained tasks');
   await mutation(()=>page.getByRole('button',{name:'重试原请求',exact:true}).click(),'POST','/rules/recognize');
   const retried=writes.filter(item=>item.path.endsWith('/rules/recognize'));assert.deepEqual(retried[2].body,retried[0].body);assert.equal(recognitionReceipts.size,2);assert.equal(uploadedByHash.size,2);
   check('batch-lost-receipt-reload-preserves-request-and-does-not-reupload-or-auto-post');
   finishRecognition=true;await page.getByText('已完成：2 条建议。相同素材汇总展示，核对后再分别启用。',{exact:true}).first().waitFor();
   await settled(()=>rules.filter(item=>item.summary.startsWith('同图建议')).length===4);
-  await page.getByRole('combobox',{name:'选择这份素材的分析建议',exact:true}).first().waitFor();
-  assert.equal(await page.getByRole('combobox',{name:'选择这份素材的分析建议',exact:true}).count(),2);
+  // Each terminal task separately invalidates the rules query. Four persisted
+  // suggestions do not imply the second query result has rendered its card.
+  const adviceSelectors=page.getByRole('combobox',{name:'选择这份素材的分析建议',exact:true});
+  await adviceSelectors.nth(1).waitFor({state:'visible'});
+  assert.equal(await adviceSelectors.count(),2);
   const group=page.getByTestId('brand-kit-source-card').filter({has:page.getByRole('combobox',{name:'选择这份素材的分析建议'})}).first();
   const options=await group.locator('option').allTextContents();assert.equal(options.length,2);await group.getByRole('combobox').selectOption({index:1});
   await group.getByRole('button',{name:'规则操作',exact:true}).click();await group.getByRole('menuitem',{name:'编辑',exact:true}).click();
