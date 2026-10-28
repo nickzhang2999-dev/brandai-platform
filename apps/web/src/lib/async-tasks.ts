@@ -98,7 +98,7 @@ export async function getTask(
   if (t.kind === "OMNI_INSPIRATION_ANALYSIS") return null;
   // Inspiration conversations remain private even inside a shared workspace.
   // Generic task polling must not bypass the dedicated conversation endpoint.
-  if (t.kind === "INSPIRATION_CHAT") {
+  if (t.kind === "INSPIRATION_CHAT" || t.kind === "STUDIO_WRITING") {
     const input = t.inputJson as { userId?: unknown } | null;
     if (!userId || input?.userId !== userId) return null;
   }

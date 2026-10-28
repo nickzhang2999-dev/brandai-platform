@@ -1,3 +1,4 @@
+import { brandKitAssetIdentity, assertBrandKitAssetReusable } from "@/lib/brand-kit-import";
 import { prisma } from "@brandai/db";
 import { AssetCategory, AssetLibraryKind } from "@brandai/contracts";
 import { ApiException, handleError, ok, requireUser } from "@/lib/api";
@@ -58,15 +59,21 @@ export async function POST(
       folderId = folderRaw;
     }
 
-    const { key, url } = await uploadBuffer(buf, storageMimeType, wsId);
+    const identity = libraryKind === "BRAND_KIT" ? brandKitAssetIdentity(wsId, user.id, buf, category, folderId) : null;
+    if (identity) {
+      const existing = await prisma.asset.findUnique({ where: { id: identity.id } });
+      if (existing) { assertBrandKitAssetReusable(existing, wsId, category, folderId); return ok(serializeAsset(existing), { status: 201 }); }
+    }
+    const { key, url } = identity
+      ? await uploadBuffer(buf, storageMimeType, wsId, undefined, identity.objectKey)
+      : await uploadBuffer(buf, storageMimeType, wsId);
 
     // P04-M12 — persist the pixel dimensions so the detail panel's 尺寸 row
     // renders. Zero-dependency probe (PNG IHDR / JPEG SOF); a miss leaves
     // resolution unset rather than failing the upload.
     const resolution = decodeImageResolution(buf);
 
-    const asset = await prisma.asset.create({
-      data: {
+    const data = {
         workspaceId: wsId,
         category,
         libraryKind,
@@ -78,8 +85,11 @@ export async function POST(
         source: "UPLOAD",
         ...(resolution ? { resolution } : {}),
         ...(folderId ? { folderId } : {}),
-      },
-    });
+      };
+    const asset = identity
+      ? await prisma.asset.upsert({ where: { id: identity.id }, create: { id: identity.id, ...data, source: "UPLOAD" }, update: {} })
+      : await prisma.asset.create({ data: { ...data, source: "UPLOAD" } });
+    if (identity) assertBrandKitAssetReusable(asset, wsId, category, folderId);
     return ok(serializeAsset(asset), { status: 201 });
   } catch (err) {
     return handleError(err);

@@ -20,13 +20,14 @@ import {
   X,
   ZoomIn,
 } from "lucide-react";
-import { apiFetch, assetThumbUrl } from "../../lib/client";
+import { apiFetch, ApiFetchError, assetThumbUrl } from "../../lib/client";
 import { useBoundedTaskQuery, TASK_POLL_PAUSED_MESSAGE } from "../../lib/use-bounded-task-poll";
 import { imageUploadLimitError } from "../../lib/upload-limits";
 import type { BrandWorkspace, WorkspaceRole } from "@brandai/contracts";
 import { KnowledgeManagementPanels, ManualRuleForm } from "./KnowledgeManagementPanels";
 import { DraftImportPanel } from "./DraftImportPanel";
 import { canEditKnowledge, ruleReplacementMessage } from "./knowledge-state";
+import { groupBrandKitRules, uniqueBrandKitFiles, BRAND_KIT_BATCH_LIMIT, type BrandKitUploadEntry } from "./brand-kit-state";
 function Chip({ children }: { children: React.ReactNode }) {
   return <span className="rounded-full border border-border bg-muted px-2.5 py-1 text-[11px] text-muted-foreground">{children}</span>;
 }
@@ -49,6 +50,7 @@ export function BrandKnowledgeEditor({ wsId, brandName: initialName, userId, rol
   const [preview, setPreview] = useState<{ src: string; alt: string } | null>(null);
   const [suggestedType, setSuggestedType] = useState<string | null>(null);
   const [manualOpen, setManualOpen] = useState(false);
+  const [openRuleMenu, setOpenRuleMenu] = useState<string | null>(null);
   const [titleDraft, setTitleDraft] = useState(initialName);
   const workspace = useQuery({ queryKey: ["knowledge-workspace", wsId, userId],
     queryFn: () => apiFetch<{ workspace: BrandWorkspace }>(`/api/workspaces/${encodeURIComponent(wsId)}`) });
@@ -128,10 +130,9 @@ export function BrandKnowledgeEditor({ wsId, brandName: initialName, userId, rol
           <div className="mb-3 flex items-center gap-3"><h2 className="text-sm font-medium">{TYPE_META[type]?.label}</h2>
             {canEdit && BRAND_KIT_IMPORT_SLOTS.some(slot => slot.type === type) && <button type="button" className="text-xs text-primary hover:underline" onClick={() => setSuggestedType(type)}>上传{TYPE_META[type]?.label}素材</button>}
           </div>
-          <div className="flex flex-wrap gap-3">{rules.filter(rule => rule.type === type).map(rule => <div key={rule.id}>
-            <RuleCard rule={rule} wsId={wsId} canEdit={canEdit} busy={busy} onEdit={setEditingRule} onToggle={toggleRule} onDelete={removeRule} onPreview={setPreview} />
-            <div className="mt-2 flex max-w-[120px] flex-wrap gap-1"><StatusBadge status={rule.status} /><StrengthBadge strength={rule.strength} /></div>
-          </div>)}{!rules.some(rule => rule.type === type) && <p className="text-xs text-muted-foreground">暂无{TYPE_META[type]?.label}规则</p>}</div>
+          <div className="flex flex-wrap gap-3">{groupBrandKitRules(rules.filter(rule => rule.type === type)).map(group => <RuleGroup key={group.key} rules={group.rules}
+            wsId={wsId} canEdit={canEdit} busy={busy} onEdit={setEditingRule} onToggle={toggleRule} onDelete={removeRule} onPreview={setPreview}
+            openRuleMenu={openRuleMenu} setOpenRuleMenu={setOpenRuleMenu} />)}{!rules.some(rule => rule.type === type) && <p className="text-xs text-muted-foreground">暂无{TYPE_META[type]?.label}规则</p>}</div>
         </section>)}
       </div>}
     </> : <KnowledgeManagementPanels key={`${wsId}:${tab}`} wsId={wsId} canEdit={canEdit} panel={tab} onRulesChanged={refreshRules} />}
@@ -158,7 +159,7 @@ const BRAND_KIT_IMPORT_SLOTS: {
     title: "Logo",
     desc: "上传主标、反白标、图形标等，确认后成为 logo 使用规范。",
     accept: "image/*",
-    limit: "建议最多 10 个",
+    limit: "图片每个不超过 8 MiB",
   },
   {
     key: "font",
@@ -166,7 +167,7 @@ const BRAND_KIT_IMPORT_SLOTS: {
     title: "字体",
     desc: "上传字体说明截图或字体规范页，AI 提取字体使用边界。",
     accept: "image/*",
-    limit: "建议最多 50 个",
+    limit: "图片每个不超过 8 MiB",
   },
   {
     key: "color",
@@ -174,7 +175,7 @@ const BRAND_KIT_IMPORT_SLOTS: {
     title: "颜色",
     desc: "上传色卡、色值页或视觉样张，AI 提炼主辅色与禁用色。",
     accept: "image/*",
-    limit: "建议最多 50 个",
+    limit: "图片每个不超过 8 MiB",
   },
   {
     key: "layout",
@@ -190,7 +191,7 @@ const BRAND_KIT_IMPORT_SLOTS: {
     title: "图像",
     desc: "上传参考图、摄影风格或素材规范，沉淀图像风格规则。",
     accept: "image/*",
-    limit: "建议最多 50 个",
+    limit: "图片每个不超过 8 MiB",
   },
 ];
 
@@ -848,6 +849,26 @@ function RuleBody({ rule }: { rule: BrandRule }) {
   );
 }
 
+type RuleCardProps = { rule: BrandRule; wsId: string; onEdit: (rule: BrandRule) => void; onToggle: (rule: BrandRule) => void;
+  onDelete: (rule: BrandRule) => void; onPreview: (input: { src: string; alt: string }) => void; busy: boolean; canEdit: boolean;
+  openRuleMenu: string | null; setOpenRuleMenu: (id: string | null) => void };
+
+function RuleGroup({ rules, ...props }: Omit<RuleCardProps, "rule"> & { rules: BrandRule[] }) {
+  const [selectedId, setSelectedId] = useState(rules[0]?.id ?? "");
+  const rule = rules.find(item => item.id === selectedId) ?? rules[0];
+  if (!rule) return null;
+  return <div className="w-[160px]" data-testid="brand-kit-source-card">
+    <RuleCard {...props} rule={rule} />
+    {rules.length > 1 && <label className="mt-2 block text-[11px] text-muted-foreground">同一素材 · {rules.length} 条分析建议
+      <select aria-label="选择这份素材的分析建议" className="mt-1 w-full rounded-lg border border-border bg-background p-1.5 text-xs text-foreground"
+        value={rule.id} onChange={event => { setSelectedId(event.target.value); props.setOpenRuleMenu(null); }}>
+        {rules.map((item, index) => <option key={item.id} value={item.id}>{index + 1}. {item.summary}</option>)}
+      </select>
+    </label>}
+    <div className="mt-2 flex flex-wrap gap-1"><StatusBadge status={rule.status} /><StrengthBadge strength={rule.strength} /></div>
+  </div>;
+}
+
 function RuleCard({
   rule,
   wsId,
@@ -857,16 +878,18 @@ function RuleCard({
   onPreview,
   busy,
   canEdit,
-}: {
-  rule: BrandRule;
-  wsId: string;
-  onEdit: (rule: BrandRule) => void;
-  onToggle: (rule: BrandRule) => void;
-  onDelete: (rule: BrandRule) => void;
-  onPreview: (input: { src: string; alt: string }) => void;
-  busy: boolean;
-  canEdit: boolean;
-}) {
+  openRuleMenu,
+  setOpenRuleMenu,
+}: RuleCardProps) {
+  const menuRef = useRef<HTMLDivElement>(null), triggerRef = useRef<HTMLButtonElement>(null);
+  const menuOpen = openRuleMenu === rule.id;
+  useEffect(() => {
+    if (!menuOpen) return;
+    const outside = (event: PointerEvent) => { if (!menuRef.current?.contains(event.target as Node)) setOpenRuleMenu(null); };
+    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") { setOpenRuleMenu(null); triggerRef.current?.focus(); } };
+    document.addEventListener("pointerdown", outside); document.addEventListener("keydown", escape);
+    return () => { document.removeEventListener("pointerdown", outside); document.removeEventListener("keydown", escape); };
+  }, [menuOpen, setOpenRuleMenu]);
   const value = (rule.value ?? {}) as Val;
   const evidence = (rule.evidence ?? []).find((item) => item.assetId);
   const previewUrl = evidence?.assetId
@@ -875,7 +898,7 @@ function RuleCard({
   const swatch = rule.type === "color" ? extractSwatches(value)[0] : null;
   const font = rule.type === "font" ? extractFonts(value)[0] : null;
   return (
-    <div className="group relative w-[120px] shrink-0">
+    <div className="group relative w-full shrink-0">
       <button
         type="button"
         disabled={busy}
@@ -921,16 +944,18 @@ function RuleCard({
           {evidence?.note ?? rule.summary}
         </span>
       </div>
-      {canEdit && <details className="absolute right-1 top-1 z-20">
-        <summary className="flex h-8 w-8 cursor-pointer list-none items-center justify-center rounded-lg bg-background/85 text-muted-foreground opacity-0 shadow-sm backdrop-blur transition-opacity hover:text-foreground focus:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 group-hover:opacity-100">
+      {canEdit && <div ref={menuRef} className="absolute right-1 top-1 z-20" onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setOpenRuleMenu(null); }}>
+        <button type="button" ref={triggerRef} aria-label="规则操作" aria-haspopup="menu" aria-expanded={menuOpen}
+          onClick={() => setOpenRuleMenu(menuOpen ? null : rule.id)}
+          className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg bg-background/85 text-muted-foreground shadow-sm backdrop-blur transition-opacity hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40">
           <MoreHorizontal className="h-4 w-4" />
           <span className="sr-only">规则操作</span>
-        </summary>
-        <div className="absolute right-0 top-9 w-28 overflow-hidden rounded-xl border border-border bg-card py-1 text-xs shadow-[0_14px_36px_rgba(30,30,60,0.18)]">
+        </button>
+        {menuOpen && <div role="menu" aria-label="规则操作菜单" className="absolute right-0 top-9 w-28 overflow-hidden rounded-xl border border-border bg-card py-1 text-xs shadow-[0_14px_36px_rgba(30,30,60,0.18)]">
           <button
             type="button"
             disabled={busy}
-            onClick={() => onEdit(rule)}
+            role="menuitem" onClick={() => { setOpenRuleMenu(null); onEdit(rule); }}
             className="h-9 w-full cursor-pointer px-3 text-left transition-colors hover:bg-muted disabled:opacity-60"
           >
             编辑
@@ -938,7 +963,7 @@ function RuleCard({
           <button
             type="button"
             disabled={busy}
-            onClick={() => onToggle(rule)}
+            role="menuitem" onClick={() => { setOpenRuleMenu(null); onToggle(rule); }}
             className="h-9 w-full cursor-pointer px-3 text-left transition-colors hover:bg-muted disabled:opacity-60"
           >
             {rule.status === "CONFIRMED" ? "禁用" : "启用"}
@@ -946,13 +971,13 @@ function RuleCard({
           <button
             type="button"
             disabled={busy}
-            onClick={() => onDelete(rule)}
+            role="menuitem" onClick={() => { setOpenRuleMenu(null); onDelete(rule); }}
             className="h-9 w-full cursor-pointer px-3 text-left text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-60"
           >
             删除
           </button>
-        </div>
-      </details>}
+        </div>}
+      </div>}
     </div>
   );
 }
@@ -1166,19 +1191,18 @@ function TaskProgress({
 function BrandKitImportPanel({
   disabled,
   onSelectType,
-  onManualFile,
+  onManualFiles,
 }: {
   disabled: boolean;
   onSelectType: (type: string) => void;
-  onManualFile: (file: File) => void;
+  onManualFiles: (files: File[]) => void;
 }) {
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [dragging, setDragging] = useState(false);
 
   function pick(files: FileList | null) {
-    const file = files?.[0];
-    if (!file) return;
-    onManualFile(file);
+    if (disabled || !files?.length) return;
+    onManualFiles(Array.from(files));
   }
 
   return (
@@ -1255,7 +1279,8 @@ function BrandKitImportPanel({
       <input
         ref={fileRef}
         type="file"
-        accept="application/pdf"
+        multiple
+        accept="image/*,application/pdf"
         className="hidden"
         onChange={(event) => {
           pick(event.currentTarget.files);
@@ -1281,14 +1306,14 @@ function ImportSlotIcon({ type }: { type: string }) {
 
 function CompactManualImport({
   disabled,
-  onFile,
+  onFiles,
 }: {
   disabled: boolean;
-  onFile: (file: File) => void;
+  onFiles: (files: File[]) => void;
 }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   return (
-    <div className="w-full rounded-xl border border-border/60 bg-muted/45 px-5 py-4">
+    <div onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); if (!disabled) onFiles(Array.from(event.dataTransfer.files)); }} className="w-full rounded-xl border border-border/60 bg-muted/45 px-5 py-4">
       <div className="flex items-center justify-between gap-4">
         <div className="flex min-w-0 items-center gap-3">
           <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-background text-muted-foreground">
@@ -1316,11 +1341,12 @@ function CompactManualImport({
       <input
         ref={inputRef}
         type="file"
-        accept="application/pdf"
+        multiple
+        accept="image/*,application/pdf"
         className="hidden"
         onChange={(event) => {
-          const file = event.currentTarget.files?.[0];
-          if (file) onFile(file);
+          const files = Array.from(event.currentTarget.files ?? []);
+          if (!disabled && files.length) onFiles(files);
           event.currentTarget.value = "";
         }}
       />
@@ -1332,12 +1358,12 @@ function SlotUploadDialog({
   slot,
   disabled,
   onClose,
-  onFile,
+  onFiles,
 }: {
   slot: (typeof BRAND_KIT_IMPORT_SLOTS)[number];
   disabled: boolean;
   onClose: () => void;
-  onFile: (file: File) => void;
+  onFiles: (files: File[]) => void;
 }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   return (
@@ -1351,20 +1377,23 @@ function SlotUploadDialog({
           type="button"
           disabled={disabled}
           onClick={() => inputRef.current?.click()}
-          className="flex aspect-[4/3] w-36 cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-border bg-muted/35 text-muted-foreground transition-colors hover:border-primary/45 hover:bg-accent-soft hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:opacity-60"
+          onDragOver={event => event.preventDefault()}
+          onDrop={event => { event.preventDefault(); if (!disabled) onFiles(Array.from(event.dataTransfer.files)); }}
+          className="flex aspect-[4/3] w-full cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-border bg-muted/35 text-muted-foreground transition-colors hover:border-primary/45 hover:bg-accent-soft hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:opacity-60"
         >
           <Plus className="h-5 w-5" />
-          <span className="mt-2 text-[10px]">添加文件</span>
+          <span className="mt-2 text-[10px]">选择或拖入文件（可多选）</span>
         </button>
-        <p className="mt-4 text-[11px] text-muted-foreground">{slot.limit}</p>
+        <p className="mt-4 text-[11px] text-muted-foreground">每次最多 10 个文件；{slot.limit}</p>
         <input
           ref={inputRef}
           type="file"
+          multiple
           accept={slot.accept}
           className="hidden"
           onChange={(event) => {
-            const file = event.currentTarget.files?.[0];
-            if (file) onFile(file);
+            const files = Array.from(event.currentTarget.files ?? []);
+            if (!disabled && files.length) onFiles(files);
             event.currentTarget.value = "";
           }}
         />
@@ -1637,214 +1666,165 @@ function RecognizeModal({
  *      都异步产出可编辑的 DRAFT 规则预览（202+poll，§2）。
  * 语音入口（Web Speech API）把口述转写进文本框，喂给路径 1。
  */
-function AICoCreate({
-  wsId,
-  userId,
-  suggestedType,
-  hasContent,
-  onSuggestionHandled,
-}: {
-  wsId: string;
-  userId: string;
-  suggestedType?: string | null;
-  hasContent: boolean;
-  onSuggestionHandled?: () => void;
+function AICoCreate({ wsId, userId, suggestedType, hasContent, onSuggestionHandled }: {
+  wsId: string; userId: string; suggestedType?: string | null; hasContent: boolean; onSuggestionHandled?: () => void;
 }) {
-  const qc = useQueryClient();
-  const [type, setType] = useState("copy");
   const [uploadType, setUploadType] = useState<string | null>(null);
-  // parse-manual async task (from an attached PDF)
-  const [taskId, setTaskId] = useState<string | null>(null);
-  const [attachErr, setAttachErr] = useState<string | null>(null);
-  const [lastUpload, setLastUpload] = useState<{
-    name: string;
-    isPdf: boolean;
-  } | null>(null);
-  const startedAt = useRef(0);
-  const taskStorageKey = `novart:knowledge-task:${userId}:${wsId}`;
-  function rememberTask(id: string) {
-    setTaskId(id);
-    const url = new URL(window.location.href); url.searchParams.set("knowledgeTask", id);
-    history.replaceState(history.state, "", url);
-    try { sessionStorage.setItem(taskStorageKey, id); } catch { /* The URL still retains the server task. */ }
+  const [entries, setEntries] = useState<BrandKitUploadEntry[]>([]);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const entriesRef = useRef<BrandKitUploadEntry[]>([]), submittingRef = useRef(false), mounted = useRef(true);
+  const controllerRef = useRef<AbortController | null>(null), scopeEpoch = useRef(0);
+  const key = `novart:knowledge-batch:${userId}:${wsId}`;
+  function saveEntries(next: BrandKitUploadEntry[]) {
+    entriesRef.current = next;
+    // Only receipts and display metadata survive reload, never file bytes.
+    try { sessionStorage.setItem(key, JSON.stringify(next.map(({ file: _file, ...entry }) => entry))); } catch { /* URL retains task ids. */ }
+    if (mounted.current) {
+      setEntries(next);
+      const ids = next.flatMap(entry => entry.taskId ? [entry.taskId] : []);
+      const url = new URL(window.location.href);
+      if (ids.length) url.searchParams.set("knowledgeTasks", ids.join(",")); else url.searchParams.delete("knowledgeTasks");
+      url.searchParams.delete("knowledgeTask"); history.replaceState(history.state, "", url);
+    }
   }
-
+  function updateEntry(id: string, patch: Partial<BrandKitUploadEntry>) {
+    if (!entriesRef.current.some(entry => entry.id === id && Object.entries(patch).some(([field, value]) => entry[field as keyof BrandKitUploadEntry] !== value))) return;
+    saveEntries(entriesRef.current.map(entry => entry.id === id ? { ...entry, ...patch } : entry));
+  }
   useEffect(() => {
-    if (suggestedType && TYPE_META[suggestedType]) {
-      setType(suggestedType);
-      setUploadType(suggestedType);
-      onSuggestionHandled?.();
-    }
-  }, [onSuggestionHandled, suggestedType]);
-
-  // One knowledge input accepts a written rule, an image, or a PDF. The asset
-  // stays in this workspace, then AI turns it into draft rule previews.
-  const analyzeAttachment = useMutation({
-    mutationFn: async (file: File) => {
-      setAttachErr(null);
-      setTimedOut(false);
-      const isPdf =
-        file.type === "application/pdf" ||
-        file.name.toLowerCase().endsWith(".pdf");
-      setLastUpload({ name: file.name, isPdf });
-      const imageErr = imageUploadLimitError(file);
-      if (imageErr) throw new Error(imageErr);
-      const imageCategory: Record<string, AssetCategory> = {
-        logo: "LOGO",
-        color: "OTHER",
-        font: "OTHER",
-        layout: "KV",
-        imagery: "KV",
-        graphic: "PRODUCT",
-        copy: "OTHER",
-      };
-      const fd = new FormData();
-      fd.append("file", file);
-      fd.append(
-        "category",
-        isPdf ? "VI_DOC" : (imageCategory[type] ?? "OTHER"),
-      );
-      fd.append("libraryKind", "BRAND_KIT");
-      const upRes = await fetch(`/api/workspaces/${wsId}/assets/upload`, {
-        method: "POST",
-        body: fd,
+    mounted.current = true; const epoch = ++scopeEpoch.current; submittingRef.current = false; setSubmitting(false);
+    let restored: BrandKitUploadEntry[] = [];
+    try {
+      const parsed: unknown = JSON.parse(sessionStorage.getItem(key) ?? "[]");
+      if (Array.isArray(parsed)) restored = parsed.slice(0, BRAND_KIT_BATCH_LIMIT).flatMap(entry => {
+        if (!entry || typeof entry.id !== "string" || !/^[a-f0-9-]{36}$/i.test(entry.id)) return [];
+        const taskId = typeof entry.taskId === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(entry.taskId) ? entry.taskId : undefined;
+        const assetId = typeof entry.assetId === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(entry.assetId) ? entry.assetId : undefined;
+        return [{ id: entry.id, name: typeof entry.name === "string" ? entry.name.slice(0, 200) : "已上传素材", isPdf: entry.isPdf === true,
+          ...(typeof entry.targetType === "string" && TYPE_META[entry.targetType] ? { targetType: entry.targetType } : {}), assetId, taskId, rejected: entry.rejected === true,
+          phase: taskId ? "ACCEPTED" as const : "FAILED" as const, ...(!taskId ? { error: assetId ? "文件已上传，解析回执未确认；可以安全继续原请求。" : "文件尚未完成上传，请重新选择文件。" } : {}) }];
       });
-      if (!upRes.ok) {
-        const b = (await upRes.json().catch(() => ({}))) as { error?: string };
-        throw new Error(b.error ?? "上传失败");
-      }
-      const asset = (await upRes.json()) as Asset;
-      startedAt.current = Date.now();
-      return apiFetch<StartResponse>(
-        isPdf
-          ? `/api/workspaces/${wsId}/rules/parse-manual`
-          : `/api/workspaces/${wsId}/rules/recognize`,
-        {
-          method: "POST",
-          body: JSON.stringify(
-            isPdf ? { assetId: asset.id } : { assetIds: [asset.id] },
-          ),
-        },
-      );
-    },
-    onSuccess: (res) => rememberTask(res.taskId),
-    onError: (e) => setAttachErr(e instanceof Error ? e.message : "解析失败"),
-  });
-
-  const { data: task, error: taskError, refetch: readTask, timedOut, setTimedOut, resume: resumePoll } = useBoundedTaskQuery<TaskState>({
-    queryKey: ["brandai-task", wsId, taskId],
-    queryFn: (signal) =>
-      apiFetch<TaskState>(`/api/workspaces/${wsId}/tasks/${taskId}`, { signal }),
-    enabled: !!taskId,
-    taskKey: taskId ? JSON.stringify([wsId, taskId]) : null,
-    startedAt,
-    getStatus: task => task?.status,
-  });
-
-
-
-  useEffect(() => {
-    const url = new URL(window.location.href);
-    let id = url.searchParams.get("knowledgeTask");
-    if (!id) { try { id = sessionStorage.getItem(taskStorageKey); } catch { /* URL is the primary resume pointer. */ } }
-    setTaskId(id && /^[A-Za-z0-9_-]{1,128}$/.test(id) ? id : null);
-    startedAt.current = Date.now();
-    setTimedOut(false);
-    setAttachErr(null);
-    setLastUpload(null);
-    setUploadType(null);
-  }, [wsId, taskStorageKey, setTimedOut]);
-
-  const status = task?.status ?? (taskId ? "PENDING" : null);
-  const running =
-    !!taskId && status !== "SUCCEEDED" && status !== "FAILED" && !timedOut && !taskError;
-
-  // refresh rules once when a parse task succeeds.
-  const firedFor = useRef<string | null>(null);
-  useEffect(() => {
-    if (status === "SUCCEEDED" && taskId && firedFor.current !== taskId) {
-      firedFor.current = taskId;
-      qc.invalidateQueries({ queryKey: ["brandai-rules", wsId] });
+    } catch { /* Invalid local receipt is not an instruction. */ }
+    if (!restored.length) {
+      const url = new URL(window.location.href);
+      const ids = (url.searchParams.get("knowledgeTasks") ?? url.searchParams.get("knowledgeTask") ?? "").split(",").filter(id => /^[A-Za-z0-9_-]{1,128}$/.test(id)).slice(0, BRAND_KIT_BATCH_LIMIT);
+      restored = ids.map(taskId => ({ id: crypto.randomUUID(), name: "已上传素材", isPdf: false, taskId, phase: "ACCEPTED" }));
     }
-  }, [status, taskId, qc, wsId]);
+    entriesRef.current = restored; setEntries(restored);
+    return () => { mounted.current = false; scopeEpoch.current = epoch + 1; controllerRef.current?.abort(); };
+  }, [key]);
+  useEffect(() => { if (suggestedType && TYPE_META[suggestedType]) { setUploadType(suggestedType); onSuggestionHandled?.(); } }, [suggestedType, onSuggestionHandled]);
 
-  const parsing = analyzeAttachment.isPending || (!!taskId && status !== "SUCCEEDED" && status !== "FAILED");
-  const activeSlot = BRAND_KIT_IMPORT_SLOTS.find(
-    (slot) => slot.type === uploadType,
-  );
+  async function processEntries(selected: BrandKitUploadEntry[]) {
+    if (submittingRef.current) return;
+    const epoch = scopeEpoch.current;
+    const currentScope = () => mounted.current && scopeEpoch.current === epoch;
+    submittingRef.current = true; setSubmitting(true);
+    try {
+      for (const requested of selected) {
+        if (!currentScope()) break;
+        const current = entriesRef.current.find(entry => entry.id === requested.id) ?? requested;
+        const controller = new AbortController(); controllerRef.current = controller;
+        const timeout = setTimeout(() => controller.abort(), 45_000);
+        try {
+          let assetId = current.assetId;
+          if (!assetId) {
+            if (!current.file) throw new Error("请重新选择原文件。");
+            updateEntry(current.id, { phase: "UPLOADING", error: undefined });
+            const imageCategory: Record<string, AssetCategory> = { logo: "LOGO", layout: "KV", imagery: "KV", graphic: "PRODUCT" };
+            const form = new FormData(); form.append("file", current.file); form.append("category", current.isPdf ? "VI_DOC" : (imageCategory[current.targetType ?? ""] ?? "OTHER")); form.append("libraryKind", "BRAND_KIT");
+            const response = await fetch(`/api/workspaces/${encodeURIComponent(wsId)}/assets/upload`, { method: "POST", body: form, signal: controller.signal });
+            if (!response.ok) { const data = await response.json().catch(() => ({})); throw new Error(data.error ?? "上传失败，请重试原文件。"); }
+            const asset = await response.json() as Asset; if (!currentScope()) break; assetId = asset.id;
+            updateEntry(current.id, { assetId, phase: "SUBMITTING" });
+          } else updateEntry(current.id, { phase: "SUBMITTING", error: undefined });
+          const receipt = await apiFetch<StartResponse>(`/api/workspaces/${encodeURIComponent(wsId)}/rules/${current.isPdf ? "parse-manual" : "recognize"}`, {
+            method: "POST", signal: controller.signal, body: JSON.stringify({ ...(current.isPdf ? { assetId } : { assetIds: [assetId] }), mutationId: current.id,
+              ...(current.targetType ? { targetType: current.targetType } : {}) }) });
+          if (!currentScope()) break;
+          updateEntry(current.id, { taskId: receipt.taskId, phase: "ACCEPTED", error: undefined, rejected: false, removable: false });
+        } catch (error) {
+          if (!currentScope()) break;
+          updateEntry(current.id, { phase: "FAILED", removable: false, rejected: error instanceof ApiFetchError && [400, 403, 404, 409, 413, 415, 422].includes(error.status), error: controller.signal.aborted ? "请求回执尚未确认；重试会沿用原上传和解析标识。" : error instanceof Error ? error.message : "未完成，请重试原请求。" });
+        } finally { clearTimeout(timeout); if (controllerRef.current === controller) controllerRef.current = null; }
+      }
+    } finally { if (currentScope()) { submittingRef.current = false; setSubmitting(false); } }
+  }
+  async function inspectReceipt(entry: BrandKitUploadEntry) {
+    if (submittingRef.current) return;
+    const epoch = scopeEpoch.current, controller = new AbortController();
+    const isCurrent = () => mounted.current && scopeEpoch.current === epoch;
+    submittingRef.current = true; setSubmitting(true); controllerRef.current = controller;
+    const timeout = setTimeout(() => controller.abort(), 20_000);
+    try {
+      const receipt = await apiFetch<StartResponse>(`/api/workspaces/${encodeURIComponent(wsId)}/rules/${entry.isPdf ? "parse-manual" : "recognize"}?mutationId=${encodeURIComponent(entry.id)}`, { signal: controller.signal });
+      if (isCurrent()) updateEntry(entry.id, { taskId: receipt.taskId, phase: "ACCEPTED", error: undefined, rejected: false, removable: false });
+    } catch (error) {
+      if (!isCurrent()) return;
+      if (error instanceof ApiFetchError && error.status === 404 && error.message === "没有找到这次解析任务。" && entry.rejected) {
+        updateEntry(entry.id, { removable: true, error: "原请求已被拒绝，服务端未找到解析任务；可以移除这项记录后重新选择。" });
+      } else updateEntry(entry.id, { removable: false, error: "原回执尚未确认；请保留本项，稍后查询或重试原请求。" });
+    } finally { clearTimeout(timeout); if (controllerRef.current === controller) controllerRef.current = null;
+      if (isCurrent()) { submittingRef.current = false; setSubmitting(false); } }
+  }
+  async function selectFiles(files: File[], targetType?: string) {
+    if (submittingRef.current || !files.length) return;
+    if (files.length > BRAND_KIT_BATCH_LIMIT) { setNotice("每次最多选择 10 个文件，请分批上传。"); return; }
+    if (files.reduce((sum, file) => sum + file.size, 0) > 100 * 1024 * 1024) { setNotice("每批文件合计不超过 100 MiB，请分批上传。"); return; }
+    for (const file of files) {
+      if (file.size > 50 * 1024 * 1024 || !file.size) { setNotice("文件须大于零且不超过 50 MiB。"); return; }
+      const issue = imageUploadLimitError(file); if (issue) { setNotice(issue); return; }
+      const pdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
+      if (!pdf && !file.type.startsWith("image/")) { setNotice("请选择图片或 PDF 文件。"); return; }
+      if (targetType && targetType !== "layout" && pdf) { setNotice("该类别请上传图片；PDF 可从设计指南或完整品牌手册入口上传。"); return; }
+    }
+    const epoch = scopeEpoch.current;
+    submittingRef.current = true; setSubmitting(true);
+    try {
+      const unique = await uniqueBrandKitFiles(files);
+      if (!mounted.current || scopeEpoch.current !== epoch) return;
+      const rows = unique.files.map(file => ({ id: crypto.randomUUID(), file, name: file.name, isPdf: file.type === "application/pdf" || /\.pdf$/i.test(file.name), targetType, phase: "WAITING" as const }));
+      saveEntries(rows); setUploadType(null); setNotice(unique.duplicates ? `已跳过 ${unique.duplicates} 个内容相同的重复文件。` : null);
+      submittingRef.current = false; await processEntries(rows);
+    } catch { if (mounted.current && scopeEpoch.current === epoch) setNotice("文件读取失败，请重新选择。"); }
+    finally { if (mounted.current && scopeEpoch.current === epoch) { submittingRef.current = false; setSubmitting(false); } }
+  }
+  const activeSlot = BRAND_KIT_IMPORT_SLOTS.find(slot => slot.type === uploadType);
+  const busy = submitting || entries.some(entry => (entry.phase === "ACCEPTED" && !entry.terminal) || (entry.phase === "FAILED" && !!entry.assetId));
+  return <>
+    {hasContent ? <CompactManualImport disabled={busy} onFiles={files => { void selectFiles(files); }} />
+      : <BrandKitImportPanel disabled={busy} onSelectType={setUploadType} onManualFiles={files => { void selectFiles(files); }} />}
+    {activeSlot && <SlotUploadDialog slot={activeSlot} disabled={busy} onClose={() => setUploadType(null)} onFiles={files => { void selectFiles(files, activeSlot.type); }} />}
+    {entries.length > 0 && <section className="mt-4 space-y-2" aria-label="品牌素材上传进度">
+      <p className="text-xs text-muted-foreground">{entries.filter(entry => entry.taskId).length}/{entries.length} 份已受理。已受理的解析任务可刷新查看；尚未上传的文件请保持页面打开。</p>
+      {entries.map(entry => <div key={entry.id} className="rounded-xl border border-border bg-background p-3 text-sm">
+        <p className="break-all font-medium">{entry.name}{entry.targetType ? ` · ${TYPE_META[entry.targetType]?.label}` : " · 全类别识别"}</p>
+        {entry.taskId ? <BrandKitTaskProgress wsId={wsId} taskId={entry.taskId} isPdf={entry.isPdf} onTerminal={() => updateEntry(entry.id, { terminal: true })} />
+          : <p role="status" className="mt-1 text-xs text-muted-foreground">{entry.phase === "UPLOADING" ? "正在上传…" : entry.phase === "SUBMITTING" ? "正在受理解析…" : entry.phase === "WAITING" ? "等待上传…" : entry.error}</p>}
+        {entry.phase === "FAILED" && <div className="mt-2 flex flex-wrap gap-2">
+          {(entry.file || entry.assetId) && <Button variant="outline" disabled={submitting} onClick={() => { void processEntries([entry]); }}>重试原请求</Button>}
+          {entry.assetId && <Button variant="outline" disabled={submitting} onClick={() => { void inspectReceipt(entry); }}>检查原回执</Button>}
+          {entry.removable && <Button variant="outline" disabled={submitting} onClick={() => saveEntries(entriesRef.current.filter(item => item.id !== entry.id))}>移除此失败项</Button>}
+        </div>}
+      </div>)}
+    </section>}
+    {notice && <p role="status" className="mt-3 text-sm text-muted-foreground">{notice}</p>}
+  </>;
+}
 
-  return (
-    <>
-      {hasContent ? (
-        <CompactManualImport
-          disabled={parsing}
-          onFile={(file) => {
-            setType("layout");
-            analyzeAttachment.mutate(file);
-          }}
-        />
-      ) : (
-        <BrandKitImportPanel
-          disabled={parsing}
-          onSelectType={(nextType) => {
-            setType(nextType);
-            setUploadType(nextType);
-          }}
-          onManualFile={(file) => {
-            setType("layout");
-            analyzeAttachment.mutate(file);
-          }}
-        />
-      )}
-
-      {activeSlot ? (
-        <SlotUploadDialog
-          slot={activeSlot}
-          disabled={parsing}
-          onClose={() => setUploadType(null)}
-          onFile={(file) => {
-            analyzeAttachment.mutate(file);
-            setUploadType(null);
-          }}
-        />
-      ) : null}
-
-      {/* Unified image/PDF analysis progress, §2.3 observable. */}
-      {taskId || analyzeAttachment.isPending ? (
-        <div className="mx-auto mt-3 max-w-2xl">
-          {taskError ? <p role="alert" className="rounded-2xl bg-destructive/10 px-4 py-3 text-sm text-destructive">无法读取原解析任务：{taskError.message} <button type="button" className="underline" onClick={() => { startedAt.current = Date.now(); setTimedOut(false); void readTask(); }}>重新读取任务</button></p> : status === "SUCCEEDED" ? (
-            <div
-              className={`rounded-2xl border px-4 py-3 text-left text-sm ${
-                (task?.refCount ?? 0) > 0
-                  ? "border-success/20 bg-success/5 text-success"
-                  : "border-border bg-muted/40 text-muted-foreground"
-              }`}
-            >
-              {(task?.refCount ?? 0) > 0
-                ? `“${lastUpload?.name ?? "上传内容"}”已解析完成，生成 ${task?.refCount ?? 0} 条规则草稿。请在下方逐项核对并启用，启用后将自动约束当前品牌下的项目生成。`
-                : `“${lastUpload?.name ?? "上传内容"}”已解析完成，但没有识别到可用的品牌规则。请检查 PDF 是否清晰、是否包含品牌规范页后重试。`}
-            </div>
-          ) : (
-            <><p hidden={!timedOut} role="status" className="text-sm text-muted-foreground">{TASK_POLL_PAUSED_MESSAGE} <button type="button" className="underline" onClick={resumePoll}>继续查询原任务</button></p><TaskProgress
-              status={analyzeAttachment.isPending ? "PENDING" : status}
-              progress={task?.progress ?? (analyzeAttachment.isPending ? 5 : 0)}
-              timedOut={timedOut}
-              isManual={lastUpload?.isPdf ?? false}
-              error={
-                status === "FAILED"
-                    ? (task?.error ?? "AI 解析失败，请重试。")
-                    : null
-              }
-            /></>
-          )}
-        </div>
-      ) : null}
-
-      {attachErr ? (
-        <p className="mt-2 text-sm text-destructive">{attachErr}</p>
-      ) : null}
-    </>
-  );
+function BrandKitTaskProgress({ wsId, taskId, isPdf, onTerminal }: { wsId: string; taskId: string; isPdf: boolean; onTerminal: () => void }) {
+  const qc = useQueryClient(), startedAt = useRef(Date.now());
+  const { data: task, error, timedOut, resume } = useBoundedTaskQuery<TaskState>({ queryKey: ["brandai-task", wsId, taskId],
+    queryFn: signal => apiFetch<TaskState>(`/api/workspaces/${encodeURIComponent(wsId)}/tasks/${encodeURIComponent(taskId)}`, { signal }), enabled: true,
+    taskKey: `${wsId}:${taskId}`, startedAt, getStatus: value => value?.status });
+  const fired = useRef(false);
+  useEffect(() => { if (!fired.current && (task?.status === "SUCCEEDED" || task?.status === "FAILED")) {
+    fired.current = true; onTerminal(); void qc.invalidateQueries({ queryKey: ["brandai-rules", wsId] });
+  } }, [task?.status, onTerminal, qc, wsId]);
+  if (error || timedOut) return <p role="status" className="mt-1 text-xs text-muted-foreground">{error ? "暂时无法读取原任务；不会重复解析。" : TASK_POLL_PAUSED_MESSAGE} <button type="button" onClick={resume} className="text-primary underline">继续查询原任务</button></p>;
+  if (task?.status === "SUCCEEDED") return <p className="mt-1 text-xs text-success">已完成：{task.refCount ?? 0} 条建议。相同素材汇总展示，核对后再分别启用。</p>;
+  return <TaskProgress status={task?.status ?? "PENDING"} progress={task?.progress ?? 0} timedOut={false} isManual={isPdf} error={task?.status === "FAILED" ? task.error ?? "解析未完成；不会自动重复调用。" : null} />;
 }
 
 function BrandKitLightbox({

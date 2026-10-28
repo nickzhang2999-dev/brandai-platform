@@ -5,7 +5,7 @@ import { GenerationAspectRatioKey, StudioConversationInput, StudioConversationMe
 import type { z } from "zod";
 import { NovartApiError } from "../../lib/novart-api-client";
 import { createOwnedConversationApi } from "./owned-conversation-api";
-import { mergeOwnedConversationReferences, ownedConversationDraftEqual } from "./owned-conversation-references";
+import { chooseOwnedConversationTarget, mergeOwnedConversationReferences, ownedConversationDraftEqual, ownedConversationSizePreview, requireOwnedConversationTargetEditable } from "./owned-conversation-references";
 import { ownedConversationActive as active, ownedConversationDeadline as deadline, ownedConversationGeneration } from "./owned-conversation-state";
 import { ownedConversationChoices, ownedConversationDecisionInput, ownedConversationAcknowledges, type ConversationDecisionKind } from "./owned-conversation-decisions";
 import { OwnedGenerationCard } from "./OwnedGenerationCard";
@@ -13,13 +13,13 @@ import type { createOwnedEditorApi, DecompositionTask, GenerationTask, Persisten
 
 type Draft = Omit<StudioConversationDraftInput, "revision">;
 type Input = z.infer<typeof StudioConversationInput>;
-export type OwnedConversationHandle = { ready(): boolean; flush(): Promise<void>; confirmed(): boolean; addReferences(refs: StudioConversationReference[], quickEditTargetId?: string): void; configureReferences(refs: StudioConversationReference[], managedHashes: string[], targetId?: string): void; restoreText(text: string): void; sizeSelection(): Draft["sizeSelection"]; quickEdit(ref: StudioConversationReference, text: string): Promise<void>; startHome(text: string, mutationId: string, refs: StudioConversationReference[]): Promise<void> };
+export type OwnedConversationHandle = { ready(): boolean; flush(): Promise<void>; confirmed(): boolean; chooseCanvasTarget(reference: StudioConversationReference | null): void; addReferences(refs: StudioConversationReference[], quickEditTargetId?: string): void; configureReferences(refs: StudioConversationReference[], managedHashes: string[], targetId?: string): void; restoreText(text: string): void; sizeSelection(): Draft["sizeSelection"]; quickEdit(ref: StudioConversationReference, text: string): Promise<void>; startHome(text: string, mutationId: string, refs: StudioConversationReference[]): Promise<void> };
 type Props = { workspaceId: string; projectId: string; userId: string; readOnly: boolean;
   api: ReturnType<typeof createOwnedEditorApi> | null;
   prepare(): Promise<{ documentRevision: number; workflowRevision: number; outputFrameId?: string }>;
   selectedReferenceIds?(references: StudioConversationReference[]): string[];
   isImagePlaced?(image: PersistentImage): boolean; onNotice(message: string): void; onGeneration(task: GenerationTask): void; onInsert(image: PersistentImage, sourceShapeId?: string): Promise<void>;
-  onInsertLayers(task: DecompositionTask, source: PersistentImage): Promise<void>; onAddReference?(): void; onAdvancedSettings?(): void; activity?: ReactNode };
+  onInsertLayers(task: DecompositionTask, source: PersistentImage): Promise<void>; onAddReference?(): void; onAdvancedSettings?(): void; outputFrameId?: string; activity?: ReactNode };
 const button = "rounded-full border border-border px-3 py-2 text-xs disabled:opacity-40";
 const empty = (): Draft => ({ text: "", references: [], quickEditTargetId: null, sizeSelection: { ratioKey: "1:1", resolutionTier: "1K" } });
 const draftValue = (value: StudioConversationDraftInput): Draft => ({ text: value.text, references: value.references, quickEditTargetId: value.quickEditTargetId, sizeSelection: value.sizeSelection, ...(value.psdLayerMode ? { psdLayerMode: value.psdLayerMode, ...(value.psdLayerCount ? { psdLayerCount: value.psdLayerCount } : {}) } : {}) });
@@ -39,8 +39,16 @@ export const OwnedConversationPanel = forwardRef<OwnedConversationHandle, Props>
   const journalKey = `deepflare:conversation-pending:${JSON.stringify([props.userId, props.workspaceId, props.projectId])}`;
   const keyRef = useRef(journalKey); keyRef.current = journalKey;
   const requestOrder = useRef(0), acceptedOrder = useRef(new Map<string, number>()), cursorOrder = useRef(0);
+  const ownedTargetId = useRef<string | null>(null);
   const updateDraft = useCallback((value: Draft) => { draftRef.current = value; setDraft(value); }, []);
   const edit = (value: Partial<Draft>) => updateDraft({ ...draftRef.current, ...value });
+  const chooseCanvasTarget = useCallback((reference: StudioConversationReference | null) => {
+    requireOwnedConversationTargetEditable({ ready: readyRef.current, readOnly: latest.current.readOnly, submitting: sendBusy.current, uncertain: !!pending.current || unknown });
+    const next = chooseOwnedConversationTarget(draftRef.current, reference, ownedTargetId.current);
+    ownedTargetId.current = next.ownedTargetId;
+    const value = { ...draftRef.current, references: next.references, quickEditTargetId: next.quickEditTargetId };
+    if (!same(value, draftRef.current)) updateDraft(value);
+  }, [unknown, updateDraft]);
   const accept = useCallback((message: Message, order = ++requestOrder.current) => {
     if (message.projectId !== latest.current.projectId) throw new Error("对话结果不属于当前项目。");
     // A poll/list started before a newer read or explicit retry cannot undo it.
@@ -142,7 +150,7 @@ export const OwnedConversationPanel = forwardRef<OwnedConversationHandle, Props>
     }
     finally { if (api.current === context) { sendBusy.current = false; setSending(false); } }
   }, [accept, flush, updateDraft]);
-  useImperativeHandle(ref, () => ({ ready: () => readyRef.current, flush, confirmed: () => readyRef.current && !composing.current && !saveBusy.current && !saveSnapshot.current && same(draftRef.current, confirmedDraft.current!),
+  useImperativeHandle(ref, () => ({ ready: () => readyRef.current, flush, confirmed: () => readyRef.current && !composing.current && !saveBusy.current && !saveSnapshot.current && same(draftRef.current, confirmedDraft.current!), chooseCanvasTarget,
     async startHome(text, mutationId, refs) {
       if (!readyRef.current || latest.current.readOnly || sendBusy.current || composing.current) throw new Error("请先完成当前输入，等待对话恢复后继续创作。");
       const accepted = messagesRef.current.find(message => message.mutationId === mutationId);
@@ -154,7 +162,7 @@ export const OwnedConversationPanel = forwardRef<OwnedConversationHandle, Props>
       }
       if (pending.current && pending.current.mutationId !== mutationId) throw new Error("请先确认上一份对话提交。");
       if (!pending.current && draftRef.current.text.trim() && draftRef.current.text !== text) throw new Error("对话里已有另一份未发送需求，请先保留或清空，再继续首页创作。");
-      if (!pending.current) updateDraft({ ...empty(), text, references: refs });
+      if (!pending.current) { ownedTargetId.current = null; updateDraft({ ...empty(), text, references: refs }); }
       const acceptedMessage = await send({ mutationId });
       if (!acceptedMessage || acceptedMessage.mutationId !== mutationId) throw new Error("首次创作还没确认提交结果，原需求仍保留。");
     },
@@ -166,23 +174,32 @@ export const OwnedConversationPanel = forwardRef<OwnedConversationHandle, Props>
     },
     configureReferences(refs, managedHashes, targetId) {
       if (!readyRef.current || latest.current.readOnly || sendBusy.current || pending.current) throw new Error("请先确认对话已恢复和上一份提交。");
+      requireOwnedConversationTargetEditable({ ready: readyRef.current, readOnly: latest.current.readOnly, submitting: sendBusy.current, uncertain: !!pending.current || unknown });
       const merged = mergeOwnedConversationReferences(draftRef.current.references.filter(value => !managedHashes.includes(value.assetSha256)), refs);
       if (targetId && !merged.some(value => value.referenceId === targetId && value.shapeId)) throw new Error("修改目标尚未确认加入对话。");
+      ownedTargetId.current = null;
       updateDraft({ ...draftRef.current, references: merged, quickEditTargetId: targetId ?? (merged.some(value => value.referenceId === draftRef.current.quickEditTargetId) ? draftRef.current.quickEditTargetId : null) });
     },
     addReferences(refs, quickEditTargetId) { if (!readyRef.current || latest.current.readOnly || sendBusy.current || pending.current) throw new Error("对话还没准备好，请稍候，或先检查上次提交。");
-      const base = quickEditTargetId ? draftRef.current.references.filter(value => !refs.some(ref => ref.assetId === value.assetId)) : draftRef.current.references;
-      const merged = mergeOwnedConversationReferences(base, refs);
-      const target = quickEditTargetId ? merged.find(value => value.referenceId === quickEditTargetId) : undefined;
+      requireOwnedConversationTargetEditable({ ready: readyRef.current, readOnly: latest.current.readOnly, submitting: sendBusy.current, uncertain: !!pending.current || unknown });
+      const target = quickEditTargetId ? refs.find(value => value.referenceId === quickEditTargetId) : undefined;
       if (quickEditTargetId && !target) throw new Error("快捷编辑目标不在当前引用中。");
-      updateDraft({ ...draftRef.current, references: merged, ...(target ? { quickEditTargetId: target.referenceId } : {}) });
+      if (target) {
+        const next = chooseOwnedConversationTarget(draftRef.current, target, ownedTargetId.current);
+        const merged = mergeOwnedConversationReferences(next.references, refs.filter(value => value.assetId !== target.assetId));
+        ownedTargetId.current = next.ownedTargetId; updateDraft({ ...draftRef.current, references: merged, quickEditTargetId: next.quickEditTargetId });
+      } else {
+        const merged = mergeOwnedConversationReferences(draftRef.current.references, refs);
+        if (refs.some(value => value.referenceId === ownedTargetId.current || value.assetId === draftRef.current.references.find(current => current.referenceId === ownedTargetId.current)?.assetId)) ownedTargetId.current = null;
+        updateDraft({ ...draftRef.current, references: merged });
+      }
       requestAnimationFrame(() => input.current?.focus()); },
     async quickEdit(reference, text) { if (!readyRef.current || pending.current || sendBusy.current || latest.current.readOnly) throw new Error("请先确认对话已恢复和上一份请求。");
-      updateDraft({ ...draftRef.current, references: mergeOwnedConversationReferences(draftRef.current.references.filter(value => value.assetId !== reference.assetId), [reference]), quickEditTargetId: reference.referenceId, text }); await send(); },
-  }), [flush, updateDraft, send]);
+      chooseCanvasTarget(reference); updateDraft({ ...draftRef.current, text }); await send(); },
+  }), [flush, updateDraft, send, chooseCanvasTarget, unknown]);
   useEffect(() => {
     mounted.current = true; const controller = new AbortController(); const context = createOwnedConversationApi(props.workspaceId, props.projectId, props.userId, controller.signal); api.current = context;
-    readyRef.current = false; setReady(false); confirmedDraft.current = null; revision.current = 0; pending.current = null; saveSnapshot.current = null; messagesRef.current = []; setMessages([]); setUnknown(false); setError("");
+    readyRef.current = false; setReady(false); confirmedDraft.current = null; revision.current = 0; pending.current = null; ownedTargetId.current = null; saveSnapshot.current = null; messagesRef.current = []; setMessages([]); setUnknown(false); setError("");
     updateDraft(empty()); setNextCursor(null); acceptedOrder.current.clear(); requestOrder.current = 0; cursorOrder.current = 0;
     saveBusy.current = false; sendBusy.current = false; pollBusy.current = false; composing.current = false; setSaving(false); setSending(false); setPaused(false);
     try { const stored = localStorage.getItem(journalKey); if (stored) { pending.current = StudioConversationInput.parse(JSON.parse(stored)); setUnknown(true); } }
@@ -224,24 +241,27 @@ export const OwnedConversationPanel = forwardRef<OwnedConversationHandle, Props>
     return () => { window.removeEventListener("beforeunload", leaving); window.removeEventListener("pagehide", saveOnLeave); document.removeEventListener("visibilitychange", hiding); };
   }, [flush]);
   const locked = props.readOnly || !ready || sending || unknown;
+  const target = draft.references.find(value => value.referenceId === draft.quickEditTargetId);
+  const referenceOnly = draft.references.filter(value => value.referenceId !== draft.quickEditTargetId);
+  const sizePreview = ownedConversationSizePreview(draft, props.outputFrameId);
   function clarify(message: Message, targetId?: string) {
     if (locked || message.intent?.modelStatus === "UNKNOWN") return;
     if (draftRef.current.text.trim()) { props.onNotice("输入框还有未发送内容，请先保留或清空，再选择这条需求的处理方式。"); input.current?.focus(); return; }
-    updateDraft({ ...draftRef.current, text: targetId ? message.text : `生成一张新图：${message.text}`, references: message.references, quickEditTargetId: targetId ?? null }); input.current?.focus();
+    ownedTargetId.current = null; updateDraft({ ...draftRef.current, text: targetId ? message.text : `生成一张新图：${message.text}`, references: message.references, quickEditTargetId: targetId ?? null }); input.current?.focus();
   }
   function reedit(message: Message) {
     // Recover a draft only. Never reuse an accepted mutation or call send().
     if (props.readOnly || !readyRef.current || sendBusy.current || pending.current || composing.current) return;
     if (draftRef.current.text.trim() || draftRef.current.references.length > 0 && JSON.stringify(draftRef.current.references) !== JSON.stringify(message.references)) { props.onNotice("输入框中还有未发送的需求或不同引用，请先保留或清空，再重新编辑这条需求。"); input.current?.focus(); return; }
     const target = message.intent?.action === "modify" ? message.references.find(value => value.shapeId && value.referenceId === message.intent?.targetReferenceId) : undefined;
-    updateDraft({ text: message.text, references: message.references, quickEditTargetId: target?.referenceId ?? null, sizeSelection: message.intent?.sizeSelection ?? draftRef.current.sizeSelection, ...(message.generation?.psdLayerMode ? { psdLayerMode: message.generation.psdLayerMode, ...(message.generation.psdLayerMode === "MANUAL" && message.generation.psdLayerCount ? { psdLayerCount: message.generation.psdLayerCount } : {}) } : {}) });
+    ownedTargetId.current = null; updateDraft({ text: message.text, references: message.references, quickEditTargetId: target?.referenceId ?? null, sizeSelection: message.intent?.sizeSelection ?? draftRef.current.sizeSelection, ...(message.generation?.psdLayerMode ? { psdLayerMode: message.generation.psdLayerMode, ...(message.generation.psdLayerMode === "MANUAL" && message.generation.psdLayerCount ? { psdLayerCount: message.generation.psdLayerCount } : {}) } : {}) });
     props.onNotice("需求已放回输入框，请确认图片和内容后点击发送。"); input.current?.focus();
   }
   return <section className="flex h-full min-h-0 flex-col gap-3" data-testid="owned-conversation" data-conversation-ready={ready}>
     {(error || paused) && <div className="flex shrink-0 justify-end"><button className="rounded-full px-2 py-1 text-xs text-muted-foreground disabled:opacity-40" disabled={sending || saving} onClick={() => { setPaused(false); void read(); }}>检查任务状态</button></div>}
     <div ref={history} className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain" onScroll={event => { const node = event.currentTarget; follow.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80; }} aria-label="项目对话记录">
       {nextCursor && <button className={button + " w-full"} onClick={() => { const context = api.current, order = ++requestOrder.current; if (context) void context.list(nextCursor).then(page => { if (!mounted.current || api.current !== context) return; page.messages.forEach(message => accept(message, order)); if (order >= cursorOrder.current) { cursorOrder.current = order; setNextCursor(page.nextCursor); } }).catch(failure => { if (mounted.current && api.current === context) setError(explain(failure)); }); }}>读取更早对话</button>}
-      {!messages.length && <p className="py-6 text-center text-xs leading-6 text-muted-foreground">描述想法开始创作。<br />选中图片后，点击「加入对话」再发送修改或参考需求。</p>}
+      {!messages.length && <p className="py-6 text-center text-xs leading-6 text-muted-foreground">描述想法开始创作。<br />选中画布图片即可指定修改对象；点击发送才会开始处理。</p>}
       {messages.map(message => <article key={message.messageId} className="space-y-2" data-message-id={message.messageId}>
         <div className="ml-5 rounded-2xl rounded-tr-md bg-accent-soft p-3 text-sm leading-6"><p className="whitespace-pre-wrap break-words">{message.text}</p>{message.references.length > 0 && <p className="mt-2 text-xs text-muted-foreground">{message.references.map(value => value.name).join("、")}</p>}</div>
         {message.clarification && <p className="rounded-xl border border-border p-3 text-xs leading-6">{message.clarification}</p>}
@@ -260,25 +280,33 @@ export const OwnedConversationPanel = forwardRef<OwnedConversationHandle, Props>
     {error && <div role="alert" className="rounded-xl bg-accent-soft p-3 text-xs leading-6">{error}{ready && !unknown && <button className="ml-2 underline" onClick={() => { setError(""); void flush().catch(() => undefined); }}>确认草稿</button>}</div>}
     {unknown && <div className="space-y-2 rounded-xl border border-border p-3"><p className="text-xs leading-6">上次提交的结果还没确认，需求和引用先保留不动。点“检查上次提交”会读取同一次请求，不会重复扣费。</p><button className={button} disabled={sending || !pending.current || props.readOnly} onClick={() => void send().catch(() => undefined)}>检查上次提交</button></div>}
     <div className="mt-auto shrink-0 space-y-3 rounded-3xl border border-border bg-background p-3">
-      <div className="flex max-h-32 flex-wrap gap-2 overflow-y-auto" aria-label="对话引用图片">{draft.references.map(value => {
-        const target = draft.quickEditTargetId === value.referenceId;
-        return <span key={value.referenceId} className={"inline-flex max-w-full items-center gap-1 rounded-2xl border p-1 " + (target ? "border-primary bg-accent-soft" : "border-border bg-card")}>
-          <button type="button" aria-label={`修改对象 ${value.name}`} aria-pressed={target} title={value.shapeId ? target ? "点击取消修改目标" : "点击设为修改目标" : "素材仅用作参考"} disabled={locked || !value.shapeId} className="flex min-w-0 items-center gap-2 rounded-xl text-left disabled:cursor-default" onClick={() => edit({ quickEditTargetId: target ? null : value.referenceId })}>
-            <img src={`/api/workspaces/${encodeURIComponent(props.workspaceId)}/assets/${encodeURIComponent(value.assetId)}/raw`} alt="" className="h-9 w-9 shrink-0 rounded-lg object-cover" loading="lazy" />
-            <span className="min-w-0"><span className="block max-w-28 truncate text-xs">{value.name}</span><span className={"block text-xs " + (target ? "text-primary" : "text-muted-foreground")}>{target ? "正在修改" : "参考"}</span></span>
-          </button>
-          <button type="button" aria-label={`移除对话引用 ${value.name}`} className="rounded-full px-2 py-1 text-muted-foreground" disabled={locked} onClick={() => edit({ references: draft.references.filter(ref => ref.referenceId !== value.referenceId), ...(target ? { quickEditTargetId: null } : {}) })}>×</button>
-        </span>;
-      })}</div>
+      <section aria-label="本轮修改对象" className="rounded-2xl border border-border p-2" data-testid="conversation-target">
+        <h3 className="mb-1 text-xs font-medium">修改对象</h3>
+        {target ? <div className="flex items-center gap-2">
+          <img src={`/api/workspaces/${encodeURIComponent(props.workspaceId)}/assets/${encodeURIComponent(target.assetId)}/raw`} alt="" className="h-10 w-12 shrink-0 rounded-lg object-contain" loading="lazy" />
+          <span className="min-w-0 flex-1"><span className="block truncate text-xs">{target.name}</span><span className="text-xs text-muted-foreground">本轮修改这张图，原图保留</span></span>
+          <button type="button" className="shrink-0 text-xs text-muted-foreground disabled:opacity-40" aria-label="取消修改对象" disabled={locked} onClick={() => { try { chooseCanvasTarget(null); } catch (failure) { setError(explain(failure)); } }}>取消修改</button>
+        </div> : <p className="text-xs leading-5 text-muted-foreground">选中画布中的一张图片，或直接描述要创作的新图。</p>}
+      </section>
+      {!!referenceOnly.length && <section aria-label="仅参考图片"><h3 className="mb-1 text-xs font-medium">仅参考</h3><div className="flex max-h-36 flex-wrap gap-2 overflow-y-auto">{referenceOnly.map(value => <div key={value.referenceId} className="flex max-w-full items-center gap-2 rounded-xl border border-border bg-card p-2">
+        <img src={`/api/workspaces/${encodeURIComponent(props.workspaceId)}/assets/${encodeURIComponent(value.assetId)}/raw`} alt="" className="h-9 w-9 shrink-0 rounded-lg object-cover" loading="lazy" />
+        <span className="min-w-0"><span className="block max-w-28 truncate text-xs">{value.name}</span><span className="block text-xs text-muted-foreground">{value.purpose === "EXACT" ? "严格保留 · 规则未变" : value.purpose === "ADAPTIVE" ? "允许融合 · 规则未变" : "仅作视觉参考"}</span>
+          {value.shapeId && <button type="button" className="mt-1 text-xs text-primary disabled:opacity-40" aria-label={`设为修改对象 ${value.name}`} title={value.purpose === "EXACT" ? "请先在素材用途中明确调整严格保留规则" : undefined} disabled={locked || value.purpose === "EXACT"} onClick={() => { try { chooseCanvasTarget(value); } catch (failure) { setError(explain(failure)); } }}>设为修改对象</button>}
+        </span>
+        <button type="button" aria-label={`移除参考 ${value.name}`} className="rounded-full px-1 py-1 text-muted-foreground disabled:opacity-40" disabled={locked} onClick={() => edit({ references: draft.references.filter(ref => ref.referenceId !== value.referenceId) })}>×</button>
+      </div>)}</div></section>}
       <textarea ref={input} aria-label="对话设计需求" className="h-24 max-h-40 min-h-16 w-full resize-none bg-transparent text-sm leading-6 outline-none" placeholder={draft.quickEditTargetId ? "描述这张图片要怎么修改" : "输入想法，或添加图片作为参考"} value={draft.text} maxLength={4000} disabled={locked} onChange={event => edit({ text: event.target.value })} onCompositionStart={() => { composing.current = true; if (timer.current) clearTimeout(timer.current); }} onCompositionEnd={() => { composing.current = false; if (timer.current) clearTimeout(timer.current); timer.current = setTimeout(() => void flush().catch(() => undefined), 700); }} onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && !composing.current) { event.preventDefault(); if (draftRef.current.text.trim()) void send().catch(() => undefined); } }} />
-      <div className="flex items-center gap-2">
-        {props.onAddReference && <button type="button" className={button} aria-label="添加参考图片" title="从素材库添加参考图片" disabled={locked} onClick={props.onAddReference}>＋</button>}
-        <details className="relative" data-testid="conversation-settings"><summary className={button + " cursor-pointer list-none"} aria-label="生成设置">设置</summary>
-          <div className="absolute bottom-full left-0 z-30 mb-2 w-60 space-y-3 rounded-2xl border border-border bg-card p-4 shadow-lg">
+      <div className="flex flex-wrap items-center gap-2" aria-label="本轮输出规格">
             <label className="flex items-center justify-between text-xs">比例<select aria-label="对话图片比例" className={button} value={draft.sizeSelection.ratioKey} disabled={locked} onChange={event => edit({ sizeSelection: { ratioKey: event.target.value as Draft["sizeSelection"]["ratioKey"], resolutionTier: draft.sizeSelection.resolutionTier, ...(event.target.value === "custom" ? { customRatio: { width: 1, height: 1 } } : {}) } })}>{GenerationAspectRatioKey.options.map(value => <option key={value} value={value}>{value === "custom" ? "自定义" : value}</option>)}</select></label>
             {draft.sizeSelection.ratioKey === "custom" && <div className="flex gap-2">{(["width", "height"] as const).map(axis => <input key={axis} aria-label={axis === "width" ? "自定义比例宽" : "自定义比例高"} className="w-20 rounded border border-border bg-background px-2 py-1" type="number" min={1} max={10000} disabled={locked} value={draft.sizeSelection.customRatio?.[axis] ?? 1} onChange={event => edit({ sizeSelection: { ...draft.sizeSelection, customRatio: { width: 1, height: 1, ...draft.sizeSelection.customRatio, [axis]: Number(event.target.value) } } })} />)}</div>}
             <label className="flex items-center justify-between text-xs">画质<select aria-label="对话图片画质" className={button} value={draft.sizeSelection.resolutionTier} disabled={locked} onChange={event => edit({ sizeSelection: { ...draft.sizeSelection, resolutionTier: event.target.value as "1K" | "2K" } })}><option>1K</option><option>2K</option></select></label>
-            <p className="text-xs leading-5 text-muted-foreground">需求里指定的尺寸优先。Enter 发送，Shift+Enter 换行。</p>
+      </div>
+      <p className="text-xs leading-5 text-muted-foreground" role="status" data-testid="conversation-size-preview" data-source={sizePreview.source}>{sizePreview.text}</p>
+      <details className="text-xs text-muted-foreground"><summary className="cursor-pointer">尺寸以哪一个为准？</summary><p className="mt-1 leading-5">文字像素优先，其次是文字中的比例 / 1K、2K；修改图片且文字未指定尺寸时保留原图像素。其余情况使用上方下拉。要改变修改图尺寸，请在需求里写明；矛盾要求会先确认。这里只预览现有规则，发送后还会校验素材和生成能力。</p></details>
+      <div className="flex flex-wrap items-center gap-2">
+        {props.onAddReference && <button type="button" className={button} aria-label="添加参考图片" title="从素材库添加参考图片" disabled={locked} onClick={props.onAddReference}>＋ 参考</button>}
+        <details className="relative" data-testid="conversation-settings"><summary className={button + " cursor-pointer list-none"} aria-label="生成设置">更多</summary>
+          <div className="absolute bottom-full left-0 z-30 mb-2 w-60 space-y-3 rounded-2xl border border-border bg-card p-4 shadow-lg">
             <label className="flex items-center gap-2 text-xs"><input type="checkbox" aria-label="同时准备可编辑PSD" checked={!!draft.psdLayerMode} disabled={locked} onChange={event => edit({ psdLayerMode: event.target.checked ? "AUTO" : undefined, psdLayerCount: undefined })} />同时准备 PSD</label>
             {draft.psdLayerMode && <><select aria-label="PSD分层方式" className={button} disabled={locked} value={draft.psdLayerMode} onChange={event => edit({ psdLayerMode: event.target.value as "AUTO" | "MANUAL", psdLayerCount: event.target.value === "MANUAL" ? 4 : undefined })}><option value="AUTO">按内容自动分层</option><option value="MANUAL">指定层数</option></select>{draft.psdLayerMode === "MANUAL" && <input aria-label="PSD图层数量" className="w-16 rounded border border-border" type="number" min={2} max={10} value={draft.psdLayerCount} disabled={locked} onChange={event => edit({ psdLayerCount: Number(event.target.value) })} />}<p className="text-xs text-muted-foreground">会额外使用分层服务额度，原图先可用。</p></>}
             {props.onAdvancedSettings && <button className={button} type="button" onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); props.onAdvancedSettings?.(); }}>素材用途与输出画框</button>}

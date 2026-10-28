@@ -170,7 +170,7 @@ async function verifyViewport(browser,spec,origin) {
     const imageModeAppearance=await verifyModeAppearance(page,'ns-mode-image');
     await page.locator('#ns-mode-copywriting').click();
     await page.waitForFunction(()=>document.querySelector('#ns-mode-copywriting').getAttribute('aria-pressed')==='true');
-    assert.equal(await page.locator('#ns-create span').textContent(),'进入文案创作');
+    assert.equal(await page.locator('#ns-create span').textContent(),'打开文案工作台');
     const copyModeAppearance=await verifyModeAppearance(page,'ns-mode-copywriting');
     await page.locator('#ns-home-brief').fill('保留这份草稿');
     await page.getByRole('button',{name:'品牌口号',exact:true}).click();
@@ -181,7 +181,7 @@ async function verifyViewport(browser,spec,origin) {
     if(spec.width===1440) await page.screenshot({path:reportPath.replace(/\.json$/i,'')+'-home-copywriting.png'});
     await page.reload();await page.waitForFunction(()=>document.querySelector('#ns-mode-copywriting').getAttribute('aria-pressed')==='true');
     await page.locator('#ns-mode-image').click();
-    assert.equal(await page.locator('#ns-create span').textContent(),'开始创作');
+    assert.equal(await page.locator('#ns-create span').textContent(),'生成图片');
     assert.match(await page.locator('#ns-home-brief').inputValue(),/保留这份草稿/);
     const home = await measure(page,['.ns-sidebar','.np-brand-trigger','.np-brand-label','.np-brand-initial','.np-brand-chevron','.np-inbox-trigger','.np-inbox-label']);
     assert.ok(home['.np-brand-trigger'].scrollWidth<=home['.np-brand-trigger'].clientWidth+1,'Long brand names must fit the home switcher');

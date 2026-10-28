@@ -135,6 +135,7 @@ model User {
   workbenchDrafts WorkbenchChatDraft[]
   studioBrandCreations StudioBrandCreation[]
   studioConversations StudioConversation[]
+  studioWritingDocuments StudioWritingDocument[]
 }
 
 // M-B — Auth.js Prisma adapter tables. Used when OAuth providers are
@@ -194,6 +195,8 @@ model Membership {
 }
 
 model BrandWorkspace {
+  studioWritingDocuments StudioWritingDocument[]
+  studioWritingStyle StudioWritingStyle?
   inspirationState InspirationState?
   inspirationReleases InspirationRelease[]
   inspirationRecords InspirationRecord[]
@@ -442,6 +445,7 @@ model ComplianceTerm {
 // Project = BrandAI **Campaign** 的物理底座（保留表名以零成本复用迁移过来的
 // 路由/worker/lib）。下列 BrandAI 业务字段 frozen-additive。
 model Project {
+  studioWritingDocuments StudioWritingDocument[]
   id          String         @id @default(cuid())
   workspaceId String
   workspace   BrandWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -619,6 +623,108 @@ model StudioConversationMessage {
   @@unique([conversationId, mutationId])
   @@index([conversationId, createdAt, id])
   @@index([status, expiresAt])
+}
+
+// Private writing drafts never share mutable state between collaborators.
+model StudioWritingDocument {
+  id String @id
+  workspaceId String
+  workspace BrandWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  projectId String
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title String @default("未命名文案")
+  text String @default("") @db.Text
+  revision Int @default(0)
+  versions StudioWritingVersion[]
+  references StudioWritingReference[]
+  messages StudioWritingMessage[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@unique([workspaceId, projectId, userId])
+  @@index([userId, updatedAt])
+}
+
+model StudioWritingVersion {
+  id String @id @default(cuid())
+  documentId String
+  document StudioWritingDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  revision Int
+  mutationId String @db.Uuid
+  payloadHash String @db.Char(64)
+  title String
+  text String @db.Text
+  operation String
+  createdAt DateTime @default(now())
+  @@unique([documentId, revision])
+  @@unique([documentId, mutationId])
+}
+
+model StudioWritingReference {
+  id String @id
+  documentId String
+  document StudioWritingDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  mutationId String @db.Uuid
+  payloadHash String @db.Char(64)
+  taskId String @unique
+  name String
+  mimeType String
+  sha256 String @db.Char(64)
+  sizeBytes Int
+  kind String
+  status String @default("PENDING")
+  error String?
+  // Scoped original bytes, bounded at upload. Retained for selected references;
+  // removal/expiry clears bytes, while the idempotency tombstone remains.
+  body Bytes?
+  assetId String?
+  segments Json @default("[]")
+  truncated Boolean @default(false)
+  deletedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@unique([documentId, mutationId])
+  @@index([documentId, deletedAt, createdAt])
+}
+
+model StudioWritingMessage {
+  id String @id @default(cuid())
+  documentId String
+  document StudioWritingDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  taskId String
+  role String
+  text String @db.Text
+  citations Json @default("[]")
+  createdAt DateTime @default(now())
+  @@unique([taskId, role])
+  @@index([documentId, createdAt, id])
+}
+
+// Brand-level confirmed rules are versioned independently of any private draft.
+model StudioWritingStyle {
+  workspaceId String @id
+  workspace BrandWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  revision Int @default(0)
+  rules Json @default("[]")
+  examples Json @default("[]")
+  confirmedAt DateTime?
+  versions StudioWritingStyleVersion[]
+}
+
+model StudioWritingStyleVersion {
+  id String @id @default(cuid())
+  workspaceId String
+  style StudioWritingStyle @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
+  revision Int
+  userId String
+  mutationId String @db.Uuid
+  payloadHash String @db.Char(64)
+  rules Json
+  examples Json
+  confirmedAt DateTime @default(now())
+  @@unique([workspaceId, revision])
+  @@unique([workspaceId, userId, mutationId])
 }
 
 model Generation {

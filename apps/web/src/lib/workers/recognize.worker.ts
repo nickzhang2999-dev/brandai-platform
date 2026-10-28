@@ -1,3 +1,6 @@
+import { requireBrandKitTaskPermission } from "../brand-kit-permissions";
+import { classifyBrandKitRule } from "../brand-kit-import";
+import type { RuleType } from "@brandai/contracts";
 import { runLegacyTask } from "../legacy-task-runtime";
 import { Worker, type Job } from "bullmq";
 import { prisma, Prisma } from "@brandai/db";
@@ -18,6 +21,7 @@ import {
  */
 export interface RecognizeJobData {
   workspaceId: string;
+  targetType?: RuleType;
   /** K7 — `source` carries asset provenance for the AI service's SSRF policy. */
   assets: { id: string; url: string; source?: "UPLOAD" | "WEBSITE" }[];
   /** H-async — server-authoritative task row to mirror progress/status into. */
@@ -44,7 +48,10 @@ export async function runRecognizeJob(
   await job.updateProgress(10);
   ctx.check();
 
-  const request = RecognizeRequest.parse({ assets: data.assets });
+  await requireBrandKitTaskPermission(taskId!, data.workspaceId, data.assets.map(asset => asset.id));
+  ctx.check();
+
+  const request = RecognizeRequest.parse({ assets: data.assets, ...(data.targetType ? { targetType: data.targetType } : {}) });
   // §2.3 — log every AI call's wall-clock latency for the activity log.
   const _t0 = Date.now();
   let raw: unknown;
@@ -69,12 +76,16 @@ export async function runRecognizeJob(
     imageCount: data.assets.length,
     latencyMs: Date.now() - _t0,
   });
+  // The provider has already consumed this call, even if access was revoked meanwhile.
+  await requireBrandKitTaskPermission(taskId!, data.workspaceId, data.assets.map(asset => asset.id));
+  ctx.check();
   await job.updateProgress(60);
   await setProgress(taskId, 60);
 
   const ruleIds: string[] = [];
   let colorSystemAttached = false;
-  for (const rule of result.rules) {
+  for (const suggested of result.rules) {
+    const rule = classifyBrandKitRule(suggested, data.targetType);
     // Persist the Color System report payload onto the first `color` rule's
     // value so the report page can read it without a (frozen-out) Job model.
     const value: Record<string, unknown> = { ...(rule.value ?? {}) };
@@ -82,6 +93,7 @@ export async function runRecognizeJob(
       value.colorSystem = result.colorSystem;
       colorSystemAttached = true;
     }
+    await requireBrandKitTaskPermission(taskId!, data.workspaceId, data.assets.map(asset => asset.id));
     const created = await ctx.write(tx => tx.brandRule.create({
       data: {
         workspaceId: data.workspaceId,

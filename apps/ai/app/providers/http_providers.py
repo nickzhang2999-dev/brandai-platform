@@ -998,11 +998,11 @@ class HttpVLMProvider(VLMProvider):
             raise ImageResponseError("Vision provider returned unusable JSON") from None
 
     async def analyze_assets(
-        self, assets: list[dict[str, str]]
+        self, assets: list[dict[str, str]], *, target_type: str | None = None
     ) -> dict[str, Any]:
         asset_ids = [str(a["id"]) for a in assets]
         parts: list[dict[str, Any]] = [
-            {"type": "text", "text": _ANALYZE_PROMPT.format(ids=", ".join(asset_ids))}
+            {"type": "text", "text": _ANALYZE_PROMPT.format(ids=", ".join(asset_ids)) + (f"\n用户明确选择 {target_type} 类别。只分析该类别相关的可见规则；不够明确时返回空rules，不补写其它类别。所有规则type必须为 {target_type}。" if target_type else "")}
         ]
         attached = 0
         for a in assets[:_MAX_VISION_IMAGES]:
@@ -1023,12 +1023,13 @@ class HttpVLMProvider(VLMProvider):
         return _coerce_recognize(data, asset_ids)
 
     async def parse_manual(
-        self, text: str, pages: list[dict[str, Any]] | None = None
+        self, text: str, pages: list[dict[str, Any]] | None = None, *, target_type: str | None = None
     ) -> dict[str, Any]:
+        focus = f"\n用户明确选择 {target_type} 类别。只提取该类别可见规则，缺乏依据就返回空rules；所有规则type必须为 {target_type}。" if target_type else ""
         rendered = [p for p in (pages or []) if p.get("dataUrl")]
         # Text-only compatibility path for callers that cannot render a PDF.
         if not rendered:
-            prompt = _PARSE_MANUAL_PROMPT.format(text=text[:_MAX_SCRAPE_TEXT])
+            prompt = _PARSE_MANUAL_PROMPT.format(text=text[:_MAX_SCRAPE_TEXT]) + focus
             data = await self._chat_json(
                 [{"type": "text", "text": prompt}],
                 system=_PARSE_MANUAL_SYSTEM,
@@ -1053,7 +1054,7 @@ class HttpVLMProvider(VLMProvider):
             parts: list[dict[str, Any]] = [
                 {
                     "type": "text",
-                    "text": _PARSE_MANUAL_PROMPT.format(text=page_text),
+                    "text": _PARSE_MANUAL_PROMPT.format(text=page_text) + focus,
                 }
             ]
             for page in batch:

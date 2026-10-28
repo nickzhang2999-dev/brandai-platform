@@ -283,3 +283,8 @@ CDS preflight directly confirms push automatic deployment and default shared bra
 - 代码默认 gpt-4o 不代表实际配置；只读查询开发预览确认 VLM 为 gpt-5.6-sol、凭据存在。用户选择沿用后台当前模型并先验图片能力。
 - 模型凭据留在 Nova；Omni 仅持服务令牌。图片分析使用现有 AsyncTask 异步处理、固定工作区权限与独立额度；不改变原产品模型配置。
 - 服务器 POTW 四个采集文件与本地现有改动哈希一致；本轮部署保留这些未提交的用户改动。
+
+
+## 2026-10-28 Studio writing and import boundaries
+
+Writing results remain suggestions until explicit adoption. Durable mutation identity prevents a lost acknowledgement from creating another paid request. Canvas programmatic focus is separate from explicit target selection. Grouping source suggestions must retain each underlying rule. New import tasks recheck access before provider use and result persistence; a consumed provider call remains recorded if the result is rejected.

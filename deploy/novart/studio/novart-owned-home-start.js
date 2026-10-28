@@ -225,7 +225,7 @@ window.createHomeStart = function createHomeStart(host) {
     for (const value of ['image','copywriting']) { const tab = $('ns-mode-' + value); if (tab) { tab.disabled = false; tab.setAttribute('aria-disabled',String(Boolean(modeReason))); tab.setAttribute('aria-pressed',String(creationMode === value)); tab.setAttribute('aria-describedby','ns-home-mode-status'); tab.title = modeReason; } }
     renderModeStatus(modeReason);
     $('ns-home-brief').placeholder = creationMode === 'copywriting' ? '描述你想写的内容，例如：为新品写一句标题和一段介绍…' : '描述你的设计想法，也可以带上图片…';
-    const help = $('ns-home-brief-help'); if (help) help.textContent = creationMode === 'copywriting' ? '最多 2000 个字符。先进入文案面板，再确认生成；附图会保存在画布。' : '最多 4000 个字符。开始创作后会提交一次生成；只添加图片时先放入画布。';
+    const help = $('ns-home-brief-help'); if (help) help.textContent = creationMode === 'copywriting' ? '最多 2000 个字符。打开工作台后发送需求；附图会带入参考资料。' : '最多 4000 个字符。点击生成图片会提交一次生成；只添加图片时先放入画布。';
     const examples = [
       ['品牌口号','为品牌写三句简洁有记忆点的口号，突出品牌特点。'],
       ['产品介绍','写一段清晰自然的产品介绍，突出使用场景，不编造功能和功效。'],
@@ -238,7 +238,7 @@ window.createHomeStart = function createHomeStart(host) {
     });
     $('ns-create-blank').disabled = frozen || recoveryBlocked || host.legacyBlocked();
     $('ns-create').disabled = busy || checkingRecovery || modeSwitching || !loaded || recoveryBlocked || host.legacyBlocked() || (!submitted && items.some(item => !validFile(item.file)));
-    $('ns-create').querySelector('span').textContent = busy ? '正在创建…' : submitted ? '继续这个项目' : creationMode === 'copywriting' ? '进入文案创作' : items.length && !$('ns-home-brief').value.trim() ? '放入画布' : '开始创作';
+    $('ns-create').querySelector('span').textContent = busy ? '正在创建…' : submitted ? '继续这个项目' : creationMode === 'copywriting' ? '打开文案工作台' : items.length && !$('ns-home-brief').value.trim() ? '放入画布' : '生成图片';
   }
   function render() {
     const list = $('hs-attachments'); list.hidden = !items.length; list.replaceChildren();
@@ -426,7 +426,7 @@ window.createHomeStart = function createHomeStart(host) {
       if (submitted.startCreation === true && !submitted.creationAccepted) {
         if (!submitted.brief.trim() || submitted.brief.length > 4000) throw new Error('创作需求长度不符合要求，请保留原始需求并在项目中继续编辑。');
         if (!current(entry) || !entry.ready) throw new Error('画布暂时不可用，需求和已保存素材仍保留。');
-        paint(entry,{kind:'loading',title:submitted.creationMode === 'copywriting' ? '正在打开文案创作' : '正在开始创作',detail:submitted.creationMode === 'copywriting' ? '需求已保存，正在带入文案面板。' : '需求和参考图已保存，正在提交这次创作。'});
+        paint(entry,{kind:'loading',title:submitted.creationMode === 'copywriting' ? '正在打开文案创作' : '正在开始创作',detail:submitted.creationMode === 'copywriting' ? '需求已保存，正在带入文案工作台。' : '需求和参考图已保存，正在提交这次创作。'});
         submitted.creationStarted = true; await persist();
         await waitForCreation(entry,submitted,deadline);
         submitted.creationAccepted = true; await persist();
@@ -437,7 +437,7 @@ window.createHomeStart = function createHomeStart(host) {
       completed.forEach(item => { if (item.url) URL.revokeObjectURL(item.url); });
       if ($('ns-home-brief').value === previous.brief) { $('ns-home-brief').value = ''; try { localStorage.removeItem('novart-m24-home-brief'); } catch {} }
       states.delete(entry.id); host.invalidateAssets(entry.id); render();
-      if (current(entry)) { hide(); notify(previous.creationMode === 'copywriting' ? '需求已带入文案面板，确认后即可生成。' : previous.startCreation ? '创作已提交，可以在对话中查看进度。' : '图片和需求已保存，可以继续编辑。'); if (!previous.startCreation) host.showRequirements(entry); }
+      if (current(entry)) { hide(); notify(previous.creationMode === 'copywriting' ? '需求已带入文案工作台，确认后即可生成。' : previous.startCreation ? '创作已提交，可以在对话中查看进度。' : '图片和需求已保存，可以继续编辑。'); if (!previous.startCreation) host.showRequirements(entry); }
     } catch (error) {
       paint(entry,{kind:'error',title:submitted?.startCreation ? '创作交接尚未完成' : '图片交接尚未完成',detail:(typeof error?.message === 'string' ? error.message.slice(0,300) : '请稍后继续确认。') + ' 需求和原图仍保留。',failedId:error.failedId});
     }

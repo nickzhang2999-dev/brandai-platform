@@ -60,6 +60,7 @@ export type AssetSourceHint = z.infer<typeof AssetSourceHint>;
 
 // POST /v1/recognize
 export const RecognizeRequest = z.object({
+  targetType: RuleType.optional(),
   providerRetryPolicy: z.literal("never").optional(),
   assets: z
     .array(
@@ -171,6 +172,7 @@ export type SummarizeResponse = z.infer<typeof SummarizeResponse>;
 // POST /v1/parse-manual — parse a brand/VI manual PDF (by asset URL) into the
 // same DRAFT rule shape as /v1/recognize, so the confirm workbench is reused.
 export const ParseManualRequest = z.object({
+  targetType: RuleType.optional(),
   providerRetryPolicy: z.literal("never").optional(),
   url: z.string(),
 });

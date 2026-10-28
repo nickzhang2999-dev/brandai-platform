@@ -1,3 +1,4 @@
+vi.mock("@/lib/studio-writing-notifications", () => ({ listWritingNotifications: async () => [] }));
 import { afterEach,beforeEach,describe,expect,it,vi } from 'vitest';
 const f=vi.hoisted(()=>({chats:vi.fn(),generations:vi.fn(),tasks:vi.fn(),uploads:vi.fn()}));
 vi.mock('@brandai/db',()=>({prisma:{inspirationChat:{findMany:f.chats},generation:{findMany:f.generations},asyncTask:{findMany:f.tasks},studioMaterialUpload:{findMany:f.uploads}}}));

@@ -1,3 +1,6 @@
+import { requireBrandKitTaskPermission } from "../brand-kit-permissions";
+import { classifyBrandKitRule } from "../brand-kit-import";
+import type { RuleType } from "@brandai/contracts";
 import { runLegacyTask } from "../legacy-task-runtime";
 import { Worker, type Job } from "bullmq";
 import { prisma, Prisma } from "@brandai/db";
@@ -17,6 +20,7 @@ import { decodeImageResolution } from "@/lib/assets";
  */
 export interface ParseManualJobData {
   workspaceId: string;
+  targetType?: RuleType;
   /** the VI_DOC asset whose PDF text is parsed; stamped onto rule evidence */
   assetId: string;
   url: string;
@@ -69,7 +73,10 @@ export async function runParseManualJob(
     await job.updateProgress(10);
     ctx.check();
 
-    const request = ParseManualRequest.parse({ url: data.url });
+  await requireBrandKitTaskPermission(taskId!, data.workspaceId, [data.assetId]);
+  ctx.check();
+
+    const request = ParseManualRequest.parse({ url: data.url, ...(data.targetType ? { targetType: data.targetType } : {}) });
     // §2.3 — log every AI call's wall-clock latency for the activity log.
     const _t0 = Date.now();
     let raw: unknown;
@@ -93,6 +100,9 @@ export async function runParseManualJob(
       status: "SUCCEEDED",
       latencyMs: Date.now() - _t0,
     });
+  // The provider has already consumed this call, even if access was revoked meanwhile.
+  await requireBrandKitTaskPermission(taskId!, data.workspaceId, [data.assetId]);
+  ctx.check();
     await job.updateProgress(50);
     await setProgress(taskId, 50);
 
@@ -111,6 +121,8 @@ export async function runParseManualJob(
         `${data.workspaceId}/brand-kit`,
         ctx.signal,
       );
+      await requireBrandKitTaskPermission(taskId!, data.workspaceId, [data.assetId]);
+      ctx.check();
       const safeRef = extracted.ref.replace(/[^a-zA-Z0-9._-]+/g, "-");
       const resolution = decodeImageResolution(bytes);
       const created = await ctx.write(tx => tx.asset.create({
@@ -139,9 +151,12 @@ export async function runParseManualJob(
     await job.updateProgress(72);
     await setProgress(taskId, 72);
 
+    await requireBrandKitTaskPermission(taskId!, data.workspaceId, [data.assetId]);
+    ctx.check();
     const ruleIds: string[] = [];
     let colorSystemAttached = false;
-    for (const rule of result.rules) {
+    for (const suggested of result.rules) {
+      const rule = classifyBrandKitRule(suggested, data.targetType);
       // Persist the Color System report payload onto the first `color` rule's
       // value so the report page can read it (parity with recognize.worker).
       const value: Record<string, unknown> = { ...(rule.value ?? {}) };
@@ -155,7 +170,7 @@ export async function runParseManualJob(
           : [{ note: "来自 VI 手册解析" }];
       // Prefer the crop explicitly cited by the VLM. If a visual module has a
       // crop but the model omitted sourceRef, attach the first crop of that type.
-      const fallbackRef = refsByType.get(rule.type)?.[0];
+      const fallbackRef = refsByType.get(suggested.type)?.[0];
       const evidence = sourceEvidence.map((ev, index) => {
         const sourceRef =
           ev.sourceRef ?? (index === 0 ? fallbackRef : undefined);
@@ -171,7 +186,8 @@ export async function runParseManualJob(
             (ev.page ? `品牌手册第 ${ev.page} 页` : "来自 VI 手册解析"),
         };
       });
-      const created = await ctx.write(tx => tx.brandRule.create({
+      await requireBrandKitTaskPermission(taskId!, data.workspaceId, [data.assetId]);
+    const created = await ctx.write(tx => tx.brandRule.create({
         data: {
           workspaceId: data.workspaceId,
           type: rule.type,

@@ -14,6 +14,7 @@ def test_health(client):
         "studioDecompositionQueueRevision": "studio-layer-queue-r1",
         "studioLayerPlanRevision": "semantic-layer-plan-r1",
         "studioConversationIntentRevision": "structured-conversation-intent-r2",
+        "studioWritingParserRevision": "studio-writing-text-v1",
     }
 
 

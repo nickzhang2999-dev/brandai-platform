@@ -14,9 +14,9 @@ type Props = {
   readOnly: boolean; frozen: boolean; outputFrameId: string; onOutputFrameChange: (id: string) => void;
   onCreateOutputFrame: () => void;
   onChange: (update: (draft: WorkflowInput) => WorkflowInput) => void;
-  onSave: () => void; onRefresh: () => void; onResolveConflict: (choice: "server" | "local") => void;
+  onSave: () => void; onComplete?: () => void; onRefresh: () => void; onResolveConflict: (choice: "server" | "local") => void;
 };
-export function OwnedWorkflowPanel({ conversationOnly = false, state, document, selectedIds, readOnly, frozen, outputFrameId, onOutputFrameChange, onCreateOutputFrame, onChange, onSave, onRefresh, onResolveConflict }: Props) {
+export function OwnedWorkflowPanel({ conversationOnly = false, state, document, selectedIds, readOnly, frozen, outputFrameId, onOutputFrameChange, onCreateOutputFrame, onChange, onSave, onComplete, onRefresh, onResolveConflict }: Props) {
   const [candidate, setCandidate] = useState("");
   const draft = state?.draft, assets = state?.assets?.assets ?? [];
   const locked = readOnly || frozen || !draft || !!state?.busy || state?.status === "uncertain" || state?.status === "conflict";
@@ -27,7 +27,7 @@ export function OwnedWorkflowPanel({ conversationOnly = false, state, document, 
   const selectedAsset = candidates.find(asset => selectedIds.includes(asset.shapeId));
   function add(selected: string) {
     const asset = candidates.find(value => key(value) === selected); if (!asset) return;
-    onChange(value => ({ ...value, references: [...value.references, { shapeId: asset.shapeId, assetSha256: asset.assetSha256, purpose: "REFERENCE", participates: false }] })); setCandidate("");
+    onChange(value => ({ ...value, references: [...value.references, { shapeId: asset.shapeId, assetSha256: asset.assetSha256, purpose: "REFERENCE", participates: conversationOnly }] })); setCandidate("");
   }
   return <section className="space-y-3 rounded-2xl border border-border p-3" data-testid="owned-workflow" data-workflow-state={state?.status ?? "loading"} data-workflow-dirty={state?.dirty ? "true" : "false"}>
     <div className="flex items-center justify-between"><h2 className="text-xs font-semibold">素材用途</h2>{(!conversationOnly || !!state?.error || !draft) && <button type="button" className={button} disabled={!!state?.busy || frozen} onClick={onRefresh}>读取最新设置</button>}</div>
@@ -58,7 +58,7 @@ export function OwnedWorkflowPanel({ conversationOnly = false, state, document, 
       {!!state?.server?.issues.length && <ul className="space-y-1 text-xs text-muted-foreground">{state.server.issues.map((issue, index) => <li key={index}>{issue.message}</li>)}</ul>}
       {!!state?.error && <p role="alert" className="text-xs leading-5">{state.error}</p>}
       {state?.status === "conflict" && state.latest && <div className="space-y-2 rounded-xl bg-accent-soft p-2"><p className="text-xs">服务器最新版本 {state.latest.revision}：{state.latest.mode === "modify" ? "修改图片" : "生成新图"}，{state.latest.references.filter(ref => ref.participates).length} 张参与。</p><div className="flex flex-wrap gap-2"><button type="button" className={button} disabled={readOnly || frozen} onClick={() => onResolveConflict("server")}>采用最新设置</button><button type="button" className={button} disabled={readOnly || frozen} onClick={() => onResolveConflict("local")}>保留我的选择再检查</button></div></div>}
-      <button type="button" className={button + " w-full"} disabled={readOnly || frozen || !!state?.busy || state?.status === "conflict" || !state?.dirty && state?.status !== "uncertain" || !StudioWorkflowSaveInput.safeParse(draft).success} onClick={onSave}>{state?.busy ? "正在确认素材…" : state?.status === "uncertain" ? "确认上一份用途保存" : state?.dirty ? "保存用途" : "用途已保存"}</button>
+      <button type="button" className={button + " w-full"} disabled={readOnly || frozen || !!state?.busy || state?.status === "conflict" || !onComplete && !state?.dirty && state?.status !== "uncertain" || !StudioWorkflowSaveInput.safeParse(draft).success} onClick={onComplete ?? onSave}>{state?.busy ? "正在确认素材…" : onComplete ? "完成并应用到对话" : state?.status === "uncertain" ? "确认上一份用途保存" : state?.dirty ? "保存用途" : "用途已保存"}</button>
     </>}
   </section>;
 }

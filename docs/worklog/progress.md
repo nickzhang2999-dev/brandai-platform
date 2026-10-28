@@ -566,3 +566,8 @@ ef42d5c CI39018642952通过并部署，真实同任务归档恢复成功、9层S
 - 已实现服务鉴权、异步任务与八项设计拆解，复用后台实际 VLM 配置；公司上游密钥不传入 Omni。
 - L1 2281、AI 667、专项协议与浏览器测试已通过。发布与真实图片结果单独记录，不以模拟响应替代模型验收。
 - 详细计划和状态见 [本轮记录](2026-10-24-omni-analysis-plan.md)。
+
+
+## 2026-10-28 Studio writing and canvas interaction
+
+Implemented persistent writing documents, versioned selection replacement, bounded reference parsing, confirmed style, and explicit native-canvas handoff. Canvas controls and reference targets are grouped into the editor workflow. Brand kit imports add batch recovery, explicit categories, grouped suggestions and new-task access revalidation. Local checks cover database persistence and isolated browser interaction; provider/runtime acceptance is tracked separately. See [technical notes](../studio-writing-workbench.md).

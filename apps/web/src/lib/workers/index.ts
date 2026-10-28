@@ -16,6 +16,7 @@ import "./runtime-env";
 import { createInspirationWorker } from "../inspiration/worker";
 import { createOmniAnalysisWorker } from "../omni-analysis/worker";
 import { createStudioCopywritingWorker } from "./studio-copywriting.worker";
+import { createStudioWritingWorker } from "./studio-writing.worker";
 import http from "node:http";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -90,6 +91,7 @@ try {
     createInspirationWorker(),
     createOmniAnalysisWorker(),
     createStudioCopywritingWorker(),
+    createStudioWritingWorker(),
     createRecognizeWorker(),
     createParseManualWorker(),
     createGenerateWorker(),

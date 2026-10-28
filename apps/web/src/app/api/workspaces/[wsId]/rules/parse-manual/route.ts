@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { BrandKitParseManualInput } from "@brandai/contracts";
+import { brandKitImportTask, readBrandKitImportTask } from "@/lib/brand-kit-import";
 import { prisma } from "@brandai/db";
 import { handleError, ok, parse, requireUser, ApiException } from "@/lib/api";
 import { requireOwnedWorkspace, requireWorkspaceRole } from "@/lib/workspace";
@@ -16,9 +18,7 @@ import type { ParseManualJobData } from "@/lib/workers/parse-manual.worker";
  * AI service and writes DRAFT BrandRule rows — the same recognition machinery
  * and confirm/edit/reject workbench as image-based recognition.
  */
-const StartParseManualInput = z.object({
-  assetId: z.string().min(1),
-});
+const StartParseManualInput = BrandKitParseManualInput;
 
 export async function POST(
   req: Request,
@@ -35,6 +35,7 @@ export async function POST(
         id: input.assetId,
         workspaceId: wsId,
         category: "VI_DOC",
+        deprecatedAt: null, availableForGeneration: true,
       },
       select: { id: true, url: true },
     });
@@ -42,14 +43,19 @@ export async function POST(
       throw new ApiException(400, "No matching VI manual in this workspace");
     }
 
-    const task = await createTask({ workspaceId: wsId, kind: "PARSE_MANUAL" });
+    const task = input.mutationId
+      ? await brandKitImportTask(wsId, user.id, "PARSE_MANUAL", input.mutationId, input)
+      : await createTask({ workspaceId: wsId, kind: "PARSE_MANUAL" });
+    if ("status" in task && task.status !== "PENDING") return ok({ taskId: task.id, jobId: "jobId" in task ? task.jobId : undefined, status: task.status }, { status: 202 });
     const jobData: ParseManualJobData = {
       workspaceId: wsId,
       assetId: asset.id,
       url: asset.url,
       taskId: task.id,
+      ...(input.targetType ? { targetType: input.targetType } : {}),
     };
     const job = await parseManualQueue.add("parse-manual", jobData, {
+      ...(input.mutationId ? { jobId: task.id } : {}),
       removeOnComplete: 50,
       removeOnFail: 50,
     });
@@ -89,6 +95,8 @@ export async function GET(
     const { wsId } = await params;
     await requireOwnedWorkspace(wsId, user.id);
 
+    const mutationId = new URL(req.url).searchParams.get("mutationId");
+    if (mutationId) return ok(await readBrandKitImportTask(wsId, user.id, "PARSE_MANUAL", z.string().uuid().parse(mutationId)));
     const jobId = new URL(req.url).searchParams.get("jobId");
     if (!jobId) throw new ApiException(400, "jobId is required");
 
