@@ -248,15 +248,21 @@ async function fixtureSettled(condition) {const deadline=Date.now()+10000;while(
   }
   if(copywritingOnly) {
     const output=path.join(repo,'.novart-build/writing-workbench-integration');fs.mkdirSync(output,{recursive:true});
-    const open=async()=>{await page.getByRole('tab',{name:'AI 文案',exact:true}).click();await page.waitForFunction(()=>document.querySelector('[data-testid="writing-workbench"]')?.dataset.ready==='true');};
+    const open=async(document=false)=>{await page.getByRole('tab',{name:'AI 文案',exact:true}).click();await page.waitForFunction(()=>document.querySelector('[data-testid="writing-workbench"]')?.dataset.ready==='true');if(document)await page.getByRole('button',{name:'当前稿',exact:true}).click();};
     await open();const panel=page.getByTestId('writing-workbench');
-    assert.equal(await page.getByRole('dialog').count(),0);assert.equal(await surface.isVisible(),false);check('writing-opens-as-independent-surface-not-modal-or-canvas');
+    assert.equal(await page.getByRole('dialog').count(),0);assert.equal(await surface.isVisible(),true);const canvasBounds=await surface.boundingBox(),writingBounds=await panel.boundingBox();assert.ok(canvasBounds&&writingBounds&&canvasBounds.x+canvasBounds.width<=writingBounds.x+1);check('writing-opens-beside-visible-canvas');
     await panel.getByRole('textbox',{name:'本轮文案需求',exact:true}).fill('写一组短标题和正文');
-    await panel.getByRole('button',{name:'发送需求',exact:true}).click();await panel.getByRole('button',{name:'设为当前稿',exact:true}).click();
+    await panel.getByRole('button',{name:'发送需求',exact:true}).click();await panel.getByRole('button',{name:'加入画布',exact:true}).waitFor();
+    const beforeDirect=JSON.stringify(writingFixture.state.document);await panel.getByRole('button',{name:'加入画布',exact:true}).click();await fixtureSettled(()=>shapes().length===1&&writes>0);
+    assert.equal(JSON.stringify(writingFixture.state.document),beforeDirect);assert.equal(await surface.isVisible(),true);assert.equal(await panel.isVisible(),true);assert.equal(copywritingPosts,1);check('suggestion-inserts-directly-without-adopting-draft-or-extra-model-call');
+    await panel.getByRole('button',{name:'加入画布',exact:true}).click();await page.waitForTimeout(150);assert.equal(shapes().length,1);check('direct-suggestion-insertion-is-idempotent');
+    await panel.getByRole('textbox',{name:'本轮文案需求',exact:true}).fill('尚未发送的后续需求');await panel.getByRole('button',{name:'展开编辑',exact:true}).click();assert.equal(await surface.isVisible(),false);await panel.getByRole('button',{name:'收回侧栏',exact:true}).click();assert.equal(await surface.isVisible(),true);assert.equal(await panel.getByRole('textbox',{name:'本轮文案需求',exact:true}).inputValue(),'尚未发送的后续需求');check('expand-and-dock-preserve-unsent-composer-without-model-call');
+    await panel.getByRole('button',{name:'返回画布',exact:true}).click();await page.getByRole('button',{name:'撤销',exact:true}).click();await fixtureSettled(()=>shapes().length===0);await open();await panel.getByRole('button',{name:'设为当前稿',exact:true}).click();
+    const sendBounds=await panel.getByRole('button',{name:'当前稿加入画布',exact:true}).boundingBox();assert.ok(sendBounds&&sendBounds.y>=0&&sendBounds.y+sendBounds.height<=850);check('current-draft-insert-is-visible-without-scrolling-to-bottom');
     await page.waitForFunction(()=>document.querySelector('[data-testid="writing-workbench"]')?.dataset.saveState==='saved');
-    await panel.getByRole('button',{name:'送回画布',exact:true}).click();await fixtureSettled(()=>shapes().length===1&&writes>0);
+    await panel.getByRole('button',{name:'当前稿加入画布',exact:true}).click();await fixtureSettled(()=>shapes().length===1&&writes>0);
     assert.equal(shapes()[0].props.text.replaceAll('\n',''),'交互测试标题测试夹具正文，仅用于编辑、撤销和刷新恢复检查。');check('writing-current-draft-inserts-native-editable-text');
-    await open();await panel.getByRole('button',{name:'送回画布',exact:true}).click();await page.waitForTimeout(350);assert.equal(shapes().length,1);check('same-document-revision-handoff-is-idempotent');
+    await open(true);await panel.getByRole('button',{name:'当前稿加入画布',exact:true}).click();await page.waitForTimeout(350);assert.equal(shapes().length,1);check('same-document-revision-handoff-is-idempotent');
     await page.getByRole('button',{name:'撤销',exact:true}).click();await fixtureSettled(()=>shapes().length===0);check('writing-insertion-can-be-undone');
     await page.getByRole('button',{name:'重做',exact:true}).click();await fixtureSettled(()=>shapes().length===1);check('writing-insertion-can-be-redone');
     await page.reload();await page.getByTestId('owned-canvas-item').waitFor();assert.equal(shapes().length,1);check('writing-text-restores-on-canvas-after-refresh');
@@ -268,6 +274,7 @@ async function fixtureSettled(condition) {const deadline=Date.now()+10000;while(
     await panel.getByRole('button',{name:'关闭本轮参考资料'}).click();await page.setViewportSize({width:390,height:844});assert.ok(await panel.isVisible());assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);check('writing-surface-fits-mobile-width');
     await page.screenshot({path:path.join(output,'01-embedded-mobile.png'),fullPage:true});await page.setViewportSize({width:1366,height:850});
     stage='embedded-long-document-scroll';
+    await panel.getByRole('button',{name:'展开编辑',exact:true}).click();
     const longDraft=Array.from({length:100},(_,index)=>`第 ${index+1} 段：这是一段用于验证真实嵌入滚动容器的长文。末尾应能编辑和保存，正文长度超过三千字符。`).join('\n\n');
     const writingBody=panel.getByRole('textbox',{name:'当前稿正文',exact:true});await writingBody.fill(longDraft);
     await writingBody.press('Control+End');await writingBody.press('Enter');await writingBody.pressSequentially('尾段追加：编辑完成。');
@@ -281,7 +288,7 @@ async function fixtureSettled(condition) {const deadline=Date.now()+10000;while(
     const writingReceipt=writingFixture.state.document.id+'-'+writingFixture.state.document.revision,writingPrefix='shape:writing-'+writingReceipt.length+'_'+writingReceipt+'-';
     await footer.click();await fixtureSettled(()=>shapes().filter(shape=>shape.id.startsWith(writingPrefix)).map(shape=>shape.props.text).join('')===longDraft+'\n尾段追加：编辑完成。');
     check('embedded-long-document-tail-edit-ctrl-s-save-and-bottom-canvas-handoff-remain-reachable');
-    const longShapeCount=shapes().length;assert.ok(longShapeCount>2);await open();await panel.getByRole('button',{name:'送回画布',exact:true}).click();await page.waitForTimeout(150);assert.equal(shapes().length,longShapeCount);await page.getByRole('button',{name:'撤销',exact:true}).click();await fixtureSettled(()=>shapes().length===1);await page.getByRole('button',{name:'重做',exact:true}).click();await fixtureSettled(()=>shapes().length===longShapeCount);check('long-draft-handoff-is-idempotent-and-entire-chunk-group-undoes-in-one-step');
+    const longShapeCount=shapes().length;assert.ok(longShapeCount>2);await open(true);await panel.getByRole('button',{name:'当前稿加入画布',exact:true}).click();await page.waitForTimeout(150);assert.equal(shapes().length,longShapeCount);await page.getByRole('button',{name:'撤销',exact:true}).click();await fixtureSettled(()=>shapes().length===1);await page.getByRole('button',{name:'重做',exact:true}).click();await fixtureSettled(()=>shapes().length===longShapeCount);check('long-draft-handoff-is-idempotent-and-entire-chunk-group-undoes-in-one-step');
     // Use a fresh browser composer scope for a new homepage handoff in this fixture project.
     await page.evaluate(()=>{for(const key of Object.keys(localStorage))if(key.startsWith('novart:writing-workbench:'))localStorage.removeItem(key);});
     const initialCopyPosts=copywritingPosts, initialImagePosts=conversationPosts.length;
@@ -290,7 +297,7 @@ async function fixtureSettled(condition) {const deadline=Date.now()+10000;while(
     await page.locator('#hs-file-input').setInputFiles({name:'reference.png',mimeType:'image/png',buffer:png});await page.waitForFunction(()=>homeStart.snapshot().attachmentCount===1);await page.locator('#ns-create').click();
     await page.waitForFunction(()=>homeStart.snapshot().submittedRequestId===null && document.querySelector('iframe')?.contentDocument?.querySelector('[aria-label="本轮文案需求"]')?.value==='为新品写一句品牌口号',undefined,{timeout:45000});
     const homeFrame=page.frames().find(frame=>new URL(frame.url()).pathname==='/studio-editor');assert.ok(homeFrame);
-    const homePanel=homeFrame.getByTestId('writing-workbench');assert.ok(await homePanel.isVisible());assert.equal(await homeFrame.getByTestId('owned-canvas').isVisible(),false);
+    const homePanel=homeFrame.getByTestId('writing-workbench');assert.ok(await homePanel.isVisible());assert.equal(await homeFrame.getByTestId('owned-canvas').isVisible(),true);
     assert.ok(writingFixture.state.references.some(r=>r.kind==='IMAGE'));assert.equal(copywritingPosts,initialCopyPosts);assert.equal(conversationPosts.length,initialImagePosts);check('homepage-writing-opens-real-iframe-with-reference-without-model-post');
     await homePanel.getByRole('textbox',{name:'本轮文案需求',exact:true}).fill('调整后的品牌口号需求');await homeFrame.waitForTimeout(150);
     await homeFrame.goto(origin+'/studio-editor?surface=writing');await homeFrame.waitForFunction(()=>document.querySelector('[data-testid="writing-workbench"]')?.dataset.ready==='true');
@@ -312,8 +319,8 @@ async function fixtureSettled(condition) {const deadline=Date.now()+10000;while(
     await homePanel.getByRole('button',{name:/^资料/}).click();assert.equal(await homePanel.getByRole('checkbox',{checked:true}).count(),4);await homePanel.getByRole('button',{name:'关闭本轮参考资料'}).click();
     assert.equal(copywritingPosts,initialCopyPosts);assert.equal(conversationPosts.length,initialImagePosts);check('five-selected-canvas-images-all-imported-four-explicitly-selected-with-visible-limit');
     await page.screenshot({path:path.join(output,'02-homepage-writing.png')});
-    stage='writing-parent-open-panel';await homePanel.getByRole('textbox',{name:'当前稿正文',exact:true}).fill('外层打开资料前，先保存文案手改。');await page.evaluate(projectId=>document.querySelector('iframe').contentWindow.postMessage({type:'nv-studio',projectId,action:'open-panel',panel:'materials'},location.origin),fixture.projectId);await homeFrame.getByRole('dialog',{name:'品牌素材',exact:true}).waitFor();assert.equal(writingFixture.state.document.text,'外层打开资料前，先保存文案手改。');assert.equal(await homePanel.isVisible(),false);assert.equal(await homeFrame.getByTestId('owned-canvas').isVisible(),true);check('parent-open-panel-confirms-writing-save-before-showing-visible-canvas-panel');
-    stage='writing-notification-link';const notified=writingFixture.state.tasks.find(task=>task.operation==='GENERATE');await page.goto(origin+'/studio-writing?taskId='+encodeURIComponent(notified.id));await page.getByTestId('writing-workbench').locator('[data-task-id="'+notified.id+'"]').waitFor();assert.equal(await page.getByTestId('owned-canvas').isVisible(),false);assert.equal(copywritingPosts,initialCopyPosts);check('writing-notification-task-link-stays-in-writing-and-only-reads-original-task');
+    stage='writing-parent-open-panel';await homePanel.getByRole('button',{name:'当前稿',exact:true}).click();await homePanel.getByRole('textbox',{name:'当前稿正文',exact:true}).fill('外层打开资料前，先保存文案手改。');await page.evaluate(projectId=>document.querySelector('iframe').contentWindow.postMessage({type:'nv-studio',projectId,action:'open-panel',panel:'materials'},location.origin),fixture.projectId);await homeFrame.getByRole('dialog',{name:'品牌素材',exact:true}).waitFor();assert.equal(writingFixture.state.document.text,'外层打开资料前，先保存文案手改。');assert.equal(await homePanel.isVisible(),false);assert.equal(await homeFrame.getByTestId('owned-canvas').isVisible(),true);check('parent-open-panel-confirms-writing-save-before-showing-visible-canvas-panel');
+    stage='writing-notification-link';const notified=writingFixture.state.tasks.find(task=>task.operation==='GENERATE');await page.goto(origin+'/studio-writing?taskId='+encodeURIComponent(notified.id));await page.getByTestId('writing-workbench').locator('[data-task-id="'+notified.id+'"]').waitFor();assert.equal(await page.getByTestId('owned-canvas').isVisible(),true);assert.equal(copywritingPosts,initialCopyPosts);check('writing-notification-task-link-stays-in-writing-and-only-reads-original-task');
     assert.deepEqual(report.externalRequests,[]);assert.deepEqual(report.errors,[]);report.passed=true;return;
   }
   if(brandOnly) {

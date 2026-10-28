@@ -1,0 +1,5 @@
+.canvas{display:flex;flex:1;min-width:0;min-height:0;flex-direction:column}
+.writing{display:flex;flex:1;min-width:0;min-height:0;flex-direction:column;overflow-y:auto}
+.docked{flex:0 0 420px;width:420px;max-width:100%;border-left:1px solid rgb(var(--border))}
+.hidden{display:none}
+@media(max-width:900px){.dockedCanvas{display:none}.docked{flex:1;width:100%}}

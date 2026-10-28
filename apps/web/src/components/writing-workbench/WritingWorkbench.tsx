@@ -10,7 +10,8 @@ import styles from "./writing-workbench.module.css";
 
 export type WritingWorkbenchProps = { workspaceId: string; projectId: string; userId: string; readOnly: boolean; projectName: string;
   initialPrompt?: string; initialTaskId?: string; onSendToCanvas?(document: { documentId: string; revision: number; title: string; text: string }): Promise<void>;
-  onReturnToCanvas?(): void };
+  onReturnToCanvas?(): void; compact?: boolean; onToggleExpanded?(): void;
+  onInsertSuggestion?(text: string, taskId: string): Promise<void> };
 export type WritingWorkbenchHandle = { restoreHome(prompt: string, requestId: string): void; ready(): boolean; refresh(): Promise<void>;
   confirmLeave(): Promise<void>; selectReferences(ids: string[]): void };
 type Pending = { kind: "generate" | "style" | "upload"; mutationId: string; input?: StudioWritingGenerateInput | ReturnType<typeof StudioWritingStyleExtractInput.parse> };
@@ -186,9 +187,9 @@ export const WritingWorkbench = forwardRef<WritingWorkbenchHandle, WritingWorkbe
     const interval = setInterval(() => void poll(), 3000);
     return () => { cancelled = true; clearInterval(interval); };
   }, [activeHistoryKey, endpoint, headers]);
-  useEffect(() => { if (editor.current) { editor.current.style.height = "auto"; editor.current.style.height = Math.max(560, editor.current.scrollHeight) + "px"; } }, [text, tab]);
+  useEffect(() => { if (editor.current) { editor.current.style.height = "auto"; if (!props.compact) editor.current.style.height = Math.max(560, editor.current.scrollHeight) + "px"; } }, [text, tab, props.compact]);
   useEffect(() => {
-    const element = editor.current; if (!element) return;
+    const element = editor.current; if (!element || props.compact) return;
     let previousWidth = -1;
     const observer = new ResizeObserver(entries => {
       const width = entries[0]?.contentRect.width || 0;
@@ -196,7 +197,7 @@ export const WritingWorkbench = forwardRef<WritingWorkbenchHandle, WritingWorkbe
       previousWidth = width; element.style.height = "auto"; element.style.height = Math.max(560, element.scrollHeight) + "px";
     });
     observer.observe(element); return () => observer.disconnect();
-  }, [documentReady]);
+  }, [documentReady, props.compact]);
   const save = useCallback(async (operation?: StudioWritingSaveInput): Promise<StudioWritingDocument | null> => {
     if (props.readOnly || !server.current || saveBusy.current || conflictRef.current) return null;
     const captured = { ...edit.current }, before = server.current;
@@ -365,6 +366,13 @@ export const WritingWorkbench = forwardRef<WritingWorkbenchHandle, WritingWorkbe
     try { await props.onSendToCanvas({ documentId: saved.id, revision: saved.revision, title: saved.title, text: saved.text }); setNotice("当前稿已送回画布。"); } catch (e) { setError(message(e)); }
     finally { busy.current = false; setWorking(false); }
   }
+  async function insertSuggestion(task: StudioWritingTask) {
+    if (props.readOnly || busy.current || !props.onInsertSuggestion || task.status !== "SUCCEEDED" || task.result?.scope !== "DOCUMENT" || !task.result.text.trim()) return;
+    busy.current = true; setWorking(true); setError("");
+    try { await props.onInsertSuggestion(task.result.text, task.id); setNotice("这条建议已加入画布，可编辑或撤销；当前稿保持不变。"); }
+    catch (e) { setError(message(e)); }
+    finally { busy.current = false; setWorking(false); }
+  }
   const references = state?.references || [], selectedRefs = references.filter(r => selectedIds.includes(r.id));
   const tasks = [...new Map([...historyTasks, ...(state?.tasks || []), ...(linkedTask ? [linkedTask] : [])].map(task => [task.id, task])).values()];
   const activeTasks = tasks.filter(isActive), generated = tasks.filter(t => t.operation === "GENERATE");
@@ -395,9 +403,9 @@ export const WritingWorkbench = forwardRef<WritingWorkbenchHandle, WritingWorkbe
   const stageText = (task: StudioWritingTask) => task.status === "FAILED" ? task.error || "处理失败，请检查资料或调整需求。" : new Date(task.expiresAt).getTime() < Date.now() ? "处理时间较长，请刷新核对原任务。不会自动重试。" : task.status === "PENDING" ? "已受理，等待处理…" : `正在处理 ${task.progress}%…`;
   const feedback = <>{error && <p role="alert" className={styles.error}>{error}</p>}{notice && <p role="status" className={styles.status}>{notice}</p>}</>;
 
-  return <main className={styles.workbench} data-testid="writing-workbench" data-ready={!!state} data-save-state={saving ? "saving" : conflict ? "conflict" : dirty ? "dirty" : "saved"}>
+  return <main className={`${styles.workbench} ${props.compact ? styles.compact : ""}`} data-testid="writing-workbench" data-ready={!!state} data-save-state={saving ? "saving" : conflict ? "conflict" : dirty ? "dirty" : "saved"}>
     <header className={styles.header}><div><p className={styles.eyebrow}>NOVART / WRITING</p><h1>文案工作台</h1><p className={styles.subtle}>{props.projectName} · 从想法，到一篇可用的文案</p></div>
-      <div className={styles.actions}>{props.onReturnToCanvas && <Button variant="ghost" size="sm" className={buttonClass} onClick={() => { void confirmLeave().then(() => props.onReturnToCanvas?.()).catch(e => setError(message(e))); }}>返回画布</Button>}<Button variant="ghost" size="sm" className={buttonClass} onClick={() => setDrawer("references")}>资料 {references.length || ""}</Button><Button variant="ghost" size="sm" className={buttonClass} onClick={openStyle} disabled={!state}>品牌风格</Button>
+      <div className={styles.actions}>{props.onReturnToCanvas && <Button variant="ghost" size="sm" className={buttonClass} onClick={() => { void confirmLeave().then(() => props.onReturnToCanvas?.()).catch(e => setError(message(e))); }}>返回画布</Button>}{props.onToggleExpanded && <Button variant="ghost" size="sm" onClick={props.onToggleExpanded}>{props.compact ? "展开编辑" : "收回侧栏"}</Button>}<Button variant="ghost" size="sm" className={buttonClass} onClick={() => setDrawer("references")}>资料 {references.length || ""}</Button><Button variant="ghost" size="sm" className={buttonClass} onClick={openStyle} disabled={!state}>品牌风格</Button>
         <a className="text-xs text-muted-foreground hover:text-primary" href={`/studio?workspaceId=${encodeURIComponent(props.workspaceId)}#/projects`} target="_top" onClick={event => { event.preventDefault(); const href = event.currentTarget.href; void confirmLeave().then(() => { window.top!.location.href = href; }).catch(e => setError(message(e))); }}>返回项目</a></div></header>
     <div className={styles.notice}>{props.readOnly && <p className={styles.readOnly}>只读权限 · 可以阅读与复制，不能提交模型任务或修改内容。</p>}
       {loadError && <p role="alert" className={styles.error}>{loadError} <Button variant="ghost" size="sm" onClick={() => void read()}>重新读取</Button></p>}
@@ -424,7 +432,7 @@ export const WritingWorkbench = forwardRef<WritingWorkbenchHandle, WritingWorkbe
                 {selectionOf(task) && <details className={styles.details}><summary>查看原选段</summary><pre>{selectionOf(task)!.text}</pre></details>}
                 <p>{task.result.text}</p>
                 {!!task.result.citations.length && <details className={styles.details}><summary>查看引用来源</summary>{task.result.citations.map((c, i) => <p className={styles.sourceLine} key={i}>{references.find(r => r.id === c.referenceId)?.name || "已移除的资料"} · {c.label}{c.pageNumber ? ` · 第 ${c.pageNumber} 页` : ""}</p>)}</details>}
-                <div className={styles.actions}><Button variant="ghost" size="sm" onClick={() => void copy(task.result!.text)}>复制建议</Button>{["DOCUMENT", "SELECTION"].includes(task.result.scope) && <Button variant="outline" size="sm" className={buttonClass} disabled={props.readOnly || saving || working || dirty} onClick={() => void applyTask(task)}>{task.result.scope === "SELECTION" ? "采纳选段修改" : "设为当前稿"}</Button>}</div>
+                <div className={styles.actions}>{task.result.scope === "DOCUMENT" && props.onInsertSuggestion && <Button size="sm" disabled={props.readOnly || working || !task.result.text.trim()} onClick={() => void insertSuggestion(task)}>加入画布</Button>}<Button variant="ghost" size="sm" onClick={() => void copy(task.result!.text)}>复制建议</Button>{["DOCUMENT", "SELECTION"].includes(task.result.scope) && <Button variant="outline" size="sm" className={buttonClass} disabled={props.readOnly || saving || working || dirty} onClick={() => void applyTask(task)}>{task.result.scope === "SELECTION" ? "采纳选段修改" : "设为当前稿"}</Button>}</div>
                 {task.result.baseRevision !== state.document.revision && task.result.scope !== "CHAT" && <p className={styles.sourceLine}>正文版本已变化，采纳前将重新核对。</p>}
               </div>}
             </article>)}
@@ -440,7 +448,7 @@ export const WritingWorkbench = forwardRef<WritingWorkbenchHandle, WritingWorkbe
         </section>
         <section className={`${styles.editor} ${tab !== "document" ? styles.mobileHidden : ""}`} aria-label="当前文案">
           <div className={styles.editorToolbar}><div className="min-w-0 flex-1"><label className="sr-only" htmlFor="writing-title">文案标题</label><input id="writing-title" className={styles.titleInput} value={title} maxLength={200} readOnly={props.readOnly} placeholder="当前稿" onChange={e => updateEdit({ ...edit.current, title: e.target.value })} /><p className={styles.subtle}>{saving ? "正在保存…" : conflict ? "版本冲突，手改已保留" : saveError ? "保存尚未确认" : dirty ? "有未保存修改" : `已保存 · 版本 ${state.document.revision}`}</p></div>
-            <div className={styles.actions}><Button variant="ghost" size="sm" onClick={() => setDrawer("versions")}>版本记录</Button><Button variant="outline" size="sm" className={buttonClass} disabled={props.readOnly || saving || !dirty || conflict} onClick={() => void save()}>保存正文</Button></div></div>
+            <div className={styles.actions}><Button size="sm" disabled={props.readOnly || !text.trim() || working || saving || !props.onSendToCanvas} onClick={() => void handoff()}>当前稿加入画布</Button><Button variant="ghost" size="sm" onClick={() => setDrawer("versions")}>版本记录</Button><Button variant="outline" size="sm" className={buttonClass} disabled={props.readOnly || saving || !dirty || conflict} onClick={() => void save()}>保存正文</Button></div></div>
           {(saveError || conflict) && <div className={styles.selection} role="alert">{saveError || "服务端正文已更新，你的修改仍保留。"}<div className={styles.actions}><Button variant="ghost" size="sm" onClick={() => void copy(text)}>复制当前修改</Button><Button variant="ghost" size="sm" onClick={() => void read()}>核对最新状态</Button>{conflict && <Button variant="outline" size="sm" onClick={() => { if (state) { acceptDocument(state.document, true); setSaveError(""); setConflict(false); conflictRef.current = false; journal(":draft", null); } }}>使用最新服务端稿</Button>}</div></div>}
           {selection && <div className={styles.selection}><strong>已选中 {selection.text.length} 个字符</strong><p className={styles.quote}>{selection.text}</p><Button variant="outline" size="sm" className={buttonClass} disabled={props.readOnly} onClick={() => { setMode("SELECTION"); setTab("chat"); }}>用一句话修改这段</Button></div>}
           <textarea ref={editor} className={styles.body} aria-label="当前稿正文" spellCheck={false} maxLength={60000} value={text} readOnly={props.readOnly} placeholder="文案会在这里展开。你也可以直接粘贴或写下第一段。\n\n选中一句或一段，再告诉我怎么改。" onChange={e => { updateEdit({ ...edit.current, text: e.target.value }); setSelection(null); if (mode === "SELECTION") setMode("GENERATE"); }} onSelect={e => { if (props.readOnly) return; const el = e.currentTarget; if (el.selectionEnd > el.selectionStart) setSelection(captureSelection(el.value, el.selectionStart, el.selectionEnd, server.current?.revision || 0)); }} />

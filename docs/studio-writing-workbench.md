@@ -1,6 +1,6 @@
 # Studio writing workbench and canvas interaction
 
-The writing workbench provides a conversation beside an editable current draft. Writing tasks produce suggestions; they do not replace the draft until the user accepts a result. The image canvas remains available, and sending a finished draft to the canvas is an explicit action.
+Writing opens in a panel beside the project canvas. Users can expand it for a conversation beside an editable current draft, then dock it again without losing unsent input. A completed full-document suggestion can be inserted directly into the canvas without first replacing the current draft or calling the model again. The current draft also has an insertion action above the text. Both insertion paths use stable receipt IDs, native editable text and the existing save/undo pipeline.
 
 ## Persistence and task lifecycle
 

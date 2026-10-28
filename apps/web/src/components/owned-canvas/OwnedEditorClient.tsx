@@ -10,6 +10,7 @@ import { assignOwnedImageNames, type OwnedCanvasDocument, type OwnedCanvasItem }
 import type { OwnedExportOptions } from "../../lib/owned-canvas-export";
 import { OwnedCanvas } from "./OwnedCanvas";
 import { WritingWorkbench, type WritingWorkbenchHandle } from "../writing-workbench/WritingWorkbench";
+import writingLayout from "./owned-writing-layout.module.css";
 import { importWritingReferences } from "./owned-writing-bridge";
 import { placeWritingDocument } from "./owned-copywriting-placement";
 import { OwnedWorkflowPanel } from "./OwnedWorkflowPanel";
@@ -57,6 +58,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
   const writingRef = useRef<WritingWorkbenchHandle | null>(null);
   const [surface, setSurface] = useState<"canvas" | "writing">(initialSurface);
   const [writingOpened, setWritingOpened] = useState(initialSurface === "writing");
+  const [writingExpanded, setWritingExpanded] = useState(false);
   const surfaceRef = useRef(surface); surfaceRef.current = surface;
   const conversationRef = useRef<OwnedConversationHandle | null>(null);
   const [resizingImage, setResizingImage] = useState<OwnedCanvasItem | null>(null);
@@ -156,6 +158,8 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
   }, [send]);
 
   const openWriting = useCallback(async (ids: string[] = []) => {
+    setWritingExpanded(false);
+    setPanel("generate");
     showSurface("writing");
     const deadline = Date.now() + 20000;
     while (alive.current && !writingRef.current?.ready()) {
@@ -845,8 +849,8 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
               onInsert={image => insertImage(image, undefined, undefined, task.sourceShapeId)} onInsertLayers={insertLayers} />)}
   </>;
   const saveLabel = saveState === "loading" ? "正在打开…" : saveState === "saving" ? "正在保存…" : saveState === "dirty" ? "有未保存修改" : saveState === "conflict" ? "保存冲突" : saveState === "error" ? "保存未确认" : view?.updatedAt ? "已保存 " + new Date(view.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "已打开";
-  return <div className="flex h-dvh min-h-0 flex-col overflow-hidden bg-background text-foreground" data-testid="owned-editor" data-save-state={saveState} data-document-revision={view?.revision} data-surface={surface}>
-    <div hidden={surface !== "canvas"} style={{ display: surface === "canvas" ? "flex" : "none" }} className="min-h-0 flex-1 flex-col">
+  return <div className="flex h-dvh min-h-0 overflow-hidden bg-background text-foreground" data-testid="owned-editor" data-save-state={saveState} data-document-revision={view?.revision} data-surface={surface}>
+    <div className={`${writingLayout.canvas} ${surface === "writing" ? writingExpanded ? writingLayout.hidden : writingLayout.dockedCanvas : ""}`}>
     <header className="flex min-h-14 shrink-0 flex-wrap items-center gap-1 border-b border-border bg-card px-2 sm:gap-3 sm:px-5">
       <picture className="shrink-0">
         <source media="(min-width: 640px)" srcSet="/brand/deepflare-logo.svg" />
@@ -874,7 +878,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
         {resizingImage && document && <OwnedImageResize document={document} item={resizingImage} readOnly={!canEdit} onClose={() => setResizingImage(null)} onStore={async (file, sourceShapeId) => { if (!writableRef.current || uploadOperation.current || uploadBusy.current) throw new Error("请先确认正在上传的图片。"); uploadOperation.current = { file, sourceShapeId, mutationId: crypto.randomUUID() }; setPendingUpload(true); const completed = await runUpload(); if (!completed) throw new Error("上传结果尚未确认，图片文件仍保留，请在任务中继续读取。"); }} />}
         {maskingImage && <OwnedImageMask key={maskingImage.item.id} source={maskingImage.material} name={`图片${maskingImage.item.imageNumber ?? ""}`} readOnly={!canEdit} onClose={() => setMaskingImage(null)} onSubmit={(mask, instruction) => submitImageTool("inpaint", maskingImage.item.id, mask, instruction)} />}
       </main>
-      <aside aria-label="创作面板" hidden={!panel} className={(panel ? "flex " : "hidden ") + "absolute inset-y-0 right-0 z-20 w-[min(380px,92vw)] flex-col border-l border-border bg-card shadow-lg md:relative md:w-[360px] md:shrink-0 md:shadow-none"}>
+      <aside aria-label="创作面板" hidden={!panel || surface === "writing"} className={(panel && surface !== "writing" ? "flex " : "hidden ") + "absolute inset-y-0 right-0 z-20 w-[min(380px,92vw)] flex-col border-l border-border bg-card shadow-lg md:relative md:w-[360px] md:shrink-0 md:shadow-none"}>
         <div className="flex items-center border-b border-border px-2" role="tablist" aria-label="创作方式">
           <button role="tab" aria-selected={panel !== "tasks"} className={"min-w-0 flex-1 border-b-2 px-3 py-4 text-xs font-medium " + (panel !== "tasks" ? "border-primary text-primary" : "border-transparent text-muted-foreground")} onClick={() => setPanel("generate")}>对话改图</button>
           <button role="tab" aria-selected={false} aria-label="AI 文案" className="min-w-0 flex-1 border-b-2 border-transparent px-3 py-4 text-xs font-medium text-muted-foreground" onClick={() => void openWriting(selectedIds).catch(error => setNotice(messageOf(error)))}>文案</button>
@@ -908,9 +912,21 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
       </div>}
     </div>
     </div>
-    {writingOpened && <div hidden={surface !== "writing"} style={{ display: surface === "writing" ? "flex" : "none" }} className="min-h-0 flex-1 flex-col overflow-y-auto" data-testid="writing-scroll-region">
+    {writingOpened && <div className={`${writingLayout.writing} ${!writingExpanded ? writingLayout.docked : ""} ${surface !== "writing" ? writingLayout.hidden : ""}`} data-testid="writing-scroll-region">
       <WritingWorkbench ref={writingRef} key={JSON.stringify([workspaceId, projectId, userId])} workspaceId={workspaceId} projectId={projectId} userId={userId}
+        compact={!writingExpanded} onToggleExpanded={() => setWritingExpanded(value => !value)}
         readOnly={readOnly || !!view?.readOnly} projectName={visibleName} initialTaskId={writingTaskId} onReturnToCanvas={() => showSurface("canvas")}
+        onInsertSuggestion={async (text, taskId) => {
+          if (!writableRef.current || !docRef.current || saveBlocked.current) throw new Error("画布尚未准备好或保存冲突，请先确认画布保存。");
+          const before = docRef.current;
+          const next = placeWritingDocument(before, text, `suggestion-${taskId}`);
+          if (next !== before) changeDocument(next);
+          const receipt = await saveSettled();
+          if (!receipt || sequence.current !== savedSequence.current || pendingSave.current || saveBlocked.current) throw new Error("画布保存尚未确认，建议已保留，请稍后确认。");
+          const added = next.items.find(item => !before.items.some(old => old.id === item.id));
+          setWritingExpanded(false);
+          if (added) requestAnimationFrame(() => { if (alive.current) setFocusImageId(added.id); });
+        }}
         onSendToCanvas={async value => {
           if (!writableRef.current || !docRef.current || saveBlocked.current) throw new Error("画布尚未准备好或保存冲突，请先确认画布保存。");
           const next = placeWritingDocument(docRef.current, value.text, `${value.documentId}-${value.revision}`);
