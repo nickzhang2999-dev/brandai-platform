@@ -18,6 +18,8 @@ Limits are 10 MiB per file, 30 references and 64 MiB per document, and 12 refere
 
 Users can save confirmed expression rules and examples. Extracting style from selected examples produces a draft for review; it does not update confirmed style automatically or train a model. Model citations must resolve to source segments actually sent in that request.
 
+A style extraction result may have an empty explanatory `text` field when its structured rules or examples and source citations are valid. Empty style content is rejected, and ordinary writing results still require nonempty text. Rejected provider responses record verified token usage when available; unknown usage remains unknown. Diagnostics contain bounded validation metadata rather than upstream content or credentials, and do not trigger another provider attempt.
+
 ## Canvas interaction
 
 The project content panel is collapsed initially and reads the existing canvas and project material records. The conversation panel provides image editing, writing and task history entry points. Basic tools are grouped above the canvas; less frequent image actions and properties remain available through explicit menus.

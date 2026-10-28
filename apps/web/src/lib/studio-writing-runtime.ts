@@ -7,7 +7,7 @@ import { ApiException } from "./api";
 import { resolveAiService } from "./ai-service";
 import { artifactDeadline, inspectArtifactImage, readArtifactImageBytes, STUDIO_ARTIFACT_MAX_PIXELS } from "./studio-generation-artifacts-image";
 import { WRITING_KIND, WRITING_EXPIRED, requireWritingScope, requireWritingAsset, writingJson, type WritingInput, type WritingScope } from "./studio-writing";
-import { generateStudioWriting, type WritingProviderContext, type WritingSource } from "./studio-writing-provider";
+import { generateStudioWriting, WritingProviderResponseError, type WritingProviderContext, type WritingSource } from "./studio-writing-provider";
 import { recordUsage } from "./usage";
 
 export async function parseWritingFile(input: z.infer<typeof StudioWritingParseRequest>, signal: AbortSignal) {
@@ -91,6 +91,7 @@ export async function processWritingTask(taskId: string, dependencies: Dependenc
   const scope = { workspaceId: task.workspaceId, projectId: task.refId, userId: input.userId };
   const controller = new AbortController(); const { signal } = controller;
   const timer = setTimeout(() => controller.abort(), Math.max(1, Math.min(input.operation === "REFERENCE_PARSE" ? 30_000 : 180_000, task.expiresAt.getTime() - Date.now())));
+  let usageRecorded = false;
   try {
     await artifactDeadline(requireWritingScope(scope, true), signal);
     const document = await prisma.studioWritingDocument.findFirst({ where: { id: input.documentId, ...scope } });
@@ -132,6 +133,7 @@ export async function processWritingTask(taskId: string, dependencies: Dependenc
       result = StudioWritingResult.parse(await artifactDeadline((dependencies.generate ?? generateStudioWriting)(context, signal), signal));
       await recordUsage({ workspaceId: task.workspaceId, userId: input.userId, kind: WRITING_KIND, status: "SUCCEEDED", provider: "copywriting-config",
         model: result.model, totalTokens: result.inputTokens + result.outputTokens, latencyMs: result.latencyMs });
+      usageRecorded = true;
       // Revalidate ownership and removals after the paid call; never silently
       // republish text from a deleted reference or revoked workspace access.
       await artifactDeadline(requireWritingScope(scope, true), signal);
@@ -155,6 +157,15 @@ export async function processWritingTask(taskId: string, dependencies: Dependenc
       // Deliberately no StudioWritingDocument/Version or Style mutation here.
     }, { maxWait: 1000, timeout: 1500 });
   } catch (error) {
+    // Only a validated provider response error carries metering evidence. The
+    // durable PENDING -> RUNNING claim prevents replay; post-call permission
+    // failures have already logged usage and must not create a second row.
+    if (error instanceof WritingProviderResponseError && !usageRecorded) {
+      usageRecorded = true;
+      await recordUsage({ workspaceId: task.workspaceId, userId: input.userId, kind: WRITING_KIND, status: "FAILED", provider: "copywriting-config",
+        model: error.model, latencyMs: error.latencyMs, totalTokens: error.usage ? error.usage.inputTokens + error.usage.outputTokens : undefined });
+      console.warn("[writing] provider response rejected", { taskId: task.id, ...error.diagnostics, usage: error.usage });
+    }
     const message = signal.aborted ? WRITING_EXPIRED : error instanceof ApiException ? error.message : "任务未完成，请检查资料或稍后重试；系统不会自动重复调用模型。";
     await prisma.$transaction(async tx => {
       await tx.asyncTask.updateMany({ where: { id: task.id, kind: WRITING_KIND, status: "RUNNING" }, data: { status: "FAILED", error: message } });

@@ -165,6 +165,9 @@ suite("writing workbench real PostgreSQL isolation and durable transitions", () 
     const model = vi.fn(async () => { await prisma.membership.delete({ where: { userId_workspaceId: { userId: member.userId, workspaceId: member.workspaceId } } }); return output(); });
     await processWritingTask(second.id, { generate: model });
     expect((await prisma.asyncTask.findUniqueOrThrow({ where: { id: second.id } })).status).toBe("FAILED");
+    await processWritingTask(task.id); await processWritingTask(second.id);
+    const logs = await prisma.usageLog.findMany({ where: { workspaceId: s.workspaceId } });
+    expect(logs).toHaveLength(2); expect(logs.every(log => log.status === "SUCCEEDED" && log.totalTokens === 2)).toBe(true);
   });
   it("expired queued tasks never make calls, clear pending references and preserve an explicit failure", async () => {
     const file = await uploadWritingReference(s, { mutationId: randomUUID(), name: "a.txt", mimeType: "text/plain", body: Buffer.from("data") });
@@ -224,6 +227,45 @@ suite("writing workbench real PostgreSQL isolation and durable transitions", () 
     const receipt = await submitWriting(s, request); expect(receipt.status).toBe("FAILED"); expect(receipt.error).not.toContain("private upstream");
     await processWritingTask(task.id, { generate: model }); expect(model).toHaveBeenCalledTimes(1);
     expect((await writingState(s)).document.revision).toBe(0);
+    expect(await prisma.usageLog.count({ where: { workspaceId: s.workspaceId } })).toBe(0);
+  });
+  it("a real parser rejection logs measured FAILED usage once and durable replay cannot call or bill again", async () => {
+    const request = generate(); const task = await submitWriting(s, request);
+    const raw = { stop_reason: "end_turn", content: [{ type: "text", text: JSON.stringify({ text: "", citations: [], styleDraft: null, "private-key-sentinel": "private-value-sentinel" }) }], usage: { input_tokens: 823, output_tokens: 260 } };
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify(raw))); vi.stubGlobal("fetch", fetcher);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      await Promise.all([processWritingTask(task.id), processWritingTask(task.id)]);
+      const failed = await writingTask(s, task.id); expect(failed.status).toBe("FAILED"); expect(failed.result).toBeNull(); expect(failed.error).toContain("格式无效");
+      expect(await submitWriting(s, request)).toMatchObject({ id: task.id, status: "FAILED" }); await processWritingTask(task.id);
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      const logs = await prisma.usageLog.findMany({ where: { workspaceId: s.workspaceId } });
+      expect(logs).toHaveLength(1); expect(logs[0]).toMatchObject({ kind: "STUDIO_WRITING", status: "FAILED", totalTokens: 1083, costUsd: null });
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0]).toMatchObject(["[writing] provider response rejected", { taskId: task.id, stage: "model_result", usage: { inputTokens: 823, outputTokens: 260 } }]);
+      const persisted = JSON.stringify({ failed, logs, warnings: warn.mock.calls });
+      for (const secret of ["private-key-sentinel", "private-value-sentinel", "synthetic-test-only"]) expect(persisted).not.toContain(secret);
+      expect((await writingState(s)).document.revision).toBe(0); expect((await writingMessages(s)).messages.map(item => item.role)).toEqual(["user"]);
+    } finally { warn.mockRestore(); }
+  });
+  it("invalid provider usage remains null rather than being reported as a free call", async () => {
+    const task = await submitWriting(s, generate());
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ content: [{ type: "text", text: "invalid response" }], usage: { input_tokens: "823", output_tokens: 260 } }))));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try { await processWritingTask(task.id); } finally { warn.mockRestore(); }
+    const logs = await prisma.usageLog.findMany({ where: { workspaceId: s.workspaceId } });
+    expect(logs).toHaveLength(1); expect(logs[0]).toMatchObject({ status: "FAILED", totalTokens: null, costUsd: null });
+  });
+  it("empty-explanation STYLE_EXTRACT succeeds through the real provider parser but does not confirm style or modify text", async () => {
+    await save(s, 0, "用户当前稿"); const id = await reference();
+    const task = await submitWriting(s, { mutationId: randomUUID(), referenceIds: [id], prompt: "" }, "STYLE_EXTRACT");
+    const styleDraft = { rules: ["短句", "清楚具体", "克制表达", "避免夸大"], examples: [{ title: "例一", text: "把今天的小事做好。" }, { title: "例二", text: "从需求出发。" }] };
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ stop_reason: "end_turn", content: [{ type: "text", text: JSON.stringify({ text: "", citations: [{ referenceId: id, segmentId: "segment-1" }], styleDraft }) }], usage: { input_tokens: 823, output_tokens: 260 } })));
+    vi.stubGlobal("fetch", fetcher); await processWritingTask(task.id); await processWritingTask(task.id);
+    expect(fetcher).toHaveBeenCalledTimes(1); expect(await writingTask(s, task.id)).toMatchObject({ status: "SUCCEEDED", result: { text: "", scope: "STYLE_DRAFT", styleDraft } });
+    expect((await writingState(s)).document).toMatchObject({ revision: 1, text: "用户当前稿" }); expect((await readWritingStyle(s)).revision).toBe(0);
+    expect(await prisma.studioWritingStyleVersion.count({ where: { workspaceId: s.workspaceId } })).toBe(0);
+    const logs = await prisma.usageLog.findMany({ where: { workspaceId: s.workspaceId } }); expect(logs).toHaveLength(1); expect(logs[0]).toMatchObject({ status: "SUCCEEDED", totalTokens: 1083 });
   });
   it("a workspace rate limit includes different editors and archived projects reject writes", async () => {
     await prisma.asyncTask.createMany({ data: Array.from({ length: 15 }, (_, i) => ({ id: `rate-${randomUUID()}`, workspaceId: s.workspaceId, kind: "STUDIO_WRITING", status: "FAILED", refId: s.projectId, expiresAt: new Date(Date.now() + 60000), inputJson: { operation: "GENERATE", request: generate(), userId: i % 2 ? member.userId : s.userId } })) });
@@ -255,5 +297,8 @@ suite("writing workbench real PostgreSQL isolation and durable transitions", () 
     await expect(writingReferenceContent(s, file.reference.id)).rejects.toMatchObject({ status: 404 });
     expect((await writingMessages(s)).messages.map(message => message.role)).toEqual(["user"]);
     expect((await writingState(s)).document.revision).toBe(0);
+    await processWritingTask(task.id);
+    const logs = await prisma.usageLog.findMany({ where: { workspaceId: s.workspaceId } });
+    expect(logs).toHaveLength(1); expect(logs[0]).toMatchObject({ status: "SUCCEEDED", totalTokens: 2 });
   });
 });
