@@ -59,9 +59,8 @@ describe("shared knowledge UI (local interaction only, no provider)", () => {
     fireEvent.click(screen.getByRole("button", { name: "上传Logo素材" }));
     expect(await screen.findByRole("dialog", { name: "添加你的品牌 Logo" })).toBeTruthy();
     fireEvent.click(within(screen.getByRole("dialog", { name: "添加你的品牌 Logo" })).getByRole("button", { name: "关闭" }));
-    const menu = screen.getAllByText("规则操作")[1]!.closest("details")!;
-    menu.open = true;
-    fireEvent.click(within(menu).getByRole("button", { name: "启用" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "规则操作" })[1]!);
+    fireEvent.click(screen.getByRole("menuitem", { name: "启用" }));
     expect(confirm).toHaveBeenCalledWith(expect.stringContaining("替换同类别已启用的 1 条规则"));
     expect(api.mock.calls.every(([, init]) => !init?.method)).toBe(true);
   });
