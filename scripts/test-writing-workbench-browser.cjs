@@ -90,7 +90,7 @@ async function main(){
  const css=spawnSync(process.execPath,[path.join(repo,'apps/web/node_modules/tailwindcss/lib/cli.js'),'-i',path.join(repo,'packages/ui/src/styles.css'),'-o',path.join(directory,'tokens.css'),'-c',path.join(repo,'apps/web/tailwind.config.ts'),'--content',[path.join(repo,'apps/web/src/components/writing-workbench/**/*.tsx'),path.join(repo,'packages/ui/src/**/*.tsx')].join(',')],{cwd:repo,encoding:'utf8',timeout:60000});assert.equal(css.status,0,'production CSS compilation');
  server=http.createServer((req,res)=>{handle(req,res).catch(()=>{if(!res.headersSent)json(res,{error:'fixture-contract-failed'},500);else res.end();});});await new Promise(r=>server.listen(0,'127.0.0.1',r));
  const base=`http://127.0.0.1:${server.address().port}`;
- browser=await chromium.launch({channel:process.env.SMOKE_BROWSER_CHANNEL||'chrome',headless:true});
+ browser=await chromium.launch({...process.env.NOVART_CHROMIUM_EXECUTABLE?{executablePath:process.env.NOVART_CHROMIUM_EXECUTABLE}:{channel:process.env.SMOKE_BROWSER_CHANNEL||'chrome'},headless:true});
  const context=await browser.newContext({viewport:{width:1440,height:1000},permissions:['clipboard-read','clipboard-write']});
  await context.route('**/*',route=>{const url=new URL(route.request().url());if(['http:','https:'].includes(url.protocol)&&url.origin!==base){report.externalRequests.push(url.hostname);return route.abort();}return route.continue();});
  const page=await context.newPage();page.on('pageerror',()=>report.errors.push('browser-runtime-error'));page.on('dialog',dialog=>dialog.dismiss());
