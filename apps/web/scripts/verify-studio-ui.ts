@@ -55,11 +55,12 @@ async function saved(frame: Frame, projectId: string, predicate: (items: Shape[]
 }
 type DraftExpectation = { prompt: string; ratio: string; quality: string };
 type WorkflowExpectation = { mode: "generate" | "modify"; target: { shapeId: string; assetSha256: string } | null; references: Array<{ shapeId: string; assetSha256: string; purpose: "EXACT" | "ADAPTIVE" | "REFERENCE"; participates: boolean }> };
-async function persistedDraft(userId: string, workspaceId: string, projectId: string, expected: DraftExpectation) {
+async function persistedDraft(userId: string, workspaceId: string, projectId: string, expected: DraftExpectation, expectedTarget?: string | null) {
   const row = await eventually("real composer draft row", async () => {
     const value = await prisma.studioConversation.findUnique({ where: { workspaceId_userId_projectId: { workspaceId, userId, projectId } } });
     const form = value?.draft as any;
-    return value && form?.text === expected.prompt && form?.sizeSelection?.ratioKey === expected.ratio && form?.sizeSelection?.resolutionTier === expected.quality ? value : null;
+    return value && form?.text === expected.prompt && form?.sizeSelection?.ratioKey === expected.ratio && form?.sizeSelection?.resolutionTier === expected.quality
+      && (expectedTarget === undefined || form.quickEditTargetId === expectedTarget) ? value : null;
   });
   assert.equal(row.userId, userId); assert.equal(row.workspaceId, workspaceId); assert.equal(row.projectId, projectId); assert.ok(row.draftRevision >= 1);
   return row;
@@ -122,12 +123,15 @@ async function openTasks(frame: Frame) {
   await expect(frame.getByRole("region", { name: "项目任务记录", exact: true })).toBeVisible();
   await expect(frame.getByRole("button", { name: "刷新任务", exact: true })).toBeVisible();
 }
-async function conversationDraft(userId: string, workspaceId: string, projectId: string, text: string, assetIds: string[] = [], size?: { ratioKey: string; resolutionTier: string }) {
+async function conversationDraft(userId: string, workspaceId: string, projectId: string, text: string, assetIds: string[] = [], size?: { ratioKey: string; resolutionTier: string }, expectedTarget?: string | null) {
   return eventually("real persistent conversation draft", async () => {
     const row = await prisma.studioConversation.findUnique({ where: { workspaceId_userId_projectId: { workspaceId, userId, projectId } } });
     const value = row?.draft as any;
     return row && value?.text === text && JSON.stringify(value.references.map((ref: any) => ref.assetId)) === JSON.stringify(assetIds)
-      && (!size || value.sizeSelection?.ratioKey === size.ratioKey && value.sizeSelection?.resolutionTier === size.resolutionTier) ? row : null;
+      && (!size || value.sizeSelection?.ratioKey === size.ratioKey && value.sizeSelection?.resolutionTier === size.resolutionTier)
+      // Explicit null waits for a cleared target in SQL; unchanged text and
+      // references alone can still match the row before debounced autosave.
+      && (expectedTarget === undefined || value.quickEditTargetId === expectedTarget) ? row : null;
   });
 }
 async function saveWorkflow(frame: Frame) {
@@ -580,13 +584,13 @@ try {
     await pinSelectedCanvasReference(frame, workspace.id, uploadedId, receipt.material.assetId);
     await pinSelectedCanvasReference(frame, workspace.id, detachedId, detachedReceipt.material.assetId);
     const orderedIds = [receipt.material.assetId, detachedReceipt.material.assetId];
-    const withReferences = await conversationDraft(user.id, workspace.id, projectId, "", orderedIds);
+    const withReferences = await conversationDraft(user.id, workspace.id, projectId, "", orderedIds, undefined, detachedId);
     assert.deepEqual((withReferences.draft as any).references.map((ref: any) => ref.shapeId), [uploadedId, detachedId]);
     // Single-image selection now sets an explicit edit target. Both pictures
     // were pinned with 加入对话; cancelling the target keeps those references.
     await frame.getByRole("button", { name: "取消修改对象", exact: true }).click();
     await frame.getByTestId("owned-canvas").press("Escape");
-    const unselectedDraft = await conversationDraft(user.id, workspace.id, projectId, "", orderedIds);
+    const unselectedDraft = await conversationDraft(user.id, workspace.id, projectId, "", orderedIds, undefined, null);
     assert.equal((unselectedDraft.draft as any).quickEditTargetId, null, "The intentional ambiguity check must have no explicit modification target");
     const multiPrompt = `背景改成蓝色，多图目标待确认 ${run}`;
     await frame.getByRole("textbox", { name: "对话设计需求", exact: true }).fill(multiPrompt);
@@ -601,7 +605,7 @@ try {
     assert.deepEqual((multiMessage.references as any[]).map(ref => ref.assetId), orderedIds);
     assert.equal(multiMessage.generationRequestId, null); assert.equal((multiMessage.intent as any).action, "clarify");
     assert.equal(await prisma.generation.count({ where: { projectId } }), 0);
-    await conversationDraft(user.id, workspace.id, projectId, "", orderedIds);
+    await conversationDraft(user.id, workspace.id, projectId, "", orderedIds, undefined, null);
     realOrderedConversationReferences = true;
     check("actual worker-uploaded references preserve asset/shape identity and order while ambiguous target selection creates no paid task");
 
@@ -647,10 +651,8 @@ try {
     const currentTarget = frame.getByRole("button", { name: "取消修改对象", exact: true });
     if (await currentTarget.isVisible()) await currentTarget.click();
     await frame.getByRole("button", { name: `设为修改对象 ${targetReference.name}`, exact: true }).click();
-    const modifying = await eventually("explicit target saved by actual composer", async () => {
-      const value = await persistedDraft(user.id, workspace.id, projectId, expectedDraft);
-      return (value.draft as any).quickEditTargetId === targetReference.referenceId ? value : null;
-    });
+    const modifying = await persistedDraft(user.id, workspace.id, projectId, expectedDraft, targetReference.referenceId);
+    assert.equal((modifying.draft as any).quickEditTargetId, targetReference.referenceId);
     await persistedWorkflow(projectId, workspace.id, expectedWorkflow, workflowBefore.workflowRevision + 1);
     assert.equal(await prisma.generation.count({ where: { projectId } }), 0, "Saving purposes and a modification target must not call a provider");
 
@@ -662,7 +664,7 @@ try {
     await openConversation(workflowFrame);
     await expect(workflowFrame.getByTestId("conversation-target")).toContainText(targetReference.name);
     await expect(workflowFrame.getByRole("button", { name: "取消修改对象", exact: true })).toBeVisible();
-    assert.deepEqual((await persistedDraft(user.id, workspace.id, projectId, expectedDraft)).draft, modifying.draft);
+    assert.deepEqual((await persistedDraft(user.id, workspace.id, projectId, expectedDraft, targetReference.referenceId)).draft, modifying.draft);
     await workflowFresh.context().close(); currentPage = page;
     check("real workflow rows and a fresh authenticated browser preserve mode, exact target, purpose and participation without generation");
 
@@ -670,7 +672,7 @@ try {
     // provider test. Never spend a model request as a side effect of this test.
     await frame.getByRole("button", { name: "取消修改对象", exact: true }).click();
     await expect(frame.getByTestId("conversation-draft-status")).toHaveAttribute("data-saved", "true");
-    assert.equal(((await persistedDraft(user.id, workspace.id, projectId, expectedDraft)).draft as any).quickEditTargetId, null);
+    assert.equal(((await persistedDraft(user.id, workspace.id, projectId, expectedDraft, null)).draft as any).quickEditTargetId, null);
     await openWorkflow(frame);
     await frame.getByRole("combobox", { name: "素材用途 1", exact: true }).selectOption("REFERENCE");
     await frame.getByRole("checkbox", { name: "参与生成 1", exact: true }).uncheck();
@@ -682,7 +684,7 @@ try {
     await expect(frame.getByRole("dialog", { name: "素材与画框", exact: true })).toBeHidden();
     // Explicitly remove all references before the opt-in plain-generation check.
     while (await frame.getByRole("button", { name: /^移除参考 / }).count()) await frame.getByRole("button", { name: /^移除参考 / }).first().click();
-    await conversationDraft(user.id, workspace.id, projectId, "", []);
+    await conversationDraft(user.id, workspace.id, projectId, "", [], undefined, null);
   } else console.log("SKIP real upload acceptance: enable WORKBENCH_TEST_MATERIAL_UPLOAD with disposable storage/worker.");
 
   if (process.env.WORKBENCH_TEST_GENERATION === "1") {
