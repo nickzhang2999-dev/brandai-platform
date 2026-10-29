@@ -1,20 +1,31 @@
 import { z } from "zod";
+import { StudioLayerQualityReport } from "./studio-layer-quality";
 
 const id = z.string().regex(/^[a-zA-Z0-9_-]{1,128}$/);
 const sha = z.string().regex(/^[a-f0-9]{64}$/);
 const dimension = z.number().int().positive().max(16384);
 export const StudioLayerMode = z.enum(["AUTO", "MANUAL"]);
-export const STUDIO_LAYER_PLAN_REVISION = "semantic-layer-plan-r1";
+export const STUDIO_LAYER_PLAN_REVISION = "semantic-layer-plan-r2";
+export const LEGACY_STUDIO_LAYER_PLAN_REVISION = "semantic-layer-plan-r1";
 export const StudioLayerPlanGroup = z.object({ name: z.string().trim().min(1).max(80), description: z.string().trim().min(1).max(300) }).strict();
-export const StudioLayerPlan = z.object({ layerCount: z.number().int().min(2).max(10), summary: z.string().trim().min(1).max(600),
-  groups: z.array(StudioLayerPlanGroup).min(2).max(10) }).strict().superRefine((plan, context) => {
+const layerPlanFields = { layerCount: z.number().int().min(2).max(10), summary: z.string().trim().min(1).max(600),
+  groups: z.array(StudioLayerPlanGroup).min(2).max(10) };
+function validateLayerGroups(plan: { layerCount: number; groups: { name: string }[] }, context: z.RefinementCtx) {
   if (plan.groups.length !== plan.layerCount || new Set(plan.groups.map(group => group.name)).size !== plan.groups.length)
     context.addIssue({ code: "custom", message: "Semantic groups must have unique names and match the selected count" });
-});
+}
+const LegacyStudioLayerPlan = z.object(layerPlanFields).strict().superRefine(validateLayerGroups);
+export const StudioLayerPlan = z.object({ ...layerPlanFields,
+  // Whole-image visible content only; never per-layer instructions or editing intent.
+  sourceCaption: z.string().trim().min(1).max(2000) }).strict().superRefine(validateLayerGroups);
 export const StudioLayerPlanRequest = z.object({ imageUrl: z.string().regex(/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/).max(45 * 1024 * 1024),
   maxLayers: z.number().int().min(2).max(10), intent: z.string().max(500).optional(), providerRetryPolicy: z.literal("never") }).strict();
-export const StudioLayerPlanResponse = z.object({ revision: z.literal(STUDIO_LAYER_PLAN_REVISION), plan: StudioLayerPlan,
-  usage: z.object({ provider: z.literal("HttpVLMProvider"), model: z.string().min(1).max(200), latencyMs: z.number().int().nonnegative() }).strict() }).strict();
+const layerPlanUsage = z.object({ provider: z.literal("HttpVLMProvider"), model: z.string().min(1).max(200), latencyMs: z.number().int().nonnegative() }).strict();
+export const StudioLayerPlanResponse = z.discriminatedUnion("revision", [
+  z.object({ revision: z.literal(STUDIO_LAYER_PLAN_REVISION), plan: StudioLayerPlan, usage: layerPlanUsage }).strict(),
+  // Read saved r1 plans as-is; upgrading must never charge for a replacement analysis.
+  z.object({ revision: z.literal(LEGACY_STUDIO_LAYER_PLAN_REVISION), plan: LegacyStudioLayerPlan, usage: layerPlanUsage }).strict(),
+]);
 export type StudioLayerPlanRequest = z.infer<typeof StudioLayerPlanRequest>;
 export type StudioLayerPlanResponse = z.infer<typeof StudioLayerPlanResponse>;
 export const STUDIO_DECOMPOSITION_TTL_MS = 6 * 60_000;
@@ -58,7 +69,11 @@ export const StudioDecompositionView = z.object({
   createdAt: z.string().datetime(), expiresAt: z.string().datetime(),
   archiveExpiresAt: z.string().datetime().nullable(), canRetryArchive: z.boolean(),
   layers: z.array(StudioDecompositionLayer).max(10),
+  quality: StudioLayerQualityReport.nullable().default(null),
 }).strict().superRefine((view, context) => {
+  if (view.quality && (view.status !== "SUCCEEDED" || view.quality.sourceSha256 !== view.assetSha256
+    || view.quality.sourceWidth !== view.sourceWidth || view.quality.sourceHeight !== view.sourceHeight))
+    context.addIssue({ code: "custom", message: "Quality belongs only to its complete published source frame" });
   if (view.status !== "SUCCEEDED" && view.requestedLayerCount !== undefined && view.requestedLayerCount !== view.layerCount)
     context.addIssue({ code: "custom", message: "Unfinished layer receipts must retain the accepted count" });
   if (view.layerMode === "AUTO" && ((view.status === "SUCCEEDED" && (view.analysisStatus !== "SUCCEEDED" || !view.analysisSummary)) || view.analysisStatus === "NOT_REQUESTED"))

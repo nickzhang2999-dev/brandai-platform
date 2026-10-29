@@ -1,5 +1,15 @@
 # Integration findings
 
+## 2026-10-29 分层质量规划与实施取证
+
+- 合并后 main 为 `3272951480c2a737886a9f4921c30504e7e3cc66`，包含文案工作台提交 `f83a8a9`。独立工作区从该提交创建。
+- 开发前桥接把组名拼成明确分层指令；Qwen 官方说明和 Fal caption 参数不保证逐层语义控制。现已分离 r2 原图 caption 与用户 intent；此修正不是已证明的唯一质量根因或效果提升证据。
+- 归档新增透明底重合成和局部差异初检；文件可读与质量通过分开。来源权限/祖先/EXACT 不可降级为质检警告；源字节不一致仍拒绝发布，网络或计算不可用才降为 UNAVAILABLE。
+- 现有精确非方图变换、弱 alpha 保留、队列任务恢复与来源校验应保留。
+- 原始 `all_skills_feed.json` 核实 20 卡片/10 skillKey/104 变体；`renderRules` 是输入字符串渲染，不能当作图像分层实现。报告的完整后台、绝对安全等结论未被这些材料证明。
+- Lovart 的源图保留、可拆性判断、阶段校验与最小返工适合迁入 Nova；分层客户端消费背景/前景/文字的静态证据不证明具体后端模型或效果。
+- 路径、阶段、验收与官方引用见[完整规划](2026-10-29-layer-quality-plan.md)，前后端变化和门禁见[开发日志](../development-log-2026-10-29-layer-quality.md)。本轮真实模型调用 0，实际质量改进仍待真实 A/B。
+
 ## 2026-10-15 — reproducible canvas and conversation races
 
 - Actual Chromium reproduced asynchronous insertion recording transient drag/stroke state in undo history, and restoring erased strokes while the eraser pointer remained down. Minimal committed-scene history/deletion merge fixes pass image-context19 and core52.

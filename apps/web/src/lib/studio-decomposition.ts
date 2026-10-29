@@ -17,13 +17,15 @@ import { encryptStudioBase, decryptStudioBase, requireStudioBaseEncryption } fro
 import { getObjectStream, uploadBuffer, deleteObject } from "./s3";
 import { nodeStreamToBuffer } from "./image-preview";
 import { assertStudioLayerBudget, inspectStudioLayer, STUDIO_LAYER_TOTAL_PIXELS } from "./studio-decomposition-images";
+import { createStudioLayerQualityCheck } from "./studio-layer-quality";
+import { StudioLayerQualityReport } from "@brandai/contracts";
 import { enqueueStudioDecomposition } from "./studio-decomposition-queue";
 import { ai } from "./ai";
 import { recordUsage } from "./usage";
 import { generatedPsdLayerCount, generatedPsdMutationId, generatedPsdSourceShapeId } from "./studio-generated-psd-state";
 import { generatedPsdLayerMode } from "./studio-generated-psd-state";
 import { StudioLayerPlanResponse } from "@brandai/contracts";
-import { newStudioLayerPlanning, readStudioLayerPlanning, studioLayerMaxCount, semanticDecompositionIntent } from "./studio-decomposition-planning";
+import { newStudioLayerPlanning, readStudioLayerPlanning, studioLayerMaxCount, semanticDecompositionIntent, semanticDecompositionSourceCaption } from "./studio-decomposition-planning";
 import { assertStudioPsdBudget, StudioPsdEncodingError } from "./studio-psd-codec";
 import { studioBrandMaterialSourceDigest, studioBrandObjectKey } from "./studio-brand-materials-trust";
 
@@ -42,7 +44,7 @@ const keysOf = (row: Pick<Row, "objectKeys">) => z.array(z.string().max(512)).ma
 const outputOf = (row: Row) => row.outputJson === null ? null : PrivateOutput.parse(row.outputJson);
 const receiptSelect = { id: true, mutationId: true, projectId: true, workspaceId: true, sourceShapeId: true, assetId: true, assetSha256: true,
   documentRevision: true, layerCount: true, planningJson: true, sourceWidth: true, sourceHeight: true, status: true, error: true,
-  createdAt: true, expiresAt: true, archiveExpiresAt: true, archiveToken: true, objectKeys: true, publishedLayers: true } satisfies Prisma.StudioDecompositionRequestSelect;
+  createdAt: true, expiresAt: true, archiveExpiresAt: true, archiveToken: true, objectKeys: true, publishedLayers: true, qualityJson: true } satisfies Prisma.StudioDecompositionRequestSelect;
 type ReceiptRow = Prisma.StudioDecompositionRequestGetPayload<{ select: typeof receiptSelect }>;
 const identity = (workspaceId: string, userId: string, input: z.infer<typeof StudioDecompositionInput>) => ({ workspaceId, userId, projectId: input.projectId, mutationId: input.mutationId });
 
@@ -80,32 +82,35 @@ function canRetry(row: Pick<Row, "status" | "archiveExpiresAt" | "objectKeys" | 
 function receipt(row: ReceiptRow) {
   const planning = readStudioLayerPlanning(row.planningJson);
   const layers = row.status === "SUCCEEDED" ? z.array(StudioDecompositionLayer).parse(row.publishedLayers) : [];
+  // Historical/malformed reports are not retroactively checked from a GET.
+  const quality = row.status === "SUCCEEDED" ? StudioLayerQualityReport.safeParse(row.qualityJson) : null;
   return StudioDecompositionView.parse({ requestId: row.id, mutationId: row.mutationId, projectId: row.projectId,
     sourceShapeId: row.sourceShapeId, assetId: row.assetId, assetSha256: row.assetSha256,
     documentRevision: row.documentRevision, layerCount: layers.length || row.layerCount, requestedLayerCount: row.layerCount, sourceWidth: row.sourceWidth, sourceHeight: row.sourceHeight,
     layerMode: planning.mode, analysisStatus: planning.mode === "AUTO" && row.status === "FAILED" && !planning.result ? "FAILED" : planning.status, analysisSummary: planning.result?.plan.summary ?? null,
     status: row.status, error: row.error, createdAt: row.createdAt.toISOString(), expiresAt: row.expiresAt.toISOString(),
     archiveExpiresAt: row.archiveExpiresAt?.toISOString() ?? null, canRetryArchive: canRetry(row),
-    layers });
+    layers, quality: quality?.success && quality.data.sourceSha256 === row.assetSha256
+      && quality.data.sourceWidth === row.sourceWidth && quality.data.sourceHeight === row.sourceHeight ? quality.data : null });
 }
 
 /** Only a scoped durable original or a published layer can become an input.
  * Every recursive ancestor is checked, including the exact-original guard. */
-async function sourceAsset(workspaceId: string, projectId: string, assetId: string, expectedHash: string, ancestors = new Set<string>()) {
+async function sourceAsset(workspaceId: string, projectId: string, assetId: string, expectedHash: string, ancestors = new Set<string>(), db: Prisma.TransactionClient = prisma) {
   if (ancestors.has(assetId) || ancestors.size >= 8) throw new ApiException(422, "图层来源循环或继续分层深度已达到安全上限，请保留当前图层。");
   ancestors.add(assetId);
-  const asset = await prisma.asset.findFirst({ where: { id: assetId, workspaceId, deprecatedAt: null, availableForGeneration: true,
+  const asset = await db.asset.findFirst({ where: { id: assetId, workspaceId, deprecatedAt: null, availableForGeneration: true,
     projectLinks: { some: { projectId, project: { workspaceId } } } } });
   if (!asset) throw new ApiException(404, "原图片不属于当前品牌与项目。");
   const [upload, generated] = await Promise.all([
-    prisma.studioMaterialUpload.findFirst({ where: { workspaceId, assetId, sha256: expectedHash, task: { workspaceId, kind: "STUDIO_UPLOAD", status: "SUCCEEDED" } } }),
-    prisma.studioGeneratedMaterial.findFirst({ where: { workspaceId, assetId, sha256: expectedHash, status: "SUCCEEDED",
+    db.studioMaterialUpload.findFirst({ where: { workspaceId, assetId, sha256: expectedHash, task: { workspaceId, kind: "STUDIO_UPLOAD", status: "SUCCEEDED" } } }),
+    db.studioGeneratedMaterial.findFirst({ where: { workspaceId, assetId, sha256: expectedHash, status: "SUCCEEDED",
       request: { workspaceId, status: "SUCCEEDED" }, output: { workspaceId }, version: { generation: { workspaceId } } },
       include: { request: { select: { jobData: true } } } }),
   ]);
   let row: { objectKey: string | null; width: number | null; height: number | null; mimeType: string | null; sizeBytes: number | null } | null = upload ?? generated;
   if (!row && !asset.generationVersionId && !asset.storageKey?.startsWith(`${workspaceId}/studio-layer-assets/`)) {
-    const verified = await prisma.studioBrandMaterialReceipt.findUnique({ where: { assetId }, include: { task: true } });
+    const verified = await db.studioBrandMaterialReceipt.findUnique({ where: { assetId }, include: { task: true } });
     if (verified && verified.workspaceId === workspaceId && verified.assetId === assetId && verified.sha256 === expectedHash
       && verified.task.workspaceId === workspaceId && verified.task.kind === "STUDIO_MATERIAL_VERIFY" && verified.task.status === "SUCCEEDED"
       && verified.sourceDigest === studioBrandMaterialSourceDigest(asset)) row = { ...verified, objectKey: asset.storageKey };
@@ -113,11 +118,11 @@ async function sourceAsset(workspaceId: string, projectId: string, assetId: stri
   if (!row && asset.storageKey?.startsWith(`${workspaceId}/studio-layer-assets/`)) {
     const parts = asset.storageKey.split("/");
     if (parts.length !== 6 || parts[2] !== projectId || !/^\d\.bin$/.test(parts[5]!)) throw new ApiException(422, "图层存储来源与项目不一致。");
-    const parent = await prisma.studioDecompositionRequest.findFirst({ where: { id: parts[3], workspaceId, projectId, status: "SUCCEEDED" } });
+    const parent = await db.studioDecompositionRequest.findFirst({ where: { id: parts[3], workspaceId, projectId, status: "SUCCEEDED" } });
     const layer = parent && z.array(StudioDecompositionLayer).parse(parent.publishedLayers).find(value => value.assetId === assetId);
     if (!parent || !layer || layer.assetSha256 !== expectedHash || layer.order !== Number(parts[5]![0]) || !keysOf(parent).includes(asset.storageKey)
       || layer.width !== parent.sourceWidth || layer.height !== parent.sourceHeight) throw new ApiException(422, "继续分层需要完整保存且校验通过的原图层。");
-    await sourceAsset(workspaceId, projectId, parent.assetId, parent.assetSha256, ancestors);
+    await sourceAsset(workspaceId, projectId, parent.assetId, parent.assetSha256, ancestors, db);
     row = { objectKey: asset.storageKey, width: layer.width, height: layer.height, mimeType: layer.mimeType, sizeBytes: layer.sizeBytes };
   }
   if (!row || !row.width || !row.height || !row.mimeType || !row.sizeBytes || !["image/png", "image/jpeg", "image/webp"].includes(row.mimeType)
@@ -388,6 +393,7 @@ export async function runStudioDecomposition(requestId: string) {
       ownedProviderClaim = claimTime;
       signal.throwIfAborted();
       const queue = DecomposeQueueTicket.parse(await ai.decomposeSubmit({ imageUrl: `data:${metadata.mimeType};base64,${original.toString("base64")}`, layerCount: row.layerCount,
+        ...(semanticDecompositionSourceCaption(planning) ? { sourceCaption: semanticDecompositionSourceCaption(planning) } : {}),
         providerRetryPolicy: "never", ...(semanticDecompositionIntent(row.intent, planning) ? { intent: semanticDecompositionIntent(row.intent, planning) } : {}) },
         { signal, requestId: decompositionTraceId(requestId), requireRealLayerProvider: true, maxResponseBytes: 4096 }));
       // Even a response arriving just after the task TTL must retain its ticket:
@@ -426,13 +432,24 @@ async function archiveLayers(row: Row, signal: AbortSignal) {
     data: { archiveToken: token, archivingStartedAt: new Date(), objectKeys: [...oldKeys, ...objectKeys] } });
   if (!claimed.count) return;
   try {
+  // Authorization/ancestry/EXACT guards are mandatory, including archive-only
+  // recovery. They must never be downgraded into an optional quality warning.
+  await sourceAsset(row.workspaceId, row.projectId, row.assetId, row.assetSha256);
+  const quality = await createStudioLayerQualityCheck(row, count, signal, async qualitySignal => {
+    return row.sourceObjectKey.startsWith(`${row.workspaceId}/studio-layer-assets/`)
+      ? readStudioLayerAsset(row.workspaceId, { id: row.assetId, storageKey: row.sourceObjectKey }, qualitySignal)
+      : readArtifactImageBytes({ imageUrl: "", objectKey: row.sourceObjectKey }, qualitySignal);
+  });
+  if (quality.failureReason === "SOURCE_MISMATCH" || quality.failureReason === "SOURCE_INVALID")
+    throw new ApiException(422, "原图片的实际内容与受理记录不一致或已损坏，未发布图层。");
   const layers: Layer[] = []; let transparent = false;
   // Read/process/store one layer at a time. Bytes remain encrypted even on a
   // legacy public bucket; only the authenticated raw handler decrypts them.
   for (let index = 0; index < count; index++) {
     signal.throwIfAborted();
     const raw = await readArtifactImageBytes({ imageUrl: output.result.layers[index]!.imageUrl }, signal);
-    const image = await inspectStudioLayer(raw, row.sourceWidth, row.sourceHeight, signal, output.result.usage); transparent ||= image.hasTransparency;
+    const image = await inspectStudioLayer(raw, row.sourceWidth, row.sourceHeight, signal, output.result.usage, pixels => quality.addDecoded(pixels, index)); transparent ||= image.hasTransparency;
+    quality.noteLayer(image);
     const assetId = `sdl_${row.id}_${index}`;
     await artifactDeadline(uploadBuffer(encryptStudioBase(image.body, { workspaceId: row.workspaceId, projectId: row.projectId, outputId: `${row.id}_${index}` }), "application/octet-stream", prefix, signal, objectKeys[index]), signal);
     const { body: _body, hasTransparency: _transparent, ...meta } = image;
@@ -442,6 +459,7 @@ async function archiveLayers(row: Row, signal: AbortSignal) {
   if (layers.filter(layer => layer.inkCoverage > 0).length < 2) {
     throw new ApiException(422, "模型结果不足两个具有有效内容的图层，未将近透明噪点冒充分层结果。");
   }
+  const qualityReport = quality.finish();
   signal.throwIfAborted();
   await prisma.$transaction(async tx => {
     const locked = await tx.$queryRaw<Array<{ id: string }>>`SELECT "id" FROM "StudioDecompositionRequest" WHERE "id"=${row.id} FOR UPDATE`;
@@ -450,15 +468,18 @@ async function archiveLayers(row: Row, signal: AbortSignal) {
     if (current.status !== "RUNNING" || current.archiveToken !== token || current.expiresAt.getTime() <= Date.now()) throw new ApiException(409, "图层保存期限已结束，未发布部分结果。");
     await tx.$queryRaw`SELECT "id" FROM "Project" WHERE "id"=${row.projectId} AND "workspaceId"=${row.workspaceId} FOR UPDATE`;
     await actorInTransaction(tx, row);
-    const original = await tx.asset.findFirst({ where: { id: row.assetId, workspaceId: row.workspaceId, deprecatedAt: null, projectLinks: { some: { projectId: row.projectId } } }, select: { id: true } });
-    if (!original) throw new ApiException(409, "原图片已不可用，图层尚未发布。");
+    const original = await sourceAsset(row.workspaceId, row.projectId, row.assetId, row.assetSha256, new Set(), tx);
+    if (original.sourceObjectKey !== row.sourceObjectKey || original.sourceSizeBytes !== row.sourceSizeBytes
+      || original.sourceMimeType !== row.sourceMimeType || original.sourceWidth !== row.sourceWidth || original.sourceHeight !== row.sourceHeight)
+      throw new ApiException(409, "原图片存储或来源已变化，图层尚未发布。");
     for (const layer of layers) {
       await tx.asset.create({ data: { id: layer.assetId, workspaceId: row.workspaceId, category: "OTHER", source: "UPLOAD", libraryKind: "GENERATED",
         fileName: `AI-layer-${layer.order + 1}.png`, storageKey: objectKeys[layer.order]!, url: layer.url, mimeType: "image/png", sizeBytes: layer.sizeBytes,
         resolution: `${layer.width}×${layer.height}`, availableForGeneration: false } });
       await tx.projectAsset.create({ data: { projectId: row.projectId, assetId: layer.assetId, kind: "MATERIAL" } });
     }
-    await tx.studioDecompositionRequest.update({ where: { id: row.id }, data: { status: "SUCCEEDED", outputJson: Prisma.DbNull, publishedLayers: layers as Prisma.InputJsonValue, archiveToken: null, archivingStartedAt: null, error: null } });
+    await tx.studioDecompositionRequest.update({ where: { id: row.id }, data: { status: "SUCCEEDED", outputJson: Prisma.DbNull, publishedLayers: layers as Prisma.InputJsonValue,
+      qualityJson: qualityReport as Prisma.InputJsonValue, archiveToken: null, archivingStartedAt: null, error: null } });
   }, { timeout: 15_000 });
   } catch (error) {
     const reason = error instanceof ApiException && [409, 422].includes(error.status)

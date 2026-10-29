@@ -4,7 +4,7 @@ name: CI
 # L1 契约/UI vitest、web typecheck、web 生产 build，以及 apps/ai 的 pytest。
 on:
   push:
-    branches: [main]
+    branches: [main, claude/layer-quality]
   pull_request:
   workflow_dispatch:
 

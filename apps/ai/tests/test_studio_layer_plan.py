@@ -12,7 +12,7 @@ from app.main import app
 from app.providers import resolve_vlm_provider
 from app.providers.http_providers import HttpVLMProvider
 from app.providers.mock import MockVLMProvider
-from app.studio_layer_plan import LayerPlanRequest, LayerPlan
+from app.studio_layer_plan import LayerPlanRequest, LayerPlanResponse
 from app.studio_decomposition_schemas import StudioDecompositionInput
 from app.studio_generation_schemas import StudioGenerationInput
 
@@ -22,7 +22,7 @@ def image_ref():
     return "data:image/png;base64," + base64.b64encode(body.getvalue()).decode()
 
 def plan(count=3):
-    return {"layerCount": count, "summary": "图中主体与装饰可分别编辑。",
+    return {"layerCount": count, "summary": "图中主体与装饰可分别编辑。", "sourceCaption": "浅色背景中央是一位人物，左上角有文字，边缘有彩色装饰。",
             "groups": [{"name": f"组{i+1}", "description": "实际可见内容"} for i in range(count)]}
 
 @pytest.fixture(autouse=True)
@@ -54,12 +54,43 @@ def test_uses_actual_image_and_vision_selected_count_once_with_execution_evidenc
     assert response.status_code == 200
     assert response.json()["plan"]["layerCount"] == 5
     assert response.json()["usage"]["provider"] == "HttpVLMProvider"
-    assert response.json()["revision"] == "semantic-layer-plan-r1"
+    assert response.json()["revision"] == "semantic-layer-plan-r2"
+    assert response.json()["plan"]["sourceCaption"] == plan()["sourceCaption"]
     assert len(calls) == 1
     content = calls[0]["messages"][1]["content"]
     assert content[1]["image_url"]["url"] == image_ref()
     assert "人物保持完整" in content[0]["text"]
     assert "not verified output-layer labels" in content[0]["text"]
+    assert "Keep user intent out of sourceCaption" in content[0]["text"]
+    assert "merged/flattened" in content[0]["text"]
+    assert "Do not guess hidden text" in content[0]["text"]
+
+
+@pytest.mark.parametrize("caption", [None, "", " \t\ufeff", 123, "a" * 2001, "😀" * 1001])
+def test_r2_requires_a_bounded_caption_and_never_retries_invalid_output(caption):
+    calls = configured({**plan(), "sourceCaption": caption})
+    assert post().status_code == 422
+    assert len(calls) == 1
+
+
+def test_missing_caption_is_not_repaired_from_user_intent_or_group_names():
+    result = plan()
+    del result["sourceCaption"]
+    calls = configured(result)
+    assert post(intent="请把人物与文字分开").status_code == 422
+    assert len(calls) == 1
+
+
+def test_saved_r1_response_remains_readable_but_cannot_masquerade_as_r2():
+    legacy = plan()
+    del legacy["sourceCaption"]
+    response = {"revision": "semantic-layer-plan-r1", "plan": legacy,
+                "usage": {"provider": "HttpVLMProvider", "model": "fixture", "latencyMs": 1}}
+    assert LayerPlanResponse.model_validate(response).plan.model_dump() == legacy
+    with pytest.raises(ValueError):
+        LayerPlanResponse.model_validate({**response, "revision": "semantic-layer-plan-r2"})
+    with pytest.raises(ValueError):
+        LayerPlanResponse.model_validate({**response, "plan": plan()})
 
 def test_missing_real_vision_service_fails_without_fixed_count_fallback():
     app.dependency_overrides[resolve_vlm_provider] = lambda: MockVLMProvider()

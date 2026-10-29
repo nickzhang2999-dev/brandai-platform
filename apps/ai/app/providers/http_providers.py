@@ -38,7 +38,6 @@ from .base import (
     LayerProvider,
     ProviderCheck,
     VLMProvider,
-    build_decompose_prompt,
     clamp_layer_count,
 )
 
@@ -2315,15 +2314,22 @@ class FalLayerProvider(LayerProvider):
         }
 
     @staticmethod
-    def _body(image_url: str, layer_count: int, intent: str | None) -> dict[str, Any]:
-        return {
+    def _body(image_url: str, layer_count: int, source_caption: str | None = None) -> dict[str, Any]:
+        body = {
             "image_url": image_url,
             "num_layers": clamp_layer_count(layer_count),
             "output_format": "png",
             "enable_safety_checker": True,
             "acceleration": "regular",
-            "prompt": build_decompose_prompt(intent),
         }
+        # Qwen uses prompt as a caption of the entire source image, not a
+        # command for the semantics of each layer. No caption => automatic
+        # upstream description; never substitute the user's editing intent.
+        # https://github.com/QwenLM/Qwen-Image-Layered#readme
+        caption = (source_caption or "").strip()
+        if caption:
+            body["prompt"] = caption
+        return body
 
     @staticmethod
     def _json(response: httpx.Response) -> dict[str, Any]:
@@ -2371,12 +2377,13 @@ class FalLayerProvider(LayerProvider):
 
     async def decompose(
         self, image_url: str, *, layer_count: int, intent: str | None = None,
+        source_caption: str | None = None,
     ) -> dict[str, Any]:
         # Legacy callers still receive the same result, but never lose the
         # safe timeout/auth classification or silently replay a paid request.
         try:
             async with self._client() as c:
-                r = await c.post(self.base_url, headers=self._headers(), json=self._body(image_url, layer_count, intent))
+                r = await c.post(self.base_url, headers=self._headers(), json=self._body(image_url, layer_count, source_caption))
                 r.raise_for_status()
         except httpx.HTTPError as exc:
             exc._novart_failure_stage = "provider"
@@ -2425,9 +2432,9 @@ class FalLayerProvider(LayerProvider):
             raise
         return self._json(response)
 
-    async def submit_decomposition(self, image_url: str, *, layer_count: int, intent: str | None = None) -> dict[str, str]:
+    async def submit_decomposition(self, image_url: str, *, layer_count: int, intent: str | None = None, source_caption: str | None = None) -> dict[str, str]:
         endpoint = self.queue_endpoint_id()
-        data = await self._queue_request("POST", f"https://queue.fal.run/{endpoint}", self._body(image_url, layer_count, intent))
+        data = await self._queue_request("POST", f"https://queue.fal.run/{endpoint}", self._body(image_url, layer_count, source_caption))
         request_id = data.get("request_id")
         if not isinstance(request_id, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", request_id):
             raise ImageResponseError("Layer queue did not return a usable request identifier")

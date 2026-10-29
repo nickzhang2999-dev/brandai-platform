@@ -4,6 +4,7 @@ from typing import Annotated, Literal
 from pydantic import Field, field_validator, model_validator
 
 from .studio_workflow_schemas import StrictModel, ProjectId, Sha256
+from .studio_layer_quality_schemas import StudioLayerQualityReport
 
 STUDIO_DECOMPOSITION_TTL_MS = 6 * 60_000
 STUDIO_LAYER_RECOVERY_TTL_MS = 24 * 60 * 60_000
@@ -120,6 +121,7 @@ class StudioDecompositionView(StrictModel):
     assetSha256: Sha256
     documentRevision: int = Field(ge=0)
     layerCount: int = Field(ge=2, le=10)
+    requestedLayerCount: int | None = Field(default=None, ge=2, le=10)
     layerMode: Literal["AUTO", "MANUAL"] = "MANUAL"
     analysisStatus: Literal["NOT_REQUESTED", "PENDING", "RUNNING", "SUCCEEDED", "FAILED"] = "NOT_REQUESTED"
     analysisSummary: str | None = Field(default=None, max_length=600)
@@ -132,6 +134,14 @@ class StudioDecompositionView(StrictModel):
     archiveExpiresAt: UtcDateTime | None
     canRetryArchive: bool
     layers: list[StudioDecompositionLayer] = Field(max_length=10)
+    quality: StudioLayerQualityReport | None = None
+
+    @field_validator("requestedLayerCount", mode="before")
+    @classmethod
+    def no_null_requested_count(cls, value):
+        if value is None:
+            raise ValueError("requestedLayerCount must be omitted, not null")
+        return value
 
     @field_validator("error")
     @classmethod
@@ -142,6 +152,11 @@ class StudioDecompositionView(StrictModel):
 
     @model_validator(mode="after")
     def only_complete_public_layers(self):
+        if self.quality and (self.status != "SUCCEEDED" or self.quality.sourceSha256 != self.assetSha256
+            or self.quality.sourceWidth != self.sourceWidth or self.quality.sourceHeight != self.sourceHeight):
+            raise ValueError("Quality belongs only to its complete published source frame")
+        if self.status != "SUCCEEDED" and self.requestedLayerCount is not None and self.requestedLayerCount != self.layerCount:
+            raise ValueError("Unfinished layer receipts must retain the accepted count")
         if self.layerMode == "AUTO" and ((self.status == "SUCCEEDED" and (self.analysisStatus != "SUCCEEDED" or not self.analysisSummary)) or self.analysisStatus == "NOT_REQUESTED"):
             raise ValueError("AUTO requires real semantic analysis before publishing layers")
         if self.status != "SUCCEEDED" and self.layers:

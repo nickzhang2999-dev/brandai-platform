@@ -1044,6 +1044,7 @@ model StudioDecompositionRequest {
   layerCount Int
   intent String?
   planningJson Json?
+  qualityJson Json?
   sourceWidth Int
   sourceHeight Int
   sourceObjectKey String

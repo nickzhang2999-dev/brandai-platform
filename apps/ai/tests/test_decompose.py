@@ -121,12 +121,30 @@ def test_missing_image_is_rejected():
 
 
 def test_intent_is_appended_verbatim():
-    """用户的话原样附在提示词后面：不改写、不翻译、不"优化"。"""
+    """Legacy instruction helper remains available to other providers, not Fal."""
     intent = "logo 单独一层，不要切开人物"
     prompt = build_decompose_prompt(intent)
     assert prompt.endswith(intent)
     assert build_decompose_prompt(None) == build_decompose_prompt("   ")
     assert intent not in build_decompose_prompt(None)
+
+
+def test_caption_does_not_change_other_providers_old_signature_or_intent():
+    from app.providers import resolve_layer_provider
+    calls = []
+    class ExistingLayerProvider:
+        async def decompose(self, image_url, *, layer_count, intent=None):
+            calls.append((image_url, layer_count, intent))
+            return await MockLayerProvider().decompose(image_url, layer_count=layer_count, intent=intent)
+    original = app.dependency_overrides.copy()
+    try:
+        app.dependency_overrides[resolve_layer_provider] = lambda: ExistingLayerProvider()
+        response = _post(intent="人物保持完整", sourceCaption="红衣人物站在蓝色背景前。")
+        assert response.status_code == 200
+        assert calls == [(SOURCE, 4, "人物保持完整")]
+    finally:
+        app.dependency_overrides.clear()
+        app.dependency_overrides.update(original)
 
 
 @pytest.mark.asyncio

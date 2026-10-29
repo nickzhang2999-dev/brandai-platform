@@ -8,6 +8,7 @@ import { createOwnedLayerRecovery } from "./owned-layer-recovery";
 import type { createOwnedEditorApi, DecompositionInput, DecompositionTask } from "./owned-editor-api";
 import { downloadOwnedPsd } from "./owned-psd-download";
 import { OwnedLayerOptions } from "./OwnedLayerOptions";
+import { OwnedLayerComparison, OwnedLayerQualitySummary } from "./OwnedLayerComparison";
 import { matchesOwnedDecomposition, ownedLayerTaskTitle, ownedLayerTaskStatus, ownedLayerTaskNotice, type OwnedLayerMode } from "./owned-layer-options";
 
 type Api = ReturnType<typeof createOwnedEditorApi>;
@@ -23,12 +24,17 @@ const message = (error: unknown) => error instanceof Error ? error.message : "�
 export function OwnedLayerPanel({ api, workspaceId, projectId, userId, document, selectedIds, readOnly, onPrepare, onPlace, onTasks }: Props) {
   const [tasks, setTasks] = useState<DecompositionTask[]>([]), [layerMode, setLayerMode] = useState<OwnedLayerMode>("AUTO"), [layerCount, setLayerCount] = useState(4), [intent, setIntent] = useState("");
   const [refineSourceId, setRefineSourceId] = useState<string | null>(null);
+  const [comparisonId, setComparisonId] = useState<string | null>(null);
   const [pending, setPending] = useState(false), [busy, setBusy] = useState(false), [reading, setReading] = useState(false);
   const [blocked, setBlocked] = useState(false), [notice, setNotice] = useState("");
   const recovery = useRef<ReturnType<typeof createOwnedLayerRecovery> | null>(null), operation = useRef<DecompositionInput | null>(null);
-  const alive = useRef(true), activeApi = useRef(api), serial = useRef(false), readBusy = useRef(false);
+  const alive = useRef(true), serial = useRef(false), readBusy = useRef(false);
+  const activeScope = useRef({ api, workspaceId, projectId, userId });
   const noticeTask = useRef<string | null>(null);
-  activeApi.current = api;
+  // A -> B -> A may reuse an API object. Each visit still needs its own
+  // identity so the first A's late finally cannot unlock the second A's work.
+  if (activeScope.current.api !== api || activeScope.current.workspaceId !== workspaceId || activeScope.current.projectId !== projectId || activeScope.current.userId !== userId)
+    activeScope.current = { api, workspaceId, projectId, userId };
   const sourceId = refineSourceId ?? (selectedIds.length === 1 ? selectedIds[0] : undefined);
   const source = document?.items.find(item => item.id === sourceId && item.kind === "image");
   const sourceLayer = source && tasks.flatMap(task => task.layers).find(layer => layer.assetId === source.assetId && layer.assetSha256 === source.assetSha256);
@@ -41,7 +47,7 @@ export function OwnedLayerPanel({ api, workspaceId, projectId, userId, document,
     try { requireOwnedLayerSource(document, { sourceShapeId: source.id, assetId: source.assetId, assetSha256: source.assetSha256 }); sourceError = ""; }
     catch (error) { sourceError = message(error); }
   }
-  const current = (expected: Api) => alive.current && activeApi.current === expected;
+  const current = (context: typeof activeScope.current) => alive.current && activeScope.current === context;
   const accept = (task: DecompositionTask) => setTasks(values => [task, ...values.filter(value => value.requestId !== task.requestId)].slice(0, 50));
   const confirm = useCallback((values: DecompositionTask[]) => {
     const input = operation.current;
@@ -51,21 +57,22 @@ export function OwnedLayerPanel({ api, workspaceId, projectId, userId, document,
     }
   }, []);
   const refresh = useCallback(async () => {
-    const expected = activeApi.current;
+    const context = activeScope.current, expected = context.api;
     if (!expected || readBusy.current) return;
     readBusy.current = true; setReading(true);
     try {
       const values = await expected.listDecompositions();
-      if (!current(expected)) return;
+      if (!current(context)) return;
       setTasks(values); confirm(values);
-    } catch (error) { if (current(expected)) setNotice(message(error)); }
-    finally { if (current(expected)) { readBusy.current = false; setReading(false); } }
+    } catch (error) { if (current(context)) setNotice(message(error)); }
+    finally { if (current(context)) { readBusy.current = false; setReading(false); } }
   }, [confirm]);
   useEffect(() => { const check = () => { if (window.document.visibilityState !== "hidden") void refresh(); }; window.addEventListener("focus", check); return () => window.removeEventListener("focus", check); }, [refresh]);
 
 
   useEffect(() => {
-    alive.current = true; operation.current = null; noticeTask.current = null; setNotice(""); setPending(false); setBlocked(false); setTasks([]); setRefineSourceId(null); setLayerMode("AUTO"); setLayerCount(4);
+    alive.current = true; serial.current = false; readBusy.current = false; setBusy(false); setReading(false);
+    operation.current = null; noticeTask.current = null; setNotice(""); setPending(false); setBlocked(false); setTasks([]); setRefineSourceId(null); setComparisonId(null); setLayerMode("AUTO"); setLayerCount(4);
     try {
       recovery.current = createOwnedLayerRecovery({ workspaceId, projectId, userId });
       operation.current = recovery.current.load(); setPending(!!operation.current);
@@ -96,14 +103,14 @@ export function OwnedLayerPanel({ api, workspaceId, projectId, userId, document,
   }, [tasks]);
 
   async function submit() {
-    const expected = activeApi.current;
+    const context = activeScope.current, expected = context.api;
     if (!expected || readOnly || blocked || serial.current) return;
     serial.current = true; setBusy(true);
     try {
       if (!operation.current) {
         const chosenSource = source;
         if (!chosenSource?.assetId || !chosenSource.assetSha256) throw new Error("请先选择一张已存入当前项目的图片。");
-        const saved = await onPrepare(); if (!current(expected)) return;
+        const saved = await onPrepare(); if (!current(context)) return;
         const selected = saved.document.items.find(item => item.id === sourceId);
         if (!selected?.assetId || !selected.assetSha256 || selected.assetId !== chosenSource.assetId || selected.assetSha256 !== chosenSource.assetSha256) throw new Error("选中的图片已变化，本次未提交；请重新选择后分层。");
         requireOwnedLayerSource(saved.document, { sourceShapeId: selected.id, assetId: selected.assetId, assetSha256: selected.assetSha256 });
@@ -114,63 +121,65 @@ export function OwnedLayerPanel({ api, workspaceId, projectId, userId, document,
         setPending(true);
       }
       const receipt = await expected.submitDecomposition(operation.current);
-      if (!current(expected)) return;
+      if (!current(context)) return;
       noticeTask.current = receipt.requestId;
       accept(receipt); confirm([receipt]); setNotice(ownedLayerTaskNotice(receipt));
     } catch (error) {
-      if (!current(expected)) return;
+      if (!current(context)) return;
       if (error instanceof NovartApiError && !error.uncertain && operation.current) {
         try { recovery.current?.clear(operation.current); operation.current = null; setPending(false); }
         catch (recoveryError) { setBlocked(true); setNotice(message(recoveryError)); return; }
       }
       setNotice(message(error));
-    } finally { if (current(expected)) { serial.current = false; setBusy(false); } }
+    } finally { if (current(context)) { serial.current = false; setBusy(false); } }
   }
   async function place(task: DecompositionTask) {
-    const expected = activeApi.current; if (!expected || readOnly || serial.current) return;
+    const context = activeScope.current, expected = context.api; if (!expected || readOnly || serial.current) return;
     serial.current = true; setBusy(true);
-    try { await onPlace(task); if (current(expected)) setNotice("已展开图层，原图保留在图层列表中。可解除组合后分别编辑；撤销可恢复原图。"); }
-    catch (error) { if (current(expected)) setNotice(message(error)); }
-    finally { if (current(expected)) { serial.current = false; setBusy(false); } }
+    try { await onPlace(task); if (current(context)) setNotice("已展开图层，原图仍保留。可分别移动、缩放图片图层；其中的文字仍是图片，请核对后使用。"); }
+    catch (error) { if (current(context)) setNotice(message(error)); }
+    finally { if (current(context)) { serial.current = false; setBusy(false); } }
   }
   async function retryArchive(task: DecompositionTask) {
-    const expected = activeApi.current; if (!expected || readOnly || serial.current) return;
+    const context = activeScope.current, expected = context.api; if (!expected || readOnly || serial.current) return;
     serial.current = true; setBusy(true);
-    try { const result = await expected.retryLayerArchive(task.requestId); if (current(expected)) { noticeTask.current = result.requestId; accept(result); setNotice("正在检查并保存原任务的结果，不会重新提交分层模型。"); } }
-    catch (error) { if (current(expected)) setNotice(message(error)); }
-    finally { if (current(expected)) { serial.current = false; setBusy(false); } }
+    try { const result = await expected.retryLayerArchive(task.requestId); if (current(context)) { noticeTask.current = result.requestId; accept(result); setNotice("正在检查并保存原任务的结果，不会重新提交分层模型。"); } }
+    catch (error) { if (current(context)) setNotice(message(error)); }
+    finally { if (current(context)) { serial.current = false; setBusy(false); } }
   }
   async function download(task: DecompositionTask) {
-    const expected = activeApi.current; if (!expected || serial.current || task.status !== "SUCCEEDED") return;
+    const context = activeScope.current, expected = context.api; if (!expected || serial.current || task.status !== "SUCCEEDED") return;
     serial.current = true; setBusy(true);
-    try { await downloadOwnedPsd(expected, task); if (current(expected)) setNotice("PSD 已下载，原图和图层仍保留。"); }
-    catch (error) { if (current(expected)) setNotice(message(error)); }
-    finally { if (current(expected)) { serial.current = false; setBusy(false); } }
+    try { await downloadOwnedPsd(expected, task); if (current(context)) setNotice("PSD 已下载，包含图片图层，文字仍非原生文字层。原图和图层仍保留。"); }
+    catch (error) { if (current(context)) setNotice(message(error)); }
+    finally { if (current(context)) { serial.current = false; setBusy(false); } }
   }
   return <section className="space-y-4" aria-label="AI 分层" data-testid="owned-layer-panel">
-    <div><h2 className="text-sm font-semibold">{refining ? "进一步分层" : "AI 分层"}</h2><p className="mt-1 text-xs leading-5 text-muted-foreground">按图片内容拆成可分别编辑的透明图层，原图保留。{layerMode === "AUTO" ? "会额外使用内容分析与分层服务额度。" : "会使用分层服务额度。"}</p></div>
+    <div><h2 className="text-sm font-semibold">{refining ? "进一步分层" : "AI 分层"}</h2><p className="mt-1 text-xs leading-5 text-muted-foreground">拆成可分别移动、缩放的透明图片图层，原图保留。文字仍是图片，不能直接改字。{layerMode === "AUTO" ? "会额外使用内容分析与分层服务额度。" : "会使用分层服务额度。"}</p></div>
     <p className="text-xs leading-5 text-muted-foreground" data-testid="owned-layer-source">{sourceError || (refining ? `已选择${sourceLayer?.name || "已保存图层"}，只拆分这一个图层，其余图层保留。` : "已选择图片。原图和全部结果分别保存，完成后由你展开。")}</p>
     {refineSourceId && source && <div className="flex items-center gap-3 rounded-2xl border border-border p-3"><img src={source.url} alt="进一步分层的对象" className="h-14 w-14 shrink-0 rounded-lg bg-muted object-contain" /><button type="button" className={control} disabled={pending || busy} onClick={() => setRefineSourceId(null)}>返回画布选中对象</button></div>}
     <OwnedLayerOptions mode={layerMode} count={layerCount} context="分层" disabled={readOnly || busy || pending || blocked} onMode={setLayerMode} onCount={setLayerCount} />
     <textarea aria-label="分层说明" className="min-h-24 w-full rounded-2xl border border-border bg-background p-3 text-sm" placeholder="可选：优先拆分主体、文字和背景…" maxLength={500} value={intent} disabled={readOnly || busy || pending || blocked} onChange={event => setIntent(event.target.value)} />
+    {intent.trim() && <p className="text-xs leading-5 text-muted-foreground">说明用于内容规划，实际图层分组仍需核对。</p>}
     <button type="button" className="w-full rounded-full bg-primary py-3 text-sm text-primary-foreground disabled:opacity-40" data-testid="owned-layer-submit" disabled={!api || readOnly || busy || blocked || !pending && !!sourceError} onClick={() => void submit()}>{busy ? "正在确认…" : pending ? "检查上次分层" : refining ? "进一步分层" : "开始 AI 分层"}</button>
     {!!notice && !tasks.some(task => task.error && notice.includes(task.error)) && <p role="status" className="rounded-xl bg-accent-soft p-3 text-xs leading-6" data-testid="owned-layer-notice">{notice}</p>}
     {(blocked || tasks.some(task => ["PENDING", "RUNNING"].includes(task.status) && Date.parse(task.expiresAt) <= Date.now())) && <button type="button" className={control} disabled={reading || busy} onClick={() => void refresh()}>检查分层状态</button>}
     {!tasks.length && <p className="py-4 text-center text-xs text-muted-foreground">当前项目还没有分层任务。</p>}
-    {tasks.map(task => <article className="space-y-3 rounded-2xl border border-border p-3" key={task.requestId} data-testid="owned-layer-task" data-status={task.status}>
+    {tasks.map(task => <article className="space-y-3 rounded-2xl border border-border p-3" key={task.requestId} data-testid="owned-layer-task" data-request-id={task.requestId} data-status={task.status}>
       <div className="flex flex-wrap justify-between gap-2 text-xs"><strong>{ownedLayerTaskTitle(task)}</strong><span>{ownedLayerTaskStatus(task)}</span></div>
       {task.analysisSummary && <p className="text-xs leading-5 text-muted-foreground">{task.analysisSummary}</p>}
       {task.error && <div role="alert" className="text-xs leading-5 text-muted-foreground"><p>{/画幅|尺寸比例/.test(task.error) ? "分层结果尺寸与原图不一致，已保留原图。" : task.error}</p>{/画幅|尺寸比例/.test(task.error) && <details><summary>查看详情</summary>{task.error}</details>}</div>}
-      {task.layers.length > 0 && <><div className="grid grid-cols-2 gap-2">{task.layers.map(layer => {
+      {task.status === "SUCCEEDED" && <><OwnedLayerQualitySummary task={task} /><button type="button" className={control} data-testid="owned-layer-compare-toggle" aria-expanded={comparisonId === task.requestId} onClick={() => setComparisonId(value => value === task.requestId ? null : task.requestId)}>{comparisonId === task.requestId ? "收起原图对照与图层" : "查看原图对照与图层"}</button></>}
+      {comparisonId === task.requestId && task.layers.length > 0 && <><OwnedLayerComparison key={`${workspaceId}:${projectId}:${task.requestId}`} task={task} workspaceId={workspaceId} projectId={projectId} userId={userId} /><div className="grid grid-cols-2 gap-2">{task.layers.map(layer => {
         const label = layer.name || `图层 ${layer.order + 1}`;
         // No pixel reaches the visible-ink threshold: the model returned an
         // almost empty layer. Keep it (never drop real pixels) but say so.
         const faint = layer.inkCoverage === 0;
         const item = document?.items.find(value => value.kind === "image" && value.assetId === layer.assetId && value.assetSha256 === layer.assetSha256 && !value.hidden);
-        return <div key={layer.assetId} className={"min-w-0 space-y-2 rounded-xl bg-muted p-2" + (faint ? " opacity-60" : "")} data-faint={faint || undefined}><img src={layer.url} alt={faint ? `${label}（几乎透明）` : label} loading="lazy" className="aspect-square w-full object-contain" /><p className="truncate text-xs text-muted-foreground" title={label}>{label}{faint && <span className="ml-1 rounded-full bg-background px-1.5">几乎透明</span>}</p>
+        return <div key={layer.assetId} className={"min-w-0 space-y-2 rounded-xl bg-muted p-2" + (faint ? " opacity-60" : "")} data-faint={faint || undefined}><p className="truncate text-xs text-muted-foreground" title={label}>{label}{faint && <span className="ml-1 rounded-full bg-background px-1.5">几乎透明</span>}</p>
           <button type="button" className={control + " w-full !px-2"} aria-label={`进一步分层：${label}`} disabled={!item || readOnly || busy || pending || blocked} onClick={() => { if (item) { setRefineSourceId(item.id); setLayerMode("AUTO"); setNotice(`已选择${label}。确认拆分后才会调用模型，原图层与其他图层仍保留。`); } }}>进一步分层</button></div>;
       })}</div>{task.layers.some(layer => layer.inkCoverage === 0) && <p className="text-xs leading-5 text-muted-foreground" data-testid="owned-layer-faint-note">标记为“几乎透明”的图层基本没有可见内容，可以在画布上隐藏或删除，不影响其他图层。</p>}<p className="text-xs leading-5 text-muted-foreground">展开到画布后，可选择其中一个图层继续细拆。</p></>}
-      {task.status === "SUCCEEDED" && <div className="flex flex-wrap gap-2"><button type="button" className={control} disabled={readOnly || busy} onClick={() => void place(task)}>展开为可编辑图层</button>
+      {task.status === "SUCCEEDED" && <div className="flex flex-wrap gap-2"><button type="button" className={control} disabled={readOnly || busy} onClick={() => void place(task)}>展开图片图层</button>
         {api && <button type="button" className={control} disabled={busy} onClick={() => void download(task)} data-testid="owned-layer-psd-download">下载 PSD</button>}
       </div>}
       {task.canRetryArchive && <button type="button" className={control} disabled={readOnly || busy} onClick={() => void retryArchive(task)}>检查并保存已有结果</button>}

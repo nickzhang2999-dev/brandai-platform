@@ -160,8 +160,8 @@ PARSER_REVISION = "grounded-six-slot-r6"
 GENERATION_REVISION = "gpt-image-2-size-quality-r1"
 VISUAL_CHECK_REVISION = "studio-visual-check-evidence-r1"
 PROVIDER_RETRY_REVISION = "single-provider-attempt-r2"
-STUDIO_DECOMPOSITION_REVISION = "studio-real-layer-single-attempt-r1"
-STUDIO_DECOMPOSITION_QUEUE_REVISION = "studio-layer-queue-r1"
+STUDIO_DECOMPOSITION_REVISION = "studio-real-layer-single-attempt-r2"
+STUDIO_DECOMPOSITION_QUEUE_REVISION = "studio-layer-queue-r2"
 
 
 @app.get("/health")
@@ -1068,6 +1068,8 @@ async def decompose(
         req.imageUrl,
         layer_count=req.layerCount,
         intent=req.intent,
+        # Other adapters retain their existing signature and intent behavior.
+        **({"source_caption": req.sourceCaption} if isinstance(provider, FalLayerProvider) else {}),
     )
     latency_ms = int((time.perf_counter() - started) * 1000)
 
@@ -1106,7 +1108,7 @@ async def decompose_submit(req: DecomposeRequest, provider: LayerProvider = Depe
     if not req.imageUrl.strip():
         raise HTTPException(status_code=400, detail="imageUrl is required")
     try:
-        return await provider.submit_decomposition(req.imageUrl, layer_count=req.layerCount, intent=req.intent)
+        return await provider.submit_decomposition(req.imageUrl, layer_count=req.layerCount, intent=req.intent, source_caption=req.sourceCaption)
     except LayerQueueConfigurationError as exc:
         # Only fixed local configuration messages, never provider content.
         raise HTTPException(status_code=503, detail=str(exc)) from None

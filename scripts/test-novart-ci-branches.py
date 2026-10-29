@@ -5,7 +5,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 APPROVED = {
-    'main', 'devUpdate1012', 'claude/novart-product-integration',
+    'main', 'devUpdate1012', 'claude/novart-product-integration', 'claude/layer-quality',
     'fix/p1-remove-captured-bundle', 'fix/p2-security',
     'fix/p3-ai-reliability', 'fix/p4-frontend', 'chore/p5-engineering',
 }

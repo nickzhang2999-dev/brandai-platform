@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   backend:
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/devUpdate1012' || github.ref == 'refs/heads/claude/novart-product-integration' || github.ref == 'refs/heads/fix/p1-remove-captured-bundle' || github.ref == 'refs/heads/fix/p2-security' || github.ref == 'refs/heads/fix/p3-ai-reliability' || github.ref == 'refs/heads/fix/p4-frontend' || github.ref == 'refs/heads/chore/p5-engineering'
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/devUpdate1012' || github.ref == 'refs/heads/claude/novart-product-integration' || github.ref == 'refs/heads/claude/layer-quality' || github.ref == 'refs/heads/fix/p1-remove-captured-bundle' || github.ref == 'refs/heads/fix/p2-security' || github.ref == 'refs/heads/fix/p3-ai-reliability' || github.ref == 'refs/heads/fix/p4-frontend' || github.ref == 'refs/heads/chore/p5-engineering'
     # Keep the locked Playwright browser/dependency installer on its supported OS.
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -101,6 +101,7 @@ jobs:
           NOVART_HOME_LEAVE_REPORT=apps/web/.novart-ui-artifacts/home-brand-leave-fixture.json node scripts/test-novart-home-brand-leave-browser.cjs
           NOVART_BRAND_CREATION_REPORT=apps/web/.novart-ui-artifacts/brand-creation-recovery-fixture.json node scripts/test-novart-brand-creation-recovery-browser.cjs
           NOVART_AUTO_PSD_REPORT=apps/web/.novart-ui-artifacts/automatic-psd-fixture.json NOVART_AUTO_PSD_SCREENSHOT=apps/web/.novart-ui-artifacts/automatic-psd-fixture.png node scripts/test-novart-auto-psd-browser.cjs
+          node scripts/test-owned-layer-quality-browser.cjs
           NOVART_IMAGE_CONTEXT_REPORT=apps/web/.novart-ui-artifacts/image-context-fixture.json node scripts/test-novart-image-context-browser.cjs
           NOVART_CONVERSATION_REPORT=apps/web/.novart-ui-artifacts/conversation-fixture.json node scripts/test-novart-conversation-browser.cjs
           node scripts/test-writing-workbench-browser.cjs
@@ -149,6 +150,17 @@ jobs:
           assert not report['externalRequests'] and not report['errors']
           assert all(isinstance(check, str) or check['status'] == 'PASS' for check in report['checks'])
           print('PASS automatic PSD selection, recovery and file-download interaction; isolated fixtures only')
+          report = json.loads(Path('.novart-build/layer-quality-interactions/report.json').read_text())
+          assert report['passed'] is True and report['fixtureOnly'] is True
+          assert report['realBackend'] is False and report['realProvider'] is False and report['realAuthorization'] is False
+          assert report['providerCalls'] == 0 and len(report['checks']) == 11
+          assert not report['externalRequests'] and not report['errors']
+          assert {'ordered-alpha-composite-and-layer-inspection-never-use-original-as-bottom-layer',
+                  'project-switch-aborts-asset-read-and-never-revives-old-task',
+                  'source-hash-mismatch-fails-closed-before-image-decoding',
+                  '25-second-timeout-aborts-read-and-offers-working-retry',
+                  'all-inspection-actions-issue-zero-writes-placement-or-provider-calls'} <= set(report['checks'])
+          print('PASS layer comparison: 11 isolated interactions; no real model or quality acceptance claimed')
           report = json.loads((root / 'conversation-fixture.json').read_text())
           assert report['passed'] is True and report['isolated'] is True
           assert report['realBackend'] is False and report['realProvider'] is False and report['realAuthentication'] is False
@@ -505,6 +517,8 @@ jobs:
             apps/web/.novart-ui-artifacts/target-fixture.json
             .novart-build/writing-workbench-browser/summary.json
             .novart-build/writing-workbench-integration/summary.json
+            .novart-build/layer-quality-interactions/report.json
+            .novart-build/layer-quality-interactions/mobile-fixture.png
             apps/web/.novart-ui-artifacts/psd-file-proof/*.json
             apps/web/.novart-ui-artifacts/psd-file-proof/*.psd
             apps/web/.novart-ui-artifacts/psd-file-proof/*.png

@@ -10,9 +10,9 @@ def test_health(client):
         "providerRetryRevision": "single-provider-attempt-r2",
         "studioEditRevision": "studio-whole-image-edit-r1",
         "studioImageToolsRevision": "studio-image-tools-r1",
-        "studioDecompositionRevision": "studio-real-layer-single-attempt-r1",
-        "studioDecompositionQueueRevision": "studio-layer-queue-r1",
-        "studioLayerPlanRevision": "semantic-layer-plan-r1",
+        "studioDecompositionRevision": "studio-real-layer-single-attempt-r2",
+        "studioDecompositionQueueRevision": "studio-layer-queue-r2",
+        "studioLayerPlanRevision": "semantic-layer-plan-r2",
         "studioConversationIntentRevision": "structured-conversation-intent-r2",
         "studioWritingParserRevision": "studio-writing-text-v1",
     }

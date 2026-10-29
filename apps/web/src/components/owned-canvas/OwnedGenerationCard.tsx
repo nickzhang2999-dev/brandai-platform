@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { createOwnedEditorApi, GenerationTask, GenerationCompliance, PersistentImage, GeneratedPsdTask, DecompositionTask } from "./owned-editor-api";
 import { downloadOwnedPsd } from "./owned-psd-download";
-import { ownedPsdSelection, ownedLayerTaskStatus, ownedLayerTaskTitle } from "./owned-layer-options";
+import { ownedPsdSelection, ownedLayerTaskStatus, ownedLayerTaskTitle, ownedLayerTaskNotice } from "./owned-layer-options";
 import { useBoundedTaskPoll } from "../../lib/use-bounded-task-poll";
 
 type Props = { task: GenerationTask; api: ReturnType<typeof createOwnedEditorApi> | null; canEdit: boolean;
@@ -70,7 +70,7 @@ export function OwnedGenerationCard({ task, api, canEdit, onTask, onNotice, onIn
     const source = context.task.results.find(image => image.assetId === decomposition.assetId && image.assetSha256 === decomposition.assetSha256);
     if (!source) throw new Error("PSD 原图与当前生成结果不一致，未下载文件，请刷新确认。");
     await downloadOwnedPsd(context.api, decomposition);
-    if (alive.current && latest.current.api === context.api) onNotice("PSD 已下载，原图和图层仍保留。");
+    if (alive.current && latest.current.api === context.api) onNotice("PSD 已下载，包含图片图层，文字仍非原生文字层。原图和图层仍保留。");
   }
   async function action(work: () => Promise<void>) {
     if (!alive.current || running.current) return;
@@ -107,12 +107,12 @@ export function OwnedGenerationCard({ task, api, canEdit, onTask, onNotice, onIn
     {task.canRetryArchive && <button type="button" className={button} disabled={!canEdit || busy} onClick={() => void action(retryArchive)}>重试保存结果</button>}
     {selection.requested && <details open={compact ? undefined : true} className="space-y-2 rounded-xl bg-accent-soft p-3" data-testid="owned-generated-psd" data-status={psd?.status ?? "LOADING"}>
       <summary hidden={!compact} className="cursor-pointer text-xs">PSD 与图层{psd?.status === "READY" ? " · 已就绪" : psd?.status === "FAILED" ? " · 未完成" : " · 准备中"}</summary>
-      <p className="text-xs font-semibold">可编辑 PSD · {psd?.decomposition ? ownedLayerTaskTitle(psd.decomposition) : selection.mode === "AUTO" ? "按内容自动分层" : `${selection.count} 层`}</p>
-      <p role="status" className="text-xs leading-5 text-muted-foreground" data-testid="owned-generated-psd-status">{psdError || (psdPaused ? "自动读取已暂停，任务仍在后台处理；可刷新确认。" : psd?.status === "READY" ? "图层已保存，可展开编辑或导出 PSD；导出时会校验文件大小与资源限制。" : psd?.status === "FAILED" ? (psd.error || "PSD 准备未完成。") + " 生成图片仍保留。" : psd?.decomposition ? ownedLayerTaskStatus(psd.decomposition) + "，原图可以先使用。" : psd?.status === "RUNNING" ? "正在准备可编辑图层，原图可以先使用。" : psd?.status === "NOT_REQUESTED" ? "服务端尚未确认 PSD 请求，请刷新任务。" : "PSD 已请求，图片生成保存后将在后台准备。")}</p>
+      <p className="text-xs font-semibold">分层 PSD · {psd?.decomposition ? ownedLayerTaskTitle(psd.decomposition) : selection.mode === "AUTO" ? "按内容自动分层" : `${selection.count} 层`}</p>
+      <p role="status" className="text-xs leading-5 text-muted-foreground" data-testid="owned-generated-psd-status">{psdError || (psdPaused ? "自动读取已暂停，任务仍在后台处理；可刷新确认。" : psd?.status === "READY" && psd.decomposition ? ownedLayerTaskNotice(psd.decomposition) : psd?.status === "FAILED" ? (psd.error || "PSD 准备未完成。") + " 生成图片仍保留。" : psd?.decomposition ? ownedLayerTaskStatus(psd.decomposition) + "，原图可以先使用。" : psd?.status === "RUNNING" ? "正在准备图片图层，原图可以先使用。" : psd?.status === "NOT_REQUESTED" ? "服务端尚未确认 PSD 请求，请刷新任务。" : "PSD 已请求，图片生成保存后将在后台准备。")}</p>
       {psd?.decomposition?.analysisSummary && <p className="text-xs leading-5 text-muted-foreground">{psd.decomposition.analysisSummary}</p>}
       <div className="flex flex-wrap gap-2">
         {psd?.status === "READY" && psd.downloadUrl && <button type="button" className={button + " bg-card"} disabled={!api || busy} onClick={() => void action(downloadPsd)} data-testid="owned-generated-psd-download">下载 PSD</button>}
-        {psd?.status === "READY" && onInsertLayers && <button type="button" className={button + " bg-card"} disabled={!canEdit || busy} onClick={() => void action(expandPsd)}>展开为可编辑图层</button>}
+        {psd?.status === "READY" && onInsertLayers && <button type="button" className={button + " bg-card"} disabled={!canEdit || busy} onClick={() => void action(expandPsd)}>展开图片图层</button>}
         <button type="button" className={button + " bg-card"} disabled={!api || psdReading} onClick={() => void refreshPsd()}>{psdReading ? "正在读取 PSD…" : "刷新 PSD 进度"}</button>
       </div>
     </details>}

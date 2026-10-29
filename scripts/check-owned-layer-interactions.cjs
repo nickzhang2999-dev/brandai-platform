@@ -42,7 +42,7 @@ async function runOwnedLayerChecks({page,surface,origin,fixture,png,material,lay
       assert.equal(shapes().length,1);assert.notEqual(sourceRecord().meta?.novartOwned?.hidden,true);
       check('expired-provider-task-survives-reload-and-recovers-via-explicit-read-without-resubmission');
       await page.reload();await surface.waitFor();await page.getByTestId('owned-canvas-item').click();await openLayers();
-      await button('展开为可编辑图层').waitFor();
+      await button('展开图片图层').waitFor();
       assert.equal(state().decompositionPosts,1);assert.equal(state().layerRecoveryPosts,1);
       check('recovered-result-persists-and-remains-explicitly-placeable');
       report.unverified=['This fixture tests UI recovery only; no real provider or database is used'];
@@ -63,12 +63,12 @@ async function runOwnedLayerChecks({page,surface,origin,fixture,png,material,lay
   assert.deepEqual([...new Set(state().layerTaskReads.map(value=>value.status))],['PENDING','RUNNING','SUCCEEDED']);assert.equal(shapes().length,1);assert.notEqual(sourceRecord().meta?.novartOwned?.hidden,true);
   check('strict-saved-source-request-pending-running-succeeded-without-auto-insert');
 
-  setStage('layers-failed-download-is-atomic');const unchanged=state().canvas,baselineWrites=state().writes;await button('展开为可编辑图层').click();
+  setStage('layers-failed-download-is-atomic');const unchanged=state().canvas,baselineWrites=state().writes;await button('展开图片图层').click();
   await page.getByTestId('owned-layer-notice').filter({hasText:'图层暂时无法读取，原图未改动'}).waitFor();
   assert.equal(state().canvas,unchanged);assert.equal(state().writes,baselineWrites);assert.equal(shapes().length,1);
   assert.ok(state().layerDownloads.some(value=>value.order===0&&!value.failed));assert.ok(state().layerDownloads.some(value=>value.order===1&&value.failed));
   check('second-layer-download-failure-inserts-no-partial-group-and-preserves-source');
-  setStage('layers-retry-download-and-placement');allowLayerDownloads();await page.reload();await surface.waitFor();await page.locator('[data-testid="owned-canvas-item"][data-kind="image"]').click();await openLayers();await button('展开为可编辑图层').waitFor();
+  setStage('layers-retry-download-and-placement');allowLayerDownloads();await page.reload();await surface.waitFor();await page.locator('[data-testid="owned-canvas-item"][data-kind="image"]').click();await openLayers();await button('展开图片图层').waitFor();
   const actualPngs=await page.evaluate(async paths=>{
     const result=[];
     for(const path of paths) {
@@ -82,14 +82,14 @@ async function runOwnedLayerChecks({page,surface,origin,fixture,png,material,lay
   },layerResults.map(value=>value.url));
   assert.deepEqual(actualPngs.map(value=>[value.width,value.height]),[[12,8],[12,8]]);assert.equal(actualPngs[0].transparent,0);assert.equal(actualPngs[1].transparent,84);assert.equal(actualPngs[1].ink,12);
   check('two-real-full-frame-png-fixtures-decode-with-transparent-foreground');
-  await button('展开为可编辑图层').click();await page.getByTestId('owned-layer-notice').filter({hasText:'已展开图层'}).waitFor();await save();
+  await button('展开图片图层').click();await page.getByTestId('owned-layer-notice').filter({hasText:'已展开图层'}).waitFor();await save();
   assert.equal(shapes().length,3);assert.equal(sourceRecord().id,sourceId);assert.notEqual(sourceRecord().meta.novartOwned.hidden,true);
   const placed=shapes().filter(value=>value.id!==sourceId),groupId=placed[0].meta.novartOwned.groupId;
   assert.ok(groupId);assert.equal(placed[1].meta.novartOwned.groupId,groupId);
   for(const layer of placed) {assert.equal(layer.x,sourceRecord().x+sourceRecord().props.w+48);assert.equal(layer.y,sourceRecord().y);assert.equal(layer.props.w,sourceRecord().props.w);assert.equal(layer.props.h,sourceRecord().props.h);}
   assert.equal(await page.getByTestId('owned-canvas-item').count(),3);check('all-layers-insert-as-one-aligned-group-beside-visible-retained-source');
 
-  setStage('layers-idempotent-placement');const placedCanvas=state().canvas,placedWrites=state().writes;await button('展开为可编辑图层').click();await page.getByText('这一组图层已经在画布中，保留当前编辑。',{exact:true}).waitFor();await save();
+  setStage('layers-idempotent-placement');const placedCanvas=state().canvas,placedWrites=state().writes;await button('展开图片图层').click();await page.getByText('这一组图层已经在画布中，保留当前编辑。',{exact:true}).waitFor();await save();
   assert.equal(shapes().length,3);assert.equal(state().canvas,placedCanvas);assert.equal(state().writes,placedWrites);check('repeated-place-click-does-not-add-or-resave-duplicate-layers');
   setStage('layers-single-undo-redo');await button('关闭工具窗口').click();await button('撤销').click();await save();assert.equal(shapes().length,1);assert.equal(sourceRecord().id,sourceId);assert.notEqual(sourceRecord().meta?.novartOwned?.hidden,true);assert.equal(await page.getByTestId('owned-canvas-item').count(),1);
   await button('重做').click();await save();assert.equal(shapes().length,3);assert.notEqual(sourceRecord().meta.novartOwned.hidden,true);assert.equal(await page.getByTestId('owned-canvas-item').count(),3);check('one-undo-keeps-source-and-redo-restores-entire-layer-group');

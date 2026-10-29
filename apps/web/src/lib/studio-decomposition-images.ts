@@ -59,6 +59,7 @@ export async function inspectStudioLayer(
   sourceHeight: number,
   signal: AbortSignal,
   provider?: { provider?: string; model?: string },
+  onDecoded?: (pixels: { data: Buffer; width: number; height: number }) => void,
 ): Promise<StudioInspectedLayer> {
   signal.throwIfAborted();
   if (!validDimensions(sourceWidth, sourceHeight) || sourceWidth * sourceHeight > STUDIO_LAYER_TOTAL_PIXELS) {
@@ -94,6 +95,7 @@ export async function inspectStudioLayer(
     signal.throwIfAborted();
     if (decoded.info.width !== sourceWidth || decoded.info.height !== sourceHeight || decoded.info.channels !== 4
       || decoded.data.length !== sourceWidth * sourceHeight * 4) throw invalid();
+    onDecoded?.({ data: decoded.data, width: sourceWidth, height: sourceHeight });
     let ink = 0, minX = sourceWidth, minY = sourceHeight, maxX = -1, maxY = -1;
     let hasTransparency = false;
     for (let y = 0; y < sourceHeight; y++) {

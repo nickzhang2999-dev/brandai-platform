@@ -11,7 +11,7 @@ const complete = (requestedLayerCount: number) => ({ ...pending, requestedLayerC
 describe("owned decomposition API", () => {
   it("confirms a completed replay using the accepted count, not the model's output count", async () => {
     const value = complete(4), fetcher = vi.fn().mockResolvedValue(response(value, 202));
-    expect(await setup(fetcher).submitDecomposition(input)).toEqual(value);
+    expect(await setup(fetcher).submitDecomposition(input)).toEqual({ ...value, quality: null });
     expect(fetcher).toHaveBeenCalledOnce();
   });
   it("still rejects a completed receipt for a different requested count", async () => {
@@ -20,7 +20,7 @@ describe("owned decomposition API", () => {
   });
   it("pins the requested workspace/account, source identity and immutable mutation", async () => {
     const fetcher = vi.fn().mockResolvedValue(response(pending, 202));
-    expect(await setup(fetcher).submitDecomposition(input)).toEqual(pending);
+    expect(await setup(fetcher).submitDecomposition(input)).toEqual({ ...pending, quality: null });
     const [path, init] = fetcher.mock.calls[0]!;
     expect(path).toBe("/studio/decomposition?projectId=p&workspaceId=w");
     expect(JSON.parse(init.body)).toEqual(input); expect(new Headers(init.headers).get("X-Novart-User")).toBe("u");

@@ -134,11 +134,10 @@ _DECOMPOSE_PROMPT = (
 
 
 def build_decompose_prompt(intent: str | None) -> str:
-    """Fold the user's own words into the decomposition prompt.
+    """Legacy instruction prompt for providers supporting editing intent.
 
-    A layer COUNT cannot express "just separate the person from the scenery" —
-    asking for 2 layers may well return "person + ice cream". So the intent is
-    the primary handle and the count is only an expected value.
+    Not used by Fal/Qwen: its prompt accepts a whole-image caption and cannot
+    command the semantic content of individual layers.
 
     The user's sentence is appended VERBATIM: no rewriting, no translating,
     no "improving". Rewriting it is deciding for them (least astonishment).

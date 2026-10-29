@@ -1,7 +1,7 @@
 import { z } from "zod";
-import { StudioLayerPlanResponse, STUDIO_LAYER_PLAN_REVISION } from "@brandai/contracts";
+import { StudioLayerPlanResponse, STUDIO_LAYER_PLAN_REVISION, LEGACY_STUDIO_LAYER_PLAN_REVISION } from "@brandai/contracts";
 
-export const StudioDecompositionPlanning = z.object({ revision: z.literal(STUDIO_LAYER_PLAN_REVISION), mode: z.enum(["AUTO", "MANUAL"]),
+export const StudioDecompositionPlanning = z.object({ revision: z.enum([STUDIO_LAYER_PLAN_REVISION, LEGACY_STUDIO_LAYER_PLAN_REVISION]), mode: z.enum(["AUTO", "MANUAL"]),
   status: z.enum(["NOT_REQUESTED", "PENDING", "RUNNING", "SUCCEEDED", "FAILED"]),
   startedAt: z.string().datetime().nullable(), result: StudioLayerPlanResponse.nullable() }).strict().superRefine((planning, context) => {
     const valid = planning.mode === "MANUAL"
@@ -27,12 +27,14 @@ export function studioLayerMaxCount(width: number, height: number, totalPixels: 
   if (!Number.isSafeInteger(pixels) || pixels < 1) return 0;
   return Math.min(10, Math.floor(totalPixels / pixels));
 }
-export function semanticDecompositionIntent(userIntent: string | null, planning: StudioDecompositionPlanning) {
-  // The plan's names describe proposed groups, never verified names of
-  // returned layers. Their order is not assumed to match the Fal images list.
-  if (planning.mode !== "AUTO" || !planning.result) return userIntent ?? undefined;
-  const groups = planning.result.plan.groups.map((group, index) => `${index + 1}.${group.name.slice(0, 24)}`).join("；");
-  const required = `按图像实际内容拆出完整可编辑组：${groups}。保留原构图、透明边缘；勿把同一主体切碎。`;
-  const spare = Math.max(0, 500 - required.length - 6);
-  return userIntent && spare ? `${required}\n用户要求：${userIntent.slice(0, spare)}` : required;
+export function semanticDecompositionIntent(userIntent: string | null, _planning: StudioDecompositionPlanning) {
+  // Keep the original intent for audit and providers which support it. Qwen's
+  // prompt is a source caption, not a command for the proposed semantic groups.
+  return userIntent ?? undefined;
+}
+export function semanticDecompositionSourceCaption(planning: StudioDecompositionPlanning) {
+  // Manual and saved r1 plans have no verified caption. Omit it so Fal can
+  // describe the source itself; never synthesize one from intent/group names.
+  return planning.mode === "AUTO" && planning.status === "SUCCEEDED" && planning.result?.revision === STUDIO_LAYER_PLAN_REVISION
+    ? planning.result.plan.sourceCaption : undefined;
 }

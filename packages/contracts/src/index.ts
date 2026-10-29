@@ -29,6 +29,7 @@ export * from "./studio-generation";
 export * from "./studio-compliance";
 export * from "./studio-edit";
 export * from "./studio-decomposition";
+export * from "./studio-layer-quality";
 export * from "./studio-generated-psd";
 export * from "./studio-conversation";
 export * from "./studio-conversation-model";

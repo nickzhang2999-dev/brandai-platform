@@ -12,6 +12,7 @@ const input = { projectId: "p", mutationId: "00000000-0000-4000-8000-00000000000
 const task = StudioDecompositionView.parse({ ...input, requestId: "task", sourceWidth: 100, sourceHeight: 100, status: "SUCCEEDED", error: null, createdAt: "2026-10-13T00:00:00.000Z", expiresAt: "2099-01-01T00:00:00.000Z", archiveExpiresAt: null, canRetryArchive: false,
   layers: [0, 1].map(order => ({ order, assetId: `layer-${order}`, assetSha256: String(order + 1).repeat(64), width: 100, height: 100, mimeType: "image/png", url: `/api/workspaces/w/assets/layer-${order}/raw`, sizeBytes: 100, alphaBounds: { left: 0, top: 0, width: 100, height: 100 }, inkCoverage: 0.5 })) });
 const settle = async () => { await act(async () => { for (let index = 0; index < 20; index++) await Promise.resolve(); }); };
+function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; }
 beforeEach(() => { vi.stubGlobal("React", React); window.sessionStorage.clear(); });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 function fixture(document: OwnedCanvasDocument = { ...emptyOwnedDocument(), items: [source] }, tasks = [task]) {
@@ -33,6 +34,7 @@ describe("owned semantic layer interaction", () => {
   it("selects a stored layer for further decomposition without submitting until confirmed", async () => {
     const layers = task.layers.map((layer, index) => ({ ...source, id: `shape:layer-${index}`, assetId: layer.assetId, assetSha256: layer.assetSha256, url: layer.url, groupId: "group:existing" }));
     const document = { ...emptyOwnedDocument(), items: [{ ...source, hidden: true }, ...layers] }, f = fixture(document); await settle();
+    fireEvent.click(screen.getByTestId("owned-layer-compare-toggle"));
     fireEvent.click(screen.getByRole("button", { name: "进一步分层：图层 1" }));
     expect(f.api.submitDecomposition).not.toHaveBeenCalled(); expect(screen.getByTestId("owned-layer-source").textContent).toContain("只拆分这一个图层");
     fireEvent.click(screen.getByTestId("owned-layer-submit")); await settle();
@@ -49,8 +51,8 @@ describe("owned semantic layer interaction", () => {
   it("labels almost-empty layers instead of hiding them", async () => {
     const faint = StudioDecompositionView.parse({ ...task, layers: task.layers.map((layer, index) => index === 1 ? { ...layer, inkCoverage: 0 } : layer) });
     fixture(undefined, [faint]); await settle();
+    fireEvent.click(screen.getByTestId("owned-layer-compare-toggle"));
     expect(screen.getAllByText("几乎透明")).toHaveLength(1);
-    expect(screen.getByRole("img", { name: "图层 2（几乎透明）" })).toBeTruthy();
     expect(screen.getByTestId("owned-layer-faint-note")).toBeTruthy();
   });
   it("shows no faint note when every layer has visible content", async () => {
@@ -74,6 +76,45 @@ describe("owned semantic layer interaction", () => {
     expect((screen.getByTestId("owned-layer-retry") as HTMLButtonElement).disabled).toBe(true);
   });
   it("does not offer refinement before the real saved layer is on the canvas", async () => {
-    fixture(); await settle(); expect((screen.getByRole("button", { name: "进一步分层：图层 1" }) as HTMLButtonElement).disabled).toBe(true);
+    fixture(); await settle(); fireEvent.click(screen.getByTestId("owned-layer-compare-toggle")); expect((screen.getByRole("button", { name: "进一步分层：图层 1" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+  it("marks legacy results unchecked and loads no comparison before it is opened", async () => {
+    const fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher);
+    const f = fixture(); await settle();
+    expect(screen.getByTestId("owned-layer-quality").textContent).toContain("尚未做质量初检");
+    expect(screen.getByTestId("owned-layer-quality").textContent).not.toContain("通过");
+    expect(screen.getByText("2 个图片图层")).toBeTruthy();
+    expect(screen.queryByTestId("owned-layer-comparison")).toBeNull();
+    expect(fetcher).not.toHaveBeenCalled(); expect(f.api.submitDecomposition).not.toHaveBeenCalled();
+  });
+  it("resets project read locks but rejects a previous visit's late result and finally", async () => {
+    const first = deferred<typeof task[]>(), second = deferred<typeof task[]>(), latest = deferred<typeof task[]>();
+    const api = { listDecompositions: vi.fn().mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise).mockReturnValueOnce(latest.promise), submitDecomposition: vi.fn() };
+    const props = { api: api as never, workspaceId: "w", userId: "u", document: { ...emptyOwnedDocument(), items: [source] }, selectedIds: [source.id], readOnly: false, onPrepare: vi.fn(), onPlace: vi.fn() };
+    const view = render(<OwnedLayerPanel {...props} projectId="p" />); await settle();
+    view.rerender(<OwnedLayerPanel {...props} projectId="other" />); await settle();
+    view.rerender(<OwnedLayerPanel {...props} projectId="p" />); await settle();
+    expect(api.listDecompositions).toHaveBeenCalledTimes(3);
+    first.resolve([{ ...task, requestId: "stale" }]); second.resolve([]); await settle();
+    expect(screen.queryByTestId("owned-layer-task")).toBeNull();
+    fireEvent(window, new Event("focus")); await settle();
+    expect(api.listDecompositions).toHaveBeenCalledTimes(3);
+    latest.resolve([task]); await settle(); expect(screen.getByTestId("owned-layer-task").dataset.requestId).toBe("task");
+    expect(api.submitDecomposition).not.toHaveBeenCalled();
+  });
+  it("a previous project visit's submit finally cannot unlock the current save or submit twice", async () => {
+    const document = { ...emptyOwnedDocument(), items: [source] };
+    const first = deferred<{ document: OwnedCanvasDocument; revision: number }>(), latest = deferred<{ document: OwnedCanvasDocument; revision: number }>();
+    const api = { listDecompositions: vi.fn(async () => []), submitDecomposition: vi.fn(async (value: typeof input) => ({ ...task, ...value })) };
+    const onPrepare = vi.fn().mockReturnValueOnce(first.promise).mockReturnValueOnce(latest.promise);
+    const props = { api: api as never, workspaceId: "w", userId: "u", document, selectedIds: [source.id], readOnly: false, onPrepare, onPlace: vi.fn() };
+    const view = render(<OwnedLayerPanel {...props} projectId="p" />); await settle(); fireEvent.click(screen.getByTestId("owned-layer-submit")); await settle();
+    view.rerender(<OwnedLayerPanel {...props} projectId="other" />); await settle();
+    view.rerender(<OwnedLayerPanel {...props} projectId="p" />); await settle(); fireEvent.click(screen.getByTestId("owned-layer-submit")); await settle();
+    expect(onPrepare).toHaveBeenCalledTimes(2);
+    first.resolve({ document, revision: 3 }); await settle();
+    expect(api.submitDecomposition).not.toHaveBeenCalled(); expect((screen.getByTestId("owned-layer-submit") as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByTestId("owned-layer-submit")); expect(onPrepare).toHaveBeenCalledTimes(2);
+    latest.resolve({ document, revision: 3 }); await settle(); expect(api.submitDecomposition).toHaveBeenCalledTimes(1);
   });
 });

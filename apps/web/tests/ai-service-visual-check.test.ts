@@ -4,8 +4,8 @@ vi.mock("node:dns/promises", () => ({ resolve4: f.dns }));
 const current = { parserRevision: "grounded-six-slot-r6", generationRevision: "gpt-image-2-size-quality-r1", visualCheckRevision: "studio-visual-check-evidence-r1", providerRetryRevision: "single-provider-attempt-r2" };
 const older = { parserRevision: current.parserRevision, generationRevision: current.generationRevision };
 const editable = { ...current, studioEditRevision: "studio-whole-image-edit-r1" };
-const layered = { ...current, studioDecompositionRevision: "studio-real-layer-single-attempt-r1" };
-const planned = { ...layered, studioLayerPlanRevision: "semantic-layer-plan-r1" };
+const layered = { ...current, studioDecompositionRevision: "studio-real-layer-single-attempt-r2" };
+const planned = { ...layered, studioLayerPlanRevision: "semantic-layer-plan-r2" };
 const load = () => import("../src/lib/ai-service");
 beforeEach(() => {
   vi.resetModules(); vi.resetAllMocks(); vi.stubGlobal("fetch", f.fetch);
@@ -16,25 +16,33 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 describe("product visual-check service capability gate", () => {
+  it("rejects pre-caption AI instances before new planner or layer submissions", async () => {
+    f.fetch.mockImplementation(async () => Response.json({ ...planned, studioLayerPlanRevision: "semantic-layer-plan-r1",
+      studioDecompositionRevision: "studio-real-layer-single-attempt-r1", studioDecompositionQueueRevision: "studio-layer-queue-r1" }));
+    const { resolveAiService } = await load();
+    await expect(resolveAiService({ requireStudioLayerPlan: true })).rejects.toThrow("semantic-layer planning");
+    await expect(resolveAiService({ requireStudioDecomposition: true })).rejects.toThrow("real-layer decomposition revision");
+    await expect(resolveAiService({ requireStudioDecompositionQueue: true })).rejects.toThrow("durable layer queue tasks");
+  });
   it("rejects a cached synchronous layer service before queue submission", async () => {
     f.fetch.mockImplementation(async () => Response.json(layered));
     const { resolveAiService } = await load();
     await resolveAiService({ requireStudioDecomposition: true });
     await expect(resolveAiService({ requireStudioDecompositionQueue: true })).rejects.toThrow("durable layer queue tasks");
-    f.fetch.mockImplementation(async () => Response.json({ ...layered, studioDecompositionQueueRevision: "studio-layer-queue-r1" }));
-    expect(await resolveAiService({ requireStudioDecompositionQueue: true })).toMatchObject({ studioDecompositionQueueRevision: "studio-layer-queue-r1" });
+    f.fetch.mockImplementation(async () => Response.json({ ...layered, studioDecompositionQueueRevision: "studio-layer-queue-r2" }));
+    expect(await resolveAiService({ requireStudioDecompositionQueue: true })).toMatchObject({ studioDecompositionQueueRevision: "studio-layer-queue-r2" });
     await resolveAiService({ requireStudioDecompositionQueue: true });
     expect(f.fetch).toHaveBeenCalledTimes(3);
   });
   it("resolves only a queue-capable container and does not fall back to the synchronous alias", async () => {
     vi.stubEnv("BRANDAI_AI_SERVICE_URL", "http://ai:8000");
-    f.fetch.mockImplementation(async (url: string) => Response.json(url.includes("10.0.0.1") ? layered : { ...layered, studioDecompositionQueueRevision: "studio-layer-queue-r1" }));
+    f.fetch.mockImplementation(async (url: string) => Response.json(url.includes("10.0.0.1") ? layered : { ...layered, studioDecompositionQueueRevision: "studio-layer-queue-r2" }));
     const { resolveAiService } = await load();
     expect((await resolveAiService({ requireStudioDecomposition: true })).base).toBe("http://10.0.0.1:8000");
     expect((await resolveAiService({ requireStudioDecompositionQueue: true })).base).toBe("http://10.0.0.2:8000");
   });
   it("queue support cannot opt out of the single-provider-attempt contract", async () => {
-    f.fetch.mockResolvedValue(Response.json({ ...layered, providerRetryRevision: undefined, studioDecompositionQueueRevision: "studio-layer-queue-r1" }));
+    f.fetch.mockResolvedValue(Response.json({ ...layered, providerRetryRevision: undefined, studioDecompositionQueueRevision: "studio-layer-queue-r2" }));
     const { resolveAiService } = await load();
     await expect(resolveAiService({ requireStudioDecompositionQueue: true })).rejects.toThrow("single-provider-attempt revision");
   });

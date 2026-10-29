@@ -44,7 +44,7 @@ it("requires structured conversation service capability and existing real VLM wi
 });
 
 it("requires real decomposition capability and one provider attempt before dispatch", async () => {
-  const request = { imageUrl: "data:image/png;base64,YQ==", layerCount: 2 } as Parameters<typeof ai.decompose>[0];
+  const request = { imageUrl: "data:image/png;base64,YQ==", layerCount: 2, intent: "Separate the person", sourceCaption: "A person beside a tree." } as Parameters<typeof ai.decompose>[0];
   f.settings.mockResolvedValue({ image: {}, layer: { provider: "fal", apiKey: "fixture-layer" }, vlm: {} });
   await ai.decompose(request, { requireRealLayerProvider: true });
   expect(f.service).toHaveBeenCalledWith({ requireStudioDecomposition: true, requireSingleAttempt: true });
@@ -61,7 +61,7 @@ it("never posts decomposition when service capability cannot be confirmed", asyn
 });
 it.each(["decomposeSubmit", "decomposePoll"] as const)("requires queue capability and real layer settings for %s without lower-layer retries", async method => {
   f.settings.mockResolvedValue({ image: {}, layer: { provider: "fal", apiKey: "fixture-layer" }, vlm: {} });
-  const request = method === "decomposeSubmit" ? { imageUrl: "data:image/png;base64,YQ==", layerCount: 2 }
+  const request = method === "decomposeSubmit" ? { imageUrl: "data:image/png;base64,YQ==", layerCount: 2, intent: "Separate the person", sourceCaption: "A person beside a tree." }
     : { requestId: "fixture-request", endpointId: "fal-ai/qwen-image-layered", providerRetryPolicy: "never" };
   await ai[method](request as never);
   expect(f.service).toHaveBeenCalledWith({ requireStudioDecompositionQueue: true, requireSingleAttempt: true });

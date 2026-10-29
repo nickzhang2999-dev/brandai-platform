@@ -57,7 +57,7 @@ describe("分解请求契约", () => {
 
   it("请求体里没有尺寸 / 张数 / 场景——它是动作不是生图模型", () => {
     const keys = Object.keys(DecomposeRequest.shape);
-    expect(keys.sort()).toEqual(["imageUrl", "intent", "layerCount", "providerRetryPolicy"]);
+    expect(keys.sort()).toEqual(["imageUrl", "intent", "layerCount", "providerRetryPolicy", "sourceCaption"]);
     for (const forbidden of [
       "size",
       "width",
@@ -85,6 +85,15 @@ describe("分解请求契约", () => {
       providerRetryPolicy: "never",
     };
     expect(DecomposeRequest.parse(request)).toStrictEqual(request);
+  });
+
+  it("keeps the visible source caption separate from the original editing intent", () => {
+    const parsed = DecomposeRequest.parse({ imageUrl: "https://x/a.png", intent: "请把人物分开", sourceCaption: "  红衣人物站在蓝色背景前。  " });
+    expect(parsed.sourceCaption).toBe("红衣人物站在蓝色背景前。");
+    expect(parsed.intent).toBe("请把人物分开");
+  });
+  it.each([null, "", " \t\ufeff", 123, "a".repeat(2001), "😀".repeat(1001)])("rejects invalid captions before inference: %j", sourceCaption => {
+    expect(DecomposeRequest.safeParse({ imageUrl: "https://x/a.png", sourceCaption }).success).toBe(false);
   });
 
   it.each(["always", "NEVER", "", null, 0, true, {}, []].map((value) => [value]))("拒绝非法 providerRetryPolicy：%j", (providerRetryPolicy) => {

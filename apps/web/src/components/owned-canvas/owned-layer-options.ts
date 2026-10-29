@@ -23,7 +23,7 @@ export function matchesOwnedDecomposition(input: DecompositionInput, task: Decom
     && (mode === "AUTO" || input.layerCount === (task.requestedLayerCount ?? task.layerCount));
 }
 export function ownedLayerTaskTitle(task: DecompositionTask) {
-  if (task.status === "SUCCEEDED") return `${task.layers.length} 个可编辑图层`;
+  if (task.status === "SUCCEEDED") return `${task.layers.length} 个图片图层`;
   if ((task.layerMode ?? "MANUAL") !== "AUTO") return `${task.layerCount} 层分解`;
   return task.analysisStatus === "SUCCEEDED" ? `按内容拆分 · ${task.layerCount} 层方案` : "按内容自动分层";
 }
@@ -38,8 +38,15 @@ export function ownedLayerTaskStatus(task: DecompositionTask) {
 }
 
 export function ownedLayerTaskNotice(task: DecompositionTask) {
-  if (task.status === "SUCCEEDED") return "图层已保存，可展开到画布或下载 PSD。";
+  if (task.status === "SUCCEEDED") return `图片图层已保存，${ownedLayerQualityLabel(task)}。可查看原图对照，再展开到画布或下载 PSD；文字仍是图片。`;
   if (task.status === "FAILED") return task.error || "分层未完成，原图片保留。任务已停止，不会自动重复调用模型。";
   if (Date.parse(task.expiresAt) <= Date.now()) return "分层等待已超时，请刷新查看最终结果；不会自动重新提交。";
   return `${ownedLayerTaskStatus(task)}。关闭页面后任务仍会继续，可稍后回到此项目查看。`;
+}
+
+export function ownedLayerQualityLabel(task: DecompositionTask) {
+  if (!task.quality) return "尚未做质量初检";
+  if (task.quality.status === "REVIEW_REQUIRED") return "质量初检发现需复核的问题";
+  if (task.quality.status === "UNAVAILABLE") return "质量初检暂不可用";
+  return "像素初检未见明显重合成差异";
 }

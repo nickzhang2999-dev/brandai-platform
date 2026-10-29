@@ -574,6 +574,19 @@ class DecomposeRequest(BaseModel):
     # 能提交规范判为非法的请求。CLAUDE.md 明写「契约改动两边同时改」。
     layerCount: int = Field(default=4, ge=1, le=10)
     intent: Optional[str] = Field(default=None, max_length=500)
+    sourceCaption: Optional[str] = Field(default=None, min_length=1, max_length=2000)
+
+    @field_validator("sourceCaption", mode="before")
+    @classmethod
+    def validate_source_caption(cls, value):
+        from .studio_decomposition_schemas import _JS_WHITESPACE, _utf16_length
+        if value is None:
+            raise ValueError("sourceCaption must be omitted, not null")
+        if isinstance(value, str):
+            value = value.strip(_JS_WHITESPACE)
+            if _utf16_length(value) > 2000:
+                raise ValueError("Source caption exceeds UTF-16 budget")
+        return value
 
 
 class DecomposedLayer(BaseModel):
@@ -798,6 +811,7 @@ from .studio_generation_schemas import StudioGenerationInput, StudioGenerationQu
 from .studio_generated_psd_schemas import StudioGeneratedPsdQuery, StudioGeneratedPsdView
 from .studio_compliance_schemas import StudioGenerationComplianceInput, StudioGenerationComplianceQuery, StudioGenerationComplianceView
 from .studio_decomposition_schemas import StudioDecompositionInput, StudioDecompositionQuery, StudioDecompositionRetryInput, StudioDecompositionLayer, StudioDecompositionView
+from .studio_layer_quality_schemas import StudioLayerQualityReport
 
 from .studio_copywriting_schemas import StudioCopywritingInput, StudioCopywritingResult
 from .studio_writing_schemas import *  # Zod studio-writing.ts mirror

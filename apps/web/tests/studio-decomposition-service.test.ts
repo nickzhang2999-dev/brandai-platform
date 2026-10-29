@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
+import sharp from "sharp";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const f = vi.hoisted(() => ({ role: vi.fn(), project: vi.fn(), document: vi.fn(), decode: vi.fn(), source: vi.fn(),
@@ -42,7 +43,7 @@ import { matchesOwnedDecomposition } from "../src/components/owned-canvas/owned-
 
 // This suite proves service decisions with simulated persistence, not a real
 // database/provider acceptance. Only the envelope crypto below runs unmocked.
-const bytes = Buffer.from("synthetic layer bytes");
+const bytes = await sharp({ create: { width: 8, height: 8, channels: 4, background: { r: 70, g: 90, b: 160, alpha: .5 } } }).png().toBuffer();
 const digest = (body: Buffer) => createHash("sha256").update(body).digest("hex");
 const input = { projectId: "p", mutationId: "9decc9bc-6fb2-4d6f-a52d-83f90acff1ae", sourceShapeId: "shape:source", assetId: "source", assetSha256: digest(bytes), documentRevision: 4, layerCount: 2 };
 const result = { layers: [0, 1].map(index => ({ imageUrl: `https://private-provider.invalid/layer-${index}?signature=synthetic-private`, width: 8, height: 8 })), usage: { provider: "FalLayerProvider", model: "unit-model", imageCount: 2 } };
@@ -55,7 +56,7 @@ const layers = () => [0, 1].map(order => ({ assetId: `sdl_request_${order}`, ass
 function seed(overrides: Record<string, unknown> = {}) {
   const value = { id: "request", workspaceId: "w", userId: "u", ...input, payloadHash: createHash("sha256").update(JSON.stringify(input)).digest("hex"),
     sourceWidth: 8, sourceHeight: 8, sourceObjectKey: "w/source.png", sourceMimeType: "image/png", sourceSizeBytes: bytes.length,
-    status: "PENDING", providerStartedAt: null, outputJson: null, publishedLayers: [], archiveExpiresAt: null, archiveToken: null, archivingStartedAt: null,
+    status: "PENDING", providerStartedAt: null, outputJson: null, publishedLayers: [], qualityJson: null, archiveExpiresAt: null, archiveToken: null, archivingStartedAt: null,
     objectKeys: [], intent: null, error: null, createdAt: new Date(), expiresAt: new Date(Date.now() + 60_000), ...overrides };
   rows.set(value.id, value); return value;
 }
@@ -106,10 +107,11 @@ beforeEach(() => {
   f.get.mockImplementation(async (key: string) => { const body = objects.get(key); if (!body) throw new Error("fixture object absent"); return { body: Readable.from(body), contentLength: body.length }; });
   f.assetCreate.mockImplementation(({ data }) => { publishedAssets.push(structuredClone(data)); return data; });
   f.linkCreate.mockImplementation(({ data }) => { publishedLinks.push(structuredClone(data)); return data; });
-  tx = { $queryRaw: f.lock, studioDecompositionRequest: { findUnique: f.find, findUniqueOrThrow: f.findOrThrow, count: f.count, create: f.create, updateMany: f.updateMany, update: f.update },
+  tx = { $queryRaw: f.lock, studioDecompositionRequest: { findUnique: f.find, findUniqueOrThrow: f.findOrThrow, findFirst: f.findFirst, count: f.count, create: f.create, updateMany: f.updateMany, update: f.update },
     brandWorkspace: { findUnique: f.workspace }, user: { findUnique: f.user }, membership: { findUnique: f.membership }, project: { findFirst: f.project }, editorDocument: { findUnique: f.saved },
     asset: { findFirst: f.asset, create: f.assetCreate }, projectAsset: { create: f.linkCreate } };
-  tx.studioGeneratedMaterial = { findUnique: f.archivedSource };
+  tx.studioGeneratedMaterial = { findUnique: f.archivedSource, findFirst: f.generatedReceipt };
+  tx.studioMaterialUpload = { findFirst: f.uploadReceipt };
   f.transaction.mockImplementation(async fn => {
     const backup = structuredClone({ rows: [...rows], assets: publishedAssets, links: publishedLinks });
     try { return await fn(tx); } catch (error) { rows = new Map(backup.rows); publishedAssets = backup.assets; publishedLinks = backup.links; throw error; }
@@ -482,8 +484,117 @@ describe("private raw layers: real AES and simulated storage", () => {
   });
 });
 
+describe("quality archive integration: real local PNG bytes with simulated persistence", () => {
+  async function realImages() {
+    const sourceRaw = Buffer.alloc(8 * 8 * 4), lowerRaw = Buffer.alloc(sourceRaw.length), upperRaw = Buffer.alloc(sourceRaw.length);
+    for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) {
+      const offset = (y * 8 + x) * 4, color = [70, 90, 160, 255]; sourceRaw.set(color, offset);
+      (x < 4 ? lowerRaw : upperRaw).set(color, offset);
+    }
+    const encode = (data: Buffer) => sharp(data, { raw: { width: 8, height: 8, channels: 4 } }).png().toBuffer();
+    const original = await encode(sourceRaw), lower = await encode(lowerRaw), upper = await encode(upperRaw);
+    const actual = await vi.importActual<typeof import("../src/lib/studio-decomposition-images")>("../src/lib/studio-decomposition-images");
+    f.layer.mockImplementation(actual.inspectStudioLayer);
+    f.readBytes.mockImplementation(async source => source.objectKey ? original : source.imageUrl.includes("layer-0") ? lower : upper);
+    f.inspect.mockResolvedValue({ sha256: digest(original), width: 8, height: 8, sizeBytes: original.length, mimeType: "image/png" });
+    f.asset.mockResolvedValue({ id: "source", workspaceId: "w", storageKey: "w/source.png", sizeBytes: original.length, mimeType: "image/png" });
+    f.uploadReceipt.mockResolvedValue({ objectKey: "w/source.png", width: 8, height: 8, sizeBytes: original.length, mimeType: "image/png" });
+    seed({ assetSha256: digest(original), sourceSizeBytes: original.length });
+    return { original, lower, upper };
+  }
+  it("publishes measured quality and complete encrypted layers in the same transaction", async () => {
+    const { original } = await realImages(); await runStudioDecomposition("request");
+    expect(row()).toMatchObject({ status: "SUCCEEDED", qualityJson: { status: "COMPOSITE_MATCH", sourceSha256: digest(original),
+      metrics: { meanAbsoluteError: 0, changedPixelRatio: 0, alphaMeanAbsoluteError: 0 } } });
+    expect(f.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ publishedLayers: expect.any(Array),
+      qualityJson: expect.objectContaining({ status: "COMPOSITE_MATCH" }) }) }));
+    const beforeReads = f.readBytes.mock.calls.length;
+    const receipt = await readStudioDecompositions("w", "u", { projectId: "p", requestId: "request" });
+    expect(receipt).toMatchObject({ quality: { status: "COMPOSITE_MATCH", humanReviewRequired: true } });
+    expect(f.readBytes).toHaveBeenCalledTimes(beforeReads); expect(f.paid).toHaveBeenCalledOnce();
+  });
+  it("scores against the decrypted, hash-checked source of a recursive layer request", async () => {
+    const { original } = await realImages(), key = "w/studio-layer-assets/p/parent/attempt/0.bin";
+    seed({ id: "parent", status: "SUCCEEDED", assetSha256: digest(original), sourceSizeBytes: original.length,
+      publishedLayers: layers().map((value, index) => ({ ...value, assetId: `sdl_parent_${index}`, assetSha256: digest(original), sizeBytes: original.length })), objectKeys: [key] });
+    objects.set(key, encryptStudioBase(original, { workspaceId: "w", projectId: "p", outputId: "parent_0" }));
+    f.asset.mockImplementation(async ({ where }) => ({ id: where.id, workspaceId: "w", storageKey: where.id === "sdl_parent_0" ? key : "w/source.png", sizeBytes: original.length, mimeType: "image/png" }));
+    f.uploadReceipt.mockImplementation(async ({ where }) => where.assetId === "source" ? { objectKey: "w/source.png", width: 8, height: 8, sizeBytes: original.length, mimeType: "image/png" } : null);
+    Object.assign(row(), { assetId: "sdl_parent_0", sourceObjectKey: key });
+    await runStudioDecomposition("request");
+    expect(row()).toMatchObject({ status: "SUCCEEDED", qualityJson: { status: "COMPOSITE_MATCH", sourceSha256: digest(original) } });
+    expect(f.get.mock.calls.filter(([objectKey]) => objectKey === key)).toHaveLength(2);
+    expect(f.paid).toHaveBeenCalledOnce();
+  });
+  it("source changes after the paid submission block publication without a paid retry", async () => {
+    const { original, lower, upper } = await realImages(); let sourceReads = 0;
+    f.readBytes.mockImplementation(async source => source.objectKey ? (++sourceReads === 1 ? original : lower)
+      : source.imageUrl.includes("layer-0") ? lower : upper);
+    await runStudioDecomposition("request"); await runStudioDecomposition("request");
+    expect(row()).toMatchObject({ status: "FAILED", qualityJson: null, publishedLayers: [] });
+    expect(row().error).toContain("实际内容"); expect(f.paid).toHaveBeenCalledOnce();
+    f.readBytes.mockImplementation(async source => source.objectKey ? original : source.imageUrl.includes("layer-0") ? lower : upper);
+    await retryStudioLayerArchive("w", "u", { projectId: "p", requestId: "request" }); await runStudioDecomposition("request");
+    expect(row()).toMatchObject({ status: "SUCCEEDED", qualityJson: { status: "COMPOSITE_MATCH" } }); expect(f.paid).toHaveBeenCalledOnce();
+  });
+  it("source network unavailability during quality check remains explicit and does not retry the model", async () => {
+    const { original, lower, upper } = await realImages(); let sourceReads = 0;
+    f.readBytes.mockImplementation(async source => {
+      if (source.objectKey) { if (++sourceReads > 1) throw new Error("storage network unavailable"); return original; }
+      return source.imageUrl.includes("layer-0") ? lower : upper;
+    });
+    await runStudioDecomposition("request");
+    expect(row()).toMatchObject({ status: "SUCCEEDED", qualityJson: { status: "UNAVAILABLE", unavailableReason: "SOURCE_UNAVAILABLE" } });
+    expect(f.paid).toHaveBeenCalledOnce();
+  });
+  it("archive-only recovery cannot bypass a revoked direct source", async () => {
+    await realImages(); Object.assign(row(), { status: "RUNNING", providerStartedAt: new Date(), outputJson: { result, publishedLayers: null }, archiveExpiresAt: new Date(Date.now() + 60_000) });
+    f.asset.mockResolvedValue(null); await runStudioDecomposition("request");
+    expect(row()).toMatchObject({ status: "FAILED", publishedLayers: [], qualityJson: null }); expect(f.paid).not.toHaveBeenCalled(); expect(f.put).not.toHaveBeenCalled();
+  });
+  it("archive-only recovery cannot wash an EXACT ancestor through an encrypted child layer", async () => {
+    const key = "w/studio-layer-assets/p/parent/attempt/0.bin";
+    seed({ id: "parent", status: "SUCCEEDED", publishedLayers: layers().map((value, index) => ({ ...value, assetId: `sdl_parent_${index}` })), objectKeys: [key] });
+    f.asset.mockImplementation(async ({ where }) => ({ id: where.id, storageKey: where.id === "source" ? "w/source.png" : key, sizeBytes: bytes.length, mimeType: "image/png" }));
+    f.uploadReceipt.mockResolvedValue(null);
+    f.generatedReceipt.mockImplementation(async ({ where }) => where.assetId === "source" ? { objectKey: "w/source.png", width: 8, height: 8, sizeBytes: bytes.length,
+      mimeType: "image/png", request: { jobData: { assetUsages: [{ mode: "EXACT" }] } } } : null);
+    seed({ assetId: "sdl_parent_0", sourceObjectKey: key, status: "RUNNING", providerStartedAt: new Date(),
+      outputJson: { result, publishedLayers: null }, archiveExpiresAt: new Date(Date.now() + 60_000) });
+    await runStudioDecomposition("request");
+    expect(row()).toMatchObject({ status: "FAILED", publishedLayers: [], qualityJson: null });
+    expect(row().error).toContain("严格保留素材"); expect(f.put).not.toHaveBeenCalled(); expect(f.paid).not.toHaveBeenCalled(); expect(f.plan).not.toHaveBeenCalled();
+  });
+  it("rechecks ancestor/source records inside the publishing transaction", async () => {
+    await realImages();
+    const realSource = await f.asset(); let sourceReads = 0;
+    // Before provider claim, before archive, then in final transaction.
+    f.asset.mockImplementation(async () => ++sourceReads >= 5 ? null : realSource);
+    await runStudioDecomposition("request");
+    expect(row()).toMatchObject({ status: "FAILED", publishedLayers: [], qualityJson: null }); expect(publishedAssets).toHaveLength(0);
+  });
+  it("archive-only recovery rechecks existing output, retains atomic reports and never resubmits the model", async () => {
+    await realImages(); f.put.mockRejectedValueOnce(new Error("simulated storage unavailable"));
+    await runStudioDecomposition("request"); expect(row()).toMatchObject({ status: "FAILED", publishedLayers: [], qualityJson: null });
+    await retryStudioLayerArchive("w", "u", { projectId: "p", requestId: "request" }); await runStudioDecomposition("request");
+    expect(row()).toMatchObject({ status: "SUCCEEDED", qualityJson: { status: "COMPOSITE_MATCH" } }); expect(f.paid).toHaveBeenCalledOnce();
+  });
+  it("rolls back the report with asset publication on transaction failure", async () => {
+    await realImages(); f.linkCreate.mockRejectedValueOnce(new Error("simulated transaction failure"));
+    await runStudioDecomposition("request");
+    expect(row()).toMatchObject({ status: "FAILED", publishedLayers: [], qualityJson: null }); expect(publishedAssets).toHaveLength(0);
+  });
+  it("leaves old tasks unchecked and ignores corrupt or foreign-source reports on every GET", async () => {
+    seed({ status: "SUCCEEDED", publishedLayers: layers(), qualityJson: null });
+    expect(await readStudioDecompositions("w", "u", { projectId: "p", requestId: "request" })).toMatchObject({ quality: null });
+    row().qualityJson = { status: "COMPOSITE_MATCH" };
+    expect(await readStudioDecompositions("w", "u", { projectId: "p", requestId: "request" })).toMatchObject({ quality: null });
+    expect(f.readBytes).not.toHaveBeenCalled(); expect(f.paid).not.toHaveBeenCalled(); expect(f.plan).not.toHaveBeenCalled();
+  });
+});
+
 describe("semantic AUTO planning: simulated once-only paid boundaries, not model quality acceptance", () => {
-  const plan = (count = 3) => ({ revision: "semantic-layer-plan-r1", plan: { layerCount: count, summary: "检测到主体、文字与背景，可独立编辑。",
+  const plan = (count = 3) => ({ revision: "semantic-layer-plan-r2", plan: { layerCount: count, summary: "检测到主体、文字与背景，可独立编辑。", sourceCaption: "画面中间是一件蓝色商品，上方有白色标题文字，后方是浅色背景。",
     groups: Array.from({ length: count }, (_, index) => ({ name: `内容${index + 1}`, description: `可见组${index + 1}` })) },
     usage: { provider: "HttpVLMProvider", model: "fixture-vision", latencyMs: 21 } });
   beforeEach(() => {
@@ -492,11 +603,11 @@ describe("semantic AUTO planning: simulated once-only paid boundaries, not model
     f.poll.mockResolvedValue({ status: "COMPLETED", result: { ...result, layers: [...result.layers, { imageUrl: "https://private-provider.invalid/layer-2", width: 8, height: 8 }] } });
   });
   it("chooses the actual count from a persisted image analysis before one decomposition call, independent of the placeholder", async () => {
-    seed({ planningJson: newStudioLayerPlanning("AUTO") });
+    seed({ planningJson: newStudioLayerPlanning("AUTO"), intent: "保留阴影" });
     await runStudioDecomposition("request"); await runStudioDecomposition("request");
     expect(f.plan).toHaveBeenCalledOnce(); expect(f.paid).toHaveBeenCalledOnce();
     expect(f.plan.mock.calls[0]![0]).toMatchObject({ maxLayers: 10, providerRetryPolicy: "never", imageUrl: expect.stringContaining("data:image/png;base64,") });
-    expect(f.paid.mock.calls[0]![0]).toMatchObject({ layerCount: 3, intent: expect.stringContaining("内容3"), providerRetryPolicy: "never" });
+    expect(f.paid.mock.calls[0]![0]).toMatchObject({ layerCount: 3, sourceCaption: plan().plan.sourceCaption, intent: "保留阴影", providerRetryPolicy: "never" });
     expect(row()).toMatchObject({ status: "SUCCEEDED", layerCount: 3, planningJson: { status: "SUCCEEDED", result: plan() } });
     expect(await readStudioDecompositions("w", "u", { projectId: "p", requestId: "request" })).toMatchObject({ layerMode: "AUTO", analysisStatus: "SUCCEEDED", layerCount: 3, layers: expect.any(Array) });
     expect(f.usage).toHaveBeenCalledWith(expect.objectContaining({ kind: "LAYER_PLAN", imageCount: 1, model: "fixture-vision" }));
@@ -506,6 +617,14 @@ describe("semantic AUTO planning: simulated once-only paid boundaries, not model
     seed({ layerCount: 3, planningJson: { ...newStudioLayerPlanning("AUTO"), status: "SUCCEEDED", startedAt: new Date().toISOString(), result: plan() } });
     await runStudioDecomposition("request");
     expect(f.plan).not.toHaveBeenCalled(); expect(f.paid).toHaveBeenCalledOnce(); expect(row().status).toBe("SUCCEEDED");
+  });
+  it("resumes a legacy r1 saved analysis without buying a new caption or converting groups into a prompt", async () => {
+    const legacy = plan(); const { sourceCaption: _caption, ...legacyPlan } = legacy.plan;
+    seed({ layerCount: 3, planningJson: { ...newStudioLayerPlanning("AUTO"), revision: "semantic-layer-plan-r1", status: "SUCCEEDED",
+      startedAt: new Date().toISOString(), result: { ...legacy, revision: "semantic-layer-plan-r1", plan: legacyPlan } } });
+    await runStudioDecomposition("request");
+    expect(f.plan).not.toHaveBeenCalled(); expect(f.paid).toHaveBeenCalledOnce(); expect(row().status).toBe("SUCCEEDED");
+    expect(f.paid.mock.calls[0]![0]).not.toHaveProperty("sourceCaption"); expect(f.paid.mock.calls[0]![0]).not.toHaveProperty("intent");
   });
   it("does not duplicate an ambiguous in-flight analysis delivery", async () => {
     seed({ status: "RUNNING", planningJson: { ...newStudioLayerPlanning("AUTO"), status: "RUNNING", startedAt: new Date().toISOString() } });

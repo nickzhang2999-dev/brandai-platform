@@ -40,6 +40,7 @@ def test_submit_is_one_post_and_polls_resume_with_gets_only(install_provider):
             assert req.url.path == f"/{ENDPOINT}"
             assert req.headers["x-fal-request-start-timeout"] == "360"
             assert json.loads(req.content)["num_layers"] == 7
+            assert "prompt" not in json.loads(req.content)
             # These untrusted convenience URLs must never receive our key.
             return httpx.Response(200, json={"request_id": REQUEST_ID, "status_url": "https://evil.invalid", "response_url": "http://127.0.0.1/secret"})
         if req.url.path.endswith("/status"):
@@ -222,4 +223,32 @@ def test_connection_failure_is_network_error_and_does_not_replay(install_provide
 
 
 def test_health_declares_resumable_queue_capability():
-    assert client.get("/health").json()["studioDecompositionQueueRevision"] == "studio-layer-queue-r1"
+    assert client.get("/health").json()["studioDecompositionQueueRevision"] == "studio-layer-queue-r2"
+
+
+@pytest.mark.parametrize("path", ["/v1/decompose", "/v1/decompose/submit"])
+@pytest.mark.parametrize("caption", [None, "A person in a red coat stands before a blue wall with lettering."])
+def test_fal_uses_only_source_caption_never_editing_intent(install_provider, path, caption):
+    calls = []
+    def handler(req):
+        calls.append(json.loads(req.content))
+        return httpx.Response(200, json={"request_id": REQUEST_ID} if path.endswith("submit") else OUTPUT)
+    install_provider(handler)
+    body = {**BODY, "intent": "Put the person and every letter in separate layers"}
+    if caption is not None:
+        body["sourceCaption"] = "  " + caption + "  "
+    assert client.post(path, json=body).status_code == 200
+    assert len(calls) == 1
+    if caption is None:
+        assert "prompt" not in calls[0]
+    else:
+        assert calls[0]["prompt"] == caption
+    assert "intent" not in calls[0] and "sourceCaption" not in calls[0]
+
+
+@pytest.mark.parametrize("caption", [None, "", " \t\ufeff", 123, "a" * 2001, "😀" * 1001])
+def test_invalid_caption_is_rejected_before_paid_submit(install_provider, caption):
+    calls = []
+    install_provider(lambda req: calls.append(req))
+    assert client.post("/v1/decompose/submit", json={**BODY, "sourceCaption": caption}).status_code == 422
+    assert calls == []

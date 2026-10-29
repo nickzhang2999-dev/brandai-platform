@@ -499,7 +499,7 @@ export const DecomposeRequest = z.object({
   /** Studio paid intents are single-attempt, with a real layer provider. */
   providerRetryPolicy: z.literal("never").optional(),
   imageUrl: z.string(),
-  /** 要拆几层。上游是必填参数，不是「期望值」——给多少就必须凑够多少。 */
+  /** Requested count; returned layers still require independent validation. */
   layerCount: z
     .number()
     .int()
@@ -508,9 +508,11 @@ export const DecomposeRequest = z.object({
     .default(4),
   /**
    * 用户用自然语言说的拆法（「logo 单独一层」「不要切开人物」）。
-   * 原样附进提示词，不改写、不翻译——改写等于替用户做决定。
+   * 保留原文供审计及支持该能力的 provider 使用；Fal 不把它当整图 caption。
    */
   intent: z.string().max(500).optional(),
+  /** Visible whole-image description, separate from editing intent. */
+  sourceCaption: z.string().trim().min(1).max(2000).optional(),
 });
 export type DecomposeRequest = z.infer<typeof DecomposeRequest>;
 

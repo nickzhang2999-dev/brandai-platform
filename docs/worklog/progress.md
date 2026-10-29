@@ -1,5 +1,14 @@
 # Integration progress
 
+## 2026-10-29 分层优化第一批
+
+- 已完成：确认 PR #68 合并后的 main、创建 `claude/layer-quality` 独立工作区、安装 CDS 推送检查。
+- 已完成：Lovart 导航/报告/原始 Skill 数据核对，结合当前 Nova 与 Qwen/Fal 能力形成[分阶段开发规划](2026-10-29-layer-quality-plan.md)。
+- 已完成：r2 caption 适配、质量报告及迁移、原图/重合成对照、跨项目异步请求隔离；独立审查发现的来源校验、差异框和矛盾状态问题均已修复。
+- 已验证：contracts 319、UI 42、Web 2187、AI 753 通过；Web 31 项既有条件跳过。类型、lint、生产构建、发布合同通过；Chrome 对照 11、分层 10、自动 PSD 19、画布 55、文案到画布 22 项通过。
+- 待完成：真实样本及旧结果基线、质量 A/B、主体蒙版/局部修复、原生文字恢复。没有用交互夹具代替真实模型质量。
+- 后续交付：按用户最新指令只正常推送分支，CDS 自动部署；不手动修改平台配置、不建 PR。日志见[第一批开发记录](../development-log-2026-10-29-layer-quality.md)。
+
 ## 2026-10-21 — Project-owned release contract
 
 - Review follow-up: pull Web/AI images and verify their baked full commit before
