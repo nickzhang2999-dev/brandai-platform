@@ -438,5 +438,5 @@ P1 local gates complete: e0725bd owned shell/export;6ce5de0 routes;601a3c1 exact
 
 - [x] Resolve main/devUpdate1012 conflicts without replacing the writing workbench with the old panel.
 - [x] Preserve enterprise-only login and pre-hydration guards; retain committed release-entry verification.
-- [ ] Run full local gates and relevant browser regression checks.
+- [x] Run full local gates and relevant browser regression checks.
 - [ ] Push the resolved merge to devUpdate1012 and verify PR checks; do not merge main or release production.
