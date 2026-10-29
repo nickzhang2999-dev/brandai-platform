@@ -1,12 +1,44 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { readFileSync, mkdtempSync, writeFileSync, rmSync, mkdirSync, copyFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 const script = readFileSync('cds-release.sh', 'utf8');
 const sha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+
+test('preview startup overrides only an explicit valid origin before migration and serving', t => {
+  const root = mkdtempSync(path.join(tmpdir(), 'novart-preview-origin-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  mkdirSync(path.join(root, 'apps/web/scripts'), { recursive: true });
+  for (const file of ['runtime-security.mjs', 'scripts/check-runtime-security.mjs', 'scripts/resolve-preview-origin.mjs']) {
+    copyFileSync(path.join('apps/web', file), path.join(root, 'apps/web', file));
+  }
+  const start = path.join(root, 'start-web.sh');
+  // Execute the actual startup, with only package commands replaced by a recorder.
+  writeFileSync(start, 'pnpm() { printf "PACKAGE %s ORIGIN %s\\n" "$*" "$AUTH_URL"; }\n'
+    + readFileSync('deploy/novart/start-web.sh', 'utf8').replaceAll('exec pnpm', 'pnpm'));
+  const env = { ...process.env, NODE_ENV: 'production', AUTH_SECRET: 'synthetic-startup-test-secret-only', AUTH_URL: 'https://main.example.invalid', NOVART_PUBLIC_ORIGIN: '' };
+  const run = override => spawnSync('bash', [start], { cwd: root, env: { ...env, ...override }, encoding: 'utf8' });
+  for (const [override, origin] of [[{}, env.AUTH_URL], [{ NOVART_PUBLIC_ORIGIN: 'https://preview.example.invalid' }, 'https://preview.example.invalid']]) {
+    const result = run(override);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.trim().split('\n').length, 2);
+    assert.match(result.stdout, /PACKAGE -F @brandai\/db exec prisma migrate deploy/);
+    assert.match(result.stdout, /PACKAGE -F web start/);
+    for (const line of result.stdout.trim().split('\n')) assert.ok(line.endsWith('ORIGIN ' + origin));
+  }
+  for (const value of ['http://preview.example.invalid', 'https://preview.example.invalid/path', 'https://u:p@preview.example.invalid', 'https://preview.example.invalid?q=x', 'https://preview.example.invalid#x', 'https://preview.example.invalid/']) {
+    const result = run({ NOVART_PUBLIC_ORIGIN: value });
+    assert.equal(result.status, 1);
+    assert.equal(result.stdout, '');
+    assert.match(result.stderr, /NOVART_PUBLIC_ORIGIN must be an HTTPS origin/);
+    assert.ok(!result.stderr.includes(value));
+  }
+  const badSecret = run({ AUTH_SECRET: '', NOVART_PUBLIC_ORIGIN: 'https://preview.example.invalid' });
+  assert.equal(badSecret.status, 1); assert.equal(badSecret.stdout, '');
+});
 test('the standard project release entry is valid Bash and rejects missing/unknown actions', () => {
   assert.equal(spawnSync('bash', ['-n', 'cds-release.sh']).status, 0);
   for (const args of [[], ['skip-checks'], ['--force']]) assert.equal(spawnSync('bash', ['cds-release.sh', ...args]).status, 64);
