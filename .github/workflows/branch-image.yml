@@ -11,6 +11,7 @@ on:
       - 'scripts/*novart*.py'
       - 'scripts/*novart*.cjs'
       - 'scripts/test-writing-workbench-browser.cjs'
+      - 'scripts/test-owned-layer-quality-browser.cjs'
       - 'scripts/writing-workbench-fixture.cjs'
       - 'scripts/check-owned-*.cjs'
       - '.github/workflows/branch-image.yml'

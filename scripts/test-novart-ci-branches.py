@@ -12,6 +12,20 @@ APPROVED = {
 
 
 class ProductWorkflowTests(unittest.TestCase):
+    def test_packaged_ai_gate_matches_web_required_capabilities(self):
+        """A client capability upgrade must not leave the image gate on r1."""
+        source = (ROOT / '.github/workflows/novart-integration.yml').read_text(encoding='utf-8')
+        web = (ROOT / 'apps/web/src/lib/ai-service.ts').read_text(encoding='utf-8')
+        for field, constant in (
+            ('studioDecompositionRevision', 'REQUIRED_AI_STUDIO_DECOMPOSITION_REVISION'),
+            ('studioDecompositionQueueRevision', 'REQUIRED_AI_STUDIO_DECOMPOSITION_QUEUE_REVISION'),
+            ('studioLayerPlanRevision', 'REQUIRED_AI_STUDIO_LAYER_PLAN_REVISION'),
+        ):
+            required = re.search(r'export const ' + constant + r' = "([a-z0-9-]+)";', web)
+            self.assertIsNotNone(required, constant)
+            asserted = re.findall(r"assert ai_health\.get\('" + field + r"'\) == '([a-z0-9-]+)'", source)
+            self.assertEqual(asserted, [required[1]], field)
+
     def test_push_and_both_dispatch_guards_allow_exactly_approved_branches(self):
         wrapper = (ROOT / '.github/workflows/branch-image.yml').read_text(encoding='utf-8')
         product = (ROOT / '.github/workflows/novart-integration.yml').read_text(encoding='utf-8')

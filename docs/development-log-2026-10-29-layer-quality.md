@@ -56,3 +56,9 @@ Chrome 交互使用生产 React 组件及本地 PNG 夹具，外部请求和付�
 
 - [Qwen 官方说明](https://github.com/QwenLM/Qwen-Image-Layered#introduction)：prompt 用于整图描述，逐层语义控制不作为保证。
 - [Fal 官方 API](https://fal.ai/models/fal-ai/qwen-image-layered/api)：托管接口的 prompt 为 caption，未假定支持未公开的蒙版/分辨率参数。
+
+## 推送后预览 503 的诊断与修复（2026-10-29）
+
+- 首次提交 `8f900d4` 的普通 CI 通过；Branch Image 在最后的实际容器能力检查失败：应用已升级为 r2，但流水线仍检查两个 r1 值。修正对应检查，并加入规划 r2 检查及 Web 要求/镜像验收一致性回归；不删除或降低能力门禁。
+- CDS 新建分支自动选择 Web 开发模式、Worker/AI release 模式。现场只读取证确认 `.novart-build/studio/manifest.json` 和 HTML 均不存在，`studioManifest()` 抛 ENOENT，登录后 `/studio` 因而返回通用 503。登录本身成功，新增数据库迁移也已应用。
+- 用户追加授权：仅修复 `claude/layer-quality` 三个服务的同提交预构建模式及本分支登录域名，镜像验收成功后恢复预览并验证能打开；main、正式站及其配置不动。部署成功与实际页面结果另行依据回执确认。
