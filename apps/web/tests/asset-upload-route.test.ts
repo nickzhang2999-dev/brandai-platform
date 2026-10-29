@@ -1,10 +1,10 @@
 import { Readable } from "node:stream";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import sharp from "sharp";
-const f = vi.hoisted(() => ({ user: vi.fn(), role: vi.fn(), owned: vi.fn(), create: vi.fn(), folder: vi.fn(), asset: vi.fn(), upload: vi.fn(), read: vi.fn(),
+const f = vi.hoisted(() => ({ user: vi.fn(), role: vi.fn(), owned: vi.fn(), create: vi.fn(), upsert: vi.fn(), folder: vi.fn(), asset: vi.fn(), upload: vi.fn(), read: vi.fn(),
   ApiException: class extends Error { constructor(public status: number, message: string) { super(message); } },
 }));
-vi.mock("../../../packages/db/src/index", () => ({ prisma: { asset: { create: f.create, findUnique: f.asset }, assetFolder: { findUnique: f.folder } } }));
+vi.mock("../../../packages/db/src/index", () => ({ prisma: { asset: { create: f.create, upsert: f.upsert, findUnique: f.asset }, assetFolder: { findUnique: f.folder } } }));
 vi.mock("@/lib/api", () => ({ ApiException: f.ApiException, requireUser: f.user,
   ok: (body: unknown, init?: ResponseInit) => Response.json(body, init),
   handleError: (error: Error & { status?: number }) => Response.json({ error: error.message }, { status: error.status ?? 500 }),
@@ -46,6 +46,32 @@ describe("asset upload route content policy and authorization", () => {
     const response = await POST(request(body), { params });
     expect(response.status).toBe(201); expect(await response.json()).toMatchObject({ mimeType: mime });
     expect(f.upload).toHaveBeenCalledWith(Buffer.from(body), "application/octet-stream", "workspace-a");
+  });
+  it("reuses the same Brand Kit asset on retry and keeps material-library uploads unchanged", async () => {
+    const image = await sharp({ create: { width: 1, height: 1, channels: 4, background: "white" } }).png().toBuffer();
+    let saved: any = null;
+    f.asset.mockImplementation(() => saved);
+    f.upsert.mockImplementation(({ create }) => (saved ??= { ...create, folderId: null, deprecatedAt: null, availableForGeneration: true }));
+    const send = () => POST(request(image, "image/png", form => form.append("libraryKind", "BRAND_KIT")), { params });
+    const first = await send(), second = await send();
+    expect(first.status).toBe(201); expect(second.status).toBe(201);
+    expect((await first.json()).id).toBe((await second.json()).id);
+    expect(f.upload).toHaveBeenCalledOnce(); expect(f.upsert).toHaveBeenCalledOnce(); expect(f.create).not.toHaveBeenCalled();
+    expect(f.upload.mock.calls[0]?.[4]).toMatch(/^workspace-a\/brand-kit\/bkit_asset_/);
+    await POST(request(image), { params }); expect(f.create).toHaveBeenCalledOnce();
+  });
+  it("keeps retryable storage failure from making an asset, then resumes the original deterministic upload", async () => {
+    f.upload.mockRejectedValueOnce(new Error("synthetic storage failure"));
+    f.upsert.mockImplementation(({ create }) => ({ ...create, folderId: null, deprecatedAt: null, availableForGeneration: true }));
+    const send = () => POST(request("%PDF-1.7\n%%EOF", "application/pdf", form => form.append("libraryKind", "BRAND_KIT")), { params });
+    expect((await send()).status).toBe(500); expect(f.upsert).not.toHaveBeenCalled();
+    expect((await send()).status).toBe(201); expect(f.upsert).toHaveBeenCalledOnce();
+    expect(f.upload.mock.calls[0]?.[4]).toBe(f.upload.mock.calls[1]?.[4]);
+  });
+  it("does not resurrect a disabled existing Brand Kit asset during reupload", async () => {
+    f.asset.mockResolvedValue({ workspaceId: "workspace-a", category: "OTHER", libraryKind: "BRAND_KIT", folderId: null, deprecatedAt: new Date(), availableForGeneration: false });
+    const response = await POST(request("%PDF-1.7\n%%EOF", "application/pdf", form => form.append("libraryKind", "BRAND_KIT")), { params });
+    expect(response.status).toBe(409); expect(f.upload).not.toHaveBeenCalled(); expect(f.upsert).not.toHaveBeenCalled();
   });
   it("refuses HTML disguised as PNG before any storage/database mutation", async () => {
     const response = await POST(request("<html><script>alert(1)</script></html>"), { params });

@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { BrandKitRecognizeInput } from "@brandai/contracts";
+import { brandKitImportTask, readBrandKitImportTask } from "@/lib/brand-kit-import";
 import { prisma } from "@brandai/db";
 import { handleError, ok, parse, requireUser, ApiException } from "@/lib/api";
 import { requireOwnedWorkspace, requireWorkspaceRole } from "@/lib/workspace";
@@ -15,9 +17,7 @@ import type { RecognizeJobData } from "@/lib/workers/recognize.worker";
  * worker (lib/workers/recognize.worker.ts) calls the AI service and writes
  * DRAFT BrandRule rows with evidence.
  */
-const StartRecognizeInput = z.object({
-  assetIds: z.array(z.string()).min(1),
-});
+const StartRecognizeInput = BrandKitRecognizeInput;
 
 export async function POST(
   req: Request,
@@ -39,13 +39,16 @@ export async function POST(
       },
       select: { id: true, url: true, source: true },
     });
-    if (assets.length === 0) {
+    if (assets.length !== new Set(input.assetIds).size) {
       throw new ApiException(400, "No matching assets in this workspace");
     }
 
     // H-async — server-authoritative task row so the recognize view is
     // refresh-resumable (`?task=`) with a real progress %.
-    const task = await createTask({ workspaceId: wsId, kind: "RECOGNIZE" });
+    const task = input.mutationId
+      ? await brandKitImportTask(wsId, user.id, "RECOGNIZE", input.mutationId, input)
+      : await createTask({ workspaceId: wsId, kind: "RECOGNIZE" });
+    if ("status" in task && task.status !== "PENDING") return ok({ taskId: task.id, jobId: "jobId" in task ? task.jobId : undefined, status: task.status }, { status: 202 });
     const jobData: RecognizeJobData = {
       workspaceId: wsId,
       // K7 — thread each asset's provenance so the AI service applies the
@@ -53,8 +56,10 @@ export async function POST(
       // (DNS-rebinding guard); UPLOAD/storage keeps the trusting default.
       assets: assets.map((a) => ({ id: a.id, url: a.url, source: a.source })),
       taskId: task.id,
+      ...(input.targetType ? { targetType: input.targetType } : {}),
     };
     const job = await recognizeQueue.add("recognize", jobData, {
+      ...(input.mutationId ? { jobId: task.id } : {}),
       removeOnComplete: 50,
       removeOnFail: 50,
     });
@@ -94,6 +99,8 @@ export async function GET(
     const { wsId } = await params;
     await requireOwnedWorkspace(wsId, user.id);
 
+    const mutationId = new URL(req.url).searchParams.get("mutationId");
+    if (mutationId) return ok(await readBrandKitImportTask(wsId, user.id, "RECOGNIZE", z.string().uuid().parse(mutationId)));
     const jobId = new URL(req.url).searchParams.get("jobId");
     if (!jobId) throw new ApiException(400, "jobId is required");
 

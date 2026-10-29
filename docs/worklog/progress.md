@@ -547,6 +547,31 @@ ef42d5c CI39018642952通过并部署，真实同任务归档恢复成功、9层S
 - 协议45、文案浏览器11、原画布55、布局8组通过；L1/AI/typecheck/build和发布合同通过。
 - 未推送、未部署；详见 [开发日志](2026-10-22-home-creation-modes.md)。
 
+## 2026-10-22 灵感页导航与文案切换修复
+
+- 灵感页移出旧 BrandAI 壳，保留当前品牌、登录与成员权限；原 URL 和业务接口不变。
+- 旧首页交接状态不再只让模式按钮无反馈；安全场景可保留原项目后切换，未知回执仍保护原请求，存储失败显示原因并保留需求。
+- 新增 11 项服务端页面权限测试；浏览器覆盖独立页面与工作台往返、原 8 个视口及 3 个恢复场景。全量检查与发布合同通过，提交及开发预览回执随后核对。
+- 详细根因、边界及验证见 [修复记录](2026-10-22-inspiration-shell-and-home-mode-fix.md)。本轮未调用付费模型。
+
+## 2026-10-22 模式按钮资源缓存修复
+
+- 用户反馈图片/文案按钮图文紧贴、焦点框直角。公网 CSS 为 4 小时缓存，固定地址可与新版 HTML 混用；旧 CSS 对照已复现相同退化。
+- 给导出 HTML/CSS 的本地资源引用添加递归内容版本，保留现有按钮设计；新增计算样式和真实浏览器旧缓存升级回归。
+- 原始产品工作区不改。具体证据和验证边界见 [修复记录追加章节](2026-10-22-inspiration-shell-and-home-mode-fix.md)。
+- 导出 8、布局 11（含旧缓存正反对照）、真实登录宽窄屏检查通过；全量测试、typecheck/build、发布合同全绿，开发预览按同提交镜像流程更新。
+
+## 2026-10-24 Omni 灵感分析桥接
+
+- 已实现服务鉴权、异步任务与八项设计拆解，复用后台实际 VLM 配置；公司上游密钥不传入 Omni。
+- L1 2281、AI 667、专项协议与浏览器测试已通过。发布与真实图片结果单独记录，不以模拟响应替代模型验收。
+- 详细计划和状态见 [本轮记录](2026-10-24-omni-analysis-plan.md)。
+
+
+## 2026-10-28 Studio writing and canvas interaction
+
+Implemented persistent writing documents, versioned selection replacement, bounded reference parsing, confirmed style, and explicit native-canvas handoff. Canvas controls and reference targets are grouped into the editor workflow. Brand kit imports add batch recovery, explicit categories, grouped suggestions and new-task access revalidation. Local checks cover database persistence and isolated browser interaction; provider/runtime acceptance is tracked separately. See [technical notes](../studio-writing-workbench.md).
+
 ## 2026-10-26 B2B 版本准备
 
 按用户要求将灵感开发与本次合并分开，隐藏公开注册入口，保留画布文案与首页修复。实际验证、PR 和合并状态见 [本轮记录](2026-10-26-b2b-release.md)。
@@ -554,3 +579,7 @@ ef42d5c CI39018642952通过并部署，真实同任务归档恢复成功、9层S
 ## 2026-10-27 · 正式发布脚本提交取证
 
 用户要求提交普通发布脚本并通过 CI，继续保持灵感独立。核对 `c72157be22b89f1d5c35c0ef902cb5f550aad5a8` 已有根目录 `cds-release.sh`（Git mode 100755），不是漏提交。补充 CI 安装依赖前的 Git 对象/可执行权限/Bash 校验，以及脚本 check 的提交一致性与 SHA-256 回执。发布脚本仍采用已有生产 Compose、同提交镜像、迁移/就绪和三域名资源校验。此记录不代表已修复 CDS 远端查找原因或正式发布完成；实际测试和 CI 结果以本次交付回执为准。
+
+## 2026-10-29 PR #68 conflict resolution
+
+Integrated main 632ac2f into devUpdate1012 f83a8a9 in an isolated worktree. Preserved the persistent writing workbench and inspiration/Omni implementation, combined enterprise-only login with hydration protection, and kept main's committed production-script verification. Added desktop/mobile regression assertions that registration stays hidden and retained the copywriting inbox navigation checks. Local validation passed: pnpm test (Web 2147, contracts 312, UI 39; 31 database-gated tests skipped), AI 712, typecheck, production build with the existing low-memory option, lint (0 errors / 17 warnings), release check and 7 release-contract tests. Isolated Chrome regression passed: login 15, inbox 19, canvas core 55, writing standalone 31, writing embedded 22, shell layout 11 and inspiration activity 9. Shell export tests 8 and CI branch-policy tests 2 also passed. Browser checks use synthetic local fixtures and do not establish live provider or database acceptance. Remote checks remain pending; no main merge or production release performed.

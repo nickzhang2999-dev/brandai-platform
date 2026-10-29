@@ -18,6 +18,7 @@ const layerQueueRecovery = process.env.NOVART_OWNED_LAYERS_QUEUE_RECOVERY === '1
 const experienceOnly = process.env.NOVART_OWNED_EXPERIENCE_ONLY === '1';
 const brandOnly = process.env.NOVART_OWNED_BRAND_ONLY === '1';
 const copywritingOnly = process.env.NOVART_OWNED_COPYWRITING_ONLY === '1';
+const targetOnly = process.env.NOVART_OWNED_TARGET_ONLY === '1';
 const copywritingTasks = []; let copywritingPosts = 0;
 const temporaryRoot = path.join(repo, '.novart-build', 'temporary');
 fs.mkdirSync(temporaryRoot, {recursive: true});
@@ -31,9 +32,11 @@ const report = {isolated:true, realBackend:false, realProvider:false, realAuthen
   fixtureScope:'Loopback in-memory HTTP persistence; actual production React editor and styles',
   checks:[], externalRequests:[], errors:[]};
 let stage = 'build-fixture', browser, server, contracts;
+const writingFixture = require('./writing-workbench-fixture.cjs').createWritingFixture({contracts:()=>contracts,json,body,onGenerate:()=>{copywritingPosts++;}});
 let canvas = '', revision = 0, readOnly = false, writes = 0, failRestore = false, conflict = false, delayMaterials = 0, delayDocument = 0, delayConversation = 0, delayWorkflow = 0;
 let draft = {projectId:fixture.projectId,revision:0,inputForm:null,updatedAt:null,referenceIssues:[]};
 let conversationDraft = null, conversationPosts = [], conversationMessages = [];
+let materialDelays = [], materialReads = 0, conversationWrites = 0;
 let workflow = {projectId:fixture.projectId,revision:0,mode:'generate',target:null,references:[],updatedAt:null,issues:[]};
 let draftWrites = 0, workflowWrites = 0, generationPosts = 0;
 const uploads = new Map(), generations = new Map(), taskReads = [], generationPostInputs = [];
@@ -63,11 +66,12 @@ function json(res, value, status=200) {res.writeHead(status, {'Content-Type':'ap
 function documentView() {return {workspaceId:fixture.workspaceId,projectId:fixture.projectId,format:'novart-native-v1',canvas,revision,checksum:canvas?crypto.createHash('sha256').update(canvas).digest('hex'):null,updatedAt:revision?new Date().toISOString():null,readOnly};}
 function records() {return canvas ? JSON.parse(zlib.gunzipSync(Buffer.from(canvas.slice('SHAKKERDATA://'.length),'base64'))).tldrawSnapshot.document.store : {};}
 function shapes() {return Object.values(records()).filter(r=>r.typeName==='shape');}
-function currentWorkflowAssets() {return contracts.workflowAssets(fixture.projectId,canvas,uploads.size?[{sha256:assetSha256,url:material.url,mimeType:material.mimeType}]:[]);}
+function currentWorkflowAssets() {return contracts.workflowAssets(fixture.projectId,canvas,[...(uploads.size?[{sha256:assetSha256,url:material.url,mimeType:material.mimeType}]:[]),...[...experienceAssets.values()].map(value=>({sha256:value.assetSha256,url:value.url,mimeType:value.mimeType}))]);}
 function workflowView() {const assets=currentWorkflowAssets();return contracts.StudioWorkflowView.parse({...workflow,issues:[...assets.issues,...contracts.workflowIssues(workflow,assets.assets)]});}
 async function body(req) {const chunks=[];for await(const c of req) chunks.push(c);return Buffer.concat(chunks);}
 async function handle(req,res) {
   const url = new URL(req.url,'http://127.0.0.1');
+  if(url.pathname.startsWith('/api/')&&url.pathname.includes('/studio-writing')) return writingFixture.handle(req,res,url);
   if(url.pathname.endsWith('/studio-copywriting')) {
     if(req.method==='POST') {const input=JSON.parse((await body(req)).toString());copywritingPosts++;let task=copywritingTasks.find(t=>t.mutationId===input.mutationId);
       if(!task){task={id:'copy-fixture-'+copywritingPosts,mutationId:input.mutationId,prompt:input.prompt,status:'SUCCEEDED',createdAt:new Date().toISOString(),error:null,result:{candidates:[{title:'交互测试标题',body:'测试夹具正文，仅用于编辑、撤销和刷新恢复检查。'}],model:'fixture',inputTokens:0,outputTokens:0,latencyMs:0}};copywritingTasks.unshift(task);}return json(res,task,202);}
@@ -93,7 +97,7 @@ async function handle(req,res) {
       document.getElementById('ns-create').addEventListener('click',()=>homeStart.create());addEventListener('message',e=>{if(e.origin===location.origin&&e.source===entry.frame.contentWindow&&e.data?.action==='ready'){entry.ready=true;homeStart.resume(entry);}});
       </script></body></html>`);
   }
-  if(url.pathname==='/studio-editor'||url.pathname==='/canvas') {res.setHeader('Content-Type','text/html');return res.end('<html><head><meta charset="utf-8"><link rel="stylesheet" href="/app.css"></head><body><div id="root"></div><script src="/app.js"></script></body></html>');}
+  if(url.pathname==='/studio-editor'||url.pathname==='/canvas'||url.pathname==='/studio-writing') {res.setHeader('Content-Type','text/html');return res.end('<html><head><meta charset="utf-8"><link rel="stylesheet" href="/app.css"></head><body><div id="root"></div><script src="/app.js"></script></body></html>');}
   if(url.pathname==='/compare/api/create'&&req.method==='POST') {const value=JSON.parse((await body(req)).toString());assert.ok(value.requestId);return json(res,{projectId:fixture.projectId,projectName:value.projectName});}
   if(url.pathname.includes('/editor-document')) {
     if(req.method==='GET') return failRestore ? json(res,{error:'合成恢复失败'},503) : json(res,documentView());
@@ -116,7 +120,7 @@ async function handle(req,res) {
   if(url.pathname===`/api/workspaces/${fixture.workspaceId}/projects/${fixture.projectId}/studio-conversation`) {
     if(req.headers['x-novart-user']!==fixture.userId) return json(res,{error:'Fixture conversation identity rejected'},403);
     if(req.method==='GET'){if(delayConversation)await new Promise(resolve=>setTimeout(resolve,delayConversation));return json(res,contracts.StudioConversationPage.parse({messages:conversationMessages,nextCursor:null,draft:conversationDraft}));}
-    if(req.method==='PUT') { const input=contracts.StudioConversationDraftInput.parse(JSON.parse((await body(req)).toString())); if(readOnly)return json(res,{error:'只读项目'},403); if(input.revision!==(conversationDraft?.revision??0))return json(res,{error:'对话草稿已更新'},409); conversationDraft=contracts.StudioConversationDraft.parse({...input,revision:input.revision+1});return json(res,conversationDraft); }
+    if(req.method==='PUT') { const input=contracts.StudioConversationDraftInput.parse(JSON.parse((await body(req)).toString())); if(readOnly)return json(res,{error:'只读项目'},403); if(input.revision!==(conversationDraft?.revision??0))return json(res,{error:'对话草稿已更新'},409); conversationDraft=contracts.StudioConversationDraft.parse({...input,revision:input.revision+1});conversationWrites++;return json(res,conversationDraft); }
     const input=contracts.StudioConversationInput.parse(JSON.parse((await body(req)).toString()));conversationPosts.push(input);
     if(input.homeStart){const old=conversationMessages.find(row=>row.mutationId===input.mutationId);if(old)return json(res,old,202);const row=contracts.StudioConversationMessage.parse({messageId:'fixture-home-message',mutationId:input.mutationId,projectId:fixture.projectId,text:input.text,references:input.references,status:'FAILED',intent:null,generation:null,error:'Interaction fixture intentionally has no AI provider',clarification:null,createdAt:new Date().toISOString(),expiresAt:new Date(Date.now()+360000).toISOString()});conversationMessages.push(row);return json(res,row,202);}
     return json(res,{error:'真实模型未配置，不接受fixture生成'},503);
@@ -143,7 +147,7 @@ async function handle(req,res) {
     if(!contracts.assertWorkflowSelection(value.data,workflow,currentWorkflowAssets().assets)) return json(res,{error:'素材不属于已保存画布'},422);
     workflow={...value.data,revision:workflow.revision+1,updatedAt:Date.now(),issues:[]};workflowWrites++;return json(res,workflowView());
   }
-  if(url.pathname==='/studio/materials') {if(delayMaterials) await new Promise(resolve=>setTimeout(resolve,delayMaterials));return json(res,[...(uploads.size?[material]:[]),...experienceAssets.values()]);}
+  if(url.pathname==='/studio/materials') {materialReads++;const wait=materialDelays.length?materialDelays.shift():delayMaterials;if(wait) await new Promise(resolve=>setTimeout(resolve,wait));return json(res,[...(uploads.size?[material]:[]),...experienceAssets.values()]);}
   if(url.pathname==='/studio/material-upload') {
     if(req.method==='POST') {
       const raw=(await body(req)).toString('latin1');
@@ -214,12 +218,12 @@ async function fixtureSettled(condition) {const deadline=Date.now()+10000;while(
 
 (async()=>{
   const entry=path.join(directory,'entry.tsx');
-  fs.writeFileSync(entry,`import React from '${path.join(repo,'apps/web/node_modules/react').replaceAll('\\','/')}';\nimport {createRoot} from '${path.join(repo,'apps/web/node_modules/react-dom/client').replaceAll('\\','/')}';\nimport {OwnedEditorClient} from '${path.join(repo,'apps/web/src/components/owned-canvas/OwnedEditorClient').replaceAll('\\','/')}';\nconst params=new URLSearchParams(location.search),task=params.get('taskId'),request=params.get('requestId'),layerRequest=params.get('layerRequestId');const initialTask=[task,request,layerRequest].filter(Boolean).length!==1?undefined:task?{kind:'STUDIO_UPLOAD' as const,id:task}:request?{kind:'STUDIO_GENERATION' as const,id:request}:layerRequest?{kind:'STUDIO_DECOMPOSITION' as const,id:layerRequest}:undefined;const fixtureRoot=createRoot(document.getElementById('root')!);window.changeFixtureReadOnly=(readOnly:boolean)=>fixtureRoot.render(<OwnedEditorClient {...${JSON.stringify(fixture)}} readOnly={readOnly} initialTask={initialTask} projectName="交互回归"/>);window.changeFixtureReadOnly(false);`);
+  fs.writeFileSync(entry,`import React from '${path.join(repo,'apps/web/node_modules/react').replaceAll('\\','/')}';\nimport {createRoot} from '${path.join(repo,'apps/web/node_modules/react-dom/client').replaceAll('\\','/')}';\nimport {OwnedEditorClient} from '${path.join(repo,'apps/web/src/components/owned-canvas/OwnedEditorClient').replaceAll('\\','/')}';\nconst params=new URLSearchParams(location.search),task=params.get('taskId'),request=params.get('requestId'),layerRequest=params.get('layerRequestId'),writingPage=location.pathname==='/studio-writing';const initialTask=writingPage||[task,request,layerRequest].filter(Boolean).length!==1?undefined:task?{kind:'STUDIO_UPLOAD' as const,id:task}:request?{kind:'STUDIO_GENERATION' as const,id:request}:layerRequest?{kind:'STUDIO_DECOMPOSITION' as const,id:layerRequest}:undefined;const fixtureRoot=createRoot(document.getElementById('root')!);window.changeFixtureReadOnly=(readOnly:boolean)=>fixtureRoot.render(<OwnedEditorClient {...${JSON.stringify(fixture)}} readOnly={readOnly} initialTask={initialTask} writingTaskId={writingPage?task||undefined:undefined} initialSurface={writingPage||params.get('surface')==='writing'?'writing':'canvas'} projectName="交互回归"/>);window.changeFixtureReadOnly(false);`);
   await esbuild.build({entryPoints:[entry],outfile:path.join(directory,'app.js'),bundle:true,platform:'browser',format:'iife',jsx:'automatic',tsconfig:path.join(repo,'apps/web/tsconfig.json'),nodePaths:[path.join(repo,'apps/web/node_modules')],define:{'process.env.NODE_ENV':'"development"'},logLevel:'silent'});
   const schemaEntry=path.join(directory,'schema.ts');
-  fs.writeFileSync(schemaEntry,`export {WorkbenchDraftView,WorkbenchDraftSaveInput,StudioWorkflowSaveInput,StudioWorkflowView,StudioGenerationInput,StudioGenerationView,StudioDecompositionInput,StudioDecompositionView,StudioConversationInput,StudioConversationMessage,StudioConversationDraftInput,StudioConversationDraft,StudioConversationPage} from '${path.join(repo,'packages/contracts/src/index').replaceAll('\\','/')}';\nexport {workflowAssets,workflowIssues,assertWorkflowSelection} from '${path.join(repo,'apps/web/src/lib/studio-workflow-codec').replaceAll('\\','/')}';`);
+  fs.writeFileSync(schemaEntry,`export {WorkbenchDraftView,WorkbenchDraftSaveInput,StudioWorkflowSaveInput,StudioWorkflowView,StudioGenerationInput,StudioGenerationView,StudioDecompositionInput,StudioDecompositionView,StudioConversationInput,StudioConversationMessage,StudioConversationDraftInput,StudioConversationDraft,StudioConversationPage,StudioWritingState,StudioWritingGenerateInput,StudioWritingSaveInput,StudioWritingTask,StudioWritingAssetReferenceInput,StudioWritingReferenceAccepted} from '${path.join(repo,'packages/contracts/src/index').replaceAll('\\','/')}';\nexport {emptyOwnedDocument} from '${path.join(repo,'apps/web/src/lib/owned-canvas-model').replaceAll('\\','/')}';\nexport {encodeOwnedCanvas} from '${path.join(repo,'apps/web/src/lib/owned-canvas-codec').replaceAll('\\','/')}';\nexport {workflowAssets,workflowIssues,assertWorkflowSelection} from '${path.join(repo,'apps/web/src/lib/studio-workflow-codec').replaceAll('\\','/')}';`);
   await esbuild.build({entryPoints:[schemaEntry],outfile:path.join(directory,'schema.cjs'),bundle:true,platform:'node',format:'cjs',tsconfig:path.join(repo,'apps/web/tsconfig.json'),nodePaths:[path.join(repo,'apps/web/node_modules')],logLevel:'silent'});contracts=require(path.join(directory,'schema.cjs'));
-  const css=spawnSync(process.execPath,[path.join(repo,'apps/web/node_modules/tailwindcss/lib/cli.js'),'-i',path.join(repo,'packages/ui/src/styles.css'),'-o',path.join(directory,'tokens.css'),'-c',path.join(repo,'apps/web/tailwind.config.ts'),'--content',path.join(repo,'apps/web/src/components/owned-canvas/*.{ts,tsx}')],{cwd:repo,encoding:'utf8',env:{...process.env,TEMP:directory,TMP:directory},timeout:60000});
+  const css=spawnSync(process.execPath,[path.join(repo,'apps/web/node_modules/tailwindcss/lib/cli.js'),'-i',path.join(repo,'packages/ui/src/styles.css'),'-o',path.join(directory,'tokens.css'),'-c',path.join(repo,'apps/web/tailwind.config.ts'),'--content',[path.join(repo,'apps/web/src/components/owned-canvas/*.{ts,tsx}'),path.join(repo,'apps/web/src/components/writing-workbench/*.{ts,tsx}'),path.join(repo,'packages/ui/src/**/*.{ts,tsx}')].join(',')],{cwd:repo,encoding:'utf8',env:{...process.env,TEMP:directory,TMP:directory},timeout:60000});
   assert.equal(css.status,0,'Actual product styles must compile');
   server=http.createServer((req,res)=>handle(req,res).catch(()=>json(res,{error:'Fixture error'},500)));
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
@@ -228,46 +232,96 @@ async function fixtureSettled(condition) {const deadline=Date.now()+10000;while(
   const context=await browser.newContext({viewport:{width:1366,height:850},acceptDownloads:true});
   await context.route('**/*',route=>{const u=new URL(route.request().url());if(['http:','https:'].includes(u.protocol)&&u.origin!==origin){report.externalRequests.push(u.hostname);return route.abort();}return route.continue();});
   const page=await context.newPage(); page.on('pageerror',e=>report.errors.push(e.name));
+  const canvasTool=async name=>{const control=page.getByRole('button',{name,exact:true});if(!await control.isVisible())await page.getByRole('button',{name:'更多画布工具',exact:true}).click();await control.click();};
   stage='open-owned-editor';await page.goto(origin+'/studio-editor');
   await page.getByTestId('owned-canvas').waitFor();
   const surface=page.getByTestId('owned-canvas');
+  if(targetOnly) {
+    await require('./check-owned-target-interactions.cjs').runOwnedTargetChecks({page,surface,origin,fixture,check,fixtureSettled,
+      setStage:value=>{stage=value;},state:()=>({conversationDraft,conversationWrites,conversationPosts,workflowWrites,workflow,draft,materialReads,writes,shapes:shapes()}),
+      delays:values=>{materialDelays=[...values];},seed:async()=>{const doc=contracts.emptyOwnedDocument();for(let i=0;i<3;i++){
+        const id='target-'+String.fromCharCode(97+i),bytes=fixturePng(192,128,()=>[124,92,255,255]);
+        const image={id,assetId:id,assetSha256:crypto.createHash('sha256').update(bytes).digest('hex'),kind:'image',mimeType:'image/png',fileName:id+'.png',sizeBytes:bytes.length,width:192,height:128,url:`/api/workspaces/${fixture.workspaceId}/assets/${id}/raw`};experienceAssets.set(id,image);
+        if(i<2)doc.items.push({id:'shape:'+id,kind:'image',x:100+i*260,y:180,w:192,h:128,rotation:0,opacity:1,url:image.url,assetId:id,assetSha256:image.assetSha256,imageNumber:i+1});
+      }canvas=await contracts.encodeOwnedCanvas(doc);revision++;}});
+    assert.deepEqual(report.externalRequests,[]);assert.deepEqual(report.errors,[]);report.passed=true;return;
+  }
   if(copywritingOnly) {
-    await page.getByRole('button',{name:'AI 文案',exact:true}).click();
-    const panel=page.getByTestId('copywriting-panel');await panel.waitFor();
-    await panel.getByRole('textbox',{name:'文案需求',exact:true}).fill('写一组短标题和正文');
-    await panel.getByRole('button',{name:'生成文案',exact:true}).last().click();
-    await panel.getByRole('button',{name:'加入画布',exact:true}).click();await fixtureSettled(()=>shapes().length===1&&writes>0);
-    assert.equal(shapes()[0].props.text.replaceAll('\n',''),'交互测试标题测试夹具正文，仅用于编辑、撤销和刷新恢复检查。');check('copywriting-inserts-native-editable-text');
-    await panel.getByRole('button',{name:'加入画布',exact:true}).click();await page.waitForTimeout(350);assert.equal(shapes().length,1);check('same-result-insertion-is-idempotent');
-    await page.getByRole('button',{name:'关闭工具窗口'}).click();await page.getByRole('button',{name:'撤销',exact:true}).click();await fixtureSettled(()=>shapes().length===0);check('copywriting-insertion-can-be-undone');
-    await page.getByRole('button',{name:'重做',exact:true}).click();await fixtureSettled(()=>shapes().length===1);check('copywriting-insertion-can-be-redone');
-    await page.reload();await page.getByTestId('owned-canvas-item').waitFor();assert.equal(shapes().length,1);check('copywriting-text-restores-after-refresh');
-    await page.getByRole('button',{name:'AI 文案',exact:true}).click();await page.getByTestId('copywriting-task').waitFor();assert.equal(copywritingPosts,1);check('task-history-recovers-without-repeating-post');
-    await page.getByRole('button',{name:'关闭工具窗口'}).click();await page.getByTestId('owned-canvas-item').dblclick();
-    const nativeEditor=page.getByRole('textbox',{name:'编辑画布文字',exact:true});
-    await nativeEditor.fill('已编辑的文案');await nativeEditor.press('Escape');await fixtureSettled(()=>shapes()[0]?.props.text==='已编辑的文案');check('inserted-copy-can-be-edited-in-canvas');
-    await page.getByTestId('owned-canvas-item').click();await page.getByRole('button',{name:'AI 文案',exact:true}).click();await panel.getByRole('button',{name:'改写文字',exact:true}).click();await panel.getByRole('button',{name:'使用选中文字',exact:true}).click();assert.equal(await panel.getByRole('textbox',{name:'待改写原文',exact:true}).inputValue(),'已编辑的文案');check('rewrite-picks-selected-native-text');
-    await page.getByRole('button',{name:'关闭工具窗口'}).click();
-    await page.getByRole('button',{name:'AI 文案',exact:true}).click();await page.setViewportSize({width:390,height:844});
-    assert.ok(await panel.isVisible());assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);check('copywriting-panel-fits-mobile-width');
-    await page.setViewportSize({width:1366,height:850});
+    const output=path.join(repo,'.novart-build/writing-workbench-integration');fs.mkdirSync(output,{recursive:true});
+    const open=async(document=false)=>{await page.getByRole('tab',{name:'AI 文案',exact:true}).click();await page.waitForFunction(()=>document.querySelector('[data-testid="writing-workbench"]')?.dataset.ready==='true');if(document)await page.getByRole('button',{name:'当前稿',exact:true}).click();};
+    await open();const panel=page.getByTestId('writing-workbench');
+    assert.equal(await page.getByRole('dialog').count(),0);assert.equal(await surface.isVisible(),true);const canvasBounds=await surface.boundingBox(),writingBounds=await panel.boundingBox();assert.ok(canvasBounds&&writingBounds&&canvasBounds.x+canvasBounds.width<=writingBounds.x+1);check('writing-opens-beside-visible-canvas');
+    await panel.getByRole('textbox',{name:'本轮文案需求',exact:true}).fill('写一组短标题和正文');
+    await panel.getByRole('button',{name:'发送需求',exact:true}).click();await panel.getByRole('button',{name:'加入画布',exact:true}).waitFor();
+    await page.setViewportSize({width:1366,height:600});const composerBounds=await panel.getByRole('button',{name:'发送需求',exact:true}).boundingBox();assert.ok(composerBounds&&composerBounds.y>=0&&composerBounds.y+composerBounds.height<=600,'History must scroll instead of pushing the composer below the viewport');check('docked-history-keeps-send-action-visible-in-short-viewport');await page.setViewportSize({width:1366,height:850});
+    const beforeDirect=JSON.stringify(writingFixture.state.document);await panel.getByRole('button',{name:'加入画布',exact:true}).click();await fixtureSettled(()=>shapes().length===1&&writes>0);
+    assert.equal(JSON.stringify(writingFixture.state.document),beforeDirect);assert.equal(await surface.isVisible(),true);assert.equal(await panel.isVisible(),true);assert.equal(copywritingPosts,1);check('suggestion-inserts-directly-without-adopting-draft-or-extra-model-call');
+    await panel.getByRole('button',{name:'加入画布',exact:true}).click();await page.waitForTimeout(150);assert.equal(shapes().length,1);check('direct-suggestion-insertion-is-idempotent');
+    await panel.getByRole('textbox',{name:'本轮文案需求',exact:true}).fill('尚未发送的后续需求');await panel.getByRole('button',{name:'展开编辑',exact:true}).click();assert.equal(await surface.isVisible(),false);await panel.getByRole('button',{name:'收回侧栏',exact:true}).click();assert.equal(await surface.isVisible(),true);assert.equal(await panel.getByRole('textbox',{name:'本轮文案需求',exact:true}).inputValue(),'尚未发送的后续需求');check('expand-and-dock-preserve-unsent-composer-without-model-call');
+    await panel.getByRole('button',{name:'返回画布',exact:true}).click();await page.getByRole('button',{name:'撤销',exact:true}).click();await fixtureSettled(()=>shapes().length===0);await open();await panel.getByRole('button',{name:'设为当前稿',exact:true}).click();
+    const sendBounds=await panel.getByRole('button',{name:'当前稿加入画布',exact:true}).boundingBox();assert.ok(sendBounds&&sendBounds.y>=0&&sendBounds.y+sendBounds.height<=850);check('current-draft-insert-is-visible-without-scrolling-to-bottom');
+    await page.waitForFunction(()=>document.querySelector('[data-testid="writing-workbench"]')?.dataset.saveState==='saved');
+    await panel.getByRole('button',{name:'当前稿加入画布',exact:true}).click();await fixtureSettled(()=>shapes().length===1&&writes>0);
+    assert.equal(shapes()[0].props.text.replaceAll('\n',''),'交互测试标题测试夹具正文，仅用于编辑、撤销和刷新恢复检查。');check('writing-current-draft-inserts-native-editable-text');
+    await open(true);await panel.getByRole('button',{name:'当前稿加入画布',exact:true}).click();await page.waitForTimeout(350);assert.equal(shapes().length,1);check('same-document-revision-handoff-is-idempotent');
+    await page.getByRole('button',{name:'撤销',exact:true}).click();await fixtureSettled(()=>shapes().length===0);check('writing-insertion-can-be-undone');
+    await page.getByRole('button',{name:'重做',exact:true}).click();await fixtureSettled(()=>shapes().length===1);check('writing-insertion-can-be-redone');
+    await page.reload();await page.getByTestId('owned-canvas-item').waitFor();assert.equal(shapes().length,1);check('writing-text-restores-on-canvas-after-refresh');
+    await open();await panel.getByTestId('writing-turn').waitFor();assert.equal(copywritingPosts,1);check('writing-history-restores-without-repeat-post');
+    await panel.getByRole('button',{name:'返回画布',exact:true}).click();await page.getByTestId('owned-canvas-item').dblclick();
+    const nativeEditor=page.getByRole('textbox',{name:'编辑画布文字',exact:true});await nativeEditor.fill('已编辑的文案');await nativeEditor.press('Escape');await fixtureSettled(()=>shapes()[0]?.props.text==='已编辑的文案');check('inserted-copy-can-still-be-edited-in-canvas');
+    await page.getByTestId('owned-canvas-item').click();await open();await panel.getByRole('button',{name:/^资料/}).click();
+    await panel.getByRole('dialog',{name:'本轮参考资料'}).getByText('画布所选文字.txt',{exact:true}).waitFor();assert.equal(writingFixture.state.references.some(r=>r.segments.some(s=>s.text==='已编辑的文案')),true);check('selected-native-text-imports-as-reference-without-overwriting-current-draft');
+    await panel.getByRole('button',{name:'关闭本轮参考资料'}).click();await page.setViewportSize({width:390,height:844});assert.ok(await panel.isVisible());assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);check('writing-surface-fits-mobile-width');
+    await page.screenshot({path:path.join(output,'01-embedded-mobile.png'),fullPage:true});await page.setViewportSize({width:1366,height:850});
+    stage='embedded-long-document-scroll';
+    await panel.getByRole('button',{name:'展开编辑',exact:true}).click();
+    const longDraft=Array.from({length:100},(_,index)=>`第 ${index+1} 段：这是一段用于验证真实嵌入滚动容器的长文。末尾应能编辑和保存，正文长度超过三千字符。`).join('\n\n');
+    const writingBody=panel.getByRole('textbox',{name:'当前稿正文',exact:true});await writingBody.fill(longDraft);
+    await writingBody.press('Control+End');await writingBody.press('Enter');await writingBody.pressSequentially('尾段追加：编辑完成。');
+    await writingBody.press('Control+s');await page.waitForFunction(()=>document.querySelector('[data-testid="writing-workbench"]')?.dataset.saveState==='saved');
+    assert.equal(writingFixture.state.document.text,longDraft+'\n尾段追加：编辑完成。');
+    const scrollRegion=page.getByTestId('writing-scroll-region');await scrollRegion.evaluate(element=>{element.scrollTop=element.scrollHeight;});
+    assert.ok(await scrollRegion.evaluate(element=>element.scrollTop>1000&&element.scrollHeight>element.clientHeight));
+    const footer=panel.getByRole('button',{name:'送回画布',exact:true}),footerBounds=await footer.boundingBox(),regionBounds=await scrollRegion.boundingBox();
+    assert.ok(footerBounds&&regionBounds&&footerBounds.y>=regionBounds.y&&footerBounds.y+footerBounds.height<=regionBounds.y+regionBounds.height+1,'Long draft footer is reachable inside embedded scroll region');
+    await page.screenshot({path:path.join(output,'03-embedded-long-document-bottom.png')});
+    const writingReceipt=writingFixture.state.document.id+'-'+writingFixture.state.document.revision,writingPrefix='shape:writing-'+writingReceipt.length+'_'+writingReceipt+'-';
+    await footer.click();await fixtureSettled(()=>shapes().filter(shape=>shape.id.startsWith(writingPrefix)).map(shape=>shape.props.text).join('')===longDraft+'\n尾段追加：编辑完成。');
+    check('embedded-long-document-tail-edit-ctrl-s-save-and-bottom-canvas-handoff-remain-reachable');
+    const longShapeCount=shapes().length;assert.ok(longShapeCount>2);await open(true);await panel.getByRole('button',{name:'当前稿加入画布',exact:true}).click();await page.waitForTimeout(150);assert.equal(shapes().length,longShapeCount);await page.getByRole('button',{name:'撤销',exact:true}).click();await fixtureSettled(()=>shapes().length===1);await page.getByRole('button',{name:'重做',exact:true}).click();await fixtureSettled(()=>shapes().length===longShapeCount);check('long-draft-handoff-is-idempotent-and-entire-chunk-group-undoes-in-one-step');
+    // Use a fresh browser composer scope for a new homepage handoff in this fixture project.
+    await page.evaluate(()=>{for(const key of Object.keys(localStorage))if(key.startsWith('novart:writing-workbench:'))localStorage.removeItem(key);});
     const initialCopyPosts=copywritingPosts, initialImagePosts=conversationPosts.length;
     await page.goto(origin+'/home-fixture');await page.waitForFunction(()=>homeStart.snapshot().loaded);
     await page.locator('#ns-mode-copywriting').click();await page.locator('#ns-home-brief').fill('为新品写一句品牌口号');
-    await page.locator('#hs-file-input').setInputFiles({name:'reference.png',mimeType:'image/png',buffer:png});
-    await page.waitForFunction(()=>homeStart.snapshot().attachmentCount===1);
-    await page.locator('#ns-create').click();
-    await page.waitForFunction(()=>homeStart.snapshot().submittedRequestId===null && document.querySelector('iframe')?.contentDocument?.querySelector('[data-testid="copywriting-panel"] textarea')?.value==='为新品写一句品牌口号',undefined,{timeout:45000});
+    await page.locator('#hs-file-input').setInputFiles({name:'reference.png',mimeType:'image/png',buffer:png});await page.waitForFunction(()=>homeStart.snapshot().attachmentCount===1);await page.locator('#ns-create').click();
+    await page.waitForFunction(()=>homeStart.snapshot().submittedRequestId===null && document.querySelector('iframe')?.contentDocument?.querySelector('[aria-label="本轮文案需求"]')?.value==='为新品写一句品牌口号',undefined,{timeout:45000});
     const homeFrame=page.frames().find(frame=>new URL(frame.url()).pathname==='/studio-editor');assert.ok(homeFrame);
-    const homePanel=homeFrame.getByTestId('copywriting-panel');assert.ok(await homePanel.isVisible());
-    assert.ok(await homePanel.getByText('参考所选图片',{exact:false}).isVisible());
-    assert.equal(copywritingPosts,initialCopyPosts);assert.equal(conversationPosts.length,initialImagePosts);
-    check('homepage-copy-opens-panel-with-reference-without-model-submission');
-    await homePanel.getByRole('textbox',{name:'文案需求',exact:true}).fill('调整后的品牌口号需求');
-    await homeFrame.goto(origin+'/studio-editor');await homeFrame.getByRole('button',{name:'AI 文案',exact:true}).click();
-    assert.equal(await homeFrame.getByRole('textbox',{name:'文案需求',exact:true}).inputValue(),'调整后的品牌口号需求');
-    assert.equal(copywritingPosts,initialCopyPosts);assert.equal(conversationPosts.length,initialImagePosts);
-    check('homepage-copy-draft-survives-refresh-without-paying');
+    const homePanel=homeFrame.getByTestId('writing-workbench');assert.ok(await homePanel.isVisible());assert.equal(await homeFrame.getByTestId('owned-canvas').isVisible(),true);
+    assert.ok(writingFixture.state.references.some(r=>r.kind==='IMAGE'));assert.equal(copywritingPosts,initialCopyPosts);assert.equal(conversationPosts.length,initialImagePosts);check('homepage-writing-opens-real-iframe-with-reference-without-model-post');
+    await homePanel.getByRole('textbox',{name:'本轮文案需求',exact:true}).fill('调整后的品牌口号需求');await homeFrame.waitForTimeout(150);
+    await homeFrame.goto(origin+'/studio-editor?surface=writing');await homeFrame.waitForFunction(()=>document.querySelector('[data-testid="writing-workbench"]')?.dataset.ready==='true');
+    assert.equal(await homeFrame.getByRole('textbox',{name:'本轮文案需求',exact:true}).inputValue(),'调整后的品牌口号需求');assert.equal(copywritingPosts,initialCopyPosts);assert.equal(conversationPosts.length,initialImagePosts);check('homepage-writing-composer-refresh-restores-without-paying');
+    stage='selected-five-images-to-writing';
+    await homePanel.getByRole('button',{name:'返回画布',exact:true}).click();
+    const multi=contracts.emptyOwnedDocument();
+    for(let i=0;i<5;i++){
+      const width=160+i, height=90, bytes=fixturePng(width,height,()=>[124,92,255,255]),assetId='writing-multi-'+i;
+      const image={id:assetId,assetId,assetSha256:crypto.createHash('sha256').update(bytes).digest('hex'),kind:'image',mimeType:'image/png',fileName:assetId+'.png',sizeBytes:bytes.length,width,height,url:`/api/workspaces/${fixture.workspaceId}/assets/${assetId}/raw`};
+      experienceAssets.set(assetId,image);multi.items.push({id:'shape:writing-multi-'+i,kind:'image',x:i*175,y:0,w:width,h:height,rotation:0,opacity:1,url:image.url,assetId,assetSha256:image.assetSha256,imageNumber:i+1});
+    }
+    canvas=await contracts.encodeOwnedCanvas(multi);revision++;
+    await homeFrame.goto(origin+'/studio-editor');await homeFrame.locator('[data-kind="image"]').nth(4).waitFor();
+    await homeFrame.getByTestId('owned-canvas').focus();await page.keyboard.press('Control+a');assert.equal(await homeFrame.locator('[data-owned-id][data-selected="true"]').count(),5);
+    const previousReferences=writingFixture.state.references.length;
+    await homeFrame.getByRole('tab',{name:'AI 文案',exact:true}).click();await fixtureSettled(()=>writingFixture.state.references.length===previousReferences+5);
+    await homePanel.getByText('导入资料均已保存，本轮先选前 4 张图片及范围内文档。更多资料可在“资料”里切换选择。每轮最多 12 份。',{exact:true}).waitFor();
+    await homePanel.getByRole('button',{name:/^资料/}).click();assert.equal(await homePanel.getByRole('checkbox',{checked:true}).count(),4);await homePanel.getByRole('button',{name:'关闭本轮参考资料'}).click();
+    assert.equal(copywritingPosts,initialCopyPosts);assert.equal(conversationPosts.length,initialImagePosts);check('five-selected-canvas-images-all-imported-four-explicitly-selected-with-visible-limit');
+    await page.screenshot({path:path.join(output,'02-homepage-writing.png')});
+    stage='writing-parent-open-panel';await homePanel.getByRole('button',{name:'当前稿',exact:true}).click();await homePanel.getByRole('textbox',{name:'当前稿正文',exact:true}).fill('外层打开资料前，先保存文案手改。');await page.evaluate(projectId=>document.querySelector('iframe').contentWindow.postMessage({type:'nv-studio',projectId,action:'open-panel',panel:'materials'},location.origin),fixture.projectId);await homeFrame.getByRole('dialog',{name:'品牌素材',exact:true}).waitFor();assert.equal(writingFixture.state.document.text,'外层打开资料前，先保存文案手改。');assert.equal(await homePanel.isVisible(),false);assert.equal(await homeFrame.getByTestId('owned-canvas').isVisible(),true);check('parent-open-panel-confirms-writing-save-before-showing-visible-canvas-panel');
+    stage='writing-notification-link';const notified=writingFixture.state.tasks.find(task=>task.operation==='GENERATE');await page.goto(origin+'/studio-writing?taskId='+encodeURIComponent(notified.id));await page.getByTestId('writing-workbench').locator('[data-task-id="'+notified.id+'"]').waitFor();assert.equal(await page.getByTestId('owned-canvas').isVisible(),true);assert.equal(copywritingPosts,initialCopyPosts);check('writing-notification-task-link-stays-in-writing-and-only-reads-original-task');
     assert.deepEqual(report.externalRequests,[]);assert.deepEqual(report.errors,[]);report.passed=true;return;
   }
   if(brandOnly) {
@@ -280,8 +334,8 @@ async function fixtureSettled(condition) {const deadline=Date.now()+10000;while(
       assert.ok((await logo.evaluate(img=>img.currentSrc)).includes(width>=640?'deepflare-logo.svg':'deepflare-mark.svg'));
       const box=await logo.boundingBox();assert.ok(box&&box.width>0&&box.height>0);
       assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
-      await page.getByRole('button',{name:'创作',exact:true}).click();
-      await page.getByRole('button',{name:'创作',exact:true}).click();
+      await page.getByRole('tab',{name:'对话改图',exact:true}).click();
+      await page.getByRole('tab',{name:'对话改图',exact:true}).click();
       await page.screenshot({path:path.join(output,'local-fixture-editor-brand-'+width+'.png')});
       check('official Chinese-English logo at '+width+' with responsive toolbar interaction');
     }
@@ -319,7 +373,7 @@ async function fixtureSettled(condition) {const deadline=Date.now()+10000;while(
     assert.deepEqual(report.externalRequests,[]);assert.deepEqual(report.errors,[]);report.passed=true;return;
   }
   const bounds=await surface.boundingBox();assert.ok(bounds&&bounds.width>400&&bounds.height>300);
-  const draw=async(label,x,y,w,h)=>{await page.getByRole('button',{name:label,exact:true}).click();await page.mouse.move(bounds.x+x,bounds.y+y);await page.mouse.down();await page.mouse.move(bounds.x+x+w,bounds.y+y+h,{steps:8});await page.mouse.up();};
+  const draw=async(label,x,y,w,h)=>{await canvasTool(label);await page.mouse.move(bounds.x+x,bounds.y+y);await page.mouse.down();await page.mouse.move(bounds.x+x+w,bounds.y+y+h,{steps:8});await page.mouse.up();};
   stage='draw-and-history';await draw('图形',160,130,150,110);await page.getByTestId('owned-canvas-item').waitFor();check('draw-rectangle');
   await page.getByRole('button',{name:'撤销',exact:true}).click();await assert.equal(await page.getByTestId('owned-canvas-item').count(),0);await page.getByRole('button',{name:'重做',exact:true}).click();assert.equal(await page.getByTestId('owned-canvas-item').count(),1);check('undo-redo');
   await draw('画笔',360,210,110,75);assert.equal(await page.getByTestId('owned-canvas-item').count(),2);check('freehand-stroke');
@@ -334,13 +388,13 @@ async function fixtureSettled(condition) {const deadline=Date.now()+10000;while(
   await surface.focus();await page.keyboard.press('Control+a');assert.equal(await page.locator('[data-owned-id][data-selected="true"]').count(),4);await page.keyboard.press('ArrowRight');await page.keyboard.press('Delete');assert.equal(await page.getByTestId('owned-canvas-item').count(),0);await page.getByRole('button',{name:'撤销',exact:true}).click();assert.equal(await page.getByTestId('owned-canvas-item').count(),4);check('multiselect-nudge-delete-undo');
   await page.getByRole('button',{name:'恢复100%缩放',exact:true}).click();await page.getByRole('button',{name:'放大',exact:true}).click();assert.match(await page.getByRole('button',{name:'恢复100%缩放'}).textContent(),/120%/);await page.getByRole('button',{name:'移动画布',exact:true}).click();const worldStyle=await page.locator('.oc-world').getAttribute('style');await page.mouse.move(bounds.x+600,bounds.y+450);await page.mouse.down();await page.mouse.move(bounds.x+650,bounds.y+480,{steps:8});await page.mouse.up();assert.notEqual(await page.locator('.oc-world').getAttribute('style'),worldStyle);check('pan-zoom');
   await page.getByRole('button',{name:'选择',exact:true}).click();if(await saveButton.isEnabled())await saveButton.click();await page.waitForFunction(()=>document.querySelector('[data-testid="owned-editor"]').dataset.saveState==='saved');before=canvas;
-  stage='export';for(const label of ['导出SVG','导出PNG']) {await page.getByRole('button',{name:'导出',exact:true}).click();const event=page.waitForEvent('download');await page.getByRole('button',{name:label,exact:true}).click();const download=await event;const file=await download.path();const bytes=fs.readFileSync(file);assert.ok(bytes.length>50);if(label==='导出PNG') assert.equal(bytes.subarray(1,4).toString(),'PNG');else assert.match(bytes.toString(),/<svg/);check(label);}
+  stage='export';for(const label of ['导出SVG','导出PNG']) {await canvasTool('导出');const event=page.waitForEvent('download');await page.getByRole('button',{name:label,exact:true}).click();const download=await event;const file=await download.path();const bytes=fs.readFileSync(file);assert.ok(bytes.length>50);if(label==='导出PNG') assert.equal(bytes.subarray(1,4).toString(),'PNG');else assert.match(bytes.toString(),/<svg/);check(label);}
   const openAdvanced=async(scope=page)=>{if(await scope.getByRole('dialog',{name:'素材与画框',exact:true}).isVisible())return;const settings=scope.getByTestId('conversation-settings');if(await settings.getAttribute('open')===null)await scope.getByLabel('生成设置',{exact:true}).click();await scope.getByRole('button',{name:'素材用途与输出画框',exact:true}).click();};
   const closeAdvanced=async(scope=page)=>{const close=scope.getByRole('button',{name:'关闭工具窗口',exact:true});if(await close.isVisible())await close.click();};
   const openComposerSettings=async()=>{const settings=page.getByTestId('conversation-settings');if(await settings.getAttribute('open')===null)await page.getByLabel('生成设置',{exact:true}).click();};
   const waitDraft=async(expectedText)=>{await page.waitForFunction(()=>document.querySelector('[data-testid="owned-conversation"]')?.dataset.conversationReady==='true');if(expectedText!==undefined)await fixtureSettled(()=>conversationDraft?.text===expectedText);await page.waitForFunction(()=>document.querySelector('[data-testid="conversation-draft-status"]')?.dataset.saved==='true');};
   const waitWorkflow=async()=>{await openAdvanced();return page.waitForFunction(()=>{const el=document.querySelector('[data-testid="owned-workflow"]');return el?.dataset.workflowState==='ready'&&el.dataset.workflowDirty==='false';});};
-  const saveWorkflow=async()=>{const response=page.waitForResponse(r=>new URL(r.url()).pathname==='/workflow'&&r.request().method()==='POST');await page.getByRole('button',{name:'保存用途',exact:true}).click();assert.equal((await response).status(),200);await waitWorkflow();};
+  const saveWorkflow=async()=>{const response=page.waitForResponse(r=>new URL(r.url()).pathname==='/workflow'&&r.request().method()==='POST');await page.getByRole('button',{name:'完成并应用到对话',exact:true}).click();assert.equal((await response).status(),200);await page.getByRole('dialog',{name:'素材与画框',exact:true}).waitFor({state:'hidden'});await waitDraft();};
   stage='draft-save-and-refresh';await waitDraft();
   await page.getByRole('textbox',{name:'对话设计需求',exact:true}).fill('合成需求：保留中文\n刷新后继续编辑');await openComposerSettings();
   await page.getByRole('combobox',{name:'对话图片比例',exact:true}).selectOption('16:9');await page.getByRole('combobox',{name:'对话图片画质',exact:true}).selectOption('2K');
@@ -354,19 +408,19 @@ async function fixtureSettled(condition) {const deadline=Date.now()+10000;while(
   const imageAsset=currentWorkflowAssets().assets[0];assert.ok(imageAsset?.valid,'Candidate is backed by saved canvas and persistent fixture material');const assetKey=JSON.stringify([imageAsset.shapeId,imageAsset.assetSha256]);
   assert.equal(await page.getByRole('combobox',{name:'创作方式',exact:true}).count(),0);assert.equal(await page.getByRole('combobox',{name:'修改目标',exact:true}).count(),0);
   await page.getByRole('combobox',{name:'添加画布素材用途',exact:true}).selectOption(assetKey);await page.getByRole('button',{name:'添加用途',exact:true}).click();
-  assert.equal(await page.getByRole('checkbox',{name:'参与生成 1',exact:true}).isChecked(),false,'Adding a reference does not silently opt it into paid generation');
+  assert.equal(await page.getByRole('checkbox',{name:'参与生成 1',exact:true}).isChecked(),true,'Explicitly adding a reference selects it for the next confirmed request');assert.equal(generationPosts,0,'Adding reference never submits a paid task');
   await page.getByRole('combobox',{name:'素材用途 1',exact:true}).selectOption('ADAPTIVE');await page.getByRole('checkbox',{name:'参与生成 1',exact:true}).check();await saveWorkflow();
   assert.equal(workflow.references[0].purpose,'ADAPTIVE');assert.equal(workflow.references[0].participates,true);assert.ok(workflowWrites>0);
-  await page.getByRole('button',{name:'应用到对话',exact:true}).click();await page.getByRole('dialog',{name:'素材与画框',exact:true}).waitFor({state:'hidden'});await page.getByRole('button',{name:'修改对象 图片1',exact:true}).click();await waitDraft();
+  await page.getByRole('dialog',{name:'素材与画框',exact:true}).waitFor({state:'hidden'});await page.getByRole('button',{name:'图层',exact:true}).click();await page.getByRole('button',{name:'选择图层 图片1',exact:true}).click();await page.getByRole('button',{name:'图层',exact:true}).click();await fixtureSettled(()=>conversationDraft.quickEditTargetId===imageAsset.shapeId);await waitDraft();
   assert.equal(conversationDraft.quickEditTargetId,imageAsset.shapeId);assert.equal(conversationDraft.references[0].purpose,'ADAPTIVE');
-  const savedWorkflowRevision=workflow.revision;await page.reload();await waitDraft();assert.equal(await page.getByRole('button',{name:'修改对象 图片1',exact:true}).getAttribute('aria-pressed'),'true');await waitWorkflow();
+  const savedWorkflowRevision=workflow.revision;await page.reload();await waitDraft();assert.equal(await page.getByTestId('conversation-target').getByText('图片1',{exact:true}).count(),1);assert.equal(conversationDraft.quickEditTargetId,imageAsset.shapeId);await waitWorkflow();
   assert.equal(await page.getByRole('combobox',{name:'素材用途 1',exact:true}).inputValue(),'ADAPTIVE');assert.equal(await page.getByRole('checkbox',{name:'参与生成 1',exact:true}).isChecked(),true);assert.equal(workflow.revision,savedWorkflowRevision);check('composer-target-purpose-participation-reopen-without-duplicate-mode-controls');
-  stage='exact-output-frame-draft';await closeAdvanced();await page.getByRole('button',{name:'修改对象 图片1',exact:true}).click();await waitDraft();await waitWorkflow();await page.getByRole('combobox',{name:'素材用途 1',exact:true}).selectOption('EXACT');
+  stage='exact-output-frame-draft';await closeAdvanced();await page.getByRole('button',{name:'取消修改对象',exact:true}).click();await fixtureSettled(()=>conversationDraft.quickEditTargetId===null);await waitDraft();await waitWorkflow();await page.getByRole('combobox',{name:'素材用途 1',exact:true}).selectOption('EXACT');
   await page.getByRole('button',{name:'按输出比例新建画框',exact:true}).click();const frameId=await page.getByRole('combobox',{name:'输出画框',exact:true}).inputValue();assert.match(frameId,/^shape:/);
   await page.waitForFunction(()=>document.querySelector('[data-testid="owned-editor"]').dataset.saveState==='saved');await fixtureSettled(()=>draft.inputForm?.outputFrameId===frameId);await saveWorkflow();assert.equal(workflow.target,null);assert.equal(generationPosts,0);
-  await page.getByRole('button',{name:'应用到对话',exact:true}).click();await page.getByRole('dialog',{name:'素材与画框',exact:true}).waitFor({state:'hidden'});await waitDraft();assert.equal(conversationDraft.references[0].purpose,'EXACT');
-  stage='removed-workflow-reference-clears-composer';await waitWorkflow();await page.getByRole('button',{name:'移除素材用途 1',exact:true}).click();await saveWorkflow();await page.getByRole('button',{name:'应用到对话',exact:true}).click();await page.getByRole('dialog',{name:'素材与画框',exact:true}).waitFor({state:'hidden'});await waitDraft();assert.equal(conversationDraft.references.length,0);check('removed-strict-workflow-reference-is-also-removed-from-composer');
-  await waitWorkflow();await page.getByRole('combobox',{name:'添加画布素材用途',exact:true}).selectOption(assetKey);await page.getByRole('button',{name:'添加用途',exact:true}).click();await page.getByRole('combobox',{name:'素材用途 1',exact:true}).selectOption('EXACT');await page.getByRole('checkbox',{name:'参与生成 1',exact:true}).check();await saveWorkflow();await page.getByRole('button',{name:'应用到对话',exact:true}).click();await page.getByRole('dialog',{name:'素材与画框',exact:true}).waitFor({state:'hidden'});await waitDraft();assert.equal(conversationDraft.references.length,1);
+  await page.getByRole('dialog',{name:'素材与画框',exact:true}).waitFor({state:'hidden'});await waitDraft();assert.equal(conversationDraft.references[0].purpose,'EXACT');
+  stage='removed-workflow-reference-clears-composer';await waitWorkflow();await page.getByRole('button',{name:'移除素材用途 1',exact:true}).click();await saveWorkflow();await page.getByRole('dialog',{name:'素材与画框',exact:true}).waitFor({state:'hidden'});await waitDraft();assert.equal(conversationDraft.references.length,0);check('removed-strict-workflow-reference-is-also-removed-from-composer');
+  await waitWorkflow();await page.getByRole('combobox',{name:'添加画布素材用途',exact:true}).selectOption(assetKey);await page.getByRole('button',{name:'添加用途',exact:true}).click();await page.getByRole('combobox',{name:'素材用途 1',exact:true}).selectOption('EXACT');await page.getByRole('checkbox',{name:'参与生成 1',exact:true}).check();await saveWorkflow();await page.getByRole('dialog',{name:'素材与画框',exact:true}).waitFor({state:'hidden'});await waitDraft();assert.equal(conversationDraft.references.length,1);
   before=canvas;const baselineShapes=shapes().length;assert.equal(baselineShapes,5);await page.reload();await waitDraft();await waitWorkflow();assert.equal(await page.getByRole('combobox',{name:'输出画框',exact:true}).inputValue(),frameId);assert.equal(await page.getByRole('combobox',{name:'素材用途 1',exact:true}).inputValue(),'EXACT');assert.equal(canvas,before);check('exact-output-frame-restores-with-document-and-draft');
   stage='missing-provider';await closeAdvanced();await page.getByRole('button',{name:'发送',exact:true}).click();await page.getByRole('alert').filter({hasText:'真实模型未配置，不接受fixture生成'}).waitFor();assert.equal(await prompt.inputValue(),'合成测试需求：中文输入完成');assert.equal(conversationPosts.length,1);assert.equal(generations.size,0);check('missing-provider-preserves-prompt-and-does-not-invent-task');
   stage='lost-conversation-receipt-reload';const conversationPendingKey='deepflare:conversation-pending:'+JSON.stringify([fixture.userId,fixture.workspaceId,fixture.projectId]);
@@ -379,7 +433,7 @@ async function fixtureSettled(condition) {const deadline=Date.now()+10000;while(
   const legacyInput={projectId:fixture.projectId,mutationId:crypto.randomUUID(),prompt:conversationDraft.text,sizeSelection:conversationDraft.sizeSelection,workflowRevision:workflow.revision,documentRevision:revision,outputFrameId:frameId};
   const pendingRecord=JSON.stringify({...fixture,version:1,intent:{mode:'generate',input:legacyInput}});
   await page.evaluate(({newKey,oldKey,record})=>{localStorage.removeItem(newKey);sessionStorage.setItem(oldKey,record);},{newKey:conversationPendingKey,oldKey:pendingKey,record:pendingRecord});
-  const pendingBaseline={posts:generationPosts,draftWrites,workflowWrites,canvas};await page.reload();await waitDraft();assert.equal(await prompt.isDisabled(),true);await page.getByRole('button',{name:'任务记录',exact:true}).click();
+  const pendingBaseline={posts:generationPosts,draftWrites,workflowWrites,canvas};await page.reload();await waitDraft();assert.equal(await prompt.isDisabled(),true);await page.getByRole('tab',{name:'任务记录',exact:true}).click();
   const confirmIntent=page.getByRole('button',{name:'检查上次生成',exact:true});await confirmIntent.waitFor();assert.equal(await confirmIntent.isEnabled(),true);assert.equal(generationPosts,pendingBaseline.posts);assert.equal(draftWrites,pendingBaseline.draftWrites);assert.equal(workflowWrites,pendingBaseline.workflowWrites);assert.equal(canvas,pendingBaseline.canvas);check('legacy-uncertain-generation-locks-new-composer-without-auto-post');
   const confirmedResponse=page.waitForResponse(response=>new URL(response.url()).pathname==='/studio/generation'&&response.request().method()==='POST');await confirmIntent.click();assert.equal((await confirmedResponse).status(),503);assert.deepEqual(generationPostInputs[0],legacyInput);assert.equal(generations.size,0);assert.equal(await page.evaluate(key=>sessionStorage.getItem(key),pendingKey),pendingRecord);check('legacy-confirmation-replays-exact-mutation-and-payload-from-task-modal');
   for(const scenario of ['corrupt','unavailable','quota','readonly']) {
@@ -389,7 +443,7 @@ async function fixtureSettled(condition) {const deadline=Date.now()+10000;while(
       await isolatedContext.addInitScript(({scenario,key,record,newKey})=>{if(scenario==='corrupt')sessionStorage.setItem(key,'{unreadable');if(scenario==='readonly')sessionStorage.setItem(key,record);if(scenario==='unavailable')Object.defineProperty(window,'sessionStorage',{get(){throw new DOMException('Unavailable','SecurityError');}});if(scenario==='quota'){const original=Storage.prototype.setItem;Storage.prototype.setItem=function(name,value){if(this===window.localStorage&&name===newKey)throw new DOMException('Unavailable','QuotaExceededError');return original.call(this,name,value);};}},{scenario,key:pendingKey,record:pendingRecord,newKey:conversationPendingKey});
       const isolatedPage=await isolatedContext.newPage();isolatedPage.on('pageerror',error=>report.errors.push(error.name));const noPost=generationPosts,noConversation=conversationPosts.length;await isolatedPage.goto(origin+'/studio-editor');await isolatedPage.getByTestId('owned-canvas').waitFor();await isolatedPage.waitForFunction(()=>document.querySelector('[data-testid="owned-conversation"]')?.dataset.conversationReady==='true');
       if(scenario==='quota'){await isolatedPage.getByRole('button',{name:'发送',exact:true}).click();await isolatedPage.getByRole('alert').waitFor();assert.equal(await isolatedPage.evaluate(key=>localStorage.getItem(key),conversationPendingKey),null);}
-      else if(scenario==='readonly'){await isolatedPage.evaluate(()=>window.changeFixtureReadOnly(true));await isolatedPage.getByRole('button',{name:'任务记录',exact:true}).click();assert.equal(await isolatedPage.getByRole('button',{name:'检查上次生成',exact:true}).isDisabled(),true);assert.equal(await isolatedPage.evaluate(key=>sessionStorage.getItem(key),pendingKey),pendingRecord);}
+      else if(scenario==='readonly'){await isolatedPage.evaluate(()=>window.changeFixtureReadOnly(true));await isolatedPage.getByRole('tab',{name:'任务记录',exact:true}).click();assert.equal(await isolatedPage.getByRole('button',{name:'检查上次生成',exact:true}).isDisabled(),true);assert.equal(await isolatedPage.evaluate(key=>sessionStorage.getItem(key),pendingKey),pendingRecord);await isolatedPage.getByRole('tab',{name:'对话改图',exact:true}).click();}
       else{await isolatedPage.getByRole('status').filter({hasText:scenario==='corrupt'?'上一份创作的确认记录暂不可读':'浏览器暂不能保存创作确认记录'}).waitFor();if(scenario==='corrupt')assert.equal(await isolatedPage.evaluate(key=>sessionStorage.getItem(key),pendingKey),'{unreadable');}
       if(scenario!=='quota')assert.equal(await isolatedPage.getByRole('textbox',{name:'对话设计需求',exact:true}).isDisabled(),true);
       assert.equal(generationPosts,noPost);assert.equal(conversationPosts.length,noConversation,'Unsafe journals never submit a paid request');assert.equal(generations.size,0);check('generation-journal-'+scenario+'-preserves-safety-without-post');
@@ -398,7 +452,7 @@ async function fixtureSettled(condition) {const deadline=Date.now()+10000;while(
   await closeAdvanced();
   if(process.env.NOVART_OWNED_SCREENSHOT)await page.screenshot({path:process.env.NOVART_OWNED_SCREENSHOT});
   stage='stable-no-sdk';await page.evaluate(()=>{const element=document.querySelector('[data-testid="owned-canvas"]');window.ownedStability={element,started:performance.now(),removed:false};window.ownedObserver=new MutationObserver(records=>{if(!element.isConnected||records.some(record=>[...record.removedNodes].some(node=>node===element||node instanceof Element&&node.contains(element))))window.ownedStability.removed=true;});window.ownedObserver.observe(document.body,{childList:true,subtree:true});});
-  await page.waitForTimeout(15100);const stability=await page.evaluate(()=>{window.ownedObserver.disconnect();return {elapsed:performance.now()-window.ownedStability.started,removed:window.ownedStability.removed,same:window.ownedStability.element===document.querySelector('[data-testid="owned-canvas"]')};});assert.ok(stability.elapsed>=15000);assert.equal(stability.removed,false);assert.equal(stability.same,true);assert.equal(await page.getByRole('button',{name:'画笔',exact:true}).isVisible(),true);assert.equal(await surface.count(),1);assert.deepEqual(report.externalRequests,[]);assert.deepEqual(report.errors,[]);assert.equal(await page.evaluate(()=>!!window.webpackChunk_lovartai_lovart_shell),false);check('canvas-and-toolbar-stable-15-seconds-without-sdk');
+  await page.waitForTimeout(15100);const stability=await page.evaluate(()=>{window.ownedObserver.disconnect();return {elapsed:performance.now()-window.ownedStability.started,removed:window.ownedStability.removed,same:window.ownedStability.element===document.querySelector('[data-testid="owned-canvas"]')};});assert.ok(stability.elapsed>=15000);assert.equal(stability.removed,false);assert.equal(stability.same,true);await page.getByRole('button',{name:'更多画布工具',exact:true}).click();assert.equal(await page.getByRole('button',{name:'画笔',exact:true}).isVisible(),true);await page.getByRole('button',{name:'更多画布工具',exact:true}).click();assert.equal(await surface.count(),1);assert.deepEqual(report.externalRequests,[]);assert.deepEqual(report.errors,[]);assert.equal(await page.evaluate(()=>!!window.webpackChunk_lovartai_lovart_shell),false);check('canvas-and-toolbar-stable-15-seconds-without-sdk');
   stage='responsive';await page.setViewportSize({width:390,height:844});await page.getByRole('button',{name:'收起面板',exact:true}).click();const small=await surface.boundingBox();assert.ok(small.width<=390&&small.width>=380);assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);const dock=await page.locator('.oc-dock').boundingBox();assert.ok(dock.x>=0&&dock.x+dock.width<=390);check('phone-layout');await page.setViewportSize({width:1366,height:850});
   stage='task-inbox-real-react-handoff';generations.set('fixture-generation',{mode:'generate',requestId:'fixture-generation',mutationId:crypto.randomUUID(),projectId:fixture.projectId,generationId:'fixture-generation-record',status:'FAILED',progress:null,expiresAt:new Date(Date.now()+60000).toISOString(),archiveExpiresAt:null,archiveProcessingExpiresAt:null,displayText:'合成任务，仅验证提醒入口',resultState:'NOT_REQUESTED',results:[],error:'合成失败回执，未调用真实 AI',archiveError:null,canRetryArchive:false});
   const taskOpenBaseline={canvas,writes,generationPosts,count:shapes().length};await page.goto(origin+'/studio');await page.waitForFunction(()=>receipts.some(r=>r.type==='nv-studio'&&r.action==='ready'));
@@ -444,7 +498,7 @@ async function fixtureSettled(condition) {const deadline=Date.now()+10000;while(
     before=canvas;
   } finally {delayDocument=0;await leaveContext.close();}
   stage='handoff-turns-readonly';delayMaterials=350;const readonlyRequest=crypto.randomUUID();await page.evaluate(({requestId,projectId,material})=>{const frame=document.querySelector('iframe').contentWindow;frame.postMessage({type:'nv-studio',action:'insert-material',projectId,requestId,material},location.origin);setTimeout(()=>frame.changeFixtureReadOnly(true),100);},{requestId:readonlyRequest,projectId:fixture.projectId,material});await page.waitForFunction(id=>receipts.some(r=>r.action==='insert-material-result'&&r.requestId===id&&r.status==='failed'),readonlyRequest);assert.equal(canvas,before);assert.equal(shapes().length,baselineShapes+1);check('readonly-during-handoff-never-confirms-insertion');delayMaterials=0;
-  stage='conflict';conflict=true;await page.goto(origin+'/studio-editor');await surface.waitFor();await draw('图形',180,140,120,80);await page.getByText('保存冲突',{exact:true}).waitFor();assert.equal(canvas,before);assert.equal(await page.getByRole('button',{name:'画笔',exact:true}).isDisabled(),true);check('save-conflict-preserves-server-and-local-content');conflict=false;
+  stage='conflict';conflict=true;await page.goto(origin+'/studio-editor');await surface.waitFor();await draw('图形',180,140,120,80);await page.getByText('保存冲突',{exact:true}).waitFor();assert.equal(canvas,before);await page.getByRole('button',{name:'更多画布工具',exact:true}).click();assert.equal(await page.getByRole('button',{name:'画笔',exact:true}).isDisabled(),true);check('save-conflict-preserves-server-and-local-content');conflict=false;
   stage='restore-failure';failRestore=true;const initialWrites=writes;await page.goto(origin+'/studio-editor');await page.getByText('合成恢复失败',{exact:false}).waitFor();await page.waitForTimeout(1500);assert.equal(writes,initialWrites);assert.equal(canvas,before);check('failed-restore-never-writes-empty');failRestore=false;
   stage='homepage-file-to-saved-owned-editor';await page.evaluate(key=>sessionStorage.removeItem(key),pendingKey);conversationDraft=null;delayConversation=1200;delayWorkflow=900;canvas='';revision=0;uploads.clear();generations.clear();draft={projectId:fixture.projectId,revision:0,inputForm:null,updatedAt:null,referenceIssues:[]};workflow={projectId:fixture.projectId,revision:0,mode:'generate',target:null,references:[],updatedAt:null,issues:[]};await page.goto(origin+'/home-fixture');await page.waitForFunction(()=>homeStart.snapshot().loaded);await page.locator('#ns-home-brief').fill('首页带图测试');await page.locator('#hs-file-input').setInputFiles({name:'fixture.png',mimeType:'image/png',buffer:png});await page.waitForFunction(()=>homeStart.snapshot().attachmentCount===1);await page.locator('#ns-create').click();await page.waitForFunction(()=>homeStart.snapshot().submittedRequestId===null&&homeStart.snapshot().attachmentCount===0&&document.querySelector('iframe').contentDocument?.querySelector('[data-kind="image"]'),undefined,{timeout:45000});assert.equal(shapes().length,1);assert.ok(revision>=1);const homeSaved=canvas;const homeFrame=page.frames().find(frame=>new URL(frame.url()).pathname==='/studio-editor');assert.ok(homeFrame);await homeFrame.goto(origin+'/studio-editor');await homeFrame.getByTestId('owned-canvas-item').waitFor();assert.equal(canvas,homeSaved);assert.equal(conversationPosts.filter(input=>input.homeStart).length,1);delayConversation=0;delayWorkflow=0;check('homepage-file-handoff-waits-for-delayed-restore-and-clears-only-after-saved-and-accepted');
   stage='complete-owned-editing-tools';await page.goto(origin+'/studio-editor');await page.getByTestId('owned-canvas').waitFor();

@@ -48,7 +48,12 @@ class OwnedStudioExportTests(unittest.TestCase):
             self.assertEqual(entry['sha256'], hashlib.sha256(content).hexdigest(), route)
             self.assertNotRegex(content.lower(), rb'lovart|lib-tldraw|webpackchunk|__novart_tldraw_license_key')
             if entry['mime'].startswith('text/html') or 'css' in entry['mime']:
-                for reference in re.findall(rb'(?:src|href)=["\'](/[^"\'?#]+)', content):
+                for attribute, reference in re.findall(rb'(src|href)=["\'](/[^"\'?#]+)', content):
+                    # A navigation href is served by Next, not the static asset exporter.
+                    # Keep this narrow: src references and every other URL still need a manifest entry.
+                    if attribute == b'href' and reference == b'/inspiration':
+                        self.assertTrue((ROOT / 'apps/web/src/app/inspiration/page.tsx').is_file())
+                        continue
                     self.assertIn(reference.decode('utf-8'), manifest['files'], route)
                 for reference in re.findall(rb'url\(["\']?(/[^)"\'?#]+)', content):
                     self.assertIn(reference.decode('utf-8'), manifest['files'], route)

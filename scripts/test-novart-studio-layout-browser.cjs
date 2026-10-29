@@ -45,6 +45,7 @@ function handle(req,res) {
   if (url.pathname === '/api/workspaces') return json(res,{workspaces:context.workspaces});
   if (url.pathname === '/api/workbench/session') return json(res,{...context,activeWorkspaceId:context.workspaceId});
   if (url.pathname.endsWith('/notifications')) return json(res,{items:[]});
+  if (url.pathname.endsWith('/inspiration/activity')) return json(res,{enabled:false,items:[]});
   if (url.pathname.endsWith('/studio-layer-activity')) return json(res,{requests:Array.from({length:12},(_,i)=>({requestId:'layout-task-'+i,projectId:project.projectId,status:'RUNNING',createdAt:'2026-10-13T08:00:00Z',expiresAt:'2026-10-14T08:00:00Z',layerCount:4}))});
   if (url.pathname === '/canvas') {res.writeHead(307,{Location:'/studio-editor'+url.search});return res.end();}
   if (url.pathname === '/studio-editor') {res.setHeader('Content-Type','text/html; charset=utf-8');return res.end(`<!doctype html><html data-nv-studio-canvas-ready="true"><head><meta charset="utf-8"></head><body style="margin:0;height:100vh;background:#fafafc"><div data-testid="owned-editor">布局用 iframe 协议测试件</div><section data-testid="fixture-materials" hidden>素材面板协议测试件</section><script>const projectId=${JSON.stringify(project.projectId)};window.panelReceipts=[];addEventListener('message',e=>{const d=e.data;if(e.origin!==location.origin||e.source!==parent||d.type!=='nv-studio'||d.action!=='open-panel'||d.projectId!==projectId)return;panelReceipts.push(d);if(d.panel==='materials')document.querySelector('[data-testid="fixture-materials"]').hidden=false;});parent.postMessage({type:'nv-studio',action:'ready',projectId},location.origin);</script></body></html>`);}
@@ -169,7 +170,7 @@ async function verifyViewport(browser,spec,origin) {
     const imageModeAppearance=await verifyModeAppearance(page,'ns-mode-image');
     await page.locator('#ns-mode-copywriting').click();
     await page.waitForFunction(()=>document.querySelector('#ns-mode-copywriting').getAttribute('aria-pressed')==='true');
-    assert.equal(await page.locator('#ns-create span').textContent(),'进入文案创作');
+    assert.equal(await page.locator('#ns-create span').textContent(),'打开文案工作台');
     const copyModeAppearance=await verifyModeAppearance(page,'ns-mode-copywriting');
     await page.locator('#ns-home-brief').fill('保留这份草稿');
     await page.getByRole('button',{name:'品牌口号',exact:true}).click();
@@ -180,7 +181,7 @@ async function verifyViewport(browser,spec,origin) {
     if(spec.width===1440) await page.screenshot({path:reportPath.replace(/\.json$/i,'')+'-home-copywriting.png'});
     await page.reload();await page.waitForFunction(()=>document.querySelector('#ns-mode-copywriting').getAttribute('aria-pressed')==='true');
     await page.locator('#ns-mode-image').click();
-    assert.equal(await page.locator('#ns-create span').textContent(),'开始创作');
+    assert.equal(await page.locator('#ns-create span').textContent(),'生成图片');
     assert.match(await page.locator('#ns-home-brief').inputValue(),/保留这份草稿/);
     const home = await measure(page,['.ns-sidebar','.np-brand-trigger','.np-brand-label','.np-brand-initial','.np-brand-chevron','.np-inbox-trigger','.np-inbox-label']);
     assert.ok(home['.np-brand-trigger'].scrollWidth<=home['.np-brand-trigger'].clientWidth+1,'Long brand names must fit the home switcher');

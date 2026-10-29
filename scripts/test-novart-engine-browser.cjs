@@ -165,6 +165,7 @@ return <div style={{position:'relative',width:'100vw',height:'100vh'}}><OwnedCan
   await page.keyboard.press('Escape'); await page.getByRole('button', {name: '文字', exact: true}).click(); await page.mouse.click(520, 490);
   const text = page.getByRole('textbox', {name: '编辑画布文字', exact: true}); await text.fill('引擎适配\n中文文字'); await page.keyboard.press('Control+Enter');
   await page.waitForFunction(() => fixtureDocument().items.some(item => item.kind === 'text' && item.text === '引擎适配\n中文文字'));
+  await page.getByRole('button', {name: '更多画布工具', exact: true}).click();
   await page.getByRole('button', {name: '画笔', exact: true}).click();
   await page.mouse.move(170, 520); await page.mouse.down(); await page.mouse.move(210, 540, {steps: 5}); await page.mouse.move(250, 510, {steps: 5}); await page.mouse.up();
   assert.equal(await page.evaluate(() => fixtureDocument().items.filter(item => item.kind === 'stroke' && item.points.length > 5).length), 1);

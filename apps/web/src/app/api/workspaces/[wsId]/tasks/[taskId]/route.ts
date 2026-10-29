@@ -14,7 +14,7 @@ export async function GET(
     const user = await requireUser();
     const { wsId, taskId } = await params;
     await requireOwnedWorkspace(wsId, user.id);
-    const task = await getTask(wsId, taskId);
+    const task = await getTask(wsId, taskId, user.id);
     if (!task) throw new ApiException(404, "Task not found");
     return ok(task);
   } catch (err) {

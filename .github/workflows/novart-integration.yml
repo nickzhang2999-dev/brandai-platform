@@ -90,6 +90,7 @@ jobs:
           export NOVART_CHROMIUM_EXECUTABLE="$(pnpm -F web exec node -e 'process.stdout.write(require("playwright/test").chromium.executablePath())')"
           test -f "$NOVART_CHROMIUM_EXECUTABLE"
           mkdir -p apps/web/.novart-ui-artifacts
+          NOVART_LOGIN_HYDRATION_REPORT=apps/web/.novart-ui-artifacts/login-hydration.json node scripts/test-login-hydration-browser.cjs
           NOVART_OWNED_REPORT=apps/web/.novart-ui-artifacts/owned-react-fixture.json node scripts/test-novart-owned-canvas-browser.cjs
           NOVART_ENGINE_REPORT=apps/web/.novart-ui-artifacts/owned-engine-fixture.json node scripts/test-novart-engine-browser.cjs
           NOVART_OWNED_LAYERS_ONLY=1 NOVART_OWNED_REPORT=apps/web/.novart-ui-artifacts/owned-layer-fixture.json node scripts/test-novart-owned-canvas-browser.cjs
@@ -102,6 +103,9 @@ jobs:
           NOVART_AUTO_PSD_REPORT=apps/web/.novart-ui-artifacts/automatic-psd-fixture.json NOVART_AUTO_PSD_SCREENSHOT=apps/web/.novart-ui-artifacts/automatic-psd-fixture.png node scripts/test-novart-auto-psd-browser.cjs
           NOVART_IMAGE_CONTEXT_REPORT=apps/web/.novart-ui-artifacts/image-context-fixture.json node scripts/test-novart-image-context-browser.cjs
           NOVART_CONVERSATION_REPORT=apps/web/.novart-ui-artifacts/conversation-fixture.json node scripts/test-novart-conversation-browser.cjs
+          node scripts/test-writing-workbench-browser.cjs
+          NOVART_OWNED_COPYWRITING_ONLY=1 NOVART_OWNED_REPORT=.novart-build/writing-workbench-integration/summary.json node scripts/test-novart-owned-canvas-browser.cjs
+          NOVART_OWNED_TARGET_ONLY=1 NOVART_OWNED_REPORT=apps/web/.novart-ui-artifacts/target-fixture.json node scripts/test-novart-owned-canvas-browser.cjs
           python - <<'PY'
           import json
           from pathlib import Path
@@ -114,7 +118,7 @@ jobs:
           assert {'zoomed-hit-testing-drag-and-history-share-the-current-camera',
                   'engine-export-includes-offscreen-images-from-the-full-document',
                   'gzip-save-reopen-retains-all-226-records-camera-stacking-text-and-brush'} <= set(engine['checks'])
-          for name, expected in (('owned-layer-fixture.json', 10), ('brand-knowledge-fixture.json', 14), ('layer-inbox-fixture.json', 19), ('studio-layout-fixture.json', 11), ('brand-switch-fixture.json', 9), ('home-brand-leave-fixture.json', 9), ('brand-creation-recovery-fixture.json', 15), ('image-context-fixture.json', 19)):
+          for name, expected in (('owned-layer-fixture.json', 10), ('brand-knowledge-fixture.json', 23), ('layer-inbox-fixture.json', 19), ('studio-layout-fixture.json', 11), ('brand-switch-fixture.json', 9), ('home-brand-leave-fixture.json', 9), ('brand-creation-recovery-fixture.json', 15), ('image-context-fixture.json', 22), ('target-fixture.json', 8)):
               report = json.loads((root / name).read_text())
               assert report['passed'] is True and report['isolated'] is True, name
               assert report['realBackend'] is False and report['realProvider'] is False, name
@@ -125,7 +129,19 @@ jobs:
               print(f'PASS {name}: {expected} isolated interaction checks; no real provider or database acceptance claimed')
           report = json.loads((root / 'image-context-fixture.json').read_text())
           assert {'async-insertion-history-move', 'async-insertion-history-draw',
-                  'async-insertion-history-cancel-move', 'async-insertion-during-erase'} <= set(report['checks'])
+                  'async-insertion-history-cancel-move', 'async-insertion-during-erase',
+                  'single-user-image-click-signals-target-programmatic-focus-and-multiselect-do-not',
+                  'top-basic-tools-bottom-view-controls-and-collapsed-properties-have-no-repeated-crop',
+                  'canvas-fullscreen-enters-and-exits-through-native-browser-api'} <= set(report['checks'])
+          report = json.loads((root / 'brand-knowledge-fixture.json').read_text())
+          assert report['realAuthentication'] is False and report['ssrCovered'] is False
+          assert {'multiple-files-deduplicate-by-bytes-and-preserve-explicit-logo',
+                  'batch-lost-receipt-reload-preserves-request-and-does-not-reupload-or-auto-post',
+                  'same-source-advice-one-card-every-suggestion-remains-editable',
+                  'drop-upload-failure-retains-file-and-retries-only-failed-entry',
+                  'read-only-receipt-recovery-never-reposts-accepted-task',
+                  'workspace-permission-404-does-not-discard-receipt',
+                  'definitive-rejection-plus-readonly-not-found-can-remove-failed-entry'} <= {check['name'] for check in report['checks']}
           report = json.loads((root / 'automatic-psd-fixture.json').read_text())
           assert report['passed'] is True and report['isolated'] is True
           assert report['realBackend'] is False and report['realProvider'] is False
@@ -165,6 +181,52 @@ jobs:
           assert not report['externalRequests'] and not report['errors']
           assert all(isinstance(check, str) or check['status'] == 'PASS' for check in report['checks'])
           print('PASS conversation recovery and terminal-state interaction; isolated fixtures only')
+          report = json.loads(Path('.novart-build/writing-workbench-browser/summary.json').read_text())
+          assert report['status'] == 'passed' and report['fixture'] is True
+          assert report['realBackend'] is False and report['realAuthentication'] is False and report['realModel'] is False
+          assert report['modelCalls'] == 0 and len(report['checks']) == 31
+          assert not report['externalRequests'] and not report['errors']
+          assert all(isinstance(check, str) for check in report['checks'])
+          assert {'selection-instruction-returns-preview-and-only-replaces-exact-range',
+                  'late-selection-suggestion-rejects-stale-revision-without-overwriting-manual-edit',
+                  'imported-pending-references-stay-selected-and-block-send-until-ready',
+                  'unknown-post-survives-reload-and-recovers-by-get-without-repeat',
+                  'confirmed-missing-submit-replays-original-id-only-after-explicit-click',
+                  'thirty-one-later-upload-tasks-do-not-hide-paginated-history-or-original-suggestions',
+                  'twenty-five-saves-refresh-can-page-to-and-restore-earliest-version',
+                  'viewer-can-read-but-cannot-edit-upload-or-submit'} <= set(report['checks'])
+          print('PASS writing workbench: 31 isolated interactions; no real model or database acceptance claimed')
+          report = json.loads(Path('.novart-build/writing-workbench-integration/summary.json').read_text())
+          assert report['passed'] is True and report['isolated'] is True
+          assert report['realBackend'] is False and report['realProvider'] is False and report['realAuthentication'] is False
+          assert report['providerCalls'] == 0 and len(report['checks']) == 22
+          assert not report['externalRequests'] and not report['errors']
+          assert all(isinstance(check, str) for check in report['checks'])
+          assert {'docked-history-keeps-send-action-visible-in-short-viewport',
+                  'writing-opens-beside-visible-canvas',
+                  'suggestion-inserts-directly-without-adopting-draft-or-extra-model-call',
+                  'direct-suggestion-insertion-is-idempotent',
+                  'expand-and-dock-preserve-unsent-composer-without-model-call',
+                  'current-draft-insert-is-visible-without-scrolling-to-bottom',
+                  'writing-current-draft-inserts-native-editable-text',
+                  'same-document-revision-handoff-is-idempotent',
+                  'writing-insertion-can-be-undone', 'writing-insertion-can-be-redone',
+                  'embedded-long-document-tail-edit-ctrl-s-save-and-bottom-canvas-handoff-remain-reachable',
+                  'long-draft-handoff-is-idempotent-and-entire-chunk-group-undoes-in-one-step',
+                  'homepage-writing-opens-real-iframe-with-reference-without-model-post',
+                  'five-selected-canvas-images-all-imported-four-explicitly-selected-with-visible-limit'} <= set(report['checks'])
+          print('PASS writing-to-canvas: 22 isolated interactions; no real model or database acceptance claimed')
+          report = json.loads((root / 'target-fixture.json').read_text())
+          assert report['realAuthentication'] is False
+          assert {'explicit-image-click-locks-composer-during-material-lookup',
+                  'rapid-a-to-b-selection-ignores-late-a-response-without-submitting',
+                  'multiselection-cancels-pending-single-target-lookup',
+                  'programmatic-insert-and-focus-never-replace-user-selected-modification-target',
+                  'task-and-writing-tabs-preserve-same-composer-node-text-target-and-references',
+                  'advanced-workflow-completes-with-one-save-and-one-apply-preserving-exact-and-frame',
+                  'unknown-submit-retains-original-target-and-request-when-another-image-is-clicked',
+                  'refresh-with-unknown-request-is-read-only-and-restores-frozen-target'} == set(report['checks'])
+          print('PASS canvas modification target: 8 isolated interactions; no real model or database acceptance claimed')
           PY
       - name: Write and read actual layered PSD format proof
         run: |
@@ -426,6 +488,7 @@ jobs:
           # v4 excludes dot-directories unless explicitly enabled. Whitelist
           # only known test outputs; never upload raw logs or diagnostics.json.
           path: |
+            apps/web/.novart-ui-artifacts/login-hydration.json
             apps/web/.novart-ui-artifacts/owned-react-fixture.json
             apps/web/.novart-ui-artifacts/owned-engine-fixture.json
             apps/web/.novart-ui-artifacts/owned-layer-fixture.json
@@ -437,6 +500,11 @@ jobs:
             apps/web/.novart-ui-artifacts/brand-creation-recovery-fixture.json
             apps/web/.novart-ui-artifacts/automatic-psd-fixture.json
             apps/web/.novart-ui-artifacts/automatic-psd-fixture.png
+            apps/web/.novart-ui-artifacts/image-context-fixture.json
+            apps/web/.novart-ui-artifacts/conversation-fixture.json
+            apps/web/.novart-ui-artifacts/target-fixture.json
+            .novart-build/writing-workbench-browser/summary.json
+            .novart-build/writing-workbench-integration/summary.json
             apps/web/.novart-ui-artifacts/psd-file-proof/*.json
             apps/web/.novart-ui-artifacts/psd-file-proof/*.psd
             apps/web/.novart-ui-artifacts/psd-file-proof/*.png

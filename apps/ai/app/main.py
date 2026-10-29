@@ -118,6 +118,17 @@ async def _probe_image_size(image_ref: str) -> tuple[int, int] | None:
 
 app = FastAPI(title="OpenVisual AI Service", version="0.1.0")
 
+# Internal worker-only text parsing; no model provider is used by this route.
+from .studio_writing_schemas import StudioWritingParseRequest, StudioWritingParseResponse
+from .studio_writing_parser import parse_document as parse_writing_document, WritingParseError, REVISION as STUDIO_WRITING_PARSER_REVISION
+
+@app.post("/v1/studio-writing/parse", response_model=StudioWritingParseResponse)
+def studio_writing_parse(request: StudioWritingParseRequest):
+    try:
+        return parse_writing_document(request)
+    except WritingParseError as error:
+        raise HTTPException(status_code=422, detail={"code": str(error), "error": "Document text extraction failed; no OCR was performed."}) from None
+
 
 @app.exception_handler(httpx.HTTPError)
 @app.exception_handler(ImageResponseError)
@@ -174,6 +185,7 @@ async def health():
         "studioDecompositionQueueRevision": STUDIO_DECOMPOSITION_QUEUE_REVISION,
         "studioLayerPlanRevision": STUDIO_LAYER_PLAN_REVISION,
         "studioConversationIntentRevision": STUDIO_CONVERSATION_MODEL_REVISION,
+        "studioWritingParserRevision": STUDIO_WRITING_PARSER_REVISION,
     }
 
 
@@ -217,7 +229,8 @@ async def recognize(
 ):
     data = await call_with_retry_policy(
         req.providerRetryPolicy, vlm.analyze_assets,
-        [a.model_dump() for a in req.assets]
+        [a.model_dump() for a in req.assets],
+        **({"target_type": req.targetType} if req.targetType is not None else {})
     )
     return RecognizeResponse(**data)
 
@@ -355,7 +368,7 @@ async def parse_manual(
         return ParseManualResponse(
             rules=[], pageCount=page_count, warnings=warnings
         )
-    data = await call_with_retry_policy(req.providerRetryPolicy, vlm.parse_manual, text, pages=pages)
+    data = await call_with_retry_policy(req.providerRetryPolicy, vlm.parse_manual, text, pages=pages, **({"target_type": req.targetType} if req.targetType is not None else {}))
     provider_warnings = data.pop("warnings", [])
     return ParseManualResponse(
         **data,

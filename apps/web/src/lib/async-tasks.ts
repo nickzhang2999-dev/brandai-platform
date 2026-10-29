@@ -90,9 +90,18 @@ export async function markSucceededOrThrow(
 export async function getTask(
   workspaceId: string,
   taskId: string,
+  userId?: string,
 ): Promise<TaskState | null> {
   const t = await prisma.asyncTask.findUnique({ where: { id: taskId } });
   if (!t || t.workspaceId !== workspaceId) return null;
+  // Service-only image analysis is polled through its fixed bearer scope.
+  if (t.kind === "OMNI_INSPIRATION_ANALYSIS") return null;
+  // Inspiration conversations remain private even inside a shared workspace.
+  // Generic task polling must not bypass the dedicated conversation endpoint.
+  if (t.kind === "INSPIRATION_CHAT" || t.kind === "STUDIO_WRITING") {
+    const input = t.inputJson as { userId?: unknown } | null;
+    if (!userId || input?.userId !== userId) return null;
+  }
   const result = t.status === "SUCCEEDED" ? parseAsyncTaskResult(t.kind, t.resultJson) : undefined;
   return {
     id: t.id,

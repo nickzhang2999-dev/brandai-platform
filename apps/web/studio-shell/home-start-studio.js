@@ -430,6 +430,10 @@
     if (!entry) {
       if (frames.size >= 3) { activeId = ''; cacheFull(id, pendingPanels.get(id)); return; }
       const slot = node('div', 'ns-frame-slot'), frame = node('iframe'); frame.dataset.testid = 'studio-canvas-frame'; frame.dataset.projectId = id; slot.dataset.projectId = id; slot.dataset.active = 'false'; slot.inert = true; frame.title = (project(id).projectName || '未命名项目') + ' — 画布编辑器'; frame.allow = 'clipboard-read; clipboard-write'; frame.src = '/studio-editor?' + new URLSearchParams({projectId: id, workspaceId: window.__NOVART_PRODUCT__.workspaceId}); slot.append(frame); $('ns-frames').append(slot);
+      const surfaceQuery = new URLSearchParams(location.search);
+      if (surfaceQuery.get('surfaceProjectId') === id && ['canvas', 'writing'].includes(surfaceQuery.get('surface'))) {
+        const frameUrl = new URL(frame.src); frameUrl.searchParams.set('surface', surfaceQuery.get('surface')); frame.src = frameUrl.pathname + frameUrl.search;
+      }
       entry = {id, frame, slot, ready: false, pendingPanel: pendingPanels.get(id) || '', timer: 0}; frames.set(id, entry); pendingPanels.delete(id);
       const params = new URLSearchParams(location.search); if (!entry.pendingPanel && ['requirements', 'materials', 'upload'].includes(params.get('panel'))) { entry.pendingPanel = params.get('panel'); params.delete('panel'); const query = params.toString(); history.replaceState(history.state, '', '/studio' + (query ? '?' + query : '') + location.hash); }
       entry.timer = setTimeout(() => workspaceStartupFailed(entry), 22000);
@@ -489,6 +493,11 @@
     if (event.origin !== location.origin) return; const data = event.data; if (!data || data.type !== 'nv-studio' || typeof data.projectId !== 'string') return;
     const entry = frames.get(data.projectId); if (!entry || event.source !== entry.frame.contentWindow) return;
     if (data.action === 'startup-error') workspaceStartupFailed(entry, 'native-error');
+    else if (data.action === 'surface-changed' && ['canvas', 'writing'].includes(data.surface)) {
+      entry.surface = data.surface;
+      if (activeId === entry.id) { const query = new URLSearchParams(location.search); query.set('surface', data.surface); query.set('surfaceProjectId', entry.id); history.replaceState(history.state, '', location.pathname + '?' + query + location.hash); }
+      entry.frame.title = (project(entry.id)?.projectName || '未命名项目') + (data.surface === 'writing' ? ' — 文案工作台' : ' — 画布编辑器');
+    }
     else if (data.action === 'ready') { entry.ready = true; delete entry.startupError; delete entry.failedAfterReady; entry.frame.dataset.ready = 'true'; clearTimeout(entry.timer); trackWorkspaceInput(entry); prefsToFrame(entry); if (activeId === entry.id && route.page === 'workspace') $('ns-workspace-status').textContent = ''; panelCommand(entry); restoreWorkspaceInput(entry); updateWorkspaceReturn(entry); completeBlankRecovery(entry); homeStart.resume(entry); }
     else if (entry.ready && activeId === entry.id && data.action === 'navigate' && ['home', 'projects', 'resources', 'brand', 'settings'].includes(data.route)) {
       const origin = data.route === 'projects' ? workspaceOrigins.get(entry.id) : null;

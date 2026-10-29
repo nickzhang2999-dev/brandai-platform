@@ -5,14 +5,15 @@ const assert = require('node:assert/strict');
 
 async function runOwnedLayerChecks({page,surface,origin,fixture,png,material,layerResults,shapes,check,report,setStage,allowLayerDownloads,state,failureOnly=false,queueRecovery=false}) {
   const button=name=>page.getByRole('button',{name,exact:true});
+  const openLayers=async()=>{await button('更多图片操作').click();await page.getByRole('menuitem',{name:'选图AI分层',exact:true}).click();};
   const waitSaved=async()=>{await page.waitForFunction(()=>document.querySelector('[data-testid="owned-editor"]')?.dataset.saveState==='saved');};
   const save=async()=>{if(!await page.getByRole('dialog',{name:'图片分层',exact:true}).isVisible()){const control=button('保存');if(await control.isEnabled())await control.click();}await waitSaved();};
   const sourceRecord=()=>shapes().find(value=>value.meta?.novartAssetId===material.assetId);
 
-  setStage('layers-empty-canvas');assert.equal(await button('选图AI分层').count(),0);assert.equal(await button('开始 AI 分层').isVisible(),false);assert.equal(state().decompositionPosts,0);check('empty-canvas-cannot-request-ai-layers');
+  setStage('layers-empty-canvas');assert.equal(await page.getByRole('menuitem',{name:'选图AI分层',exact:true}).count(),0);assert.equal(await button('开始 AI 分层').isVisible(),false);assert.equal(state().decompositionPosts,0);check('empty-canvas-cannot-request-ai-layers');
   setStage('layers-upload-and-saved-selection');await page.locator('input[type=file]').first().setInputFiles({name:'fixture.png',mimeType:'image/png',buffer:png});
   const sourceNode=page.locator('[data-testid="owned-canvas-item"][data-kind="image"]');await sourceNode.waitFor();await save();
-  const sourceId=sourceRecord().id;assert.equal(shapes().length,1);await sourceNode.click();await button('选图AI分层').click();await page.getByTestId('owned-layer-panel').waitFor();
+  const sourceId=sourceRecord().id;assert.equal(shapes().length,1);await sourceNode.click();await openLayers();await page.getByTestId('owned-layer-panel').waitFor();
   assert.equal(await sourceNode.getAttribute('data-selected'),'true');assert.equal(await button('开始 AI 分层').isEnabled(),true);check('uploaded-persistent-source-selected-and-saved-before-ai-layers');
   const options=page.getByTestId('owned-layer-options');
   await options.getByText('按内容自动拆分，无需指定层数。',{exact:true}).waitFor();
@@ -34,13 +35,13 @@ async function runOwnedLayerChecks({page,surface,origin,fixture,png,material,lay
       check('transient-status-read-failure-resumes-without-focus-reload-or-paid-resubmit');
       await notice.filter({hasText:'分层等待超时'}).waitFor();
       assert.equal(await button('用同样设置重新分层').count(),0);
-      await page.reload();await surface.waitFor();await page.getByTestId('owned-canvas-item').click();await button('选图AI分层').click();
+      await page.reload();await surface.waitFor();await page.getByTestId('owned-canvas-item').click();await openLayers();
       await button('检查并保存已有结果').click();
       await notice.filter({hasText:'图层已保存'}).waitFor();
       assert.equal(state().decompositionPosts,1);assert.equal(state().layerRecoveryPosts,1);
       assert.equal(shapes().length,1);assert.notEqual(sourceRecord().meta?.novartOwned?.hidden,true);
       check('expired-provider-task-survives-reload-and-recovers-via-explicit-read-without-resubmission');
-      await page.reload();await surface.waitFor();await page.getByTestId('owned-canvas-item').click();await button('选图AI分层').click();
+      await page.reload();await surface.waitFor();await page.getByTestId('owned-canvas-item').click();await openLayers();
       await button('展开为可编辑图层').waitFor();
       assert.equal(state().decompositionPosts,1);assert.equal(state().layerRecoveryPosts,1);
       check('recovered-result-persists-and-remains-explicitly-placeable');
@@ -67,7 +68,7 @@ async function runOwnedLayerChecks({page,surface,origin,fixture,png,material,lay
   assert.equal(state().canvas,unchanged);assert.equal(state().writes,baselineWrites);assert.equal(shapes().length,1);
   assert.ok(state().layerDownloads.some(value=>value.order===0&&!value.failed));assert.ok(state().layerDownloads.some(value=>value.order===1&&value.failed));
   check('second-layer-download-failure-inserts-no-partial-group-and-preserves-source');
-  setStage('layers-retry-download-and-placement');allowLayerDownloads();await page.reload();await surface.waitFor();await page.locator('[data-testid="owned-canvas-item"][data-kind="image"]').click();await button('选图AI分层').click();await button('展开为可编辑图层').waitFor();
+  setStage('layers-retry-download-and-placement');allowLayerDownloads();await page.reload();await surface.waitFor();await page.locator('[data-testid="owned-canvas-item"][data-kind="image"]').click();await openLayers();await button('展开为可编辑图层').waitFor();
   const actualPngs=await page.evaluate(async paths=>{
     const result=[];
     for(const path of paths) {

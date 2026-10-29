@@ -27,6 +27,8 @@ const report = {isolated:true, realBackend:false, realProvider:false, realAuthen
 const fixture = {workspaceId:'knowledge-fixture-a', userId:'knowledge-fixture-user', brandName:'本地合成测试品牌'};
 let role = 'EDITOR', stage = 'build', browser, server, page, schemas;
 let sequence = 0, draftRevision = 7, loseImportReceipt = true;
+let loseRecognitionReceipt = true, finishRecognition = false, failUploadName = '', rejectNextRecognition = false, denyReceiptWorkspace = false;
+const uploadedByHash = new Map(), recognitionReceipts = new Map(), recognitionTasks = new Map();
 const requests = [], writes = [], imports = new Map();
 const terms = [], prohibitions = [], snapshots = [];
 const date = () => new Date().toISOString();
@@ -35,7 +37,10 @@ function rule(type, summary, status='DRAFT') {return {id:`fixture-rule-${++seque
 let rules = [rule('copy','原有已启用中文规则','CONFIRMED'),rule('graphic','已有图形规则草稿')];
 const oldConfirmedId = rules[0].id;
 function json(res, value, status=200) {res.writeHead(status, {'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(value));}
-async function body(req) {const chunks=[];for await (const chunk of req) chunks.push(chunk);return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');}
+async function body(req) {const chunks=[];for await (const chunk of req) chunks.push(chunk);const bytes=Buffer.concat(chunks);
+  if(String(req.headers['content-type']).startsWith('multipart/form-data')) {const form=await new Request('http://127.0.0.1/upload',{method:'POST',headers:{'content-type':req.headers['content-type']},body:bytes}).formData();const file=form.get('file');return {fileName:file.name,digest:crypto.createHash('sha256').update(Buffer.from(await file.arrayBuffer())).digest('hex'),category:form.get('category'),libraryKind:form.get('libraryKind')};}
+  return JSON.parse(bytes.toString('utf8') || '{}');}
+
 function snapshot(label, note) {
   const saved = clone(rules.filter(item=>item.status==='CONFIRMED'));
   const value = {id:`fixture-snapshot-${++sequence}`,workspaceId:fixture.workspaceId,label,note,createdById:fixture.userId,ruleCount:saved.length,createdAt:date(),rules:saved};
@@ -84,6 +89,27 @@ async function handle(req,res) {
   const suffix=url.pathname.slice(base.length);
   if(suffix==='') return json(res,{workspace:{id:fixture.workspaceId,name:fixture.brandName,tags:[],createdAt:date(),updatedAt:date()}});
   if(suffix==='/assets') return json(res,[]);
+  if(/^\/assets\/[^/]+\/raw$/.test(suffix)) {res.setHeader('Content-Type','image/svg+xml');return res.end('<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"><rect width="200" height="200" fill="#e7e2ff"/><text x="100" y="115" font-size="42" text-anchor="middle" fill="#6750a4">TEST</text></svg>');}
+  if(suffix==='/assets/upload') {
+    assert.equal(req.method,'POST');assert.equal(value.libraryKind,'BRAND_KIT');
+    if(value.fileName===failUploadName){failUploadName='';return json(res,{error:'合成故障：本文件上传未完成'},503);}
+    const key=value.digest+':'+value.category;if(!uploadedByHash.has(key))uploadedByHash.set(key,{id:'fixture-asset-'+(++sequence),workspaceId:fixture.workspaceId,fileName:value.fileName,mimeType:'image/png',url:'https://never-called.invalid/image',category:value.category,libraryKind:'BRAND_KIT'});
+    return json(res,uploadedByHash.get(key),201);
+  }
+  if(suffix==='/rules/recognize' || suffix==='/rules/parse-manual') {
+    if(req.method==='GET'){if(denyReceiptWorkspace)return json(res,{error:'Workspace not found'},404);const receipt=recognitionReceipts.get(url.searchParams.get('mutationId'));return receipt?json(res,receipt.receipt):json(res,{error:'没有找到这次解析任务。'},404);}
+    assert.equal(req.method,'POST'); const input=(suffix.endsWith('recognize')?schemas.BrandKitRecognizeInput:schemas.BrandKitParseManualInput).parse(value);
+    if(rejectNextRecognition){rejectNextRecognition=false;return json(res,{error:'合成拒绝：素材已不可用，未受理解析'},400);}
+    const old=recognitionReceipts.get(input.mutationId);if(old){assert.deepEqual(old.input,input);return json(res,old.receipt,202);}
+    const receipt={taskId:'fixture-analysis-'+input.mutationId,status:'PENDING'};recognitionReceipts.set(input.mutationId,{input,receipt});recognitionTasks.set(receipt.taskId,{receipt,input,completed:false});
+    if(loseRecognitionReceipt){loseRecognitionReceipt=false;return json(res,{error:'合成故障：解析已受理，回执丢失'},503);}return json(res,receipt,202);
+  }
+  if(suffix.startsWith('/tasks/')) {
+    assert.equal(req.method,'GET'); const task=recognitionTasks.get(suffix.split('/')[2]);assert.ok(task);
+    if(finishRecognition&&!task.completed){task.completed=true;const assetId=task.input.assetIds?.[0]??task.input.assetId;rules.push(...[1,2].map(index=>({...rule(task.input.targetType??'logo','同图建议'+index+'-'+assetId),evidence:[{assetId,note:'合成素材 '+assetId}]})));}
+    return json(res,{id:task.receipt.taskId,status:task.completed?'SUCCEEDED':'RUNNING',progress:task.completed?100:20,refCount:task.completed?2:0});
+  }
+
   if(suffix==='/rules/snapshots') {
     if(!mutating)return json(res,{snapshots:snapshots.map(snapshotSummary)});
     const input=schemas.CreateRuleSnapshotInput.parse(value);return json(res,snapshotSummary(snapshot(input.label,input.note)),201);
@@ -131,7 +157,7 @@ async function dialogClick(action, accept, expected) {
   await Promise.all([page.waitForEvent('dialog').then(async dialog=>{assert.match(dialog.message(),expected);await (accept?dialog.accept():dialog.dismiss());}),action()]);
 }
 function ruleCard(summary) {return page.locator('div.group.relative').filter({has:page.locator('div.mt-1\\.5 > span').filter({hasText:summary})});}
-async function ruleMenu(summary) {const card=ruleCard(summary);await card.waitFor();await card.hover();const details=card.locator('details');if(await details.getAttribute('open')===null)await details.locator('summary').click();return details;}
+async function ruleMenu(summary) {const card=ruleCard(summary);await card.waitFor();const trigger=card.getByRole('button',{name:'规则操作',exact:true});if(await trigger.getAttribute('aria-expanded')!=='true')await trigger.click();return card.getByRole('menu',{name:'规则操作菜单',exact:true});}
 
 (async()=>{
   const esbuildPackage=fs.readdirSync(path.join(repo,'node_modules/.pnpm')).find(name=>name.startsWith('esbuild@0.28.'));
@@ -148,7 +174,7 @@ const workspaceId=new URLSearchParams(location.search).get('workspaceId');
 function FixtureSessionBoundary(){const session=useQuery({queryKey:['fixture-session',workspaceId],queryFn:()=>apiFetch('/api/workbench/session?'+new URLSearchParams({workspaceId:workspaceId||''}))});if(!session.data)return <p>合成会话读取中</p>;const brand=session.data.workspaces.find(w=>w.id===workspaceId);if(!brand||session.data.activeWorkspaceId!==workspaceId)return <p role="alert">合成会话品牌不匹配</p>;return <BrandKnowledgeEditor wsId={workspaceId} userId={session.data.user.id} brandName={brand.name} role={brand.role} embedded/>;}
 const client=new QueryClient({defaultOptions:{queries:{retry:false,refetchOnWindowFocus:false},mutations:{retry:false}}});
 createRoot(document.getElementById('root')).render(<QueryClientProvider client={client}><FixtureSessionBoundary/></QueryClientProvider>);`);
-  await esbuild.build({entryPoints:[entry],outfile:path.join(directory,'app.js'),bundle:true,platform:'browser',format:'iife',jsx:'automatic',tsconfig:path.join(repo,'apps/web/tsconfig.json'),nodePaths:[path.join(repo,'apps/web/node_modules')],define:{'process.env.NODE_ENV':'"development"'},logLevel:'silent'});
+  await esbuild.build({entryPoints:[entry],outfile:path.join(directory,'app.js'),bundle:true,platform:'browser',format:'iife',jsx:'automatic',tsconfig:path.join(repo,'apps/web/tsconfig.json'),nodePaths:[path.join(repo,'apps/web/node_modules')],define:{'process.env.NODE_ENV':'"development"','process.env.NEXT_PUBLIC_ASSET_PROXY':'"1"'},logLevel:'silent'});
   const schemaEntry=path.join(directory,'schemas.ts');fs.writeFileSync(schemaEntry,`export * from ${modulePath('packages/contracts/src/index')};export * from ${modulePath('packages/contracts/src/studio-brand-knowledge')};`);
   await esbuild.build({entryPoints:[schemaEntry],outfile:path.join(directory,'schemas.cjs'),bundle:true,platform:'node',format:'cjs',logLevel:'silent'});schemas=require(path.join(directory,'schemas.cjs'));
   const css=spawnSync(process.execPath,[path.join(repo,'apps/web/node_modules/tailwindcss/lib/cli.js'),'-i',path.join(repo,'packages/ui/src/styles.css'),'-o',path.join(directory,'tokens.css'),'-c',path.join(repo,'apps/web/tailwind.config.ts'),'--content',path.join(repo,'apps/web/src/components/brand-knowledge/*.{ts,tsx}')+','+path.join(repo,'packages/ui/src/**/*.{ts,tsx}')],{cwd:repo,encoding:'utf8',env:{...process.env,TEMP:directory,TMP:directory},timeout:60000});
@@ -156,7 +182,7 @@ createRoot(document.getElementById('root')).render(<QueryClientProvider client={
   report.sourceSha256=Object.fromEntries(['BrandKnowledgeEditor.tsx','DraftImportPanel.tsx','KnowledgeManagementPanels.tsx','knowledge-state.ts'].map(name=>[name,crypto.createHash('sha256').update(fs.readFileSync(path.join(repo,'apps/web/src/components/brand-knowledge',name))).digest('hex')]));
   server=http.createServer((req,res)=>handle(req,res).catch(error=>{report.errors.push({kind:'fixture-server',message:String(error.message).slice(0,300)});json(res,{error:'Fixture validation failed'},500);}));
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const origin='http://127.0.0.1:'+server.address().port;
-  browser=await chromium.launch({headless:true,...(process.env.NOVART_CHROMIUM_EXECUTABLE?{executablePath:process.env.NOVART_CHROMIUM_EXECUTABLE}:{}),args:['--disable-background-networking'],env:{...process.env,TEMP:directory,TMP:directory}});
+  browser=await chromium.launch({headless:true,...(process.env.NOVART_BROWSER_CHANNEL?{channel:process.env.NOVART_BROWSER_CHANNEL}:{}),...(process.env.NOVART_CHROMIUM_EXECUTABLE?{executablePath:process.env.NOVART_CHROMIUM_EXECUTABLE}:{}),args:['--disable-background-networking'],env:{...process.env,TEMP:directory,TMP:directory}});
   async function newPage() {
     const context=await browser.newContext({viewport:{width:1280,height:960},serviceWorkers:'block'});
     await context.route('**/*',route=>{const url=new URL(route.request().url());if(url.origin!==origin){report.externalRequests.push({protocol:url.protocol,host:url.hostname});return route.abort();}return route.continue();});
@@ -174,18 +200,18 @@ createRoot(document.getElementById('root')).render(<QueryClientProvider client={
   await page.getByRole('button',{name:'手动添加规则',exact:true}).click();await page.getByRole('textbox',{name:'新规则说明',exact:true}).fill(summary);
   const added=await mutation(()=>page.getByRole('button',{name:'保存为草稿',exact:true}).click(),'POST','/rules');await ruleCard(summary).waitFor();assert.equal(added.status,'DRAFT');assert.equal(added.summary,summary);check('editor-creates-chinese-copy-draft');
   stage='cancel-rule-replacement';let menu=await ruleMenu(summary);const beforeCancel=writes.length;
-  await dialogClick(()=>menu.getByRole('button',{name:'启用',exact:true}).click(),false,/替换同类别已启用的 1 条规则/);await page.waitForTimeout(150);assert.equal(writes.length,beforeCancel);assert.equal(rules.find(item=>item.id===oldConfirmedId).status,'CONFIRMED');check('replacement-cancel-zero-writes',{writes:0});
+  await dialogClick(()=>menu.getByRole('menuitem',{name:'启用',exact:true}).click(),false,/替换同类别已启用的 1 条规则/);await page.waitForTimeout(150);assert.equal(writes.length,beforeCancel);assert.equal(rules.find(item=>item.id===oldConfirmedId).status,'CONFIRMED');check('replacement-cancel-zero-writes',{writes:0});
   stage='confirm-rule-replacement';menu=await ruleMenu(summary);
-  await mutation(()=>dialogClick(()=>menu.getByRole('button',{name:'启用',exact:true}).click(),true,/替换同类别已启用的 1 条规则/),'PATCH','/rules/'+added.id);
+  await mutation(()=>dialogClick(()=>menu.getByRole('menuitem',{name:'启用',exact:true}).click(),true,/替换同类别已启用的 1 条规则/),'PATCH','/rules/'+added.id);
   assert.equal(rules.find(item=>item.id===added.id).status,'CONFIRMED');assert.equal(rules.find(item=>item.id===oldConfirmedId).status,'REJECTED');check('explicit-confirm-patches-and-replaces-same-category');
-  stage='chinese-rule-edit';menu=await ruleMenu(summary);await menu.getByRole('button',{name:'编辑',exact:true}).click();const editor=page.getByRole('dialog',{name:'编辑文案语气',exact:true});await editor.waitFor();
+  stage='chinese-rule-edit';menu=await ruleMenu(summary);await menu.getByRole('menuitem',{name:'编辑',exact:true}).click();const editor=page.getByRole('dialog',{name:'编辑文案语气',exact:true});await editor.waitFor();
   const updatedSummary='更新后的中文规则：表达准确、清楚、有依据。';await editor.getByRole('textbox',{name:'规则说明',exact:true}).fill(updatedSummary);await mutation(()=>editor.getByRole('button',{name:'保存',exact:true}).click(),'PATCH','/rules/'+added.id);await ruleCard(updatedSummary).waitFor();check('editor-updates-chinese-rule');
-  stage='rule-disable-and-reenable';menu=await ruleMenu(updatedSummary);await mutation(()=>menu.getByRole('button',{name:'禁用',exact:true}).click(),'PATCH','/rules/'+added.id);assert.equal(rules.find(item=>item.id===added.id).status,'REJECTED');menu=await ruleMenu(updatedSummary);await mutation(()=>menu.getByRole('button',{name:'启用',exact:true}).click(),'PATCH','/rules/'+added.id);assert.equal(rules.find(item=>item.id===added.id).status,'CONFIRMED');check('rule-disable-and-reenable');
-  stage='graphic-rule-delete';menu=await ruleMenu('已有图形规则草稿');const graphic=rules.find(item=>item.type==='graphic');await mutation(()=>dialogClick(()=>menu.getByRole('button',{name:'删除',exact:true}).click(),true,/不可恢复/),'DELETE','/rules/'+graphic.id);await ruleCard('已有图形规则草稿').waitFor({state:'detached'});check('graphic-rule-delete-with-confirmation');
+  stage='rule-disable-and-reenable';menu=await ruleMenu(updatedSummary);await mutation(()=>menu.getByRole('menuitem',{name:'禁用',exact:true}).click(),'PATCH','/rules/'+added.id);assert.equal(rules.find(item=>item.id===added.id).status,'REJECTED');menu=await ruleMenu(updatedSummary);await mutation(()=>menu.getByRole('menuitem',{name:'启用',exact:true}).click(),'PATCH','/rules/'+added.id);assert.equal(rules.find(item=>item.id===added.id).status,'CONFIRMED');check('rule-disable-and-reenable');
+  stage='graphic-rule-delete';menu=await ruleMenu('已有图形规则草稿');const graphic=rules.find(item=>item.type==='graphic');await mutation(()=>dialogClick(()=>menu.getByRole('menuitem',{name:'删除',exact:true}).click(),true,/不可恢复/),'DELETE','/rules/'+graphic.id);await ruleCard('已有图形规则草稿').waitFor({state:'detached'});check('graphic-rule-delete-with-confirmation');
 
   stage='snapshot-save';await page.getByRole('button',{name:'版本快照',exact:true}).click();await page.getByRole('textbox',{name:'快照名称',exact:true}).fill('中文规则基线');await page.getByRole('textbox',{name:'快照备注',exact:true}).fill('本机浏览器合成版本');
   const saved=await mutation(()=>page.getByRole('button',{name:'保存当前规则版本',exact:true}).click(),'POST','/rules/snapshots');await page.getByText('中文规则基线 · 1 条规则',{exact:true}).waitFor();assert.equal(saved.ruleCount,1);check('snapshot-save');
-  stage='snapshot-restore';await page.getByRole('button',{name:'知识规则',exact:true}).click();menu=await ruleMenu(updatedSummary);await menu.getByRole('button',{name:'编辑',exact:true}).click();await page.getByRole('dialog').getByRole('textbox',{name:'规则说明',exact:true}).fill('需要恢复的临时修改');await mutation(()=>page.getByRole('dialog').getByRole('button',{name:'保存',exact:true}).click(),'PATCH','/rules/'+added.id);
+  stage='snapshot-restore';await page.getByRole('button',{name:'知识规则',exact:true}).click();menu=await ruleMenu(updatedSummary);await menu.getByRole('menuitem',{name:'编辑',exact:true}).click();await page.getByRole('dialog').getByRole('textbox',{name:'规则说明',exact:true}).fill('需要恢复的临时修改');await mutation(()=>page.getByRole('dialog').getByRole('button',{name:'保存',exact:true}).click(),'PATCH','/rules/'+added.id);
   await page.getByRole('button',{name:'版本快照',exact:true}).click();const snapshotRow=page.locator('li').filter({hasText:'中文规则基线 · 1 条规则'});
   const restored=await mutation(()=>dialogClick(()=>snapshotRow.getByRole('button',{name:'恢复此版本',exact:true}).click(),true,/恢复前会自动备份/),'POST',`/rules/snapshots/${saved.id}/restore`);assert.equal(restored.restored,1);assert.ok(snapshots.some(item=>item.id===restored.backupSnapshotId));await page.getByRole('button',{name:'知识规则',exact:true}).click();await ruleCard(updatedSummary).waitFor();check('snapshot-restore-refreshes-real-ui-and-reports-backup');
 
@@ -197,6 +223,63 @@ createRoot(document.getElementById('root')).render(<QueryClientProvider client={
   const importWrites=writes.filter(item=>item.path==='/api/studio/brand-knowledge/import-draft');assert.equal(importWrites.length,1);await page.reload();await page.getByRole('button',{name:'重试原导入请求',exact:true}).waitFor();assert.equal(writes.filter(item=>item.path==='/api/studio/brand-knowledge/import-draft').length,1,'Reload must not post automatically');
   const replay=await mutation(()=>page.getByRole('button',{name:'重试原导入请求',exact:true}).click(),'POST','/api/studio/brand-knowledge/import-draft');assert.equal(replay.replayed,true);const allImports=writes.filter(item=>item.path==='/api/studio/brand-knowledge/import-draft');assert.deepEqual(allImports[1].body,allImports[0].body);assert.equal(allImports[1].body.expectedDraftRevision,7);assert.equal(rules.length,importCount+2);assert.equal(rules.find(item=>item.id===added.id).status,'CONFIRMED');check('draft-import-reload-retries-original-mutation-after-revision-change',{postAttempts:2,createdDrafts:2,automaticRetry:false});
   await page.getByText(/已找回原导入回执/).waitFor();await page.screenshot({path:reportPath.replace(/\.json$/i,'')+'-editor.png',fullPage:true});
+
+  stage='menus-only-one-outside-escape';
+  const triggers=page.getByRole('button',{name:'规则操作',exact:true});await triggers.first().click();assert.equal(await page.getByRole('menu').count(),1);
+  await triggers.nth(1).click();assert.equal(await page.getByRole('menu').count(),1);assert.equal(await triggers.first().getAttribute('aria-expanded'),'false');
+  await page.keyboard.press('Escape');assert.equal(await page.getByRole('menu').count(),0);assert.equal(await triggers.nth(1).evaluate(element=>document.activeElement===element),true);
+  await triggers.first().click();await page.getByRole('textbox',{name:'品牌套件名称',exact:true}).click();assert.equal(await page.getByRole('menu').count(),0);check('card-menu-mutual-exclusion-outside-click-and-escape-focus');
+
+  stage='batch-multiselect-selected-logo';
+  await page.getByRole('button',{name:'上传Logo素材',exact:true}).click();const uploadDialog=page.getByRole('dialog',{name:'添加你的品牌 Logo',exact:true});await uploadDialog.waitFor();
+  assert.equal(await uploadDialog.locator('input[type=file]').getAttribute('multiple'),'');
+  const fileA={name:'synthetic-a.png',mimeType:'image/png',buffer:Buffer.from('synthetic A bytes')},fileB={name:'synthetic-b.png',mimeType:'image/png',buffer:Buffer.from('synthetic B bytes')};
+  await uploadDialog.locator('input[type=file]').setInputFiles([fileA,fileB,{...fileA,name:'same-a-another-name.png'}]);
+  await page.getByText('已跳过 1 个内容相同的重复文件。',{exact:true}).waitFor();await page.getByText('合成故障：解析已受理，回执丢失',{exact:true}).waitFor();
+  await settled(()=>recognitionReceipts.size===2);
+  // The server receipt precedes React consuming it and retaining the task.
+  await page.getByRole('region',{name:'品牌素材上传进度',exact:true}).getByText('AI 正在分析素材…',{exact:true}).waitFor();const beforeReload=writes.length;
+  const batchWrites=writes.filter(item=>item.path.endsWith('/rules/recognize'));assert.equal(batchWrites.length,2);assert.ok(batchWrites.every(item=>item.body.targetType==='logo'));
+  assert.equal(uploadedByHash.size,2);check('multiple-files-deduplicate-by-bytes-and-preserve-explicit-logo',{files:3,uploaded:2,accepted:2});
+  stage='batch-lost-receipt-reload';await page.reload();await page.getByRole('button',{name:'重试原请求',exact:true}).waitFor();await page.getByRole('region',{name:'品牌素材上传进度',exact:true}).getByText('AI 正在分析素材…',{exact:true}).waitFor();
+  assert.equal(writes.length,beforeReload,'Reload only reads retained tasks');
+  await mutation(()=>page.getByRole('button',{name:'重试原请求',exact:true}).click(),'POST','/rules/recognize');
+  const retried=writes.filter(item=>item.path.endsWith('/rules/recognize'));assert.deepEqual(retried[2].body,retried[0].body);assert.equal(recognitionReceipts.size,2);assert.equal(uploadedByHash.size,2);
+  check('batch-lost-receipt-reload-preserves-request-and-does-not-reupload-or-auto-post');
+  finishRecognition=true;await page.getByText('已完成：2 条建议。相同素材汇总展示，核对后再分别启用。',{exact:true}).first().waitFor();
+  await settled(()=>rules.filter(item=>item.summary.startsWith('同图建议')).length===4);
+  // Each terminal task separately invalidates the rules query. Four persisted
+  // suggestions do not imply the second query result has rendered its card.
+  const adviceSelectors=page.getByRole('combobox',{name:'选择这份素材的分析建议',exact:true});
+  await adviceSelectors.nth(1).waitFor({state:'visible'});
+  assert.equal(await adviceSelectors.count(),2);
+  const group=page.getByTestId('brand-kit-source-card').filter({has:page.getByRole('combobox',{name:'选择这份素材的分析建议'})}).first();
+  const options=await group.locator('option').allTextContents();assert.equal(options.length,2);await group.getByRole('combobox').selectOption({index:1});
+  await group.getByRole('button',{name:'规则操作',exact:true}).click();await group.getByRole('menuitem',{name:'编辑',exact:true}).click();
+  const logoEditor=page.getByRole('dialog',{name:'编辑Logo',exact:true});await logoEditor.waitFor();const chosenSummary=await logoEditor.getByRole('textbox',{name:'规则说明',exact:true}).inputValue();assert.ok(chosenSummary.startsWith('同图建议2-'));
+  await logoEditor.getByRole('button',{name:'取消',exact:true}).click();check('same-source-advice-one-card-every-suggestion-remains-editable',{suggestions:4,cards:2});
+
+  stage='drop-upload-failure-recovery';
+  await page.getByRole('button',{name:'上传Logo素材',exact:true}).click();const dropDialog=page.getByRole('dialog',{name:'添加你的品牌 Logo',exact:true});await dropDialog.waitFor();
+  failUploadName='synthetic-drop.png';loseRecognitionReceipt=true;const dataTransfer=await page.evaluateHandle(()=>{const value=new DataTransfer();value.items.add(new File(['drop synthetic bytes'],'synthetic-drop.png',{type:'image/png'}));return value;});
+  await dropDialog.getByRole('button',{name:'选择或拖入文件（可多选）',exact:true}).dispatchEvent('drop',{dataTransfer});await dataTransfer.dispose();
+  await page.getByText('合成故障：本文件上传未完成',{exact:true}).waitFor();const taskCount=recognitionReceipts.size;
+  await page.getByRole('button',{name:'重试原请求',exact:true}).click();await settled(()=>recognitionReceipts.size===taskCount+1);
+  await page.getByText('合成故障：解析已受理，回执丢失',{exact:true}).waitFor();const beforeReadRecovery=writes.length;
+  await page.getByRole('button',{name:'检查原回执',exact:true}).click();
+  await page.getByText('已完成：2 条建议。相同素材汇总展示，核对后再分别启用。',{exact:true}).waitFor();
+  const dropUploads=writes.filter(item=>item.path.endsWith('/assets/upload')&&item.body.fileName==='synthetic-drop.png');assert.equal(dropUploads.length,2);assert.deepEqual(dropUploads[0].body,dropUploads[1].body);
+  assert.equal(writes.length,beforeReadRecovery);check('drop-upload-failure-retains-file-and-retries-only-failed-entry');check('read-only-receipt-recovery-never-reposts-accepted-task');
+
+  stage='definitive-rejection-recovery';rejectNextRecognition=true;
+  await page.getByRole('button',{name:'上传Logo素材',exact:true}).click();await page.getByRole('dialog',{name:'添加你的品牌 Logo',exact:true}).locator('input[type=file]').setInputFiles({name:'synthetic-rejected.png',mimeType:'image/png',buffer:Buffer.from('explicit rejected synthetic')});
+  await page.getByText('合成拒绝：素材已不可用，未受理解析',{exact:true}).waitFor();assert.equal(await page.getByRole('button',{name:'从文件中提取',exact:true}).isDisabled(),true);assert.equal(await page.getByRole('button',{name:'移除此失败项',exact:true}).count(),0);
+  const beforeRejectionRead=writes.length;denyReceiptWorkspace=true;await page.getByRole('button',{name:'检查原回执',exact:true}).click();await page.getByText('原回执尚未确认；请保留本项，稍后查询或重试原请求。',{exact:true}).waitFor();assert.equal(await page.getByRole('button',{name:'移除此失败项',exact:true}).count(),0);assert.equal(await page.getByRole('button',{name:'从文件中提取',exact:true}).isDisabled(),true);check('workspace-permission-404-does-not-discard-receipt');denyReceiptWorkspace=false;await page.getByRole('button',{name:'检查原回执',exact:true}).click();await page.getByRole('button',{name:'移除此失败项',exact:true}).waitFor();await page.getByRole('button',{name:'移除此失败项',exact:true}).click();
+  assert.equal(await page.getByRole('button',{name:'从文件中提取',exact:true}).isDisabled(),false);assert.equal(writes.length,beforeRejectionRead);check('definitive-rejection-plus-readonly-not-found-can-remove-failed-entry');
+
+  stage='mobile-batch';await page.setViewportSize({width:390,height:844});await page.screenshot({path:reportPath.replace(/\.json$/i,'')+'-batch-mobile.png',fullPage:true});
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1),true);check('mobile-no-horizontal-overflow');await page.setViewportSize({width:1280,height:960});
+  await page.screenshot({path:reportPath.replace(/\.json$/i,'')+'-batch-editor.png',fullPage:true});
 
   stage='viewer-readonly';const beforeViewer=writes.length;role='VIEWER';page=await newPage();await page.goto(href);await ruleCard(updatedSummary).waitFor();assert.equal(await page.getByRole('textbox',{name:'品牌套件名称',exact:true}).getAttribute('readonly'),'');assert.equal(await page.getByRole('checkbox',{name:'应用品牌知识到项目',exact:true}).isDisabled(),true);assert.equal(await page.getByRole('button',{name:'手动添加规则',exact:true}).count(),0);assert.equal(await page.getByText('规则操作',{exact:true}).count(),0);assert.equal(await page.getByRole('button',{name:'导入为待确认规则',exact:true}).isDisabled(),true);
   await ruleCard(updatedSummary).getByRole('button').click();const viewerDialog=page.getByRole('dialog',{name:'查看文案语气',exact:true});await viewerDialog.waitFor();assert.equal(await viewerDialog.getByRole('textbox',{name:'规则说明',exact:true}).getAttribute('readonly'),'');assert.equal(await viewerDialog.getByRole('button',{name:'保存',exact:true}).count(),0);await viewerDialog.getByRole('button',{name:'关闭',exact:true}).click();

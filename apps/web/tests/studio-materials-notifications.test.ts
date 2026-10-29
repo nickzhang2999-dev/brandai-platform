@@ -1,3 +1,4 @@
+vi.mock("@/lib/studio-writing-notifications", () => ({ listWritingNotifications: async () => [] }));
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const f = vi.hoisted(() => ({ generations: vi.fn(), tasks: vi.fn(), uploads: vi.fn(), projects: vi.fn(), studio: vi.fn(), layers: vi.fn() }));
 vi.mock("../../../packages/db/src/index", () => ({ prisma: { generation: { findMany: f.generations }, asyncTask: { findMany: f.tasks }, studioMaterialUpload: { findMany: f.uploads }, project: { findMany: f.projects } } }));

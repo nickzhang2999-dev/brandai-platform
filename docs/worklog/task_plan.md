@@ -421,6 +421,22 @@ P1 local gates complete: e0725bd owned shell/export;6ce5de0 routes;601a3c1 exact
 - [ ] 修正提交的云端构建与实际部署版本核对，回执独立保存，不混同付费模型验收。
 - [x] 第二轮真实 API 验收通过；迁移旧真实 UI 脚本并补对话离页保存，最新本地全量门禁及 Chrome 53 项通过。
 
+
+## 2026-10-28 Studio writing and canvas delivery
+
+- [x] Scoped writing contracts, persistence, asynchronous parsing/generation and revision-safe edits.
+- [x] Reference/style UI, native canvas handoff, target selection and grouped controls.
+- [x] Brand kit import identity, category preservation, recovery and access rechecks.
+- [x] Local unit, database and browser verification.
+- [ ] Same-revision CI, image and authenticated provider/runtime acceptance.
+
 ## 2026-10-26 B2B 交付分离
 
 本轮范围与分阶段状态见 [独立交付记录](2026-10-26-b2b-release.md)。先隐藏公开注册入口，保留已验证文案与首页修复；灵感保持独立开发，不纳入本次 PR。
+
+## 2026-10-29 PR #68 integration
+
+- [x] Resolve main/devUpdate1012 conflicts without replacing the writing workbench with the old panel.
+- [x] Preserve enterprise-only login and pre-hydration guards; retain committed release-entry verification.
+- [x] Run full local gates and relevant browser regression checks.
+- [ ] Push the resolved merge to devUpdate1012 and verify PR checks; do not merge main or release production.

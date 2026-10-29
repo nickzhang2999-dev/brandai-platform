@@ -15,7 +15,7 @@ export default async function OwnedEditorPage({ searchParams }: {
 }) {
   const params = await searchParams;
   const query = new URLSearchParams();
-  for (const name of ["workspaceId", "projectId"]) {
+  for (const name of ["workspaceId", "projectId", "surface", "writingTaskId"]) {
     if (typeof params[name] === "string") query.set(name, params[name]);
   }
   for (const name of ["taskId", "requestId", "layerRequestId"]) {
@@ -29,8 +29,11 @@ export default async function OwnedEditorPage({ searchParams }: {
     const document = await readEditorDocument(workspaceId, projectId, user.id);
     const initialTask = studioTaskIntent(query);
     const project = await prisma.project.findFirst({ where: { id: projectId, workspaceId }, select: { name: true } });
+    const previousWriting = !initialTask && !["canvas", "writing"].includes(query.get("surface") ?? "")
+      ? await prisma.studioWritingDocument.findUnique({ where: { workspaceId_projectId_userId: { workspaceId, projectId, userId: user.id } }, select: { id: true } }) : null;
+    const initialSurface = !initialTask && (query.get("surface") === "writing" || previousWriting) ? "writing" : "canvas";
     return <OwnedEditorClient workspaceId={workspaceId} projectId={projectId} userId={user.id}
-      readOnly={document.readOnly} projectName={project?.name ?? "项目画布"} initialTask={initialTask} />;
+      readOnly={document.readOnly} projectName={project?.name ?? "项目画布"} initialTask={initialTask} initialSurface={initialSurface} writingTaskId={query.get("writingTaskId") ?? undefined} />;
   } catch (error) {
     if (error instanceof ApiException || error instanceof EditorDocumentError) {
       if (error.status === 401) redirect("/login?callbackUrl=" + encodeURIComponent(callback));

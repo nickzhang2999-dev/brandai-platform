@@ -4,6 +4,8 @@
   'use strict';
   const context = JSON.parse(document.getElementById('novart-product-context').textContent);
   window.__NOVART_PRODUCT__ = Object.freeze(context);
+  const inspirationLink = document.getElementById('ns-inspiration-link');
+  if (inspirationLink && context.workspaceId) inspirationLink.href = '/inspiration?workspaceId=' + encodeURIComponent(context.workspaceId);
   const NativeWebSocket = window.WebSocket;
   window.WebSocket = class extends NativeWebSocket {
     constructor(address, protocols) {

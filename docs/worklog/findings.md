@@ -278,6 +278,21 @@ CDS preflight directly confirms push automatic deployment and default shared bra
 - GitHub84fa5e4成功run39220851878；CDS timed_out_no_run、workflow URL空，实际deployedImage及health仍2492b43。正常恢复入口为claim-prebuilt先dry-run再deploy，不修改平台结果。
 - 安全边界：POST无编号不重发；有编号查询可重试。6分钟退出后只显式查询原任务，24小时恢复期限不延长。旧失败任务无编号不能凭空恢复。
 
+## 2026-10-24 Omni 视觉分析服务接入
+
+- 代码默认 gpt-4o 不代表实际配置；只读查询开发预览确认 VLM 为 gpt-5.6-sol、凭据存在。用户选择沿用后台当前模型并先验图片能力。
+- 模型凭据留在 Nova；Omni 仅持服务令牌。图片分析使用现有 AsyncTask 异步处理、固定工作区权限与独立额度；不改变原产品模型配置。
+- 服务器 POTW 四个采集文件与本地现有改动哈希一致；本轮部署保留这些未提交的用户改动。
+
+
+## 2026-10-28 Studio writing and import boundaries
+
+Writing results remain suggestions until explicit adoption. Durable mutation identity prevents a lost acknowledgement from creating another paid request. Canvas programmatic focus is separate from explicit target selection. Grouping source suggestions must retain each underlying rule. New import tasks recheck access before provider use and result persistence; a consumed provider call remains recorded if the result is rejected.
+
 ## 2026-10-26 B2B 交付范围
 
 main 为 d896d7c，开发版为 c13a7c0。独立工作区以 main 为基线迁移非灵感功能，避免将灵感导航、后端与数据库迁移带入本次交付。原工作区改动全部保留。
+
+## 2026-10-29 PR #68 merge boundaries
+
+The source f83a8a9 and main 632ac2f contain parallel/cherry-picked history. Resolving only conflict markers in OwnedEditorClient would leave obsolete panel JSX beside the new workbench, so the reviewed development editor and its integration fixture are kept together. Main contributes enterprise provisioning, three copywriting inbox regressions and release-entry integrity checks. The inbox CI expectation is therefore 19, not the development branch's 16. This PR includes the development inspiration/Omni code; October 26/27 release-isolation notes describe those earlier deliveries, not this PR. Existing runtime enablement and membership checks are retained.

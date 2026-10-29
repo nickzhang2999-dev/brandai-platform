@@ -6,6 +6,7 @@ const fs = require('node:fs');
 
 async function runOwnedToolChecks({page, surface, check, records, shapes, png, waitSaved}) {
   const button = name => page.getByRole('button', {name, exact:true});
+  const tool=async name=>{const control=button(name);if(!await control.isVisible())await button('更多画布工具').click();await control.click();};
   const node = id => page.locator(`[data-testid="owned-canvas-item"][data-owned-id="${id}"]`);
   const record = id => {const value=records()[id];assert.ok(value, `Expected persisted object ${id}`);return value;};
   const owned = value => value.meta?.novartOwned || {};
@@ -24,17 +25,17 @@ async function runOwnedToolChecks({page, surface, check, records, shapes, png, w
   };
   const box = async locator => {const value=await locator.boundingBox();assert.ok(value&&value.width>0&&value.height>0);return value;};
   const draw = async (label,x,y,w,h,shape) => {
-    await clear();await button(label).click();
+    await clear();await tool(label);
     if(shape)await page.getByRole('combobox',{name:'图形种类',exact:true}).selectOption(shape);
     const bounds=await box(surface), previous=new Set(shapes().map(value=>value.id));
     await page.mouse.move(bounds.x+x,bounds.y+y);await page.mouse.down();
     await page.mouse.move(bounds.x+x+w,bounds.y+y+h,{steps:10});await page.mouse.up();await save();
     const added=shapes().find(value=>!previous.has(value.id));assert.ok(added, 'Pointer drawing must persist one new item');return added.id;
   };
-  const field = async (name,value) => {const input=page.getByRole('spinbutton',{name,exact:true});await input.fill(String(value));await input.press('Tab');};
-  const action = async name => {if(!await page.getByTestId('owned-object-menu').count())await button('更多元素操作').click();await page.getByRole('menuitem',{name,exact:true}).click();};
+  const field = async (name,value) => {const input=page.getByRole('spinbutton',{name,exact:true});if(!await input.isVisible())await button('元素属性').click();await input.fill(String(value));await input.press('Tab');};
+  const action = async name => {if(!await page.getByTestId('owned-object-menu').count()){const more=button('更多图片操作');await (await more.isVisible()?more:button('更多元素操作')).click();}await page.getByRole('menuitem',{name,exact:true}).click();};
   const download = async label => {
-    await button('导出').click();const pending=page.waitForEvent('download');await button(label).click();
+    await tool('导出');const pending=page.waitForEvent('download');await button(label).click();
     const file=await pending;assert.equal(await file.failure(),null);const location=await file.path();assert.ok(location);return fs.readFileSync(location);
   };
   const compareRaster = async (svg,pngBytes,requireInteriorContent=false) => {
@@ -93,10 +94,10 @@ async function runOwnedToolChecks({page, surface, check, records, shapes, png, w
   await button('重做').click();await save();assert.equal(shapes().filter(value=>value.type==='c-image').length,3);
   check('owned-tools-keyboard-copy-paste-duplicate-keeps-material-identity');
 
-  await select(imageId);await button('裁切图片').click();
+  await select(imageId);await button('快捷裁切图片').click();
   await field('裁切宽度',50);await field('裁切高度',80);await field('裁切左边距',25);await field('裁切上边距',10);
   await button('取消裁切').last().click();await save();assert.equal(record(imageId).props.cropRegion,undefined);
-  await button('裁切图片').click();await field('裁切宽度',50);await field('裁切高度',80);await field('裁切左边距',25);await field('裁切上边距',10);
+  await button('快捷裁切图片').click();await field('裁切宽度',50);await field('裁切高度',80);await field('裁切左边距',25);await field('裁切上边距',10);
   await button('应用裁切').click();await save();assert.deepEqual(record(imageId).props.cropRegion,{x:.25,y:.1,w:.5,h:.8});
   await action('水平翻转图片');await action('垂直翻转图片');await save();
   assert.equal(record(imageId).props.flipX,true);assert.equal(record(imageId).props.flipY,true);
@@ -167,7 +168,7 @@ async function runOwnedToolChecks({page, surface, check, records, shapes, png, w
   const linePaint=await node(lineId).locator('line').getAttribute('x1');assert.equal(Number(linePaint),record(lineId).props.novartPoints[0].x);
   assert.ok(await node(arrowId).locator('line').getAttribute('marker-end'));check('owned-tools-line-arrow-drag-endpoints-and-rendered-marker');
 
-  const strokeId=await draw('画笔',420,530,180,25);await button('橡皮擦').click();
+  const strokeId=await draw('画笔',420,530,180,25);await tool('橡皮擦');
   const strokeBox=await box(node(strokeId));await page.mouse.move(strokeBox.x+strokeBox.width/2,strokeBox.y+strokeBox.height/2);await page.mouse.down();await page.mouse.move(strokeBox.x+strokeBox.width/2+5,strokeBox.y+strokeBox.height/2,{steps:3});await page.mouse.up();await save();
   assert.equal(records()[strokeId],undefined);assert.ok(records()[lineId]);assert.ok(records()[arrowId]);assert.ok(records()[imageId]);
   await button('撤销').click();await save();assert.ok(records()[strokeId]);await button('重做').click();await save();assert.equal(records()[strokeId],undefined);

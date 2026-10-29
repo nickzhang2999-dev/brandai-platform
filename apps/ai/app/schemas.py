@@ -262,7 +262,18 @@ class AssetRef(BaseModel):
         return value
 
 
-class RecognizeRequest(SingleAttemptRequest):
+BrandKitTargetType = Literal["logo", "color", "font", "layout", "imagery", "copy", "graphic"]
+
+class BrandKitTargetRequest(SingleAttemptRequest):
+    targetType: BrandKitTargetType | None = None
+
+    @field_validator("targetType", mode="before")
+    @classmethod
+    def reject_null_target(cls, value):
+        if value is None: raise ValueError("targetType must be omitted or a valid rule category")
+        return value
+
+class RecognizeRequest(BrandKitTargetRequest):
     assets: list[AssetRef] = Field(min_length=1)
 
 
@@ -318,7 +329,7 @@ class SummarizeResponse(BaseModel):
     highlights: list[str] = Field(default_factory=list)
 
 
-class ParseManualRequest(SingleAttemptRequest):
+class ParseManualRequest(BrandKitTargetRequest):
     """POST /v1/parse-manual — a brand/VI manual PDF asset URL to parse."""
 
     url: str
@@ -780,8 +791,8 @@ class StudioMaterialUploadView(StudioMaterialUploadInput):
 from .studio_workflow_schemas import StudioWorkflowSaveInput, StudioWorkflowView, StudioWorkflowAssets
 
 # Mirrored BFF notification kind; upload events remain scoped to the initiator.
-NotificationKind = Literal["GENERATE", "EDIT", "RECOGNIZE", "PARSE_MANUAL", "DESCRIBE", "INGEST", "SUMMARIZE", "DECOMPOSE", "STUDIO_UPLOAD", "STUDIO_GENERATION", "STUDIO_DECOMPOSITION", "STUDIO_MATERIAL_VERIFY", "STUDIO_CONVERSATION", "STUDIO_COPYWRITING"]
-AsyncTaskKind = Literal["RECOGNIZE", "PARSE_MANUAL", "EDIT", "DESCRIBE", "INGEST", "SUMMARIZE", "DECOMPOSE", "STUDIO_UPLOAD", "STUDIO_COMPLIANCE", "STUDIO_MATERIAL_VERIFY", "STUDIO_CONVERSATION", "STUDIO_COPYWRITING", "COMPLIANCE_PRECHECK", "GENERATION_PRECHECK", "COMPLIANCE_RECHECK"]
+NotificationKind = Literal["GENERATE", "EDIT", "RECOGNIZE", "PARSE_MANUAL", "DESCRIBE", "INGEST", "SUMMARIZE", "DECOMPOSE", "STUDIO_UPLOAD", "STUDIO_GENERATION", "STUDIO_DECOMPOSITION", "STUDIO_MATERIAL_VERIFY", "STUDIO_CONVERSATION", "STUDIO_COPYWRITING", "STUDIO_WRITING", "INSPIRATION_CHAT"]
+AsyncTaskKind = Literal["RECOGNIZE", "PARSE_MANUAL", "EDIT", "DESCRIBE", "INGEST", "SUMMARIZE", "DECOMPOSE", "STUDIO_UPLOAD", "STUDIO_COMPLIANCE", "STUDIO_MATERIAL_VERIFY", "STUDIO_CONVERSATION", "STUDIO_COPYWRITING", "STUDIO_WRITING", "INSPIRATION_SYNC", "INSPIRATION_CHAT", "COMPLIANCE_PRECHECK", "GENERATION_PRECHECK", "COMPLIANCE_RECHECK", "OMNI_INSPIRATION_ANALYSIS"]
 
 from .studio_generation_schemas import StudioGenerationInput, StudioGenerationQuery, StudioGenerationRetryInput, StudioGenerationArchiveRetryInput, StudioGenerationView
 from .studio_generated_psd_schemas import StudioGeneratedPsdQuery, StudioGeneratedPsdView
@@ -789,3 +800,8 @@ from .studio_compliance_schemas import StudioGenerationComplianceInput, StudioGe
 from .studio_decomposition_schemas import StudioDecompositionInput, StudioDecompositionQuery, StudioDecompositionRetryInput, StudioDecompositionLayer, StudioDecompositionView
 
 from .studio_copywriting_schemas import StudioCopywritingInput, StudioCopywritingResult
+from .studio_writing_schemas import *  # Zod studio-writing.ts mirror
+from .inspiration_schemas import InspirationCaseCard, InspirationListResponse, InspirationChatInput, InspirationChatState, InspirationBookmarkInput, InspirationBookmark
+from .omni_analysis_schemas import OmniAnalysisInput, OmniAnalysisSuggestion, OmniAnalysisResult, OmniAnalysisJob, OmniAnalysisConfig
+
+from .brand_kit_import_schemas import *  # noqa: F403 — mirrored additive BFF contracts

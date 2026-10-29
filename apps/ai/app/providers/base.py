@@ -54,13 +54,13 @@ class ImageProvider(ABC):
 class VLMProvider(ABC):
     @abstractmethod
     async def analyze_assets(
-        self, assets: list[dict[str, str]]
+        self, assets: list[dict[str, str]], *, target_type: str | None = None
     ) -> dict[str, Any]:
         """Return recognized brand rules + color system."""
 
     @abstractmethod
     async def parse_manual(
-        self, text: str, pages: list[dict[str, Any]] | None = None
+        self, text: str, pages: list[dict[str, Any]] | None = None, *, target_type: str | None = None
     ) -> dict[str, Any]:
         """Return rules, color system and visual crops from a brand manual.
 

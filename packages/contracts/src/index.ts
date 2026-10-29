@@ -36,3 +36,7 @@ export * from "./studio-brand-materials";
 export * from "./studio-image-tools";
 export * from "./ai-failure";
 export * from "./studio-copywriting";
+export * from "./studio-writing";
+export * from "./brand-kit-import";
+export * from "./inspiration";
+export * from "./omni-analysis";

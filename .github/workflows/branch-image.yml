@@ -10,6 +10,9 @@ on:
       - 'scripts/test-novart-production.mjs'
       - 'scripts/*novart*.py'
       - 'scripts/*novart*.cjs'
+      - 'scripts/test-writing-workbench-browser.cjs'
+      - 'scripts/writing-workbench-fixture.cjs'
+      - 'scripts/check-owned-*.cjs'
       - '.github/workflows/branch-image.yml'
       - '.github/workflows/novart-integration.yml'
       - 'apps/**'
@@ -18,6 +21,7 @@ on:
       - 'package.json'
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
+      - 'turbo.json'
       - '.npmrc'
   workflow_dispatch:
 

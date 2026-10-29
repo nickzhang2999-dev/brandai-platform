@@ -10,6 +10,7 @@ export const REQUIRED_AI_STUDIO_DECOMPOSITION_REVISION = "studio-real-layer-sing
 export const REQUIRED_AI_STUDIO_DECOMPOSITION_QUEUE_REVISION = "studio-layer-queue-r1";
 export const REQUIRED_AI_STUDIO_LAYER_PLAN_REVISION = "semantic-layer-plan-r1";
 export const REQUIRED_AI_STUDIO_CONVERSATION_INTENT_REVISION = "structured-conversation-intent-r2";
+export const REQUIRED_AI_STUDIO_WRITING_PARSER_REVISION = "studio-writing-text-v1";
 
 const CONFIGURED_BASE =
   process.env.BRANDAI_AI_SERVICE_URL ??
@@ -31,9 +32,10 @@ export type AiServiceResolution = {
   studioDecompositionQueueRevision?: string;
   studioLayerPlanRevision?: string;
   studioConversationIntentRevision?: string;
+  studioWritingParserRevision?: string;
 };
 
-export type AiServiceRequirements = { requireVisualCheck?: boolean; requireSingleAttempt?: boolean; requireStudioEdit?: boolean; requireStudioDecomposition?: boolean; requireStudioDecompositionQueue?: boolean; requireStudioLayerPlan?: boolean; requireStudioImageTools?: boolean; requireStudioConversationIntent?: boolean };
+export type AiServiceRequirements = { requireVisualCheck?: boolean; requireSingleAttempt?: boolean; requireStudioEdit?: boolean; requireStudioDecomposition?: boolean; requireStudioDecompositionQueue?: boolean; requireStudioLayerPlan?: boolean; requireStudioImageTools?: boolean; requireStudioConversationIntent?: boolean; requireStudioWritingParser?: boolean };
 
 let cachedResolution: { value: AiServiceResolution; expiresAt: number } | null =
   null;
@@ -62,6 +64,7 @@ async function probe(base: string): Promise<AiServiceResolution | null> {
       studioDecompositionQueueRevision?: unknown;
       studioLayerPlanRevision?: unknown;
       studioConversationIntentRevision?: unknown;
+      studioWritingParserRevision?: unknown;
     };
     return {
       base,
@@ -85,6 +88,7 @@ async function probe(base: string): Promise<AiServiceResolution | null> {
       studioDecompositionQueueRevision: typeof body.studioDecompositionQueueRevision === "string" ? body.studioDecompositionQueueRevision : undefined,
       studioLayerPlanRevision: typeof body.studioLayerPlanRevision === "string" ? body.studioLayerPlanRevision : undefined,
       studioConversationIntentRevision: typeof body.studioConversationIntentRevision === "string" ? body.studioConversationIntentRevision : undefined,
+      studioWritingParserRevision: typeof body.studioWritingParserRevision === "string" ? body.studioWritingParserRevision : undefined,
     };
   } catch {
     return null;
@@ -111,6 +115,7 @@ export async function resolveAiService(requirements: AiServiceRequirements = {})
   const requireStudioDecompositionQueue = requirements.requireStudioDecompositionQueue === true;
   const requireStudioLayerPlan = requirements.requireStudioLayerPlan === true;
   const requireStudioConversationIntent = requirements.requireStudioConversationIntent === true;
+  const requireStudioWritingParser = requirements.requireStudioWritingParser === true;
   const requireSingleAttempt = requirements.requireSingleAttempt === true || requireStudioEdit || requireStudioDecomposition || requireStudioDecompositionQueue || requireStudioLayerPlan || requireStudioImageTools || requireStudioConversationIntent;
   if (cachedResolution && cachedResolution.expiresAt > now &&
       (!requireStudioEdit || cachedResolution.value.studioEditRevision === REQUIRED_AI_STUDIO_EDIT_REVISION) &&
@@ -119,6 +124,7 @@ export async function resolveAiService(requirements: AiServiceRequirements = {})
       (!requireStudioDecompositionQueue || cachedResolution.value.studioDecompositionQueueRevision === REQUIRED_AI_STUDIO_DECOMPOSITION_QUEUE_REVISION) &&
       (!requireStudioLayerPlan || cachedResolution.value.studioLayerPlanRevision === REQUIRED_AI_STUDIO_LAYER_PLAN_REVISION) &&
       (!requireStudioConversationIntent || cachedResolution.value.studioConversationIntentRevision === REQUIRED_AI_STUDIO_CONVERSATION_INTENT_REVISION) &&
+      (!requireStudioWritingParser || cachedResolution.value.studioWritingParserRevision === REQUIRED_AI_STUDIO_WRITING_PARSER_REVISION) &&
       (!requireSingleAttempt || cachedResolution.value.providerRetryRevision === REQUIRED_AI_PROVIDER_RETRY_REVISION) &&
       (!requireVisualCheck || cachedResolution.value.visualCheckRevision === REQUIRED_AI_VISUAL_CHECK_REVISION)) {
     return cachedResolution.value;
@@ -130,7 +136,7 @@ export async function resolveAiService(requirements: AiServiceRequirements = {})
       base: CONFIGURED_BASE.replace(/\/$/, ""),
       source: "configured",
     };
-    if (requireVisualCheck || requireSingleAttempt) {
+    if (requireVisualCheck || requireSingleAttempt || requireStudioWritingParser) {
       const health = await probe(value.base);
       if (requireVisualCheck && health?.visualCheckRevision !== REQUIRED_AI_VISUAL_CHECK_REVISION) {
         throw new Error("Configured AI service does not support the required visual-check evidence revision");
@@ -152,6 +158,7 @@ export async function resolveAiService(requirements: AiServiceRequirements = {})
         throw new Error("Configured AI service does not support real semantic-layer planning");
       }
       if (requireStudioConversationIntent && health?.studioConversationIntentRevision !== REQUIRED_AI_STUDIO_CONVERSATION_INTENT_REVISION) throw new Error("Configured AI service does not support structured conversation intent");
+      if (requireStudioWritingParser && health?.studioWritingParserRevision !== REQUIRED_AI_STUDIO_WRITING_PARSER_REVISION) throw new Error("Configured AI service does not support bounded writing text parsing");
       Object.assign(value, health, { source: "configured" });
     }
     cachedResolution = { value, expiresAt: now + CACHE_MS };
@@ -174,6 +181,7 @@ export async function resolveAiService(requirements: AiServiceRequirements = {})
         (!requireStudioDecompositionQueue || result.studioDecompositionQueueRevision === REQUIRED_AI_STUDIO_DECOMPOSITION_QUEUE_REVISION) &&
         (!requireStudioLayerPlan || result.studioLayerPlanRevision === REQUIRED_AI_STUDIO_LAYER_PLAN_REVISION) &&
         (!requireStudioConversationIntent || result.studioConversationIntentRevision === REQUIRED_AI_STUDIO_CONVERSATION_INTENT_REVISION) &&
+        (!requireStudioWritingParser || result.studioWritingParserRevision === REQUIRED_AI_STUDIO_WRITING_PARSER_REVISION) &&
         (!requireSingleAttempt || result.providerRetryRevision === REQUIRED_AI_PROVIDER_RETRY_REVISION) &&
         (!requireVisualCheck || result.visualCheckRevision === REQUIRED_AI_VISUAL_CHECK_REVISION),
     );
