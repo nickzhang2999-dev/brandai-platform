@@ -203,6 +203,9 @@ async function pending() {
     releaseScripts();
     await page.getByRole('button', { name: '登录', exact: true }).waitFor();
     await page.waitForFunction(() => !document.querySelector('#login-email').disabled);
+    assert.equal(await page.getByText('使用企业账号登录，账号请联系管理员开通。', { exact: true }).count(), 1);
+    assert.equal(await page.getByRole('button', { name: /注册/ }).count(), 0);
+    check(spec.name + ': enterprise login keeps administrator provisioning and exposes no public registration');
     assert.equal(await page.evaluate(() => window.__loginHydrateRootCalled), true);
     assert.equal(await page.evaluate(() => document.querySelector('#login-email') === window.__ssrEmailNode), true, 'Hydration must reuse the actual server-rendered input rather than replace it with CSR');
     assert.equal(await page.locator('form').getAttribute('aria-busy'), 'false');

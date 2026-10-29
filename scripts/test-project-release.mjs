@@ -15,6 +15,19 @@ test('the exact project script check succeeds with no production settings or Doc
   const result = spawnSync('bash', ['cds-release.sh', 'check'], { encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr + result.stdout);
 });
+test('check rejects a release entry changed after the selected commit', t => {
+  const root = mkdtempSync(path.join(tmpdir(), 'novart-release-dirty-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  execFileSync('git', ['init', '-q'], { cwd: root });
+  writeFileSync(path.join(root, 'cds-release.sh'), script, { mode: 0o755 });
+  execFileSync('git', ['add', 'cds-release.sh'], { cwd: root });
+  execFileSync('git', ['-c', 'user.name=Release Test', '-c', 'user.email=release@example.invalid', 'commit', '-qm', 'Fixture'], { cwd: root });
+  writeFileSync(path.join(root, 'cds-release.sh'), script + '\n# Uncommitted release change\n');
+  const result = spawnSync('bash', ['cds-release.sh', 'check'], { cwd: root, encoding: 'utf8' });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Release script differs from the selected Git commit/);
+  assert.doesNotMatch(result.stdout, /"sha256"/);
+});
 test('deployment rejects wrong branch, wrong commit and wrong target before Docker', t => {
   const root = mkdtempSync(path.join(tmpdir(), 'novart-release-cli-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));

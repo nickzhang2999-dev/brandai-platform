@@ -571,3 +571,15 @@ ef42d5c CI39018642952通过并部署，真实同任务归档恢复成功、9层S
 ## 2026-10-28 Studio writing and canvas interaction
 
 Implemented persistent writing documents, versioned selection replacement, bounded reference parsing, confirmed style, and explicit native-canvas handoff. Canvas controls and reference targets are grouped into the editor workflow. Brand kit imports add batch recovery, explicit categories, grouped suggestions and new-task access revalidation. Local checks cover database persistence and isolated browser interaction; provider/runtime acceptance is tracked separately. See [technical notes](../studio-writing-workbench.md).
+
+## 2026-10-26 B2B 版本准备
+
+按用户要求将灵感开发与本次合并分开，隐藏公开注册入口，保留画布文案与首页修复。实际验证、PR 和合并状态见 [本轮记录](2026-10-26-b2b-release.md)。
+
+## 2026-10-27 · 正式发布脚本提交取证
+
+用户要求提交普通发布脚本并通过 CI，继续保持灵感独立。核对 `c72157be22b89f1d5c35c0ef902cb5f550aad5a8` 已有根目录 `cds-release.sh`（Git mode 100755），不是漏提交。补充 CI 安装依赖前的 Git 对象/可执行权限/Bash 校验，以及脚本 check 的提交一致性与 SHA-256 回执。发布脚本仍采用已有生产 Compose、同提交镜像、迁移/就绪和三域名资源校验。此记录不代表已修复 CDS 远端查找原因或正式发布完成；实际测试和 CI 结果以本次交付回执为准。
+
+## 2026-10-29 PR #68 conflict resolution
+
+Integrated main 632ac2f into devUpdate1012 f83a8a9 in an isolated worktree. Preserved the persistent writing workbench and inspiration/Omni implementation, combined enterprise-only login with hydration protection, and kept main's committed production-script verification. Added desktop/mobile regression assertions that registration stays hidden and retained the copywriting inbox navigation checks. Local validation and remote checks are pending; no main merge or production release performed.

@@ -5,7 +5,6 @@ import { signIn } from "next-auth/react";
 import { Button, CreamCard, Input, Label } from "@brandai/ui";
 
 export default function LoginPage() {
-  const [mode, setMode] = useState<"login" | "register">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -13,7 +12,6 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [providers, setProviders] = useState<string[]>([]);
-  const [registrationOpen, setRegistrationOpen] = useState(false);
   function destination() {
     const value = new URLSearchParams(window.location.search).get("callbackUrl");
     if (!value) return "/studio";
@@ -30,14 +28,10 @@ export default function LoginPage() {
     // its submit handler. A native fallback must never put them in a GET URL.
     setReady(true);
     const controller = new AbortController();
-    fetch("/api/auth/providers")
+    fetch("/api/auth/providers", { signal: controller.signal })
       .then((r) => r.json())
       .then((p) => setProviders(Object.keys(p ?? {})))
       .catch(() => setProviders([]));
-    fetch("/api/auth/registration", { cache: "no-store", signal: controller.signal })
-      .then(async response => response.ok ? await response.json() : null)
-      .then(body => { if (!controller.signal.aborted) setRegistrationOpen(body?.registrationOpen === true); })
-      .catch(() => { if (!controller.signal.aborted) setRegistrationOpen(false); });
     return () => controller.abort();
   }, []);
 
@@ -47,18 +41,6 @@ export default function LoginPage() {
     setError(null);
     setLoading(true);
     try {
-      if (mode === "register") {
-        if (!registrationOpen) throw new Error("注册暂未开放，请联系管理员");
-        const res = await fetch("/api/auth/register", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ email, password }),
-        });
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}));
-          throw new Error(body?.error ?? "注册失败");
-        }
-      }
       const r = await signIn("password", {
         email,
         password,
@@ -84,13 +66,11 @@ export default function LoginPage() {
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src="/brand/deepflare-logo-dark.svg" alt="DeepFlare · 曜影深蓝" className="mx-auto hidden h-16 w-full max-w-[252px] object-contain dark:block" />
         <h1 className="mt-6 text-center text-[21px] font-semibold leading-snug text-foreground sm:text-[24px]">
-          {mode === "login" ? "进入你的品牌视觉工作台" : "创建账号"}
+          进入你的品牌视觉工作台
         </h1>
-        {mode === "register" && (
-          <p className="mt-2 text-center text-sm leading-relaxed text-muted-foreground">
-            用邮箱开始建立品牌视觉系统（密码至少 8 位）
-          </p>
-        )}
+        <p className="mt-2 text-center text-sm leading-relaxed text-muted-foreground">
+          使用企业账号登录，账号请联系管理员开通。
+        </p>
 
         {(providers.includes("github") || providers.includes("google")) && (
           <div className="mt-6 flex flex-col gap-2">
@@ -130,7 +110,7 @@ export default function LoginPage() {
               onChange={(e) => setEmail(e.target.value)}
               type="email"
               inputMode="email"
-              autoComplete={mode === "login" ? "username" : "email"}
+              autoComplete="username"
               spellCheck={false}
               placeholder="输入邮箱地址"
               className="h-12 rounded-2xl px-4 text-[15px]"
@@ -147,8 +127,8 @@ export default function LoginPage() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 type={showPassword ? "text" : "password"}
-                autoComplete={mode === "login" ? "current-password" : "new-password"}
-                placeholder={mode === "login" ? "输入密码" : "设置密码，至少 8 位"}
+                autoComplete="current-password"
+                placeholder="输入密码"
                 className="h-12 rounded-2xl pl-4 pr-12 text-[15px]"
                 disabled={!ready || loading}
                 required
@@ -172,23 +152,10 @@ export default function LoginPage() {
           </div>
           {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
           <Button type="submit" disabled={!ready || loading} className="h-12 w-full rounded-2xl text-sm font-semibold">
-            {!ready ? "正在准备登录…" : loading ? "处理中…" : mode === "login" ? "登录" : "注册并登录"}
+            {!ready ? "正在准备登录…" : loading ? "处理中…" : "登录"}
           </Button>
         </form>
         <noscript><p className="mt-4 text-sm text-muted-foreground">登录需要启用 JavaScript。请启用后刷新页面。</p></noscript>
-
-        {registrationOpen && <button
-          type="button"
-          disabled={loading}
-          className="mx-auto mt-6 block text-sm text-muted-foreground underline underline-offset-4 hover:text-foreground disabled:opacity-50"
-          onClick={() => {
-            setError(null);
-            setShowPassword(false);
-            setMode(mode === "login" ? "register" : "login");
-          }}
-        >
-          {mode === "login" ? "没有账号?去注册" : "已有账号?去登录"}
-        </button>}
 
         {providers.includes("credentials") && (
           <button

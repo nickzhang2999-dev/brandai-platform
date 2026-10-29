@@ -8,6 +8,13 @@ hash, then executes check and deploy. The project script owns Compose project
 No independently edited `/opt/.../*.sh` release script is used. The 2026-10-20
 generated-compose migration was the preceding step, superseded by this contract.
 
+Both CI pipelines verify the executable entry in the selected Git commit before
+installing dependencies. The script's `check` also rejects a modified release
+entry and prints its full commit and SHA-256. A CDS “missing cds-release.sh” error
+must be compared with that exact commit and script path: `c72157be22b8` already
+contains the executable root entry. Do not replace production with an older
+server-owned script to bypass a checkout or platform lookup error.
+
 ## Stable production state
 
 - Private settings remain in `/opt/brandai-platform-prod/.env`; do not commit them.

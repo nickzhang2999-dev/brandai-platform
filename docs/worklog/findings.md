@@ -288,3 +288,11 @@ CDS preflight directly confirms push automatic deployment and default shared bra
 ## 2026-10-28 Studio writing and import boundaries
 
 Writing results remain suggestions until explicit adoption. Durable mutation identity prevents a lost acknowledgement from creating another paid request. Canvas programmatic focus is separate from explicit target selection. Grouping source suggestions must retain each underlying rule. New import tasks recheck access before provider use and result persistence; a consumed provider call remains recorded if the result is rejected.
+
+## 2026-10-26 B2B 交付范围
+
+main 为 d896d7c，开发版为 c13a7c0。独立工作区以 main 为基线迁移非灵感功能，避免将灵感导航、后端与数据库迁移带入本次交付。原工作区改动全部保留。
+
+## 2026-10-29 PR #68 merge boundaries
+
+The source f83a8a9 and main 632ac2f contain parallel/cherry-picked history. Resolving only conflict markers in OwnedEditorClient would leave obsolete panel JSX beside the new workbench, so the reviewed development editor and its integration fixture are kept together. Main contributes enterprise provisioning, three copywriting inbox regressions and release-entry integrity checks. The inbox CI expectation is therefore 19, not the development branch's 16. This PR includes the development inspiration/Omni code; October 26/27 release-isolation notes describe those earlier deliveries, not this PR. Existing runtime enablement and membership checks are retained.

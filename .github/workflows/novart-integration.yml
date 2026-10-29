@@ -45,6 +45,13 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
+      - name: Verify committed production release entry
+        run: |
+          git cat-file -e HEAD:cds-release.sh
+          test -f cds-release.sh && test -x cds-release.sh
+          bash -n cds-release.sh
+          git ls-tree HEAD -- cds-release.sh
+          sha256sum cds-release.sh
       - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0
@@ -111,7 +118,7 @@ jobs:
           assert {'zoomed-hit-testing-drag-and-history-share-the-current-camera',
                   'engine-export-includes-offscreen-images-from-the-full-document',
                   'gzip-save-reopen-retains-all-226-records-camera-stacking-text-and-brush'} <= set(engine['checks'])
-          for name, expected in (('owned-layer-fixture.json', 10), ('brand-knowledge-fixture.json', 23), ('layer-inbox-fixture.json', 16), ('studio-layout-fixture.json', 11), ('brand-switch-fixture.json', 9), ('home-brand-leave-fixture.json', 9), ('brand-creation-recovery-fixture.json', 15), ('image-context-fixture.json', 22), ('target-fixture.json', 8)):
+          for name, expected in (('owned-layer-fixture.json', 10), ('brand-knowledge-fixture.json', 23), ('layer-inbox-fixture.json', 19), ('studio-layout-fixture.json', 11), ('brand-switch-fixture.json', 9), ('home-brand-leave-fixture.json', 9), ('brand-creation-recovery-fixture.json', 15), ('image-context-fixture.json', 22), ('target-fixture.json', 8)):
               report = json.loads((root / name).read_text())
               assert report['passed'] is True and report['isolated'] is True, name
               assert report['realBackend'] is False and report['realProvider'] is False, name
