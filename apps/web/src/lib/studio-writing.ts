@@ -3,10 +3,11 @@ import { z } from "zod";
 import { prisma, Prisma } from "@brandai/db";
 import { StudioWritingAssetReferenceInput, StudioWritingDocument, StudioWritingGenerateInput, StudioWritingReference,
   StudioWritingResult, StudioWritingSaveInput, StudioWritingStyle, StudioWritingStyleExtractInput, StudioWritingStyleSaveInput,
-  StudioWritingTask, StudioWritingVersion, STUDIO_WRITING_FILE_MAX_BYTES } from "@brandai/contracts";
+  StudioWritingTask, StudioWritingVersion, STUDIO_WRITING_FILE_MAX_BYTES, type StudioProjectContextSnapshot } from "@brandai/contracts";
 import { ApiException } from "./api";
 import { requireStudioMaterialProject } from "./studio-materials";
 import { copywritingEnabled } from "./studio-copywriting-provider";
+import { freezeStudioProjectContext } from "./studio-project-context";
 
 export const WRITING_KIND = "STUDIO_WRITING";
 export const WRITING_TTL = 6 * 60_000;
@@ -17,7 +18,8 @@ export const writingTaskId = (workspaceId: string, projectId: string, userId: st
 export type WritingScope = { workspaceId: string; projectId: string; userId: string };
 export type WritingInput = { userId: string; documentId: string; operation: "GENERATE" | "STYLE_EXTRACT" | "REFERENCE_PARSE";
   request: unknown; payloadHash: string; referenceId?: string; context?: { draft: { title: string; text: string; revision: number };
-    style: StudioWritingStyle | null; references: { id: string; sha256: string }[]; history: { role: string; text: string }[] } };
+    style: StudioWritingStyle | null; references: { id: string; sha256: string }[]; history: { role: string; text: string }[];
+    projectContext?: StudioProjectContextSnapshot } };
 export const writingJson = (value: unknown) => value as Prisma.InputJsonValue;
 const transaction = <T>(work: (tx: Prisma.TransactionClient) => Promise<T>) => prisma.$transaction(work, { maxWait: 1000, timeout: 1500 });
 const idFor = (s: WritingScope) => writingDocumentId(s.workspaceId, s.projectId, s.userId);
@@ -170,6 +172,9 @@ export async function submitWriting(s: WritingScope, raw: unknown, styleExtract 
     await lock(tx, "writing:" + idFor(s));
     const prior = await tx.asyncTask.findUnique({ where: { id } });
     if (prior) { if ((prior.inputJson as unknown as WritingInput).payloadHash !== payloadHash) throw new ApiException(409, "任务标识已用于其它内容。"); return prior; }
+    const contextRevision = styleExtract ? undefined : (request as StudioWritingGenerateInput).projectContextRevision;
+    const projectContext = contextRevision === undefined ? undefined
+      : await freezeStudioProjectContext(tx, s.workspaceId, s.projectId, contextRevision);
     if (!copywritingEnabled()) throw new ApiException(503, "文案模型尚未配置，请管理员完成接入。");
     await admission(tx, s, operation);
     const document = await ensureDocument(tx, s);
@@ -191,6 +196,7 @@ export async function submitWriting(s: WritingScope, raw: unknown, styleExtract 
     const messages = await tx.studioWritingMessage.findMany({ where: { documentId: document.id }, orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: 8 });
     const input: WritingInput = { userId: s.userId, documentId: document.id, operation, request, payloadHash,
       context: { draft: { title: document.title, text: document.text, revision: document.revision }, style,
+        ...(projectContext ? { projectContext } : {}),
         references: references.map(r => ({ id: r.id, sha256: r.sha256 })), history: messages.reverse().map(m => ({ role: m.role, text: m.text.slice(0, 3000) })) } };
     const task = await tx.asyncTask.create({ data: { id, workspaceId: s.workspaceId, refId: s.projectId, kind: WRITING_KIND, jobId: id,
       inputJson: writingJson(input), expiresAt: new Date(Date.now() + WRITING_TTL) } });

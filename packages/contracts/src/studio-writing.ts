@@ -25,6 +25,7 @@ export type StudioWritingSaveInput = z.infer<typeof StudioWritingSaveInput>;
 export const StudioWritingGenerateInput = z.object({ mutationId: z.string().uuid(), expectedRevision: Revision,
   prompt: z.string().trim().min(1).max(4000), mode: z.enum(["GENERATE", "REWRITE", "CONTINUE", "SELECTION", "CHAT"]),
   referenceIds: z.array(Id).max(12), styleRevision: Revision.nullable(), selection: StudioWritingSelection.optional(),
+  projectContextRevision: Revision.optional(),
 }).strict().superRefine((v, ctx) => {
   if ((v.mode === "SELECTION") !== !!v.selection) ctx.addIssue({ code: "custom", path: ["selection"], message: "选段模式必须提供当前原文选段，其它模式不接受选段。" });
   if (new Set(v.referenceIds).size !== v.referenceIds.length) ctx.addIssue({ code: "custom", path: ["referenceIds"], message: "参考资料不可重复。" });

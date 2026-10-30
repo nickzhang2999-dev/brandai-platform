@@ -1,5 +1,12 @@
 # Integration findings
 
+## 2026-10-30 项目资料 / 主稿续建
+
+- 用户确认采用素材职责、已知信息复用、主稿衍生、分项质检与 Omni 接续路线。依据为归档的 Meta / UGC Skill 规则；不等于拿到其服务端算法。
+- 当前已有文案文件解析、风格提取及确认版本；应接共享项目上下文，不重做一套文案学习。
+- 当前 `StudioConversationReference.purpose` 为 REFERENCE / ADAPTIVE / EXACT，表达复用强度，不能代替产品 / 品牌 / 文案 / 风格职责。
+- `WorkbenchProjectState` 已有 brief / notes 与独立 workflowRevision；新上下文须独立修订，避免互相覆盖。源码基线 `ebbb4de`，工作区开始时干净。
+
 ## 2026-10-30 图片工具实测
 
 - 当前预览图片配置完整；三项工具开关均关闭，作用范围为部署环境，不是足球专用。

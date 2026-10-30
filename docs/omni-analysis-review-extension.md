@@ -4,7 +4,9 @@
 
 ## 当前接好了什么
 
-BrandAI 预留 `packages/contracts/src/omni-asset-workflow.ts`，Python 镜像为 `apps/ai/app/omni_asset_workflow_schemas.py`。这是可执行校验的数据契约与纯函数，不是新增 HTTP 接口；尚未接入 Omni 实际记录和发布链路，不会改变线上审核结果。
+完整审核契约在 `packages/contracts/src/omni-asset-workflow.ts`，Python 镜像为 `apps/ai/app/omni_asset_workflow_schemas.py`。这是数据校验与资格纯函数，尚未接入 Omni 权威审核记录或发布链路。不能将下面的只读证据入口称为完整自动审核接入。
+
+本分支已新增独立的分析证据读取入口：`GET /api/internal/inspiration-analysis/jobs/{jobId}/workflow-evidence`。它沿用现有服务 Bearer 鉴权与当前工作区/服务成员校验；只读取已有任务，不创建任务、不关闭超时任务、不重试、不改权限或发布状态。旧分析提交、任务查询、按 request_id 查询的响应结构保持原样。
 
 `evaluateOmniAssetWorkflow(record, currentSource)` 检查记录是否属于当前素材版本、人工审核与用途权限是否具备、是否已撤下，只返回资格与缺口。它不发模型请求、不写数据库、不自动发布。模型成功或建议接受，不能自动填成人工审核通过。
 
@@ -18,7 +20,18 @@ BrandAI 预留 `packages/contracts/src/omni-asset-workflow.ts`，Python 镜像�
 | Omni 发布 | `D:/coding/OmniSignal-ad-workbench/src/omnisignal/workbench/publishing.py` | AI 建议先保留为建议；沿用真实审核、用途权限和版本绑定，不以模型成功代替发布门槛 |
 | Nova 知识副本 | `apps/web/src/lib/inspiration/protocol.ts`、`replica.ts` | 沿用签名知识包、哈希校验、版本切换和撤回；本次未增加第二条推送通道 |
 
-## 扩展数据格式
+## 只读分析证据已经接到哪里
+
+- 契约为 `packages/contracts/src/omni-workflow-evidence.ts`，Python 镜像为 `apps/ai/app/omni_workflow_evidence_schemas.py`；生产映射在 `apps/web/src/lib/omni-analysis/workflow-evidence.ts`，由已认证的 `service.ts::getJobWorkflowEvidence` 调用。
+- 未来分析请求保存最小 `source_identity`：`request_id / asset_id / revision / sha256`，均来自原有必填请求字段。成功、失败、轮询超时和 worker 过期清理均保留这份摘要，同时继续剥离标题、描述与图片 base64。
+- 该身份只标为 `source_basis=authenticated_request`，表示受认证请求当时声明的原图身份。它不是当前 Omni 素材版本的实时核验，也不会拿缩略 JPEG 的摘要冒充原图 SHA。
+- 旧终态记录已经剥离的来源信息不能从 `payload_hash` 还原。没有摘要就返回 `source=null / source_basis=unavailable`；不会为历史记录补造版本。
+- 回执只提供已保存的任务执行状态，以及校验通过的完成结果里的模型版本；不返回图片、分析正文、服务用户 ID、payload hash、凭据或配置。未确认的模型版本保持 `null`。
+- 人工审核、AI 审核、三项用途权限与发布状态均明确 `unknown`，`workflow=null`、`eligible_for_publication=false`；`missing_evidence` 列出来源、当前版本、审核、用途和发布证据缺口。没有调用完整资格函数去填造 `draft` 或批准状态。
+
+这些实现可用隔离测试验证接口鉴权、旧响应兼容、请求重放、终态清理与未知状态；本次没有新增真实模型调用或线上审核结果。完整审核 adapter 仍需下一节所述可信记录。
+
+## 完整审核契约（尚待可信审核记录接入）
 
 ```ts
 {

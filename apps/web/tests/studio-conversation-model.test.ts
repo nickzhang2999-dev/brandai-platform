@@ -15,6 +15,15 @@ const input = (extra = {}) => StudioConversationInput.parse({ mutationId: "831a0
 const response = (decision = {}) => ({ revision: "structured-conversation-intent-r2", decision: { action: "modify", targetReferenceId: two.referenceId, referenceIds: [ref.referenceId], confidence: .95, clarification: null, imagePrompt: "保留图片2的主体构图，参考图片1调整画面光影。", options: [], ...decision } });
 beforeEach(() => { vi.resetAllMocks(); delete process.env.STUDIO_CONVERSATION_INTENT_ENABLED; f.model.mockResolvedValue(response()); f.settings.mockResolvedValue({ vlm: { provider: "openai", apiKey: "fixture-unit-only" } }); });
 describe("formal structured model adapter without any real provider calls", () => {
+  it("never lets an inherited master override the explicit quick-edit target", async () => {
+    const master = { referenceId: "project-context:master", assetId: "master", assetSha256: "b".repeat(64), name: "主稿", width: 1024, height: 1024, purpose: "REFERENCE" };
+    const current = input({ text: "背景改成蓝色", references: [ref, master], quickEditTargetId: ref.referenceId, projectContextRevision: 1 });
+    f.model.mockResolvedValue(response({ action: "modify", targetReferenceId: master.referenceId, referenceIds: [], imagePrompt: "改主稿背景" }));
+    const context = { references: current.references.map(item => ({ referenceId: item.referenceId, name: item.name, editable: !!item.shapeId })), history: [], selectedReferenceIds: [],
+      projectContext: { revision: 1, facts: { goal: "海报", audience: "", approvedCopy: "", visualRequirements: "" }, materials: [], masterReferenceId: master.referenceId } };
+    await expect(resolveStudioConversationModel(current, undefined, AbortSignal.timeout(1000), context)).rejects.toThrow("Untrusted structured intent");
+    expect(f.model.mock.calls[0][0].quickEditTargetId).toBe(ref.referenceId);
+  });
   it.each([
     ["构图保持不变，场景要有真实感，渲染光影，阳光洒下", "modify"],
     ["小狐狸在家门口给小白鼠糖", "generate"],

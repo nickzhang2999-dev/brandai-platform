@@ -107,10 +107,17 @@ jobs:
           node scripts/test-writing-workbench-browser.cjs
           NOVART_OWNED_COPYWRITING_ONLY=1 NOVART_OWNED_REPORT=.novart-build/writing-workbench-integration/summary.json node scripts/test-novart-owned-canvas-browser.cjs
           NOVART_OWNED_TARGET_ONLY=1 NOVART_OWNED_REPORT=apps/web/.novart-ui-artifacts/target-fixture.json node scripts/test-novart-owned-canvas-browser.cjs
+          NOVART_OWNED_PROJECT_CONTEXT_ONLY=1 NOVART_OWNED_REPORT=apps/web/.novart-ui-artifacts/project-context-fixture.json node scripts/test-novart-owned-canvas-browser.cjs
+          NOVART_OWNED_LAYER_REPAIR_ONLY=1 NOVART_OWNED_REPORT=apps/web/.novart-ui-artifacts/layer-repair-fixture.json node scripts/test-novart-owned-canvas-browser.cjs
           python - <<'PY'
           import json
           from pathlib import Path
           root = Path('apps/web/.novart-ui-artifacts')
+          for filename, minimum in [('project-context-fixture.json', 14), ('layer-repair-fixture.json', 4)]:
+              report = json.loads((root / filename).read_text())
+              assert report['passed'] and report['isolated'] and len(report['checks']) >= minimum
+              assert not report['realBackend'] and not report['realProvider'] and not report['realAuthentication']
+              assert report['providerCalls'] == 0 and not report['externalRequests'] and not report['errors']
           engine = json.loads((root / 'owned-engine-fixture.json').read_text())
           assert engine['passed'] is True and engine['isolated'] is True
           assert engine['realBackend'] is False and engine['realProvider'] is False
@@ -456,7 +463,7 @@ jobs:
               ai_health = json.load(response)
           assert ai_health.get('studioDecompositionRevision') == 'studio-real-layer-single-attempt-r2', 'Built AI layer revision mismatch'
           assert ai_health.get('studioDecompositionQueueRevision') == 'studio-layer-queue-r2', 'Built AI durable layer queue revision mismatch'
-          assert ai_health.get('studioLayerPlanRevision') == 'semantic-layer-plan-r2', 'Built AI caption planning revision mismatch'
+          assert ai_health.get('studioLayerPlanRevision') == 'semantic-layer-plan-r3', 'Built AI caption planning revision mismatch'
           assert ai_health.get('providerRetryRevision') == 'single-provider-attempt-r2', 'Built AI must match the Web r2 single-attempt contract'
           print('PASS built AI container advertises real-layer and single-attempt capabilities; no model call made')
           for attempt in range(30):
@@ -516,6 +523,8 @@ jobs:
             apps/web/.novart-ui-artifacts/image-context-fixture.json
             apps/web/.novart-ui-artifacts/conversation-fixture.json
             apps/web/.novart-ui-artifacts/target-fixture.json
+            apps/web/.novart-ui-artifacts/project-context-fixture.json
+            apps/web/.novart-ui-artifacts/layer-repair-fixture.json
             .novart-build/writing-workbench-browser/summary.json
             .novart-build/writing-workbench-integration/summary.json
             .novart-build/layer-quality-interactions/report.json

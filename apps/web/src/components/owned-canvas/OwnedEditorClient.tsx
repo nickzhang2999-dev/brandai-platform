@@ -6,7 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { StudioMaterial, resolveGenerationSize, type EditorDocumentView } from "@brandai/contracts";
 import { NovartApiError } from "../../lib/novart-api-client";
 import { ownedCanvasEngine } from "../../lib/owned-canvas-engine";
-import { assignOwnedImageNames, type OwnedCanvasDocument, type OwnedCanvasItem } from "../../lib/owned-canvas-model";
+import { assignOwnedImageNames, ownedImageName, type OwnedCanvasDocument, type OwnedCanvasItem } from "../../lib/owned-canvas-model";
 import type { OwnedExportOptions } from "../../lib/owned-canvas-export";
 import { OwnedCanvas } from "./OwnedCanvas";
 import { WritingWorkbench, type WritingWorkbenchHandle } from "../writing-workbench/WritingWorkbench";
@@ -29,6 +29,7 @@ import type { z } from "zod";
 import { matchesOwnedPsdSelection, ownedPsdSelection, type OwnedLayerMode } from "./owned-layer-options";
 import { generatedOwnedSourceShapeId, placeGeneratedOwnedLayers } from "./owned-generated-layer-placement";
 import { createOwnedWorkflowSession, workflowSelection, type OwnedWorkflowSession, type WorkflowSessionState } from "./owned-workflow-session";
+import { createOwnedProjectContextSession, hasProjectContext, type OwnedProjectContextSession, type ProjectContextDraft, type ProjectContextState } from "./owned-project-context-session";
 import { useOwnedDraft } from "./use-owned-draft";
 import { createOwnedGenerationRecovery, OwnedGenerationRecoveryError } from "./owned-generation-recovery";
 import { takeReadyGenerationImages } from "./owned-generation-autoinsert";
@@ -91,6 +92,9 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
   const [uploads, setUploads] = useState<UploadTask[]>([]);
   const [generations, setGenerations] = useState<GenerationTask[]>([]);
   const [workflowState, setWorkflowState] = useState<WorkflowSessionState | null>(null);
+  const [projectContextState, setProjectContextState] = useState<ProjectContextState | null>(null);
+  const [useProjectContext, setUseProjectContext] = useState<boolean | null>(null);
+  const projectContextRef = useRef<OwnedProjectContextSession | null>(null);
   const [workflowCompleting, setWorkflowCompleting] = useState(false);
   const workflowCompleteBusy = useRef(false);
   const managedWorkflowHashes = useRef(new Set<string>());
@@ -132,6 +136,8 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
   const canEdit = !!document && ownedCanvasEngine.canEdit(document, readOnly || !!view?.readOnly) && saveState !== "conflict";
   writableRef.current = canEdit;
   const workflow = workflowState?.draft;
+  const projectContextEnabled = useProjectContext ?? hasProjectContext(projectContextState?.server);
+  const confirmedProjectContextRevision = projectContextEnabled && projectContextState?.status === "ready" && !projectContextState.dirty && !projectContextState.busy && !projectContextState.server?.issues.length ? projectContextState.server?.revision : undefined;
   const draft = useOwnedDraft({ workspaceId, projectId, userId, value: { prompt, ratio, quality, ...(outputFrameId ? { outputFrameId } : {}) },
     onRestore: value => { setPrompt(value.prompt); setRatio(value.ratio); setQuality(value.quality); setOutputFrameId(value.outputFrameId ?? ""); },
     readOnly: readOnly || !!view?.readOnly || !!document?.warnings.length, frozen: pendingGeneration || submitting || generationRecoveryBlocked });
@@ -352,6 +358,12 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
       if (!alive.current || apiRef.current !== api || !saved || sequence.current !== savedSequence.current || pendingSave.current || saveBlocked.current) throw new Error("画布保存尚未确认，请保存后再设置用途。");
     } });
     workflowRef.current = workflowSession; const stopWorkflow = workflowSession.subscribe(setWorkflowState);
+    const contextSession = createOwnedProjectContextSession(api, { canWrite: () => writableRef.current, saveDocument: async () => {
+      const saved = await save();
+      if (!alive.current || apiRef.current !== api || !saved || sequence.current !== savedSequence.current || pendingSave.current || saveBlocked.current) throw new Error("画布保存尚未确认，请先保存后再选主稿。");
+      return saved.revision;
+    } });
+    projectContextRef.current = contextSession; const stopContext = contextSession.subscribe(setProjectContextState); setUseProjectContext(null);
     setGenerations([]); setMaterials([]); setUploads([]); setLayerTasks([]);
     setSaveState("loading"); setSaveError(""); setDocument(null); setView(null); docRef.current = null; viewRef.current = null; sequence.current = 0; savedSequence.current = 0;
     pendingSave.current = null; saveBlocked.current = false;
@@ -383,13 +395,13 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
       if (!alive.current || apiRef.current !== api) return;
       docRef.current = loaded; viewRef.current = result; setView(result); setDocument(loaded);
       if (loaded !== decoded) { sequence.current++; setSaveState("dirty"); } else setSaveState("saved");
-      void refresh(); void workflowSession.load();
+      void refresh(); void workflowSession.load(); void contextSession.load();
       if (initialTaskKind && initialTaskId) void openExistingTask(initialTaskKind, initialTaskId).catch(error => { if (alive.current && apiRef.current === api) setNotice(messageOf(error)); });
     }).catch(error => {
       if (!alive.current || apiRef.current !== api) return;
       setSaveError(messageOf(error)); setSaveState("error"); send("startup-error", { code: "OWNED_CANVAS_LOAD_FAILED" });
     });
-    return () => { alive.current = false; workflowSession.dispose(); stopWorkflow(); controller.abort(); if (saveTimer.current) clearTimeout(saveTimer.current); };
+    return () => { alive.current = false; workflowSession.dispose(); stopWorkflow(); contextSession.dispose(); stopContext(); controller.abort(); if (saveTimer.current) clearTimeout(saveTimer.current); };
   }, [workspaceId, projectId, userId, refresh, send, save, openExistingTask, initialTaskKind, initialTaskId, imageToolJournal]);
 
   useEffect(() => {
@@ -409,7 +421,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
 
   useEffect(() => {
     const preventLoss = (event: BeforeUnloadEvent) => {
-      if (sequence.current !== savedSequence.current || pendingSave.current || workflowRef.current?.snapshot().dirty) { event.preventDefault(); event.returnValue = ""; }
+      if (sequence.current !== savedSequence.current || pendingSave.current || workflowRef.current?.snapshot().dirty || projectContextRef.current?.snapshot().dirty) { event.preventDefault(); event.returnValue = ""; }
     };
     const keyboard = (event: KeyboardEvent) => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
       event.preventDefault();
@@ -504,7 +516,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
             const saved = await saveSettled();
             if (!alive.current || apiRef.current !== api) return;
             if (!saved || sequence.current !== savedSequence.current || pendingSave.current || saveBlocked.current) throw new Error("画布修改尚未确认保存，请稍后继续。");
-            if (data.action === "confirm-leave" && (!draftConfirmed() || conversationRef.current && !conversationRef.current.confirmed() || workflowRef.current?.snapshot().dirty)) throw new Error("仍有新的需求或素材修改，请确认保存后再切换品牌。");
+            if (data.action === "confirm-leave" && (!draftConfirmed() || conversationRef.current && !conversationRef.current.confirmed() || workflowRef.current?.snapshot().dirty || projectContextRef.current?.snapshot().dirty)) throw new Error("仍有新的需求或素材修改，请确认保存后再切换品牌。");
             send(action, { requestId: data.requestId, status: "saved", revision: saved.revision });
           } catch (error) {
             if (alive.current && apiRef.current === api) send(action, { requestId: data.requestId, status: "failed", error: error instanceof Error && error.name === "ZodError" ? "素材结果格式无法确认，原文件保留。" : messageOf(error) });
@@ -563,6 +575,29 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
     const state = workflow.snapshot();
     if (!writableRef.current || state.dirty || state.busy || state.status !== "ready" || !state.server) throw new Error("素材设置尚未确认，请读取最新设置。");
     return { documentRevision: saved.revision, workflowRevision: state.server.revision, ...(outputFrameId ? { outputFrameId } : {}) };
+  }
+  async function prepareProjectContext() {
+    if (!projectContextEnabled) return undefined;
+    const api = apiRef.current, session = projectContextRef.current;
+    if (!api || !session) throw new Error("项目资料尚未准备好，请稍后再试或关闭本轮沿用。");
+    const context = await session.confirmForUse();
+    if (!alive.current || apiRef.current !== api || projectContextRef.current !== session || !writableRef.current) throw new Error("项目已切换，本轮没有提交旧项目的资料。");
+    return context.revision;
+  }
+  function changeProjectContext(update: (draft: ProjectContextDraft) => ProjectContextDraft) {
+    try { projectContextRef.current?.change(update); } catch (error) { setNotice(messageOf(error)); }
+  }
+  async function setProjectMaster() {
+    const api = apiRef.current, session = projectContextRef.current, ids = [...selectedIds];
+    if (!api || !session || ids.length !== 1) throw new Error("请先在画布选择一张已保存的图片。");
+    const saved = await prepareLayers();
+    const available = await api.listMaterials();
+    if (!alive.current || apiRef.current !== api || projectContextRef.current !== session || !writableRef.current) throw new Error("项目已切换，本次未更换主稿。");
+    const [reference] = selectedOwnedConversationReferences(saved.document, ids, available);
+    const current = docRef.current?.items.find(item => item.id === ids[0]);
+    if (!reference || !current || current.assetId !== reference.assetId || current.assetSha256 !== reference.assetSha256) throw new Error("选中图片的来源已变化，请重新选择主稿。");
+    session.change(value => ({ ...value, master: { assetId: reference.assetId, assetSha256: reference.assetSha256, shapeId: current.id, ...(reference.versionId ? { versionId: reference.versionId } : {}) } }));
+    setNotice("主稿已选好，请保存项目资料。当前修改对象保持原选择。");
   }
   async function applyWorkflowToConversation() {
     if (workflowCompleteBusy.current) throw new Error("素材设置正在应用，请稍后确认。");
@@ -899,6 +934,12 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
       {projectContentOpen && <OwnedProjectSidebar document={document} selectedIds={selectedIds} materials={materials} readOnly={!canEdit}
         onClose={() => setProjectContentOpen(false)} onChooseImage={id => { setFocusImageId(undefined); requestAnimationFrame(() => setFocusImageId(id)); void chooseCanvasTarget(id); }}
         onUpload={() => uploadInput.current?.click()} onOpenLibrary={() => setPanel("materials")} onReference={addMaterialReference}
+        projectContext={{ state: projectContextState, readOnly: !canEdit,
+          masterName: materials.find(value => value.assetId === projectContextState?.draft?.master?.assetId)?.fileName || projectContextState?.server?.master?.name,
+          selectedImageName: selectedIds.length === 1 && document?.items.find(item => item.id === selectedIds[0] && item.kind === "image" && item.assetId && item.assetSha256) ? ownedImageName(document.items.find(item => item.id === selectedIds[0])!) : undefined,
+          onChange: changeProjectContext, onSave: () => void projectContextRef.current?.save().catch(error => setNotice(messageOf(error))),
+          onRefresh: () => void projectContextRef.current?.load(), onSetMaster: () => void setProjectMaster().catch(error => setNotice(messageOf(error))),
+          onResolveConflict: choice => { try { projectContextRef.current?.resolveConflict(choice); } catch (error) { setNotice(messageOf(error)); } } }}
         onInsert={material => insertImage(material)} onNotice={setNotice} onBrandRules={() => { setPanel("settings"); if (!workflowRef.current?.snapshot().dirty) void refreshWorkflow(); }} />}
       <main className="relative min-h-0 min-w-0 flex-1">
         {document ? <OwnedCanvas key={projectId} document={document} focusImageId={focusImageId} clipboardScope={`${userId}:${workspaceId}:${projectId}`} onChange={changeDocument} readOnly={!canEdit} onUploadFiles={uploadFiles} onOpenMaterials={() => setPanel("materials")} onReplaceImage={replaceImage} onExport={(format, scope) => exportDocument(format, scope)} onSelectionChange={ids => { if (ids.length !== 1) { targetChoice.current++; setTargetResolving(false); } setSelectedIds(ids); }} onImageSelect={id => void chooseCanvasTarget(id)} onImageAction={(action, ids) => void imageAction(action, ids)} imageTools={imageTools} /> : <div className="grid h-full place-content-center text-sm text-muted-foreground">{saveError ? "画布未能打开，原数据没有被修改。" : "正在读取项目…"}</div>}
@@ -920,7 +961,9 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
           {targetResolving && <p role="status" className="text-xs text-muted-foreground">正在读取选中图片，确认后可发送修改…</p>}
           {placementFailed && <p role="alert" className="text-xs">图片已生成，放入画布未完成。<button className="ml-2 underline" onClick={() => { failedPlacements.current.clear(); setPlacementFailed(false); setPlacementRetry(value => value + 1); }}>重试放入</button></p>}
           {(pendingGeneration || pendingUpload || pendingImageTool || generationRecoveryBlocked) && <button className="text-left text-xs underline" onClick={() => setPanel("tasks")}>有尚未确认的操作，检查原任务</button>}
-          <fieldset disabled={targetResolving} aria-busy={targetResolving} hidden={panel === "tasks"} style={{ display: panel === "tasks" ? "none" : "block" }} className="min-h-0 min-w-0 flex-1"><OwnedConversationPanel ref={conversationRef} workspaceId={workspaceId} projectId={projectId} userId={userId} readOnly={!canEdit || pendingGeneration || generationRecoveryBlocked || pendingImageTool} isImagePlaced={image => !!document?.items.some(item => item.assetId === image.assetId && item.assetSha256 === image.assetSha256)} api={apiRef.current} outputFrameId={outputFrameId || undefined} prepare={prepareConversation} selectedReferenceIds={references => ownedConversationSelectedIds(docRef.current, selectedIds, references)} onAddReference={() => setPanel("materials")} onAdvancedSettings={() => { setPanel("settings"); if (!workflowRef.current?.snapshot().dirty) void refreshWorkflow(); }} activity={layerTasks.map(task => <button key={task.requestId} className="flex w-full items-center justify-between rounded-2xl border border-border px-3 py-3 text-xs" onClick={() => setPanel("layers")}><span>图片分层 · {task.layerMode === "AUTO" ? "按内容" : `${task.layerCount} 层`}</span><span>{task.status === "SUCCEEDED" ? "查看图层" : task.status === "FAILED" ? "未完成 · 查看" : "处理中…"}</span></button>)} onNotice={setNotice} onGeneration={task => { setGenerations(current => mergeTask(current, task, value => value.requestId)); generationPoll.resume(); setPollPaused(false); }} onInsert={(image, sourceShapeId) => insertImage(image, undefined, undefined, sourceShapeId)} onInsertLayers={insertLayers} /></fieldset>
+          <fieldset disabled={targetResolving} aria-busy={targetResolving} hidden={panel === "tasks"} style={{ display: panel === "tasks" ? "none" : "block" }} className="min-h-0 min-w-0 flex-1"><OwnedConversationPanel ref={conversationRef} workspaceId={workspaceId} projectId={projectId} userId={userId} readOnly={!canEdit || pendingGeneration || generationRecoveryBlocked || pendingImageTool} isImagePlaced={image => !!document?.items.some(item => item.assetId === image.assetId && item.assetSha256 === image.assetSha256)} api={apiRef.current} outputFrameId={outputFrameId || undefined} prepare={prepareConversation} projectContext={{ enabled: projectContextEnabled, available: hasProjectContext(projectContextState?.server),
+            blocked: projectContextEnabled && (projectContextState?.status !== "ready" || !!projectContextState?.busy || !!projectContextState?.dirty || !!projectContextState?.server?.issues.length),
+            onChange: setUseProjectContext, onOpen: () => setProjectContentOpen(true), prepare: prepareProjectContext }} selectedReferenceIds={references => ownedConversationSelectedIds(docRef.current, selectedIds, references)} onAddReference={() => setPanel("materials")} onAdvancedSettings={() => { setPanel("settings"); if (!workflowRef.current?.snapshot().dirty) void refreshWorkflow(); }} activity={layerTasks.map(task => <button key={task.requestId} className="flex w-full items-center justify-between rounded-2xl border border-border px-3 py-3 text-xs" onClick={() => setPanel("layers")}><span>图片分层 · {task.layerMode === "AUTO" ? "按内容" : `${task.layerCount} 层`}</span><span>{task.status === "SUCCEEDED" ? "查看图层" : task.status === "FAILED" ? "未完成 · 查看" : "处理中…"}</span></button>)} onNotice={setNotice} onGeneration={task => { setGenerations(current => mergeTask(current, task, value => value.requestId)); generationPoll.resume(); setPollPaused(false); }} onInsert={(image, sourceShapeId) => insertImage(image, undefined, undefined, sourceShapeId)} onInsertLayers={insertLayers} /></fieldset>
           {panel === "tasks" && <section aria-label="项目任务记录" className="min-h-0 flex-1 space-y-3 overflow-y-auto">{taskHistory}</section>}
         </div>
       </aside>
@@ -946,6 +989,8 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
     </div>
     {writingOpened && <div className={`${writingLayout.writing} ${!writingExpanded ? writingLayout.docked : ""} ${surface !== "writing" ? writingLayout.hidden : ""}`} data-testid="writing-scroll-region">
       <WritingWorkbench ref={writingRef} key={JSON.stringify([workspaceId, projectId, userId])} workspaceId={workspaceId} projectId={projectId} userId={userId}
+        projectContextRevision={confirmedProjectContextRevision}
+        projectContextBlocked={projectContextEnabled && (projectContextState?.status !== "ready" || !!projectContextState.busy || !!projectContextState.dirty || !!projectContextState.server?.issues.length) ? "请先保存并核对项目资料，或关闭本轮沿用。" : undefined}
         compact={!writingExpanded} onToggleExpanded={() => setWritingExpanded(value => !value)}
         readOnly={readOnly || !!view?.readOnly} projectName={visibleName} initialTaskId={writingTaskId} onReturnToCanvas={() => showSurface("canvas")}
         onInsertSuggestion={async (text, taskId) => {

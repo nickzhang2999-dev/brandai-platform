@@ -46,6 +46,7 @@ export function ownedConversationDecisionInput(message: StudioConversationMessag
  * Only the same source, kind and option can acknowledge a different mutation. */
 export function ownedConversationAcknowledges(input: StudioConversationInput, message: StudioConversationMessage): boolean {
   if (message.text !== input.text || !ownedConversationDraftEqual(message.references, input.references)) return false;
+  if (message.originalInput?.projectContextRevision !== input.projectContextRevision) return false;
   if (message.mutationId === input.mutationId) return true;
   return Boolean(input.decision && message.intent?.modelStatus !== "UNKNOWN" && message.originalInput?.decision
     && ownedConversationDraftEqual(input.decision, message.originalInput.decision));

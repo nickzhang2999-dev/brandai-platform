@@ -7,12 +7,14 @@ import { parseStudioConversationIntent, studioConversationNonActionable } from "
 import { studioConversationFeedback } from "@/lib/studio-conversation-feedback";
 import { submitStudioGeneration } from "@/lib/studio-generation";
 import { requireArtifactWrite } from "@/lib/studio-generation-artifacts";
-import { validateConversationReferences, conversationGenerationInput, recoverStudioConversationGeneration } from "@/lib/studio-conversation";
+import { validateConversationReferences, conversationGenerationInput, conversationGenerationAcceptance, recoverStudioConversationGeneration } from "@/lib/studio-conversation";
 import { enqueueStudioConversation } from "@/lib/studio-conversation-queue";
 import { ApiException } from "@/lib/api";
 import { studioConversationModelAvailable, resolveStudioConversationModel, unknownStudioConversationIntent } from "@/lib/studio-conversation-model";
 import { loadStudioConversationContext } from "@/lib/studio-conversation-context";
 import { withConversationChoices } from "@/lib/studio-conversation-choices";
+import { assertStudioProjectContextSources } from "@/lib/studio-project-context";
+import { readConversationProjectContext, withStudioProjectContext, studioProjectContextForPlanner } from "@/lib/studio-project-context-conversation";
 
 const CLAIM_MS = 60_000;
 export async function runStudioConversationJob(job: Job<{ messageId: string }>) {
@@ -28,11 +30,13 @@ export async function runStudioConversationJob(job: Job<{ messageId: string }>) 
   if (!row) return;
   const { workspaceId, projectId, userId } = row.conversation;
   try {
-    const input = StudioConversationInput.parse(row.input);
+    const originalInput = StudioConversationInput.parse(row.input), projectContext = readConversationProjectContext(row.projectContextJson);
+    const input = withStudioProjectContext(originalInput, projectContext);
     const active = await prisma.user.findUnique({ where: { id: userId }, select: { isActive: true } });
     if (!active?.isActive) throw new ApiException(403, "账号已停用，消息未调用生成服务。");
     await prisma.$transaction(async tx => {
       await requireArtifactWrite(tx, workspaceId, projectId, userId);
+      if (projectContext) await assertStudioProjectContextSources(tx, workspaceId, projectId, projectContext);
       await validateConversationReferences(tx, workspaceId, projectId, input.references, row.acceptedCanvas);
     });
     let previous: StudioConversationReference | undefined;
@@ -60,6 +64,13 @@ export async function runStudioConversationJob(job: Job<{ messageId: string }>) 
       // Preparation can fail without a paid call. Claim only after authorized
       // image reads and resizing succeed; never label that failure as UNKNOWN.
       const context = await loadStudioConversationContext(workspaceId, projectId, row.conversationId, row.createdAt, input, signal);
+      if (projectContext) {
+        await prisma.$transaction(async tx => {
+          await requireArtifactWrite(tx, workspaceId, projectId, userId);
+          await assertStudioProjectContextSources(tx, workspaceId, projectId, projectContext);
+        });
+        context.projectContext = studioProjectContextForPlanner(projectContext, input.references);
+      }
       signal.throwIfAborted();
       const claimed = await prisma.studioConversationMessage.updateMany({ where: { id: row.id, attemptToken: token, status: "RUNNING", intentModelStartedAt: null, intent: { equals: Prisma.DbNull }, expiresAt: { gt: new Date() } },
         data: { intentModelStartedAt: new Date() } });
@@ -81,7 +92,7 @@ export async function runStudioConversationJob(job: Job<{ messageId: string }>) 
     if (intent.action === "clarify") {
       await prisma.studioConversationMessage.updateMany({ where: { id: row.id, attemptToken: token, status: "RUNNING", expiresAt: { gt: new Date() } }, data: { status: "CLARIFICATION", attemptToken: null } }); return;
     }
-    const generation = await submitStudioGeneration(workspaceId, userId, conversationGenerationInput(projectId, input, intent), { canvas: row.acceptedCanvas, references: input.references, intent }, { messageId: row.id, attemptToken: token });
+    const generation = await submitStudioGeneration(workspaceId, userId, conversationGenerationInput(projectId, originalInput, intent, projectContext), conversationGenerationAcceptance(row, originalInput, intent), { messageId: row.id, attemptToken: token });
     if (!("requestId" in generation)) throw new Error("Generation receipt unavailable");
     await prisma.studioConversationMessage.updateMany({ where: { id: row.id, attemptToken: token, status: "RUNNING", generationRequestId: null },
       data: { generationRequestId: generation.requestId, attemptToken: null } });

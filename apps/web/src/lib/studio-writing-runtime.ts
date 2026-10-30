@@ -9,6 +9,8 @@ import { artifactDeadline, inspectArtifactImage, readArtifactImageBytes, STUDIO_
 import { WRITING_KIND, WRITING_EXPIRED, requireWritingScope, requireWritingAsset, writingJson, type WritingInput, type WritingScope } from "./studio-writing";
 import { generateStudioWriting, WritingProviderResponseError, type WritingProviderContext, type WritingSource } from "./studio-writing-provider";
 import { recordUsage } from "./usage";
+import { assertStudioProjectContextSources } from "./studio-project-context";
+import { requireArtifactWrite } from "./studio-generation-artifacts";
 
 export async function parseWritingFile(input: z.infer<typeof StudioWritingParseRequest>, signal: AbortSignal) {
   const resolution = await artifactDeadline(resolveAiService({ requireStudioWritingParser: true }), signal);
@@ -129,6 +131,10 @@ export async function processWritingTask(taskId: string, dependencies: Dependenc
         prisma.project.findFirstOrThrow({ where: { id: task.refId, workspaceId: task.workspaceId }, select: { name: true } }),
       ]);
       const sources = await prepareWritingSources(scope, input, signal);
+      if (input.context.projectContext) await artifactDeadline(assertStudioProjectContextSources(prisma, scope.workspaceId, scope.projectId, input.context.projectContext), signal);
+      // File loading may outlast a membership change. Re-check immediately
+      // before any private draft/project facts leave for the model.
+      await artifactDeadline(requireWritingScope(scope, true), signal);
       const context: WritingProviderContext = { input, brandName: brand.name, projectName: project.name, sources };
       result = StudioWritingResult.parse(await artifactDeadline((dependencies.generate ?? generateStudioWriting)(context, signal), signal));
       await recordUsage({ workspaceId: task.workspaceId, userId: input.userId, kind: WRITING_KIND, status: "SUCCEEDED", provider: "copywriting-config",
@@ -145,6 +151,10 @@ export async function processWritingTask(taskId: string, dependencies: Dependenc
     if (parsed?.assetId) await artifactDeadline(requireWritingAsset(scope, parsed.assetId), signal);
     if (result.text.includes("\0")) throw new ApiException(502, "模型返回无效字符。");
     await prisma.$transaction(async tx => {
+      if (input.context?.projectContext) {
+        await requireArtifactWrite(tx, scope.workspaceId, scope.projectId, scope.userId);
+        await assertStudioProjectContextSources(tx, scope.workspaceId, scope.projectId, input.context.projectContext, true);
+      }
       const changed = await tx.asyncTask.updateMany({ where: { id: task.id, kind: WRITING_KIND, status: "RUNNING", expiresAt: { gt: new Date() } },
         data: { status: "SUCCEEDED", progress: 100, resultJson: writingJson(result), error: null, refCount: result.citations.length } });
       if (!changed.count) throw new ApiException(409, WRITING_EXPIRED);

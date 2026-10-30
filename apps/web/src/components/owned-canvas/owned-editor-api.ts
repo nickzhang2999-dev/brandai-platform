@@ -4,6 +4,7 @@ import { createDocumentSession, createNovartApiClient, NovartApiError } from "..
 import { StudioDecompositionInput, StudioDecompositionView } from "../../../../../packages/contracts/src/studio-decomposition";
 import { matchesOwnedDecomposition, matchesOwnedPsdSelection } from "./owned-layer-options";
 import { StudioImageToolCapabilities, StudioImageToolInput } from "@brandai/contracts";
+import { StudioProjectContextSaveInput, StudioProjectContextView } from "@brandai/contracts";
 
 export type Material = z.infer<typeof StudioMaterial>;
 export type UploadTask = z.infer<typeof StudioMaterialUploadView>;
@@ -12,6 +13,8 @@ export type GenerationCompliance = z.infer<typeof StudioGenerationComplianceView
 export type Workflow = z.infer<typeof StudioWorkflowView>;
 export type WorkflowAssets = z.infer<typeof StudioWorkflowAssets>;
 export type WorkflowInput = z.infer<typeof StudioWorkflowSaveInput>;
+export type ProjectContext = z.infer<typeof StudioProjectContextView>;
+export type ProjectContextInput = z.infer<typeof StudioProjectContextSaveInput>;
 export type GenerationInput = z.infer<typeof StudioGenerationInput>;
 export type PersistentImage = Pick<Material, "assetId" | "assetSha256" | "width" | "height" | "url"> & { versionId?: string; fileName?: string };
 export type DecompositionTask = z.infer<typeof StudioDecompositionView>;
@@ -106,6 +109,25 @@ export function createOwnedEditorApi(workspaceId: string, projectId: string, use
     return value;
   };
   return {
+    async readProjectContext() {
+      const value = await request(`/api/workspaces/${encodeURIComponent(workspaceId)}/projects/${encodeURIComponent(projectId)}/studio-project-context`, StudioProjectContextView);
+      if (value.projectId !== projectId) throw new NovartApiError("项目资料不属于当前项目。", 422);
+      return value;
+    },
+    async saveProjectContext(input: ProjectContextInput) {
+      const payload = StudioProjectContextSaveInput.parse(input);
+      const value = await request(`/api/workspaces/${encodeURIComponent(workspaceId)}/projects/${encodeURIComponent(projectId)}/studio-project-context`, StudioProjectContextView,
+        { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      const factsMatch = Object.entries(payload.facts).every(([key, text]) => value.facts[key as keyof typeof value.facts] === text);
+      const materialsMatch = value.materials.length === payload.materials.length && payload.materials.every((item, index) => {
+        const saved = value.materials[index]; return saved?.assetId === item.assetId && saved.assetSha256 === item.assetSha256 && saved.role === item.role;
+      });
+      const masterMatch = !payload.master ? value.master === null : value.master?.assetId === payload.master.assetId
+        && value.master.assetSha256 === payload.master.assetSha256 && value.master.shapeId === (payload.master.shapeId ?? null)
+        && (!payload.master.versionId || value.master.versionId === payload.master.versionId);
+      if (value.projectId !== projectId || value.revision !== payload.expectedRevision + 1 || !factsMatch || !materialsMatch || !masterMatch) throw new NovartApiError("项目资料保存结果尚未确认，请读取最新资料。", null, "INVALID_RECEIPT", true);
+      return value;
+    },
     getImageToolCapabilities: () => request(`/api/workspaces/${encodeURIComponent(workspaceId)}/projects/${encodeURIComponent(projectId)}/studio-image-tools`, StudioImageToolCapabilities),
     async submitImageTool(input: z.infer<typeof StudioImageToolInput>) {
       const payload = StudioImageToolInput.parse(input);

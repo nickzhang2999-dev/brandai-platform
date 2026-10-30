@@ -1,6 +1,7 @@
 import { gzipSync } from "node:zlib";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const f = vi.hoisted(() => ({ prepare: vi.fn(), rules: vi.fn(), materials: vi.fn(), gate: vi.fn(), state: vi.fn(), doc: vi.fn(), assets: vi.fn(), proh: vi.fn(), edit: vi.fn(), inspectEdit: vi.fn() }));
+const f = vi.hoisted(() => ({ prepare: vi.fn(), rules: vi.fn(), materials: vi.fn(), gate: vi.fn(), state: vi.fn(), doc: vi.fn(), assets: vi.fn(), proh: vi.fn(), edit: vi.fn(), inspectEdit: vi.fn(), trustedContextSource: vi.fn() }));
+vi.mock("../src/lib/studio-brand-materials", () => ({ requireTrustedStudioBrandProjectMaterial: f.trustedContextSource }));
 vi.mock("../src/lib/api", () => ({ ApiException: class extends Error { constructor(public status: number, message: string) { super(message); } } }));
 vi.mock("../src/lib/settings", () => ({ getEffectiveAiSettings: vi.fn(), getEffectiveStorage: vi.fn() }));
 vi.mock("../src/lib/generation-prepare", () => ({ prepareGeneration: f.prepare }));
@@ -11,6 +12,7 @@ vi.mock("../src/lib/studio-generation-edit", () => ({ resolveStudioEditSource: f
 import { prepareStudioGeneration, studioGenerationContextHash } from "../src/lib/studio-generation-policy";
 import { parseStudioConversationIntent } from "../src/lib/studio-conversation-intent";
 import { StudioConversationInput } from "../../../packages/contracts/src/studio-conversation";
+import { ApiException } from "../src/lib/api";
 const sha = "a".repeat(64), url = "/api/workspaces/w/assets/a/raw";
 const input = { projectId: "p", mutationId: "831a0280-2cf1-41ba-ac94-621053c4a4c6", prompt: "tree", sizeSelection: { ratioKey: "1:1" as const, resolutionTier: "1K" as const }, workflowRevision: 1, documentRevision: 2 };
 const reference = { shapeId: "shape:image", assetSha256: sha, purpose: "ADAPTIVE", participates: true };
@@ -25,6 +27,20 @@ beforeEach(() => {
   db = { workbenchProjectState: { findUnique: f.state }, editorDocument: { findUnique: f.doc }, asset: { findMany: f.assets }, prohibitionRule: { findMany: f.proh } };
 });
 describe("saved workflow selection to company generation", () => {
+  it("persists accepted project facts and source roles, ignores later context edits, rejects revoked sources at execution", async () => {
+    const projectContext = { projectId: "p", revision: 1, facts: { goal: "原目标", audience: "", approvedCopy: "原文案", visualRequirements: "" },
+      materials: [{ assetId: "a", assetSha256: sha, name: "原产品", role: "PRODUCT" as const, width: 20, height: 10, versionId: null }], master: null, updatedAt: null };
+    f.trustedContextSource.mockResolvedValue({ width: 20, height: 10, generationVersionId: null });
+    const accepted = await prepareStudioGeneration(db, "w", "u", input, { canvas, projectContext,
+      references: [{ referenceId: "source", name: "产品", assetId: "a", assetSha256: sha, shapeId: "shape:image", width: 20, height: 10, purpose: "REFERENCE" }],
+      intent: { action: "generate", targetReferenceId: null, referenceIds: ["source"], prompt: input.prompt, clarification: null,
+        requestedSize: { width: 1024, height: 1024 }, sizeSource: "control", sizeSelection: input.sizeSelection, parser: "safe-rules-v1" } });
+    expect(accepted.jobData.studioProjectContext).toEqual(projectContext);
+    state.contextRevision = 99;
+    expect(await studioGenerationContextHash(db, "w", "p", accepted.jobData)).toBe(accepted.contextHash);
+    f.trustedContextSource.mockRejectedValue(new ApiException(404, "Revoked"));
+    await expect(studioGenerationContextHash(db, "w", "p", accepted.jobData)).rejects.toMatchObject({ status: 409 });
+  });
   it("freezes the inpaint parent and rejects its disappearance at the worker context fence", async () => {
     const source = { assetId: "a", sha256: sha, width: 20, height: 10, shapeId: "shape:image", recipeHash: "b".repeat(64) };
     const parent = { id: "parent", workspaceId: "w", projectId: "p", status: "SUCCEEDED", sourceShapeId: source.shapeId,

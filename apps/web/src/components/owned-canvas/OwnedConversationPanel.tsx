@@ -17,6 +17,7 @@ export type OwnedConversationHandle = { ready(): boolean; flush(): Promise<void>
 type Props = { workspaceId: string; projectId: string; userId: string; readOnly: boolean;
   api: ReturnType<typeof createOwnedEditorApi> | null;
   prepare(): Promise<{ documentRevision: number; workflowRevision: number; outputFrameId?: string }>;
+  projectContext?: { enabled: boolean; available: boolean; blocked: boolean; onChange(value: boolean): void; onOpen(): void; prepare(): Promise<number | undefined> };
   selectedReferenceIds?(references: StudioConversationReference[]): string[];
   isImagePlaced?(image: PersistentImage): boolean; onNotice(message: string): void; onGeneration(task: GenerationTask): void; onInsert(image: PersistentImage, sourceShapeId?: string): Promise<void>;
   onInsertLayers(task: DecompositionTask, source: PersistentImage): Promise<void>; onAddReference?(): void; onAdvancedSettings?(): void; outputFrameId?: string; activity?: ReactNode };
@@ -122,13 +123,15 @@ export const OwnedConversationPanel = forwardRef<OwnedConversationHandle, Props>
         if (!mounted.current || api.current !== context) return;
         const prepared = await latest.current.prepare();
         if (!mounted.current || api.current !== context) return;
+        const projectContextRevision = !decision && latest.current.projectContext?.enabled ? await latest.current.projectContext.prepare() : undefined;
+        if (!mounted.current || api.current !== context || latest.current.readOnly) return;
         const source = decision ? messagesRef.current.find(message => message.messageId === decision.messageId) : undefined;
         if (decision && !source) throw new Error("原任务暂不可用，请读取最新对话。");
         const references = source?.originalInput?.references ?? draftRef.current.references;
         const selectedReferenceIds = latest.current.selectedReferenceIds?.(references) ?? [];
         operation = decision && source
           ? ownedConversationDecisionInput(source, decision.optionId, decision.kind, prepared, crypto.randomUUID(), selectedReferenceIds)
-          : StudioConversationInput.parse({ ...structuredClone(draftRef.current), ...prepared, selectedReferenceIds, mutationId: home?.mutationId ?? crypto.randomUUID(), ...(home ? { homeStart: true } : {}) });
+          : StudioConversationInput.parse({ ...structuredClone(draftRef.current), ...prepared, selectedReferenceIds, ...(projectContextRevision === undefined ? {} : { projectContextRevision }), mutationId: home?.mutationId ?? crypto.randomUUID(), ...(home ? { homeStart: true } : {}) });
         // Persist before sending. A storage error must not lead to an untracked paid request.
         localStorage.setItem(keyRef.current, JSON.stringify(operation)); pending.current = operation; setUnknown(true);
       }
@@ -296,6 +299,10 @@ export const OwnedConversationPanel = forwardRef<OwnedConversationHandle, Props>
         <button type="button" aria-label={`移除参考 ${value.name}`} className="rounded-full px-1 py-1 text-muted-foreground disabled:opacity-40" disabled={locked} onClick={() => edit({ references: draft.references.filter(ref => ref.referenceId !== value.referenceId) })}>×</button>
       </div>)}</div></section>}
       <textarea ref={input} aria-label="对话设计需求" className="h-24 max-h-40 min-h-16 w-full resize-none bg-transparent text-sm leading-6 outline-none" placeholder={draft.quickEditTargetId ? "描述这张图片要怎么修改" : "输入想法，或添加图片作为参考"} value={draft.text} maxLength={4000} disabled={locked} onChange={event => edit({ text: event.target.value })} onCompositionStart={() => { composing.current = true; if (timer.current) clearTimeout(timer.current); }} onCompositionEnd={() => { composing.current = false; if (timer.current) clearTimeout(timer.current); timer.current = setTimeout(() => void flush().catch(() => undefined), 700); }} onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && !composing.current) { event.preventDefault(); if (draftRef.current.text.trim()) void send().catch(() => undefined); } }} />
+      {props.projectContext && <div className="space-y-1 rounded-xl bg-muted px-2 py-2 text-xs" data-testid="conversation-project-context">
+        <div className="flex flex-wrap items-center justify-between gap-2"><label className="flex items-center gap-2"><input type="checkbox" aria-label="沿用项目资料" checked={props.projectContext.enabled} disabled={locked || !props.projectContext.available && !props.projectContext.enabled} onChange={event => props.projectContext?.onChange(event.target.checked)} />沿用项目资料</label><button type="button" className="text-primary underline" onClick={props.projectContext.onOpen}>查看资料</button></div>
+        <p className="leading-5 text-muted-foreground">{props.projectContext.blocked ? "资料有未保存修改或来源变化，请先确认；也可关闭本轮沿用。" : props.projectContext.enabled ? "使用已保存的目标、文案和参考；本轮要求与修改对象优先。" : props.projectContext.available ? "本轮只使用当前需求和所选参考。" : "先在项目资料中确认目标、文案和素材职责。"}</p>
+      </div>}
       <div className="flex flex-wrap items-center gap-2" aria-label="本轮输出规格">
             <label className="flex items-center justify-between text-xs">比例<select aria-label="对话图片比例" className={button} value={draft.sizeSelection.ratioKey} disabled={locked} onChange={event => edit({ sizeSelection: { ratioKey: event.target.value as Draft["sizeSelection"]["ratioKey"], resolutionTier: draft.sizeSelection.resolutionTier, ...(event.target.value === "custom" ? { customRatio: { width: 1, height: 1 } } : {}) } })}>{GenerationAspectRatioKey.options.map(value => <option key={value} value={value}>{value === "custom" ? "自定义" : value}</option>)}</select></label>
             {draft.sizeSelection.ratioKey === "custom" && <div className="flex gap-2">{(["width", "height"] as const).map(axis => <input key={axis} aria-label={axis === "width" ? "自定义比例宽" : "自定义比例高"} className="w-20 rounded border border-border bg-background px-2 py-1" type="number" min={1} max={10000} disabled={locked} value={draft.sizeSelection.customRatio?.[axis] ?? 1} onChange={event => edit({ sizeSelection: { ...draft.sizeSelection, customRatio: { width: 1, height: 1, ...draft.sizeSelection.customRatio, [axis]: Number(event.target.value) } } })} />)}</div>}

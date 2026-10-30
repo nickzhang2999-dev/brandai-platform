@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/studio-conversation-image-size", () => ({ sizeStudioConversationImage: vi.fn() }));
-const f = vi.hoisted(() => ({ transaction: vi.fn(), query: vi.fn(), gate: vi.fn(), read: vi.fn(), update: vi.fn(), updateMany: vi.fn(), output: vi.fn(), clearOutputs: vi.fn(), pending: vi.fn(), missing: vi.fn(), ensure: vi.fn(), enqueue: vi.fn(), settings: vi.fn(), bytes: vi.fn(), inspect: vi.fn(), process: vi.fn(), upload: vi.fn(), priorAsset: vi.fn(), logo: vi.fn(), asset: vi.fn(), version: vi.fn(), existingVersion: vi.fn(), link: vi.fn(), check: vi.fn(), enqueueCheck: vi.fn(), exact: vi.fn(), base: vi.fn(), editLock: vi.fn(), psd: vi.fn(), alpha: vi.fn() }));
+const f = vi.hoisted(() => ({ transaction: vi.fn(), query: vi.fn(), gate: vi.fn(), read: vi.fn(), update: vi.fn(), updateMany: vi.fn(), output: vi.fn(), clearOutputs: vi.fn(), pending: vi.fn(), missing: vi.fn(), ensure: vi.fn(), enqueue: vi.fn(), settings: vi.fn(), bytes: vi.fn(), inspect: vi.fn(), process: vi.fn(), upload: vi.fn(), priorAsset: vi.fn(), logo: vi.fn(), asset: vi.fn(), version: vi.fn(), existingVersion: vi.fn(), link: vi.fn(), check: vi.fn(), enqueueCheck: vi.fn(), exact: vi.fn(), base: vi.fn(), editLock: vi.fn(), psd: vi.fn(), alpha: vi.fn(), contextGuard: vi.fn() }));
+vi.mock("@/lib/studio-project-context", () => ({ assertStudioProjectContextSources: f.contextGuard }));
 vi.mock("../../../packages/db/src/index", () => ({ Prisma: {}, prisma: { $transaction: f.transaction,
   studioGeneratedMaterial: { updateMany: f.updateMany, findMany: f.pending }, studioGenerationOutput: { updateMany: f.clearOutputs }, studioGenerationRequest: { findMany: f.missing }, asset: { findUnique: f.priorAsset, findFirst: f.logo } } }));
 vi.mock("@/lib/queue", () => ({ connection: {}, queuePrefix: "test" }));
@@ -63,6 +64,20 @@ function enableExact() {
 }
 
 describe("generation archive worker (unit fixtures; no provider or remote storage)", () => {
+  it.each([false, true])("revalidates frozen project sources under locks and publishes only server-owned lineage; revoked=%s", async revoked => {
+    const context = { projectId: "p", revision: 2, facts: { goal: "任务资料", audience: "", approvedCopy: "内部确认文案", visualRequirements: "" }, materials: [],
+      master: { assetId: "master", assetSha256: sha, shapeId: null, name: "主稿", versionId: "v1", width: 48, height: 32 }, updatedAt: null };
+    row.request.jobData = { studioProjectContext: context }; row.output.params.projectContext = { revision: 999, private: "untrusted" };
+    if (revoked) f.contextGuard.mockRejectedValue(new ApiException(409, "Context source removed"));
+    await runStudioGenerationArtifactJob(job());
+    expect(f.contextGuard).toHaveBeenCalledWith(tx, "w", "p", context, true);
+    if (revoked) { expect(row.status).toBe("FAILED"); expect(f.version).not.toHaveBeenCalled(); expect(row.output.imageUrl).not.toBeNull(); }
+    else {
+      expect(row.status).toBe("SUCCEEDED");
+      expect(f.version.mock.calls[0][0].create.params.projectContext).toEqual({ revision: 2, master: { assetId: "master", assetSha256: sha, versionId: "v1" }, materials: [] });
+      expect(JSON.stringify(f.version.mock.calls[0][0].create.params.projectContext)).not.toMatch(/内部确认文案|untrusted/);
+    }
+  });
   it.each([false, true])("revalidates layer-repair lineage before publishing a new version; parent missing=%s", async missing => {
     const source = { assetId: "source", sha256: sha, width: 48, height: 32, shapeId: "shape:source", recipeHash: "b".repeat(64) };
     const layerRepair = { decompositionRequestId: "parent", sourceShapeId: source.shapeId, assetId: source.assetId, assetSha256: sha,

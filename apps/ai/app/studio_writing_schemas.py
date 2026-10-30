@@ -128,6 +128,7 @@ class StudioWritingGenerateInput(Strict):
     referenceIds: list[Id] = Field(max_length=12)
     styleRevision: Revision | None
     selection: StudioWritingSelection | None = None
+    projectContextRevision: Revision | None = None
 
     @field_validator("prompt", mode="before")
     @classmethod
@@ -137,8 +138,10 @@ class StudioWritingGenerateInput(Strict):
     @model_validator(mode="before")
     @classmethod
     def optional_not_null(cls, value):
-        if isinstance(value, dict) and "selection" in value and value["selection"] is None:
-            raise ValueError("Omit optional selection instead of null")
+        if isinstance(value, dict):
+            for field in ("selection", "projectContextRevision"):
+                if field in value and value[field] is None:
+                    raise ValueError("Omit optional field instead of null")
         return value
 
     @model_validator(mode="after")

@@ -5,6 +5,7 @@ import { activeScope } from './service';
 import { OMNI_KIND, serviceConfig, providerReady } from './policy';
 import { analyzeImage } from './provider';
 import { AnalysisFailure, safeAnalysisFailure } from './failure';
+import { retainedOmniAnalysisMetadata } from './workflow-evidence';
 
 export async function processAnalysis(id:string) {
   const c=serviceConfig(),where={id,workspaceId:c.workspaceId,kind:OMNI_KIND};
@@ -13,7 +14,7 @@ export async function processAnalysis(id:string) {
   const claim=await prisma.asyncTask.updateMany({where:{...where,status:'PENDING',expiresAt:{gt:new Date()}},data:{status:'RUNNING',progress:10}});
   if(claim.count!==1)return; // Replayed/restarted work never repeats a paid call.
   const meta=task.inputJson as {payload_hash?:string;user_id?:string;request?:unknown}|null;
-  const stripped={payload_hash:meta?.payload_hash || '',user_id:meta?.user_id || ''};
+  const stripped=retainedOmniAnalysisMetadata(task.inputJson);
   const controller=new AbortController();
   const deadline=Math.min(90_000,task.expiresAt.getTime()-Date.now());
   const timer=setTimeout(()=>controller.abort(),Math.max(1,deadline));
@@ -37,8 +38,7 @@ export async function processAnalysis(id:string) {
 export async function sweepAnalysis() {
   const expired=await prisma.asyncTask.findMany({where:{kind:OMNI_KIND,status:{in:['PENDING','RUNNING']},expiresAt:{lte:new Date()}},take:100,select:{id:true,workspaceId:true,inputJson:true}});
   for(const task of expired) {
-    const meta=task.inputJson as {payload_hash?:string;user_id?:string}|null;
-    await prisma.asyncTask.updateMany({where:{id:task.id,workspaceId:task.workspaceId,kind:OMNI_KIND,status:{in:['PENDING','RUNNING']},expiresAt:{lte:new Date()}},data:{status:'FAILED',error:'analysis_expired_no_retry',inputJson:{payload_hash:meta?.payload_hash || '',user_id:meta?.user_id || ''}}});
+    await prisma.asyncTask.updateMany({where:{id:task.id,workspaceId:task.workspaceId,kind:OMNI_KIND,status:{in:['PENDING','RUNNING']},expiresAt:{lte:new Date()}},data:{status:'FAILED',error:'analysis_expired_no_retry',inputJson:retainedOmniAnalysisMetadata(task.inputJson)}});
   }
 }
 

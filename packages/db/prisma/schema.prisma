@@ -477,6 +477,7 @@ model Project {
   canvas      ProjectCanvas?
   editorDocument EditorDocument?
   workbenchState WorkbenchProjectState?
+  studioProjectContextMutations StudioProjectContextMutation[]
   workbenchDrafts WorkbenchChatDraft[]
   studioConversations StudioConversation[]
 
@@ -561,10 +562,30 @@ model WorkbenchProjectState {
   workflowTarget Json?
   workflowReferences Json @default("[]")
   workflowUpdatedAt DateTime?
+  contextRevision Int @default(0)
+  contextJson Json?
+  contextUpdatedAt DateTime?
   creationKey String? @unique
   creationChecksum String?
   updatedAt DateTime @updatedAt
   @@index([workspaceId])
+}
+
+// Independent project-context mutation receipts. No provider calls or changes
+// to the existing brief, notes, document and workflow revision streams.
+model StudioProjectContextMutation {
+  id String @id @default(cuid())
+  projectId String
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  workspaceId String
+  userId String
+  mutationId String @db.Uuid
+  payloadHash String @db.Char(64)
+  revision Int
+  snapshot Json
+  createdAt DateTime @default(now())
+  @@unique([workspaceId, projectId, userId, mutationId], map: "StudioProjectContextMutation_identity_key")
+  @@index([workspaceId, projectId, createdAt], map: "StudioProjectContextMutation_history_idx")
 }
 
 model WorkbenchChatDraft {
@@ -610,6 +631,7 @@ model StudioConversationMessage {
   references Json
   input Json
   acceptedCanvas String @db.Text
+  projectContextJson Json?
   intent Json?
   status String @default("PENDING")
   generationRequestId String? @unique

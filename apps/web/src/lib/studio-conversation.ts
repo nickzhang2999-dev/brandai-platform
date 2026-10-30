@@ -13,6 +13,9 @@ import { readStudioGeneration } from "./studio-generation";
 import { enqueueStudioConversation } from "./studio-conversation-queue";
 import { freezeStudioConversationCanvas } from "./studio-conversation-snapshot";
 import { intentFromConversationOption } from "./studio-conversation-choices";
+import { freezeStudioProjectContext } from "./studio-project-context";
+import { readConversationProjectContext, withStudioProjectContext, studioProjectContextPrompt } from "./studio-project-context-conversation";
+import type { StudioProjectContextSnapshot } from "@brandai/contracts";
 
 type Message = Prisma.StudioConversationMessageGetPayload<{ include: { conversation: true } }>;
 const own = (workspaceId: string, userId: string, projectId: string) => ({ workspaceId, userId, projectId });
@@ -30,11 +33,17 @@ export async function validateConversationReferences(db: Prisma.TransactionClien
   }
 }
 
-export function conversationGenerationInput(projectId: string, input: StudioConversationInput, intent: StudioConversationIntent) {
-  return StudioGenerationInput.parse({ projectId, mutationId: input.mutationId, prompt: intent.imagePrompt ?? intent.prompt,
+export function conversationGenerationInput(projectId: string, input: StudioConversationInput, intent: StudioConversationIntent, projectContext?: StudioProjectContextSnapshot) {
+  return StudioGenerationInput.parse({ projectId, mutationId: input.mutationId, prompt: studioProjectContextPrompt(input.text, projectContext, intent.imagePrompt ?? intent.prompt),
     sizeSelection: intent.sizeSelection, documentRevision: input.documentRevision, workflowRevision: input.workflowRevision,
     ...(input.psdLayerMode ? { psdLayerMode: input.psdLayerMode, ...(input.psdLayerCount ? { psdLayerCount: input.psdLayerCount } : {}) } : {}),
     ...(input.outputFrameId ? { outputFrameId: input.outputFrameId } : {}) });
+}
+
+export function conversationGenerationAcceptance(row: Pick<Message, "acceptedCanvas" | "projectContextJson">, input: StudioConversationInput, intent: StudioConversationIntent) {
+  const projectContext = readConversationProjectContext(row.projectContextJson);
+  const effective = withStudioProjectContext(input, projectContext);
+  return { canvas: row.acceptedCanvas, references: effective.references, intent, ...(projectContext ? { projectContext } : {}) };
 }
 
 /** Recover a lost DB/HTTP acknowledgement from the original generation row;
@@ -47,8 +56,8 @@ export async function recoverStudioConversationGeneration(row: Message) {
   const { workspaceId, projectId, userId } = row.conversation;
   const existing = await prisma.studioGenerationRequest.findUnique({ where: { workspaceId_userId_projectId_mutationId: { workspaceId, projectId, userId, mutationId: row.mutationId } }, select: { id: true, payloadHash: true } });
   if (!existing) return row;
-  const accepted = { canvas: row.acceptedCanvas, references: input.references, intent };
-  const expected = hashStudioPayload({ input: conversationGenerationInput(projectId, input, intent), accepted });
+  const accepted = conversationGenerationAcceptance(row, input, intent);
+  const expected = hashStudioPayload({ input: conversationGenerationInput(projectId, input, intent, accepted.projectContext), accepted });
   if (existing.payloadHash !== expected) return row;
   await prisma.studioConversationMessage.updateMany({ where: { id: row.id, generationRequestId: null }, data: { generationRequestId: existing.id, status: "RUNNING", attemptToken: null, error: null } });
   return { ...row, generationRequestId: existing.id, status: "RUNNING", error: null };
@@ -99,6 +108,7 @@ export async function submitStudioConversation(workspaceId: string, userId: stri
           return old;
         }
         let chosenIntent: StudioConversationIntent | undefined;
+        let chosenContext: StudioProjectContextSnapshot | undefined;
         if (input.decision) {
           // Serialize all choices of one message, including different tabs and
           // fresh mutation UUIDs. A clarification can launch only one request.
@@ -107,6 +117,7 @@ export async function submitStudioConversation(workspaceId: string, userId: stri
           const source = await tx.studioConversationMessage.findFirst({ where: { id: sourceId, conversationId: conversation.id } });
           if (!source?.intent) throw new ApiException(404, "原消息不存在或尚未完成判断。");
           const sourceInput = StudioConversationInput.parse(source.input), sourceIntent = StudioConversationIntent.parse(source.intent);
+          chosenContext = readConversationProjectContext(source.projectContextJson);
           const stable = (value: StudioConversationInput) => { const { mutationId: _m, documentRevision: _d, workflowRevision: _w, decision: _c,
             selectedReferenceIds: _s, homeStart: _h, ...rest } = value; return hashStudioPayload(rest); };
           if (stable(sourceInput) !== stable(input)) throw new ApiException(409, "选项对应的原始需求已变化，请重新发送需求。");
@@ -131,19 +142,23 @@ export async function submitStudioConversation(workspaceId: string, userId: stri
             const unfinished = await tx.studioGeneratedMaterial.count({ where: { requestId: source.generationRequestId, workspaceId, projectId, status: { not: "SUCCEEDED" } } });
             if (!completed || !ready || unfinished) throw new ApiException(409, "请等待原生成和图片保存完成后再纠正。");
           }
-          chosenIntent = intentFromConversationOption(input, option);
+          chosenIntent = intentFromConversationOption(withStudioProjectContext(input, chosenContext), option);
           if (chosenIntent.action === "clarify") throw new ApiException(422, chosenIntent.clarification ?? "当前画布不满足该选项要求。");
         }
         const [document, workflow] = await Promise.all([tx.editorDocument.findUnique({ where: { projectId } }), tx.workbenchProjectState.findUnique({ where: { projectId } })]);
         if ((document?.revision ?? 0) !== input.documentRevision || (workflow?.workflowRevision ?? 0) !== input.workflowRevision) throw new ApiException(409, "画布或工作流已更新，请保存最新内容后发送。");
         if (document && document.workspaceId !== workspaceId || workflow && workflow.workspaceId !== workspaceId) throw new ApiException(404, "项目不存在。");
-        await validateConversationReferences(tx, workspaceId, projectId, input.references, document?.canvas ?? "");
+        const projectContext = input.projectContextRevision === undefined ? undefined : chosenContext ?? await freezeStudioProjectContext(tx, workspaceId, projectId, input.projectContextRevision);
+        const effective = withStudioProjectContext(input, projectContext);
+        studioProjectContextPrompt(input.text, projectContext);
+        await validateConversationReferences(tx, workspaceId, projectId, effective.references, document?.canvas ?? "");
         const pending = await tx.studioConversationMessage.count({ where: { conversationId: conversation.id, status: { in: ["PENDING", "RUNNING"] }, generationRequestId: null, expiresAt: { gt: new Date() } } });
         if (pending >= 4) throw new ApiException(429, "待处理的消息较多，请稍后再发送。");
         return tx.studioConversationMessage.create({ data: { id: "scm_" + randomUUID().replace(/-/g, ""), conversationId: conversation.id,
           mutationId: input.mutationId, payloadHash, text: input.text, references: input.references as Prisma.InputJsonValue,
           ...(chosenIntent ? { intent: chosenIntent as Prisma.InputJsonValue } : {}),
-          input: input as unknown as Prisma.InputJsonValue, acceptedCanvas: freezeStudioConversationCanvas(document?.canvas ?? "", input.references, input.outputFrameId), expiresAt: new Date(Date.now() + STUDIO_CONVERSATION_TTL_MS) }, include: { conversation: true } });
+          input: input as unknown as Prisma.InputJsonValue, ...(projectContext ? { projectContextJson: projectContext as unknown as Prisma.InputJsonValue } : {}),
+          acceptedCanvas: freezeStudioConversationCanvas(document?.canvas ?? "", effective.references, input.outputFrameId), expiresAt: new Date(Date.now() + STUDIO_CONVERSATION_TTL_MS) }, include: { conversation: true } });
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 10_000 });
       break;
     } catch (error) { if (attempt < 2 && error instanceof Prisma.PrismaClientKnownRequestError && ["P2002", "P2034"].includes(error.code)) continue; throw error; }

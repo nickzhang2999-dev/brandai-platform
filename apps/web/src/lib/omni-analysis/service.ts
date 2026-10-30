@@ -2,6 +2,7 @@ import { prisma, type Prisma } from '@brandai/db';
 import { OmniAnalysisInput } from '@brandai/contracts';
 import { getOmniAnalysisProvider } from './configuration';
 import { checkToken, serviceConfig, providerReady, OmniError, OMNI_KIND, OMNI_TTL_MS, payloadHash, requestRef, jobView } from './policy';
+import { omniWorkflowEvidence, retainedOmniAnalysisMetadata, snapshotOmniAnalysisSource } from './workflow-evidence';
 
 type Db = Pick<Prisma.TransactionClient,'membership'|'brandWorkspace'|'user'>;
 export async function activeScope(db:Db=prisma) {
@@ -37,8 +38,9 @@ export async function submit(input:OmniAnalysisInput) {
     const pending=await tx.asyncTask.count({where:{workspaceId:c.workspaceId,kind:OMNI_KIND,status:{in:['PENDING','RUNNING']}}});
     if(c.dailyLimit!==null&&used>=c.dailyLimit)throw new OmniError(429,'daily_limit_reached');
     if(pending>=20)throw new OmniError(429,'queue_full');
+    const source=snapshotOmniAnalysisSource(input);
     const task=await tx.asyncTask.create({data:{workspaceId:c.workspaceId,kind:OMNI_KIND,refId,status:'PENDING',
-      expiresAt:new Date(Date.now()+OMNI_TTL_MS),inputJson:{payload_hash:hash,user_id:c.userId,request:input}}});
+      expiresAt:new Date(Date.now()+OMNI_TTL_MS),inputJson:{payload_hash:hash,user_id:c.userId,request:input,...(source?{source_identity:source}:{})}}});
     return {created:true,job:jobView(task)};
   },{maxWait:1000,timeout:5000});
 }
@@ -49,8 +51,7 @@ export async function getJob(id:string) {
   if(!task||(task.inputJson as {user_id?:string}|null)?.user_id!==c.userId)throw new OmniError(404,'job_not_found');
   // Polling remains bounded even when the worker is stopped or unavailable.
   if(['PENDING','RUNNING'].includes(task.status)&&task.expiresAt&&task.expiresAt<=new Date()) {
-    const meta=task.inputJson as {payload_hash?:string;user_id?:string};
-    const closed=await prisma.asyncTask.updateMany({where:{...where,status:{in:['PENDING','RUNNING']},expiresAt:{lte:new Date()}},data:{status:'FAILED',error:'analysis_expired_no_retry',inputJson:{payload_hash:meta.payload_hash || '',user_id:meta.user_id || ''}}});
+    const closed=await prisma.asyncTask.updateMany({where:{...where,status:{in:['PENDING','RUNNING']},expiresAt:{lte:new Date()}},data:{status:'FAILED',error:'analysis_expired_no_retry',inputJson:retainedOmniAnalysisMetadata(task.inputJson)}});
     if(closed.count===1)return {id,status:'failed' as const,reason:'analysis_expired_no_retry'};
     task=await prisma.asyncTask.findFirst({where});
     if(!task)throw new OmniError(404,'job_not_found');
@@ -65,4 +66,13 @@ export async function getJobByRequest(requestId:string) {
   const task=await prisma.asyncTask.findFirst({where:{workspaceId:c.workspaceId,kind:OMNI_KIND,refId:requestRef(c.workspaceId,c.userId,requestId)},select:{id:true,inputJson:true}});
   if(!task||(task.inputJson as {user_id?:string}|null)?.user_id!==c.userId)throw new OmniError(404,'job_not_found');
   return getJob(task.id);
+}
+
+/** Read-only evidence for an already admitted job. Never closes, submits or retries it. */
+export async function getJobWorkflowEvidence(id:string) {
+  const c=await activeScope();
+  const task=await prisma.asyncTask.findFirst({where:{id,workspaceId:c.workspaceId,kind:OMNI_KIND},
+    select:{id:true,workspaceId:true,kind:true,status:true,inputJson:true,resultJson:true,expiresAt:true}});
+  if(!task||task.workspaceId!==c.workspaceId||task.kind!==OMNI_KIND||(task.inputJson as {user_id?:string}|null)?.user_id!==c.userId)throw new OmniError(404,'job_not_found');
+  return omniWorkflowEvidence(task);
 }

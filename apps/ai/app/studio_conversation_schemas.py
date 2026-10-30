@@ -85,11 +85,12 @@ class StudioConversationInput(StudioConversationFields):
     homeStart: Literal[True] | None = None
     selectedReferenceIds: list[str] | None = Field(default=None, max_length=8)
     decision: StudioConversationDecision | None = None
+    projectContextRevision: int | None = Field(default=None, ge=0, le=2147483646)
 
     @model_validator(mode="before")
     @classmethod
     def no_optional_null_or_revision(cls, value):
-        if isinstance(value, dict) and ("revision" in value or any(key in value and value[key] is None for key in ("requestedSize", "outputFrameId", "homeStart", "selectedReferenceIds", "decision"))):
+        if isinstance(value, dict) and ("revision" in value or any(key in value and value[key] is None for key in ("requestedSize", "outputFrameId", "homeStart", "selectedReferenceIds", "decision", "projectContextRevision"))):
             raise ValueError("unexpected revision or explicit null")
         if isinstance(value, dict) and "homeStart" in value and value["homeStart"] is not True:
             raise ValueError("homeStart must be true when supplied")

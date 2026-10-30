@@ -41,6 +41,20 @@ describe("writing provider and bounded reference context", () => {
     const fallback = selectWritingSegments(segments, "zzz nevermatch", 100); expect(fallback.selection).toBe("opening-snippets"); expect(fallback.segments[0].id).toBe("s0");
     expect(selectWritingSegments([{ id: "s", pageNumber: 1, label: "", text: "😀" }], "", 1).segments).toEqual([]);
   });
+  it("carries confirmed project facts without claiming the master or role images were read", () => {
+    const projectContext = { projectId: "project", revision: 3, facts: { goal: "新品发布", audience: "设计师", approvedCopy: "已确认标题", visualRequirements: "简洁" }, materials: [], master: null, updatedAt: null };
+    const input = { ...context.input, context: { ...context.input.context!, projectContext } };
+    const messages = buildWritingMessages({ ...context, input, sources: [] });
+    const blocks = messages[0].content as { type: string; text: string }[];
+    expect(blocks).toHaveLength(1);
+    const data = JSON.parse(blocks[0].text);
+    expect(data.confirmedProjectContext).toEqual({ revision: 3, facts: projectContext.facts });
+    expect(data.references).toEqual([]); expect(data.userRequest).toEqual(request);
+    const old = JSON.parse((buildWritingMessages(context)[0].content as { text: string }[])[0].text);
+    expect(old).not.toHaveProperty("confirmedProjectContext");
+    expect(StudioWritingGenerateInput.parse({ ...request, projectContextRevision: 0 }).projectContextRevision).toBe(0);
+    for (const projectContextRevision of [null, -1, true, 0.5, "2"]) expect(StudioWritingGenerateInput.safeParse({ ...request, projectContextRevision }).success).toBe(false);
+  });
   it("accepts only sent references, rejects omitted page references, and uses server provenance", () => {
     const result = parseWritingModelResponse(envelope(), context, "configured-model", 8);
     expect(result).toMatchObject({ text: "新稿", baseRevision: 2, model: "configured-model", inputTokens: 12, outputTokens: 34, citations: [{ referenceId: "ref", segmentId: "s2", pageNumber: 9 }] });

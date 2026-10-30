@@ -18,6 +18,8 @@ import { StudioEditSourceSnapshot, lockStudioEditPublicationSource } from "@/lib
 import { sizeStudioConversationImage } from "@/lib/studio-conversation-image-size";
 import { requireStudioTransparentForeground } from "@/lib/studio-image-tool-alpha";
 import { inspectStudioLayerRepair, studioImageToolPixelEvidence } from "@/lib/studio-layer-repair";
+import { assertStudioProjectContextSources } from "@/lib/studio-project-context";
+import { StudioProjectContextSnapshot } from "@brandai/contracts";
 
 function object(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -53,6 +55,8 @@ export async function runStudioGenerationArtifactJob(job: Job<{ outputId: string
     const editSource = processing.editSource === undefined ? null : StudioEditSourceSnapshot.parse(processing.editSource);
     const imageTool = processing.imageTool;
     const layerRepair = object(row.request.jobData).studioLayerRepair;
+    const contextRaw = object(row.request.jobData).studioProjectContext;
+    const projectContext = contextRaw === undefined ? undefined : StudioProjectContextSnapshot.parse(contextRaw);
     if (imageTool !== undefined && !["remove-background", "inpaint"].includes(String(imageTool))) throw new ApiException(422, "图片工具输出记录不完整，未发布结果。");
     if (params.imageKind === "EDITED" && !editSource) throw new ApiException(422, "改图结果缺少原图来源，未发布图片。");
     // A retained EXACT marker without its private recipe must fail closed.
@@ -113,6 +117,7 @@ export async function runStudioGenerationArtifactJob(job: Job<{ outputId: string
     signal.throwIfAborted();
     const check = await prisma.$transaction(async tx => {
       await requireArtifactWrite(tx, row.workspaceId, row.projectId, row.userId);
+      if (projectContext) await assertStudioProjectContextSources(tx, row.workspaceId, row.projectId, projectContext, true);
       if (exact) await lockStudioExactPublicationSources(tx, row.workspaceId, row.projectId, exact);
       if (editSource) {
         if (imageTool) await lockStudioEditPublicationSource(tx, row.workspaceId, row.projectId, editSource, true);
@@ -123,10 +128,13 @@ export async function runStudioGenerationArtifactJob(job: Job<{ outputId: string
       const current = await tx.studioGeneratedMaterial.findUnique({ where: { outputId }, include: { output: { select: { expiresAt: true } } } });
       if (!current || current.status !== "RUNNING" || current.attemptToken !== token || current.expiresAt.getTime() <= Date.now() || current.output.expiresAt.getTime() <= Date.now()) throw new ApiException(409, "归档任务已结束或超时，迟到结果未发布。");
       signal.throwIfAborted();
-      const { studioPostprocess: _privateSnapshot, studioSourceRetention: _privateRetention, imageToolPixelEvidence: pixelEvidence, layerRepair: _untrustedRepair, ...publicParams } = params;
+      const { studioPostprocess: _privateSnapshot, studioSourceRetention: _privateRetention, imageToolPixelEvidence: pixelEvidence, layerRepair: _untrustedRepair, projectContext: _untrustedContext, ...publicParams } = params;
       const finalParams = { ...publicParams, actualSize: { actualWidth: final.width, actualHeight: final.height },
         ...studioImageToolPixelEvidence(imageTool, object(pixelEvidence), final.width, final.height),
         ...(verifiedLayerRepair ? { layerRepair: verifiedLayerRepair } : {}),
+        ...(projectContext ? { projectContext: { revision: projectContext.revision,
+          master: projectContext.master ? { assetId: projectContext.master.assetId, assetSha256: projectContext.master.assetSha256, versionId: projectContext.master.versionId } : null,
+          materials: projectContext.materials.map(({ assetId, assetSha256, role, versionId }) => ({ assetId, assetSha256, role, versionId })) } } : {}),
         ...(sized ? { requestedSize: sized.requestedSize, providerSize: imageTool && params.imageToolProviderSize ? params.imageToolProviderSize : sized.providerSize, outputSize: { width: final.width, height: final.height },
           sizeSource: conversationSize.sizeSource, outputSizeMethod: imageTool === "inpaint" ? "masked-source-pixel-composite" : imageTool === "remove-background" ? "preserve-alpha-source-size" : sized.resized ? "deterministic-contain" : "provider-native" } : {}),
         ...(editSource ? { source: { assetId: editSource.assetId, sha256: editSource.sha256,

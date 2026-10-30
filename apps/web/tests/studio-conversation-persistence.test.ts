@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const f = vi.hoisted(() => ({ db: {} as any, auth: vi.fn(), gate: vi.fn(), materials: vi.fn(), assets: vi.fn(), enqueue: vi.fn(), generation: vi.fn() }));
+const f = vi.hoisted(() => ({ db: {} as any, auth: vi.fn(), gate: vi.fn(), materials: vi.fn(), assets: vi.fn(), enqueue: vi.fn(), generation: vi.fn(), trusted: vi.fn() }));
+vi.mock("../src/lib/studio-brand-materials", () => ({ requireTrustedStudioBrandProjectMaterial: f.trusted }));
 vi.mock("../../../packages/db/src/index", () => ({ prisma: f.db, Prisma: { PrismaClientKnownRequestError: class extends Error {}, TransactionIsolationLevel: { Serializable: "Serializable" } } }));
 vi.mock("../src/lib/api", () => ({ ApiException: class extends Error { constructor(public status: number, message: string) { super(message); } } }));
 vi.mock("../src/lib/studio-materials", () => ({ requireStudioMaterialProject: f.auth }));
@@ -21,6 +22,7 @@ const base = { mutationId: "831a0280-2cf1-41ba-ac94-621053c4a4c6", text: "生成
 const reference = { referenceId: "shape:image", shapeId: "shape:image", name: "图片1", assetId: "a", assetSha256: "a".repeat(64), width: 1024, height: 1024 };
 beforeEach(() => {
   vi.clearAllMocks(); f.auth.mockReset(); f.gate.mockReset(); f.generation.mockReset(); conversation = null; conversations = []; messages = []; generationRequests = []; generatedMaterials = []; canvas = "server frozen canvas";
+  f.trusted.mockReset();
   f.assets.mockReturnValue([{ shapeId: reference.shapeId, assetSha256: reference.assetSha256, valid: true }]);
   f.materials.mockResolvedValue([{ assetId: "a", sha256: reference.assetSha256, width: 1024, height: 1024 }]);
   f.enqueue.mockResolvedValue(false);
@@ -51,6 +53,20 @@ beforeEach(() => {
   });
 });
 describe("durable conversation intake and isolated drafts (DB adapter interaction tests)", () => {
+  it("freezes opt-in context without rewriting the receipt, and replays the original snapshot after later context edits", async () => {
+    const snapshot = { projectId: "p", revision: 1, facts: { goal: "原目标", audience: "学生", approvedCopy: "原文案", visualRequirements: "" }, materials: [],
+      master: { assetId: "a", assetSha256: reference.assetSha256, shapeId: "shape:image", name: "主稿", width: 1024, height: 1024, versionId: null }, updatedAt: null };
+    f.trusted.mockResolvedValue({ width: 1024, height: 1024, generationVersionId: null });
+    f.db.workbenchProjectState.findUnique = async () => ({ workspaceId: "w", workflowRevision: 0, contextRevision: 1, contextJson: snapshot });
+    const original = { ...base, projectContextRevision: 1 };
+    const receipt = await submitStudioConversation("w", "u", "p", original);
+    expect(receipt.references).toEqual([]); expect(receipt.originalInput).toMatchObject(original);
+    expect(messages[0].projectContextJson).toEqual(snapshot); expect(messages[0].input.references).toEqual([]);
+    f.db.workbenchProjectState.findUnique = async () => ({ workspaceId: "w", workflowRevision: 0, contextRevision: 2, contextJson: { ...snapshot, revision: 2, facts: { ...snapshot.facts, goal: "后来目标" } } });
+    expect((await submitStudioConversation("w", "u", "p", original)).messageId).toBe(receipt.messageId);
+    expect(messages[0].projectContextJson.facts.goal).toBe("原目标"); expect(messages).toHaveLength(1);
+    await expect(submitStudioConversation("w", "u", "p", { ...original, mutationId: randomUUID() })).rejects.toMatchObject({ status: 409 });
+  });
   it.each([{ psdLayerMode: "AUTO" }, { psdLayerMode: "MANUAL", psdLayerCount: 4 }])("restores PSD draft settings and passes them to normal and modify generation: %j", async options => {
     const draft = { revision: 0, text: "夏季海报", references: [], sizeSelection: base.sizeSelection, ...options };
     const saved = await saveStudioConversationDraft("w", "u", "p", draft);

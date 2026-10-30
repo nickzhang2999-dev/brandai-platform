@@ -25,6 +25,7 @@ export async function resolveStudioConversationModel(input: StudioConversationIn
     references: context?.references ?? input.references.map(ref => ({ referenceId: ref.referenceId, name: ref.name, editable: !!ref.shapeId })),
     history: context?.history ?? [], selectedReferenceIds: context?.selectedReferenceIds ?? input.selectedReferenceIds ?? [],
     ...(context?.lastResultImage ? { lastResultImage: context.lastResultImage } : {}),
+    ...(context?.projectContext ? { projectContext: context.projectContext } : {}),
     quickEditTargetId: input.quickEditTargetId, previousResultReferenceId: previous?.referenceId ?? null, providerRetryPolicy: "never" });
   const response = StudioConversationModelResponse.parse(await ai.studioConversationIntent(request, { signal, maxResponseBytes: 96 * 1024 }));
   if (response.revision !== "structured-conversation-intent-r2") throw new Error("Planner revision mismatch");

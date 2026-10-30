@@ -162,6 +162,10 @@ def test_child_timeout_or_start_failure_is_bounded_and_cleaned(monkeypatch, star
 def test_mirror_strict_boundaries():
     request = dict(mutationId=UUID, expectedRevision=0, prompt='  写作  ', mode='CHAT', referenceIds=[], styleRevision=None)
     assert StudioWritingGenerateInput(**request).prompt == '写作'
+    assert StudioWritingGenerateInput(**request).projectContextRevision is None
+    assert StudioWritingGenerateInput(**request, projectContextRevision=2).projectContextRevision == 2
+    for revision in [None, -1, True, 0.5, '2']:
+        with pytest.raises(ValidationError): StudioWritingGenerateInput(**request, projectContextRevision=revision)
     for patch in [{'prompt':' '}, {'referenceIds':['x','x']}, {'selection':None}, {'mode':'SELECTION'}, {'model':'override'}, {'expectedRevision':True}, {'prompt':'😀'*2001}]:
         with pytest.raises(ValidationError): StudioWritingGenerateInput(**{**request, **patch})
     assert StudioWritingSelection(start=1,end=3,text='😀').end == 3

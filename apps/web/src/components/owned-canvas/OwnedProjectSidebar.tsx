@@ -4,12 +4,14 @@ import { useState } from "react";
 import { ownedImageName, type OwnedCanvasDocument } from "@/lib/owned-canvas-model";
 import { getSceneFlags } from "@/lib/owned-canvas-operations";
 import type { Material } from "./owned-editor-api";
+import { OwnedProjectContext, type OwnedProjectContextProps } from "./OwnedProjectContext";
 
 type Props = {
   document: OwnedCanvasDocument | null; selectedIds: string[]; materials: Material[]; readOnly: boolean;
   onClose(): void; onChooseImage(id: string): void; onUpload(): void; onOpenLibrary(): void;
   onReference(material: Material): Promise<void> | void; onInsert(material: Material): Promise<void> | void;
   onNotice(message: string): void; onBrandRules(): void;
+  projectContext?: OwnedProjectContextProps;
 };
 const button = "rounded-full border border-border bg-card px-3 py-2 text-xs disabled:opacity-40";
 
@@ -29,6 +31,7 @@ export function OwnedProjectSidebar(props: Props) {
     <header className="flex items-center justify-between px-4 py-4"><h2 className="text-sm font-semibold">项目内容</h2><button className={button} aria-label="收起项目内容" onClick={props.onClose}>收起</button></header>
     <div className="mx-4 mb-4 flex rounded-xl bg-muted p-1" role="tablist" aria-label="项目内容分类">{([['canvas','画布'],['materials','素材']] as const).map(([key,label]) => <button key={key} role="tab" aria-selected={tab === key} className={"flex-1 rounded-lg px-3 py-2 text-xs " + (tab === key ? "bg-accent-soft font-semibold text-primary" : "text-muted-foreground")} onClick={() => setTab(key)}>{label}</button>)}</div>
     <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 pb-4">
+      {props.projectContext && <OwnedProjectContext {...props.projectContext} />}
       {tab === "canvas" ? <>
         <p className="rounded-xl bg-accent-soft px-3 py-3 text-xs font-medium">当前画布</p>
         <h3 className="pt-2 text-xs font-semibold">画布图片 · {images.length}</h3>
@@ -52,6 +55,10 @@ export function OwnedProjectSidebar(props: Props) {
             <img src={material.url} alt="" className="h-12 w-12 rounded-xl object-cover" loading="lazy" />
             <span className="min-w-0 truncate text-xs">{material.fileName}</span>
           </div>
+          {props.projectContext?.state?.draft && <label className="flex items-center justify-between gap-2 text-xs"><span>素材职责</span><select aria-label={`素材职责 ${material.fileName}`} className="min-w-0 rounded-lg border border-border bg-background px-2 py-1" disabled={props.readOnly || props.projectContext.state.busy || ["uncertain", "conflict"].includes(props.projectContext.state.status)} value={props.projectContext.state.draft.materials.find(value => value.assetId === material.assetId)?.role ?? ""} onChange={event => {
+            const role = event.target.value as "PRODUCT" | "BRAND" | "COPY" | "STYLE" | "";
+            props.projectContext?.onChange(value => ({ ...value, materials: [...value.materials.filter(item => item.assetId !== material.assetId), ...(role ? [{ assetId: material.assetId, assetSha256: material.assetSha256, role }] : [])] }));
+          }}><option value="">未设置</option><option value="PRODUCT">产品事实</option><option value="BRAND">品牌标识</option><option value="COPY">文案内容</option><option value="STYLE">视觉风格</option></select></label>}
           <div className="flex flex-wrap gap-2"><button className={button} disabled={busy || props.readOnly} onClick={() => void perform(() => props.onReference(material))}>用作参考</button><button className={button} disabled={busy || props.readOnly} onClick={() => void perform(() => props.onInsert(material))}>加入画布</button></div>
         </article>)}
       </>}

@@ -4,7 +4,7 @@ import { StudioConversationThumbnail, type StudioConversationInput, type StudioC
 import { readArtifactImageBytes, inspectArtifactImage, artifactDeadline, STUDIO_ARTIFACT_MAX_PIXELS } from "./studio-generation-artifacts-image";
 import { ApiException } from "./api";
 
-export type ConversationVisualContext = Pick<Extract<StudioConversationModelRequest, { schemaVersion: 2 }>, "references" | "history" | "selectedReferenceIds" | "lastResultImage">;
+export type ConversationVisualContext = Pick<Extract<StudioConversationModelRequest, { schemaVersion: 2 }>, "references" | "history" | "selectedReferenceIds" | "lastResultImage" | "projectContext">;
 
 /** Resolve images on the server through current project links. The browser
  * cannot supply a URL, thumbnail or conversation transcript to the planner. */

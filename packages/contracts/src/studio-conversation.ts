@@ -29,6 +29,7 @@ export const StudioConversationInput = draftFields.extend({ mutationId: z.string
   documentRevision: z.number().int().min(0).max(2147483646), workflowRevision: z.number().int().min(0).max(2147483646),
   requestedSize: StudioConversationPixels.optional(), outputFrameId: StudioWorkflowTarget.shape.shapeId.optional(), homeStart: z.literal(true).optional(),
   selectedReferenceIds: z.array(z.string().min(1).max(200)).max(8).optional(),
+  projectContextRevision: z.number().int().min(0).max(2147483646).optional(),
   decision: z.object({ sourceMessageId: id, optionId: z.string().min(1).max(80), kind: z.enum(["clarification", "correction"]) }).strict().optional(),
 }).superRefine((value, context) => {
   validateDraft(value, context);

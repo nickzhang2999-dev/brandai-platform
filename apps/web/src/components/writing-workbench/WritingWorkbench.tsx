@@ -9,6 +9,8 @@ import { captureSelection, selectionIsCurrent, writingFetch, writingScope, type 
 import styles from "./writing-workbench.module.css";
 
 export type WritingWorkbenchProps = { workspaceId: string; projectId: string; userId: string; readOnly: boolean; projectName: string;
+  projectContextRevision?: number;
+  projectContextBlocked?: string;
   initialPrompt?: string; initialTaskId?: string; onSendToCanvas?(document: { documentId: string; revision: number; title: string; text: string }): Promise<void>;
   onReturnToCanvas?(): void; compact?: boolean; onToggleExpanded?(): void;
   onInsertSuggestion?(text: string, taskId: string): Promise<void> };
@@ -286,6 +288,7 @@ export const WritingWorkbench = forwardRef<WritingWorkbenchHandle, WritingWorkbe
   }
   async function send(event?: FormEvent) {
     event?.preventDefault(); if (props.readOnly || busy.current || pendingRef.current || !state || !prompt.trim() || saveBusy.current) return;
+    if (props.projectContextBlocked) { setError(props.projectContextBlocked); return; }
     busy.current = true; setWorking(true); setError(""); setNotice("");
     try {
       const capturedText = edit.current.text, capturedTitle = edit.current.title, chosenSelection = selection;
@@ -294,6 +297,7 @@ export const WritingWorkbench = forwardRef<WritingWorkbenchHandle, WritingWorkbe
       if (mode === "SELECTION" && (!chosenSelection || capturedText.slice(chosenSelection.start, chosenSelection.end) !== chosenSelection.text)) throw new Error("原选段已变化，请重新选择。");
       const input = StudioWritingGenerateInput.parse({ mutationId: crypto.randomUUID(), expectedRevision: current.revision, prompt,
         mode, referenceIds: selectedIds, styleRevision: useStyle && state.style.confirmedAt ? state.style.revision : null,
+        ...(props.projectContextRevision === undefined ? {} : { projectContextRevision: props.projectContextRevision }),
         ...(mode === "SELECTION" && chosenSelection ? { selection: { start: chosenSelection.start, end: chosenSelection.end, text: chosenSelection.text } } : {}) });
       if (!rememberPending({ kind: "generate", mutationId: input.mutationId, input })) return;
       const task = StudioWritingTask.parse(await writingFetch(endpoint, { method: "POST", headers, body: JSON.stringify(input) }));
@@ -426,7 +430,7 @@ export const WritingWorkbench = forwardRef<WritingWorkbenchHandle, WritingWorkbe
             {!turns.length && <div className={styles.empty}><h2>你想说什么，<br />我们一起写清楚。</h2><p className={styles.subtle}>告诉我受众、用途和你最想表达的内容。参考资料可以随时补充。</p></div>}
             {turns.map(({ id, task, records }) => <article className={styles.turn} key={id} data-testid="writing-turn" data-task-id={id} ref={id === props.initialTaskId ? node => { linkedTaskNode.current = node; } : undefined}>
               <p className={styles.userMessage}>{task?.input && "mode" in task.input ? task.input.prompt : records.find(m => m.role === "user")?.text || "文案请求"}</p>
-              {task && <p className={styles.sourceLine}>本轮资料：{task.input?.referenceIds.length ? task.input.referenceIds.map(id => references.find(r => r.id === id)?.name || "已移除的资料").join("、") : "未选用"}{task.input && "styleRevision" in task.input && task.input.styleRevision !== null ? ` · 品牌风格版本 ${task.input.styleRevision}` : ""}</p>}
+              {task && <p className={styles.sourceLine}>本轮资料：{task.input?.referenceIds.length ? task.input.referenceIds.map(id => references.find(r => r.id === id)?.name || "已移除的资料").join("、") : "未选用"}{task.input && "styleRevision" in task.input && task.input.styleRevision !== null ? ` · 品牌风格版本 ${task.input.styleRevision}` : ""}{task.input && "projectContextRevision" in task.input && task.input.projectContextRevision !== undefined ? ` · 项目资料版本 ${task.input.projectContextRevision}` : ""}</p>}
               {!task ? <div className={styles.candidate}>{records.filter(item => item.role === "assistant").map(item => <p key={item.id}>{item.text}</p>)}<Button variant="outline" size="sm" disabled={!!historyLoading} onClick={() => void loadHistory("task", id)}>读取这轮完整建议</Button><p className={styles.sourceLine}>读取原任务后可核对来源与正文版本，不会重新调用模型。</p></div> : task.status !== "SUCCEEDED" ? <div><p role={task.status === "FAILED" ? "alert" : "status"} className={styles.status}>{stageText(task)}</p>{isActive(task) && <Button variant="ghost" size="sm" disabled={!!historyLoading} onClick={() => void loadHistory("task", id)}>核对这轮状态</Button>}</div> : task.result && <div className={styles.candidate}>
                 <h3>{task.result.scope === "SELECTION" ? "这段可以这样改" : task.result.scope === "CHAT" ? "一起推敲" : "一版新的表达"}</h3>
                 {selectionOf(task) && <details className={styles.details}><summary>查看原选段</summary><pre>{selectionOf(task)!.text}</pre></details>}
@@ -438,11 +442,13 @@ export const WritingWorkbench = forwardRef<WritingWorkbenchHandle, WritingWorkbe
             </article>)}
           </div>
           <form className={styles.composer} onSubmit={event => void send(event)}>
+            {props.projectContextBlocked && <p role="alert" className={styles.warning}>{props.projectContextBlocked}</p>}
+            {props.projectContextRevision !== undefined && <p className={styles.subtle}>本轮沿用已保存的项目资料 · 版本 {props.projectContextRevision}。图片仅在“添加资料”选用后读取。</p>}
             {mode === "SELECTION" && selection && <div className={styles.warning}>正在修改选中的 {selection.text.length} 个字符 <button type="button" className="text-primary underline" onClick={() => { setSelection(null); setMode("GENERATE"); }}>取消选段</button></div>}
             <textarea className={styles.input} aria-label="本轮文案需求" maxLength={4000} value={prompt} readOnly={props.readOnly} onChange={e => setPrompt(e.target.value)} placeholder={mode === "SELECTION" ? "这段想怎么改？例如：保留信息，写得更直接一些。" : "例如：为新品写一篇发布文案，先讲清楚它解决了什么问题。"} />
             {!!selectedRefs.length && <div className={styles.chips}>{selectedRefs.map(r => <span className={styles.chip} key={r.id}>{r.name}{r.status !== "READY" ? " · 未就绪" : ""}</span>)}</div>}
             {state.style.confirmedAt && <label className={styles.subtle}><input type="checkbox" checked={useStyle} onChange={e => setUseStyle(e.target.checked)} disabled={props.readOnly} /> 使用已确认的品牌风格</label>}
-            <div className={styles.composerFooter}><Button type="button" variant="ghost" size="sm" onClick={() => setDrawer("references")}>＋ 添加资料</Button><Button type="submit" className={buttonClass} disabled={props.readOnly || !state.enabled || working || saving || !!pending || !prompt.trim() || selectedRefs.some(r => r.status !== "READY") || selectedRefs.filter(r => r.kind === "IMAGE").length > 4}> {working ? "处理中…" : "发送需求"}</Button></div>
+            <div className={styles.composerFooter}><Button type="button" variant="ghost" size="sm" onClick={() => setDrawer("references")}>＋ 添加资料</Button><Button type="submit" className={buttonClass} disabled={props.readOnly || !!props.projectContextBlocked || !state.enabled || working || saving || !!pending || !prompt.trim() || selectedRefs.some(r => r.status !== "READY") || selectedRefs.filter(r => r.kind === "IMAGE").length > 4}> {working ? "处理中…" : "发送需求"}</Button></div>
           </form>
           <p className={styles.subtle}>{!state.enabled ? "文案模型尚未配置，请联系管理员。" : "点击发送才调用模型。建议先预览，采纳后才改正文。"}</p>
         </section>

@@ -2,23 +2,29 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { StudioConversationInput } from "../../../packages/contracts/src/studio-conversation";
 import { parseStudioConversationIntent } from "../src/lib/studio-conversation-intent";
 import { studioConversationFeedback } from "../src/lib/studio-conversation-feedback";
-const f = vi.hoisted(() => ({ db: {} as any, row: null as any, available: vi.fn(), resolve: vi.fn(), context: vi.fn(), submit: vi.fn(), validate: vi.fn(), gate: vi.fn(), recover: vi.fn() }));
+const f = vi.hoisted(() => ({ db: {} as any, row: null as any, available: vi.fn(), resolve: vi.fn(), context: vi.fn(), submit: vi.fn(), validate: vi.fn(), gate: vi.fn(), recover: vi.fn(), trusted: vi.fn() }));
+vi.mock("@/lib/studio-brand-materials", () => ({ requireTrustedStudioBrandProjectMaterial: f.trusted }));
 vi.mock("@/lib/studio-conversation-context", () => ({ loadStudioConversationContext: f.context }));
 vi.mock("../../../packages/db/src/index", () => ({ prisma: f.db, Prisma: { DbNull: "DbNull" } }));
 vi.mock("@/lib/queue", () => ({ connection: {}, queuePrefix: "test" }));
 vi.mock("@/lib/api", () => ({ ApiException: class extends Error { constructor(public status: number, message: string) { super(message); } } }));
 vi.mock("@/lib/studio-generation", () => ({ submitStudioGeneration: f.submit }));
 vi.mock("@/lib/studio-generation-artifacts", () => ({ requireArtifactWrite: f.gate }));
-vi.mock("@/lib/studio-conversation", () => ({ validateConversationReferences: f.validate,
-  conversationGenerationInput: (projectId: string, input: any, intent: any) => ({ projectId, mutationId: input.mutationId, prompt: intent.prompt }), recoverStudioConversationGeneration: f.recover }));
+vi.mock("@/lib/studio-conversation", async () => {
+  const actual = await vi.importActual<typeof import("../src/lib/studio-conversation")>("../src/lib/studio-conversation");
+  return { validateConversationReferences: f.validate, conversationGenerationInput: actual.conversationGenerationInput,
+    conversationGenerationAcceptance: actual.conversationGenerationAcceptance, recoverStudioConversationGeneration: f.recover };
+});
 vi.mock("@/lib/studio-conversation-queue", () => ({ enqueueStudioConversation: vi.fn() }));
 vi.mock("@/lib/studio-conversation-model", () => ({ studioConversationModelAvailable: f.available, resolveStudioConversationModel: f.resolve,
   unknownStudioConversationIntent: (input: any) => ({ ...parseStudioConversationIntent(input), action: "clarify", targetReferenceId: null, clarification: "Unknown model result", parser: "structured-model-v1", modelStatus: "UNKNOWN" }) }));
 import { runStudioConversationJob } from "../src/lib/workers/studio-conversation.worker";
+import { ApiException } from "@/lib/api";
 const input = StudioConversationInput.parse({ mutationId: "831a0280-2cf1-41ba-ac94-621053c4a4c6", text: "生成一张海报", references: [], documentRevision: 0, workflowRevision: 0,
   sizeSelection: { ratioKey: "1:1", resolutionTier: "1K" } });
 beforeEach(() => {
   vi.clearAllMocks(); delete process.env.STUDIO_CONVERSATION_INTENT_ENABLED;
+  f.trusted.mockReset();
   f.recover.mockImplementation(async row => row);
   f.context.mockResolvedValue({ references: [], history: [], selectedReferenceIds: [] });
   f.row = { id: "m", conversationId: "c", input, references: [], intent: null, intentModelStartedAt: null, acceptedCanvas: "", status: "PENDING",
@@ -32,6 +38,24 @@ beforeEach(() => {
         || where.expiresAt?.gt && f.row.expiresAt <= where.expiresAt.gt) return {count:0}; Object.assign(f.row,data); return {count:1}; }) } });
 });
 describe("durable structured intent claim, no real model or image calls", () => {
+  it.each([false, true])("consumes an explicitly frozen project context, rejects its revoked source before any model; revoked=%s", async revoked => {
+    const projectContext = { projectId: "p", revision: 1, facts: { goal: "广告海报", audience: "学生", approvedCopy: "一起出发", visualRequirements: "绿色" },
+      materials: [], master: { assetId: "master", assetSha256: "a".repeat(64), shapeId: "shape:master", versionId: "v1", name: "确认主稿", width: 1024, height: 1024 }, updatedAt: null };
+    f.row.projectContextJson = projectContext; f.row.input = StudioConversationInput.parse({ ...input, projectContextRevision: 1 });
+    if (revoked) f.trusted.mockRejectedValue(new ApiException(404, "Source removed"));
+    else f.trusted.mockResolvedValue({ generationVersionId: "v1", width: 1024, height: 1024 });
+    f.resolve.mockImplementation(async (effective: any) => ({ ...parseStudioConversationIntent(effective), parser: "structured-model-v2", modelStatus: "SUCCEEDED" }));
+    await runStudioConversationJob({ data: { messageId: "m" } } as any);
+    if (revoked) { expect(f.resolve).not.toHaveBeenCalled(); expect(f.submit).not.toHaveBeenCalled(); expect(f.row.status).toBe("FAILED"); }
+    else {
+      expect(f.resolve.mock.calls[0][0].references).toMatchObject([{ assetId: "master", purpose: "REFERENCE" }]);
+      expect(f.resolve.mock.calls[0][0].references[0]).not.toHaveProperty("shapeId");
+      expect(f.resolve.mock.calls[0][3].projectContext).toMatchObject({ facts: projectContext.facts, masterReferenceId: "project-context:master" });
+      expect(f.submit.mock.calls[0][2].prompt).toContain("一起出发");
+      expect(f.submit.mock.calls[0][3].projectContext).toEqual(projectContext);
+      expect(f.row.input.references).toEqual([]); expect(f.row.input.text).toBe(input.text); expect(f.trusted).toHaveBeenCalledTimes(2);
+    }
+  });
   it.each(["先别生成一张海报", "不要修改背景", "这张怎么样？", "背景很好看", "这是参考图"])
   ("does not charge either semantic or image models for commentary/holds: %s", async text => {
     const ref = { referenceId: "shape:one", shapeId: "shape:one", assetId: "a1", assetSha256: "a".repeat(64), name: "图片1", width: 1024, height: 1024 };

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { StudioProjectContextFacts, StudioProjectMaterialRole } from "./studio-project-context";
 
 export const STUDIO_CONVERSATION_MODEL_REVISION = "structured-conversation-intent-r2";
 export const STUDIO_CONVERSATION_THUMBNAIL_MAX_BYTES = 128 * 1024;
@@ -14,9 +15,13 @@ const baseRequest = { text: z.string().trim().min(1).max(4000), quickEditTargetI
   previousResultReferenceId: refId.nullable(), providerRetryPolicy: z.literal("never").default("never") };
 export const StudioConversationModelHistory = z.object({ role: z.enum(["user", "assistant"]), text: z.string().min(1).max(1000), resultReferenceId: refId.nullable() }).strict();
 const requestV1 = z.object({ ...baseRequest, schemaVersion: z.literal(1), references: z.array(reference).max(8) }).strict();
+export const StudioConversationProjectContext = z.object({ revision: z.number().int().min(0).max(2147483646), facts: StudioProjectContextFacts,
+  materials: z.array(z.object({ name: z.string().min(1).max(255), role: StudioProjectMaterialRole, referenceId: refId.nullable() }).strict()).max(7),
+  masterReferenceId: refId.nullable() }).strict();
 const requestV2 = z.object({ ...baseRequest, schemaVersion: z.literal(2), references: z.array(reference.extend({ thumbnail: StudioConversationThumbnail.optional() })).max(8),
   history: z.array(StudioConversationModelHistory).max(6), selectedReferenceIds: z.array(refId).max(8),
   lastResultImage: z.object({ name: z.string().min(1).max(255), thumbnail: StudioConversationThumbnail }).strict().optional(),
+  projectContext: StudioConversationProjectContext.optional(),
 }).strict();
 export const StudioConversationModelRequest = z.union([requestV1, requestV2]).superRefine((value, context) => {
   const ids = new Set(value.references.map(ref => ref.referenceId));
@@ -25,6 +30,8 @@ export const StudioConversationModelRequest = z.union([requestV1, requestV2]).su
   if (value.schemaVersion === 2 && (value.references.filter(ref => ref.thumbnail).length + (value.lastResultImage ? 1 : 0) > 4 || !unique(value.selectedReferenceIds)
     || value.selectedReferenceIds.some(id => !ids.has(id)) || value.history.some(turn => turn.resultReferenceId !== null && !ids.has(turn.resultReferenceId))))
     context.addIssue({ code: "custom", message: "Invalid bounded history, selection or thumbnails" });
+  if (value.schemaVersion === 2 && value.projectContext && (value.projectContext.masterReferenceId !== null && !ids.has(value.projectContext.masterReferenceId)
+    || value.projectContext.materials.some(item => item.referenceId !== null && !ids.has(item.referenceId)))) context.addIssue({ code: "custom", message: "Project context references must be frozen references" });
 });
 export const StudioConversationOption = z.object({
   id: z.string().min(1).max(80).regex(/^[A-Za-z0-9_-]+$/), label: z.string().trim().min(1).max(80),

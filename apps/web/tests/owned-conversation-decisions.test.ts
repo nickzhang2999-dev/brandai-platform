@@ -53,4 +53,12 @@ describe("explicit conversation decisions", () => {
     expect(ownedConversationSelectedIds(doc, [], refs)).toEqual([]);
     expect(ownedConversationSelectedIds({ ...doc, items: [{ ...doc.items[0]!, hidden: true }, { ...doc.items[1]!, assetSha256: "c".repeat(64) }] }, ["shape:a", "shape:b"], refs)).toEqual([]);
   });
+  it("keeps the original confirmed project revision through decisions and rejects a mismatched receipt", () => {
+    const message = source(); message.originalInput = { ...original, projectContextRevision: 7 };
+    const input = ownedConversationDecisionInput(message, option.id, "clarification", { documentRevision: 8, workflowRevision: 5 }, mutationId, []);
+    expect(input.projectContextRevision).toBe(7);
+    expect(ownedConversationAcknowledges(input, { ...message, mutationId, originalInput: input })).toBe(true);
+    expect(ownedConversationAcknowledges(input, { ...message, mutationId, originalInput: { ...input, projectContextRevision: 8 } })).toBe(false);
+    expect(ownedConversationAcknowledges(input, { ...message, mutationId, originalInput: undefined })).toBe(false);
+  });
 });
