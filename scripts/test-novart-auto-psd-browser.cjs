@@ -179,6 +179,15 @@ async function handle(req, res) {
   const taskCard=id=>page.getByRole('region',{name:'项目任务记录',exact:true}).locator('[data-task-id="'+id+'"]');
   const submit=async()=>{await saved();const before=generationPosts;await button('发送').click();for(let i=0;i<150&&generationPosts===before;i++)await page.waitForTimeout(100);assert.equal(generationPosts,before+1);await saved();await page.waitForFunction(()=>document.querySelector('[data-testid="owned-editor"]')?.dataset.saveState==='saved');await openPanel('任务记录');};
   const expandPsd=async(card)=>{const details=card.getByTestId('owned-generated-psd');await details.waitFor();if(await details.getAttribute('open')===null)await details.locator('summary').click();};
+  const revealLayerTask=async(task)=>{
+    await task.waitFor({state:'attached'});
+    if(!await task.isVisible()) {
+      const history=page.getByTestId('owned-layer-history').filter({has:task});
+      assert.equal(await history.count(),1,'A hidden result must belong to the visible history entry');
+      if(await history.getAttribute('open')===null)await history.locator(':scope > summary').click();
+    }
+    await task.waitFor();
+  };
   stage = 'default-off'; await page.goto(origin + '/'); await ready(); const checkbox = page.getByRole('checkbox', {name: '同时准备可编辑PSD', exact: true}); assert.equal(await checkbox.isChecked(), false); assert.equal(generationPosts, 0); assert.equal(decompositionPosts, 0); assert.equal(psdReads.length, 0); check('default-off-does-not-submit-or-read-any-extra-model-task');
   stage = 'automatic-choice'; await checkbox.check(); assert.equal(await page.getByRole('combobox', {name: 'PSD图层数量', exact: true}).count(), 0); assert.equal(await page.getByRole('combobox',{name:'PSD分层方式',exact:true}).inputValue(),'AUTO'); check('automatic-content-mode-hides-count-and-keeps-manual-advanced');
   if (process.env.NOVART_LAYER_AUTOMATIC_SCREENSHOT) await page.screenshot({path: process.env.NOVART_LAYER_AUTOMATIC_SCREENSHOT});
@@ -197,6 +206,7 @@ async function handle(req, res) {
   stage = 'separate-layer-failure'; psdFailure = true; await openAdvanced(); await checkbox.check(); await page.getByRole('textbox', {name: '对话设计需求', exact: true}).fill('合成分层失败，原图保留'); await submit(); const failedCard = taskCard('fixture-generation-3'); await expandPsd(failedCard); await failedCard.locator('[data-testid="owned-generated-psd"][data-status="FAILED"]').waitFor(); assert.equal(await failedCard.locator('img').isVisible(), true); assert.equal(await failedCard.getByRole('button', {name: '恢复到画布', exact: true}).count(), 0); assert.equal(await failedCard.getByTestId('owned-generated-psd-download').count(), 0); assert.deepEqual(shapes(), originalShapes); assert.equal(decompositionPosts, 0); check('PSD-failure-preserves-generated-image-existing-canvas-and-original-generation');
   stage = 'refinement-target'; await openPanel('分层');
   const savedLayers = page.getByTestId('owned-layer-task').filter({has: page.getByTestId('owned-layer-compare-toggle')}).first();
+  await revealLayerTask(savedLayers);
   await savedLayers.getByTestId('owned-layer-compare-toggle').click();
   await savedLayers.getByRole('button', {name: '进一步分层：图层 2', exact: true}).click();
   const refinementPanel = page.getByTestId('owned-layer-panel');
@@ -206,7 +216,11 @@ async function handle(req, res) {
   check('selecting-one-persisted-layer-for-refinement-does-not-pay-or-change-document');
   stage = 'refinement-submit'; await refinementPanel.getByTestId('owned-layer-submit').click();
   const refinedTask = page.getByTestId('owned-layer-task').filter({hasText: '合成细拆计划'});
-  await refinedTask.locator('button').filter({hasText: '展开图片图层'}).waitFor({timeout: 20000});
+  // Completion may move this fixture's older timestamp into collapsed history.
+  // Wait for the completed action to exist, then open that history as a user.
+  await refinedTask.getByRole('button', {name: '展开图片图层', exact: true, includeHidden: true}).waitFor({state: 'attached', timeout: 20000});
+  await revealLayerTask(refinedTask);
+  await refinedTask.getByRole('button', {name: '展开图片图层', exact: true}).waitFor();
   assert.equal(decompositionPosts, 1); assert.equal(refinementInputs[0].layerMode, 'AUTO');
   assert.equal(Object.hasOwn(refinementInputs[0], 'layerCount'), false);
   assert.equal(refinementInputs[0].assetId, layerResults[1].assetId);
@@ -226,7 +240,7 @@ async function handle(req, res) {
   check('one-undo-restores-selected-source-and-redo-restores-refinement-without-new-task');
   stage = 'refinement-refresh'; await page.reload(); await ready(); await settled(5);
   assert.equal(shapes().length, 5); assert.equal(decompositionPosts, 1); assert.equal(generationPosts, 3);
-  await openPanel('分层'); await page.getByTestId('owned-layer-task').filter({hasText: '合成细拆计划'}).waitFor();
+  await openPanel('分层'); await revealLayerTask(page.getByTestId('owned-layer-task').filter({hasText: '合成细拆计划'}));
   check('recursive-layers-and-server-task-reopen-without-model-resubmission');
   stage = 'phone-refinement-layout'; await page.setViewportSize({width: 390, height: 844});
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
@@ -235,6 +249,7 @@ async function handle(req, res) {
   stage = 'advanced-manual-choice'; psdFailure = false; await openAdvanced(); await checkbox.check();
   await page.getByRole('combobox',{name:'PSD分层方式',exact:true}).selectOption('MANUAL'); await page.getByRole('spinbutton',{name:'PSD图层数量',exact:true}).fill('2');
   await page.getByRole('textbox', {name: '对话设计需求', exact: true}).fill('合成手动两层，兼容旧任务'); await submit();
+  await expandPsd(taskCard('fixture-generation-4'));
   await taskCard('fixture-generation-4').locator('[data-testid="owned-generated-psd"][data-status="READY"]').waitFor();
   assert.equal(generationInputs[3].psdLayerMode, 'MANUAL'); assert.equal(generationInputs[3].psdLayerCount, 2);
   await page.reload(); await ready(); assert.equal(await checkbox.isChecked(), true);

@@ -160,14 +160,18 @@ jobs:
           report = json.loads(Path('.novart-build/layer-quality-interactions/report.json').read_text())
           assert report['passed'] is True and report['fixtureOnly'] is True
           assert report['realBackend'] is False and report['realProvider'] is False and report['realAuthorization'] is False
-          assert report['providerCalls'] == 0 and len(report['checks']) == 11
+          assert report['providerCalls'] == 0 and len(report['checks']) == 17
           assert not report['externalRequests'] and not report['errors']
           assert {'ordered-alpha-composite-and-layer-inspection-never-use-original-as-bottom-layer',
                   'project-switch-aborts-asset-read-and-never-revives-old-task',
                   'source-hash-mismatch-fails-closed-before-image-decoding',
                   '25-second-timeout-aborts-read-and-offers-working-retry',
-                  'all-inspection-actions-issue-zero-writes-placement-or-provider-calls'} <= set(report['checks'])
-          print('PASS layer comparison: 11 isolated interactions; no real model or quality acceptance claimed')
+                  'all-inspection-actions-issue-zero-writes-placement-or-provider-calls',
+                  'independent-layer-backdrop-zoom-and-move-reveal-background-without-paid-or-canvas-writes',
+                  'background-repair-gates-capability-readonly-missing-original-and-pending-request-without-model-calls',
+                  'opening-layer-repair-uses-original-frame-and-requires-explicit-painted-mask',
+                  'explicit-mask-submission-preserves-parent-task-and-original-hash-in-one-request-without-canvas-replacement'} <= set(report['checks'])
+          print('PASS layer comparison: 17 isolated interactions; no real model or quality acceptance claimed')
           report = json.loads((root / 'conversation-fixture.json').read_text())
           assert report['passed'] is True and report['isolated'] is True
           assert report['realBackend'] is False and report['realProvider'] is False and report['realAuthentication'] is False

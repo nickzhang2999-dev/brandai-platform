@@ -16,6 +16,10 @@ async function runOwnedLayerChecks({page,surface,origin,fixture,png,material,lay
   const sourceId=sourceRecord().id;assert.equal(shapes().length,1);await sourceNode.click();await openLayers();await page.getByTestId('owned-layer-panel').waitFor();
   assert.equal(await sourceNode.getAttribute('data-selected'),'true');assert.equal(await button('开始 AI 分层').isEnabled(),true);check('uploaded-persistent-source-selected-and-saved-before-ai-layers');
   const options=page.getByTestId('owned-layer-options');
+  // The ordinary flow stays compact. Reach the advanced controls through the
+  // same collapsed settings entry a user opens before specifying a layer count.
+  assert.equal(await options.isVisible(),false);
+  await page.getByTestId('owned-layer-panel').getByText('精细设置 · 分层方式与说明',{exact:true}).click();
   await options.getByText('按内容自动拆分，无需指定层数。',{exact:true}).waitFor();
   assert.equal(await page.getByRole('combobox',{name:'拆分层数',exact:true}).count(),0);
   await options.locator('summary').click();
