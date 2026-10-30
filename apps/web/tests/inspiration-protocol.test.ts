@@ -26,4 +26,22 @@ describe('signed knowledge protocol',()=>{
   it('rejects duplicate source ids',async()=>{const f=await fixture(c=>{(c.sources as unknown[]).push((c.sources as unknown[])[0]);});await expect(validatePackage(f.raw,f.files,keys)).rejects.toThrow('Duplicate');});
   it('rejects traversal',async()=>{const f=await fixture(c=>{(c.images as {path:string}[])[0]!.path='images/../secret';});await expect(validatePackage(f.raw,f.files,keys)).rejects.toThrow();});
   it('rejects unlisted files',async()=>{const f=await fixture();f.files.set('images/extra.png',Buffer.from('x'));await expect(validatePackage(f.raw,f.files,keys)).rejects.toThrow('Incomplete');});
+  // Python's isoformat() emits six fractional digits; the publisher used that until
+  // 2026-10-30, so every signed package already on disk carries microseconds. Zod's
+  // bare datetime() caps at three digits and rejected them before signature checking.
+  it('accepts microsecond timestamps from the Python publisher',async()=>{
+    const f=await fixture();
+    const { signature: _s, key_id: _k, ...unsigned } = f.manifest as unknown as Record<string,unknown>;
+    const raw=Buffer.from(JSON.stringify(signed({...unsigned,created_at:'2026-10-26T04:32:28.207868Z'}))+'\n');
+    const r=await validatePackage(raw,f.files,keys);
+    expect(r.records).toHaveLength(1);
+  });
+  it('still rejects non-UTC or malformed timestamps',async()=>{
+    const f=await fixture();
+    const { signature: _s, key_id: _k, ...unsigned } = f.manifest as unknown as Record<string,unknown>;
+    for(const bad of ['2026-10-26T04:32:28.207868+08:00','2026-10-26 04:32:28','not-a-date']){
+      const raw=Buffer.from(JSON.stringify(signed({...unsigned,created_at:bad}))+'\n');
+      await expect(validatePackage(raw,f.files,keys)).rejects.toThrow();
+    }
+  });
 });

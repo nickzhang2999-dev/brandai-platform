@@ -7,6 +7,11 @@ const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/);
 const text = z.string().min(1).max(50000).refine(v=>!!v.trim());
 const positive = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 const path = z.string().max(512).refine(p => p === 'records.jsonl' || (p.startsWith('images/') && !p.includes('\\') && p.split('/').every(s => s && s !== '.' && s !== '..' && !s.includes('%') && !s.includes('\0'))));
+// Publisher stamps carry millisecond precision today, but earlier signed
+// packages (and any future producer) may emit microseconds. Zod's default
+// `datetime()` rejects more than three fractional digits, which would fail
+// verification before the signature is ever checked. Accept both.
+const utcStamp = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/);
 const hash = z.string().regex(/^[a-f0-9]{64}$/);
 const source = z.object({ source_id: id, url: z.string().url().refine(s => { const u = new URL(s); return ['http:','https:'].includes(u.protocol) && !u.username && !u.password; }), display_permission: z.literal('allowed') }).passthrough();
 const image = z.object({ image_id: id, path: path.refine(p => p.startsWith('images/')), source_id: id, display_permission: z.literal('allowed') }).passthrough();
@@ -15,9 +20,9 @@ export const PublishedCase = z.object({ case_id: id, revision: positive, title: 
   tags: z.object({ industry: z.array(text).min(1).max(100), medium: z.array(text).min(1).max(100) }).catchall(z.array(text).max(100)), sources: z.array(source).min(1).max(500), images: z.array(image).min(1).max(500), claims: z.array(claim).min(1).max(500),
 }).passthrough();
 export type PublishedCase = z.infer<typeof PublishedCase>;
-export const Manifest = z.object({ schema_version: z.literal(1), release_id: id, sequence: positive, kind: z.enum(['full','delta']), parent_release_id: id.nullable(), created_at: z.string().datetime(), taxonomy_version: text, records_count: z.number().int().min(0).max(2000), files: z.array(z.object({ path, size: z.number().int().nonnegative().max(128*1024*1024), sha256: hash }).strict()).max(10000), key_id: id, signature: z.string().max(256) }).strict();
+export const Manifest = z.object({ schema_version: z.literal(1), release_id: id, sequence: positive, kind: z.enum(['full','delta']), parent_release_id: id.nullable(), created_at: utcStamp, taxonomy_version: text, records_count: z.number().int().min(0).max(2000), files: z.array(z.object({ path, size: z.number().int().nonnegative().max(128*1024*1024), sha256: hash }).strict()).max(10000), key_id: id, signature: z.string().max(256) }).strict();
 export type Manifest = z.infer<typeof Manifest>;
-export const Withdrawal = z.object({ schema_version: z.literal(1), sequence: positive, created_at: z.string().datetime(), case_ids: z.array(id).max(100000), key_id: id, signature: z.string().max(256) }).strict();
+export const Withdrawal = z.object({ schema_version: z.literal(1), sequence: positive, created_at: utcStamp, case_ids: z.array(id).max(100000), key_id: id, signature: z.string().max(256) }).strict();
 const RecordSchema = z.object({ op: z.enum(['upsert','delete']), case_id: id, revision: positive, content_hash: hash, case: PublishedCase.optional() }).strict();
 export type ReleaseRecord = z.infer<typeof RecordSchema>;
 export const sha256 = (b: string | Buffer) => createHash('sha256').update(b).digest('hex');
