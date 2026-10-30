@@ -12,7 +12,7 @@ def test_health(client):
         "studioImageToolsRevision": "studio-image-tools-r1",
         "studioDecompositionRevision": "studio-real-layer-single-attempt-r2",
         "studioDecompositionQueueRevision": "studio-layer-queue-r2",
-        "studioLayerPlanRevision": "semantic-layer-plan-r2",
+        "studioLayerPlanRevision": "semantic-layer-plan-r3",
         "studioConversationIntentRevision": "structured-conversation-intent-r2",
         "studioWritingParserRevision": "studio-writing-text-v1",
     }

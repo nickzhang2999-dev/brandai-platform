@@ -5,7 +5,7 @@ const current = { parserRevision: "grounded-six-slot-r6", generationRevision: "g
 const older = { parserRevision: current.parserRevision, generationRevision: current.generationRevision };
 const editable = { ...current, studioEditRevision: "studio-whole-image-edit-r1" };
 const layered = { ...current, studioDecompositionRevision: "studio-real-layer-single-attempt-r2" };
-const planned = { ...layered, studioLayerPlanRevision: "semantic-layer-plan-r2" };
+const planned = { ...layered, studioLayerPlanRevision: "semantic-layer-plan-r3" };
 const load = () => import("../src/lib/ai-service");
 beforeEach(() => {
   vi.resetModules(); vi.resetAllMocks(); vi.stubGlobal("fetch", f.fetch);

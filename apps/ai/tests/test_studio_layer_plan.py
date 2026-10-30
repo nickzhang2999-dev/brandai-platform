@@ -23,6 +23,7 @@ def image_ref():
 
 def plan(count=3):
     return {"layerCount": count, "summary": "图中主体与装饰可分别编辑。", "sourceCaption": "浅色背景中央是一位人物，左上角有文字，边缘有彩色装饰。",
+            "assessment": {"occlusions": [], "preserve": ["保留人物与文字原像素"], "shadowPolicy": "NONE_VISIBLE", "shadowEvidence": "未见明确投影"},
             "groups": [{"name": f"组{i+1}", "description": "实际可见内容"} for i in range(count)]}
 
 @pytest.fixture(autouse=True)
@@ -54,7 +55,7 @@ def test_uses_actual_image_and_vision_selected_count_once_with_execution_evidenc
     assert response.status_code == 200
     assert response.json()["plan"]["layerCount"] == 5
     assert response.json()["usage"]["provider"] == "HttpVLMProvider"
-    assert response.json()["revision"] == "semantic-layer-plan-r2"
+    assert response.json()["revision"] == "semantic-layer-plan-r3"
     assert response.json()["plan"]["sourceCaption"] == plan()["sourceCaption"]
     assert len(calls) == 1
     content = calls[0]["messages"][1]["content"]
@@ -64,6 +65,9 @@ def test_uses_actual_image_and_vision_selected_count_once_with_execution_evidenc
     assert "Keep user intent out of sourceCaption" in content[0]["text"]
     assert "merged/flattened" in content[0]["text"]
     assert "Do not guess hidden text" in content[0]["text"]
+    assert "Classify occlusion by the hidden content" in content[0]["text"]
+    assert "INFER_BACKGROUND" in content[0]["text"]
+    assert "Do not assume occluded regions can be recovered" not in content[0]["text"]
 
 
 @pytest.mark.parametrize("caption", [None, "", " \t\ufeff", 123, "a" * 2001, "😀" * 1001])
@@ -83,6 +87,7 @@ def test_missing_caption_is_not_repaired_from_user_intent_or_group_names():
 
 def test_saved_r1_response_remains_readable_but_cannot_masquerade_as_r2():
     legacy = plan()
+    legacy.pop("assessment")
     del legacy["sourceCaption"]
     response = {"revision": "semantic-layer-plan-r1", "plan": legacy,
                 "usage": {"provider": "HttpVLMProvider", "model": "fixture", "latencyMs": 1}}

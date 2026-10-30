@@ -72,7 +72,7 @@ describe("semantic layer wire and fail-closed persistence", () => {
   });
   it("manual tasks omit captions even when editing intent is provided", () => {
     const manual = newStudioLayerPlanning("MANUAL");
-    expect(manual.revision).toBe("semantic-layer-plan-r2");
+    expect(manual.revision).toBe("semantic-layer-plan-r3");
     expect(semanticDecompositionSourceCaption(manual)).toBeUndefined();
     expect(semanticDecompositionIntent("拆成两层", manual)).toBe("拆成两层");
   });

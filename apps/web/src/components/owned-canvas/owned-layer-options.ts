@@ -31,10 +31,17 @@ export function ownedLayerTaskStatus(task: DecompositionTask) {
   if (task.status === "SUCCEEDED") return "图层已保存";
   if (task.status === "FAILED") return "未完成，原图保留";
   if (Date.parse(task.expiresAt) <= Date.now()) return "等待确认超时，可刷新任务";
+  if (task.workflow?.stage === "CHECKING_AND_SAVING") return "正在检查并保存图层";
   if (task.layerMode === "AUTO" && ["PENDING", "RUNNING"].includes(task.analysisStatus)) {
     return task.analysisStatus === "RUNNING" ? "正在分析图片内容" : "等待内容分析";
   }
   return task.status === "RUNNING" ? "正在拆分图层" : "等待处理";
+}
+
+export function partitionOwnedLayerTasks(tasks: DecompositionTask[]) {
+  const sorted = [...tasks].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+  return { current: sorted.filter((task, index) => index === 0 || ["PENDING", "RUNNING"].includes(task.status)),
+    history: sorted.filter((task, index) => index !== 0 && !["PENDING", "RUNNING"].includes(task.status)) };
 }
 
 export function ownedLayerTaskNotice(task: DecompositionTask) {

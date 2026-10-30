@@ -8,7 +8,7 @@ export const REQUIRED_AI_STUDIO_EDIT_REVISION = "studio-whole-image-edit-r1";
 export const REQUIRED_AI_STUDIO_IMAGE_TOOLS_REVISION = "studio-image-tools-r1";
 export const REQUIRED_AI_STUDIO_DECOMPOSITION_REVISION = "studio-real-layer-single-attempt-r2";
 export const REQUIRED_AI_STUDIO_DECOMPOSITION_QUEUE_REVISION = "studio-layer-queue-r2";
-export const REQUIRED_AI_STUDIO_LAYER_PLAN_REVISION = "semantic-layer-plan-r2";
+export const REQUIRED_AI_STUDIO_LAYER_PLAN_REVISION = "semantic-layer-plan-r3";
 export const REQUIRED_AI_STUDIO_CONVERSATION_INTENT_REVISION = "structured-conversation-intent-r2";
 export const REQUIRED_AI_STUDIO_WRITING_PARSER_REVISION = "studio-writing-text-v1";
 

@@ -7,9 +7,10 @@ import { NovartApiError } from "../../lib/novart-api-client";
 import { createOwnedLayerRecovery } from "./owned-layer-recovery";
 import type { createOwnedEditorApi, DecompositionInput, DecompositionTask } from "./owned-editor-api";
 import { downloadOwnedPsd } from "./owned-psd-download";
+import { OwnedLayerWorkflow } from "./OwnedLayerWorkflow";
 import { OwnedLayerOptions } from "./OwnedLayerOptions";
 import { OwnedLayerComparison, OwnedLayerQualitySummary } from "./OwnedLayerComparison";
-import { matchesOwnedDecomposition, ownedLayerTaskTitle, ownedLayerTaskStatus, ownedLayerTaskNotice, type OwnedLayerMode } from "./owned-layer-options";
+import { partitionOwnedLayerTasks, matchesOwnedDecomposition, ownedLayerTaskTitle, ownedLayerTaskStatus, ownedLayerTaskNotice, type OwnedLayerMode } from "./owned-layer-options";
 
 type Api = ReturnType<typeof createOwnedEditorApi>;
 type Props = {
@@ -154,19 +155,10 @@ export function OwnedLayerPanel({ api, workspaceId, projectId, userId, document,
     catch (error) { if (current(context)) setNotice(message(error)); }
     finally { if (current(context)) { serial.current = false; setBusy(false); } }
   }
-  return <section className="space-y-4" aria-label="AI 分层" data-testid="owned-layer-panel">
-    <div><h2 className="text-sm font-semibold">{refining ? "进一步分层" : "AI 分层"}</h2><p className="mt-1 text-xs leading-5 text-muted-foreground">拆成可分别移动、缩放的透明图片图层，原图保留。文字仍是图片，不能直接改字。{layerMode === "AUTO" ? "会额外使用内容分析与分层服务额度。" : "会使用分层服务额度。"}</p></div>
-    <p className="text-xs leading-5 text-muted-foreground" data-testid="owned-layer-source">{sourceError || (refining ? `已选择${sourceLayer?.name || "已保存图层"}，只拆分这一个图层，其余图层保留。` : "已选择图片。原图和全部结果分别保存，完成后由你展开。")}</p>
-    {refineSourceId && source && <div className="flex items-center gap-3 rounded-2xl border border-border p-3"><img src={source.url} alt="进一步分层的对象" className="h-14 w-14 shrink-0 rounded-lg bg-muted object-contain" /><button type="button" className={control} disabled={pending || busy} onClick={() => setRefineSourceId(null)}>返回画布选中对象</button></div>}
-    <OwnedLayerOptions mode={layerMode} count={layerCount} context="分层" disabled={readOnly || busy || pending || blocked} onMode={setLayerMode} onCount={setLayerCount} />
-    <textarea aria-label="分层说明" className="min-h-24 w-full rounded-2xl border border-border bg-background p-3 text-sm" placeholder="可选：优先拆分主体、文字和背景…" maxLength={500} value={intent} disabled={readOnly || busy || pending || blocked} onChange={event => setIntent(event.target.value)} />
-    {intent.trim() && <p className="text-xs leading-5 text-muted-foreground">说明用于内容规划，实际图层分组仍需核对。</p>}
-    <button type="button" className="w-full rounded-full bg-primary py-3 text-sm text-primary-foreground disabled:opacity-40" data-testid="owned-layer-submit" disabled={!api || readOnly || busy || blocked || !pending && !!sourceError} onClick={() => void submit()}>{busy ? "正在确认…" : pending ? "检查上次分层" : refining ? "进一步分层" : "开始 AI 分层"}</button>
-    {!!notice && !tasks.some(task => task.error && notice.includes(task.error)) && <p role="status" className="rounded-xl bg-accent-soft p-3 text-xs leading-6" data-testid="owned-layer-notice">{notice}</p>}
-    {(blocked || tasks.some(task => ["PENDING", "RUNNING"].includes(task.status) && Date.parse(task.expiresAt) <= Date.now())) && <button type="button" className={control} disabled={reading || busy} onClick={() => void refresh()}>检查分层状态</button>}
-    {!tasks.length && <p className="py-4 text-center text-xs text-muted-foreground">当前项目还没有分层任务。</p>}
-    {tasks.map(task => <article className="space-y-3 rounded-2xl border border-border p-3" key={task.requestId} data-testid="owned-layer-task" data-request-id={task.requestId} data-status={task.status}>
+  const renderTask = (task: DecompositionTask) => <article className="space-y-3 rounded-2xl border border-border p-3" key={task.requestId} data-testid="owned-layer-task" data-request-id={task.requestId} data-status={task.status}>
       <div className="flex flex-wrap justify-between gap-2 text-xs"><strong>{ownedLayerTaskTitle(task)}</strong><span>{ownedLayerTaskStatus(task)}</span></div>
+      <time className="block text-xs text-muted-foreground" dateTime={task.createdAt}>{new Date(task.createdAt).toLocaleString("zh-CN", { hour12: false })}</time>
+      <OwnedLayerWorkflow task={task} />
       {task.analysisSummary && <p className="text-xs leading-5 text-muted-foreground">{task.analysisSummary}</p>}
       {task.error && <div role="alert" className="text-xs leading-5 text-muted-foreground"><p>{/画幅|尺寸比例/.test(task.error) ? "分层结果尺寸与原图不一致，已保留原图。" : task.error}</p>{/画幅|尺寸比例/.test(task.error) && <details><summary>查看详情</summary>{task.error}</details>}</div>}
       {task.status === "SUCCEEDED" && <><OwnedLayerQualitySummary task={task} /><button type="button" className={control} data-testid="owned-layer-compare-toggle" aria-expanded={comparisonId === task.requestId} onClick={() => setComparisonId(value => value === task.requestId ? null : task.requestId)}>{comparisonId === task.requestId ? "收起原图对照与图层" : "查看原图对照与图层"}</button></>}
@@ -192,6 +184,22 @@ export function OwnedLayerPanel({ api, workspaceId, projectId, userId, document,
           onClick={() => { if (!original) return; setRefineSourceId(original.id); setLayerMode(task.layerMode); if (task.layerMode === "MANUAL") setLayerCount(task.layerCount);
             setNotice("已选好原图和原设置。点“开始 AI 分层”才会重新提交，会再次使用分层额度。"); }}>用同样设置重新分层</button>;
       })()}
-    </article>)}
+    </article>;
+  const taskGroups = partitionOwnedLayerTasks(tasks);
+  return <section className="space-y-4" aria-label="AI 分层" data-testid="owned-layer-panel">
+    <div><h2 className="text-sm font-semibold">{refining ? "进一步分层" : "AI 分层"}</h2><p className="mt-1 text-xs leading-5 text-muted-foreground">拆成可分别移动、缩放的透明图片图层，原图保留。文字仍是图片，不能直接改字。{layerMode === "AUTO" ? "会额外使用内容分析与分层服务额度。" : "会使用分层服务额度。"}</p></div>
+    <p className="text-xs leading-5 text-muted-foreground" data-testid="owned-layer-source">{sourceError || (refining ? `已选择${sourceLayer?.name || "已保存图层"}，只拆分这一个图层，其余图层保留。` : "已选择图片。原图和全部结果分别保存，完成后由你展开。")}</p>
+    {refineSourceId && source && <div className="flex items-center gap-3 rounded-2xl border border-border p-3"><img src={source.url} alt="进一步分层的对象" className="h-14 w-14 shrink-0 rounded-lg bg-muted object-contain" /><button type="button" className={control} disabled={pending || busy} onClick={() => setRefineSourceId(null)}>返回画布选中对象</button></div>}
+    <details className="space-y-3"><summary className="cursor-pointer text-xs text-muted-foreground">精细设置 · 分层方式与说明</summary>
+    <OwnedLayerOptions mode={layerMode} count={layerCount} context="分层" disabled={readOnly || busy || pending || blocked} onMode={setLayerMode} onCount={setLayerCount} />
+    <textarea aria-label="分层说明" className="min-h-24 w-full rounded-2xl border border-border bg-background p-3 text-sm" placeholder="可选：优先拆分主体、文字和背景…" maxLength={500} value={intent} disabled={readOnly || busy || pending || blocked} onChange={event => setIntent(event.target.value)} />
+    {intent.trim() && <p className="text-xs leading-5 text-muted-foreground">说明用于内容规划，实际图层分组仍需核对。</p>}
+    </details>
+    <button type="button" className="w-full rounded-full bg-primary py-3 text-sm text-primary-foreground disabled:opacity-40" data-testid="owned-layer-submit" disabled={!api || readOnly || busy || blocked || !pending && !!sourceError} onClick={() => void submit()}>{busy ? "正在确认…" : pending ? "检查上次分层" : refining ? "进一步分层" : "开始 AI 分层"}</button>
+    {!!notice && !tasks.some(task => task.error && notice.includes(task.error)) && <p role="status" className="rounded-xl bg-accent-soft p-3 text-xs leading-6" data-testid="owned-layer-notice">{notice}</p>}
+    {(blocked || tasks.some(task => ["PENDING", "RUNNING"].includes(task.status) && Date.parse(task.expiresAt) <= Date.now())) && <button type="button" className={control} disabled={reading || busy} onClick={() => void refresh()}>检查分层状态</button>}
+    {!tasks.length && <p className="py-4 text-center text-xs text-muted-foreground">当前项目还没有分层任务。</p>}
+    {taskGroups.current.map(renderTask)}
+    {taskGroups.history.length > 0 && <details className="space-y-3" data-testid="owned-layer-history"><summary className="cursor-pointer text-xs text-muted-foreground">历史任务（{taskGroups.history.length}）</summary><p className="text-xs text-muted-foreground">以下是过去的结果和错误，不代表本次任务状态。</p>{taskGroups.history.map(renderTask)}</details>}
   </section>;
 }

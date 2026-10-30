@@ -1,7 +1,8 @@
 import { z } from "zod";
-import { StudioLayerPlanResponse, STUDIO_LAYER_PLAN_REVISION, LEGACY_STUDIO_LAYER_PLAN_REVISION } from "@brandai/contracts";
+import { StudioLayerPlanResponse, STUDIO_LAYER_PLAN_REVISION, CAPTION_STUDIO_LAYER_PLAN_REVISION, LEGACY_STUDIO_LAYER_PLAN_REVISION } from "@brandai/contracts";
+import type { StudioLayerWorkflow } from "@brandai/contracts";
 
-export const StudioDecompositionPlanning = z.object({ revision: z.enum([STUDIO_LAYER_PLAN_REVISION, LEGACY_STUDIO_LAYER_PLAN_REVISION]), mode: z.enum(["AUTO", "MANUAL"]),
+export const StudioDecompositionPlanning = z.object({ revision: z.enum([STUDIO_LAYER_PLAN_REVISION, CAPTION_STUDIO_LAYER_PLAN_REVISION, LEGACY_STUDIO_LAYER_PLAN_REVISION]), mode: z.enum(["AUTO", "MANUAL"]),
   status: z.enum(["NOT_REQUESTED", "PENDING", "RUNNING", "SUCCEEDED", "FAILED"]),
   startedAt: z.string().datetime().nullable(), result: StudioLayerPlanResponse.nullable() }).strict().superRefine((planning, context) => {
     const valid = planning.mode === "MANUAL"
@@ -35,6 +36,14 @@ export function semanticDecompositionIntent(userIntent: string | null, _planning
 export function semanticDecompositionSourceCaption(planning: StudioDecompositionPlanning) {
   // Manual and saved r1 plans have no verified caption. Omit it so Fal can
   // describe the source itself; never synthesize one from intent/group names.
-  return planning.mode === "AUTO" && planning.status === "SUCCEEDED" && planning.result?.revision === STUDIO_LAYER_PLAN_REVISION
+  return planning.mode === "AUTO" && planning.status === "SUCCEEDED" && planning.result && planning.result.revision !== LEGACY_STUDIO_LAYER_PLAN_REVISION
     ? planning.result.plan.sourceCaption : undefined;
+}
+
+export function studioLayerWorkflow(row: { status: string; providerStartedAt: Date | null; archiveToken: string | null }, planning: StudioDecompositionPlanning): StudioLayerWorkflow {
+  const stage = row.status === "FAILED" ? "FAILED" : row.status === "SUCCEEDED" ? "READY_FOR_REVIEW"
+    : row.archiveToken ? "CHECKING_AND_SAVING" : row.providerStartedAt ? "DECOMPOSING"
+      : planning.status === "RUNNING" ? "ANALYZING" : "QUEUED";
+  return { stage, assessment: planning.result?.revision === STUDIO_LAYER_PLAN_REVISION ? planning.result.plan.assessment : null,
+    backgroundCompletion: "NOT_PERFORMED", independentQuality: "NOT_REVIEWED" };
 }

@@ -13,7 +13,8 @@ export function OwnedLayerQualitySummary({ task }: { task: DecompositionTask }) 
   const quality = task.quality;
   return <div className="space-y-1 rounded-xl bg-accent-soft p-3 text-xs leading-5" data-testid="owned-layer-quality" data-quality={quality?.status ?? "UNCHECKED"}>
     <p className="font-medium">{ownedLayerQualityLabel(task)}</p>
-    <p>初检仅比较重合成像素，不判断文字是否正确、主体是否完整或分组是否合理，仍需人工对照。</p>
+    <p>重合成相似还不够：请单独查看背景、移开主体，核对补丁、残影与投影；切换底色检查主体杂点和边缘。独立图层质量尚未审核。</p>
+    <p>像素初检不判断文字正确性、主体完整性或分组合理性。</p>
     {quality?.warnings.length ? <ul className="list-inside list-disc">{quality.warnings.map(warning => <li key={warning}>{warningLabels[warning] ?? "请查看原图与图层对照"}</li>)}</ul> : null}
     {quality?.metrics && <details><summary className="cursor-pointer text-muted-foreground">查看初检详情</summary><p className="mt-1 text-muted-foreground">按 {quality.sampleWidth} × {quality.sampleHeight} 像素预览检查；变化像素约 {(quality.metrics.changedPixelRatio * 100).toFixed(1)}%。{quality.regions.length > 0 && `有 ${quality.regions.length} 处区域需要留意，可在对照中标出。`}</p></details>}
   </div>;
@@ -27,13 +28,15 @@ export function OwnedLayerComparison({ task, workspaceId, projectId, userId }: {
   const [attempt, setAttempt] = useState(0), [images, setImages] = useState<LayerComparisonImages | null>(null);
   const [error, setError] = useState(""), [hidden, setHidden] = useState<string[]>([]), [single, setSingle] = useState("");
   const [showRegions, setShowRegions] = useState(false);
+  const [background, setBackground] = useState("checker"), [zoom, setZoom] = useState(1);
+  const [moveLayer, setMoveLayer] = useState(""), [moveX, setMoveX] = useState(25);
   const sourceCanvas = useRef<HTMLCanvasElement>(null), compositeCanvas = useRef<HTMLCanvasElement>(null);
   // Polling may replace the task object; only immutable image identity reloads it.
   const identity = JSON.stringify([workspaceId, projectId, userId, task.requestId, task.assetId, task.assetSha256,
     task.sourceWidth, task.sourceHeight, task.layers.map(layer => [layer.assetId, layer.assetSha256, layer.order, layer.width, layer.height, layer.url])]);
   useEffect(() => {
     const controller = new AbortController(); let active = true, loaded: LayerComparisonImages | null = null;
-    setImages(null); setError(""); setHidden([]); setSingle(""); setShowRegions(false);
+    setImages(null); setError(""); setHidden([]); setSingle(""); setShowRegions(false); setMoveLayer(""); setMoveX(25); setZoom(1); setBackground("checker");
     const timer = setTimeout(() => {
       if (!active) return;
       controller.abort(); setError("对照加载超时，可重试或下载 PSD 查看。原图和已保存图层不受影响。");
@@ -56,23 +59,31 @@ export function OwnedLayerComparison({ task, workspaceId, projectId, userId }: {
     sourceContext.clearRect(0, 0, images.width, images.height); sourceContext.drawImage(images.source, 0, 0);
     // An empty canvas is intentional. The original never becomes a bottom layer.
     context.clearRect(0, 0, images.width, images.height);
-    for (const layer of images.layers) if (single ? layer.assetId === single : !hidden.includes(layer.assetId)) context.drawImage(layer.bitmap, 0, 0);
+    for (const layer of images.layers) if (single ? layer.assetId === single : !hidden.includes(layer.assetId))
+      context.drawImage(layer.bitmap, !single && layer.assetId === moveLayer ? images.width * moveX / 100 : 0, 0);
     return () => { source.width = source.height = composite.width = composite.height = 0; };
-  }, [images, hidden, single]);
+  }, [images, hidden, single, moveLayer, moveX]);
   const layers = [...task.layers].sort((a, b) => a.order - b.order);
+  const backdrop = background === "checker" ? checkerboard : { backgroundColor: background === "light" ? "#fff" : "#171717" };
   return <div className="space-y-3" data-testid="owned-layer-comparison" data-request-id={task.requestId} data-state={error ? "error" : images ? "ready" : "loading"}>
     {!images && !error && <p role="status" className="text-xs text-muted-foreground">正在读取原图和已保存图层…</p>}
     {error && <div role="alert" className="space-y-2 rounded-xl bg-muted p-3 text-xs leading-5"><p>{error}</p><button type="button" className={control} onClick={() => setAttempt(value => value + 1)}>重新加载对照</button></div>}
     {images && !error && <>
       <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
-        <figure className="min-w-0"><figcaption className="mb-2 text-xs font-medium">原图</figcaption><canvas ref={sourceCanvas} role="img" aria-label="保留的原图" className="block h-auto w-full rounded-lg border border-border" style={checkerboard} /></figure>
-        <figure className="min-w-0"><figcaption className="mb-2 text-xs font-medium">{single ? "单层查看" : hidden.length ? "已选图层合成" : "全部图层重合成"}</figcaption><div className="relative"><canvas ref={compositeCanvas} role="img" aria-label="图片图层对照" className="block h-auto w-full rounded-lg border border-border" style={checkerboard} />{showRegions && <svg aria-label="初检差异区域" className="pointer-events-none absolute inset-0 h-full w-full" viewBox={`0 0 ${task.sourceWidth} ${task.sourceHeight}`}>{task.quality?.regions.map((region, index) => <rect key={index} x={region.left} y={region.top} width={region.width} height={region.height} fill="none" stroke="rgb(var(--primary))" strokeWidth="2" vectorEffect="non-scaling-stroke" />)}</svg>}</div></figure>
+        <figure className="min-w-0"><figcaption className="mb-2 text-xs font-medium">原图</figcaption><div className="max-h-96 overflow-auto rounded-lg"><div style={{ width: `${zoom * 100}%` }}><canvas ref={sourceCanvas} role="img" aria-label="保留的原图" className="block h-auto w-full rounded-lg border border-border" style={backdrop} /></div></div></figure>
+        <figure className="min-w-0"><figcaption className="mb-2 text-xs font-medium">{single ? "单层查看" : hidden.length ? "已选图层合成" : "全部图层重合成"}</figcaption><div className="max-h-96 overflow-auto rounded-lg"><div className="relative" style={{ width: `${zoom * 100}%` }}><canvas ref={compositeCanvas} role="img" aria-label="图片图层对照" className="block h-auto w-full rounded-lg border border-border" style={backdrop} />{showRegions && !single && !moveLayer && hidden.length === 0 && <svg aria-label="初检差异区域" className="pointer-events-none absolute inset-0 h-full w-full" viewBox={`0 0 ${task.sourceWidth} ${task.sourceHeight}`}>{task.quality?.regions.map((region, index) => <rect key={index} x={region.left} y={region.top} width={region.width} height={region.height} fill="none" stroke="rgb(var(--primary))" strokeWidth="2" vectorEffect="non-scaling-stroke" />)}</svg>}</div></div></figure>
       </div>
-      <p className="text-xs leading-5 text-muted-foreground">仅用已保存图层重合成，棋盘格表示透明区域。预览最长边 1024 像素，请重点核对文字、主体和边缘。</p>
+      <p className="text-xs leading-5 text-muted-foreground">仅用已保存图层重合成，棋盘格表示透明区域，深浅底色仅用于检查。预览最长边 1024 像素，请重点核对文字、主体和边缘。</p>
       {!!task.quality?.regions.length && <label className="flex items-center gap-2 text-xs"><input type="checkbox" className="accent-primary" checked={showRegions} onChange={event => setShowRegions(event.target.checked)} />标出初检差异区域（全图层结果）</label>}
+      <div className="flex flex-wrap gap-3 text-xs"><label>底色 <select aria-label="图层检查底色" className={control} value={background} onChange={event => setBackground(event.target.value)}><option value="checker">棋盘格</option><option value="light">浅色</option><option value="dark">深色</option></select></label><label>放大 <select aria-label="图层检查放大" className={control} value={zoom} onChange={event => setZoom(Number(event.target.value))}><option value={1}>适合窗口</option><option value={2}>2 倍</option><option value={4}>4 倍</option></select></label></div>
       <label className="flex flex-wrap items-center gap-2 text-xs">查看范围<select aria-label="对照查看范围" className={control + " min-w-0 max-w-full"} value={single} onChange={event => setSingle(event.target.value)}><option value="">重合成</option>{layers.map(layer => <option key={layer.assetId} value={layer.assetId}>{layer.name || `图层 ${layer.order + 1}`}</option>)}</select></label>
       {!single && <fieldset className="flex flex-wrap gap-x-4 gap-y-2"><legend className="mb-2 text-xs text-muted-foreground">开关图层，检查是否混层或缺失</legend>{layers.map(layer => <label key={layer.assetId} className="flex min-w-0 items-center gap-2 text-xs"><input type="checkbox" className="accent-primary" checked={!hidden.includes(layer.assetId)} onChange={event => setHidden(values => event.target.checked ? values.filter(id => id !== layer.assetId) : [...values, layer.assetId])} /><span className="break-all">{layer.name || `图层 ${layer.order + 1}`}</span></label>)}</fieldset>}
-      {(single || hidden.length > 0) && <button type="button" className={control} onClick={() => { setHidden([]); setSingle(""); }}>恢复全部图层</button>}
+      {!single && <details className="space-y-2 text-xs"><summary className="cursor-pointer">移开图层，检查遮挡处</summary>
+        <label className="block">移动对象 <select aria-label="检查时移动的图层" className={control} value={moveLayer} onChange={event => setMoveLayer(event.target.value)}><option value="">不移动</option>{layers.map(layer => <option key={layer.assetId} value={layer.assetId}>{layer.name || `图层 ${layer.order + 1}`}</option>)}</select></label>
+        {moveLayer && <label className="block">水平移动 {moveX}%<input aria-label="图层检查移动距离" className="mt-2 w-full accent-primary" type="range" min={-75} max={75} step={5} value={moveX} onChange={event => setMoveX(Number(event.target.value))} /></label>}
+        <p className="text-muted-foreground">检查原位置是否有球形补丁、残影或孤立投影。此处移动只影响预览，不改画布、不调用模型。</p>
+      </details>}
+      {(single || hidden.length > 0 || moveLayer) && <button type="button" className={control} onClick={() => { setHidden([]); setSingle(""); setMoveLayer(""); setMoveX(25); }}>恢复全部图层</button>}
     </>}
   </div>;
 }

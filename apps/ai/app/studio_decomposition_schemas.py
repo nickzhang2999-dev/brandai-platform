@@ -5,6 +5,7 @@ from pydantic import Field, field_validator, model_validator
 
 from .studio_workflow_schemas import StrictModel, ProjectId, Sha256
 from .studio_layer_quality_schemas import StudioLayerQualityReport
+from .studio_layer_assessment_schemas import LayerWorkflow
 
 STUDIO_DECOMPOSITION_TTL_MS = 6 * 60_000
 STUDIO_LAYER_RECOVERY_TTL_MS = 24 * 60 * 60_000
@@ -135,6 +136,14 @@ class StudioDecompositionView(StrictModel):
     canRetryArchive: bool
     layers: list[StudioDecompositionLayer] = Field(max_length=10)
     quality: StudioLayerQualityReport | None = None
+    workflow: LayerWorkflow | None = None
+
+    @field_validator("workflow", mode="before")
+    @classmethod
+    def no_null_workflow(cls, value):
+        if value is None:
+            raise ValueError("workflow must be omitted, not null")
+        return value
 
     @field_validator("requestedLayerCount", mode="before")
     @classmethod
@@ -152,6 +161,10 @@ class StudioDecompositionView(StrictModel):
 
     @model_validator(mode="after")
     def only_complete_public_layers(self):
+        if self.workflow and ((self.status == "SUCCEEDED") != (self.workflow.stage == "READY_FOR_REVIEW")
+                or (self.status == "FAILED") != (self.workflow.stage == "FAILED")
+                or (self.workflow.assessment is not None and (self.layerMode != "AUTO" or self.analysisStatus != "SUCCEEDED"))):
+            raise ValueError("Workflow must reflect the actual saved task and successful scene analysis")
         if self.quality and (self.status != "SUCCEEDED" or self.quality.sourceSha256 != self.assetSha256
             or self.quality.sourceWidth != self.sourceWidth or self.quality.sourceHeight != self.sourceHeight):
             raise ValueError("Quality belongs only to its complete published source frame")

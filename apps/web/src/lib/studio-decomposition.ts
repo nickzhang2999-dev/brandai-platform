@@ -25,7 +25,7 @@ import { recordUsage } from "./usage";
 import { generatedPsdLayerCount, generatedPsdMutationId, generatedPsdSourceShapeId } from "./studio-generated-psd-state";
 import { generatedPsdLayerMode } from "./studio-generated-psd-state";
 import { StudioLayerPlanResponse } from "@brandai/contracts";
-import { newStudioLayerPlanning, readStudioLayerPlanning, studioLayerMaxCount, semanticDecompositionIntent, semanticDecompositionSourceCaption } from "./studio-decomposition-planning";
+import { newStudioLayerPlanning, readStudioLayerPlanning, studioLayerMaxCount, semanticDecompositionIntent, semanticDecompositionSourceCaption, studioLayerWorkflow } from "./studio-decomposition-planning";
 import { assertStudioPsdBudget, StudioPsdEncodingError } from "./studio-psd-codec";
 import { studioBrandMaterialSourceDigest, studioBrandObjectKey } from "./studio-brand-materials-trust";
 
@@ -43,7 +43,7 @@ const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(valu
 const keysOf = (row: Pick<Row, "objectKeys">) => z.array(z.string().max(512)).max(30).parse(row.objectKeys);
 const outputOf = (row: Row) => row.outputJson === null ? null : PrivateOutput.parse(row.outputJson);
 const receiptSelect = { id: true, mutationId: true, projectId: true, workspaceId: true, sourceShapeId: true, assetId: true, assetSha256: true,
-  documentRevision: true, layerCount: true, planningJson: true, sourceWidth: true, sourceHeight: true, status: true, error: true,
+  documentRevision: true, layerCount: true, planningJson: true, sourceWidth: true, sourceHeight: true, status: true, error: true, providerStartedAt: true,
   createdAt: true, expiresAt: true, archiveExpiresAt: true, archiveToken: true, objectKeys: true, publishedLayers: true, qualityJson: true } satisfies Prisma.StudioDecompositionRequestSelect;
 type ReceiptRow = Prisma.StudioDecompositionRequestGetPayload<{ select: typeof receiptSelect }>;
 const identity = (workspaceId: string, userId: string, input: z.infer<typeof StudioDecompositionInput>) => ({ workspaceId, userId, projectId: input.projectId, mutationId: input.mutationId });
@@ -88,7 +88,7 @@ function receipt(row: ReceiptRow) {
     sourceShapeId: row.sourceShapeId, assetId: row.assetId, assetSha256: row.assetSha256,
     documentRevision: row.documentRevision, layerCount: layers.length || row.layerCount, requestedLayerCount: row.layerCount, sourceWidth: row.sourceWidth, sourceHeight: row.sourceHeight,
     layerMode: planning.mode, analysisStatus: planning.mode === "AUTO" && row.status === "FAILED" && !planning.result ? "FAILED" : planning.status, analysisSummary: planning.result?.plan.summary ?? null,
-    status: row.status, error: row.error, createdAt: row.createdAt.toISOString(), expiresAt: row.expiresAt.toISOString(),
+    status: row.status, error: row.error, workflow: studioLayerWorkflow(row, planning), createdAt: row.createdAt.toISOString(), expiresAt: row.expiresAt.toISOString(),
     archiveExpiresAt: row.archiveExpiresAt?.toISOString() ?? null, canRetryArchive: canRetry(row),
     layers, quality: quality?.success && quality.data.sourceSha256 === row.assetSha256
       && quality.data.sourceWidth === row.sourceWidth && quality.data.sourceHeight === row.sourceHeight ? quality.data : null });
