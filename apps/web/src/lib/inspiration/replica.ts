@@ -62,9 +62,16 @@ export async function installPackage(workspaceId: string, raw: Buffer, files: Ma
       const imageHash=sha256(canonical(r.case?.images.map(i=>({path:i.path,sha256:m.files.find(f=>f.path===i.path)!.sha256})).sort((a,b)=>a.path.localeCompare(b.path)) ?? []));
       const old=await tx.inspirationRecord.findFirst({where:{workspaceId,caseId:r.case_id},orderBy:{revision:'desc'}});
       if(old && (r.revision<old.revision || (r.revision===old.revision && (r.content_hash!==old.contentHash || imageHash!==old.imageHash)))) throw new Error('Case revision conflict');
-      if(r.op==='upsert' && withdrawn.has(r.case_id)) throw new Error('Withdrawn case cannot be restored');
+      // A case in the cumulative withdrawn set may still appear in older releases:
+      // a fresh install replays history that predates the withdrawal, and its
+      // `delete` records (or the snapshot sweep below) keep it out of the active
+      // set. Persist the record for audit, never the snapshot entry. Creating a
+      // snapshot entry for a withdrawn case is the actual restore, and the sweep
+      // below removes it either way, so the final invariant "withdrawn cases are
+      // not in the active snapshot" holds regardless of replay order.
+      const suppressed = r.op === 'upsert' && withdrawn.has(r.case_id);
       const row=old && old.revision===r.revision ? old : await tx.inspirationRecord.create({data:{workspaceId,caseId:r.case_id,revision:r.revision,contentHash:r.content_hash,imageHash,releaseId:m.release_id,deleted:r.op==='delete',body:json(r.case ?? {})}});
-      if(r.op==='delete') delete snapshot[r.case_id]; else snapshot[r.case_id]=row.id;
+      if(r.op==='delete') delete snapshot[r.case_id]; else if(!suppressed) snapshot[r.case_id]=row.id;
     }
     for(const [path,mimeType] of mimes) await tx.inspirationImage.create({data:{workspaceId,releaseId:m.release_id,path,mimeType,sha256:sha256(files.get(path)!),bytes:new Uint8Array(files.get(path)!)}});
     for(const id of withdrawn) delete snapshot[id];
