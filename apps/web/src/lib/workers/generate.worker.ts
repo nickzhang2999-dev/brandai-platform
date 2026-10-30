@@ -5,6 +5,7 @@ import { ensureStudioGenerationArtifacts } from "@/lib/studio-generation-artifac
 import { studioExactIntent, preflightStudioExactSources, assertStudioExactNotModelInput, type StudioExactSnapshot } from "@/lib/studio-generation-exact";
 import { loadStudioEditSource, assertStudioEditNotModelReference, type StudioEditSourceSnapshot } from "@/lib/studio-generation-edit";
 import { requireStudioBaseEncryption } from "@/lib/studio-generation-base";
+import { studioImageToolPixelEvidence } from "@/lib/studio-layer-repair";
 import { StudioEditRequest, StudioEditResponse, type StudioImageToolSpec } from "@brandai/contracts";
 import { Worker, type Job } from "bullmq";
 import { prisma, Prisma } from "@brandai/db";
@@ -1116,6 +1117,7 @@ export async function runGenerateJob(
           params: { ...studioProviderParams(v.params), appliedRuleIds, appliedBrandRuleCount: appliedRuleIds.length,
             brandConstraintMode: !job.data.studioImageTool && brandRules.length ? "BRANDED" : "FREE", sceneType, ...constraintEcho,
             ...(job.data.studioImageTool ? { imageTool: job.data.studioImageTool.operation } : {}),
+            ...(job.data.studioImageTool && job.data.studioEdit ? studioImageToolPixelEvidence(job.data.studioImageTool.operation, v.params, job.data.studioEdit.width, job.data.studioEdit.height) : {}),
             ...(job.data.studioImageTool && Number.isSafeInteger(v.params.providerWidth) && Number.isSafeInteger(v.params.providerHeight)
               && Number(v.params.providerWidth) > 0 && Number(v.params.providerHeight) > 0 && Number(v.params.providerWidth) <= 8192 && Number(v.params.providerHeight) <= 8192
               ? { imageToolProviderSize: { width: v.params.providerWidth, height: v.params.providerHeight } } : {}),

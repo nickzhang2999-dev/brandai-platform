@@ -9,6 +9,7 @@ import { requireTrustedStudioBrandProjectMaterial } from "./studio-brand-materia
 import { hashStudioPayload, type StudioConversationAcceptance } from "./studio-generation-policy";
 import { submitStudioGeneration, readStudioGeneration } from "./studio-generation";
 import { requireArtifactWrite } from "./studio-generation-artifacts";
+import { requireStudioLayerRepairParent } from "./studio-layer-repair";
 
 /** No key or provider URL is returned. Unverified adapters remain unavailable. */
 export async function studioImageToolCapabilities() {
@@ -65,11 +66,12 @@ export async function submitStudioImageTool(workspaceId: string, userId: string,
     if (!document || document.workspaceId !== workspaceId || state && state.workspaceId !== workspaceId || document.revision !== input.documentRevision || (state?.workflowRevision ?? 0) !== input.workflowRevision) throw new ApiException(409, "画布或素材已变更，请先保存最新画布再操作图片。");
     const source = await resolveStudioEditSource(tx, workspaceId, input.projectId, input.target, document.canvas, true);
     const snapshot = source.snapshot;
+    const layerRepair = input.decompositionRequestId ? await requireStudioLayerRepairParent(tx, workspaceId, input.projectId, input.decompositionRequestId, snapshot) : undefined;
     const material = await requireTrustedStudioBrandProjectMaterial(tx, workspaceId, input.projectId, snapshot.assetId, snapshot.sha256);
     const requestedSize = StudioConversationPixels.parse({ width: snapshot.width, height: snapshot.height });
     if (input.mask) assertStudioToolMaskHeader(input.mask, snapshot.width, snapshot.height);
     const referenceId = "tool-target";
-    return { canvas: document.canvas, imageTool, imageToolInputHash: inputHash,
+    return { canvas: document.canvas, imageTool, imageToolInputHash: inputHash, ...(layerRepair ? { layerRepair } : {}),
       references: [{ referenceId, name: material.fileName, shapeId: snapshot.shapeId, assetId: snapshot.assetId,
         assetSha256: snapshot.sha256, width: snapshot.width, height: snapshot.height, purpose: "REFERENCE" as const }],
       intent: { action: "modify" as const, targetReferenceId: referenceId, referenceIds: [], prompt, clarification: null,

@@ -24,7 +24,7 @@ describe("strict image-tool transport and actual PNG alpha", () => {
     const body=await sharp({create:{width:32,height:32,channels:4,background:{r:0,g:0,b:0,alpha:0}}}).composite([{input:opaque,left:8,top:8}]).png().toBuffer();
     await expect(requireStudioTransparentForeground(body,AbortSignal.timeout(3000))).resolves.toBeUndefined();
   });
-  it.each([0,1])("rejects all-transparent or opaque-white alpha=%s", async alpha => {
+  it.each([0,0.5,1])("rejects uniform alpha=%s without both background and foreground", async alpha => {
     const body=await sharp({create:{width:32,height:32,channels:4,background:{r:255,g:255,b:255,alpha}}}).png().toBuffer();
     await expect(requireStudioTransparentForeground(body,AbortSignal.timeout(3000))).rejects.toMatchObject({status:422});
   });

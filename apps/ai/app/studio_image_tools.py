@@ -6,6 +6,7 @@ module never fetches a browser URL and never returns a fake transparent image.
 import base64
 import io
 import math
+import hashlib
 from fastapi import HTTPException
 from PIL import Image
 from .providers.http_providers import HttpImageProvider, _is_gpt_image_2_model, _resolve_openai_size
@@ -13,6 +14,7 @@ from .providers.retry_policy import call_with_retry_policy
 from .schemas import GenerateResponse, GeneratedVersion
 from .studio_edit_schemas import StudioEditRequest, studio_data_bytes, STUDIO_EDIT_MAX_BYTES
 from .studio_image_tool_schemas import STUDIO_IMAGE_TOOL_MAX_PIXELS
+from .ai_failure import ImageResponseError
 
 
 def _image(body: bytes, *, png=False):
@@ -74,14 +76,34 @@ async def run_studio_image_tool(req: StudioEditRequest, provider) -> GenerateRes
     ref = await call_with_retry_policy("never", provider.edit, req.imageUrl,
                                       "REMOVE_BACKGROUND" if tool == "remove-background" else "INPAINT", payload)
     # Bounded data response only: no provider-returned URL may initiate SSRF.
-    result = _image(studio_data_bytes(ref), png=True).convert("RGBA")
+    try:
+        result = _image(studio_data_bytes(ref), png=True).convert("RGBA")
+    except (HTTPException, ValueError) as error:
+        raise ImageResponseError("Image tool returned invalid PNG bytes") from error
     provider_output = result.size
+    # An edit may return the original frame or the requested aligned provider
+    # frame. Use relative tolerance: an absolute one-pixel tolerance would
+    # incorrectly admit e.g. a 2x2 square for a 96x64 source.
+    def same_aspect(frame):
+        w, h = frame
+        left, right = result.width * h, result.height * w
+        return abs(left - right) * 200 <= max(left, right)
+    if not same_aspect(source.size) and not same_aspect(provider_size):
+        raise ImageResponseError("Image tool returned a different aspect ratio")
+    if result.width < min(source.width, provider_size[0]) or result.height < min(source.height, provider_size[1]):
+        raise ImageResponseError("Image tool returned less than the accepted source or provider resolution")
     if tool == "remove-background":
         extrema = result.getchannel("A").getextrema()
-        if extrema[0] >= 255 or extrema[1] <= 0:
-            raise HTTPException(422, "Background-removal provider did not return a real foreground with transparent pixels")
+        if extrema[0] != 0 or extrema[1] <= 0:
+            raise ImageResponseError("Background-removal provider did not return a real foreground with transparent pixels")
     if result.size != source.size:
         result = result.resize(source.size, Image.Resampling.LANCZOS)
+    if tool == "remove-background":
+        # Resampling can erase a tiny/very faint foreground; validate the final
+        # deliverable too, not only the provider's high-resolution response.
+        low, high = result.getchannel("A").getextrema()
+        if low != 0 or high <= 0:
+            raise ImageResponseError("Background-removal output lost meaningful alpha after normalization")
     if mask is not None:
         # Server compositing preserves every unpainted decoded source pixel,
         # even if a provider edits outside its advertised mask.
@@ -93,5 +115,10 @@ async def run_studio_image_tool(req: StudioEditRequest, provider) -> GenerateRes
               "providerWidth": provider_output[0], "providerHeight": provider_output[1],
               "actualWidth": source.width, "actualHeight": source.height,
               "maskConvention": "white-edit-black-preserve" if mask is not None else None}
+    if mask is not None:
+        histogram = mask.histogram()
+        params.update({"sourcePixelProtection": "outside-mask", "protectedPixelCount": histogram[0],
+                       "editedPixelCount": histogram[255], "independentQuality": "not-reviewed",
+                       "maskSha256": hashlib.sha256(f"{source.width}x{source.height}:".encode() + mask.tobytes()).hexdigest()})
     return GenerateResponse(versions=[GeneratedVersion(imageUrl="data:image/png;base64," + base64.b64encode(body).decode(),
         width=source.width, height=source.height, params=params)])

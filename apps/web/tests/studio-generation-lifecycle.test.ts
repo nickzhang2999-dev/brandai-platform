@@ -9,6 +9,7 @@ import { claimStudioGeneration, assertStudioGenerationReady, stageStudioGenerati
 import { ApiException } from "../src/lib/api";
 import { Prisma } from "../../../packages/db/src/index";
 import { AiServiceFailure } from "../src/lib/ai-failure";
+import { inspectStudioLayerRepair } from "../src/lib/studio-layer-repair";
 let row: any, tx: any;
 beforeEach(() => {
   vi.resetAllMocks(); row = { id: "sgr_1", workspaceId: "w", projectId: "p", userId: "u", generationId: "g", contextHash: "same", status: "PENDING", providerStartedAt: null, expiresAt: new Date(Date.now() + 60000), jobData: { generationId: "g", assetUsages: [] } };
@@ -47,6 +48,30 @@ describe("safe public generation failures", () => {
 });
 
 describe("product single execution and private output atomicity", () => {
+  it.each(["claim", "pre-provider"])("revalidates the durable layer parent at %s without replacing the accepted request", async stage => {
+    const source = { assetId: "a", sha256: "a".repeat(64), shapeId: "shape:source", width: 96, height: 64 };
+    const layerRepair = { decompositionRequestId: "parent", sourceShapeId: source.shapeId, assetId: source.assetId,
+      assetSha256: source.sha256, width: 96, height: 64, mode: "inferred-completion", independentQuality: "NOT_REVIEWED" };
+    row.jobData = { ...row.jobData, studioEdit: source, studioImageTool: { operation: "inpaint" }, studioLayerRepair: layerRepair };
+    const parent = { id: "parent", workspaceId: "w", projectId: "p", status: "SUCCEEDED", sourceShapeId: source.shapeId,
+      assetId: source.assetId, assetSha256: source.sha256, sourceWidth: 96, sourceHeight: 64 };
+    const readParent = vi.fn().mockResolvedValue(stage === "claim" ? null : parent);
+    tx.studioDecompositionRequest = { findFirst: readParent };
+    f.context.mockImplementation(async (db, ws, projectId, job) => {
+      await inspectStudioLayerRepair(db, ws, projectId, job.studioLayerRepair, job.studioEdit, job.studioImageTool.operation);
+      return "same";
+    });
+    const claim = await claimStudioGeneration(row);
+    if (stage === "claim") {
+      expect(claim).toBeNull(); expect(row.status).toBe("FAILED"); expect(row.providerStartedAt).toBeNull();
+    } else {
+      expect(claim).not.toBeNull(); readParent.mockResolvedValue(null);
+      await expect(assertStudioGenerationReady(claim!)).rejects.toMatchObject({ status: 409 });
+      expect(f.context).toHaveBeenCalledTimes(2);
+    }
+    expect(f.context).toHaveBeenCalledWith(tx, "w", "p", expect.objectContaining({ studioLayerRepair: layerRepair }));
+    expect(f.output).not.toHaveBeenCalled();
+  });
   it("logs only the fixed source reason and safe request identity before failing an unclaimed request", async () => {
     row.id = "sgr_" + "a".repeat(32);
     const failure = Object.assign(new ApiException(422, "修改目标已失效、归属不符或原始配方发生变化，请重新选择图片。"), {

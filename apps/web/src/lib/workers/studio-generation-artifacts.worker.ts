@@ -17,6 +17,7 @@ import { storeStudioCleanBase } from "@/lib/studio-generation-base";
 import { StudioEditSourceSnapshot, lockStudioEditPublicationSource } from "@/lib/studio-generation-edit";
 import { sizeStudioConversationImage } from "@/lib/studio-conversation-image-size";
 import { requireStudioTransparentForeground } from "@/lib/studio-image-tool-alpha";
+import { inspectStudioLayerRepair, studioImageToolPixelEvidence } from "@/lib/studio-layer-repair";
 
 function object(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -51,6 +52,7 @@ export async function runStudioGenerationArtifactJob(job: Job<{ outputId: string
     const exact = processing.exactLayout === undefined ? null : StudioExactSnapshot.parse(processing.exactLayout);
     const editSource = processing.editSource === undefined ? null : StudioEditSourceSnapshot.parse(processing.editSource);
     const imageTool = processing.imageTool;
+    const layerRepair = object(row.request.jobData).studioLayerRepair;
     if (imageTool !== undefined && !["remove-background", "inpaint"].includes(String(imageTool))) throw new ApiException(422, "图片工具输出记录不完整，未发布结果。");
     if (params.imageKind === "EDITED" && !editSource) throw new ApiException(422, "改图结果缺少原图来源，未发布图片。");
     // A retained EXACT marker without its private recipe must fail closed.
@@ -116,12 +118,15 @@ export async function runStudioGenerationArtifactJob(job: Job<{ outputId: string
         if (imageTool) await lockStudioEditPublicationSource(tx, row.workspaceId, row.projectId, editSource, true);
         else await lockStudioEditPublicationSource(tx, row.workspaceId, row.projectId, editSource);
       }
+      const verifiedLayerRepair = layerRepair === undefined ? null : await inspectStudioLayerRepair(tx, row.workspaceId, row.projectId, layerRepair, editSource, imageTool, true);
       await tx.$queryRaw`SELECT "outputId" FROM "StudioGeneratedMaterial" WHERE "outputId" = ${outputId} FOR UPDATE`;
       const current = await tx.studioGeneratedMaterial.findUnique({ where: { outputId }, include: { output: { select: { expiresAt: true } } } });
       if (!current || current.status !== "RUNNING" || current.attemptToken !== token || current.expiresAt.getTime() <= Date.now() || current.output.expiresAt.getTime() <= Date.now()) throw new ApiException(409, "归档任务已结束或超时，迟到结果未发布。");
       signal.throwIfAborted();
-      const { studioPostprocess: _privateSnapshot, studioSourceRetention: _privateRetention, ...publicParams } = params;
+      const { studioPostprocess: _privateSnapshot, studioSourceRetention: _privateRetention, imageToolPixelEvidence: pixelEvidence, layerRepair: _untrustedRepair, ...publicParams } = params;
       const finalParams = { ...publicParams, actualSize: { actualWidth: final.width, actualHeight: final.height },
+        ...studioImageToolPixelEvidence(imageTool, object(pixelEvidence), final.width, final.height),
+        ...(verifiedLayerRepair ? { layerRepair: verifiedLayerRepair } : {}),
         ...(sized ? { requestedSize: sized.requestedSize, providerSize: imageTool && params.imageToolProviderSize ? params.imageToolProviderSize : sized.providerSize, outputSize: { width: final.width, height: final.height },
           sizeSource: conversationSize.sizeSource, outputSizeMethod: imageTool === "inpaint" ? "masked-source-pixel-composite" : imageTool === "remove-background" ? "preserve-alpha-source-size" : sized.resized ? "deterministic-contain" : "provider-native" } : {}),
         ...(editSource ? { source: { assetId: editSource.assetId, sha256: editSource.sha256,

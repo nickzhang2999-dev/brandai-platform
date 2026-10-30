@@ -10,6 +10,7 @@ import { downloadOwnedPsd } from "./owned-psd-download";
 import { OwnedLayerWorkflow } from "./OwnedLayerWorkflow";
 import { OwnedLayerOptions } from "./OwnedLayerOptions";
 import { OwnedLayerComparison, OwnedLayerQualitySummary } from "./OwnedLayerComparison";
+import { requireOwnedLayerRepairSource } from "./owned-layer-repair";
 import { partitionOwnedLayerTasks, matchesOwnedDecomposition, ownedLayerTaskTitle, ownedLayerTaskStatus, ownedLayerTaskNotice, type OwnedLayerMode } from "./owned-layer-options";
 
 type Api = ReturnType<typeof createOwnedEditorApi>;
@@ -19,10 +20,11 @@ type Props = {
   onPrepare: () => Promise<{ document: OwnedCanvasDocument; revision: number }>;
   onPlace: (task: DecompositionTask) => Promise<void>;
   onTasks?: (tasks: DecompositionTask[]) => void;
+  backgroundRepair?: { available: boolean; reason: string | null; pending: boolean; onRepair: (task: DecompositionTask) => Promise<void> };
 };
 const control = "rounded-full border border-border bg-card px-3 py-2 text-xs text-foreground hover:bg-muted disabled:opacity-40";
 const message = (error: unknown) => error instanceof Error ? error.message : "操作未完成，请重新读取任务。";
-export function OwnedLayerPanel({ api, workspaceId, projectId, userId, document, selectedIds, readOnly, onPrepare, onPlace, onTasks }: Props) {
+export function OwnedLayerPanel({ api, workspaceId, projectId, userId, document, selectedIds, readOnly, onPrepare, onPlace, onTasks, backgroundRepair }: Props) {
   const [tasks, setTasks] = useState<DecompositionTask[]>([]), [layerMode, setLayerMode] = useState<OwnedLayerMode>("AUTO"), [layerCount, setLayerCount] = useState(4), [intent, setIntent] = useState("");
   const [refineSourceId, setRefineSourceId] = useState<string | null>(null);
   const [comparisonId, setComparisonId] = useState<string | null>(null);
@@ -155,6 +157,14 @@ export function OwnedLayerPanel({ api, workspaceId, projectId, userId, document,
     catch (error) { if (current(context)) setNotice(message(error)); }
     finally { if (current(context)) { serial.current = false; setBusy(false); } }
   }
+  async function repair(task: DecompositionTask) {
+    const context = activeScope.current;
+    if (!backgroundRepair?.available || backgroundRepair.pending || readOnly || serial.current || pending || blocked) return;
+    serial.current = true; setBusy(true);
+    try { await backgroundRepair.onRepair(task); }
+    catch (error) { if (current(context)) setNotice(message(error)); }
+    finally { if (current(context)) { serial.current = false; setBusy(false); } }
+  }
   const renderTask = (task: DecompositionTask) => <article className="space-y-3 rounded-2xl border border-border p-3" key={task.requestId} data-testid="owned-layer-task" data-request-id={task.requestId} data-status={task.status}>
       <div className="flex flex-wrap justify-between gap-2 text-xs"><strong>{ownedLayerTaskTitle(task)}</strong><span>{ownedLayerTaskStatus(task)}</span></div>
       <time className="block text-xs text-muted-foreground" dateTime={task.createdAt}>{new Date(task.createdAt).toLocaleString("zh-CN", { hour12: false })}</time>
@@ -174,6 +184,17 @@ export function OwnedLayerPanel({ api, workspaceId, projectId, userId, document,
       {task.status === "SUCCEEDED" && <div className="flex flex-wrap gap-2"><button type="button" className={control} disabled={readOnly || busy} onClick={() => void place(task)}>展开图片图层</button>
         {api && <button type="button" className={control} disabled={busy} onClick={() => void download(task)} data-testid="owned-layer-psd-download">下载 PSD</button>}
       </div>}
+      {task.status === "SUCCEEDED" && backgroundRepair && (() => {
+        let reason = backgroundRepair.reason;
+        if (!reason) { try { requireOwnedLayerRepairSource(document, task, projectId); } catch (error) { reason = message(error); } }
+        if (!reason && readOnly) reason = "当前项目为只读，可检查图层，不能提交背景修复。";
+        if (!reason && backgroundRepair.pending) reason = "请先到任务记录确认上一份操作，再修复背景。";
+        return <div className="space-y-2 rounded-xl bg-muted p-3" data-testid="owned-layer-repair">
+          <button type="button" className={control} data-testid="owned-layer-repair-open" disabled={!backgroundRepair.available || !!reason || readOnly || busy || pending || blocked} onClick={() => void repair(task)}>修复原图背景</button>
+          <p className="text-xs leading-5 text-muted-foreground">在原图上涂抹主体和需移除的投影，另存背景修复版本。遮挡处由模型推断，需检查纹理与结构；现有图层保留。</p>
+          {reason && <p className="text-xs leading-5 text-muted-foreground" data-testid="owned-layer-repair-reason">{reason}</p>}
+        </div>;
+      })()}
       {task.canRetryArchive && <button type="button" className={control} disabled={readOnly || busy} onClick={() => void retryArchive(task)}>检查并保存已有结果</button>}
       {task.status === "FAILED" && !task.canRetryArchive && (() => {
         // Retry only preselects the same image and settings; the paid call

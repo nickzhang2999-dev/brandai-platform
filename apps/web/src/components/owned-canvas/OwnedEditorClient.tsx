@@ -23,6 +23,7 @@ import { OwnedBrandMaterialsDrawer } from "./OwnedBrandMaterialsDrawer";
 import { OwnedProjectSidebar } from "./OwnedProjectSidebar";
 import { OwnedImageResize } from "./OwnedImageResize";
 import { OwnedImageMask } from "./OwnedImageMask";
+import { OWNED_LAYER_REPAIR_INSTRUCTION, requireOwnedLayerRepairMaterial, requireOwnedLayerRepairSource } from "./owned-layer-repair";
 import { StudioImageToolInput, type StudioImageToolCapabilities } from "@brandai/contracts";
 import type { z } from "zod";
 import { matchesOwnedPsdSelection, ownedPsdSelection, type OwnedLayerMode } from "./owned-layer-options";
@@ -62,7 +63,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
   const surfaceRef = useRef(surface); surfaceRef.current = surface;
   const conversationRef = useRef<OwnedConversationHandle | null>(null);
   const [resizingImage, setResizingImage] = useState<OwnedCanvasItem | null>(null);
-  const [maskingImage, setMaskingImage] = useState<{ item: OwnedCanvasItem; material: PersistentImage } | null>(null);
+  const [maskingImage, setMaskingImage] = useState<{ item: OwnedCanvasItem; material: PersistentImage; decompositionRequestId?: string } | null>(null);
   const [imageTools, setImageTools] = useState<z.infer<typeof StudioImageToolCapabilities> | undefined>();
   const imageToolOperation = useRef<z.infer<typeof StudioImageToolInput> | null>(null), imageToolBusy = useRef(false);
   const [pendingImageTool, setPendingImageTool] = useState(false);
@@ -613,26 +614,52 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
       setPanel("generate"); setNotice(action === "quick-edit" ? "编辑目标已固定，请描述这张图片要如何修改。" : "图片已加入对话；改变画布选择不会替换这些引用。");
     } catch (error) { setNotice(messageOf(error)); }
   }
-  async function submitImageTool(operation: "remove-background" | "inpaint", itemId: string, mask?: string, instruction?: string) {
+  async function repairLayerBackground(task: DecompositionTask) {
+    const api = apiRef.current;
+    if (!api || !writableRef.current || imageToolBusy.current || imageToolOperation.current || pendingGeneration || submitting || generationRecoveryBlocked) throw new Error("请先确认当前操作，再修复分层背景。");
+    if (!imageTools?.inpaint.available) throw new Error(imageTools?.inpaint.reason ?? "正在确认背景修复能力，请稍后再试。");
+    const saved = await prepareLayers();
+    const assertCurrent = () => { if (!alive.current || apiRef.current !== api || !writableRef.current || !docRef.current) throw new Error("项目或画布状态已变化，本次未打开背景修复。"); };
+    assertCurrent();
+    requireOwnedLayerRepairSource(saved.document, task, projectId);
+    const material = requireOwnedLayerRepairMaterial(await api.listMaterials(), task, workspaceId);
+    assertCurrent();
+    const item = requireOwnedLayerRepairSource(docRef.current, task, projectId);
+    // Closing the layer modal avoids stacking a second modal behind it.
+    setPanel("generate");
+    setMaskingImage({ item: { ...item }, material, decompositionRequestId: task.requestId });
+  }
+  async function submitImageTool(operation: "remove-background" | "inpaint", itemId: string, mask?: string, instruction?: string,
+    expectedSource?: { assetId?: string; assetSha256: string; decompositionRequestId?: string }) {
     const api = apiRef.current;
     if (!api || !writableRef.current || imageToolBusy.current) throw new Error("图片工具暂不可用，请稍后再试。");
+    const currentScope = () => alive.current && apiRef.current === api;
     imageToolBusy.current = true;
     try {
       let input = imageToolOperation.current;
       if (!input) {
         if (pendingImageTool) throw new Error("请先确认上一份图片工具请求。");
-        const prepared = await prepareConversation(), item = docRef.current?.items.find(value => value.id === itemId);
+        const prepared = await prepareConversation();
+        if (!currentScope() || !writableRef.current) throw new Error("项目已切换或只读，本次图片工具未提交。");
+        const item = docRef.current?.items.find(value => value.id === itemId);
         if (!item?.assetSha256 || item.kind !== "image") throw new Error("原图片已变化，请重新选择。");
+        if (expectedSource && (item.assetSha256 !== expectedSource.assetSha256 || expectedSource.assetId && item.assetId !== expectedSource.assetId)) throw new Error("绘制蒙版时使用的原图已变化，本次未提交；请重新打开修复工具。");
+        if (operation === "inpaint" && (item.crop || item.flipX || item.flipY || Math.abs(item.rotation) > 1e-6)) throw new Error("原图的裁切、翻转或旋转已变化，请重新打开修复工具。");
         input = StudioImageToolInput.parse({ projectId, mutationId: crypto.randomUUID(), documentRevision: prepared.documentRevision, workflowRevision: prepared.workflowRevision,
-          target: { shapeId: itemId, assetSha256: item.assetSha256 }, operation, ...(mask ? { mask } : {}), ...(instruction?.trim() ? { instruction: instruction.trim() } : {}) });
+          target: { shapeId: itemId, assetSha256: item.assetSha256 }, operation, ...(mask ? { mask } : {}), ...(instruction?.trim() ? { instruction: instruction.trim() } : {}),
+          ...(expectedSource?.decompositionRequestId ? { decompositionRequestId: expectedSource.decompositionRequestId } : {}) });
         localStorage.setItem(imageToolJournal, JSON.stringify(input)); imageToolOperation.current = input; setPendingImageTool(true);
-      } else if (input.operation !== operation || input.target.shapeId !== itemId || mask && input.mask !== mask) throw new Error("上次图片编辑的结果还没确认，请先到任务记录查看。");
+      } else if (input.operation !== operation || input.target.shapeId !== itemId || mask && input.mask !== mask
+        || input.decompositionRequestId !== expectedSource?.decompositionRequestId || expectedSource && input.target.assetSha256 !== expectedSource.assetSha256
+        || instruction !== undefined && input.instruction !== instruction.trim()) throw new Error("上次图片编辑的结果还没确认，请先到任务记录查看。");
       const task = await api.submitImageTool(input);
       if (!alive.current || apiRef.current !== api) return;
       setGenerations(current => mergeTask(current, task, value => value.requestId)); localStorage.removeItem(imageToolJournal); imageToolOperation.current = null; setPendingImageTool(false);
-      generationPoll.resume(); setPollPaused(false); setPanel("tasks"); setNotice("图片工具已提交，原图保留。结果会在任务中显示，关闭页面后仍会继续处理。");
+      generationPoll.resume(); setPollPaused(false); setPanel("tasks"); setNotice(input.decompositionRequestId
+        ? "背景修复已提交，将保存为关联这次分层的新版本。原图与现有图层保留，完成后请检查补全区域。"
+        : "图片工具已提交，原图保留。结果会在任务中显示，关闭页面后仍会继续处理。");
     } catch (error) {
-      if (error instanceof NovartApiError && !error.uncertain && error.status !== null && error.status >= 400 && error.status < 500) { localStorage.removeItem(imageToolJournal); imageToolOperation.current = null; setPendingImageTool(false); }
+      if (currentScope() && error instanceof NovartApiError && !error.uncertain && error.status !== null && error.status >= 400 && error.status < 500) { localStorage.removeItem(imageToolJournal); imageToolOperation.current = null; setPendingImageTool(false); }
       if (alive.current && apiRef.current === api) setNotice(messageOf(error)); throw error;
     } finally { if (apiRef.current === api) imageToolBusy.current = false; }
   }
@@ -838,7 +865,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
   }
 
   const taskHistory = <>
-            {pendingImageTool && <button className={button} disabled={!canEdit || !imageToolOperation.current} onClick={() => { const input = imageToolOperation.current; if (input) void submitImageTool(input.operation, input.target.shapeId, input.mask, input.instruction).catch(() => undefined); }}>检查上次图片编辑</button>}
+            {pendingImageTool && <button className={button} disabled={!canEdit || !imageToolOperation.current} onClick={() => { const input = imageToolOperation.current; if (input) void submitImageTool(input.operation, input.target.shapeId, input.mask, input.instruction, { assetSha256: input.target.assetSha256, decompositionRequestId: input.decompositionRequestId }).catch(() => undefined); }}>检查上次图片编辑</button>}
             <button className={button} disabled={refreshing} onClick={() => void refresh()}>{refreshing ? "正在读取…" : "刷新任务"}</button>
             {pendingUpload && <button className={button + " ml-2"} disabled={uploading || !canEdit} onClick={() => void runUpload()}>检查上次上传</button>}
             {pendingGeneration && <button className={button} disabled={submitting || !canEdit} onClick={() => void submitGeneration()}>检查上次生成</button>}
@@ -876,7 +903,11 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
       <main className="relative min-h-0 min-w-0 flex-1">
         {document ? <OwnedCanvas key={projectId} document={document} focusImageId={focusImageId} clipboardScope={`${userId}:${workspaceId}:${projectId}`} onChange={changeDocument} readOnly={!canEdit} onUploadFiles={uploadFiles} onOpenMaterials={() => setPanel("materials")} onReplaceImage={replaceImage} onExport={(format, scope) => exportDocument(format, scope)} onSelectionChange={ids => { if (ids.length !== 1) { targetChoice.current++; setTargetResolving(false); } setSelectedIds(ids); }} onImageSelect={id => void chooseCanvasTarget(id)} onImageAction={(action, ids) => void imageAction(action, ids)} imageTools={imageTools} /> : <div className="grid h-full place-content-center text-sm text-muted-foreground">{saveError ? "画布未能打开，原数据没有被修改。" : "正在读取项目…"}</div>}
         {resizingImage && document && <OwnedImageResize document={document} item={resizingImage} readOnly={!canEdit} onClose={() => setResizingImage(null)} onStore={async (file, sourceShapeId) => { if (!writableRef.current || uploadOperation.current || uploadBusy.current) throw new Error("请先确认正在上传的图片。"); uploadOperation.current = { file, sourceShapeId, mutationId: crypto.randomUUID() }; setPendingUpload(true); const completed = await runUpload(); if (!completed) throw new Error("上传结果尚未确认，图片文件仍保留，请在任务中继续读取。"); }} />}
-        {maskingImage && <OwnedImageMask key={maskingImage.item.id} source={maskingImage.material} name={`图片${maskingImage.item.imageNumber ?? ""}`} readOnly={!canEdit} onClose={() => setMaskingImage(null)} onSubmit={(mask, instruction) => submitImageTool("inpaint", maskingImage.item.id, mask, instruction)} />}
+        {maskingImage && <OwnedImageMask key={`${maskingImage.item.id}:${maskingImage.material.assetSha256}:${maskingImage.decompositionRequestId ?? "general"}`} source={maskingImage.material} name={`图片${maskingImage.item.imageNumber ?? ""}`} readOnly={!canEdit}
+          {...(maskingImage.decompositionRequestId ? { title: "修复分层原图背景", initialInstruction: OWNED_LAYER_REPAIR_INSTRUCTION,
+            description: "请涂抹需要移除的主体和投影，未涂抹区域保持原始像素。遮挡处依据周围内容推断，需核对纹理与结构；结果另存新版本，原图与现有图层保留。" } : {})}
+          onClose={() => setMaskingImage(null)} onSubmit={(mask, instruction) => submitImageTool("inpaint", maskingImage.item.id, mask, instruction,
+            { assetId: maskingImage.material.assetId, assetSha256: maskingImage.material.assetSha256, decompositionRequestId: maskingImage.decompositionRequestId })} />}
       </main>
       <aside aria-label="创作面板" hidden={!panel || surface === "writing"} className={(panel && surface !== "writing" ? "flex " : "hidden ") + "absolute inset-y-0 right-0 z-20 w-[min(380px,92vw)] flex-col border-l border-border bg-card shadow-lg md:relative md:w-[360px] md:shrink-0 md:shadow-none"}>
         <div className="flex items-center border-b border-border px-2" role="tablist" aria-label="创作方式">
@@ -898,7 +929,8 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
           <header className="flex shrink-0 items-center justify-between border-b border-border p-4"><h2 className="text-sm font-semibold">{panel === "layers" ? "图片分层" : panel === "materials" ? "品牌素材" : panel === "settings" ? "素材与画框" : "任务记录"}</h2><button aria-label="关闭工具窗口" onClick={() => setPanel("generate")}>×</button></header>
           <div className="min-h-0 space-y-3 overflow-y-auto p-4">
             {!!notice && panel && panel !== "generate" && <p role="status" className="text-xs leading-6" data-testid="owned-notice">{notice}</p>}
-            {<div hidden={panel !== "layers"}><OwnedLayerPanel key={projectId} api={apiRef.current} workspaceId={workspaceId} projectId={projectId} userId={userId} document={document} selectedIds={selectedIds} readOnly={!canEdit} onPrepare={prepareLayers} onPlace={insertLayers} onTasks={setLayerTasks} /></div>}
+            {<div hidden={panel !== "layers"}><OwnedLayerPanel key={projectId} api={apiRef.current} workspaceId={workspaceId} projectId={projectId} userId={userId} document={document} selectedIds={selectedIds} readOnly={!canEdit} onPrepare={prepareLayers} onPlace={insertLayers} onTasks={setLayerTasks}
+              backgroundRepair={{ available: imageTools?.inpaint.available ?? false, reason: imageTools?.inpaint.reason ?? (!imageTools ? "正在确认背景修复能力…" : null), pending: pendingImageTool || pendingGeneration || submitting || generationRecoveryBlocked, onRepair: repairLayerBackground }} /></div>}
             <span className="sr-only" data-testid="owned-draft-status" data-draft-state={draft.state}>{draft.error || draft.state}</span>
             {draft.blocked && <p role="alert" className="text-xs">{draft.error || "旧需求正在恢复。"}<button className="ml-2 underline" disabled={!canEdit} onClick={() => void draft.retry().catch(error => setNotice(messageOf(error)))}>检查需求保存</button></p>}
             {panel === "settings" && <>

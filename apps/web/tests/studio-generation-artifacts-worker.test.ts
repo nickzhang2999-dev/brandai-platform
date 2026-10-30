@@ -63,6 +63,29 @@ function enableExact() {
 }
 
 describe("generation archive worker (unit fixtures; no provider or remote storage)", () => {
+  it.each([false, true])("revalidates layer-repair lineage before publishing a new version; parent missing=%s", async missing => {
+    const source = { assetId: "source", sha256: sha, width: 48, height: 32, shapeId: "shape:source", recipeHash: "b".repeat(64) };
+    const layerRepair = { decompositionRequestId: "parent", sourceShapeId: source.shapeId, assetId: source.assetId, assetSha256: sha,
+      width: 48, height: 32, mode: "inferred-completion", independentQuality: "NOT_REVIEWED" };
+    const pixelEvidence = { sourcePixelProtection: "outside-mask", protectedPixelCount: 1500, editedPixelCount: 36, maskSha256: "c".repeat(64), independentQuality: "not-reviewed" };
+    row.output.params.imageKind = "EDITED"; row.output.params.studioPostprocess.editSource = source;
+    row.output.params.studioPostprocess.imageTool = "inpaint"; row.output.params.imageToolPixelEvidence = { ...pixelEvidence, unrelated: "discard" };
+    row.output.params.layerRepair = { mode: "untrusted-provider-claim" };
+    row.request.jobData = { studioLayerRepair: layerRepair, targets: [{ width: 48, height: 32 }] };
+    const findParent = vi.fn().mockResolvedValue(missing ? null : { id: "parent", workspaceId: "w", projectId: "p", status: "SUCCEEDED",
+      sourceShapeId: source.shapeId, assetId: source.assetId, assetSha256: sha, sourceWidth: 48, sourceHeight: 32 });
+    tx.studioDecompositionRequest = { findFirst: findParent };
+    await runStudioGenerationArtifactJob(job());
+    expect(f.editLock).toHaveBeenCalledWith(tx, "w", "p", source, true);
+    if (missing) {
+      expect(row.status).toBe("FAILED"); expect(f.version).not.toHaveBeenCalled(); expect(row.output.imageUrl).not.toBeNull();
+    } else {
+      expect(row.status).toBe("SUCCEEDED");
+      expect(f.version.mock.calls[0][0].create.params).toMatchObject({ layerRepair, imageToolPixelEvidence: pixelEvidence });
+      expect(f.version.mock.calls[0][0].create.params.imageToolPixelEvidence).not.toHaveProperty("unrelated");
+      expect(f.query.mock.calls.some(call => String(call[0]).includes("StudioDecompositionRequest"))).toBe(true);
+    }
+  });
   it("validates background alpha before padding and after final composition, before upload", async () => {
     row.output.params.studioPostprocess.imageTool = "remove-background";
     await runStudioGenerationArtifactJob(job());

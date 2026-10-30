@@ -23,9 +23,19 @@ export const StudioImageToolInput = NativeProjectQueryInput.pick({ projectId: tr
   workflowRevision: z.number().int().min(0).max(2147483646), target: StudioWorkflowTarget,
   operation: z.enum(["remove-background", "inpaint"]), mask: mask.optional(),
   instruction: z.string().trim().min(1).max(4000).optional(),
+  decompositionRequestId: z.string().regex(/^[a-zA-Z0-9_-]{1,128}$/).optional(),
 }).strict().superRefine((value, context) => {
   if ((value.operation === "inpaint") !== (value.mask !== undefined)) context.addIssue({ code: "custom", path: ["mask"], message: "Only inpainting requires a mask" });
+  if (value.decompositionRequestId !== undefined && value.operation !== "inpaint") context.addIssue({ code: "custom", path: ["decompositionRequestId"], message: "Only inpainting may continue a decomposition" });
 });
+/** Server-verified provenance, persisted with the generation. Never sent to the model. */
+export const StudioLayerRepairContext = z.object({
+  decompositionRequestId: z.string().regex(/^[a-zA-Z0-9_-]{1,128}$/),
+  sourceShapeId: StudioWorkflowTarget.shape.shapeId,
+  assetId: z.string().regex(/^[a-zA-Z0-9_-]{1,128}$/), assetSha256: StudioWorkflowTarget.shape.assetSha256,
+  width: z.number().int().positive().max(16384), height: z.number().int().positive().max(16384),
+  mode: z.literal("inferred-completion"), independentQuality: z.literal("NOT_REVIEWED"),
+}).strict();
 const capability = z.object({ available: z.boolean(), reason: z.string().nullable() }).strict();
 export const StudioImageToolCapabilities = z.object({ revision: z.literal(STUDIO_IMAGE_TOOLS_REVISION),
   removeBackground: capability, inpaint: capability,
@@ -34,3 +44,4 @@ export const StudioImageToolCapabilities = z.object({ revision: z.literal(STUDIO
 }).strict();
 export type StudioImageToolSpec = z.infer<typeof StudioImageToolSpec>;
 export type StudioImageToolInput = z.infer<typeof StudioImageToolInput>;
+export type StudioLayerRepairContext = z.infer<typeof StudioLayerRepairContext>;

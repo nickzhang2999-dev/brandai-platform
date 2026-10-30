@@ -25,6 +25,26 @@ beforeEach(() => {
   db = { workbenchProjectState: { findUnique: f.state }, editorDocument: { findUnique: f.doc }, asset: { findMany: f.assets }, prohibitionRule: { findMany: f.proh } };
 });
 describe("saved workflow selection to company generation", () => {
+  it("freezes the inpaint parent and rejects its disappearance at the worker context fence", async () => {
+    const source = { assetId: "a", sha256: sha, width: 20, height: 10, shapeId: "shape:image", recipeHash: "b".repeat(64) };
+    const parent = { id: "parent", workspaceId: "w", projectId: "p", status: "SUCCEEDED", sourceShapeId: source.shapeId,
+      assetId: source.assetId, assetSha256: source.sha256, sourceWidth: source.width, sourceHeight: source.height };
+    const layerRepair = { decompositionRequestId: "parent", sourceShapeId: source.shapeId, assetId: source.assetId, assetSha256: source.sha256,
+      width: source.width, height: source.height, mode: "inferred-completion" as const, independentQuality: "NOT_REVIEWED" as const };
+    const findParent = vi.fn().mockResolvedValue(parent); db.studioDecompositionRequest = { findFirst: findParent };
+    f.edit.mockResolvedValue({ snapshot: source, postprocess: null }); f.assets.mockResolvedValue([]);
+    const accepted = await prepareStudioGeneration(db, "w", "u", input, { canvas, layerRepair,
+      imageTool: { operation: "inpaint", mask: "data:image/png;base64,AAAA" }, imageToolInputHash: "c".repeat(64),
+      references: [{ referenceId: "source", name: "原图", assetId: "a", assetSha256: sha, shapeId: source.shapeId, width: 20, height: 10, purpose: "REFERENCE" }],
+      intent: { action: "modify", targetReferenceId: "source", referenceIds: [], prompt: "修复背景", clarification: null,
+        requestedSize: { width: 20, height: 10 }, sizeSource: "target", sizeSelection: input.sizeSelection, parser: "safe-rules-v1" } });
+    expect(accepted.jobData.studioLayerRepair).toEqual(layerRepair);
+    expect(accepted.jobData.studioImageTool).not.toHaveProperty("decompositionRequestId");
+    expect(await studioGenerationContextHash(db, "w", "p", accepted.jobData)).toBe(accepted.contextHash);
+    findParent.mockResolvedValue(null);
+    await expect(studioGenerationContextHash(db, "w", "p", accepted.jobData)).rejects.toMatchObject({ status: 409 });
+    expect(f.prepare).toHaveBeenCalledTimes(1);
+  });
   it("uses accepted conversation refs and pixels without mutating later workflow state", async () => {
     const conversation = StudioConversationInput.parse({ mutationId: input.mutationId, text: "生成一张海报1080×1920", documentRevision: 2, workflowRevision: 1,
       sizeSelection: input.sizeSelection, references: [{ referenceId: "asset:a", name: "品牌素材", assetId: "a", assetSha256: sha, width: 1024, height: 1024 }] });

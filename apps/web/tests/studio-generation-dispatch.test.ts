@@ -6,6 +6,7 @@ vi.mock("../../../packages/db/src/index", () => ({ Prisma: {}, prisma: {
   asset: { findMany: f.assets }, generationVersion: { findMany: f.roots, create: f.createVersion },
 } }));
 vi.mock("@/lib/queue", () => ({ connection: {}, queuePrefix: "test" }));
+vi.mock("@/lib/api", () => ({ ApiException: class extends Error { constructor(public status: number, message: string) { super(message); } } }));
 vi.mock("@/lib/studio-generation-lifecycle", () => ({ claimStudioGeneration: f.claim, assertStudioGenerationReady: f.ready, finishStudioGeneration: f.finish, stageStudioGenerationOutput: f.stage }));
 vi.mock("@/lib/studio-generation-artifacts", () => ({ ensureStudioGenerationArtifacts: f.archive }));
 vi.mock("@/lib/studio-generation-exact", () => ({ studioExactIntent: () => ({ layout: null, modelExpected: {} }), preflightStudioExactSources: f.exact, assertStudioExactNotModelInput: vi.fn() }));

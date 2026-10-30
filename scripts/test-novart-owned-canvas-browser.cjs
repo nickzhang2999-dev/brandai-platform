@@ -19,6 +19,7 @@ const experienceOnly = process.env.NOVART_OWNED_EXPERIENCE_ONLY === '1';
 const brandOnly = process.env.NOVART_OWNED_BRAND_ONLY === '1';
 const copywritingOnly = process.env.NOVART_OWNED_COPYWRITING_ONLY === '1';
 const targetOnly = process.env.NOVART_OWNED_TARGET_ONLY === '1';
+const layerRepairOnly = process.env.NOVART_OWNED_LAYER_REPAIR_ONLY === '1';
 const copywritingTasks = []; let copywritingPosts = 0;
 const temporaryRoot = path.join(repo, '.novart-build', 'temporary');
 fs.mkdirSync(temporaryRoot, {recursive: true});
@@ -45,6 +46,8 @@ const experienceAssets = new Map(), failedExperienceAssets = new Set();
 let decompositionPosts = 0, failLayerDownload = layersOnly;
 let layerRecoveryPosts = 0;
 let layerReadFailures = 0;
+const imageToolInputs = [];
+let imageToolResponse = 'lost', releaseImageTool;
 function pngChunk(type, value) {
   const payload=Buffer.concat([Buffer.from(type),value]), result=Buffer.alloc(value.length+12);let crc=0xffffffff;
   for(const byte of payload) {crc^=byte;for(let bit=0;bit<8;bit++) crc=(crc>>>1)^((crc&1)?0xedb88320:0);}
@@ -57,9 +60,9 @@ function fixturePng(width,height,pixel) {
   return Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]),pngChunk('IHDR',header),pngChunk('IDAT',zlib.deflateSync(rgba)),pngChunk('IEND',Buffer.alloc(0))]);
 }
 const foregroundPixel=(x,y)=>x>=3&&x<7&&y>=2&&y<5?[220,70,90,255]:[0,0,0,0];
-const png=layersOnly?fixturePng(12,8,(x,y)=>foregroundPixel(x,y)[3]?foregroundPixel(x,y):[124,92,255,255]):Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]),pngChunk('IHDR',imageHeader),pngChunk('IDAT',zlib.deflateSync(Buffer.from([0,124,92,255,255]))),pngChunk('IEND',Buffer.alloc(0))]);
+const png=(layersOnly||layerRepairOnly)?fixturePng(12,8,(x,y)=>foregroundPixel(x,y)[3]?foregroundPixel(x,y):[124,92,255,255]):Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]),pngChunk('IHDR',imageHeader),pngChunk('IDAT',zlib.deflateSync(Buffer.from([0,124,92,255,255]))),pngChunk('IEND',Buffer.alloc(0))]);
 const assetSha256 = crypto.createHash('sha256').update(png).digest('hex');
-const material = {id:'fixture-asset',assetId:'fixture-asset',assetSha256,fileName:'fixture.png',mimeType:'image/png',sizeBytes:png.length,width:layersOnly?12:1,height:layersOnly?8:1,url:'/api/workspaces/fixture-workspace/assets/fixture-asset/raw',kind:'image'};
+const material = {id:'fixture-asset',assetId:'fixture-asset',assetSha256,fileName:'fixture.png',mimeType:'image/png',sizeBytes:png.length,width:(layersOnly||layerRepairOnly)?12:1,height:(layersOnly||layerRepairOnly)?8:1,url:'/api/workspaces/fixture-workspace/assets/fixture-asset/raw',kind:'image'};
 const layerPngs=[fixturePng(12,8,()=>[124,92,255,255]),fixturePng(12,8,foregroundPixel)];
 const layerResults=layerPngs.map((bytes,order)=>({assetId:'fixture-layer-'+order,assetSha256:crypto.createHash('sha256').update(bytes).digest('hex'),mimeType:'image/png',width:12,height:8,order,sizeBytes:bytes.length,url:`/api/workspaces/${fixture.workspaceId}/assets/fixture-layer-${order}/raw`,alphaBounds:order?{left:3,top:2,width:4,height:3}:{left:0,top:0,width:12,height:8},inkCoverage:order?12/96:1}));
 function json(res, value, status=200) {res.writeHead(status, {'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(value));}
@@ -71,6 +74,14 @@ function workflowView() {const assets=currentWorkflowAssets();return contracts.S
 async function body(req) {const chunks=[];for await(const c of req) chunks.push(c);return Buffer.concat(chunks);}
 async function handle(req,res) {
   const url = new URL(req.url,'http://127.0.0.1');
+  if(layerRepairOnly && url.pathname===`/api/workspaces/${fixture.workspaceId}/projects/${fixture.projectId}/studio-image-tools`) {
+    if(req.method==='GET')return json(res,{revision:'studio-image-tools-r1',removeBackground:{available:false,reason:'Not enabled in this fixture'},inpaint:{available:true,reason:null},maskConvention:'white-edit-black-preserve',maxMaskBytes:1048576,maxPixels:16777216});
+    const input=contracts.StudioImageToolInput.parse(JSON.parse((await body(req)).toString()));imageToolInputs.push(input);
+    assert.equal(input.decompositionRequestId,'fixture-decomposition');assert.equal(input.target.shapeId,'shape:repair-source');assert.equal(input.target.assetSha256,material.assetSha256);
+    if(imageToolResponse==='lost'){imageToolResponse='accepted';res.writeHead(202,{'Content-Type':'application/json'});res.end('{"incomplete":');return;}
+    if(imageToolResponse==='hold'){await new Promise(resolve=>{releaseImageTool=resolve;});return json(res,{error:'Fixture old-scope rejection'},422);}
+    return json(res,contracts.StudioGenerationView.parse({mode:'modify',sourceShapeId:input.target.shapeId,requestId:'fixture-repair',mutationId:input.mutationId,projectId:fixture.projectId,generationId:'fixture-repair-generation',status:'PENDING',progress:null,expiresAt:'2099-01-01T00:00:00.000Z',archiveExpiresAt:null,archiveProcessingExpiresAt:null,displayText:input.instruction,resultState:'NOT_REQUESTED',results:[],error:null,archiveError:null,canRetryArchive:false}),202);
+  }
   if(url.pathname.startsWith('/api/')&&url.pathname.includes('/studio-writing')) return writingFixture.handle(req,res,url);
   if(url.pathname.endsWith('/studio-copywriting')) {
     if(req.method==='POST') {const input=JSON.parse((await body(req)).toString());copywritingPosts++;let task=copywritingTasks.find(t=>t.mutationId===input.mutationId);
@@ -218,10 +229,10 @@ async function fixtureSettled(condition) {const deadline=Date.now()+10000;while(
 
 (async()=>{
   const entry=path.join(directory,'entry.tsx');
-  fs.writeFileSync(entry,`import React from '${path.join(repo,'apps/web/node_modules/react').replaceAll('\\','/')}';\nimport {createRoot} from '${path.join(repo,'apps/web/node_modules/react-dom/client').replaceAll('\\','/')}';\nimport {OwnedEditorClient} from '${path.join(repo,'apps/web/src/components/owned-canvas/OwnedEditorClient').replaceAll('\\','/')}';\nconst params=new URLSearchParams(location.search),task=params.get('taskId'),request=params.get('requestId'),layerRequest=params.get('layerRequestId'),writingPage=location.pathname==='/studio-writing';const initialTask=writingPage||[task,request,layerRequest].filter(Boolean).length!==1?undefined:task?{kind:'STUDIO_UPLOAD' as const,id:task}:request?{kind:'STUDIO_GENERATION' as const,id:request}:layerRequest?{kind:'STUDIO_DECOMPOSITION' as const,id:layerRequest}:undefined;const fixtureRoot=createRoot(document.getElementById('root')!);window.changeFixtureReadOnly=(readOnly:boolean)=>fixtureRoot.render(<OwnedEditorClient {...${JSON.stringify(fixture)}} readOnly={readOnly} initialTask={initialTask} writingTaskId={writingPage?task||undefined:undefined} initialSurface={writingPage||params.get('surface')==='writing'?'writing':'canvas'} projectName="交互回归"/>);window.changeFixtureReadOnly(false);`);
+  fs.writeFileSync(entry,`import React from '${path.join(repo,'apps/web/node_modules/react').replaceAll('\\','/')}';\nimport {createRoot} from '${path.join(repo,'apps/web/node_modules/react-dom/client').replaceAll('\\','/')}';\nimport {OwnedEditorClient} from '${path.join(repo,'apps/web/src/components/owned-canvas/OwnedEditorClient').replaceAll('\\','/')}';\nconst params=new URLSearchParams(location.search),task=params.get('taskId'),request=params.get('requestId'),layerRequest=params.get('layerRequestId'),writingPage=location.pathname==='/studio-writing';const initialTask=writingPage||[task,request,layerRequest].filter(Boolean).length!==1?undefined:task?{kind:'STUDIO_UPLOAD' as const,id:task}:request?{kind:'STUDIO_GENERATION' as const,id:request}:layerRequest?{kind:'STUDIO_DECOMPOSITION' as const,id:layerRequest}:undefined;const fixtureRoot=createRoot(document.getElementById('root')!);let fixtureUserId='fixture-user';window.changeFixtureUser=(userId:string)=>{fixtureUserId=userId;window.changeFixtureReadOnly(false);};window.changeFixtureReadOnly=(readOnly:boolean)=>fixtureRoot.render(<OwnedEditorClient {...${JSON.stringify(fixture)}} userId={fixtureUserId} readOnly={readOnly} initialTask={initialTask} writingTaskId={writingPage?task||undefined:undefined} initialSurface={writingPage||params.get('surface')==='writing'?'writing':'canvas'} projectName="交互回归"/>);window.changeFixtureReadOnly(false);`);
   await esbuild.build({entryPoints:[entry],outfile:path.join(directory,'app.js'),bundle:true,platform:'browser',format:'iife',jsx:'automatic',tsconfig:path.join(repo,'apps/web/tsconfig.json'),nodePaths:[path.join(repo,'apps/web/node_modules')],define:{'process.env.NODE_ENV':'"development"'},logLevel:'silent'});
   const schemaEntry=path.join(directory,'schema.ts');
-  fs.writeFileSync(schemaEntry,`export {WorkbenchDraftView,WorkbenchDraftSaveInput,StudioWorkflowSaveInput,StudioWorkflowView,StudioGenerationInput,StudioGenerationView,StudioDecompositionInput,StudioDecompositionView,StudioConversationInput,StudioConversationMessage,StudioConversationDraftInput,StudioConversationDraft,StudioConversationPage,StudioWritingState,StudioWritingGenerateInput,StudioWritingSaveInput,StudioWritingTask,StudioWritingAssetReferenceInput,StudioWritingReferenceAccepted} from '${path.join(repo,'packages/contracts/src/index').replaceAll('\\','/')}';\nexport {emptyOwnedDocument} from '${path.join(repo,'apps/web/src/lib/owned-canvas-model').replaceAll('\\','/')}';\nexport {encodeOwnedCanvas} from '${path.join(repo,'apps/web/src/lib/owned-canvas-codec').replaceAll('\\','/')}';\nexport {workflowAssets,workflowIssues,assertWorkflowSelection} from '${path.join(repo,'apps/web/src/lib/studio-workflow-codec').replaceAll('\\','/')}';`);
+  fs.writeFileSync(schemaEntry,`export {WorkbenchDraftView,WorkbenchDraftSaveInput,StudioWorkflowSaveInput,StudioWorkflowView,StudioGenerationInput,StudioGenerationView,StudioImageToolInput,StudioDecompositionInput,StudioDecompositionView,StudioConversationInput,StudioConversationMessage,StudioConversationDraftInput,StudioConversationDraft,StudioConversationPage,StudioWritingState,StudioWritingGenerateInput,StudioWritingSaveInput,StudioWritingTask,StudioWritingAssetReferenceInput,StudioWritingReferenceAccepted} from '${path.join(repo,'packages/contracts/src/index').replaceAll('\\','/')}';\nexport {emptyOwnedDocument} from '${path.join(repo,'apps/web/src/lib/owned-canvas-model').replaceAll('\\','/')}';\nexport {encodeOwnedCanvas} from '${path.join(repo,'apps/web/src/lib/owned-canvas-codec').replaceAll('\\','/')}';\nexport {workflowAssets,workflowIssues,assertWorkflowSelection} from '${path.join(repo,'apps/web/src/lib/studio-workflow-codec').replaceAll('\\','/')}';`);
   await esbuild.build({entryPoints:[schemaEntry],outfile:path.join(directory,'schema.cjs'),bundle:true,platform:'node',format:'cjs',tsconfig:path.join(repo,'apps/web/tsconfig.json'),nodePaths:[path.join(repo,'apps/web/node_modules')],logLevel:'silent'});contracts=require(path.join(directory,'schema.cjs'));
   const css=spawnSync(process.execPath,[path.join(repo,'apps/web/node_modules/tailwindcss/lib/cli.js'),'-i',path.join(repo,'packages/ui/src/styles.css'),'-o',path.join(directory,'tokens.css'),'-c',path.join(repo,'apps/web/tailwind.config.ts'),'--content',[path.join(repo,'apps/web/src/components/owned-canvas/*.{ts,tsx}'),path.join(repo,'apps/web/src/components/writing-workbench/*.{ts,tsx}'),path.join(repo,'packages/ui/src/**/*.{ts,tsx}')].join(',')],{cwd:repo,encoding:'utf8',env:{...process.env,TEMP:directory,TMP:directory},timeout:60000});
   assert.equal(css.status,0,'Actual product styles must compile');
@@ -236,6 +247,14 @@ async function fixtureSettled(condition) {const deadline=Date.now()+10000;while(
   stage='open-owned-editor';await page.goto(origin+'/studio-editor');
   await page.getByTestId('owned-canvas').waitFor();
   const surface=page.getByTestId('owned-canvas');
+  if(layerRepairOnly) {
+    const doc=contracts.emptyOwnedDocument();doc.items.push({id:'shape:repair-source',kind:'image',x:160,y:100,w:240,h:160,parentId:doc.pageId,rotation:0,opacity:1,url:material.url,assetId:material.assetId,assetSha256:material.assetSha256,imageNumber:1});
+    canvas=await contracts.encodeOwnedCanvas(doc);revision++;experienceAssets.set(material.assetId,material);
+    decompositions.set('fixture-decomposition',{reads:2,view:contracts.StudioDecompositionView.parse({requestId:'fixture-decomposition',mutationId:crypto.randomUUID(),projectId:fixture.projectId,sourceShapeId:'shape:repair-source',assetId:material.assetId,assetSha256:material.assetSha256,documentRevision:revision,sourceWidth:12,sourceHeight:8,layerCount:2,status:'SUCCEEDED',error:null,createdAt:new Date().toISOString(),expiresAt:'2099-01-01T00:00:00.000Z',archiveExpiresAt:null,canRetryArchive:false,layers:layerResults})});
+    await require('./check-owned-layer-repair-interactions.cjs').runOwnedLayerRepairChecks({page,origin,fixture,material,check,fixtureSettled,
+      setStage:value=>{stage=value;},state:()=>({canvas,revision,writes,imageToolInputs}),holdNext:()=>{imageToolResponse='hold';},releaseOld:()=>releaseImageTool?.()});
+    assert.deepEqual(report.externalRequests,[]);assert.deepEqual(report.errors,[]);report.passed=true;return;
+  }
   if(targetOnly) {
     await require('./check-owned-target-interactions.cjs').runOwnedTargetChecks({page,surface,origin,fixture,check,fixtureSettled,
       setStage:value=>{stage=value;},state:()=>({conversationDraft,conversationWrites,conversationPosts,workflowWrites,workflow,draft,materialReads,writes,shapes:shapes()}),

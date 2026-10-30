@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
-const f = vi.hoisted(() => ({ settings:vi.fn(),storage:vi.fn(),auth:vi.fn(),existing:vi.fn(),transaction:vi.fn(),write:vi.fn(),source:vi.fn(),material:vi.fn(),submit:vi.fn(),read:vi.fn(),doc:vi.fn(),state:vi.fn() }));
+import { StudioImageToolInput } from "@brandai/contracts";
+const f = vi.hoisted(() => ({ settings:vi.fn(),storage:vi.fn(),auth:vi.fn(),existing:vi.fn(),transaction:vi.fn(),write:vi.fn(),source:vi.fn(),material:vi.fn(),submit:vi.fn(),read:vi.fn(),doc:vi.fn(),state:vi.fn(),parent:vi.fn() }));
 vi.mock("../../../packages/db/src/index", () => ({ prisma:{$transaction:f.transaction,studioGenerationRequest:{findUnique:f.existing}} }));
 vi.mock("../src/lib/api", () => ({ ApiException:class extends Error { constructor(public status:number,message:string){super(message);} } }));
 vi.mock("../src/lib/settings", () => ({getEffectiveAiSettings:f.settings,getEffectiveStorage:f.storage}));
@@ -13,7 +14,11 @@ vi.mock("../src/lib/studio-generation-policy", () => ({hashStudioPayload:(input:
 import { studioImageToolCapabilities, submitStudioImageTool, assertStudioToolMaskHeader } from "../src/lib/studio-image-tools";
 import { hashStudioPayload } from "../src/lib/studio-generation-policy";
 const input = {projectId:"p",mutationId:"831a0280-2cf1-41ba-ac94-621053c4a4c6",documentRevision:2,workflowRevision:1,target:{shapeId:"shape:source",assetSha256:"a".repeat(64)},operation:"remove-background" as const};
-const tx = {editorDocument:{findUnique:f.doc},workbenchProjectState:{findUnique:f.state}};
+const tx = {editorDocument:{findUnique:f.doc},workbenchProjectState:{findUnique:f.state},studioDecompositionRequest:{findFirst:f.parent}};
+function repairInput() {
+  const bytes=Buffer.alloc(33);Buffer.from([137,80,78,71,13,10,26,10]).copy(bytes);bytes.writeUInt32BE(13,8);bytes.write("IHDR",12);bytes.writeUInt32BE(96,16);bytes.writeUInt32BE(64,20);
+  return {...input,operation:"inpaint",decompositionRequestId:"parent",mask:"data:image/png;base64,"+bytes.toString("base64")};
+}
 beforeEach(()=>{
   vi.resetAllMocks();vi.unstubAllEnvs();
   vi.stubEnv("STUDIO_IMAGE_TOOLS_ENABLED","1");vi.stubEnv("STUDIO_BACKGROUND_REMOVAL_ENABLED","1");vi.stubEnv("STUDIO_INPAINT_ENABLED","1");
@@ -21,8 +26,23 @@ beforeEach(()=>{
   f.doc.mockResolvedValue({workspaceId:"w",revision:2,canvas:"saved-authoritative-canvas"});f.state.mockResolvedValue({workspaceId:"w",workflowRevision:1});
   f.source.mockResolvedValue({snapshot:{assetId:"asset",shapeId:"shape:source",sha256:"a".repeat(64),width:96,height:64}});
   f.material.mockResolvedValue({fileName:"已验证品牌素材"});f.submit.mockResolvedValue({requestId:"accepted",status:"PENDING"});f.read.mockResolvedValue({requestId:"original",status:"RUNNING"});
+  f.parent.mockResolvedValue({id:"parent",workspaceId:"w",projectId:"p",status:"SUCCEEDED",sourceShapeId:input.target.shapeId,assetId:"asset",assetSha256:input.target.assetSha256,sourceWidth:96,sourceHeight:64});
 });
 describe("image tool intake (synthetic DB dependency tests, zero provider calls)",()=>{
+  it("accepts a completed decomposition's verified original and keeps lineage server-side",async()=>{
+    await submitStudioImageTool("w","u",repairInput());
+    const accepted=f.submit.mock.calls[0][3];
+    expect(accepted.layerRepair).toEqual({decompositionRequestId:"parent",sourceShapeId:input.target.shapeId,assetId:"asset",assetSha256:input.target.assetSha256,width:96,height:64,mode:"inferred-completion",independentQuality:"NOT_REVIEWED"});
+    expect(accepted.imageTool).not.toHaveProperty("decompositionRequestId");
+  });
+  it("does not enqueue a foreign/removed parent or relink an existing mutation to another parent",async()=>{
+    f.parent.mockResolvedValue(null);
+    await expect(submitStudioImageTool("w","u",repairInput())).rejects.toMatchObject({status:409});expect(f.submit).not.toHaveBeenCalled();
+    const frozen=StudioImageToolInput.parse(repairInput());f.existing.mockResolvedValue({id:"existing",jobData:{studioImageToolInputHash:hashStudioPayload(frozen)}});
+    await expect(submitStudioImageTool("w","u",{...frozen,decompositionRequestId:"other"})).rejects.toMatchObject({status:409});
+    f.parent.mockClear();await expect(submitStudioImageTool("w","u",frozen)).resolves.toMatchObject({requestId:"original"});
+    expect(f.parent).not.toHaveBeenCalled();expect(f.submit).not.toHaveBeenCalled();
+  });
   it("freezes the authenticated shape and actual pixels into the existing durable generation intake",async()=>{
     await expect(submitStudioImageTool("w","u",input)).resolves.toMatchObject({requestId:"accepted"});
     expect(f.auth).toHaveBeenCalledWith("w","u","p",true);expect(f.write).toHaveBeenCalledWith(tx,"w","p","u");

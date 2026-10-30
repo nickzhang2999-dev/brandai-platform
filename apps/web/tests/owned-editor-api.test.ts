@@ -12,6 +12,20 @@ const setup = (fetcher: typeof fetch, signal?: AbortSignal) => createOwnedEditor
 afterEach(() => vi.useRealTimers());
 
 describe("owned editor product API", () => {
+  it("keeps the repair parent and original target intact across a lost response and explicit replay", async () => {
+    const input = { projectId: identity.projectId, mutationId, documentRevision: 0, workflowRevision: 0, operation: "inpaint" as const,
+      mask: "data:image/png;base64,AAAA", instruction: "修复原图背景", decompositionRequestId: "layer-parent", target: { shapeId: "shape:source", assetSha256: "a".repeat(64) } };
+    const fetcher = vi.fn().mockRejectedValueOnce(new TypeError("connection lost")).mockResolvedValueOnce(response({
+      mode: "modify", sourceShapeId: "shape:source", requestId: "tool-a", projectId: identity.projectId, mutationId, generationId: "g-a", status: "PENDING", progress: null,
+      expiresAt: "2099-01-01T00:00:00.000Z", archiveExpiresAt: null, archiveProcessingExpiresAt: null, displayText: "修复原图背景", resultState: "NOT_REQUESTED",
+      results: [], error: null, archiveError: null, canRetryArchive: false }, 202));
+    const api = setup(fetcher);
+    await expect(api.submitImageTool(input)).rejects.toMatchObject({ uncertain: true });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect((await api.submitImageTool(input)).requestId).toBe("tool-a");
+    expect(JSON.parse(fetcher.mock.calls[0]![1].body)).toEqual(input);
+    expect(fetcher.mock.calls[1]![1].body).toBe(fetcher.mock.calls[0]![1].body);
+  });
   it.each(["project", "image", "mutation"])("preserves a paid image-tool journal after accepted %s receipt corruption", async mismatch => {
     const task = { mode: "modify", requestId: "tool-a", projectId: identity.projectId, mutationId, generationId: "g-a", status: "SUCCEEDED", progress: null,
       expiresAt: "2099-01-01T00:00:00.000Z", archiveExpiresAt: "2099-01-01T00:00:00.000Z", archiveProcessingExpiresAt: null, displayText: "tool request", resultState: "READY",

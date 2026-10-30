@@ -12,11 +12,12 @@ import { requireArtifactWrite } from "./studio-generation-artifacts";
 import { deriveStudioExactLayout } from "./studio-exact-geometry";
 import { resolveStudioEditSource, inspectStudioEditSource, assertStudioEditNotModelReference, type StudioEditSourceSnapshot } from "./studio-generation-edit";
 import { generatedPsdIntent } from "./studio-generated-psd-state";
-import type { StudioConversationReference, StudioConversationIntent, StudioImageToolSpec } from "@brandai/contracts";
+import type { StudioConversationReference, StudioConversationIntent, StudioImageToolSpec, StudioLayerRepairContext } from "@brandai/contracts";
+import { inspectStudioLayerRepair } from "./studio-layer-repair";
 
 /** Only a server-persisted conversation may supply this snapshot. It is never
  * accepted as part of StudioGenerationInput or from browser JSON. */
-export type StudioConversationAcceptance = { canvas: string; references: StudioConversationReference[]; intent: StudioConversationIntent; imageTool?: StudioImageToolSpec; imageToolInputHash?: string };
+export type StudioConversationAcceptance = { canvas: string; references: StudioConversationReference[]; intent: StudioConversationIntent; imageTool?: StudioImageToolSpec; imageToolInputHash?: string; layerRepair?: StudioLayerRepairContext };
 
 function canonical(value: unknown): unknown {
   if (value instanceof Date) return value.toISOString();
@@ -110,17 +111,19 @@ export async function prepareStudioGeneration(db: Prisma.TransactionClient, ws: 
     scene: "", chatDisplayText: "", versionCount: 1, textMode: "direct", sizeSelection: input.sizeSelection, assetUsages: usages }), chatDisplayText: input.prompt }, { client: db, persistHardBlock: false });
   const jobData = { ...prepared.jobData, ...(accepted ? { targets: [{ key: "conversation", label: "对话输出", width: size.width, height: size.height }],
     studioConversationSize: { requestedSize: { width: size.width, height: size.height }, sizeSource: accepted.intent.sizeSource, method: "deterministic-contain" } } : {}),
-    ...generatedPsdIntent(input.psdLayerCount, input.psdLayerMode), ...(accepted?.imageTool ? { studioImageTool: accepted.imageTool, studioImageToolInputHash: accepted.imageToolInputHash } : {}), studioExpectedAssetSha256: Object.fromEntries(expectedDigests), ...(exactLayout ? { studioExactLayout: exactLayout } : {}), ...(edit ? { studioEdit: edit.snapshot } : {}) };
+    ...generatedPsdIntent(input.psdLayerCount, input.psdLayerMode), ...(accepted?.imageTool ? { studioImageTool: accepted.imageTool, studioImageToolInputHash: accepted.imageToolInputHash } : {}),
+    ...(accepted?.layerRepair ? { studioLayerRepair: accepted.layerRepair } : {}), studioExpectedAssetSha256: Object.fromEntries(expectedDigests), ...(exactLayout ? { studioExactLayout: exactLayout } : {}), ...(edit ? { studioEdit: edit.snapshot } : {}) };
   return { ...prepared, jobData, contextHash: await studioGenerationContextHash(db, ws, input.projectId, jobData) };
 }
 
 /** A queued intent keeps its accepted selection while the user keeps editing.
  * Revalidate the authoritative sources and brand policy, not later canvas revisions. */
-export async function studioGenerationContextHash(db: Prisma.TransactionClient, ws: string, projectId: string, job: { assetUsages?: {assetId: string}[]; generationId?: string; studioExpectedAssetSha256?: Record<string, string>; studioEdit?: StudioEditSourceSnapshot; studioGeneratedPsd?: unknown; studioImageTool?: StudioImageToolSpec }) {
+export async function studioGenerationContextHash(db: Prisma.TransactionClient, ws: string, projectId: string, job: { assetUsages?: {assetId: string}[]; generationId?: string; studioExpectedAssetSha256?: Record<string, string>; studioEdit?: StudioEditSourceSnapshot; studioGeneratedPsd?: unknown; studioImageTool?: StudioImageToolSpec; studioLayerRepair?: StudioLayerRepairContext }) {
   // The PSD choice is immutable and remains in the context hash. Its terminal
   // continuation journal is operational state, never an accepted AI input.
   const { generationId: _generationId, studioGeneratedPsd: _continuationJournal, ...snapshot } = job;
   const usages = job.assetUsages ?? [];
+  if (job.studioLayerRepair !== undefined) await inspectStudioLayerRepair(db, ws, projectId, job.studioLayerRepair, job.studioEdit, job.studioImageTool?.operation);
   if (job.studioEdit) {
     if (job.studioImageTool) await inspectStudioEditSource(db, ws, projectId, job.studioEdit, true);
     else await inspectStudioEditSource(db, ws, projectId, job.studioEdit);

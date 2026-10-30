@@ -672,6 +672,7 @@ class HttpImageProvider(ImageProvider):
         started = time.perf_counter()
         status = 0
         error: str | None = None
+        failure_stage = "source"
         try:
             async with self._client() as c:
                 if self.kind == "openai" or (payload.get("studioImageTool") and _is_gpt_image_2_model(self.model)):
@@ -696,6 +697,7 @@ class HttpImageProvider(ImageProvider):
                             _build_inpaint_mask(img_bytes, str(mask_ref)),
                             "image/png",
                         )
+                    failure_stage = "provider"
                     r = await c.post(
                         f"{self.base_url}/images/edits",
                         headers={"Authorization": f"Bearer {self.api_key}"},
@@ -711,6 +713,7 @@ class HttpImageProvider(ImageProvider):
                     )
                 else:
                     # OpenAI 兼容网关:保留 JSON 体(img2img-capable 网关自解析)。
+                    failure_stage = "provider"
                     r = await c.post(
                         f"{self.base_url}/images/edits",
                         headers={"Authorization": f"Bearer {self.api_key}"},
@@ -718,12 +721,17 @@ class HttpImageProvider(ImageProvider):
                     )
                 status = r.status_code
                 r.raise_for_status()
+                failure_stage = "response"
                 refs = _extract_image_refs(r.json())
                 if not refs:
                     raise ValueError("provider returned no image refs")
                 return refs[0]
         except Exception as exc:  # noqa: BLE001 — logged then re-raised
             error = type(exc).__name__
+            if isinstance(exc, httpx.HTTPError):
+                exc._novart_failure_stage = failure_stage
+            elif failure_stage == "response":
+                raise ImageResponseError("Invalid image edit provider response") from None
             raise
         finally:
             logger.info(
