@@ -1,4 +1,5 @@
 import { prisma, type Prisma } from "@brandai/db";
+import { lockTaskWorkspace } from "./workspace-task-lock";
 import { StudioGenerationRetryInput } from "@brandai/contracts";
 import { ApiException } from "./api";
 import { requireWorkspaceRole } from "./workspace";
@@ -40,6 +41,7 @@ function appliedBrandRuleCount(outputs: Array<{ params: unknown }>) {
 
 /** Recheck writer membership inside the same transaction as publication. */
 export async function requireArtifactWrite(db: Db, workspaceId: string, projectId: string, userId: string) {
+  await lockTaskWorkspace(db, workspaceId);
   const project = await db.$queryRaw<Array<{ archivedAt: Date | null }>>`SELECT "archivedAt" FROM "Project" WHERE "id" = ${projectId} AND "workspaceId" = ${workspaceId} FOR UPDATE`;
   if (!project[0] || project[0].archivedAt) throw new ApiException(409, "项目已归档或删除，生成图片尚未添加到项目。");
   const workspace = await db.brandWorkspace.findUnique({ where: { id: workspaceId }, select: { ownerId: true } });

@@ -9,8 +9,9 @@ import {
   useState,
 } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import type { BrandWorkspace } from "@brandai/contracts";
+import type { BrandWorkspace, BrandDeletionInput } from "@brandai/contracts";
 import { apiFetch } from "@/lib/client";
+import { clearBrandDeletionRecovery, submitBrandDeletion } from "@/lib/brand-deletion-client";
 import {
   ACTIVE_BRAND_COOKIE,
   ACTIVE_BRAND_COOKIE_MAX_AGE,
@@ -35,7 +36,7 @@ export interface BrandCtx {
     workspaceId: string,
     patch: { name?: string; industry?: string; disabled?: boolean },
   ) => Promise<BrandWorkspace>;
-  deleteBrand: (workspaceId: string) => Promise<void>;
+  deleteBrand: (workspaceId: string, input: BrandDeletionInput) => Promise<void>;
 }
 
 const Ctx = createContext<BrandCtx | null>(null);
@@ -138,27 +139,14 @@ export function BrandProvider({
   );
 
   const deleteBrand = useCallback(
-    async (workspaceId: string) => {
-      await apiFetch<{ ok: true }>(`/api/workspaces/${workspaceId}`, {
-        method: "DELETE",
-      });
-      const remainingBrands = brands.filter(
-        (brand) => brand.id !== workspaceId,
-      );
-      setBrands(remainingBrands);
-      if (workspaceId !== value.wsId) return;
-      const nextBrand = remainingBrands[0];
-      if (nextBrand) {
-        switchBrand(nextBrand.id);
-        return;
-      }
-      document.cookie = `${ACTIVE_BRAND_COOKIE}=; path=/; max-age=0; samesite=lax`;
-      const url = new URL(window.location.href);
-      for (const key of ["workspaceId", "projectId", "project", "gen", "generationId", "versionId"]) url.searchParams.delete(key);
-      router.replace(url.pathname + url.search + url.hash);
-      router.refresh();
+    async (workspaceId: string, input: BrandDeletionInput) => {
+      const result = await submitBrandDeletion(workspaceId, input);
+      clearBrandDeletionRecovery(value.user.id, workspaceId);
+      // The server selected and persisted the next accessible brand. Full
+      // navigation drops stale project state and supports the last-brand void.
+      window.location.assign(result.redirectTo);
     },
-    [brands, router, switchBrand, value.wsId],
+    [value.user.id],
   );
 
   const activeBase = brands.find((brand) => brand.id === value.wsId);

@@ -17,7 +17,7 @@ beforeEach(() => {
 describe("workbench multi-brand session scope (unit DB fixtures)", () => {
   it("lists both owned and accessible member brands without creating a default on GET", async () => {
     expect(await getWorkbenchSession({ id: "u", name: "owner" })).toEqual({ user: { id: "u", name: "owner" },
-      workspaces: [{ id: "owned", name: "自有品牌", role: "OWNER" }, { id: "shared", name: "成员品牌", role: "VIEWER" }], activeWorkspaceId: "owned" });
+      workspaces: [{ id: "owned", name: "自有品牌", role: "OWNER", canDelete: true }, { id: "shared", name: "成员品牌", role: "VIEWER", canDelete: false }], activeWorkspaceId: "owned" });
     expect(f.memberships).toHaveBeenCalledWith({ where: { userId: "u" }, select: { workspaceId: true, role: true } });
     expect(f.workspaces).toHaveBeenCalledWith({ where: { OR: [{ ownerId: "u" }, { id: { in: ["shared"] } }] },
       select: { id: true, name: true, ownerId: true }, orderBy: { createdAt: "asc" } });

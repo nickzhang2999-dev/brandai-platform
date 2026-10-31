@@ -57,7 +57,7 @@ describe("brand-wide real library service decisions (simulated DB)", () => {
   it("rejects forged hashes, unverified assets, archived projects and foreign/deleted IDs before linking", async () => {
     await expect(mutateStudioBrandMaterial("w", "u", "a", { operation: "link", projectId: "p", assetSha256: sha })).rejects.toMatchObject({ status: 409 });
     verified(); await expect(mutateStudioBrandMaterial("w", "u", "a", { operation: "link", projectId: "p", assetSha256: "c".repeat(64) })).rejects.toMatchObject({ status: 422 });
-    f.query.mockResolvedValueOnce([{ archivedAt: new Date() }]); await expect(mutateStudioBrandMaterial("w", "u", "a", { operation: "link", projectId: "p", assetSha256: sha })).rejects.toMatchObject({ status: 409 });
+    f.query.mockResolvedValueOnce([{ id: "w" }]).mockResolvedValueOnce([{ archivedAt: new Date() }]); await expect(mutateStudioBrandMaterial("w", "u", "a", { operation: "link", projectId: "p", assetSha256: sha })).rejects.toMatchObject({ status: 409 });
     f.asset.mockResolvedValueOnce(null); await expect(mutateStudioBrandMaterial("w", "u", "foreign", { operation: "link", projectId: "p", assetSha256: sha })).rejects.toMatchObject({ status: 404 });
     expect(f.link).not.toHaveBeenCalled();
   });

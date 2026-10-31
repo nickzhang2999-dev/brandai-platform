@@ -139,6 +139,27 @@
     // Full navigation drops the old project route and recreates workspace-scoped storage.
     location.assign('/studio?workspaceId=' + encodeURIComponent(workspaceId) + (destination === 'brand' ? '#/brand' : '#/home'));
   }
+  function validDeletionInput(value) {
+    return value && typeof value.confirmationName === 'string' && value.confirmationName.length > 0 && value.confirmationName.length <= 80 && /^[a-f0-9]{64}$/.test(value.confirmationToken) && /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(value.mutationId);
+  }
+  async function deletionRequest(workspaceId, input) {
+    const controller = new AbortController(), timeout = setTimeout(() => controller.abort(),12000);
+    let response;
+    try {
+      response = await originalFetch('/api/workspaces/' + encodeURIComponent(workspaceId) + (input ? '' : '/deletion'), {method:input?'DELETE':'GET',credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json','X-Novart-User':context.user.id},signal:controller.signal,...(input ? {body:JSON.stringify(input)} : {})});
+      const result = await response.json();
+      if (!response.ok) { const error=new Error(typeof result?.error==='string'?result.error:'暂时无法核对品牌删除结果。');error.status=response.status;throw error; }
+      if (input) {
+        const destination = result.nextWorkspaceId === null ? '/studio' : '/studio?workspaceId=' + encodeURIComponent(result.nextWorkspaceId) + '#/home';
+        if (result.ok !== true || result.deletedWorkspaceId !== workspaceId || !(result.nextWorkspaceId === null || typeof result.nextWorkspaceId === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(result.nextWorkspaceId) && result.nextWorkspaceId !== workspaceId) || result.redirectTo !== destination) throw new Error('删除回执尚未确认。');
+      } else if (result.workspaceId !== workspaceId || typeof result.name !== 'string' || !result.name || !/^[a-f0-9]{64}$/.test(result.confirmationToken) || !['projects','assets','rules','terms','prohibitions','inspirationCases','members'].every(key=>Number.isSafeInteger(result.counts?.[key])&&result.counts[key]>=0) || !Number.isSafeInteger(result.activeTasks) || result.activeTasks<0 || typeof result.canDelete !== 'boolean' || result.canDelete !== (result.activeTasks === 0) || !(result.canDelete ? result.blockedReason === null : typeof result.blockedReason === 'string' && result.blockedReason.length > 0)) throw new Error('品牌影响范围尚未读取完整，请重新检查。');
+      return result;
+    } catch (error) {
+      if (input && (!response || response.ok || ![400,401,403,404,409,422].includes(response.status))) { const uncertain=new Error('删除结果尚未确认，请检查上次删除结果；不会发起新的删除。');uncertain.deletionUncertain=true;throw uncertain; }
+      if (error.name==='AbortError') throw new Error('读取影响范围超时，请重新检查。');
+      throw error;
+    } finally {clearTimeout(timeout);}
+  }
   const message = text => { startup.replaceChildren(); const p = document.createElement('p'); p.textContent = text; const retry = document.createElement('button'); retry.className='ns-primary'; retry.textContent='重新打开'; retry.onclick=() => location.reload(); startup.append(p,retry); };
   async function createBrand() {
     startup.replaceChildren(); const form = document.createElement('form'), title = document.createElement('h1'), input = document.createElement('input'), submit = document.createElement('button'), status = document.createElement('p');
@@ -219,6 +240,39 @@
         finally {saving=false;submit.disabled=false;cancel.disabled=false;input.disabled=Boolean(created);}
       };
       dialog.showModal();input.focus();
+    };
+    const remove=document.createElement('button');remove.type='button';remove.textContent='删除当前品牌';remove.dataset.testid='product-brand-delete';
+    // Membership role alone never proves ownership of the brand's data.
+    if(current?.canDelete===true)menu.insertBefore(remove,add);
+    remove.onclick=()=>{
+      if(busy||document.querySelector('.np-create-brand[open]'))return;menu.close();
+      const dialog=document.createElement('dialog'),form=document.createElement('form'),title=document.createElement('h2'),note=document.createElement('p'),impact=document.createElement('p'),field=document.createElement('label'),input=document.createElement('input'),feedback=document.createElement('p'),footer=document.createElement('footer'),cancel=document.createElement('button'),refresh=document.createElement('button'),submit=document.createElement('button');
+      dialog.className='np-create-brand';dialog.dataset.testid='product-delete-brand';dialog.setAttribute('aria-label','删除当前品牌');title.textContent='删除“'+currentName+'”？';note.textContent='该品牌的项目、素材、生成记录和品牌规范将无法再访问，成员将失去该品牌访问权限。删除后无法恢复。';impact.dataset.testid='product-delete-impact';field.textContent='输入完整品牌名称确认删除';input.autocomplete='off';input.setAttribute('aria-label','输入品牌名称确认删除');field.append(input);feedback.className='np-brand-status';feedback.setAttribute('role','status');cancel.type='button';cancel.textContent='取消';refresh.type='button';refresh.textContent='重新检查';submit.type='submit';submit.textContent='确认删除';footer.append(cancel,refresh,submit);form.append(title,note,impact,field,feedback,footer);dialog.append(form);document.body.append(dialog);
+      const journalKey='brand-deletion:'+context.user.id+':'+context.workspaceId;
+      let summary=null,pending=null,loading=false,saving=false,closed=false;
+      try {const saved=JSON.parse(sessionStorage.getItem(journalKey)||'null');if(validDeletionInput(saved))pending=saved;}catch(_){/* A fresh request must successfully save its recovery receipt before sending. */}
+      const update=()=>{busy=saving;controls();input.disabled=loading||saving||Boolean(pending);cancel.disabled=saving;refresh.disabled=loading||saving||Boolean(pending);submit.disabled=loading||saving||(!pending&&(!summary?.canDelete||input.value!==summary.name));submit.textContent=saving?'正在核对…':pending?'检查上次删除结果':'确认删除';};
+      const close=()=>{if(!saving)dialog.close();};cancel.onclick=close;
+      dialog.addEventListener('cancel',event=>{if(saving)event.preventDefault();});dialog.addEventListener('close',()=>{closed=true;dialog.remove();trigger.focus();});
+      const load=async()=>{
+        if(loading||saving||pending)return;loading=true;summary=null;impact.textContent='正在读取影响范围…';feedback.textContent='';update();
+        try {const value=await deletionRequest(context.workspaceId);if(closed)return;summary=value;title.textContent='删除“'+value.name+'”？';impact.textContent=value.counts.projects+' 个项目、'+value.counts.assets+' 个素材、'+value.counts.rules+' 条规则、'+value.counts.terms+' 条术语、'+value.counts.prohibitions+' 条禁用约束、'+value.counts.inspirationCases+' 个灵感案例；涉及 '+value.counts.members+' 位成员。';feedback.textContent=value.canDelete?'请核对数量并输入品牌名称。':value.blockedReason||'当前不能删除品牌，请稍后重新检查。';}
+        catch(error){if(!closed){impact.textContent='尚未确认影响范围。';feedback.textContent=error.message;}}
+        finally{loading=false;if(!closed)update();}
+      };
+      refresh.onclick=()=>void load();input.oninput=update;
+      form.onsubmit=async event=>{
+        event.preventDefault();if(saving||loading||(!pending&&(!summary?.canDelete||input.value!==summary.name)))return;saving=true;feedback.textContent=pending?'正在检查上次删除结果…':'正在确认当前内容已保存…';update();
+        try {
+          if(!pending){await prepareBrandSwitch();const request={confirmationName:input.value,confirmationToken:summary.confirmationToken,mutationId:crypto.randomUUID()};try{sessionStorage.setItem(journalKey,JSON.stringify(request));}catch(_){throw new Error('当前浏览器无法保存删除进度，请先恢复会话存储后重试。');}pending=request;}
+          const result=await deletionRequest(context.workspaceId,pending);
+          try{sessionStorage.removeItem(journalKey);}catch(_){}feedback.textContent='品牌已删除，正在打开工作台…';location.assign(result.redirectTo);
+        }catch(error){
+          if(!error.deletionUncertain&&error.status){pending=null;summary=null;input.value='';try{sessionStorage.removeItem(journalKey);}catch(_){}impact.textContent='影响范围需重新核对。';}
+          feedback.textContent=error.message;
+        }finally{saving=false;if(!closed)update();}
+      };
+      dialog.showModal();if(pending){input.value=pending.confirmationName;impact.textContent='上次删除结果尚未确认。';feedback.textContent='请检查原请求的结果，不会重复创建删除请求。';update();submit.focus();}else{void load();input.focus();}
     };
     add.onclick=openCreateBrand;
     document.getElementById('ns-brand-new')?.addEventListener('click',openCreateBrand);

@@ -198,6 +198,14 @@ class WorkbenchWorkspace(BaseModel):
     id: str
     name: str
     role: Literal["OWNER", "EDITOR", "REVIEWER", "VIEWER"]
+    canDelete: bool | None = None
+
+    @field_validator("canDelete", mode="before")
+    @classmethod
+    def valid_delete_capability(cls, value):
+        if not isinstance(value, bool):
+            raise ValueError("canDelete must be omitted or a boolean")
+        return value
 
 
 class WorkbenchSession(BaseModel):
@@ -819,3 +827,4 @@ from .inspiration_schemas import InspirationCaseCard, InspirationListResponse, I
 from .omni_analysis_schemas import OmniAnalysisInput, OmniAnalysisSuggestion, OmniAnalysisResult, OmniAnalysisJob, OmniAnalysisConfig
 
 from .brand_kit_import_schemas import *  # noqa: F403 — mirrored additive BFF contracts
+from .brand_deletion_schemas import BrandDeletionCounts, BrandDeletionPreview, BrandDeletionInput, BrandDeletionResult

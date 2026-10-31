@@ -14,7 +14,7 @@ export async function getWorkbenchSession(
     select: { id: true, name: true, ownerId: true }, orderBy: { createdAt: "asc" },
   });
   const roles = new Map(memberships.map(m => [m.workspaceId, m.role]));
-  const workspaces = rows.map(row => ({ id: row.id, name: row.name, role: row.ownerId === user.id ? "OWNER" : roles.get(row.id) }));
+  const workspaces = rows.map(row => ({ id: row.id, name: row.name, role: row.ownerId === user.id ? "OWNER" : roles.get(row.id), canDelete: row.ownerId === user.id }));
   const selected = workspaces.find(w => w.id === preferredWorkspaceId);
   if (preferredWorkspaceId && !selected && explicitSelection) throw new ApiException(404, "Brand not found");
   return WorkbenchSession.parse({ user: { id: user.id, name: user.name ?? "" }, workspaces,

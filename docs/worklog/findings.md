@@ -1,5 +1,12 @@
 # Integration findings
 
+## 2026-10-30 品牌删除 / Omni 扩量初查
+
+- 品牌 API 已有裸 DELETE，但现有主要工作台缺删除入口；需复核关联数据、异步任务、真实所有者及活动品牌切换。
+- Omni ad-workbench 当前 HEAD 2a382e6，analysis/store/collection/daily_pilot 有用户未提交修改，不能回退或覆盖。另一个工作树 OmniSignal 为 feat/vision-analysis。
+- 本地 10/30 全自动文档声称旧 devUpdate 网关下线、main scope_forbidden，以及曾脚本整理/发布；须用服务器实际配置与状态核对。
+- 现存 30 是每日分析试运行目标，不是采集成功图片数。新增目标必须把采集、去重、分类、整理、交付分别计数。
+
 ## 2026-10-30 项目资料 / 主稿续建
 
 - 用户确认采用素材职责、已知信息复用、主稿衍生、分项质检与 Omni 接续路线。依据为归档的 Meta / UGC Skill 规则；不等于拿到其服务端算法。

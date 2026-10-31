@@ -9,7 +9,7 @@ vi.mock("@/lib/studio-copywriting-provider", () => ({ copywritingEnabled: () => 
 vi.mock("@/lib/usage", () => ({ recordUsage: vi.fn() }));
 vi.mock("@brandai/db", () => {
   const db = {
-    $executeRaw: vi.fn(), user: { findUnique: vi.fn(async () => ({ isActive: true })) },
+    $executeRaw: vi.fn(), $queryRaw: vi.fn(async () => [{ id: "ws" }]), user: { findUnique: vi.fn(async () => ({ isActive: true })) },
     brandWorkspace: { findUniqueOrThrow: vi.fn(async () => ({ name: "合成品牌" })) },
     project: { findFirstOrThrow: vi.fn(async () => ({ name: "合成项目" })) },
     asyncTask: { findUnique: f.task, create: f.create, count: vi.fn(async () => 0), updateMany: f.update },

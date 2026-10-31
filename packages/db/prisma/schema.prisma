@@ -260,6 +260,20 @@ model StudioBrandCreation {
   @@index([workspaceId])
 }
 
+// Deliberately not a workspace FK: a lost DELETE response must remain
+// recoverable by the same authenticated actor after the brand is gone.
+model BrandDeletionReceipt {
+  id String @id @default(cuid())
+  workspaceId String
+  userId String
+  mutationId String @db.Uuid
+  payloadHash String @db.Char(64)
+  createdAt DateTime @default(now())
+
+  @@unique([workspaceId, userId, mutationId], map: "BrandDeletionReceipt_identity_key")
+  @@index([userId, createdAt], map: "BrandDeletionReceipt_actor_idx")
+}
+
 model Asset {
   studioGeneratedMaterial StudioGeneratedMaterial?
   studioUploads          StudioMaterialUpload[]

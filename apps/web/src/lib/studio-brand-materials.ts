@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { prisma, type Prisma } from "@brandai/db";
+import { lockTaskWorkspace } from "./workspace-task-lock";
 import { STUDIO_MATERIAL_TTL_MS } from "@brandai/contracts";
 import { StudioBrandMaterialsQuery, StudioBrandMaterialsPage, StudioBrandMaterialVerification,
   StudioBrandMaterialOperation } from "../../../../packages/contracts/src/studio-brand-materials";
@@ -113,6 +114,7 @@ export async function mutateStudioBrandMaterial(workspaceId: string, userId: str
   if (input.operation === "verify") return verifyStudioBrandMaterial(workspaceId, userId, assetId);
   await requireStudioMaterialProject(workspaceId, userId, input.projectId, true);
   return prisma.$transaction(async tx => {
+    await lockTaskWorkspace(tx, workspaceId);
     const projects = await tx.$queryRaw<Array<{ archivedAt: Date | null }>>`SELECT "archivedAt" FROM "Project" WHERE "id" = ${input.projectId} AND "workspaceId" = ${workspaceId} FOR UPDATE`;
     if (!projects[0] || projects[0].archivedAt) throw new ApiException(409, "项目不存在或已归档，未添加素材。");
     const locked = await tx.$queryRaw<Array<{ id: string }>>`SELECT "id" FROM "Asset" WHERE "id" = ${assetId} AND "workspaceId" = ${workspaceId} FOR SHARE`;
@@ -129,6 +131,7 @@ export async function mutateStudioBrandMaterial(workspaceId: string, userId: str
 async function verifyStudioBrandMaterial(workspaceId: string, userId: string, assetId: string) {
   await expireStudioBrandMaterialVerifications(workspaceId);
   const result = await prisma.$transaction(async tx => {
+    await lockTaskWorkspace(tx, workspaceId);
     await tx.$queryRaw`SELECT pg_advisory_xact_lock(20261014, 3)::text`;
     const asset = await requireAsset(tx, workspaceId, assetId), material = trustedStudioBrandAsset(asset);
     if (material) return { material };

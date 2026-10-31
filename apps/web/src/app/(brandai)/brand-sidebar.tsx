@@ -10,6 +10,7 @@ import { navItems } from "@/lib/brandai-nav";
 import { studioEditorHref } from "@/lib/studio-navigation";
 import { NotificationCenter } from "./notification-center";
 import { useBrand } from "./brand-context";
+import { DeleteBrandDialog } from "./brand-delete-dialog";
 
 const icons = { home: Home, campaigns: Folder, "brand-knowledge": FileImage, assets: ImageIcon, inspiration: Sparkles, workspace: Sparkles, generated: ImageIcon, templates: Shapes, members: Users };
 
@@ -81,7 +82,7 @@ export function BrandSidebar({ children, user, isAdmin }: {
     <div className="fixed right-4 top-4 z-40"><NotificationCenter wsId={wsId} userId={brandUser.id} /></div>
     {creatingBrand && <CreateBrandDialog creating={false} onClose={() => setCreatingBrand(false)} onCreate={async input => { await createBrand(input); setCreatingBrand(false); }} />}
     {renamingBrand && <RenameBrandDialog brand={renamingBrand} onClose={() => setRenamingBrand(null)} onRename={async name => { await updateBrand(renamingBrand.id, { name }); setRenamingBrand(null); }} />}
-    {deletingBrand && <DeleteBrandDialog brand={deletingBrand} onClose={() => setDeletingBrand(null)} onDelete={async () => { await deleteBrand(deletingBrand.id); setDeletingBrand(null); }} />}
+    {deletingBrand && <DeleteBrandDialog key={brandUser.id + ":" + deletingBrand.id} brand={deletingBrand} userId={brandUser.id} onClose={() => setDeletingBrand(null)} onDelete={input => deleteBrand(deletingBrand.id, input)} />}
   </div>;
 }
 
@@ -242,75 +243,6 @@ function RenameBrandDialog({
             className="h-10 rounded-xl bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-60"
           >
             {saving ? "保存中…" : "保存"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function DeleteBrandDialog({
-  brand,
-  onClose,
-  onDelete,
-}: {
-  brand: BrandWorkspace;
-  onClose: () => void;
-  onDelete: () => Promise<void>;
-}) {
-  const [deleting, setDeleting] = useState(false);
-  const [confirmation, setConfirmation] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const confirmed = confirmation === brand.name;
-  async function submit() {
-    if (!confirmed || deleting) return;
-    setError(null); setDeleting(true);
-    try { await onDelete(); }
-    catch (error) { setError(error instanceof Error ? error.message : "删除品牌失败，请重试。"); }
-    finally { setDeleting(false); }
-  }
-
-  return (
-    <div
-      role="alertdialog"
-      aria-modal="true"
-      aria-label="删除品牌套件"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/35 p-4 backdrop-blur-sm"
-      onClick={() => { if (!deleting) onClose(); }}
-    >
-      <div
-        className="w-full max-w-sm overflow-hidden rounded-2xl border border-border bg-card shadow-[0_24px_70px_rgba(30,30,60,0.22)]"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="px-5 py-5">
-          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-destructive/10 text-destructive">
-            <Trash2 className="h-5 w-5" />
-          </div>
-          <h2 className="mt-4 text-base font-semibold">删除“{brand.name}”？</h2>
-          <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-            该品牌套件中的项目、素材、规则和生成记录会一起删除，且无法恢复。
-          </p>
-          <label className="mt-4 flex flex-col gap-2 text-xs">输入品牌名称“{brand.name}”确认
-            <input aria-label="输入品牌名称确认删除" value={confirmation} disabled={deleting} autoComplete="off" onChange={event => setConfirmation(event.target.value)} className="h-11 rounded-xl border border-border bg-background px-3 text-sm outline-none focus:border-primary" />
-          </label>
-          {error && <p role="alert" className="mt-3 text-sm text-destructive">{error}</p>}
-        </div>
-        <div className="flex flex-wrap justify-end gap-2 border-t border-border px-5 py-4">
-          <button
-            type="button"
-            disabled={deleting}
-            onClick={onClose}
-            className="h-10 rounded-xl border border-border px-4 text-sm text-muted-foreground transition-colors hover:bg-muted disabled:opacity-60"
-          >
-            取消
-          </button>
-          <button
-            type="button"
-            disabled={deleting || !confirmed}
-            onClick={() => void submit()}
-            className="h-10 rounded-xl bg-destructive px-4 text-sm font-medium text-primary-foreground disabled:opacity-60"
-          >
-            {deleting ? "删除中…" : "确认删除"}
           </button>
         </div>
       </div>

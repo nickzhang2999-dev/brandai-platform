@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { studioDecompositionFailure } from "./studio-decomposition-failure";
 import { z } from "zod";
 import { prisma, Prisma } from "@brandai/db";
+import { lockTaskWorkspace } from "./workspace-task-lock";
 import { DecomposeResponse, DecomposeQueueTicket, DecomposeQueuePollResponse } from "@brandai/contracts";
 import { AiServiceFailure } from "./ai-failure";
 import { StudioDecompositionInput, StudioDecompositionQuery, StudioDecompositionView, StudioDecompositionLayer,
@@ -168,6 +169,7 @@ export async function submitStudioDecomposition(workspaceId: string, userId: str
   assertStudioLayerBudget(source.sourceWidth, source.sourceHeight, input.layerCount ?? 2);
   await expireStudioDecompositions(workspaceId);
   const row = await prisma.$transaction(async tx => {
+    await lockTaskWorkspace(tx, workspaceId);
     // A separate intake lane bounds model queue/claim memory without changing
     // the existing upload/generation lock defaults.
     await tx.$queryRaw`SELECT pg_advisory_xact_lock(20261012, 3)::text`;
@@ -218,6 +220,7 @@ export async function submitGeneratedStudioDecomposition(generationRequestId: st
     assetSha256: material.sha256, documentRevision: generation.documentRevision, ...(mode === "AUTO" ? { layerMode: "AUTO" } : { layerCount }) });
   await expireStudioDecompositions(workspaceId);
   const row = await prisma.$transaction(async tx => {
+    await lockTaskWorkspace(tx, workspaceId);
     await tx.$queryRaw`SELECT pg_advisory_xact_lock(20261012, 3)::text`;
     const duplicate = await tx.studioDecompositionRequest.findUnique({ where: { workspaceId_userId_projectId_mutationId: scope } });
     if (duplicate) { if (duplicate.payloadHash !== hash(input)) throw new ApiException(409, "自动 PSD 请求来源已变化。"); return duplicate; }

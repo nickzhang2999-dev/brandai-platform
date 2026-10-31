@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { prisma, type Prisma } from "@brandai/db";
+import { lockTaskWorkspace } from "./workspace-task-lock";
 import { STUDIO_MATERIAL_TTL_MS, StudioMaterial, StudioMaterialUploadQuery, StudioMaterialUploadView } from "@brandai/contracts";
 import { ApiException } from "./api";
 import { requireWorkspaceRole } from "./workspace";
@@ -101,6 +102,7 @@ async function intake(workspaceId: string, userId: string, input: { projectId: s
   await expireStudioMaterials(workspaceId);
   const taskId = "smu_" + randomUUID().replace(/-/g, "");
   const row = await prisma.$transaction(async tx => {
+    await lockTaskWorkspace(tx, workspaceId);
     // Serialize quota checks + insert across all BFF instances. A small bounded
     // DB outbox is preferable to unbounded Redis/base64 or local-only files.
     await lockStudioIntake(tx, 1);

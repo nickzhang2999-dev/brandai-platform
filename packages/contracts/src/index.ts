@@ -20,6 +20,7 @@ export * from "./canvas";
 export * from "./layer-set";
 export * from "./editor-document";
 export * from "./workbench-session";
+export * from "./brand-deletion";
 export * from "./native-project";
 export * from "./workbench-shell";
 export * from "./studio-materials";

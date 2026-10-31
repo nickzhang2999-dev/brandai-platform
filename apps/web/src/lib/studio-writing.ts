@@ -8,6 +8,7 @@ import { ApiException } from "./api";
 import { requireStudioMaterialProject } from "./studio-materials";
 import { copywritingEnabled } from "./studio-copywriting-provider";
 import { freezeStudioProjectContext } from "./studio-project-context";
+import { lockTaskWorkspace } from "./workspace-task-lock";
 
 export const WRITING_KIND = "STUDIO_WRITING";
 export const WRITING_TTL = 6 * 60_000;
@@ -169,6 +170,7 @@ export async function submitWriting(s: WritingScope, raw: unknown, styleExtract 
   const operation = styleExtract ? "STYLE_EXTRACT" : "GENERATE";
   const payloadHash = writingHash([operation, request]);
   return writingTaskView(await transaction(async tx => {
+    await lockTaskWorkspace(tx, s.workspaceId);
     await lock(tx, "writing:" + idFor(s));
     const prior = await tx.asyncTask.findUnique({ where: { id } });
     if (prior) { if ((prior.inputJson as unknown as WritingInput).payloadHash !== payloadHash) throw new ApiException(409, "任务标识已用于其它内容。"); return prior; }
@@ -226,6 +228,7 @@ export async function uploadWritingReference(s: WritingScope, upload: WritingUpl
   const payloadHash = writingHash([upload.name, type.mimeType, sha256, assetInput?.assetId ?? null]);
   const id = writingTaskId(s.workspaceId, s.projectId, s.userId, upload.mutationId);
   const result = await transaction(async tx => {
+    await lockTaskWorkspace(tx, s.workspaceId);
     await lock(tx, "writing:" + idFor(s));
     const priorTask = await tx.asyncTask.findUnique({ where: { id } });
     if (priorTask) {

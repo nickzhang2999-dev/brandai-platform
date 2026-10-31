@@ -117,9 +117,13 @@ describe("durable archive receipt and retry boundaries (unit DB fixtures)", () =
     expect(f.update).not.toHaveBeenCalled(); expect(f.enqueue).not.toHaveBeenCalled();
   });
   it("enforces current project archive and writer membership within publication transactions", async () => {
-    await requireArtifactWrite(tx, "w", "p", "u"); expect(f.query.mock.calls[0][0].join("")).toContain("FOR UPDATE");
+    await requireArtifactWrite(tx, "w", "p", "u");
+    expect(f.query.mock.calls[0][0].join("")).toContain('"BrandWorkspace"');
+    expect(f.query.mock.calls[0][0].join("")).toContain("FOR KEY SHARE");
+    expect(f.query.mock.calls[1][0].join("")).toContain("FOR UPDATE");
     f.query.mockResolvedValueOnce([]); await expect(requireArtifactWrite(tx, "w", "p", "u")).rejects.toMatchObject({ status: 409 });
-    f.query.mockResolvedValueOnce([{ archivedAt: new Date() }]); await expect(requireArtifactWrite(tx, "w", "p", "u")).rejects.toMatchObject({ status: 409 });
+    f.query.mockResolvedValueOnce([{ id: "w" }]).mockResolvedValueOnce([]); await expect(requireArtifactWrite(tx, "w", "p", "u")).rejects.toMatchObject({ status: 409 });
+    f.query.mockResolvedValueOnce([{ id: "w" }]).mockResolvedValueOnce([{ archivedAt: new Date() }]); await expect(requireArtifactWrite(tx, "w", "p", "u")).rejects.toMatchObject({ status: 409 });
     f.workspace.mockResolvedValue({ ownerId: "other" }); f.member.mockResolvedValue({ role: "VIEWER" });
     await expect(requireArtifactWrite(tx, "w", "p", "u")).rejects.toMatchObject({ status: 403 });
     f.member.mockResolvedValue({ role: "EDITOR" }); await expect(requireArtifactWrite(tx, "w", "p", "u")).resolves.toBeUndefined();
