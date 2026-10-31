@@ -36,6 +36,7 @@ const report = {isolated:true, realBackend:false, realProvider:false, realAuthen
 let stage = 'build-fixture', browser, server, contracts;
 const writingFixture = require('./writing-workbench-fixture.cjs').createWritingFixture({contracts:()=>contracts,json,body,onGenerate:()=>{copywritingPosts++;}});
 let canvas = '', revision = 0, readOnly = false, writes = 0, failRestore = false, conflict = false, delayMaterials = 0, delayDocument = 0, delayConversation = 0, delayWorkflow = 0;
+let documentReadGate = null;
 let draft = {projectId:fixture.projectId,revision:0,inputForm:null,updatedAt:null,referenceIssues:[]};
 let conversationDraft = null, conversationPosts = [], conversationMessages = [], projectContextLostReply = false;
 let materialDelays = [], materialReads = 0, conversationWrites = 0;
@@ -114,7 +115,10 @@ async function handle(req,res) {
   if(url.pathname==='/studio-editor'||url.pathname==='/canvas'||url.pathname==='/studio-writing') {res.setHeader('Content-Type','text/html');return res.end('<html><head><meta charset="utf-8"><link rel="stylesheet" href="/app.css"></head><body><div id="root"></div><script src="/app.js"></script></body></html>');}
   if(url.pathname==='/compare/api/create'&&req.method==='POST') {const value=JSON.parse((await body(req)).toString());assert.ok(value.requestId);return json(res,{projectId:fixture.projectId,projectName:value.projectName});}
   if(url.pathname.includes('/editor-document')) {
-    if(req.method==='GET') return failRestore ? json(res,{error:'合成恢复失败'},503) : json(res,documentView());
+    if(req.method==='GET') {
+      const gate=documentReadGate;if(gate){gate.reads++;await gate.promise;}
+      return failRestore ? json(res,{error:'合成恢复失败'},503) : json(res,documentView());
+    }
     const value=JSON.parse((await body(req)).toString());
     if(delayDocument) await new Promise(resolve=>setTimeout(resolve,delayDocument));
     if(readOnly) return json(res,{error:'只读项目'},403);
@@ -354,7 +358,26 @@ async function fixtureSettled(condition) {const deadline=Date.now()+10000;while(
     assert.equal(copywritingPosts,initialCopyPosts);assert.equal(conversationPosts.length,initialImagePosts);check('five-selected-canvas-images-all-imported-four-explicitly-selected-with-visible-limit');
     await page.screenshot({path:path.join(output,'02-homepage-writing.png')});
     stage='writing-parent-open-panel';await homePanel.getByRole('button',{name:'当前稿',exact:true}).click();await homePanel.getByRole('textbox',{name:'当前稿正文',exact:true}).fill('外层打开资料前，先保存文案手改。');await page.evaluate(projectId=>document.querySelector('iframe').contentWindow.postMessage({type:'nv-studio',projectId,action:'open-panel',panel:'materials'},location.origin),fixture.projectId);await homeFrame.getByRole('dialog',{name:'品牌素材',exact:true}).waitFor();assert.equal(writingFixture.state.document.text,'外层打开资料前，先保存文案手改。');assert.equal(await homePanel.isVisible(),false);assert.equal(await homeFrame.getByTestId('owned-canvas').isVisible(),true);check('parent-open-panel-confirms-writing-save-before-showing-visible-canvas-panel');
-    stage='writing-notification-link';const notified=writingFixture.state.tasks.find(task=>task.operation==='GENERATE');await page.goto(origin+'/studio-writing?taskId='+encodeURIComponent(notified.id));await page.getByTestId('writing-workbench').locator('[data-task-id="'+notified.id+'"]').waitFor();assert.equal(await page.getByTestId('owned-canvas').isVisible(),true);assert.equal(copywritingPosts,initialCopyPosts);check('writing-notification-task-link-stays-in-writing-and-only-reads-original-task');
+    stage='writing-notification-link';
+    const notified=writingFixture.state.tasks.find(task=>task.operation==='GENERATE');
+    const gate={reads:0,promise:null,release:null};gate.promise=new Promise(resolve=>{gate.release=resolve;});documentReadGate=gate;
+    try {
+      await page.goto(origin+'/studio-writing?taskId='+encodeURIComponent(notified.id));
+      await page.getByTestId('writing-workbench').locator('[data-task-id="'+notified.id+'"]').waitFor();
+      // Task history and the canvas document load independently. Exercise the
+      // slower document response explicitly, then wait for the restored canvas.
+      await fixtureSettled(()=>gate.reads>0);
+      assert.equal(await page.getByTestId('owned-canvas').count(),0);
+      assert.equal(await page.getByText('正在读取项目…',{exact:true}).isVisible(),true);
+      assert.equal(copywritingPosts,initialCopyPosts);
+      documentReadGate=null;gate.release();
+      await page.getByTestId('owned-canvas').waitFor({state:'visible'});
+      assert.equal(await page.getByTestId('owned-canvas').isVisible(),true);
+      assert.equal(await page.getByTestId('owned-canvas').locator('[data-kind="image"]').count(),5);
+      assert.equal(copywritingPosts,initialCopyPosts);
+      assert.equal(conversationPosts.length,initialImagePosts);
+      check('writing-notification-task-link-stays-in-writing-and-only-reads-original-task');
+    } finally {documentReadGate=null;gate.release();}
     assert.deepEqual(report.externalRequests,[]);assert.deepEqual(report.errors,[]);report.passed=true;return;
   }
   if(brandOnly) {
