@@ -126,7 +126,7 @@ jobs:
           assert {'zoomed-hit-testing-drag-and-history-share-the-current-camera',
                   'engine-export-includes-offscreen-images-from-the-full-document',
                   'gzip-save-reopen-retains-all-226-records-camera-stacking-text-and-brush'} <= set(engine['checks'])
-          for name, expected in (('owned-layer-fixture.json', 10), ('brand-knowledge-fixture.json', 23), ('layer-inbox-fixture.json', 19), ('studio-layout-fixture.json', 11), ('brand-switch-fixture.json', 9), ('home-brand-leave-fixture.json', 9), ('brand-creation-recovery-fixture.json', 15), ('image-context-fixture.json', 22), ('target-fixture.json', 8)):
+          for name, expected in (('owned-layer-fixture.json', 10), ('brand-knowledge-fixture.json', 23), ('layer-inbox-fixture.json', 19), ('studio-layout-fixture.json', 11), ('brand-switch-fixture.json', 19), ('home-brand-leave-fixture.json', 9), ('brand-creation-recovery-fixture.json', 15), ('image-context-fixture.json', 22), ('target-fixture.json', 8)):
               report = json.loads((root / name).read_text())
               assert report['passed'] is True and report['isolated'] is True, name
               assert report['realBackend'] is False and report['realProvider'] is False, name
@@ -135,6 +135,18 @@ jobs:
               assert len(report['checks']) == expected, name
               assert all(isinstance(check, str) or check['status'] == 'PASS' for check in report['checks']), name
               print(f'PASS {name}: {expected} isolated interaction checks; no real provider or database acceptance claimed')
+          report = json.loads((root / 'brand-switch-fixture.json').read_text())
+          assert report['realAuthentication'] is False
+          assert {'membership-owner-role-alone-does-not-show-delete-entry',
+                  'delete-shows-project-asset-impact-and-needs-exact-name-cancel-is-read-only',
+                  'failed-impact-read-blocks-delete-and-retry-restores-confirmation',
+                  'active-tasks-block-delete-before-submission',
+                  'delete-reuses-unsaved-brand-guard-and-preserves-draft',
+                  'delete-waits-for-open-editor-save-ack-without-removing-current-project',
+                  'changed-server-impact-requires-fresh-counts-and-name-confirmation',
+                  'pending-delete-disables-input-cancel-and-escape-and-unknown-result-has-recovery',
+                  'unknown-delete-reopens-original-request-and-only-server-receipt-switches-brand',
+                  'last-brand-deletion-enters-real-empty-studio-and-clears-scoped-cookie'} <= {check['name'] for check in report['checks']}
           report = json.loads((root / 'image-context-fixture.json').read_text())
           assert {'async-insertion-history-move', 'async-insertion-history-draw',
                   'async-insertion-history-cancel-move', 'async-insertion-during-erase',
