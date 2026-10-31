@@ -64,7 +64,31 @@ export async function verifyStudioBrandsBackend({ call, check, base, ws, ownerId
   check("reusing a create intent for different input fails without another brand", () => {
     assert.equal(changedIntent.status, 409); assert.equal(changedCount, intentAfter);
   });
-  const deleted = await call("owner", `/api/workspaces/${replayId}`, "DELETE");
+  const deletionPath = `/api/workspaces/${replayId}`;
+  const unconfirmedDelete = await call("owner", deletionPath, "DELETE");
+  const stillExists = await prisma.brandWorkspace.findUnique({ where: { id: replayId } });
+  check("an unconfirmed legacy DELETE cannot remove the replay-test brand", () => {
+    assert.equal(unconfirmedDelete.status, 415); assert.ok(stillExists);
+  });
+  const impact = await call("owner", `${deletionPath}/deletion`);
+  check("real deletion preflight binds the exact brand name and current impact", () => {
+    assert.equal(impact.status, 200); assert.equal(impact.data.workspaceId, replayId);
+    assert.equal(impact.data.name, intent.name); assert.equal(impact.data.canDelete, true);
+    assert.equal(impact.data.activeTasks, 0); assert.equal(impact.data.counts.members, 1);
+    assert.match(impact.data.confirmationToken, /^[0-9a-f]{64}$/);
+  });
+  const deletionInput = { confirmationName: impact.data.name, confirmationToken: impact.data.confirmationToken, mutationId: randomUUID() };
+  const deletionHeaders = { "X-Novart-User": ownerId };
+  const deleted = await call("owner", deletionPath, "DELETE", deletionInput, base, deletionHeaders);
+  const deletionReplay = await call("owner", deletionPath, "DELETE", deletionInput, base, deletionHeaders);
+  const deletionReceipt = await prisma.brandDeletionReceipt.findUniqueOrThrow({
+    where: { workspaceId_userId_mutationId: { workspaceId: replayId, userId: ownerId, mutationId: deletionInput.mutationId } },
+  });
+  check("confirmed deletion and its exact replay return the same durable receipt", () => {
+    assert.equal(deleted.status, 200); assert.equal(deleted.data.deletedWorkspaceId, replayId);
+    assert.equal(deletionReplay.status, 200); assert.deepEqual(deletionReplay.data, deleted.data);
+    assert.match(deletionReceipt.payloadHash, /^[0-9a-f]{64}$/);
+  });
   const deletedReplay = await call("owner", "/api/workspaces", "POST", intent, base, headers);
   const tombstone = await prisma.studioBrandCreation.findUniqueOrThrow({ where: { userId_mutationId: { userId: ownerId, mutationId } } });
   const deletedCount = await prisma.brandWorkspace.count({ where: { ownerId } });
