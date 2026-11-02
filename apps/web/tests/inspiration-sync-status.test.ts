@@ -19,6 +19,11 @@ describe('independent inspiration sync status',()=>{
     expect(inspirationSyncStatus({lastSyncAt:old,lastWithdrawalAt:recent},null,true,true,now)).toMatchObject({content:{state:'stale'},withdrawals:{state:'healthy'}});
     expect(inspirationSyncStatus({lastSyncAt:new Date(now+120_000)},null,true,true,now).content.state).toBe('stale');
   });
+  it('keeps manual reception history usable without suppressing stale withdrawals, errors or future clocks',()=>{
+    expect(inspirationSyncStatus({lastSyncAt:old,lastWithdrawalAt:old},null,true,true,now,'manual')).toMatchObject({content:{state:'healthy'},withdrawals:{state:'stale'}});
+    expect(inspirationSyncStatus({lastSyncAt:old,syncError:'failure'},null,true,true,now,'manual').content.state).toBe('error');
+    expect(inspirationSyncStatus({lastSyncAt:new Date(now+120_000)},null,true,true,now,'manual').content.state).toBe('stale');
+  });
   it('keeps channel errors separate and never echoes stored diagnostic strings',()=>{
     const result=inspirationSyncStatus({lastSyncAt:recent,lastSyncAttemptAt:recent,lastWithdrawalAt:recent,syncError:'private-token-url',withdrawalError:'private-key'},null,true,true,now);
     expect(result.content).toMatchObject({state:'error',error:CONTENT_SYNC_ERROR});expect(result.withdrawals).toMatchObject({state:'error',error:WITHDRAWAL_SYNC_ERROR});

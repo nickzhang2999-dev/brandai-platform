@@ -1,6 +1,7 @@
 import { createHash, createPublicKey, verify } from 'node:crypto';
 import { z } from 'zod';
 import sharp from 'sharp';
+import { validatePublicationBinding } from './publication-scope';
 
 const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/);
 // Never transform signed values before verifying their canonical bytes.
@@ -38,6 +39,7 @@ export function verifySigned<T extends { key_id: string; signature: string }>(va
 }
 function unique(values: string[]) { if (new Set(values).size !== values.length) throw new Error('Duplicate identity'); }
 export function validateCase(c: PublishedCase) {
+  validatePublicationBinding(c);
   unique(c.sources.map(s => s.source_id)); unique(c.images.map(i => i.image_id)); unique(c.claims.map(c => c.claim_id));
   const sources = new Set(c.sources.map(s => s.source_id)), images = new Set(c.images.map(i => i.image_id));
   if (c.images.some(i => !sources.has(i.source_id)) || c.claims.some(c => (!c.source_ids.length && !c.image_ids.length) || c.source_ids.some(s => !sources.has(s)) || c.image_ids.some(i => !images.has(i)))) throw new Error('Broken evidence reference');

@@ -9,6 +9,7 @@ import { apiFetch } from "@/lib/client";
 import { PageHeader } from "@/app/(brandai)/_ui";
 import { taxonomy, contentTypes, tagLabel } from "@/lib/inspiration/catalog";
 import InspirationSyncStatus from "./inspiration-sync-status";
+import InspirationReceive from "./inspiration-receive";
 
 const evidenceLabels: Record<string, string> = { author_statement: "作者自述", media_statement: "媒体观点", visual_observation: "图像观察", analysis_inference: "分析推断" };
 const inputClass = "w-full rounded-xl border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring";
@@ -105,7 +106,8 @@ function InspirationWorkspace({ wsId }: { wsId: string }) {
     {list.isError && <div role="alert" className="rounded-2xl border border-border p-5"><p>{errorText(list.error)}</p><Button className="mt-3" onClick={() => void list.refetch()}>重新读取</Button></div>}
     {list.data?.enabled === false && <div role="status" className="rounded-2xl border border-border bg-card p-8"><h2 className="text-lg font-semibold">灵感库尚未开放</h2><p className="mt-2 text-sm text-muted-foreground">接通审核案例后，这里会显示可浏览和引用的设计内容。</p></div>}
     {list.data?.enabled && <>
-      <div className="mb-3 flex flex-wrap items-center gap-3 text-xs text-muted-foreground"><span>库内 {list.data.caseCount} 个案例</span><span>{list.data.searchMode === "hybrid" ? "关键词与语义检索" : "关键词与标签检索"}</span><button className="text-primary underline" onClick={() => { void list.refetch(); void bookmarks.refetch(); if (conversationId) void history.refetch(); }}>刷新状态</button><span>读取已同步内容，不会触发新的模型分析。</span></div>
+      <InspirationReceive key={wsId} wsId={wsId} />
+      <div className="mb-3 flex flex-wrap items-center gap-3 text-xs text-muted-foreground"><span>库内 {list.data.caseCount} 个案例</span><span>{list.data.searchMode === "hybrid" ? "关键词与语义检索" : "关键词与标签检索"}</span><button className="text-primary underline" onClick={() => { void list.refetch(); void bookmarks.refetch(); void cache.invalidateQueries({ queryKey: ["inspiration-receive", wsId] }); if (conversationId) void history.refetch(); }}>刷新状态</button><span>读取已同步内容，不会触发新的模型分析。</span></div>
       <InspirationSyncStatus data={list.data} />
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
         <section aria-label="案例浏览" className="min-w-0">

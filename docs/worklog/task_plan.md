@@ -508,3 +508,10 @@ P1 local gates complete: e0725bd owned shell/export;6ce5de0 routes;601a3c1 exact
 - [x] Preserve enterprise-only login and pre-hydration guards; retain committed release-entry verification.
 - [x] Run full local gates and relevant browser regression checks.
 - [ ] Push the resolved merge to devUpdate1012 and verify PR checks; do not merge main or release production.
+
+
+## 2026-11-02 · 点击接收Omni灵感
+
+- [x] 接收入口、持久状态、并发去重、手动内容模式与自动撤回。
+- [x] 内部用途包接收范围校验、契约镜像与隔离交互回归。
+- [ ] 同提交CI/镜像、分层预览实际运行与Omni自动发布验证；进度见2026-11-02-omni-receive.md。

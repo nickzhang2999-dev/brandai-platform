@@ -1,6 +1,6 @@
 import { prisma } from '@brandai/db';
 import { InspirationSelectedImage } from '@brandai/contracts';
-import { inspirationEnabled, syncConfigured } from './config';
+import { contentSyncMode, inspirationEnabled, syncConfigured } from './config';
 import { syncReplica, syncWithdrawals, lockWorkspace } from './replica';
 import { listCases } from './service';
 import { answerEvidence } from './provider';
@@ -73,16 +73,17 @@ export function createInspirationWorker() {
       await prisma.inspirationChat.updateMany({where:{status:{in:['PENDING','RUNNING']},expiresAt:{lte:new Date()}},data:{status:'FAILED',error:'任务已超时，请重试。'}});
       await prisma.asyncTask.updateMany({where:{kind:'INSPIRATION_CHAT',status:{in:['PENDING','RUNNING']},expiresAt:{lte:new Date()}},data:{status:'FAILED',error:'任务已超时，请重试。'}});
       const pending=await prisma.inspirationChat.findFirst({where:{status:'PENDING',expiresAt:{gt:new Date()}},orderBy:{createdAt:'asc'}});if(pending)await runInspirationChat(pending.id,abort.signal);
-      const task=await prisma.asyncTask.findFirst({where:{kind:'INSPIRATION_SYNC',status:'PENDING',expiresAt:{gt:new Date()}},orderBy:{createdAt:'asc'}});
+      const task=await prisma.asyncTask.findFirst({where:{kind:'INSPIRATION_SYNC',status:'PENDING',expiresAt:{gt:new Date()},
+        ...(contentSyncMode()==='manual'?{inputJson:{path:['trigger'],equals:'manual'}}:{})},orderBy:{createdAt:'asc'}});
       if(task && (await prisma.asyncTask.updateMany({where:{id:task.id,status:'PENDING',expiresAt:{gt:new Date()}},data:{status:'RUNNING',progress:10}})).count) {
         try {await syncReplica(task.workspaceId,AbortSignal.any([abort.signal,AbortSignal.timeout(Math.max(1,Math.min(240000,task.expiresAt!.getTime()-Date.now())))]));await prisma.asyncTask.updateMany({where:{id:task.id,status:'RUNNING',expiresAt:{gt:new Date()}},data:{status:'SUCCEEDED',progress:100}});}
         catch {await prisma.asyncTask.updateMany({where:{id:task.id,status:'RUNNING'},data:{status:'FAILED',error:terminalError}});}
       }
       await prisma.asyncTask.updateMany({where:{kind:'INSPIRATION_SYNC',status:{in:['PENDING','RUNNING']},expiresAt:{lte:new Date()}},data:{status:'FAILED',error:'同步任务已超时，请重试。'}});
-      if(syncConfigured()) {
+      if(syncConfigured() && contentSyncMode()==='automatic') {
         const due=await prisma.inspirationState.findMany({where:{OR:[{lastSyncAt:null},{lastSyncAt:{lt:new Date(Date.now()-5*60000)}}]},take:20});
         for(const state of due) {if(Date.now()-(attempted.get(state.workspaceId)??0)<5*60000)continue;attempted.set(state.workspaceId,Date.now());
-          await prisma.$transaction(async tx=>{await lockWorkspace(tx,state.workspaceId);const pending=await tx.asyncTask.count({where:{workspaceId:state.workspaceId,kind:'INSPIRATION_SYNC',status:{in:['PENDING','RUNNING']}}});if(!pending)await tx.asyncTask.create({data:{workspaceId:state.workspaceId,kind:'INSPIRATION_SYNC',expiresAt:new Date(Date.now()+6*60000)}});});}
+          await prisma.$transaction(async tx=>{await lockWorkspace(tx,state.workspaceId);const pending=await tx.asyncTask.count({where:{workspaceId:state.workspaceId,kind:'INSPIRATION_SYNC',status:{in:['PENDING','RUNNING']}}});if(!pending)await tx.asyncTask.create({data:{workspaceId:state.workspaceId,kind:'INSPIRATION_SYNC',expiresAt:new Date(Date.now()+6*60000),inputJson:{trigger:'automatic'}}});});}
       }
     } finally {busy=false;}
   }

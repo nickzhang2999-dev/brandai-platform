@@ -2,7 +2,7 @@ import { Prisma, prisma } from '@brandai/db';
 import type { InspirationCaseCard, InspirationChatState, InspirationListResponse } from '@brandai/contracts';
 import { ApiException } from '../api';
 import { activeRecords } from './replica';
-import { inspirationEnabled, syncConfigured } from './config';
+import { contentSyncMode, inspirationEnabled, syncConfigured } from './config';
 import { PublishedCase } from './protocol';
 import { catalogMetadata, catalogKeywordScore, filterCatalog, type CatalogFilters } from './catalog';
 import { inspirationSyncStatus } from './sync-status';
@@ -23,11 +23,11 @@ export async function listCases(workspaceId:string, filters:CatalogFilters={}): 
   // A disabled response exposes status only: do not read stored content or history.
   if(!enabled) return {enabled:false,syncConfigured:configured,activeRelease:null,caseCount:0,
     withdrawalSequence:0,lastSyncAt:null,error:null,cases:[],searchMode:'keyword-tags',
-    syncStatus:inspirationSyncStatus(null,null,false,configured)};
+    syncStatus:inspirationSyncStatus(null,null,false,configured,Date.now(),contentSyncMode())};
   const {state,release,records}=await activeRecords(workspaceId);
   const all=records.map(r=>card(workspaceId,r.body));
   const cases=filterCatalog(all,filters);
-  const syncStatus=inspirationSyncStatus(state,release?.manifestHash ?? null,enabled,configured);
+  const syncStatus=inspirationSyncStatus(state,release?.manifestHash ?? null,enabled,configured,Date.now(),contentSyncMode());
   return {enabled,syncConfigured:configured,activeRelease:release?{id:release.releaseId,sequence:release.sequence,createdAt:release.createdAt.toISOString()}:null,caseCount:all.length,withdrawalSequence:state?.withdrawalSequence ?? 0,lastSyncAt:state?.lastSyncAt?.toISOString() ?? null,error:[syncStatus.content.error,syncStatus.withdrawals.error].filter(Boolean).join(' ') || null,cases,searchMode:'keyword-tags' as const,syncStatus};
 }
 export async function getCase(workspaceId:string, caseId:string, revision?:number) {

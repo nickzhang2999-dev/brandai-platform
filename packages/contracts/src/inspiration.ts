@@ -23,6 +23,14 @@ export const InspirationSyncStatus = z.object({
   withdrawalHash: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
 });
 export type InspirationSyncStatus = z.infer<typeof InspirationSyncStatus>;
+export const InspirationReceiveStatus = z.object({
+  enabled: z.boolean(), configured: z.boolean(), mode: z.enum(['manual', 'automatic']), canReceive: z.boolean(),
+  task: z.object({
+    id: z.string(), status: z.enum(['PENDING', 'RUNNING', 'SUCCEEDED', 'FAILED']), error: z.string().nullable(),
+    createdAt: z.string().datetime(), updatedAt: z.string().datetime(), expiresAt: z.string().datetime().nullable(),
+  }).nullable(),
+});
+export type InspirationReceiveStatus = z.infer<typeof InspirationReceiveStatus>;
 export const InspirationListResponse = z.object({
   enabled: z.boolean(), syncConfigured: z.boolean(), activeRelease: z.object({ id: InspirationId, sequence: z.number().int(), createdAt: z.string() }).nullable(),
   caseCount: z.number().int(), withdrawalSequence: z.number().int(), lastSyncAt: z.string().nullable(), error: z.string().nullable(),

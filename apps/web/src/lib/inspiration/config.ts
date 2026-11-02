@@ -1,4 +1,18 @@
 export const inspirationEnabled = () => process.env.INSPIRATION_ENABLED === 'true';
+// Omission retains existing installations; an unknown explicit value never
+// silently enables unattended content imports.
+export function contentSyncMode(): 'manual' | 'automatic' {
+  const value = process.env.INSPIRATION_CONTENT_SYNC_MODE?.trim();
+  return !value || value === 'automatic' ? 'automatic' : 'manual';
+}
+export function receiverOrigin(): string | null {
+  const value = process.env.INSPIRATION_RECEIVER_ORIGIN?.trim();
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && url.origin === value ? value : null;
+  } catch { return null; }
+}
 export function syncConfig() {
   const value = process.env.INSPIRATION_PUBLISHER_URL?.trim();
   const token = process.env.INSPIRATION_READ_TOKEN?.trim();

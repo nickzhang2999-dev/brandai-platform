@@ -103,6 +103,7 @@ const client=new QueryClient({defaultOptions:{queries:{retry:false,refetchOnWind
       if(phase==='disabled') return json(res,{enabled:false,syncConfigured:true,activeRelease:null,caseCount:0,withdrawalSequence:0,lastSyncAt:null,error:null,cases:[],searchMode:'keyword-tags'});
       return json(res,{enabled:true,syncConfigured:true,activeRelease:{id:'isolated-release',sequence:1,createdAt:now},caseCount:cases.length,withdrawalSequence:1,lastSyncAt:now,error:null,cases:filterCatalog(cases,filters),searchMode:'keyword-tags',...(phase==='old-response'?{}:{syncStatus:syncStatus()})});
     }
+    if(url.pathname===base+'/sync')return json(res,{enabled:phase!=='disabled',configured:true,mode:'manual',canReceive:false,task:null});
     if(url.pathname.startsWith(base+'/')){
       contentRequests.push({path:url.pathname,phase});
       if(phase==='disabled') return json(res,{error:{message:'Disabled isolated library'}},503);

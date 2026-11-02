@@ -1,7 +1,8 @@
 import { Prisma, prisma } from '@brandai/db';
 import { Manifest, Withdrawal, canonical, sha256, validatePackage, verifySigned, type PublishedCase } from './protocol';
-import { boundedBody, syncConfig } from './config';
+import { boundedBody, receiverOrigin, syncConfig } from './config';
 import { CONTENT_SYNC_ERROR, WITHDRAWAL_SYNC_ERROR } from './sync-status';
+import { assertPublicationScope, publicationUseBasis } from './publication-scope';
 
 type Tx = Prisma.TransactionClient;
 const json = (v: unknown) => JSON.parse(JSON.stringify(v)) as Prisma.InputJsonValue;
@@ -32,6 +33,12 @@ async function finishCheck(workspaceId: string, channel: SyncChannel, startedAt:
 export async function lockWorkspace(tx: Tx, workspaceId: string) {
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`inspiration:${workspaceId}`}))`;
 }
+async function assertSnapshotScope(db: Pick<Tx, 'inspirationRecord'>, workspaceId: string, snapshot: unknown, withdrawn: Set<string>) {
+  const ids=Object.entries((snapshot ?? {}) as Record<string,string>).filter(([caseId])=>!withdrawn.has(caseId)).map(([,recordId])=>recordId);
+  if(!ids.length)return;
+  const rows=await db.inspirationRecord.findMany({where:{workspaceId,id:{in:ids},deleted:false}});
+  for(const row of rows)assertPublicationScope(row.body as unknown as PublishedCase,workspaceId,receiverOrigin());
+}
 export async function applyWithdrawal(workspaceId: string, raw: Buffer, keys: Record<string,string>) {
   const w=verifySigned(Withdrawal.parse(JSON.parse(raw.toString('utf8'))),keys), digest=sha256(canonical(w));
   await prisma.$transaction(async tx => {
@@ -46,6 +53,11 @@ export async function applyWithdrawal(workspaceId: string, raw: Buffer, keys: Re
 }
 export async function installPackage(workspaceId: string, raw: Buffer, files: Map<string,Buffer>, keys: Record<string,string>, signal?:AbortSignal) {
   const {manifest:m,records,mimes}=await validatePackage(raw,files,keys), digest=sha256(raw);
+  for (const record of records) if (record.case) {
+    assertPublicationScope(record.case, workspaceId, receiverOrigin());
+    const basis = publicationUseBasis(record.case);
+    if (basis && m.files.find(file => file.path === record.case!.images[0]!.path)?.sha256 !== basis.sha256) throw new Error('Publication image checksum mismatch');
+  }
   signal?.throwIfAborted();
   await prisma.$transaction(async tx => {
     await lockWorkspace(tx,workspaceId);
@@ -57,6 +69,7 @@ export async function installPackage(workspaceId: string, raw: Buffer, files: Ma
     const active=state.activeRelease ? await tx.inspirationRelease.findUnique({where:{workspaceId_releaseId:{workspaceId,releaseId:state.activeRelease}}}) : null;
     const snapshot: Record<string,string> = m.kind==='delta' && active ? {...active.snapshot as Record<string,string>} : {};
     const withdrawn=new Set(strings(state.withdrawn));
+    if(m.kind==='delta' && active)await assertSnapshotScope(tx,workspaceId,active.snapshot,withdrawn);
     for(const r of records) {
       signal?.throwIfAborted();
       const imageHash=sha256(canonical(r.case?.images.map(i=>({path:i.path,sha256:m.files.find(f=>f.path===i.path)!.sha256})).sort((a,b)=>a.path.localeCompare(b.path)) ?? []));
@@ -83,6 +96,8 @@ export async function installPackage(workspaceId: string, raw: Buffer, files: Ma
 export async function rollbackReplica(workspaceId:string, releaseId:string) {
   await prisma.$transaction(async tx=> { await lockWorkspace(tx,workspaceId);
     const target=await tx.inspirationRelease.findUnique({where:{workspaceId_releaseId:{workspaceId,releaseId}}}); if(!target) throw new Error('Unknown local release');
+    const state=await tx.inspirationState.findUnique({where:{workspaceId}});
+    await assertSnapshotScope(tx,workspaceId,target.snapshot,new Set(strings(state?.withdrawn)));
     // High-water marks and withdrawals are deliberately not rolled back.
     await tx.inspirationState.update({where:{workspaceId},data:{activeRelease:releaseId}});
   });
@@ -118,7 +133,7 @@ async function syncReplicaContent(workspaceId: string, signal: AbortSignal) {
   const state=await prisma.inspirationState.findUnique({where:{workspaceId}});
   if(state && m.sequence<state.releaseSequence)throw new Error('Release discovery rollback');
   const known=await prisma.inspirationRelease.findUnique({where:{workspaceId_releaseId:{workspaceId,releaseId:m.release_id}}});
-  if(known){if(known.manifestHash!==sha256(raw)||known.sequence!==m.sequence)throw new Error('Immutable release conflict');return;}
+  if(known){if(known.manifestHash!==sha256(raw)||known.sequence!==m.sequence)throw new Error('Immutable release conflict');await assertSnapshotScope(prisma,workspaceId,known.snapshot,new Set(strings(state?.withdrawn)));return;}
   const chain:Array<{raw:Buffer;m:Manifest}>=[{raw,m}];let cursor=m,total=m.files.reduce((n,f)=>n+f.size,0);
   while(cursor.kind==='delta' && cursor.parent_release_id!==state?.activeRelease) {
     if(chain.length>=32)throw new Error('Delta chain exceeds trial limit; full checkpoint required');
@@ -160,5 +175,9 @@ export async function activeRecords(workspaceId:string) {
   const withdrawn=new Set(strings(state?.withdrawn)); const snapshot=(release?.snapshot ?? {}) as Record<string,string>;
   const ids=Object.entries(snapshot).filter(([id])=>!withdrawn.has(id)).map(([,id])=>id);
   const records=await prisma.inspirationRecord.findMany({where:{workspaceId,id:{in:ids},deleted:false}});
-  return {state,release,records:records.filter(r=>(r.body as unknown as PublishedCase).display_permission==='allowed')};
+  return {state,release,records:records.filter(r=>{
+    const body=r.body as unknown as PublishedCase;
+    if(body.display_permission!=='allowed')return false;
+    try {assertPublicationScope(body,workspaceId,receiverOrigin());return true;} catch {return false;}
+  })};
 }

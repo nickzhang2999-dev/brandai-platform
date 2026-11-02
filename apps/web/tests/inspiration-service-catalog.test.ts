@@ -4,7 +4,7 @@ const mocks = vi.hoisted(() => ({ records: vi.fn(), enabled: vi.fn(), settings: 
 vi.mock('@brandai/db', () => ({ prisma: {}, Prisma: {} }));
 vi.mock('@/lib/api', () => ({ ApiException: class extends Error {} }));
 vi.mock('@/lib/inspiration/replica', () => ({ activeRecords: mocks.records }));
-vi.mock('@/lib/inspiration/config', () => ({ inspirationEnabled: mocks.enabled, syncConfigured: () => true }));
+vi.mock('@/lib/inspiration/config', () => ({ inspirationEnabled: mocks.enabled, syncConfigured: () => true, contentSyncMode: () => 'automatic' }));
 vi.mock('@/lib/settings', () => ({ getEffectiveAiSettings: mocks.settings }));
 vi.mock('@/lib/studio-copywriting-provider', () => ({ copywritingConfig: () => ({}), copywritingEndpoint: () => '' }));
 import { getCase, listCases } from '@/lib/inspiration/service';

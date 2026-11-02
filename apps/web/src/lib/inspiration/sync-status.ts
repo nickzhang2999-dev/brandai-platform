@@ -15,7 +15,7 @@ type State = {
 const iso = (value?: Date | null) => value?.toISOString() ?? null;
 const hash = (value?: string | null) => value && /^[a-f0-9]{64}$/.test(value) ? value : null;
 
-export function inspirationSyncStatus(state: State | null, manifestHash: string | null, enabled: boolean, configured: boolean, now = Date.now()): InspirationSyncStatus {
+export function inspirationSyncStatus(state: State | null, manifestHash: string | null, enabled: boolean, configured: boolean, now = Date.now(), mode: 'manual' | 'automatic' = 'automatic'): InspirationSyncStatus {
   function channel(attempt: Date | null | undefined, success: Date | null | undefined, failure: Date | null | undefined, error: string | null, maxAge: number): InspirationSyncChannel {
     const status = !enabled ? 'disabled' : !configured ? 'unconfigured' : error ? 'error' : !success ? 'unknown'
       : now - success.getTime() > maxAge || success.getTime() > now + 60_000 ? 'stale' : 'healthy';
@@ -23,7 +23,9 @@ export function inspirationSyncStatus(state: State | null, manifestHash: string 
   }
   const contentError = state?.syncError ? CONTENT_SYNC_ERROR : state?.lastError ? LEGACY_SYNC_ERROR : null;
   return {
-    content: channel(state?.lastSyncAttemptAt, state?.lastSyncAt, state?.lastSyncFailedAt, contentError, CONTENT_STALE_MS),
+    // Manual reception does not promise periodic content freshness. Preserve
+    // failures and clock-skew detection; withdrawal freshness remains mandatory.
+    content: channel(state?.lastSyncAttemptAt, state?.lastSyncAt, state?.lastSyncFailedAt, contentError, mode === 'manual' ? Infinity : CONTENT_STALE_MS),
     withdrawals: channel(state?.lastWithdrawalAttemptAt, state?.lastWithdrawalAt, state?.lastWithdrawalFailedAt, state?.withdrawalError ? WITHDRAWAL_SYNC_ERROR : null, WITHDRAWAL_STALE_MS),
     activeManifestHash: hash(manifestHash), withdrawalHash: hash(state?.withdrawalHash),
   };

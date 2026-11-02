@@ -69,6 +69,28 @@ class InspirationSyncStatus(BaseModel):
     activeManifestHash: Annotated[str, Field(pattern=r'^[a-f0-9]{64}$')] | None
     withdrawalHash: Annotated[str, Field(pattern=r'^[a-f0-9]{64}$')] | None
 
+class InspirationReceiveTask(BaseModel):
+    id: str
+    status: Literal['PENDING', 'RUNNING', 'SUCCEEDED', 'FAILED']
+    error: str | None
+    createdAt: str
+    updatedAt: str
+    expiresAt: str | None
+
+    @field_validator('createdAt', 'updatedAt', 'expiresAt')
+    @classmethod
+    def valid_timestamp(cls, value):
+        return InspirationSyncChannel.valid_timestamp(value)
+
+
+class InspirationReceiveStatus(BaseModel):
+    enabled: bool
+    configured: bool
+    mode: Literal['manual', 'automatic']
+    canReceive: bool
+    task: InspirationReceiveTask | None
+
+
 class InspirationListResponse(BaseModel):
     enabled: bool
     syncConfigured: bool

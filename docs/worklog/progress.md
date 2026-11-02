@@ -675,3 +675,8 @@ Implemented persistent writing documents, versioned selection replacement, bound
 ## 2026-10-29 PR #68 conflict resolution
 
 Integrated main 632ac2f into devUpdate1012 f83a8a9 in an isolated worktree. Preserved the persistent writing workbench and inspiration/Omni implementation, combined enterprise-only login with hydration protection, and kept main's committed production-script verification. Added desktop/mobile regression assertions that registration stays hidden and retained the copywriting inbox navigation checks. Local validation passed: pnpm test (Web 2147, contracts 312, UI 39; 31 database-gated tests skipped), AI 712, typecheck, production build with the existing low-memory option, lint (0 errors / 17 warnings), release check and 7 release-contract tests. Isolated Chrome regression passed: login 15, inbox 19, canvas core 55, writing standalone 31, writing embedded 22, shell layout 11 and inspiration activity 9. Shell export tests 8 and CI branch-policy tests 2 also passed. Browser checks use synthetic local fixtures and do not establish live provider or database acceptance. Remote checks remain pending; no main merge or production release performed.
+
+
+## 2026-11-02 · Omni自动发布与DeepFlare点击接收
+
+新增OWNER接收入口、服务端持久状态和manual内容模式；撤回仍自动同步。内部用途包按origin/workspace/图像身份验证，既有明确允许包兼容。代码与本地验证已完成，实际部署和接收状态见[交付日志](2026-11-02-omni-receive.md)，本轮不发布正式站。
