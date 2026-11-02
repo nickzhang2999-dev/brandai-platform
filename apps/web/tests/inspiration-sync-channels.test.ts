@@ -22,10 +22,31 @@ beforeEach(()=>{
   mocks.release.mockResolvedValue(null);
   mocks.transaction.mockImplementation(async(fn)=>fn({$executeRaw:mocks.lock,inspirationState:{upsert:mocks.upsert,update:mocks.update}}));
   vi.stubEnv('INSPIRATION_PUBLISHER_URL','https://publisher.example/knowledge/v1');vi.stubEnv('INSPIRATION_READ_TOKEN','isolated-private-token');vi.stubEnv('INSPIRATION_TRUSTED_KEYS_JSON',JSON.stringify(keys));
+  vi.stubEnv('INSPIRATION_MAX_PACKAGE_MIB','');vi.stubEnv('INSPIRATION_MAX_SYNC_MIB','');
 });
 afterEach(()=>{vi.useRealTimers();vi.unstubAllEnvs();vi.unstubAllGlobals();});
 
 describe('replica check channel persistence',()=>{
+  it.each([false,true])('applies operator checkpoint sizes before any file downloads (expanded=%s)',async expanded=>{
+    const manifest=signed({schema_version:1,release_id:'r1',sequence:1,kind:'full',parent_release_id:null,created_at:'2026-10-26T00:00:00Z',taxonomy_version:'nova-1',records_count:0,files:Array.from({length:9},(_,i)=>({path:`images/${i}.png`,size:19*1024*1024,sha256:'a'.repeat(64)}))});
+    const raw=JSON.stringify(manifest);
+    mocks.release.mockResolvedValue({manifestHash:sha256(raw),sequence:1,snapshot:{}});
+    const fetcher=vi.fn(async(url:string)=>url.endsWith('/withdrawals/latest')?response({status:'empty'}):url.endsWith('/latest')?response({release:{release_id:'r1',sequence:1,manifest_sha256:sha256(raw)}}):new Response(raw));
+    vi.stubGlobal('fetch',fetcher);
+    if(expanded){vi.stubEnv('INSPIRATION_MAX_PACKAGE_MIB','256');vi.stubEnv('INSPIRATION_MAX_SYNC_MIB','512');await syncReplica('ws',new AbortController().signal);expect(state.syncError).toBeNull();}
+    else {await expect(syncReplica('ws',new AbortController().signal)).rejects.toThrow('configured size limit');expect(state.syncError).toBe(CONTENT_SYNC_ERROR);expect(mocks.release).not.toHaveBeenCalled();}
+    expect(fetcher.mock.calls).toHaveLength(3);expect(fetcher.mock.calls.every(([url])=>!url.includes('/files/'))).toBe(true);
+  });
+  it.each([256,512])('checks cumulative signed ancestry before downloading any package (budget=%s MiB)',async budget=>{
+    vi.stubEnv('INSPIRATION_MAX_PACKAGE_MIB','256');vi.stubEnv('INSPIRATION_MAX_SYNC_MIB',String(budget));
+    const chain=[1,2,3].map(sequence=>signed({schema_version:1,release_id:`r${sequence}`,sequence,kind:sequence===1?'full':'delta',parent_release_id:sequence===1?null:`r${sequence-1}`,created_at:'2026-10-26T00:00:00Z',taxonomy_version:'nova-1',records_count:0,files:[{path:'records.jsonl',size:100*1024*1024,sha256:'a'.repeat(64)}]}));
+    const raw=JSON.stringify(chain[2]);
+    const fetcher=vi.fn(async(url:string)=>{if(url.includes('/files/'))throw new Error('file download reached');if(url.endsWith('/withdrawals/latest'))return response({status:'empty'});if(url.endsWith('/latest'))return response({release:{release_id:'r3',sequence:3,manifest_sha256:sha256(raw)}});return response(chain.find(m=>url.endsWith(`/releases/${m.release_id}/manifest`)));});
+    vi.stubGlobal('fetch',fetcher);
+    await expect(syncReplica('ws',new AbortController().signal)).rejects.toThrow(budget===256?'Sync batch exceeds configured size limit':'file download reached');
+    expect(fetcher.mock.calls.some(([url])=>url.includes('/files/'))).toBe(budget===512);
+    expect(state.activeRelease).toBeNull();expect(state.syncError).toBe(CONTENT_SYNC_ERROR);
+  });
   it('refreshes successful time on an identical signed withdrawal without clearing content errors',async()=>{
     state.syncError=CONTENT_SYNC_ERROR;vi.stubGlobal('fetch',vi.fn(async()=>response({withdrawal})));
     await syncWithdrawals('ws',new AbortController().signal);const first=state.lastWithdrawalAt;

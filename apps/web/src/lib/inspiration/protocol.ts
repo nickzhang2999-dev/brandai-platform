@@ -2,6 +2,7 @@ import { createHash, createPublicKey, verify } from 'node:crypto';
 import { z } from 'zod';
 import sharp from 'sharp';
 import { validatePublicationBinding } from './publication-scope';
+import { syncSizeLimits } from './config';
 
 const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/);
 // Never transform signed values before verifying their canonical bytes.
@@ -18,6 +19,11 @@ export const PublishedCase = z.object({ case_id: id, revision: positive, title: 
 export type PublishedCase = z.infer<typeof PublishedCase>;
 export const Manifest = z.object({ schema_version: z.literal(1), release_id: id, sequence: positive, kind: z.enum(['full','delta']), parent_release_id: id.nullable(), created_at: z.string().datetime(), taxonomy_version: text, records_count: z.number().int().min(0).max(2000), files: z.array(z.object({ path, size: z.number().int().nonnegative().max(128*1024*1024), sha256: hash }).strict()).max(10000), key_id: id, signature: z.string().max(256) }).strict();
 export type Manifest = z.infer<typeof Manifest>;
+export function checkedPackageSize(manifest: Manifest): number {
+  const bytes = manifest.files.reduce((total, file) => total + file.size, 0);
+  if (bytes > syncSizeLimits().packageBytes) throw new Error('Knowledge package exceeds configured size limit');
+  return bytes;
+}
 export const Withdrawal = z.object({ schema_version: z.literal(1), sequence: positive, created_at: z.string().datetime(), case_ids: z.array(id).max(100000), key_id: id, signature: z.string().max(256) }).strict();
 const RecordSchema = z.object({ op: z.enum(['upsert','delete']), case_id: id, revision: positive, content_hash: hash, case: PublishedCase.optional() }).strict();
 export type ReleaseRecord = z.infer<typeof RecordSchema>;
@@ -48,7 +54,7 @@ export async function validatePackage(raw: Buffer, files: Map<string,Buffer>, ke
   const manifest = verifySigned(Manifest.parse(JSON.parse(raw.toString('utf8'))), keys);
   if ((manifest.kind === 'full') !== (manifest.parent_release_id === null)) throw new Error('Invalid release parent');
   unique(manifest.files.map(f => f.path));
-  if (manifest.files.reduce((a,f) => a+f.size,0) > 128*1024*1024) throw new Error('Trial package exceeds 128 MiB');
+  checkedPackageSize(manifest);
   if (!manifest.files.some(f => f.path === 'records.jsonl') || files.size !== manifest.files.length) throw new Error('Incomplete package');
   const mimes = new Map<string,string>();
   for (const f of manifest.files) {

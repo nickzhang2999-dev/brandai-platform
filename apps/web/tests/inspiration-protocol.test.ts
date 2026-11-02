@@ -1,7 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { generateKeyPairSync, sign } from 'node:crypto';
 import sharp from 'sharp';
-import { canonical, sha256, validatePackage, verifySigned, PublishedCase, validateCase } from '../src/lib/inspiration/protocol';
+import { canonical, checkedPackageSize, sha256, validatePackage, verifySigned, PublishedCase, validateCase, Manifest } from '../src/lib/inspiration/protocol';
 const key=generateKeyPairSync('ed25519'),keys={test:key.publicKey.export({format:'pem',type:'spki'}).toString()};
 function signed<T extends object>(value:T){const payload={...value,key_id:'test'};return {...payload,signature:sign(null,Buffer.from(canonical(payload)),key.privateKey).toString('base64')};}
 async function fixture(change:(c:Record<string,unknown>)=>void=()=>{}) {
@@ -12,7 +12,24 @@ async function fixture(change:(c:Record<string,unknown>)=>void=()=>{}) {
   const manifest=signed({schema_version:1,release_id:'r1',sequence:1,kind:'full',parent_release_id:null,created_at:'2026-10-22T00:00:00Z',taxonomy_version:' v1 ',records_count:1,files:[...files].map(([path,b])=>({path,size:b.length,sha256:sha256(b)}))});
   return {raw:Buffer.from(JSON.stringify(manifest)+'\n'),files,manifest,c};
 }
+afterEach(()=>vi.unstubAllEnvs());
 describe('signed knowledge protocol',()=>{
+  it('uses the same bounded package size for signed validation and discovery without allocating large image fixtures',async()=>{
+    const f=await fixture();
+    const files=[{path:'records.jsonl',size:1024,sha256:'a'.repeat(64)},...Array.from({length:9},(_,i)=>({path:`images/${i}.png`,size:19*1024*1024,sha256:'b'.repeat(64)}))];
+    const {signature:_,key_id:__,...payload}=f.manifest;
+    const manifest=Manifest.parse(signed({...payload,files}));
+    const raw=Buffer.from(JSON.stringify(manifest));
+    vi.stubEnv('INSPIRATION_MAX_PACKAGE_MIB','128');vi.stubEnv('INSPIRATION_MAX_SYNC_MIB','256');
+    expect(()=>checkedPackageSize(manifest)).toThrow('configured size limit');
+    await expect(validatePackage(raw,new Map(),keys)).rejects.toThrow('configured size limit');
+    vi.stubEnv('INSPIRATION_MAX_PACKAGE_MIB','256');vi.stubEnv('INSPIRATION_MAX_SYNC_MIB','512');
+    expect(checkedPackageSize(manifest)).toBe(171*1024*1024+1024);
+    // Size is now allowed, but signatures alone must never bypass file integrity.
+    await expect(validatePackage(raw,new Map(),keys)).rejects.toThrow('Incomplete package');
+    manifest.files[0]!.size=128*1024*1024;
+    expect(()=>checkedPackageSize(manifest)).toThrow('configured size limit');
+  });
   it('accepts reviewed signed package without transforming whitespace',async()=>{const f=await fixture();const r=await validatePackage(f.raw,f.files,keys);expect(r.records[0]!.case!.title).toBe(' 测试案例 ');});
   it('uses Python Unicode codepoint sorting',()=>expect(canonical({'\u{10000}':1,'\ue000':2})).toBe('{"":2,"𐀀":1}'));
   it('rejects untrusted keys',()=>expect(()=>verifySigned(signed({x:1}),{})).toThrow('Unknown'));

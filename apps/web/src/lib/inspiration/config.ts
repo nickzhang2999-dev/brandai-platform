@@ -1,4 +1,18 @@
 export const inspirationEnabled = () => process.env.INSPIRATION_ENABLED === 'true';
+// Defaults retain the trial profile. Operator overrides stay within A's signed
+// 512 MiB package contract; an invalid override fails closed before downloads.
+export function syncSizeLimits() {
+  const mib = (name: string, fallback: number) => {
+    const value = process.env[name]?.trim();
+    if (!value) return fallback;
+    if (!/^[1-9]\d*$/.test(value) || Number(value) > 512) throw new Error('Invalid inspiration size limits');
+    return Number(value);
+  };
+  const packageMiB = mib('INSPIRATION_MAX_PACKAGE_MIB', 128);
+  const syncMiB = mib('INSPIRATION_MAX_SYNC_MIB', 256);
+  if (packageMiB > syncMiB) throw new Error('Invalid inspiration size limits');
+  return {packageBytes: packageMiB * 1024 * 1024, syncBytes: syncMiB * 1024 * 1024};
+}
 // Omission retains existing installations; an unknown explicit value never
 // silently enables unattended content imports.
 export function contentSyncMode(): 'manual' | 'automatic' {

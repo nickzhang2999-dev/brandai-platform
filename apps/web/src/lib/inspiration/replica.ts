@@ -1,6 +1,6 @@
 import { Prisma, prisma } from '@brandai/db';
-import { Manifest, Withdrawal, canonical, sha256, validatePackage, verifySigned, type PublishedCase } from './protocol';
-import { boundedBody, receiverOrigin, syncConfig } from './config';
+import { Manifest, Withdrawal, canonical, checkedPackageSize, sha256, validatePackage, verifySigned, type PublishedCase } from './protocol';
+import { boundedBody, receiverOrigin, syncConfig, syncSizeLimits } from './config';
 import { CONTENT_SYNC_ERROR, WITHDRAWAL_SYNC_ERROR } from './sync-status';
 import { assertPublicationScope, publicationUseBasis } from './publication-scope';
 
@@ -115,6 +115,7 @@ export async function syncReplica(workspaceId: string, signal: AbortSignal) {
 }
 async function syncReplicaContent(workspaceId: string, signal: AbortSignal) {
   const c=syncConfig(); if(!c) throw new Error('Publisher is not configured');
+  const limits=syncSizeLimits();
   const fetchPath=async(path:string,max:number)=>boundedBody(await fetch(`${c.baseUrl}${path}`,{headers:{Authorization:`Bearer ${c.token}`},redirect:'error',signal,cache:'no-store'}),max);
   // Withdrawal failure stops sync; content never advances while revocations are unknown.
   await syncWithdrawals(workspaceId, signal);
@@ -129,18 +130,18 @@ async function syncReplicaContent(workspaceId: string, signal: AbortSignal) {
   const raw=await fetchPath(`/releases/${pointer.release_id}/manifest`,4*1024*1024);
   const m=verifySigned(Manifest.parse(JSON.parse(raw.toString('utf8'))),c.keys);
   if(sha256(raw)!==pointer.manifest_sha256 || m.release_id!==pointer.release_id || m.sequence!==pointer.sequence) throw new Error('Discovery mismatch');
-  if(m.files.reduce((n,f)=>n+f.size,0)>128*1024*1024) throw new Error('Trial package exceeds limit');
+  const latestBytes=checkedPackageSize(m);
   const state=await prisma.inspirationState.findUnique({where:{workspaceId}});
   if(state && m.sequence<state.releaseSequence)throw new Error('Release discovery rollback');
   const known=await prisma.inspirationRelease.findUnique({where:{workspaceId_releaseId:{workspaceId,releaseId:m.release_id}}});
   if(known){if(known.manifestHash!==sha256(raw)||known.sequence!==m.sequence)throw new Error('Immutable release conflict');await assertSnapshotScope(prisma,workspaceId,known.snapshot,new Set(strings(state?.withdrawn)));return;}
-  const chain:Array<{raw:Buffer;m:Manifest}>=[{raw,m}];let cursor=m,total=m.files.reduce((n,f)=>n+f.size,0);
+  const chain:Array<{raw:Buffer;m:Manifest}>=[{raw,m}];let cursor=m,total=latestBytes;
   while(cursor.kind==='delta' && cursor.parent_release_id!==state?.activeRelease) {
     if(chain.length>=32)throw new Error('Delta chain exceeds trial limit; full checkpoint required');
     const parentRaw=await fetchPath(`/releases/${cursor.parent_release_id}/manifest`,4*1024*1024);
     const parent=verifySigned(Manifest.parse(JSON.parse(parentRaw.toString('utf8'))),c.keys);
     if(parent.release_id!==cursor.parent_release_id || parent.sequence!==cursor.sequence-1)throw new Error('Invalid ancestry');
-    total+=parent.files.reduce((n,f)=>n+f.size,0);if(total>256*1024*1024)throw new Error('Sync batch exceeds trial limit');
+    total+=checkedPackageSize(parent);if(total>limits.syncBytes)throw new Error('Sync batch exceeds configured size limit');
     chain.push({raw:parentRaw,m:parent});cursor=parent;
   }
   for(const release of chain.reverse()) {
