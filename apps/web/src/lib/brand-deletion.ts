@@ -23,7 +23,9 @@ async function impact(db: Db, workspaceId: string, userId: string, name: string)
     asyncRows, generationRows, requestRows, conversationRows, layerRows, chatRows, materialRows] = await Promise.all([
     db.project.count({ where: { workspaceId } }), db.asset.count({ where: { workspaceId } }),
     db.brandRule.count({ where: { workspaceId } }), db.complianceTerm.count({ where: { workspaceId } }),
-    db.prohibitionRule.count({ where: { workspaceId } }), db.inspirationRecord.count({ where: { workspaceId } }),
+    // Shared-library content survives deleting a consuming brand. Legacy private
+    // libraries retain their workspace identity and are the only owned content.
+    db.prohibitionRule.count({ where: { workspaceId } }), db.inspirationRecord.count({ where: { libraryId: workspaceId } }),
     db.membership.count({ where: { workspaceId } }),
     db.asyncTask.findMany({ where: { workspaceId, status: { in: [...active] } }, select: { id: true } }),
     db.generation.findMany({ where: { workspaceId, status: { in: [...active] } }, select: { id: true } }),

@@ -6,6 +6,32 @@ from datetime import datetime
 import re
 InspirationId = Annotated[str, Field(pattern=r'^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$')]
 
+class InspirationSourceLibrary(BaseModel):
+    id: InspirationId
+    kind: Literal['SHARED', 'WORKSPACE']
+
+
+class InspirationLibraryCreateInput(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    libraryId: InspirationId
+    ownerId: str = Field(min_length=1, max_length=128)
+
+
+class InspirationLibraryCreateResult(BaseModel):
+    sourceLibrary: InspirationSourceLibrary
+    created: bool = Field(strict=True)
+
+
+class LibraryBound(BaseModel):
+    libraryId: InspirationId | None = None
+
+    @model_validator(mode='before')
+    @classmethod
+    def omit_null_library(cls, value):
+        if isinstance(value, dict) and 'libraryId' in value and value['libraryId'] is None:
+            raise ValueError('Omit optional fields instead of null')
+        return value
+
 class InspirationImage(BaseModel):
     imageId: InspirationId
     url: str
@@ -21,7 +47,7 @@ class InspirationClaim(BaseModel):
     sourceIds: list[InspirationId]
     imageIds: list[InspirationId]
 
-class InspirationCaseCard(BaseModel):
+class InspirationCaseCard(LibraryBound):
     caseId: str = Field(pattern=r'^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$')
     revision: int = Field(gt=0)
     title: str
@@ -89,9 +115,12 @@ class InspirationReceiveStatus(BaseModel):
     mode: Literal['manual', 'automatic']
     canReceive: bool
     task: InspirationReceiveTask | None
+    sourceLibrary: InspirationSourceLibrary | None = None
+    canReceiveReason: str | None = None
 
 
 class InspirationListResponse(BaseModel):
+    sourceLibrary: InspirationSourceLibrary | None = None
     enabled: bool
     syncConfigured: bool
     activeRelease: InspirationReleaseView | None
@@ -110,13 +139,13 @@ class InspirationListResponse(BaseModel):
             raise ValueError('Omit optional fields instead of null')
         return value
 
-class InspirationSelectedImage(BaseModel):
+class InspirationSelectedImage(LibraryBound):
     model_config = ConfigDict(extra='forbid')
     caseId: InspirationId
     imageId: InspirationId
     revision: int = Field(gt=0)
 
-class InspirationChatInput(BaseModel):
+class InspirationChatInput(LibraryBound):
     model_config = ConfigDict(extra='forbid')
     requestId: str
     question: str = Field(min_length=1, max_length=3000)
@@ -144,6 +173,7 @@ class InspirationChatInput(BaseModel):
         return value
 
 class InspirationChatState(BaseModel):
+    sourceLibrary: InspirationSourceLibrary | None = None
     id: str
     conversationId: str
     status: Literal['PENDING', 'RUNNING', 'SUCCEEDED', 'FAILED']
@@ -153,7 +183,7 @@ class InspirationChatState(BaseModel):
     error: str | None
     createdAt: str
 
-class InspirationBookmarkInput(BaseModel):
+class InspirationBookmarkInput(LibraryBound):
     model_config = ConfigDict(extra='forbid')
     caseId: str = Field(pattern=r'^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$')
     revision: int = Field(gt=0)
@@ -172,7 +202,7 @@ class InspirationBookmarkInput(BaseModel):
             raise ValueError('Omit optional fields instead of null')
         return value
 
-class InspirationBookmark(BaseModel):
+class InspirationBookmark(LibraryBound):
     id: str
     caseId: str
     revision: int = Field(gt=0)
@@ -185,7 +215,7 @@ class InspirationBookmark(BaseModel):
 InspirationFeedbackKind = Literal['IRRELEVANT', 'ANALYSIS_ERROR', 'UNSUPPORTED_CITATION', 'BROKEN_IMAGE']
 
 
-class InspirationFeedbackInput(BaseModel):
+class InspirationFeedbackInput(LibraryBound):
     model_config = ConfigDict(extra='forbid')
     caseId: InspirationId
     revision: int = Field(gt=0)
@@ -198,7 +228,7 @@ class InspirationFeedbackInput(BaseModel):
         return value.strip() if isinstance(value, str) else value
 
 
-class InspirationFeedback(BaseModel):
+class InspirationFeedback(LibraryBound):
     id: str
     caseId: InspirationId
     revision: int = Field(gt=0)

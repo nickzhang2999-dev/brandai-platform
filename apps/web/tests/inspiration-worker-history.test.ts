@@ -11,7 +11,7 @@ vi.mock('../src/lib/inspiration/retrieval',()=>({retrieveInspirationCases:async(
 vi.mock('../src/lib/inspiration/replica',()=>({syncReplica:vi.fn(),syncWithdrawals:vi.fn(),lockWorkspace:vi.fn()}));
 import { runInspirationChat } from '../src/lib/inspiration/worker';
 
-const currentCard=(caseId:string,taxonomyStatus:'reviewed'|'legacy',analysisAllowed=true):InspirationCaseCard=>({caseId,revision:1,title:'隔离案例',summary:'审核中文说明',brandOrTeam:'测试',analysisAllowed,taxonomyStatus,
+const currentCard=(caseId:string,taxonomyStatus:'reviewed'|'legacy',analysisAllowed=true):InspirationCaseCard=>({libraryId:'library-fixed',caseId,revision:1,title:'隔离案例',summary:'审核中文说明',brandOrTeam:'测试',analysisAllowed,taxonomyStatus,
   tags:taxonomyStatus==='legacy'?{industry:[],medium:[],task:[]}:{industry:['culture'],medium:['poster']},images:[],sources:[],
   claims:[{claimId:'claim-1',kind:'visual_observation',text:'图上可见字体层级',sourceIds:[],imageIds:[]}]});
 const cards=[currentCard('legacy','legacy'),currentCard('reviewed','reviewed'),currentCard('denied','reviewed',false)];
@@ -23,12 +23,12 @@ const storedHistory=[
   turn('denied-turn','已无分析权限的回答',[{caseId:'denied',revision:1}]),
   turn('reviewed-turn','可复用的已审核字体层级讨论',[{caseId:'reviewed',revision:1}]),
 ];
-type Job={id:string;workspaceId:string;userId:string;status:string;question:string;selectedImages:never[];caseIds:string[];expiresAt:Date;createdAt:Date;conversationId:string};
+type Job={libraryId:string;id:string;workspaceId:string;userId:string;status:string;question:string;selectedImages:never[];caseIds:string[];expiresAt:Date;createdAt:Date;conversationId:string};
 type ModelPayload={question:string;history:Array<{question:string;answer:string|null}>;cases:Array<{caseId:string;tags:Record<string,string[]>}>};
 let job:Job, payload:ModelPayload, fetcher:ReturnType<typeof vi.fn>;
 beforeEach(()=>{
   vi.clearAllMocks();vi.stubEnv('INSPIRATION_CHAT_PROVIDER','');
-  job={id:'job',workspaceId:'ws',userId:'user',status:'PENDING',question:'分析这个案例',selectedImages:[],caseIds:['reviewed'],expiresAt:new Date(Date.now()+60000),createdAt:new Date(),conversationId:'conversation'};
+  job={libraryId:'library-fixed',id:'job',workspaceId:'ws',userId:'user',status:'PENDING',question:'分析这个案例',selectedImages:[],caseIds:['reviewed'],expiresAt:new Date(Date.now()+60000),createdAt:new Date(),conversationId:'conversation'};
   mocks.find.mockImplementation(async()=>({...job}));mocks.update.mockImplementation(async({where,data})=>{expect(where.id).toBe('job');Object.assign(job,data);return{count:1};});
   mocks.history.mockImplementation(async()=>structuredClone(storedHistory));mocks.taskUpdate.mockResolvedValue({count:1});mocks.list.mockImplementation(async()=>({cases:structuredClone(cards)}));
   mocks.settings.mockResolvedValue({vlm:{provider:'openai',model:'isolated-test',apiKey:'synthetic-key',baseUrl:'https://example.invalid/v1'}});
@@ -49,7 +49,7 @@ describe('legacy answers never reenter outbound model history',()=>{
     expect(JSON.stringify(payload)).not.toMatch(/digital|other|数字界面|已过期的案例回答|已无分析权限/);
     expect(JSON.stringify(storedHistory)).toBe(before);
     expect(mocks.history).toHaveBeenCalledWith(expect.objectContaining({where:expect.objectContaining({workspaceId:'ws',userId:'user',conversationId:'conversation'})}));
-    expect(mocks.update.mock.calls.every(([input])=>input.where.id==='job')).toBe(true);
+    expect(mocks.update.mock.calls.every(([input])=>input.where.id==='job')).toBe(true);expect(mocks.list.mock.calls.every(args=>args[0]==='ws'&&args[2]==='library-fixed')).toBe(true);
   });
   it('keeps ordinal references usable while sending only current cleaned evidence, not the old answer',async()=>{
     job.caseIds=[];job.question='比较第一个案例的字体';await runInspirationChat('job');

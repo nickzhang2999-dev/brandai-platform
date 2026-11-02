@@ -680,3 +680,8 @@ Integrated main 632ac2f into devUpdate1012 f83a8a9 in an isolated worktree. Pres
 ## 2026-11-02 · Omni自动发布与DeepFlare点击接收
 
 新增OWNER接收入口、服务端持久状态和manual内容模式；撤回仍自动同步。内部用途包按origin/workspace/图像身份验证，既有明确允许包兼容。代码与本地验证已完成，实际部署和接收状态见[交付日志](2026-11-02-omni-receive.md)，本轮不发布正式站。
+
+
+## 2026-11-02 · 公司统一接收、各品牌引用
+
+新增独立 InspirationLibrary 与永久身份账本。同owner品牌共用内容和接收状态，项目/收藏/对话仍品牌与用户隔离；旧workspace签名不重解释。数据库保全迁移、全链元数据预检、撤权重验和失败提示已实现。本地完整测试、生产构建、相关真实PG与浏览器检查通过；尚待本提交CI/镜像及实际接收，状态见[共享库改造日志](2026-11-02-shared-inspiration.md)。

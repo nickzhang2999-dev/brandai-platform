@@ -1,8 +1,8 @@
 # Nova 灵感库后端接入说明
 
-2026-10-22。本文描述本分支代码；不代表正式站已发布、真实案例已审核或付费模型已验收。
+2026-11-02 更新。本文描述本分支代码；不代表正式站已发布、真实案例已人工审核或付费模型已验收。
 
-`/inspiration` 是 Nova 工作台的独立页面，不加载旧 BrandAI 侧栏。页面沿用 Studio 的登录、品牌选择与成员权限校验，顶部返回链接保留当前 `workspaceId`；无效或无权访问的显式品牌不回退到另一个品牌。案例、会话、收藏和反馈仍使用原来的工作区隔离接口。
+`/inspiration` 是 Nova 工作台的独立页面，不加载旧 BrandAI 侧栏。页面沿用 Studio 的登录、品牌选择与成员权限校验，顶部返回链接保留当前 `workspaceId`；无效或无权访问的显式品牌不回退到另一个品牌。品牌是消费和引用上下文，发布内容属于独立 `InspirationLibrary`。配置公司库后，同一 owner（当前租户边界）的品牌共用案例和接收状态；成员必须仍通过所选品牌的权限校验。会话、收藏、反馈、项目和计费保持品牌/用户隔离，并固定来源 `libraryId`。
 
 ## 启用和连接
 
@@ -12,14 +12,17 @@
 - `INSPIRATION_PUBLISHER_URL`：A 端知识发布根路径，例如受信任 HTTPS 地址下的 `/knowledge/v1`。本机 SSH 转发可用 `http://127.0.0.1:<port>/knowledge/v1`；容器内的 localhost 指容器自身，必须先验证真实网络位置。
 - `INSPIRATION_READ_TOKEN`：A 端专用只读身份，不使用运维管理员令牌。
 - `INSPIRATION_TRUSTED_KEYS_JSON`：`key_id` 到 Ed25519 公钥 PEM 的 JSON 映射。公钥独立交付，不从下载包获取信任。
+- `INSPIRATION_SHARED_LIBRARY_ID`：公司共享库 ID；管理员通过 `/api/admin/inspiration/libraries` 显式初始化并绑定 owner。首次浏览不会抢占归属。永久身份账本不随 owner 或库删除，旧库 ID 不可改绑其他 owner。
+- `INSPIRATION_SHARED_PUBLISHER_URL`：公司库的独立 v2 发布地址。与原 v1 地址分开，缺失时不回退到旧品牌包。令牌和签名信任仍从服务器配置读取。
+- `INSPIRATION_RECEIVER_ORIGIN`：明确的部署 HTTPS origin；不能根据任意请求 Host 猜接收身份。
 
-同步请求由 workspace OWNER 发起，记录持久任务后返回 202。一次成功配置产生本地 workspace 副本，之后每 5 分钟检查更新。独立撤回检查每分钟运行，不等待问答队列；网络失败保留已有撤回集并显示错误。没有配置的工作区不会自动创建内容。HTTP handler 不下载远端文件、不调用模型。
+共享库接收由库 owner 或有权访问该品牌的管理员发起，按库锁定和去重，记录持久任务后返回 202。`INSPIRATION_CONTENT_SYNC_MODE=manual` 时只在点击接收后同步内容；切换品牌不再次导入一份图片。独立撤回检查每分钟运行，不等待问答队列；网络失败保留已有撤回集并显示错误。没有配置的库不会自动创建内容。HTTP handler 不下载远端文件、不调用模型。
 
 ## 本地副本和完整性
 
-Prisma 增量迁移新增 `InspirationState/Release/Record/Image/Chat/Bookmark/Embedding`，均以 workspace 外键隔离，删除工作区时一起删除。图片暂存在 PostgreSQL bytea，适合 20–200 案例试点；扩量前应迁移到现有对象存储并保留同样授权边界。
+`InspirationState/Release/Record/Image` 按 libraryId 保存。旧 workspace 内容迁移为同 ID 的 WORKSPACE 私有库，正文、图片字节和签名不改；新 SHARED 库与品牌删除级联分离。删除品牌只清理它自己的旧私有库和用户工作流，不删除公司共享图片。图片目前仍存在 PostgreSQL bytea；扩大长期存量前需迁移至对象存储并保留同样身份与撤回边界。
 
-签名、原始 manifest SHA256、清单文件大小和哈希、图片实际解码、来源和证据引用、审核与展示权限均在激活前校验。完整包和增量包保留不可变记录，事务同时保存图片、案例快照和活动版本。失败保留旧活动版本。相同 case revision 改正文或图片字节均拒绝。完整快照省略案例不会丢失历史修订水位。
+先验证整个待接收链的签名元数据、记录哈希和接收范围，再下载图片。共享 manifest、withdrawal、案例用途记录都使用明确的 v2 library recipient；旧 v1 工作区包不能解释成共享授权。图片实际解码、来源、证据引用及展示条件在激活前继续校验。完整包和增量包保留不可变记录，事务同时保存图片、案例快照和活动版本。失败保留已成功安装的版本。同库同 case revision 改正文或图片字节均拒绝。完整快照省略案例不会丢失历史修订水位。
 
 撤回水位和累计 case ID 独立于活动版本。回退函数 `rollbackReplica(workspaceId, releaseId)` 只切换已存在本地版本，不降低发布/撤回水位。检索、图片、历史引用和收藏都重新检查当前活动快照及撤回状态。历史引用的修订号变化后展示“已更新或撤回”，不会把原回答配到新图上。
 

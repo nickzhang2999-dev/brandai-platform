@@ -1,7 +1,7 @@
 import { createHash, createPublicKey, verify } from 'node:crypto';
 import { z } from 'zod';
 import sharp from 'sharp';
-import { validatePublicationBinding } from './publication-scope';
+import { LibraryRecipient, validatePublicationBinding } from './publication-scope';
 import { syncSizeLimits } from './config';
 
 const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/);
@@ -17,14 +17,22 @@ export const PublishedCase = z.object({ case_id: id, revision: positive, title: 
   tags: z.object({ industry: z.array(text).min(1).max(100), medium: z.array(text).min(1).max(100) }).catchall(z.array(text).max(100)), sources: z.array(source).min(1).max(500), images: z.array(image).min(1).max(500), claims: z.array(claim).min(1).max(500),
 }).passthrough();
 export type PublishedCase = z.infer<typeof PublishedCase>;
-export const Manifest = z.object({ schema_version: z.literal(1), release_id: id, sequence: positive, kind: z.enum(['full','delta']), parent_release_id: id.nullable(), created_at: z.string().datetime(), taxonomy_version: text, records_count: z.number().int().min(0).max(2000), files: z.array(z.object({ path, size: z.number().int().nonnegative().max(128*1024*1024), sha256: hash }).strict()).max(10000), key_id: id, signature: z.string().max(256) }).strict();
+const manifestFields={release_id: id, sequence: positive, kind: z.enum(['full','delta']), parent_release_id: id.nullable(), created_at: z.string().datetime(), taxonomy_version: text, records_count: z.number().int().min(0).max(2000), files: z.array(z.object({ path, size: z.number().int().nonnegative().max(128*1024*1024), sha256: hash }).strict()).max(10000), key_id: id, signature: z.string().max(256)};
+export const Manifest = z.discriminatedUnion('schema_version',[
+  z.object({schema_version:z.literal(1),...manifestFields}).strict(),
+  z.object({schema_version:z.literal(2),recipient:LibraryRecipient,...manifestFields}).strict(),
+]);
 export type Manifest = z.infer<typeof Manifest>;
 export function checkedPackageSize(manifest: Manifest): number {
   const bytes = manifest.files.reduce((total, file) => total + file.size, 0);
   if (bytes > syncSizeLimits().packageBytes) throw new Error('Knowledge package exceeds configured size limit');
   return bytes;
 }
-export const Withdrawal = z.object({ schema_version: z.literal(1), sequence: positive, created_at: z.string().datetime(), case_ids: z.array(id).max(100000), key_id: id, signature: z.string().max(256) }).strict();
+const withdrawalFields={sequence: positive, created_at: z.string().datetime(), case_ids: z.array(id).max(100000), key_id: id, signature: z.string().max(256)};
+export const Withdrawal = z.discriminatedUnion('schema_version',[
+  z.object({schema_version:z.literal(1),...withdrawalFields}).strict(),
+  z.object({schema_version:z.literal(2),recipient:LibraryRecipient,...withdrawalFields}).strict(),
+]);
 const RecordSchema = z.object({ op: z.enum(['upsert','delete']), case_id: id, revision: positive, content_hash: hash, case: PublishedCase.optional() }).strict();
 export type ReleaseRecord = z.infer<typeof RecordSchema>;
 export const sha256 = (b: string | Buffer) => createHash('sha256').update(b).digest('hex');
@@ -50,32 +58,45 @@ export function validateCase(c: PublishedCase) {
   const sources = new Set(c.sources.map(s => s.source_id)), images = new Set(c.images.map(i => i.image_id));
   if (c.images.some(i => !sources.has(i.source_id)) || c.claims.some(c => (!c.source_ids.length && !c.image_ids.length) || c.source_ids.some(s => !sources.has(s)) || c.image_ids.some(i => !images.has(i)))) throw new Error('Broken evidence reference');
 }
-export async function validatePackage(raw: Buffer, files: Map<string,Buffer>, keys: Record<string,string>) {
+/** Authenticate records and their declared image inventory before fetching image bytes. */
+export function validatePackageMetadata(raw:Buffer,recordBytes:Buffer,keys:Record<string,string>) {
   const manifest = verifySigned(Manifest.parse(JSON.parse(raw.toString('utf8'))), keys);
   if ((manifest.kind === 'full') !== (manifest.parent_release_id === null)) throw new Error('Invalid release parent');
   unique(manifest.files.map(f => f.path));
   checkedPackageSize(manifest);
-  if (!manifest.files.some(f => f.path === 'records.jsonl') || files.size !== manifest.files.length) throw new Error('Incomplete package');
-  const mimes = new Map<string,string>();
-  for (const f of manifest.files) {
-    const data = files.get(f.path); if (!data || data.length !== f.size || sha256(data) !== f.sha256) throw new Error('File checksum mismatch');
-    if (f.path.startsWith('images/')) {
-      if (data.length > 20*1024*1024) throw new Error('Image too large');
-      const processor = sharp(data, { limitInputPixels: 40000000, failOn:'error' }); const meta = await processor.metadata();
-      if (!meta.format || !['jpeg','png','webp'].includes(meta.format) || (meta.pages ?? 1) > 1) throw new Error('Unsupported image');
-      await processor.stats(); mimes.set(f.path, meta.format === 'jpeg' ? 'image/jpeg' : `image/${meta.format}`);
-    }
-  }
-  const lines = files.get('records.jsonl')!.toString('utf8').split('\n').filter(s => s.trim());
+  const entry=manifest.files.find(f=>f.path==='records.jsonl');
+  if(!entry)throw new Error('Incomplete package');
+  if(recordBytes.length!==entry.size||sha256(recordBytes)!==entry.sha256)throw new Error('File checksum mismatch');
+  const inventory=new Map(manifest.files.map(f=>[f.path,f]));
+  if(manifest.files.some(f=>f.path.startsWith('images/')&&(f.size<=0||f.size>20*1024*1024)))throw new Error('Image too large');
+  const lines = recordBytes.toString('utf8').split('\n').filter(s => s.trim());
   if (lines.length !== manifest.records_count || lines.some(s => Buffer.byteLength(s) > 1024*1024)) throw new Error('Invalid record count or size');
   const records = lines.map(line => RecordSchema.parse(JSON.parse(line))); unique(records.map(r => r.case_id));
   const used = new Set(['records.jsonl']);
   for (const r of records) {
     if (r.op === 'upsert') {
       if (!r.case || r.case.case_id !== r.case_id || r.case.revision !== r.revision || sha256(canonical(r.case)) !== r.content_hash) throw new Error('Invalid case record');
-      validateCase(r.case); for (const i of r.case.images) { if (!files.has(i.path)) throw new Error('Missing image'); used.add(i.path); }
+      validateCase(r.case); for (const i of r.case.images) { if (!inventory.has(i.path)) throw new Error('Missing image'); used.add(i.path); }
+      const basis=validatePublicationBinding(r.case);
+      if(basis&&inventory.get(r.case.images[0]!.path)?.sha256!==basis.sha256)throw new Error('Publication image checksum mismatch');
     } else if (r.case || sha256(canonical({op:r.op,case_id:r.case_id,revision:r.revision})) !== r.content_hash) throw new Error('Invalid delete record');
   }
-  if (used.size !== files.size) throw new Error('Unreferenced package file');
+  if (used.size !== inventory.size) throw new Error('Unreferenced package file');
+  return {manifest,records};
+}
+export async function validatePackage(raw: Buffer, files: Map<string,Buffer>, keys: Record<string,string>) {
+  // Preserve the early size/inventory gate even for an absent records file.
+  const envelope=verifySigned(Manifest.parse(JSON.parse(raw.toString('utf8'))),keys);checkedPackageSize(envelope);
+  if(!files.has('records.jsonl')||files.size!==envelope.files.length)throw new Error('Incomplete package');
+  const {manifest,records}=validatePackageMetadata(raw,files.get('records.jsonl')!,keys);
+  const mimes=new Map<string,string>();
+  for(const f of manifest.files) {
+    const data=files.get(f.path);if(!data||data.length!==f.size||sha256(data)!==f.sha256)throw new Error('File checksum mismatch');
+    if(f.path.startsWith('images/')) {
+      const processor=sharp(data,{limitInputPixels:40000000,failOn:'error'}),meta=await processor.metadata();
+      if(!meta.format||!['jpeg','png','webp'].includes(meta.format)||(meta.pages??1)>1)throw new Error('Unsupported image');
+      await processor.stats();mimes.set(f.path,meta.format==='jpeg'?'image/jpeg':`image/${meta.format}`);
+    }
+  }
   return { manifest, records, mimes };
 }

@@ -5,7 +5,11 @@
   const context = JSON.parse(document.getElementById('novart-product-context').textContent);
   window.__NOVART_PRODUCT__ = Object.freeze(context);
   const inspirationLink = document.getElementById('ns-inspiration-link');
-  if (inspirationLink && context.workspaceId) inspirationLink.href = '/inspiration?workspaceId=' + encodeURIComponent(context.workspaceId);
+  if (inspirationLink) {
+    // This pins the reference destination, never the shared library's owner.
+    if (context.workspaceId) inspirationLink.href = '/inspiration?workspaceId=' + encodeURIComponent(context.workspaceId);
+    inspirationLink.title = '统一灵感库 · 按需收藏到当前品牌或项目';
+  }
   const NativeWebSocket = window.WebSocket;
   window.WebSocket = class extends NativeWebSocket {
     constructor(address, protocols) {

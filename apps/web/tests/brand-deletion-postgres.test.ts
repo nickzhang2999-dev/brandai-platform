@@ -12,7 +12,9 @@ suite("brand deletion real PostgreSQL isolation and concurrent admission", () =>
   let users: string[], spaces: string[], project: string;
   beforeAll(() => {
     const url = new URL(isolated!);
-    if (url.hostname !== "127.0.0.1" || url.port !== "55438" || url.pathname !== "/brand_deletion_test" || process.env.DATABASE_URL !== isolated) throw new Error("Explicit isolated local brand_deletion_test database required");
+    const allowed = (url.port === "55438" && url.pathname === "/brand_deletion_test")
+      || (url.port === "55439" && url.pathname === "/nova_shared_inspiration_test");
+    if (url.hostname !== "127.0.0.1" || !allowed || process.env.DATABASE_URL !== isolated) throw new Error("Explicit isolated local brand deletion database required");
   });
   beforeEach(async () => {
     vi.stubGlobal("fetch", vi.fn(() => { throw new Error("No provider or storage calls in deletion tests"); }));
@@ -71,6 +73,29 @@ suite("brand deletion real PostgreSQL isolation and concurrent admission", () =>
     await expect(deleteBrand(spaces[0], users[0], second)).rejects.toMatchObject({ status: 409 });
     await expect(deleteBrand(spaces[0], users[0], {})).rejects.toThrow();
     expect(await prisma.brandDeletionReceipt.count({ where: { workspaceId: spaces[0] } })).toBe(0);
+  });
+  it("deleting a consuming brand counts only its private cases and preserves the company library", async () => {
+    const sharedId = "shared-" + randomUUID();
+    await prisma.inspirationLibrary.createMany({ data: [
+      { id: spaces[0], kind: "WORKSPACE", ownerId: users[0], legacyWorkspaceId: spaces[0] },
+      { id: sharedId, kind: "SHARED", ownerId: users[0] },
+    ] });
+    const content = { caseId: "synthetic-case", revision: 1, contentHash: "a".repeat(64), imageHash: "b".repeat(64), releaseId: "synthetic-release", body: { fixture: true } };
+    await prisma.inspirationRecord.createMany({ data: [
+      { ...content, libraryId: spaces[0] }, { ...content, libraryId: sharedId },
+    ] });
+    await prisma.inspirationImage.create({ data: { libraryId: sharedId, releaseId: "synthetic-release", path: "images/a.png", sha256: "c".repeat(64), mimeType: "image/png", bytes: new Uint8Array([1, 2, 3]) } });
+    await prisma.inspirationBookmark.create({ data: { workspaceId: spaces[0], libraryId: sharedId, userId: users[0], caseId: "synthetic-case", revision: 1 } });
+    expect((await previewBrandDeletion(spaces[0], users[0])).counts.inspirationCases).toBe(1);
+    await deleteBrand(spaces[0], users[0], await request());
+    expect(await prisma.inspirationLibrary.count({ where: { id: spaces[0] } })).toBe(0);
+    expect(await prisma.inspirationRecord.count({ where: { libraryId: spaces[0] } })).toBe(0);
+    expect(await prisma.inspirationBookmark.count({ where: { workspaceId: spaces[0] } })).toBe(0);
+    expect(await prisma.inspirationLibrary.count({ where: { id: sharedId, ownerId: users[0], kind: "SHARED" } })).toBe(1);
+    expect(await prisma.inspirationRecord.count({ where: { libraryId: sharedId } })).toBe(1);
+    expect(Array.from((await prisma.inspirationImage.findFirstOrThrow({ where: { libraryId: sharedId } })).bytes)).toEqual([1, 2, 3]);
+    expect(await prisma.brandWorkspace.count({ where: { id: spaces[1] } })).toBe(1);
+    expect(fetch).not.toHaveBeenCalled();
   });
   it("lost-response and concurrent replay return one durable receipt, while changed intent and another actor cannot replay", async () => {
     const body = await request();

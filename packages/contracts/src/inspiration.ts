@@ -1,7 +1,14 @@
 import { z } from 'zod';
 
 export const InspirationId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/);
+export const InspirationSourceLibrary = z.object({ id: InspirationId, kind: z.enum(['SHARED', 'WORKSPACE']) });
+export type InspirationSourceLibrary = z.infer<typeof InspirationSourceLibrary>;
+export const InspirationLibraryCreateInput = z.object({ libraryId: InspirationId, ownerId: z.string().min(1).max(128) }).strict();
+export type InspirationLibraryCreateInput = z.infer<typeof InspirationLibraryCreateInput>;
+export const InspirationLibraryCreateResult = z.object({ sourceLibrary: InspirationSourceLibrary, created: z.boolean() });
+export type InspirationLibraryCreateResult = z.infer<typeof InspirationLibraryCreateResult>;
 export const InspirationCaseCard = z.object({
+  libraryId: InspirationId.optional(),
   caseId: InspirationId, revision: z.number().int().positive(), title: z.string(), summary: z.string(), brandOrTeam: z.string(), analysisAllowed: z.boolean(),
   tags: z.record(z.array(z.string())),
   contentType: z.enum(['advertisement','reference','unknown']).optional(),
@@ -25,6 +32,7 @@ export const InspirationSyncStatus = z.object({
 export type InspirationSyncStatus = z.infer<typeof InspirationSyncStatus>;
 export const InspirationReceiveStatus = z.object({
   enabled: z.boolean(), configured: z.boolean(), mode: z.enum(['manual', 'automatic']), canReceive: z.boolean(),
+  sourceLibrary: InspirationSourceLibrary.nullable().optional(), canReceiveReason: z.string().nullable().optional(),
   task: z.object({
     id: z.string(), status: z.enum(['PENDING', 'RUNNING', 'SUCCEEDED', 'FAILED']), error: z.string().nullable(),
     createdAt: z.string().datetime(), updatedAt: z.string().datetime(), expiresAt: z.string().datetime().nullable(),
@@ -32,25 +40,26 @@ export const InspirationReceiveStatus = z.object({
 });
 export type InspirationReceiveStatus = z.infer<typeof InspirationReceiveStatus>;
 export const InspirationListResponse = z.object({
+  sourceLibrary: InspirationSourceLibrary.nullable().optional(),
   enabled: z.boolean(), syncConfigured: z.boolean(), activeRelease: z.object({ id: InspirationId, sequence: z.number().int(), createdAt: z.string() }).nullable(),
   caseCount: z.number().int(), withdrawalSequence: z.number().int(), lastSyncAt: z.string().nullable(), error: z.string().nullable(),
   cases: z.array(InspirationCaseCard), searchMode: z.enum(['keyword-tags','hybrid']),
   syncStatus: InspirationSyncStatus.optional(),
 });
 export type InspirationListResponse = z.infer<typeof InspirationListResponse>;
-export const InspirationSelectedImage = z.object({caseId:InspirationId,imageId:InspirationId,revision:z.number().int().positive()}).strict();
-export const InspirationChatInput = z.object({ requestId: z.string().uuid(), question: z.string().trim().min(1).max(3000), conversationId: z.string().uuid().optional(), caseIds: z.array(InspirationId).max(8).optional(),selectedImages:z.array(InspirationSelectedImage).max(2).optional() }).strict();
+export const InspirationSelectedImage = z.object({libraryId:InspirationId.optional(),caseId:InspirationId,imageId:InspirationId,revision:z.number().int().positive()}).strict();
+export const InspirationChatInput = z.object({ libraryId: InspirationId.optional(), requestId: z.string().uuid(), question: z.string().trim().min(1).max(3000), conversationId: z.string().uuid().optional(), caseIds: z.array(InspirationId).max(8).optional(),selectedImages:z.array(InspirationSelectedImage).max(2).optional() }).strict();
 export type InspirationChatInput = z.infer<typeof InspirationChatInput>;
-export const InspirationChatState = z.object({ id: z.string(), conversationId: z.string(), status: z.enum(['PENDING','RUNNING','SUCCEEDED','FAILED']), question: z.string(), answer: z.string().nullable(), citations: z.array(InspirationCaseCard), error: z.string().nullable(), createdAt: z.string() });
+export const InspirationChatState = z.object({ sourceLibrary: InspirationSourceLibrary.nullable().optional(), id: z.string(), conversationId: z.string(), status: z.enum(['PENDING','RUNNING','SUCCEEDED','FAILED']), question: z.string(), answer: z.string().nullable(), citations: z.array(InspirationCaseCard), error: z.string().nullable(), createdAt: z.string() });
 export type InspirationChatState = z.infer<typeof InspirationChatState>;
-export const InspirationBookmarkInput = z.object({ caseId: InspirationId, revision: z.number().int().positive(), projectId: z.string().min(1).max(128).optional(), note: z.string().trim().max(2000).default('') }).strict();
-export const InspirationBookmark = z.object({ id: z.string(), caseId: InspirationId, revision: z.number().int().positive(), projectId: z.string().nullable(), note: z.string(), case: InspirationCaseCard.nullable(), unavailable: z.boolean() });
+export const InspirationBookmarkInput = z.object({ libraryId: InspirationId.optional(), caseId: InspirationId, revision: z.number().int().positive(), projectId: z.string().min(1).max(128).optional(), note: z.string().trim().max(2000).default('') }).strict();
+export const InspirationBookmark = z.object({ libraryId: InspirationId.optional(), id: z.string(), caseId: InspirationId, revision: z.number().int().positive(), projectId: z.string().nullable(), note: z.string(), case: InspirationCaseCard.nullable(), unavailable: z.boolean() });
 export type InspirationBookmark = z.infer<typeof InspirationBookmark>;
 
 export const InspirationFeedbackKind = z.enum(['IRRELEVANT','ANALYSIS_ERROR','UNSUPPORTED_CITATION','BROKEN_IMAGE']);
-export const InspirationFeedbackInput = z.object({caseId:InspirationId,revision:z.number().int().positive(),kind:InspirationFeedbackKind,note:z.string().trim().max(1000).default('')}).strict();
+export const InspirationFeedbackInput = z.object({libraryId:InspirationId.optional(),caseId:InspirationId,revision:z.number().int().positive(),kind:InspirationFeedbackKind,note:z.string().trim().max(1000).default('')}).strict();
 export type InspirationFeedbackInput = z.infer<typeof InspirationFeedbackInput>;
-export const InspirationFeedback = z.object({id:z.string(),caseId:InspirationId,revision:z.number().int().positive(),kind:InspirationFeedbackKind,note:z.string(),status:z.enum(['OPEN','RESOLVED']),createdAt:z.string(),caseTitle:z.string().nullable(),unavailable:z.boolean()});
+export const InspirationFeedback = z.object({libraryId:InspirationId.optional(),id:z.string(),caseId:InspirationId,revision:z.number().int().positive(),kind:InspirationFeedbackKind,note:z.string(),status:z.enum(['OPEN','RESOLVED']),createdAt:z.string(),caseTitle:z.string().nullable(),unavailable:z.boolean()});
 export type InspirationFeedback = z.infer<typeof InspirationFeedback>;
 export const InspirationFeedbackList = z.object({items:z.array(InspirationFeedback),scope:z.enum(['mine','review']),canReview:z.boolean()});
 export type InspirationFeedbackList = z.infer<typeof InspirationFeedbackList>;

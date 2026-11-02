@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const db=vi.hoisted(()=>({inspirationChat:{findUnique:vi.fn(),count:vi.fn(),findFirst:vi.fn(),create:vi.fn()},brandWorkspace:{findUniqueOrThrow:vi.fn(),findMany:vi.fn()},$executeRaw:vi.fn(),$transaction:vi.fn()}));
 vi.mock('@brandai/db',()=>({prisma:db,Prisma:{}}));
 vi.mock('@/lib/api',()=>({ApiException:class extends Error{constructor(public status:number,message:string){super(message);}}}));
+vi.mock('@/lib/inspiration/library',()=>({resolveLibrary:async(id:string)=>({id,kind:'WORKSPACE',ownerId:'owner',legacyWorkspaceId:id}),ensureLibrary:vi.fn()}));
 import { canonical, validatePackage } from '@/lib/inspiration/protocol';
 import { createChat } from '@/lib/inspiration/service';
 const {privateKey,publicKey}=generateKeyPairSync('ed25519');

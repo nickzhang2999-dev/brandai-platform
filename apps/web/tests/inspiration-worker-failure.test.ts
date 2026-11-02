@@ -12,11 +12,11 @@ import { InspirationFailure } from '../src/lib/inspiration/failure';
 
 beforeEach(()=>{
   vi.clearAllMocks();
-  const row={id:'job',workspaceId:'ws',userId:'user',status:'PENDING',question:'private-user-content',selectedImages:[],caseIds:['case'],expiresAt:new Date(Date.now()+60000),createdAt:new Date(),conversationId:'conversation'};
+  const row={libraryId:'library-fixed',id:'job',workspaceId:'ws',userId:'user',status:'PENDING',question:'private-user-content',selectedImages:[],caseIds:['case'],expiresAt:new Date(Date.now()+60000),createdAt:new Date(),conversationId:'conversation'};
   mocks.find.mockImplementation(async()=>({...row}));
   mocks.update.mockImplementation(async({data})=>{Object.assign(row,data);return{count:1};});
   mocks.history.mockResolvedValue([]);mocks.taskUpdate.mockResolvedValue({count:1});
-  mocks.list.mockResolvedValue({cases:[{caseId:'case',revision:1,analysisAllowed:true}]});
+  mocks.list.mockResolvedValue({cases:[{libraryId:'library-fixed',caseId:'case',revision:1,analysisAllowed:true}]});
 });
 afterEach(()=>vi.restoreAllMocks());
 
@@ -24,7 +24,7 @@ describe('inspiration worker safe terminal diagnostics',()=>{
   it.each([new InspirationFailure('provider_http_error',400),new Error('private-provider-key/response')])('keeps frontend generic, logs safe fields and never retries',async(error)=>{
     mocks.answer.mockRejectedValue(error);const log=vi.spyOn(console,'warn').mockImplementation(()=>{});
     await runInspirationChat('job');
-    expect(mocks.answer).toHaveBeenCalledOnce();
+    expect(mocks.answer).toHaveBeenCalledOnce();expect(mocks.list.mock.calls.every(args=>args[0]==='ws'&&args[2]==='library-fixed')).toBe(true);
     expect(log).toHaveBeenCalledWith('[inspiration-chat] failed',error instanceof InspirationFailure?{code:'provider_http_error',status:400}:{code:'task_failed'});
     const failure=mocks.update.mock.calls.find(([arg])=>arg.data.status==='FAILED')?.[0];
     expect(failure.data.error).toBe('灵感任务未完成，请检查接入配置或稍后重试。');

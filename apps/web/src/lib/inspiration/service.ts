@@ -6,57 +6,65 @@ import { contentSyncMode, inspirationEnabled, syncConfigured } from './config';
 import { PublishedCase } from './protocol';
 import { catalogMetadata, catalogKeywordScore, filterCatalog, type CatalogFilters } from './catalog';
 import { inspirationSyncStatus } from './sync-status';
+import { ensureLibrary, resolveLibrary, sourceLibrary } from './library';
 
 export function requireEnabled() { if(!inspirationEnabled()) throw new ApiException(503,'灵感库尚未启用，请联系管理员完成接入。'); }
-export function card(workspaceId:string, value:unknown): InspirationCaseCard {
+export function card(workspaceId:string, value:unknown,libraryId=workspaceId): InspirationCaseCard {
   const c=PublishedCase.parse(value);
   const analysisAllowed=[c,...c.sources,...c.images].every(entity=>(entity.permissions as {analysis?:string}|undefined)?.analysis==='allowed');
-  return {caseId:c.case_id,revision:c.revision,title:c.title,summary:c.summary_zh,brandOrTeam:c.brand_or_team,analysisAllowed,...catalogMetadata(c),
-    images:c.images.map(i=>({imageId:i.image_id,url:`/api/workspaces/${encodeURIComponent(workspaceId)}/inspiration/cases/${encodeURIComponent(c.case_id)}/images/${encodeURIComponent(i.image_id)}?revision=${c.revision}`})),
+  return {libraryId,caseId:c.case_id,revision:c.revision,title:c.title,summary:c.summary_zh,brandOrTeam:c.brand_or_team,analysisAllowed,...catalogMetadata(c),
+    images:c.images.map(i=>({imageId:i.image_id,url:`/api/workspaces/${encodeURIComponent(workspaceId)}/inspiration/cases/${encodeURIComponent(c.case_id)}/images/${encodeURIComponent(i.image_id)}?revision=${c.revision}&libraryId=${encodeURIComponent(libraryId)}`})),
     sources:c.sources.map(s=>({sourceId:s.source_id,url:s.url})),claims:c.claims.map(x=>({claimId:x.claim_id,kind:x.kind,text:x.text,sourceIds:x.source_ids,imageIds:x.image_ids}))};
 }
 export function keywordScore(c:InspirationCaseCard, query:string) {
   return catalogKeywordScore(c,query);
 }
-export async function listCases(workspaceId:string, filters:CatalogFilters={}): Promise<InspirationListResponse> {
-  const enabled=inspirationEnabled(), configured=syncConfigured();
+export async function listCases(workspaceId:string, filters:CatalogFilters={},libraryId?:string): Promise<InspirationListResponse> {
+  const enabled=inspirationEnabled();
   // A disabled response exposes status only: do not read stored content or history.
-  if(!enabled) return {enabled:false,syncConfigured:configured,activeRelease:null,caseCount:0,
+  if(!enabled) return {sourceLibrary:null,enabled:false,syncConfigured:false,activeRelease:null,caseCount:0,
     withdrawalSequence:0,lastSyncAt:null,error:null,cases:[],searchMode:'keyword-tags',
-    syncStatus:inspirationSyncStatus(null,null,false,configured,Date.now(),contentSyncMode())};
-  const {state,release,records}=await activeRecords(workspaceId);
-  const all=records.map(r=>card(workspaceId,r.body));
+    syncStatus:inspirationSyncStatus(null,null,false,false,Date.now(),contentSyncMode())};
+  const library=await resolveLibrary(workspaceId,libraryId),configured=syncConfigured(library.kind);
+  const {state,release,records}=await activeRecords(library);
+  const all=records.map(r=>card(workspaceId,r.body,library.id));
   const cases=filterCatalog(all,filters);
   const syncStatus=inspirationSyncStatus(state,release?.manifestHash ?? null,enabled,configured,Date.now(),contentSyncMode());
-  return {enabled,syncConfigured:configured,activeRelease:release?{id:release.releaseId,sequence:release.sequence,createdAt:release.createdAt.toISOString()}:null,caseCount:all.length,withdrawalSequence:state?.withdrawalSequence ?? 0,lastSyncAt:state?.lastSyncAt?.toISOString() ?? null,error:[syncStatus.content.error,syncStatus.withdrawals.error].filter(Boolean).join(' ') || null,cases,searchMode:'keyword-tags' as const,syncStatus};
+  return {sourceLibrary:sourceLibrary(library),enabled,syncConfigured:configured,activeRelease:release?{id:release.releaseId,sequence:release.sequence,createdAt:release.createdAt.toISOString()}:null,caseCount:all.length,withdrawalSequence:state?.withdrawalSequence ?? 0,lastSyncAt:state?.lastSyncAt?.toISOString() ?? null,error:[syncStatus.content.error,syncStatus.withdrawals.error].filter(Boolean).join(' ') || null,cases,searchMode:'keyword-tags' as const,syncStatus};
 }
-export async function getCase(workspaceId:string, caseId:string, revision?:number) {
-  const {records}=await activeRecords(workspaceId); const row=records.find(r=>r.caseId===caseId && (revision===undefined || r.revision===revision));
-  if(!row) throw new ApiException(404,'案例已撤回、版本已更新或不可访问。'); return {row,case:card(workspaceId,row.body)};
+export async function getCase(workspaceId:string, caseId:string, revision?:number,libraryId?:string) {
+  const library=await resolveLibrary(workspaceId,libraryId);
+  const {records}=await activeRecords(library); const row=records.find(r=>r.caseId===caseId && (revision===undefined || r.revision===revision));
+  if(!row) throw new ApiException(404,'案例已撤回、版本已更新或不可访问。'); return {row,case:card(workspaceId,row.body,library.id),library};
 }
 export async function getChat(workspaceId:string,userId:string,id:string): Promise<InspirationChatState> {
   const row=await prisma.inspirationChat.findFirst({where:{workspaceId,userId,id}}); if(!row) throw new ApiException(404,'对话不存在。');
   if(['PENDING','RUNNING'].includes(row.status) && row.expiresAt<new Date()) {
     await prisma.inspirationChat.updateMany({where:{id,workspaceId,userId,status:{in:['PENDING','RUNNING']}},data:{status:'FAILED',error:'任务已超时，请重试。'}}); row.status='FAILED';row.error='任务已超时，请重试。';
   }
-  const {records}=await activeRecords(workspaceId); const refs=(Array.isArray(row.citations)?row.citations:[]) as unknown as Array<{caseId:string;revision:number}>;
-  const citations=refs.flatMap(ref=>{const r=records.find(r=>r.caseId===ref.caseId && r.revision===ref.revision);return r?[card(workspaceId,r.body)]:[];});
+  const library=await resolveLibrary(workspaceId,row.libraryId);
+  const {records}=await activeRecords(library); const refs=(Array.isArray(row.citations)?row.citations:[]) as unknown as Array<{caseId:string;revision:number}>;
+  const citations=refs.flatMap(ref=>{const r=records.find(r=>r.caseId===ref.caseId && r.revision===ref.revision);return r?[card(workspaceId,r.body,library.id)]:[];});
   const invalid=citations.length!==refs.length;
-  return {id:row.id,conversationId:row.conversationId,status:row.status,question:row.question,answer:invalid?'引用内容已撤回或更新，请重新检索后提问。':row.answer,citations,error:row.error,createdAt:row.createdAt.toISOString()};
+  return {sourceLibrary:sourceLibrary(library),id:row.id,conversationId:row.conversationId,status:row.status,question:row.question,answer:invalid?'引用内容已撤回或更新，请重新检索后提问。':row.answer,citations,error:row.error,createdAt:row.createdAt.toISOString()};
 }
-type ChatInput={requestId:string;question:string;conversationId?:string;caseIds?:string[];selectedImages?:Array<{caseId:string;imageId:string;revision:number}>};
-function sameInput(row:{question:string;conversationId:string;caseIds:unknown;selectedImages?:unknown},input:ChatInput) {return row.question===input.question && (!input.conversationId || input.conversationId===row.conversationId) && JSON.stringify(row.caseIds)===JSON.stringify(input.caseIds ?? []) && JSON.stringify(row.selectedImages ?? [])===JSON.stringify(input.selectedImages ?? []);}
+type ChatInput={libraryId?:string;requestId:string;question:string;conversationId?:string;caseIds?:string[];selectedImages?:Array<{caseId:string;imageId:string;revision:number;libraryId?:string}>};
+function sameInput(row:{libraryId?:string;question:string;conversationId:string;caseIds:unknown;selectedImages?:unknown},input:ChatInput) {return (!input.libraryId||row.libraryId===input.libraryId) && row.question===input.question && (!input.conversationId || input.conversationId===row.conversationId) && JSON.stringify(row.caseIds)===JSON.stringify(input.caseIds ?? []) && JSON.stringify(row.selectedImages ?? [])===JSON.stringify(input.selectedImages ?? []);}
 export async function createChat(workspaceId:string,userId:string,input:ChatInput) {
   if(new Set([...(input.caseIds??[]),...(input.selectedImages??[]).map(i=>i.caseId)]).size>8)throw new ApiException(422,'每轮最多选择 8 个案例。');
   const same=await prisma.inspirationChat.findUnique({where:{workspaceId_userId_requestId:{workspaceId,userId,requestId:input.requestId}}});
   if(same) { if(!sameInput(same,input)) throw new ApiException(409,'请求标识已被其他内容使用。'); return same; }
   const conversationId=input.conversationId ?? crypto.randomUUID();
-  if(input.conversationId && !await prisma.inspirationChat.findFirst({where:{workspaceId,userId,conversationId}})) throw new ApiException(404,'对话不存在。');
-  for(const id of input.caseIds ?? []) await getCase(workspaceId,id);
-  for(const image of input.selectedImages ?? []) {const c=(await getCase(workspaceId,image.caseId,image.revision)).case;if(!c.analysisAllowed || !c.images.some(i=>i.imageId===image.imageId))throw new ApiException(403,'选定图片不可用于外部模型分析。');}
+  const previous=input.conversationId?await prisma.inspirationChat.findFirst({where:{workspaceId,userId,conversationId},select:{libraryId:true}}):null;
+  if(input.conversationId&&!previous)throw new ApiException(404,'对话不存在。');
+  if(previous&&input.libraryId&&input.libraryId!==previous.libraryId)throw new ApiException(409,'当前对话已绑定其他灵感库，请开启新对话。');
+  const library=await resolveLibrary(workspaceId,previous?.libraryId||input.libraryId);
+  for(const id of input.caseIds ?? []) await getCase(workspaceId,id,undefined,library.id);
+  for(const image of input.selectedImages ?? []) {if(image.libraryId&&image.libraryId!==library.id)throw new ApiException(409,'选定图片来自其他灵感库。');const c=(await getCase(workspaceId,image.caseId,image.revision,library.id)).case;if(!c.analysisAllowed || !c.images.some(i=>i.imageId===image.imageId))throw new ApiException(403,'选定图片不可用于外部模型分析。');}
   if(new Set((input.selectedImages ?? []).map(i=>`${i.caseId}:${i.imageId}`)).size!==(input.selectedImages ?? []).length)throw new ApiException(422,'请勿重复选择同一图片。');
   const owner=await prisma.brandWorkspace.findUniqueOrThrow({where:{id:workspaceId},select:{ownerId:true}});
   return prisma.$transaction(async tx=>{
+    await ensureLibrary(tx,library);
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`inspiration-budget:${owner.ownerId}`}))`;
     const existing=await tx.inspirationChat.findUnique({where:{workspaceId_userId_requestId:{workspaceId,userId,requestId:input.requestId}}});
     if(existing) {if(!sameInput(existing,input))throw new ApiException(409,'请求标识已被其他内容使用。');return existing;}
@@ -66,7 +74,7 @@ export async function createChat(workspaceId:string,userId:string,input:ChatInpu
     if(await tx.inspirationChat.count({where:{workspaceId:{in:tenantSpaces.map(w=>w.id)},createdAt:{gte:today}}})>=dailyLimit) throw new ApiException(429,'今日灵感问答试点额度已用完。');
     if(await tx.inspirationChat.count({where:{workspaceId,userId,conversationId,status:{in:['PENDING','RUNNING']},expiresAt:{gt:new Date()}}})) throw new ApiException(409,'本轮回答尚未完成，请稍后继续。');
     const expiresAt=new Date(Date.now()+6*60000);
-    const row=await tx.inspirationChat.create({data:{workspaceId,userId,requestId:input.requestId,conversationId,question:input.question,caseIds:input.caseIds ?? [],selectedImages:input.selectedImages ?? [],expiresAt}});
+    const row=await tx.inspirationChat.create({data:{workspaceId,userId,libraryId:library.id,requestId:input.requestId,conversationId,question:input.question,caseIds:input.caseIds ?? [],selectedImages:input.selectedImages ?? [],expiresAt}});
     await tx.asyncTask.create({data:{id:row.id,workspaceId,kind:'INSPIRATION_CHAT',expiresAt,inputJson:{userId,conversationId}}});return row;
   });
 }

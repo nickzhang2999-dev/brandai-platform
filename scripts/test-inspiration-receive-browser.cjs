@@ -17,7 +17,7 @@ const report = {isolated:true,realBackend:false,realAuthentication:false,realPro
 const scenarios = new Map(); let server,browser;
 const check = name => report.checks.push(name);
 const json=(res,data,status=200)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(data));};
-const fresh=()=>({task:null,allowed:true,configured:true,posts:0,count:1,mode:'manual',getFailure:false,loseResponse:false});
+const fresh=()=>({task:null,allowed:true,configured:true,reason:null,posts:0,count:1,mode:'manual',getFailure:false,loseResponse:false});
 const task=(status,id='isolated-receipt')=>({id,status,error:status==='FAILED'?'知识包校验未通过，请检查发布端。':null,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),expiresAt:new Date(Date.now()+360000).toISOString()});
 function state(ws){if(!scenarios.has(ws))scenarios.set(ws,fresh());return scenarios.get(ws);}
 
@@ -41,7 +41,7 @@ async function start(){
   if(suffix==='/sync'){
    if(req.method==='POST'){s.posts++;s.task=task('PENDING',match[1]+'-'+s.posts);return setTimeout(()=>json(res,s.loseResponse?{error:'Isolated lost response'}:{id:s.task.id,status:s.task.status},s.loseResponse?502:202),200);}
    if(s.getFailure)return json(res,{error:'Isolated status unavailable'},503);
-   return json(res,{enabled:true,configured:s.configured,mode:s.mode,canReceive:s.allowed&&s.configured,task:s.task});
+   return json(res,{enabled:true,configured:s.configured,mode:s.mode,canReceive:s.allowed&&s.configured,canReceiveReason:s.reason,sourceLibrary:{id:'shared-fixture',kind:'SHARED'},task:s.task});
   }
   if(req.method!=='GET'){report.unexpectedRequests.push(req.method+':'+url.pathname);return json(res,{error:'Forbidden isolated write'},405);}
   if(suffix==='/bookmarks')return json(res,{items:[]});
@@ -68,14 +68,14 @@ async function enabled(locator){await locator.waitFor();await locator.page().wai
   await page.reload();await page.getByRole('button',{name:'接收排队中…'}).waitFor();assert.equal(s.posts,1);check(spec.name+': refresh restores durable pending task');
   s.task={...s.task,status:'RUNNING'};await refresh(page);await page.getByRole('button',{name:'正在接收…'}).waitFor();check(spec.name+': running is server state');
   s.task={...s.task,status:'SUCCEEDED'};s.count=2;await refresh(page);await page.getByText('库内 2 个案例',{exact:true}).waitFor();await enabled(receive());check(spec.name+': completion refreshes catalog');
-  s.task=task('FAILED');await refresh(page);await page.getByRole('alert').filter({hasText:'知识包校验未通过'}).waitFor();await enabled(receive());assert.equal(await page.getByTestId('inspiration-case').count(),2);check(spec.name+': failed receipt preserves prior cases');
-  s.allowed=false;await refresh(page);await page.getByText('只有当前品牌的所有者可以接收新灵感；已有案例仍可浏览。',{exact:true}).waitFor();await disabled(receive());check(spec.name+': member cannot receive');
-  s.allowed=true;s.configured=false;await refresh(page);await page.getByText('接收连接尚未配置，请联系管理员。',{exact:true}).waitFor();await disabled(receive());check(spec.name+': unconfigured receive disabled');
+  s.task=task('FAILED');await refresh(page);await page.getByRole('alert').filter({hasText:'知识包校验未通过'}).waitFor();await enabled(receive());assert.equal(await page.getByTestId('inspiration-case').count(),2);assert.equal(await page.getByText(/已提交接收请求|接收请求暂未确认/).count(),0);check(spec.name+': failed receipt preserves prior cases and has no stale submit notice');
+  s.allowed=false;await refresh(page);await page.getByText('当前账号不能接收新灵感，请联系公司灵感库管理员；已有案例仍可浏览。',{exact:true}).waitFor();await disabled(receive());check(spec.name+': member cannot receive');
+  s.reason='此账号不在公司灵感库接收范围内。';await refresh(page);await page.getByText(s.reason,{exact:true}).waitFor();await disabled(receive());assert.equal(s.posts,1);check(spec.name+': receive scope is explained before any submission');s.reason=null;s.allowed=true;s.configured=false;await refresh(page);await page.getByText('接收连接尚未配置，请联系管理员。',{exact:true}).waitFor();await disabled(receive());check(spec.name+': unconfigured receive disabled');
   s.configured=true;s.getFailure=true;await refresh(page);await page.getByRole('button',{name:'重新读取接收状态'}).waitFor();await disabled(receive());check(spec.name+': stale cached permission cannot enable after GET error');
   s.getFailure=false;s.task=null;await page.getByRole('button',{name:'重新读取接收状态'}).click();await enabled(receive());
-  s.loseResponse=true;await receive().click();await page.getByRole('button',{name:'接收排队中…'}).waitFor();assert.equal(s.posts,2);await page.getByText('接收请求暂未确认，请查看下方后台状态。请求可能已经受理，系统不会自动重复提交。',{exact:true}).waitFor();check(spec.name+': lost POST response recovers task without retry');
+  s.loseResponse=true;await receive().click();await page.getByRole('button',{name:'接收排队中…'}).waitFor();assert.equal(s.posts,2);await page.waitForFunction(()=>!document.body.textContent.includes('接收请求暂未确认'));check(spec.name+': lost POST response recovers authoritative task and clears uncertain notice without retry');
   s.task={...s.task,expiresAt:new Date(Date.now()-1000).toISOString()};await refresh(page);await page.getByRole('alert').filter({hasText:'已超时'}).waitFor();await enabled(receive());check(spec.name+': expired server task has bounded exit');
-  s.task=task('RUNNING','old-brand-running');b.allowed=false;await refresh(page);await page.getByRole('button',{name:'正在接收…'}).waitFor();await page.getByTestId('switch-workspace').click();await page.getByText('只有当前品牌的所有者可以接收新灵感；已有案例仍可浏览。',{exact:true}).waitFor();assert.equal(await page.getByRole('button',{name:'正在接收…'}).count(),0);assert.equal(b.posts,0);check(spec.name+': workspace switch clears old receipt state');
+  s.task=task('RUNNING','old-brand-running');b.allowed=false;await refresh(page);await page.getByRole('button',{name:'正在接收…'}).waitFor();await page.getByTestId('switch-workspace').click();await page.getByText('当前账号不能接收新灵感，请联系公司灵感库管理员；已有案例仍可浏览。',{exact:true}).waitFor();assert.equal(await page.getByRole('button',{name:'正在接收…'}).count(),0);assert.equal(b.posts,0);check(spec.name+': workspace switch clears old receipt state');
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);check(spec.name+': no horizontal overflow');
   assert.equal(s.posts,2);await context.close();
  }

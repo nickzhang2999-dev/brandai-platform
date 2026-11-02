@@ -5,7 +5,7 @@ import { syncReplica, syncWithdrawals, lockWorkspace } from './replica';
 import { listCases } from './service';
 import { answerEvidence } from './provider';
 import { loadSelectedImages } from './selected-images';
-import { requireActiveEditor, requireCurrentEvidence } from './access';
+import { requireActiveEditor, requireCurrentEvidence, requireLibraryReceiver } from './access';
 import { retrieveInspirationCases } from './retrieval';
 import { inspirationFailureDiagnostic } from './failure';
 
@@ -21,10 +21,10 @@ export async function runInspirationChat(id:string,stopSignal?:AbortSignal) {
   try {
     await requireActiveEditor(row.workspaceId,row.userId);
     const selectedImages=InspirationSelectedImage.array().max(2).parse(row.selectedImages);
-    const all=await listCases(row.workspaceId);const ids=[...new Set([...(row.caseIds as string[]),...selectedImages.map(i=>i.caseId)])];
+    const all=await listCases(row.workspaceId,{},row.libraryId);const ids=[...new Set([...(row.caseIds as string[]),...selectedImages.map(i=>i.caseId)])];
     if(ids.some(id=>all.cases.some(c=>c.caseId===id&&!c.analysisAllowed)))throw new Error('所选案例未授权外部模型分析，可继续本地浏览。');
     all.cases=all.cases.filter(c=>c.analysisAllowed);
-    const previous=await prisma.inspirationChat.findMany({where:{workspaceId:row.workspaceId,userId:row.userId,conversationId:row.conversationId,status:'SUCCEEDED',createdAt:{lt:row.createdAt}},orderBy:{createdAt:'desc'},take:6});
+    const previous=await prisma.inspirationChat.findMany({where:{workspaceId:row.workspaceId,userId:row.userId,conversationId:row.conversationId,libraryId:row.libraryId,status:'SUCCEEDED',createdAt:{lt:row.createdAt}},orderBy:{createdAt:'desc'},take:6});
     let selected=ids.length ? all.cases.filter(c=>ids.includes(c.caseId)) : [];
     if(ids.length && selected.length!==ids.length) throw new Error('案例已撤回或更新。');
     if(!selected.length && /前两个|第二个|第一个|第三个/u.test(row.question) && !previous[0])throw new Error('历史对话中没有这个序号的案例，请重新选择。');
@@ -40,16 +40,16 @@ export async function runInspirationChat(id:string,stopSignal?:AbortSignal) {
       else if(/第三个/u.test(row.question))selected=selected.slice(2,3);
       if(!selected.length)throw new Error('历史对话中没有这个序号的案例，请重新选择。');
     }
-    if(!selected.length)selected=await retrieveInspirationCases(row.workspaceId,row.userId,row.question,signal);
+    if(!selected.length)selected=await retrieveInspirationCases(row.workspaceId,row.userId,row.question,signal,row.libraryId);
     if(!selected.length) {
       await prisma.inspirationChat.updateMany({where:{id,status:'RUNNING',expiresAt:{gt:new Date()}},data:{status:'SUCCEEDED',answer:'当前本地知识库中没有足够相关的已审核案例。请调整关键词，或等待新的知识包同步。',citations:[]}});return;
     }
     await requireActiveEditor(row.workspaceId,row.userId);
-    const beforeModel=await listCases(row.workspaceId);if(selected.some(c=>!beforeModel.cases.some(n=>n.caseId===c.caseId&&n.revision===c.revision&&n.analysisAllowed)))throw new Error('引用内容已更新，请重新提问。');
-    const images=await loadSelectedImages(row.workspaceId,selectedImages,signal);
+    const beforeModel=await listCases(row.workspaceId,{},row.libraryId);if(selected.some(c=>!beforeModel.cases.some(n=>n.caseId===c.caseId&&n.revision===c.revision&&n.analysisAllowed)))throw new Error('引用内容已更新，请重新提问。');
+    const images=await loadSelectedImages(row.workspaceId,selectedImages,signal,row.libraryId);
     // Image conversion/cache work may take time: perform the final gate afterwards.
-    await requireCurrentEvidence(row.workspaceId,row.userId,selected);
-    const historyCurrent=await listCases(row.workspaceId);
+    await requireCurrentEvidence(row.workspaceId,row.userId,selected,row.libraryId);
+    const historyCurrent=await listCases(row.workspaceId,{},row.libraryId);
     // Old answers may repeat the historic fabricated taxonomy defaults. Keep
     // stored/UI history and ordinal references, but do not reuse those answers
     // as model context even when their signed case revision is unchanged.
@@ -57,7 +57,7 @@ export async function runInspirationChat(id:string,stopSignal?:AbortSignal) {
     const result=await answerEvidence(row.question,selected,history,signal,images);signal.throwIfAborted();
     await requireActiveEditor(row.workspaceId,row.userId);
     // A revocation may arrive during inference: never persist an answer against stale evidence.
-    const now=await listCases(row.workspaceId);if(result.citations.some(c=>!now.cases.some(n=>n.caseId===c.caseId&&n.revision===c.revision)))throw new Error('引用内容已更新，请重新提问。');
+    const now=await listCases(row.workspaceId,{},row.libraryId);if(result.citations.some(c=>!now.cases.some(n=>n.caseId===c.caseId&&n.revision===c.revision)))throw new Error('引用内容已更新，请重新提问。');
     await prisma.inspirationChat.updateMany({where:{id,status:'RUNNING',expiresAt:{gt:new Date()}},data:{status:'SUCCEEDED',answer:result.answer,citations:result.citations.map(c=>({caseId:c.caseId,revision:c.revision})),model:result.model,inputTokens:result.inputTokens,outputTokens:result.outputTokens}});
   } catch(error) {
     console.warn('[inspiration-chat] failed',inspirationFailureDiagnostic(error,signal.aborted));
@@ -73,23 +73,48 @@ export function createInspirationWorker() {
       await prisma.inspirationChat.updateMany({where:{status:{in:['PENDING','RUNNING']},expiresAt:{lte:new Date()}},data:{status:'FAILED',error:'任务已超时，请重试。'}});
       await prisma.asyncTask.updateMany({where:{kind:'INSPIRATION_CHAT',status:{in:['PENDING','RUNNING']},expiresAt:{lte:new Date()}},data:{status:'FAILED',error:'任务已超时，请重试。'}});
       const pending=await prisma.inspirationChat.findFirst({where:{status:'PENDING',expiresAt:{gt:new Date()}},orderBy:{createdAt:'asc'}});if(pending)await runInspirationChat(pending.id,abort.signal);
-      const task=await prisma.asyncTask.findFirst({where:{kind:'INSPIRATION_SYNC',status:'PENDING',expiresAt:{gt:new Date()},
+      const task=await prisma.asyncTask.findFirst({where:{kind:'INSPIRATION_SYNC',inspirationLibraryId:{not:null},status:'PENDING',expiresAt:{gt:new Date()},
         ...(contentSyncMode()==='manual'?{inputJson:{path:['trigger'],equals:'manual'}}:{})},orderBy:{createdAt:'asc'}});
       if(task && (await prisma.asyncTask.updateMany({where:{id:task.id,status:'PENDING',expiresAt:{gt:new Date()}},data:{status:'RUNNING',progress:10}})).count) {
-        try {await syncReplica(task.workspaceId,AbortSignal.any([abort.signal,AbortSignal.timeout(Math.max(1,Math.min(240000,task.expiresAt!.getTime()-Date.now())))]));await prisma.asyncTask.updateMany({where:{id:task.id,status:'RUNNING',expiresAt:{gt:new Date()}},data:{status:'SUCCEEDED',progress:100}});}
-        catch {await prisma.asyncTask.updateMany({where:{id:task.id,status:'RUNNING'},data:{status:'FAILED',error:terminalError}});}
+        try {
+          const library=task.inspirationLibraryId?await prisma.inspirationLibrary.findUnique({where:{id:task.inspirationLibraryId}}):null;
+          if(!library)throw new Error('Publication recipient mismatch');
+          const input=task.inputJson as {trigger?:string;userId?:string;workspaceId?:string}|null;
+          const recheck=async()=>{
+            if(!inspirationEnabled()||!syncConfigured(library.kind))throw new Error('Library receiver access changed');
+            if(input?.trigger==='manual') {
+              if(!input.userId)throw new Error('Library receiver access changed');
+              await requireLibraryReceiver(library,input.workspaceId||task.workspaceId,input.userId);
+            }else if(contentSyncMode()!=='automatic')throw new Error('Library receiver access changed');
+          };
+          await recheck();
+          await syncReplica(library,AbortSignal.any([abort.signal,AbortSignal.timeout(Math.max(1,Math.min(240000,task.expiresAt!.getTime()-Date.now())))]),recheck);
+          await prisma.asyncTask.updateMany({where:{id:task.id,status:'RUNNING',expiresAt:{gt:new Date()}},data:{status:'SUCCEEDED',progress:100,error:null,resultJson:{libraryId:library.id}}});
+        } catch(error) {
+          const scope=error instanceof Error&&error.message==='Publication recipient mismatch';
+          const access=error instanceof Error&&error.message==='Library receiver access changed';
+          const timedOut=error instanceof Error&&['AbortError','TimeoutError'].includes(error.name);
+          const failureCode=scope?'LIBRARY_SCOPE_MISMATCH':access?'RECEIVER_ACCESS_CHANGED':timedOut?'SYNC_TIMEOUT':'SYNC_FAILED';
+          const message=scope?'发布包与当前灵感库的接收范围不一致，请联系管理员检查库配置。':access?'接收权限已变化，请由当前灵感库管理员重新确认。':timedOut?'灵感接收超时，已有内容保留。':terminalError;
+          console.warn('[inspiration-sync] failed',{failureCode});
+          await prisma.asyncTask.updateMany({where:{id:task.id,status:'RUNNING'},data:{status:'FAILED',error:message,resultJson:{failureCode}}});
+        }
       }
       await prisma.asyncTask.updateMany({where:{kind:'INSPIRATION_SYNC',status:{in:['PENDING','RUNNING']},expiresAt:{lte:new Date()}},data:{status:'FAILED',error:'同步任务已超时，请重试。'}});
-      if(syncConfigured() && contentSyncMode()==='automatic') {
-        const due=await prisma.inspirationState.findMany({where:{OR:[{lastSyncAt:null},{lastSyncAt:{lt:new Date(Date.now()-5*60000)}}]},take:20});
-        for(const state of due) {if(Date.now()-(attempted.get(state.workspaceId)??0)<5*60000)continue;attempted.set(state.workspaceId,Date.now());
-          await prisma.$transaction(async tx=>{await lockWorkspace(tx,state.workspaceId);const pending=await tx.asyncTask.count({where:{workspaceId:state.workspaceId,kind:'INSPIRATION_SYNC',status:{in:['PENDING','RUNNING']}}});if(!pending)await tx.asyncTask.create({data:{workspaceId:state.workspaceId,kind:'INSPIRATION_SYNC',expiresAt:new Date(Date.now()+6*60000),inputJson:{trigger:'automatic'}}});});}
+      if(contentSyncMode()==='automatic') {
+        const due=await prisma.inspirationState.findMany({where:{OR:[{lastSyncAt:null},{lastSyncAt:{lt:new Date(Date.now()-5*60000)}}]},include:{library:true},take:20});
+        for(const state of due) {
+          if(!syncConfigured(state.library.kind)||Date.now()-(attempted.get(state.libraryId)??0)<5*60000)continue;attempted.set(state.libraryId,Date.now());
+          const workspaceId=state.library.legacyWorkspaceId||(await prisma.brandWorkspace.findFirst({where:{ownerId:state.library.ownerId},select:{id:true}}))?.id;
+          if(!workspaceId)continue;
+          await prisma.$transaction(async tx=>{await lockWorkspace(tx,state.libraryId);const pending=await tx.asyncTask.count({where:{inspirationLibraryId:state.libraryId,kind:'INSPIRATION_SYNC',status:{in:['PENDING','RUNNING']}}});if(!pending)await tx.asyncTask.create({data:{workspaceId,inspirationLibraryId:state.libraryId,kind:'INSPIRATION_SYNC',expiresAt:new Date(Date.now()+6*60000),inputJson:{trigger:'automatic'}}});});
+        }
       }
     } finally {busy=false;}
   }
   const timer=setInterval(()=>{void tick().catch(()=>console.error('[inspiration] background dispatcher failed'));},5000);timer.unref();
-  async function withdrawals(){if(stopped||withdrawalBusy||!inspirationEnabled()||!syncConfigured())return;withdrawalBusy=true;
-    try{const states=await prisma.inspirationState.findMany({take:200,select:{workspaceId:true}});for(const state of states){if(stopped)break;try{await syncWithdrawals(state.workspaceId,AbortSignal.any([abort.signal,AbortSignal.timeout(15000)]));}catch{console.warn('[inspiration] withdrawal check failed');}}}finally{withdrawalBusy=false;}}
+  async function withdrawals(){if(stopped||withdrawalBusy||!inspirationEnabled())return;withdrawalBusy=true;
+    try{const states=await prisma.inspirationState.findMany({take:200,include:{library:true}});for(const state of states){if(stopped)break;if(!syncConfigured(state.library.kind))continue;try{await syncWithdrawals(state.library,AbortSignal.any([abort.signal,AbortSignal.timeout(15000)]));}catch{console.warn('[inspiration] withdrawal check failed');}}}finally{withdrawalBusy=false;}}
   const withdrawalTimer=setInterval(()=>{void withdrawals().catch(()=>console.error('[inspiration] withdrawal check failed'));},60000);withdrawalTimer.unref();void withdrawals().catch(()=>undefined);
   void tick().catch(()=>undefined);
   return {close:async()=>{stopped=true;abort.abort();clearInterval(timer);clearInterval(withdrawalTimer);}};

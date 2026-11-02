@@ -7,9 +7,10 @@ vi.mock('@/lib/workspace',()=>({requireWorkspaceRole:mocks.role}));
 vi.mock('@/lib/inspiration/service',()=>({requireEnabled:()=>{if(!mocks.enabled())throw Object.assign(new Error('disabled'),{status:503});}}));
 vi.mock('@/lib/inspiration/config',()=>({contentSyncMode:()=> 'manual',inspirationEnabled:mocks.enabled,syncConfigured:mocks.configured}));
 vi.mock('@/lib/inspiration/replica',()=>({lockWorkspace:mocks.lock}));
+vi.mock('@/lib/inspiration/library',()=>({resolveLibrary:async(id:string)=>({id,kind:'WORKSPACE',ownerId:'user',legacyWorkspaceId:id}),ensureLibrary:vi.fn(),sourceLibrary:(x:{id:string;kind:string})=>({id:x.id,kind:x.kind}),canReceiveLibrary:async(_library:unknown,_user:unknown,role:string)=>role==='OWNER'}));
 import { GET, POST } from '../src/app/api/workspaces/[wsId]/inspiration/sync/route';
 
-type Task={id:string;workspaceId:string;status:'PENDING'|'RUNNING'|'SUCCEEDED'|'FAILED';createdAt:Date;updatedAt:Date;expiresAt:Date|null;inputJson:unknown;error?:string};
+type Task={id:string;workspaceId:string;inspirationLibraryId:string;status:'PENDING'|'RUNNING'|'SUCCEEDED'|'FAILED';createdAt:Date;updatedAt:Date;expiresAt:Date|null;inputJson:unknown;error?:string};
 let task:Task|null, nextId:number, tail:Promise<unknown>;
 const context=(wsId='workspace-a')=>({params:Promise.resolve({wsId})});
 const req=()=>new Request('https://example.invalid/api/workspaces/workspace-a/inspiration/sync',{method:'POST'});
@@ -17,12 +18,12 @@ const now=()=>new Date('2026-11-02T06:00:00Z');
 beforeEach(()=>{
   vi.resetAllMocks();vi.useFakeTimers();vi.setSystemTime(now());task=null;nextId=0;tail=Promise.resolve();
   mocks.enabled.mockReturnValue(true);mocks.configured.mockReturnValue(true);mocks.user.mockResolvedValue({id:'user'});mocks.role.mockResolvedValue({role:'OWNER'});
-  mocks.find.mockImplementation(async({where})=>task && task.workspaceId===where.workspaceId
+  mocks.find.mockImplementation(async({where})=>task && task.inspirationLibraryId===where.inspirationLibraryId
     && (!where.OR || task.status!=='PENDING' || (task.inputJson as {trigger?:string})?.trigger==='manual')
     && (!where.status || (where.status.in.includes(task.status)&&!!task.expiresAt&&task.expiresAt>now()))?task:null);
   mocks.create.mockImplementation(async({data})=>task={...data,id:`task-${++nextId}`,status:'PENDING',createdAt:now(),updatedAt:now()});
-  mocks.update.mockImplementation(async({where,data})=>{expect(where.id).toBe(task?.id);return Object.assign(task!,data);});
-  mocks.transaction.mockImplementation((fn)=>{const next=tail.then(()=>fn({inspirationState:{upsert:mocks.upsert},asyncTask:{findFirst:mocks.find,create:mocks.create,update:mocks.update}}));tail=next.catch(()=>{});return next;});
+  mocks.update.mockImplementation(async({where,data})=>{expect(where.id).toBe(task?.id);if(where.status&&where.status!==task!.status)return {count:0};Object.assign(task!,data);return {count:1};});
+  mocks.transaction.mockImplementation((fn)=>{const next=tail.then(()=>fn({inspirationState:{upsert:mocks.upsert},asyncTask:{findFirst:mocks.find,create:mocks.create,updateMany:mocks.update}}));tail=next.catch(()=>{});return next;});
 });
 afterEach(()=>vi.useRealTimers());
 
@@ -31,13 +32,13 @@ describe('one-click workspace-scoped inspiration reception',()=>{
     const replies=await Promise.all([POST(req(),context()),POST(req(),context())]);
     expect(replies.map(x=>x.status)).toEqual([202,202]);expect(await replies[0]!.json()).toEqual(await replies[1]!.json());
     expect(mocks.create).toHaveBeenCalledOnce();expect(mocks.lock).toHaveBeenCalledTimes(2);
-    expect(task?.inputJson).toEqual({trigger:'manual',userId:'user'});
+    expect(task?.inputJson).toEqual({trigger:'manual',userId:'user',workspaceId:'workspace-a'});
     task!.status='RUNNING';const again=await POST(req(),context());expect((await again.json()).id).toBe('task-1');expect(mocks.create).toHaveBeenCalledOnce();
-    expect(mocks.role).toHaveBeenCalledWith('workspace-a','user','OWNER');
+    expect(mocks.role).toHaveBeenCalledWith('workspace-a','user','VIEWER');
   });
   it('confirms an existing automatic queue item without creating a second import',async()=>{
     await POST(req(),context());task!.inputJson={trigger:'automatic'};mocks.create.mockClear();
-    await POST(req(),context());expect(task!.inputJson).toEqual({trigger:'manual',userId:'user'});expect(mocks.create).not.toHaveBeenCalled();
+    await POST(req(),context());expect(task!.inputJson).toEqual({trigger:'manual',userId:'user',workspaceId:'workspace-a'});expect(mocks.create).not.toHaveBeenCalled();
   });
   it('keeps reception available for old automatic or untagged pending work, then restores confirmed progress',async()=>{
     await POST(req(),context());

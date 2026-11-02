@@ -30,7 +30,7 @@ describe('internal publication recipient boundary',()=>{
   it('validates a real signed image package, then installs only into its configured receiver',async()=>{
     const f=await fixture();await installPackage('workspace-a',f.raw,f.files,keys);
     expect(mocks.createRecord).toHaveBeenCalledOnce();expect(mocks.createImage).toHaveBeenCalledOnce();
-    expect(mocks.update).toHaveBeenCalledWith({where:{workspaceId:'workspace-a'},data:{activeRelease:'r1',releaseSequence:1}});
+    expect(mocks.update).toHaveBeenCalledWith({where:{libraryId:'workspace-a'},data:{activeRelease:'r1',releaseSequence:1}});
   });
   it.each(['','https://another.invalid'])('rejects missing or mismatched trusted receiver origin before writes (%s)',async value=>{
     vi.stubEnv('INSPIRATION_RECEIVER_ORIGIN',value);const f=await fixture();await expect(installPackage('workspace-a',f.raw,f.files,keys)).rejects.toThrow('recipient');expect(mocks.transaction).not.toHaveBeenCalled();
@@ -62,7 +62,7 @@ describe('internal publication recipient boundary',()=>{
     mocks.records.mockResolvedValue([{id:'r-good',body:valid.value},{id:'r-wrong',body:wrong.value},{id:'r-invalid',body:invalid.value},{id:'r-legacy',body:legacy}]);
     expect((await activeRecords('workspace-a')).records.map(r=>r.id)).toEqual(['r-good','r-legacy']);
     vi.stubEnv('INSPIRATION_RECEIVER_ORIGIN','');expect((await activeRecords('workspace-a')).records.map(r=>r.id)).toEqual(['r-legacy']);
-    expect(mocks.records.mock.calls[0]![0].where.workspaceId).toBe('workspace-a');
+    expect(mocks.records.mock.calls[0]![0].where.libraryId).toBe('workspace-a');
   });
   it('refuses to reactivate a stored snapshot from a different receiver origin',async()=>{
     const f=await fixture(b=>{b.recipient={origin:'https://another.invalid',workspace_id:'workspace-a'};});
@@ -72,6 +72,6 @@ describe('internal publication recipient boundary',()=>{
   it('does not make a withdrawn scoped case block rollback, or restore it',async()=>{
     const f=await fixture(b=>{b.recipient={origin:'https://another.invalid',workspace_id:'workspace-a'};});
     mocks.state.mockResolvedValue({withdrawn:['case']});mocks.release.mockResolvedValue({snapshot:{case:'stored-case'}});mocks.records.mockResolvedValue([{id:'stored-case',body:f.value}]);
-    await rollbackReplica('workspace-a','r1');expect(mocks.records).not.toHaveBeenCalled();expect(mocks.update).toHaveBeenCalledWith({where:{workspaceId:'workspace-a'},data:{activeRelease:'r1'}});
+    await rollbackReplica('workspace-a','r1');expect(mocks.records).not.toHaveBeenCalled();expect(mocks.update).toHaveBeenCalledWith({where:{libraryId:'workspace-a'},data:{activeRelease:'r1'}});
   });
 });

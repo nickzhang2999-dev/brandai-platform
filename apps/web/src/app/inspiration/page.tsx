@@ -3,9 +3,10 @@ import { ApiException } from "@/lib/api";
 import { studioSession } from "@/lib/studio-session";
 import { requireWorkspaceRole } from "@/lib/workspace";
 import InspirationClient from "./inspiration-client";
+import InspirationBrandContext from "./inspiration-brand-context";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "设计灵感 · Nova" };
+export const metadata = { title: "统一灵感库 · DeepFlare" };
 
 /** A Studio destination, outside the retired BrandAI navigation shell. */
 export default async function InspirationPage({ searchParams }: {
@@ -22,15 +23,15 @@ export default async function InspirationPage({ searchParams }: {
   try {
     // Repeated explicit workspace parameters must never select a fallback brand.
     if (Array.isArray(params.workspaceId)) throw new ApiException(400, "品牌参数无效，请从工作台重新打开设计灵感。");
-    const { user, workspaceId } = await studioSession(new Request("http://novart.internal" + callback));
-    const { workspace } = await requireWorkspaceRole(workspaceId, user.id, "VIEWER");
+    const { user, workspaceId, session } = await studioSession(new Request("http://novart.internal" + callback));
+    const { workspace, role } = await requireWorkspaceRole(workspaceId, user.id, "VIEWER");
     returnUrl = "/studio?" + new URLSearchParams({ workspaceId });
     return <main className="min-h-screen bg-background text-foreground" data-testid="studio-inspiration" data-workspace-id={workspaceId}>
-      <nav aria-label="设计灵感导航" className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-5 pt-5 sm:px-8">
-        <a className="shrink-0 text-sm text-primary underline-offset-4 hover:underline" href={returnUrl}>‹ 返回 Nova 工作台</a>
-        <span className="truncate text-sm text-muted-foreground">{workspace.name}</span>
+      <nav aria-label="设计灵感导航" className="mx-auto flex max-w-7xl flex-wrap items-start justify-between gap-4 px-5 pt-5 sm:px-8">
+        <a className="shrink-0 text-sm text-primary underline-offset-4 hover:underline" href={returnUrl}>‹ 返回 DeepFlare 工作台</a>
+        <InspirationBrandContext workspaceId={workspaceId} workspaceName={workspace.name} workspaces={session.workspaces} query={query.toString()} />
       </nav>
-      <div className="mx-auto max-w-7xl px-5 py-6 sm:px-8"><InspirationClient key={workspaceId} wsId={workspaceId} /></div>
+      <div className="mx-auto max-w-7xl px-5 py-6 sm:px-8"><InspirationClient key={workspaceId} wsId={workspaceId} workspaceName={workspace.name} canEdit={role !== "VIEWER"} /></div>
     </main>;
   } catch (error) {
     if (error instanceof ApiException && error.status === 401) redirect("/login?callbackUrl=" + encodeURIComponent(callback));

@@ -14,11 +14,11 @@ const response=(value:unknown)=>new Response(JSON.stringify(value),{status:200})
 const advance=()=>vi.setSystemTime(Date.now()+1000);
 beforeEach(()=>{
   vi.useFakeTimers();vi.setSystemTime(new Date('2026-10-26T05:00:00Z'));vi.clearAllMocks();
-  state={workspaceId:'ws',activeRelease:null,releaseSequence:0,withdrawalSequence:0,withdrawalHash:null,withdrawn:[],lastSyncAt:null,lastError:null,lastSyncAttemptAt:null,lastSyncFailedAt:null,syncError:null,lastWithdrawalAttemptAt:null,lastWithdrawalAt:null,lastWithdrawalFailedAt:null,withdrawalError:null};
-  mocks.upsert.mockImplementation(async({where,update})=>{expect(where.workspaceId).toBe('ws');Object.assign(state,update);return {...state};});
-  mocks.find.mockImplementation(async({where})=>{expect(where.workspaceId).toBe('ws');return {...state};});
-  mocks.update.mockImplementation(async({where,data})=>{expect(where.workspaceId).toBe('ws');Object.assign(state,data);return {...state};});
-  mocks.updateMany.mockImplementation(async({where,data})=>{expect(where.workspaceId).toBe('ws');for(const field of ['lastSyncAttemptAt','lastWithdrawalAttemptAt'])if(where[field] && (state[field] as Date)?.getTime()!==where[field].getTime())return {count:0};Object.assign(state,data);return {count:1};});
+  state={libraryId:'ws',activeRelease:null,releaseSequence:0,withdrawalSequence:0,withdrawalHash:null,withdrawn:[],lastSyncAt:null,lastError:null,lastSyncAttemptAt:null,lastSyncFailedAt:null,syncError:null,lastWithdrawalAttemptAt:null,lastWithdrawalAt:null,lastWithdrawalFailedAt:null,withdrawalError:null};
+  mocks.upsert.mockImplementation(async({where,update})=>{expect(where.libraryId).toBe('ws');Object.assign(state,update);return {...state};});
+  mocks.find.mockImplementation(async({where})=>{expect(where.libraryId).toBe('ws');return {...state};});
+  mocks.update.mockImplementation(async({where,data})=>{expect(where.libraryId).toBe('ws');Object.assign(state,data);return {...state};});
+  mocks.updateMany.mockImplementation(async({where,data})=>{expect(where.libraryId).toBe('ws');for(const field of ['lastSyncAttemptAt','lastWithdrawalAttemptAt'])if(where[field] && (state[field] as Date)?.getTime()!==where[field].getTime())return {count:0};Object.assign(state,data);return {count:1};});
   mocks.release.mockResolvedValue(null);
   mocks.transaction.mockImplementation(async(fn)=>fn({$executeRaw:mocks.lock,inspirationState:{upsert:mocks.upsert,update:mocks.update}}));
   vi.stubEnv('INSPIRATION_PUBLISHER_URL','https://publisher.example/knowledge/v1');vi.stubEnv('INSPIRATION_READ_TOKEN','isolated-private-token');vi.stubEnv('INSPIRATION_TRUSTED_KEYS_JSON',JSON.stringify(keys));
