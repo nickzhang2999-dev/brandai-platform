@@ -54,11 +54,15 @@ describe("owned generation card explicit actions", () => {
   });
   it("shows the applied brand rule count only when the server recorded it", async () => {
     const f = fixture(task({ appliedBrandRuleCount: 3 })); await settle();
-    expect(screen.getByTestId("owned-generation-rule-count").textContent).toBe("已应用 3 条品牌规则");
+    // A count without per-rule receipts is a transfer record, not an application
+    // record; the card must not claim the rules were applied.
+    expect(screen.getByTestId("owned-generation-rule-count").textContent).toBe("已传入 3 条品牌规则；历史任务未记录明细。");
     f.rerender(<OwnedGenerationCard {...f.props} task={task({ appliedBrandRuleCount: 0 })} />);
-    expect(screen.getByTestId("owned-generation-rule-count").textContent).toBe("本次未应用品牌规则");
+    expect(screen.getByTestId("owned-generation-rule-count").textContent).toBe("本次未应用品牌规则；历史任务未记录原因。");
     f.rerender(<OwnedGenerationCard {...f.props} task={task({ appliedBrandRuleCount: null })} />);
-    expect(screen.queryByTestId("owned-generation-rule-count")).toBeNull();
+    // null means the server kept no receipt at all; state that instead of
+    // rendering an empty or misleading count.
+    expect(screen.getByTestId("owned-generation-rule-count").textContent).toBe("历史任务未记录品牌规则应用证据。");
   });
   it("does not automatically generate, inspect, archive or insert on mount/rerender", async () => {
     const f = fixture(task({ canRetryArchive: true })); await settle(); f.rerender(<OwnedGenerationCard {...f.props} task={{ ...f.props.task }} />); await settle();
@@ -71,7 +75,7 @@ describe("owned generation card explicit actions", () => {
     expect(f.archive).toHaveBeenCalledWith("fixture-request"); expect(f.submit).not.toHaveBeenCalled(); expect(f.inspect).not.toHaveBeenCalled();
     expect(f.fetcher).toHaveBeenCalledTimes(1); const [url, init] = f.fetcher.mock.calls[0]!;
     expect(String(url)).toContain("/studio/generation/retry-archive?"); expect(init?.method).toBe("POST"); expect(JSON.parse(String(init?.body))).toEqual({ projectId: "fixture-project", requestId: "fixture-request" });
-    expect(f.onTask).toHaveBeenCalledWith(updated); expect(f.onNotice).toHaveBeenCalledWith(expect.stringContaining("不会再次生成"));
+    expect(f.onTask).toHaveBeenCalledWith(expect.objectContaining({ requestId: updated.requestId, resultState: updated.resultState, canRetryArchive: updated.canRetryArchive, results: updated.results })); expect(f.onNotice).toHaveBeenCalledWith(expect.stringContaining("不会再次生成"));
     f.rerender(<OwnedGenerationCard {...f.props} task={updated} />); expect(screen.queryByRole("button", { name: "重试保存结果" })).toBeNull();
   });
   it("does not accept another mutation's archive receipt as the original task", async () => {

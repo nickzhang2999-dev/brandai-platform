@@ -4,7 +4,7 @@ import { ApiException } from '../api';
 import { activeRecords } from './replica';
 import { contentSyncMode, inspirationEnabled, syncConfigured } from './config';
 import { PublishedCase } from './protocol';
-import { catalogMetadata, catalogKeywordScore, filterCatalog, type CatalogFilters } from './catalog';
+import { catalogMetadata, catalogKeywordScore, pageCatalog, type CatalogFilters, type CatalogPage } from './catalog';
 import { inspirationSyncStatus } from './sync-status';
 import { ensureLibrary, resolveLibrary, sourceLibrary } from './library';
 
@@ -19,18 +19,18 @@ export function card(workspaceId:string, value:unknown,libraryId=workspaceId): I
 export function keywordScore(c:InspirationCaseCard, query:string) {
   return catalogKeywordScore(c,query);
 }
-export async function listCases(workspaceId:string, filters:CatalogFilters={},libraryId?:string): Promise<InspirationListResponse> {
+export async function listCases(workspaceId:string, filters:CatalogFilters={},libraryId?:string, page:CatalogPage={}): Promise<InspirationListResponse> {
   const enabled=inspirationEnabled();
   // A disabled response exposes status only: do not read stored content or history.
   if(!enabled) return {sourceLibrary:null,enabled:false,syncConfigured:false,activeRelease:null,caseCount:0,
-    withdrawalSequence:0,lastSyncAt:null,error:null,cases:[],searchMode:'keyword-tags',
+    withdrawalSequence:0,lastSyncAt:null,error:null,cases:[],searchMode:'keyword-tags',matchedCount:0,hasMore:false,nextCursor:null,
     syncStatus:inspirationSyncStatus(null,null,false,false,Date.now(),contentSyncMode())};
   const library=await resolveLibrary(workspaceId,libraryId),configured=syncConfigured(library.kind);
   const {state,release,records}=await activeRecords(library);
   const all=records.map(r=>card(workspaceId,r.body,library.id));
-  const cases=filterCatalog(all,filters);
+  const paged=pageCatalog(all,filters,page);
   const syncStatus=inspirationSyncStatus(state,release?.manifestHash ?? null,enabled,configured,Date.now(),contentSyncMode());
-  return {sourceLibrary:sourceLibrary(library),enabled,syncConfigured:configured,activeRelease:release?{id:release.releaseId,sequence:release.sequence,createdAt:release.createdAt.toISOString()}:null,caseCount:all.length,withdrawalSequence:state?.withdrawalSequence ?? 0,lastSyncAt:state?.lastSyncAt?.toISOString() ?? null,error:[syncStatus.content.error,syncStatus.withdrawals.error].filter(Boolean).join(' ') || null,cases,searchMode:'keyword-tags' as const,syncStatus};
+  return {sourceLibrary:sourceLibrary(library),enabled,syncConfigured:configured,activeRelease:release?{id:release.releaseId,sequence:release.sequence,createdAt:release.createdAt.toISOString()}:null,caseCount:all.length,withdrawalSequence:state?.withdrawalSequence ?? 0,lastSyncAt:state?.lastSyncAt?.toISOString() ?? null,error:[syncStatus.content.error,syncStatus.withdrawals.error].filter(Boolean).join(' ') || null,cases:paged.cases,searchMode:'keyword-tags' as const,matchedCount:paged.matchedCount,hasMore:paged.hasMore,nextCursor:paged.nextCursor,syncStatus};
 }
 export async function getCase(workspaceId:string, caseId:string, revision?:number,libraryId?:string) {
   const library=await resolveLibrary(workspaceId,libraryId);

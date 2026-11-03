@@ -23,13 +23,23 @@ export async function apiFetch<T>(
   url: string,
   init?: RequestInit,
 ): Promise<T> {
-  const res = await fetch(url, {
-    ...init,
-    headers: {
-      ...(init?.body ? { "content-type": "application/json" } : {}),
-      ...init?.headers,
-    },
-  });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      ...init,
+      headers: {
+        ...(init?.body ? { "content-type": "application/json" } : {}),
+        ...init?.headers,
+      },
+    });
+  } catch (error) {
+    // A transport failure (offline, DNS, aborted by the browser, proxy reset)
+    // has no HTTP status and no server-supplied message. Wrap it so callers can
+    // tell "we never reached the server" from "the server said no", instead of
+    // letting the raw `TypeError: Failed to fetch` reach the user.
+    if (error instanceof DOMException && error.name === "AbortError") throw error;
+    throw new ApiFetchError("网络连接中断，请检查网络后重试。", 0);
+  }
   if (!res.ok) {
     let detail = res.statusText;
     try {

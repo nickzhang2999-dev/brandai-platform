@@ -1,6 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../src/lib/api", () => ({ ApiException: class extends Error { constructor(public status: number, message: string) { super(message); } } }));
 import { requireStudioLayerRepairParent, inspectStudioLayerRepair, studioImageToolPixelEvidence } from "../src/lib/studio-layer-repair";
+
+it("keeps bounded cutout RGB/mask evidence through both worker and archive filters", () => {
+  const evidence = { sourcePixelProtection: "rgb-with-provider-alpha", rgbSource: "SOURCE", alphaSource: "PROVIDER_TIMES_SOURCE",
+    sourceWidth: 96, sourceHeight: 64, alphaWidth: 192, alphaHeight: 128, independentQuality: "not-reviewed" };
+  const first = studioImageToolPixelEvidence("remove-background", { ...evidence, unrelated: "discard" }, 96, 64);
+  expect(first).toEqual({ imageToolPixelEvidence: { ...evidence, scaleX: .5, scaleY: .5 } });
+  expect(studioImageToolPixelEvidence("remove-background", first.imageToolPixelEvidence!, 96, 64)).toEqual(first);
+  for (const patch of [{ sourceWidth: 95 }, { alphaWidth: 0 }, { alphaHeight: 8193 }, { rgbSource: "PROVIDER" }, { alphaSource: "PROVIDER" }])
+    expect(studioImageToolPixelEvidence("remove-background", { ...evidence, ...patch }, 96, 64)).toEqual({});
+  expect(studioImageToolPixelEvidence("inpaint", evidence, 96, 64)).toEqual({});
+});
 const source = { shapeId: "shape:source", assetId: "source", sha256: "a".repeat(64), width: 96, height: 64 };
 const parent = { id: "parent", workspaceId: "w", projectId: "p", status: "SUCCEEDED", sourceShapeId: source.shapeId,
   assetId: source.assetId, assetSha256: source.sha256, sourceWidth: source.width, sourceHeight: source.height };

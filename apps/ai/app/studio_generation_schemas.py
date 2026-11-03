@@ -3,6 +3,7 @@ from datetime import datetime
 from typing import Annotated, Literal
 from pydantic import Field, field_validator, model_validator
 from .studio_workflow_schemas import StrictModel, ProjectId, Sha256, ShapeId
+from .studio_brand_rule_status_schemas import StudioBrandRuleReceipt
 
 MutationId = Annotated[str, Field(pattern=r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\z")]
 
@@ -107,6 +108,8 @@ class StudioGenerationView(StrictModel):
     error: str | None
     archiveError: str | None
     canRetryArchive: bool
+    appliedBrandRuleCount: int | None = Field(default=None, ge=0, strict=True)
+    brandRuleReceipts: list[StudioBrandRuleReceipt] = Field(default_factory=list)
 
     @field_validator("sourceShapeId", mode="before")
     @classmethod

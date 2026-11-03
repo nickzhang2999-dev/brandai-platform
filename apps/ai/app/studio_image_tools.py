@@ -8,7 +8,7 @@ import io
 import math
 import hashlib
 from fastapi import HTTPException
-from PIL import Image
+from PIL import Image, ImageChops
 from .providers.http_providers import HttpImageProvider, _is_gpt_image_2_model, _resolve_openai_size
 from .providers.retry_policy import call_with_retry_policy
 from .schemas import GenerateResponse, GeneratedVersion
@@ -104,6 +104,15 @@ async def run_studio_image_tool(req: StudioEditRequest, provider) -> GenerateRes
         low, high = result.getchannel("A").getextrema()
         if low != 0 or high <= 0:
             raise ImageResponseError("Background-removal output lost meaningful alpha after normalization")
+        # This operation explicitly asks for a cutout of the visible source,
+        # not generated/occluded content. Use the provider only for alpha;
+        # keep source RGB at native resolution, including fine texture/text.
+        # Existing source transparency remains authoritative too.
+        alpha = ImageChops.multiply(result.getchannel("A"), source.convert("RGBA").getchannel("A"))
+        if alpha.getextrema()[1] <= 0:
+            raise ImageResponseError("Background-removal mask has no overlap with visible source pixels")
+        result = source.convert("RGBA")
+        result.putalpha(alpha)
     if mask is not None:
         # Server compositing preserves every unpainted decoded source pixel,
         # even if a provider edits outside its advertised mask.
@@ -114,7 +123,13 @@ async def run_studio_image_tool(req: StudioEditRequest, provider) -> GenerateRes
     params = {"generationPath": "studio_image_tool", "imageTool": tool,
               "providerWidth": provider_output[0], "providerHeight": provider_output[1],
               "actualWidth": source.width, "actualHeight": source.height,
+              "sourceWidth": source.width, "sourceHeight": source.height,
+              "scaleX": source.width / provider_output[0], "scaleY": source.height / provider_output[1],
               "maskConvention": "white-edit-black-preserve" if mask is not None else None}
+    if tool == "remove-background":
+        params.update({"sourcePixelProtection": "rgb-with-provider-alpha", "rgbSource": "SOURCE",
+                       "alphaSource": "PROVIDER_TIMES_SOURCE", "alphaWidth": provider_output[0],
+                       "alphaHeight": provider_output[1], "independentQuality": "not-reviewed"})
     if mask is not None:
         histogram = mask.histogram()
         params.update({"sourcePixelProtection": "outside-mask", "protectedPixelCount": histogram[0],

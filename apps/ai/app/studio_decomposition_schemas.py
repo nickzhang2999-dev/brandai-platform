@@ -83,6 +83,28 @@ class StudioDecompositionAlphaBounds(StrictModel):
     height: Dimension
 
 
+class StudioLayerResolution(StrictModel):
+    sourceWidth: Dimension
+    sourceHeight: Dimension
+    providerWidth: Dimension
+    providerHeight: Dimension
+    publishedWidth: Dimension
+    publishedHeight: Dimension
+    scaleX: float = Field(gt=0, allow_inf_nan=False)
+    scaleY: float = Field(gt=0, allow_inf_nan=False)
+    resampling: Literal["NONE", "LANCZOS3"]
+    rgbSource: Literal["PROVIDER"]
+
+    @model_validator(mode="after")
+    def measured_scaling(self):
+        if (self.sourceWidth != self.publishedWidth or self.sourceHeight != self.publishedHeight
+            or abs(self.scaleX - self.publishedWidth / self.providerWidth) > 1e-9
+            or abs(self.scaleY - self.publishedHeight / self.providerHeight) > 1e-9
+            or (self.resampling == "NONE") != (self.providerWidth == self.publishedWidth and self.providerHeight == self.publishedHeight)):
+            raise ValueError("Resolution receipt must match measured pixel dimensions and scaling")
+        return self
+
+
 class StudioDecompositionLayer(StrictModel):
     assetId: ProjectId
     assetSha256: Sha256
@@ -94,7 +116,15 @@ class StudioDecompositionLayer(StrictModel):
     url: str = Field(pattern=r"^/api/workspaces/[a-zA-Z0-9_-]{1,128}/assets/[a-zA-Z0-9_-]{1,128}/raw\z")
     alphaBounds: StudioDecompositionAlphaBounds
     inkCoverage: float = Field(ge=0, le=1, allow_inf_nan=False)
+    resolution: StudioLayerResolution | None = None
     name: str | None = Field(default=None, min_length=1, max_length=80)
+
+    @field_validator("resolution", mode="before")
+    @classmethod
+    def no_null_resolution(cls, value):
+        if value is None:
+            raise ValueError("resolution must be omitted, not null")
+        return value
 
     @field_validator("name", mode="before")
     @classmethod
@@ -108,6 +138,8 @@ class StudioDecompositionLayer(StrictModel):
 
     @model_validator(mode="after")
     def within_full_frame(self):
+        if self.resolution and (self.resolution.publishedWidth != self.width or self.resolution.publishedHeight != self.height):
+            raise ValueError("Resolution receipt must describe the published layer")
         if self.alphaBounds.left + self.alphaBounds.width > self.width or self.alphaBounds.top + self.alphaBounds.height > self.height:
             raise ValueError("Alpha bounds exceed the original full image")
         return self

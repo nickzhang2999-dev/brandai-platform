@@ -29,3 +29,4 @@ prisma/*.db
 # Redis runtime snapshot (local stack artifact — never commit)
 dump.rdb
 *.rdb
+.novart-tmp/

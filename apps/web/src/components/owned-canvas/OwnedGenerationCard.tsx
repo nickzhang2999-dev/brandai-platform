@@ -5,6 +5,8 @@ import type { createOwnedEditorApi, GenerationTask, GenerationCompliance, Persis
 import { downloadOwnedPsd } from "./owned-psd-download";
 import { ownedPsdSelection, ownedLayerTaskStatus, ownedLayerTaskTitle, ownedLayerTaskNotice } from "./owned-layer-options";
 import { useBoundedTaskPoll } from "../../lib/use-bounded-task-poll";
+import { OwnedLayerResolution } from "./OwnedLayerResolution";
+import { GenerationBrandRuleReceipt } from "./GenerationBrandRuleReceipt";
 
 type Props = { task: GenerationTask; api: ReturnType<typeof createOwnedEditorApi> | null; canEdit: boolean;
   isImagePlaced?(image: PersistentImage): boolean; compact?: boolean; activityNotice?: string; recoveryDisabled?: boolean; onReedit?(): void;
@@ -22,6 +24,7 @@ export function OwnedGenerationCard({ task, api, canEdit, onTask, onNotice, onIn
   latest.current = { task, api, canEdit };
   const [busy, setBusy] = useState(false), [checks, setChecks] = useState<Record<string, GenerationCompliance>>({});
   const [psd, setPsd] = useState<GeneratedPsdTask | null>(null), [psdError, setPsdError] = useState(""), [psdReading, setPsdReading] = useState(false);
+  const [download, setDownload] = useState<{ state: "preparing" | "started" | "error"; message: string } | null>(null);
   const psdReadBusy = useRef(false);
   const psdBudget = useBoundedTaskPoll({ taskKey: selection.requested && api ? JSON.stringify([task.requestId, task.psdLayerCount, task.psdLayerMode]) : null,
     active: !psd || ["PENDING", "RUNNING"].includes(psd.status) });
@@ -46,7 +49,7 @@ export function OwnedGenerationCard({ task, api, canEdit, onTask, onNotice, onIn
     }
   }, [psdRemaining]);
   useEffect(() => {
-    psdReadBusy.current = false; setPsd(null); setPsdError("");
+    psdReadBusy.current = false; setPsd(null); setPsdError(""); setDownload(null);
     if (selection.requested && api) void readPsd();
   }, [task.requestId, task.psdLayerCount, task.psdLayerMode, selection.requested, api, readPsd]);
   useEffect(() => {
@@ -67,10 +70,16 @@ export function OwnedGenerationCard({ task, api, canEdit, onTask, onNotice, onIn
   async function downloadPsd() {
     const context = latest.current, decomposition = psd?.decomposition;
     if (!context.api || psd?.status !== "READY" || !decomposition) return;
-    const source = context.task.results.find(image => image.assetId === decomposition.assetId && image.assetSha256 === decomposition.assetSha256);
-    if (!source) throw new Error("PSD 原图与当前生成结果不一致，未下载文件，请刷新确认。");
-    await downloadOwnedPsd(context.api, decomposition);
-    if (alive.current && latest.current.api === context.api) onNotice("PSD 已下载，包含图片图层，文字仍非原生文字层。原图和图层仍保留。");
+    const current = () => alive.current && latest.current.api === context.api && latest.current.task.requestId === context.task.requestId;
+    setDownload({ state: "preparing", message: "正在准备 PSD…正在读取已保存图层并打包，通常需要数秒，请稍候。" });
+    try {
+      const source = context.task.results.find(image => image.assetId === decomposition.assetId && image.assetSha256 === decomposition.assetSha256);
+      if (!source) throw new Error("PSD 原图与当前生成结果不一致，未下载文件，请刷新确认。");
+      await downloadOwnedPsd(context.api, decomposition);
+      if (current()) setDownload({ state: "started", message: "已开始下载 PSD，请在浏览器下载记录中查看。包含图片图层，文字仍非原生文字层。" });
+    } catch (error) {
+      if (current()) setDownload({ state: "error", message: `${explain(error)}可重新下载；只重新打包已保存图层，不会再次分层或扣取分层额度。` });
+    }
   }
   async function action(work: () => Promise<void>) {
     if (!alive.current || running.current) return;
@@ -103,18 +112,20 @@ export function OwnedGenerationCard({ task, api, canEdit, onTask, onNotice, onIn
       <p role="alert" className="text-xs leading-6">{task.error?.startsWith("生成服务") ? task.error.split("。")[0] + "。" : "本次" + (task.mode === "modify" ? "修改" : "生成") + "未完成。"}{task.mode === "modify" ? "原图已保留。" : "需求已保留。"}</p>
       <div className="flex flex-wrap items-start gap-3 text-xs"><details className="min-w-0 flex-1"><summary className="cursor-pointer text-muted-foreground">查看详情</summary><p className="mt-2 break-words leading-6 text-muted-foreground">{task.error || "具体原因尚未确认，请查看任务状态。"}</p></details>{onReedit && <button type="button" className="rounded-full text-primary disabled:opacity-40" disabled={!canEdit || recoveryDisabled} onClick={onReedit}>重新编辑</button>}</div>
     </div> : <p role={task.resultState === "FAILED" ? "alert" : undefined} className="text-xs leading-5 text-muted-foreground">{task.status === "FAILED" ? task.error : task.resultState === "READY" ? "图片已生成并保存" : task.resultState === "FAILED" ? task.archiveError || "生成结果保存失败" : activityNotice ? activityNotice : task.status === "SUCCEEDED" ? "生成完成，正在保存图片" : compact && task.status === "RUNNING" ? (task.progress === null ? "正在创作…" : `正在创作 · ${task.progress}%`) : task.status === "RUNNING" ? "正在生成…" : "已提交，排队中"}</p>}
-    {task.status === "SUCCEEDED" && task.appliedBrandRuleCount !== null && <p className="text-xs text-muted-foreground" data-testid="owned-generation-rule-count">{task.appliedBrandRuleCount > 0 ? `已应用 ${task.appliedBrandRuleCount} 条品牌规则` : "本次未应用品牌规则"}</p>}
+    <GenerationBrandRuleReceipt task={task} />
     {task.canRetryArchive && <button type="button" className={button} disabled={!canEdit || busy} onClick={() => void action(retryArchive)}>重试保存结果</button>}
     {selection.requested && <details open={compact ? undefined : true} className="space-y-2 rounded-xl bg-accent-soft p-3" data-testid="owned-generated-psd" data-status={psd?.status ?? "LOADING"}>
       <summary hidden={!compact} className="cursor-pointer text-xs">PSD 与图层{psd?.status === "READY" ? " · 已就绪" : psd?.status === "FAILED" ? " · 未完成" : " · 准备中"}</summary>
       <p className="text-xs font-semibold">分层 PSD · {psd?.decomposition ? ownedLayerTaskTitle(psd.decomposition) : selection.mode === "AUTO" ? "按内容自动分层" : `${selection.count} 层`}</p>
       <p role="status" className="text-xs leading-5 text-muted-foreground" data-testid="owned-generated-psd-status">{psdError || (psdPaused ? "自动读取已暂停，任务仍在后台处理；可刷新确认。" : psd?.status === "READY" && psd.decomposition ? ownedLayerTaskNotice(psd.decomposition) : psd?.status === "FAILED" ? (psd.error || "PSD 准备未完成。") + " 生成图片仍保留。" : psd?.decomposition ? ownedLayerTaskStatus(psd.decomposition) + "，原图可以先使用。" : psd?.status === "RUNNING" ? "正在准备图片图层，原图可以先使用。" : psd?.status === "NOT_REQUESTED" ? "服务端尚未确认 PSD 请求，请刷新任务。" : "PSD 已请求，图片生成保存后将在后台准备。")}</p>
       {psd?.decomposition?.analysisSummary && <p className="text-xs leading-5 text-muted-foreground">{psd.decomposition.analysisSummary}</p>}
+      {psd?.status === "READY" && psd.decomposition && <OwnedLayerResolution task={psd.decomposition} />}
       <div className="flex flex-wrap gap-2">
-        {psd?.status === "READY" && psd.downloadUrl && <button type="button" className={button + " bg-card"} disabled={!api || busy} onClick={() => void action(downloadPsd)} data-testid="owned-generated-psd-download">下载 PSD</button>}
+        {psd?.status === "READY" && psd.downloadUrl && <button type="button" className={button + " bg-card"} disabled={!api || busy} onClick={() => void action(downloadPsd)} data-testid="owned-generated-psd-download">{download?.state === "preparing" ? "正在准备 PSD…" : download?.state === "error" ? "重新下载 PSD" : "下载 PSD"}</button>}
         {psd?.status === "READY" && onInsertLayers && <button type="button" className={button + " bg-card"} disabled={!canEdit || busy} onClick={() => void action(expandPsd)}>展开图片图层</button>}
         <button type="button" className={button + " bg-card"} disabled={!api || psdReading} onClick={() => void refreshPsd()}>{psdReading ? "正在读取 PSD…" : "刷新 PSD 进度"}</button>
       </div>
+      {download && <p role={download.state === "error" ? "alert" : "status"} className="text-xs leading-5" data-testid="owned-generated-psd-download-status">{download.message}</p>}
     </details>}
     {task.resultState === "READY" && task.results.map(image => {
       const check = checks[imageKey(image)];

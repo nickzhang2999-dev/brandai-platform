@@ -993,6 +993,12 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
         projectContextBlocked={projectContextEnabled && (projectContextState?.status !== "ready" || !!projectContextState.busy || !!projectContextState.dirty || !!projectContextState.server?.issues.length) ? "请先保存并核对项目资料，或关闭本轮沿用。" : undefined}
         compact={!writingExpanded} onToggleExpanded={() => setWritingExpanded(value => !value)}
         readOnly={readOnly || !!view?.readOnly} projectName={visibleName} initialTaskId={writingTaskId} onReturnToCanvas={() => showSurface("canvas")}
+        onUseAsImagePrompt={async text => {
+          if (!writableRef.current || !conversationRef.current) throw new Error("请先等待画布和对话草稿恢复。");
+          conversationRef.current.stageWritingPrompt(text);
+          setPanel("generate"); showSurface("canvas");
+          setNotice("文字已交接到输入区；已有草稿会先要求追加确认。请核对修改对象、参考和规格，再点击发送。本次交接未调用生图。");
+        }}
         onInsertSuggestion={async (text, taskId) => {
           if (!writableRef.current || !docRef.current || saveBlocked.current) throw new Error("画布尚未准备好或保存冲突，请先确认画布保存。");
           const before = docRef.current;

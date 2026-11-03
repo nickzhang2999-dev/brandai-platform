@@ -130,12 +130,24 @@ class InspirationListResponse(BaseModel):
     error: str | None
     cases: list[InspirationCaseCard]
     searchMode: Literal['keyword-tags', 'hybrid']
+    # A filtered list may be shorter than caseCount on purpose; these let a
+    # reader tell "nothing else matched" from "there is another page".
+    matchedCount: int | None = Field(default=None, ge=0)
+    hasMore: bool | None = None
+    nextCursor: str | None = None
     syncStatus: InspirationSyncStatus | None = None
 
     @model_validator(mode='before')
     @classmethod
     def omit_missing_sync_status(cls, value):
         if isinstance(value, dict) and 'syncStatus' in value and value['syncStatus'] is None:
+            raise ValueError('Omit optional fields instead of null')
+        return value
+
+    @model_validator(mode='before')
+    @classmethod
+    def omit_optional_paging_fields(cls, value):
+        if isinstance(value, dict) and any(k in value and value[k] is None for k in ('matchedCount', 'hasMore', 'nextCursor')):
             raise ValueError('Omit optional fields instead of null')
         return value
 

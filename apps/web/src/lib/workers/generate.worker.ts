@@ -1115,7 +1115,8 @@ export async function runGenerateJob(
       if (studio) {
         return stageStudioGenerationOutput(studio, { imageUrl: v.imageUrl, width: v.width, height: v.height,
           params: { ...studioProviderParams(v.params), appliedRuleIds, appliedBrandRuleCount: appliedRuleIds.length,
-            brandConstraintMode: !job.data.studioImageTool && brandRules.length ? "BRANDED" : "FREE", sceneType, ...constraintEcho,
+            brandConstraintMode: appliedRuleIds.length ? "BRANDED" : "FREE",
+            brandRuleApplicationReason: job.data.studioImageTool ? "IMAGE_TOOL" : appliedRuleIds.length ? "APPLIED" : "NO_APPLICABLE_RULES", sceneType, ...constraintEcho,
             ...(job.data.studioImageTool ? { imageTool: job.data.studioImageTool.operation } : {}),
             ...(job.data.studioImageTool && job.data.studioEdit ? studioImageToolPixelEvidence(job.data.studioImageTool.operation, v.params, job.data.studioEdit.width, job.data.studioEdit.height) : {}),
             ...(job.data.studioImageTool && Number.isSafeInteger(v.params.providerWidth) && Number.isSafeInteger(v.params.providerHeight)

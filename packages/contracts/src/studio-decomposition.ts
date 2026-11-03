@@ -48,6 +48,19 @@ export const StudioDecompositionInput = z.object({
 export type StudioDecompositionInput = z.infer<typeof StudioDecompositionInput>;
 export const StudioDecompositionQuery = z.object({ projectId: id, requestId: id.optional() }).strict();
 export const StudioDecompositionRetryInput = StudioDecompositionQuery.extend({ requestId: id }).strict();
+export const StudioLayerResolution = z.object({
+  sourceWidth: dimension, sourceHeight: dimension,
+  providerWidth: dimension, providerHeight: dimension,
+  publishedWidth: dimension, publishedHeight: dimension,
+  scaleX: z.number().finite().positive(), scaleY: z.number().finite().positive(),
+  resampling: z.enum(["NONE", "LANCZOS3"]), rgbSource: z.literal("PROVIDER"),
+}).strict().superRefine((value, context) => {
+  if (value.sourceWidth !== value.publishedWidth || value.sourceHeight !== value.publishedHeight
+    || Math.abs(value.scaleX - value.publishedWidth / value.providerWidth) > 1e-9
+    || Math.abs(value.scaleY - value.publishedHeight / value.providerHeight) > 1e-9
+    || (value.resampling === "NONE") !== (value.providerWidth === value.publishedWidth && value.providerHeight === value.publishedHeight))
+    context.addIssue({ code: "custom", message: "Resolution receipt must match measured pixel dimensions and scaling" });
+});
 export const StudioDecompositionLayer = z.object({
   assetId: id, assetSha256: sha, mimeType: z.literal("image/png"),
   width: dimension, height: dimension, order: z.number().int().min(0).max(9),
@@ -55,8 +68,11 @@ export const StudioDecompositionLayer = z.object({
   url: z.string().regex(/^\/api\/workspaces\/[a-zA-Z0-9_-]{1,128}\/assets\/[a-zA-Z0-9_-]{1,128}\/raw$/),
   alphaBounds: z.object({ left: z.number().int().nonnegative(), top: z.number().int().nonnegative(), width: dimension, height: dimension }).strict(),
   inkCoverage: z.number().min(0).max(1),
+  // Absent on historical tasks: never infer provider pixels from published PNGs.
+  resolution: StudioLayerResolution.optional(),
   name: z.string().trim().min(1).max(80).optional(),
 }).strict().superRefine((layer, context) => {
+  if (layer.resolution && (layer.resolution.publishedWidth !== layer.width || layer.resolution.publishedHeight !== layer.height)) context.addIssue({ code: "custom", message: "Resolution receipt must describe the published layer" });
   if (layer.alphaBounds.left + layer.alphaBounds.width > layer.width || layer.alphaBounds.top + layer.alphaBounds.height > layer.height) context.addIssue({ code: "custom", message: "Alpha bounds exceed the original full image" });
 });
 export type StudioDecompositionLayer = z.infer<typeof StudioDecompositionLayer>;

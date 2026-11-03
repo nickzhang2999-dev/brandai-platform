@@ -8,6 +8,10 @@ export const taxonomy = {
 } as const;
 export const contentTypes = { advertisement: '广告案例', reference: '设计参考', unknown: '类型待补充' } as const;
 export type CatalogFilters = { q?: string; kind?: string; industry?: string; medium?: string; task?: string };
+/** Cursor paging for a filtered catalog. `cursor` is the last caseId already shown. */
+export type CatalogPage = { limit?: number; cursor?: string | null };
+export const CATALOG_PAGE_SIZE = 50;
+export const CATALOG_MAX_PAGE_SIZE = 200;
 export function tagLabel(group: string, value: string): string {
   return (taxonomy as Record<string, Record<string, string>>)[group]?.[value] ?? value;
 }
@@ -49,5 +53,31 @@ export function filterCatalog(cards: InspirationCaseCard[], filters: CatalogFilt
     .map(card => ({ card, score: catalogKeywordScore(card, query) }))
     .filter(row => !query || row.score > 0)
     .sort((a, b) => b.score - a.score || a.card.caseId.localeCompare(b.card.caseId))
-    .slice(0, 200).map(row => row.card);
+    .map(row => row.card);
+}
+
+/**
+ * One page of a filtered catalog. The ordering above is total (score desc, then
+ * caseId asc), so the last caseId of a page is a stable cursor: a later page
+ * starts strictly after it even if new cases were published between requests.
+ *
+ * A page never silently claims to be the whole result — `matchedCount` is the
+ * full filtered total and `hasMore` says whether the cursor can advance.
+ */
+export function pageCatalog(cards: InspirationCaseCard[], filters: CatalogFilters = {}, page: CatalogPage = {}) {
+  const matched = filterCatalog(cards, filters);
+  const size = Math.min(Math.max(Math.trunc(page.limit ?? CATALOG_PAGE_SIZE), 1), CATALOG_MAX_PAGE_SIZE);
+  const cursor = page.cursor?.trim() || null;
+  // The cursor is a caseId, not an index: resolve it inside the *filtered* order
+  // so a case that no longer matches the filters cannot resurrect as a page anchor.
+  const start = cursor ? matched.findIndex(card => card.caseId === cursor) + 1 : 0;
+  const offset = cursor ? (start > 0 ? start : matched.length) : 0;
+  const items = matched.slice(offset, offset + size);
+  const hasMore = offset + items.length < matched.length;
+  return {
+    cases: items,
+    matchedCount: matched.length,
+    hasMore,
+    nextCursor: hasMore && items.length ? items[items.length - 1]!.caseId : null,
+  };
 }

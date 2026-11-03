@@ -23,6 +23,19 @@ def layer(order=0):
                 alphaBounds=dict(left=10, top=5, width=20, height=30), inkCoverage=0.1)
 
 
+def test_permanent_resolution_receipts_preserve_unknown_history_and_validate_dimensions():
+    resolution = dict(sourceWidth=120, sourceHeight=80, providerWidth=60, providerHeight=40,
+                      publishedWidth=120, publishedHeight=80, scaleX=2, scaleY=2,
+                      resampling="LANCZOS3", rgbSource="PROVIDER")
+    assert StudioDecompositionLayer.model_validate(layer()).resolution is None
+    assert StudioDecompositionLayer.model_validate(layer() | dict(resolution=resolution)).resolution.providerWidth == 60
+    with pytest.raises(ValidationError): StudioDecompositionLayer.model_validate(layer() | dict(resolution=None))
+    for patch in [dict(scaleX=1), dict(scaleY=1), dict(sourceWidth=60), dict(publishedWidth=60),
+                  dict(resampling="NONE"), dict(rgbSource="SOURCE"), dict(providerWidth=0), dict(scaleX=float("inf"))]:
+        with pytest.raises(ValidationError): StudioDecompositionLayer.model_validate(layer() | dict(resolution=resolution | patch))
+    with pytest.raises(ValidationError): StudioDecompositionLayer.model_validate(layer() | dict(width=240, resolution=resolution))
+
+
 def receipt(status="PENDING"):
     return dict(requestId="request_1", **intent(), sourceWidth=120, sourceHeight=80,
                 status=status, error=None, createdAt="2026-10-12T03:00:00Z",

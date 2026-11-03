@@ -38,6 +38,17 @@ export async function inspectStudioLayerRepair(db: Db, workspaceId: string, proj
  * treat pixel preservation as visual/semantic approval. Old AI responses have
  * no evidence; keep them compatible without inventing a successful check. */
 export function studioImageToolPixelEvidence(operation: unknown, raw: Record<string, unknown>, width: number, height: number) {
+  if (operation === "remove-background") {
+    if (raw.sourcePixelProtection !== "rgb-with-provider-alpha" || raw.rgbSource !== "SOURCE"
+      || raw.alphaSource !== "PROVIDER_TIMES_SOURCE" || raw.independentQuality !== "not-reviewed"
+      || raw.sourceWidth !== width || raw.sourceHeight !== height
+      || !Number.isSafeInteger(raw.alphaWidth) || !Number.isSafeInteger(raw.alphaHeight)
+      || Number(raw.alphaWidth) < 1 || Number(raw.alphaHeight) < 1 || Number(raw.alphaWidth) > 8192 || Number(raw.alphaHeight) > 8192) return {};
+    return { imageToolPixelEvidence: { sourcePixelProtection: "rgb-with-provider-alpha", rgbSource: "SOURCE",
+      alphaSource: "PROVIDER_TIMES_SOURCE", sourceWidth: width, sourceHeight: height,
+      alphaWidth: Number(raw.alphaWidth), alphaHeight: Number(raw.alphaHeight),
+      scaleX: width / Number(raw.alphaWidth), scaleY: height / Number(raw.alphaHeight), independentQuality: "not-reviewed" } };
+  }
   if (operation !== "inpaint" || raw.sourcePixelProtection !== "outside-mask" || raw.independentQuality !== "not-reviewed"
     || !Number.isSafeInteger(raw.protectedPixelCount) || !Number.isSafeInteger(raw.editedPixelCount)
     || Number(raw.protectedPixelCount) < 0 || Number(raw.editedPixelCount) <= 0

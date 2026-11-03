@@ -45,6 +45,7 @@ async function handle(req, res) {
     return json(res, task, 202);
   }
   if (url.pathname === '/studio/generation' && req.method === 'POST') {generationPosts++; return json(res, {error: 'No provider is configured in this interaction fixture'}, 424);}
+  if (url.pathname === '/api/studio/brand-knowledge/status') return json(res, {workspaceId:fixture.workspaceId,brandName:'隔离测试品牌',applicationEnabled:true,confirmedCount:0,draftCount:0,savedDraftAvailable:false});
   if (url.pathname.endsWith('/studio-conversation')) {
     assert.equal(req.headers['x-novart-user'], fixture.userId);
     if (url.pathname.includes('/projects/fixture-other-project/')) {assert.equal(req.method,'GET');await new Promise(resolve=>setTimeout(resolve,600));return json(res,{messages:[],nextCursor:null,draft:null});}
@@ -100,6 +101,7 @@ import {OwnedConversationPanel} from '${absolute('apps/web/src/components/owned-
 import {createOwnedEditorApi} from '${absolute('apps/web/src/components/owned-canvas/owned-editor-api')}';
 const refs=${JSON.stringify(references)};const readOnly=new URL(location.href).searchParams.has('readonly');
 function Fixture(){const panel=useRef<any>(null),[selected,setSelected]=useState<any[]>([]),[notice,setNotice]=useState(''),[projectId,setProjectId]=useState('${fixture.projectId}');
+ (window as any).conversationHandle=panel;
  const ownedApi=useMemo(()=>createOwnedEditorApi('${fixture.workspaceId}',projectId,'${fixture.userId}'),[projectId]);
  const run=(fn:any)=>{try{Promise.resolve(fn()).catch(e=>setNotice(e.message))}catch(e:any){setNotice(e.message)}};
  return <><fieldset><legend>交互测试夹具 · 非业务验收</legend><button onClick={()=>setSelected([refs[0]])}>选择图片1</button><button onClick={()=>setSelected([refs[1],refs[0]])}>选择图片2和1</button><button onClick={()=>run(()=>panel.current.addReferences(selected))}>加入当前选择</button><button onClick={()=>run(()=>panel.current.addReferences([refs[1]],refs[1].referenceId))}>固定快捷目标图片2</button><button onClick={()=>run(async()=>{await panel.current.flush();setNotice('离页草稿已确认')} )}>模拟品牌离页保存</button><p role="status">{notice}</p></fieldset>
@@ -126,6 +128,42 @@ createRoot(document.getElementById('root')!).render(<Fixture/>);`);
   await button('加入当前选择').click(); assert.equal(await page.getByRole('button',{name:/移除参考/}).count(),2); check('explicit-add-keeps-order-and-deduplicates');
   stage = 'draft-restore'; await input().fill('还没有写完的海报需求'); await saved(); await page.reload(); await ready();
   assert.equal(await input().inputValue(),'还没有写完的海报需求'); assert.equal(await page.getByRole('button',{name:/移除参考/}).count(),2);check('server-draft-and-ordered-references-restore-after-refresh');
+  stage = 'collapse-retains-draft';
+  await button('固定快捷目标图片2').click();await page.getByLabel('对话图片比例',{exact:true}).selectOption('16:9');await page.getByLabel('对话图片画质',{exact:true}).selectOption('2K');await saved();
+  const beforeCollapse=structuredClone(draft), collapsePosts=postInputs.length;
+  await input().evaluate(el=>{window.originalComposer=el});
+  for(const viewport of [{width:1440,height:900},{width:1366,height:768},{width:390,height:844}]){
+    await page.setViewportSize(viewport);
+    const before=await page.getByLabel('项目对话记录').evaluate(el=>el.clientHeight);
+    await button('收起输入').click();assert.equal(await input().isVisible(),false);
+    const after=await page.getByLabel('项目对话记录').evaluate(el=>el.clientHeight);
+    assert(after>before+80,JSON.stringify({viewport,before,after}));
+    assert((await page.getByTestId('conversation-composer').boundingBox()).height<70);
+    await button('展开输入').click();assert.equal(await input().inputValue(),beforeCollapse.text);
+    assert(await input().evaluate(el=>el===window.originalComposer));
+    assert.equal(await page.getByLabel('对话图片比例',{exact:true}).inputValue(),'16:9');
+    assert.equal(await page.getByLabel('对话图片画质',{exact:true}).inputValue(),'2K');
+    assert.equal(await page.getByLabel('取消修改对象',{exact:true}).count(),1);
+    assert.deepEqual(draft,beforeCollapse);assert.equal(postInputs.length,collapsePosts);
+  }
+  check('three-viewports-collapse-releases-history-keeps-same-input-draft-references-target-specs-and-no-post');
+  await input().dispatchEvent('compositionstart');await button('收起输入').click();assert(await input().isVisible());await input().dispatchEvent('compositionend');
+  check('collapse-does-not-interrupt-chinese-composition');
+  await page.setViewportSize({width:1100,height:900});
+  stage='writing-handoff';
+  await page.evaluate(()=>window.conversationHandle.current.stageWritingPrompt('一份新的生图提示词'));
+  await page.getByRole('region',{name:'确认写作交接'}).waitFor();assert.equal(await input().inputValue(),beforeCollapse.text);
+  await button('取消交接').click();assert.equal(await input().inputValue(),beforeCollapse.text);
+  await page.evaluate(()=>window.conversationHandle.current.stageWritingPrompt('一份新的生图提示词'));
+  await button('追加到现有需求').click();await saved();assert.equal(draft.text,beforeCollapse.text+'\n\n一份新的生图提示词');
+  assert.deepEqual(draft.references,beforeCollapse.references);assert.equal(draft.quickEditTargetId,beforeCollapse.quickEditTargetId);assert.deepEqual(draft.sizeSelection,beforeCollapse.sizeSelection);
+  await input().fill('文'.repeat(3999));await saved();await page.evaluate(()=>window.conversationHandle.current.stageWritingPrompt('新提示词'));
+  await button('追加到现有需求').click();await page.getByRole('alert').filter({hasText:'追加后超过 4000 字'}).waitFor();assert.equal(await input().inputValue(),'文'.repeat(3999));await button('取消交接').click();
+  await input().fill('');await page.evaluate(()=>window.conversationHandle.current.stageWritingPrompt('可审阅的新图需求'));
+  await page.waitForFunction(()=>document.querySelector('textarea[aria-label="对话设计需求"]').value==='可审阅的新图需求');assert.equal(await input().inputValue(),'可审阅的新图需求');assert.equal(postInputs.length,collapsePosts);assert.equal(generationPosts,0);
+  check('handoff-requires-explicit-append-cancel-preserves-original-and-overflow-never-truncates-or-submits');
+  // Restore the existing regression fixture state.
+  await page.reload();await ready();await page.getByLabel('取消修改对象',{exact:true}).click();await input().fill(beforeCollapse.text);await saved();
   stage = 'real-dirty-page-unload'; const beforeUnloadPosts=postInputs.length, beforeUnloadRevision=draft.revision;
   const acceptLeave=dialog=>dialog.accept();page.on('dialog',acceptLeave);
   await input().fill('刚输入就离开：最后一段中文必须保存');
@@ -189,13 +227,14 @@ createRoot(document.getElementById('root')!).render(<Fixture/>);`);
 
   stage = 'running-polls';await show([row(task())]);await activity().waitFor();await until(()=>pollCount('terminal-message')>=1);
   check('normal-running-generation-renders-progress-and-continues-read-only-poll');
+  stage = 'collapsed-running-polls';await button('收起输入').click();const collapsedPollCount=pollCount('terminal-message');await until(()=>pollCount('terminal-message')>collapsedPollCount);assert.equal(await input().isVisible(),false);check('collapsing-composer-keeps-active-task-polling');
   stage = 'success-archive-pending';messages=[row(task({status:'SUCCEEDED',resultState:'PENDING'}),{status:'SUCCEEDED'})];
   const beforeArchive=pollCount('terminal-message');await until(()=>pollCount('terminal-message')>beforeArchive);await activity().waitFor();
   check('successful-generation-with-pending-archive-remains-active');
   stage = 'ready-stops';messages=[row(task({status:'SUCCEEDED',resultState:'READY',results:[result]}),{status:'SUCCEEDED'})];
   await page.getByText('图片已生成并保存',{exact:true}).waitFor({timeout:7000});assert.equal(await activity().count(),0);
   await quiet('RUNNING -> SUCCEEDED / PENDING -> READY stops subsequent polls',['terminal-message']);
-  check('poll-transition-to-ready-stops-progress-and-further-polling');
+  check('poll-transition-to-ready-stops-progress-and-further-polling');await button('展开输入').click();
 
   stage = 'explicit-archive-retry';const archiveFailed=task({status:'SUCCEEDED',resultState:'FAILED',archiveError:'夹具保存失败',canRetryArchive:true});
   await show([row(archiveFailed,{status:'FAILED',error:'夹具保存失败'})]);assert.equal(await activity().count(),0);
@@ -352,13 +391,15 @@ createRoot(document.getElementById('root')!).render(<Fixture/>);`);
   stage='responsive-composer';await show([recoverRow]);await button('重新编辑').click();await saved();
   for (const viewport of [{width:1100,height:900},{width:390,height:740},{width:1100,height:600}]) {
     await page.setViewportSize(viewport);
-    const metrics=await page.evaluate(()=>{const panel=document.querySelector('[data-testid="owned-conversation"]'),field=panel.querySelector('textarea'),history=panel.querySelector('[aria-label="项目对话记录"]');return {panel:panel.getBoundingClientRect().toJSON(),field:field.getBoundingClientRect().toJSON(),scrollWidth:panel.scrollWidth,width:panel.clientWidth,historyOverflow:getComputedStyle(history).overflowY};});
-    assert.ok(metrics.scrollWidth<=metrics.width+1,'Panel must not overflow horizontally');assert.ok(metrics.field.bottom<=metrics.panel.bottom+1,'Composer must stay inside panel');assert.equal(metrics.historyOverflow,'auto');
+    await input().scrollIntoViewIfNeeded();
+    const metrics=await page.evaluate(()=>{const panel=document.querySelector('[data-testid="owned-conversation"]'),field=panel.querySelector('textarea'),history=panel.querySelector('[aria-label="项目对话记录"]');return {panel:panel.getBoundingClientRect().toJSON(),field:field.getBoundingClientRect().toJSON(),composer:panel.querySelector('[data-testid="conversation-composer"]').getBoundingClientRect().toJSON(),historyHeight:history.clientHeight,scrollWidth:panel.scrollWidth,width:panel.clientWidth,historyOverflow:getComputedStyle(history).overflowY};});
+    assert.ok(metrics.scrollWidth<=metrics.width+1,'Panel must not overflow horizontally');assert.ok(metrics.composer.bottom<=metrics.panel.bottom+1,'Composer scroll container must stay inside panel');assert.ok(metrics.field.bottom<=metrics.panel.bottom+1,'Input remains reachable via inner scrolling');assert.ok(metrics.historyHeight>=60,'History retains usable height');assert.equal(metrics.historyOverflow,'auto');
     await page.getByLabel('生成设置',{exact:true}).click();const settings=await page.getByRole('combobox',{name:'对话图片比例'}).boundingBox();assert.ok(settings.x>=0 && settings.x+settings.width<=viewport.width,'Settings stay within viewport');await page.getByLabel('生成设置',{exact:true}).click();
   }
   await page.setViewportSize({width:1100,height:900});
   if(process.env.NOVART_CONVERSATION_SCREENSHOT) await page.locator('.fixture-panel').screenshot({path:process.env.NOVART_CONVERSATION_SCREENSHOT});
   check('composer-and-settings-fit-desktop-mobile-and-short-window');
+  stage='collapse-history-position';await show(Array.from({length:20},(_,i)=>({...recoverRow,messageId:'history-collapse-'+i,text:'历史需求 '+i})));const history=page.getByLabel('项目对话记录');await history.evaluate(el=>{el.scrollTop=100});await button('收起输入').click();assert.equal(await history.evaluate(el=>el.scrollTop),100);await button('展开输入').click();assert.equal(await history.evaluate(el=>el.scrollTop),100);check('collapse-and-expand-preserve-history-scroll-position');
 
   stage = 'switch-project-with-poll';delayedMessageRead='terminal-message';await show([row(task())]);
   await button('固定快捷目标图片2').click();await saved();assert.equal(await targetCard().getByText('图片2',{exact:true}).count(),1);assert.equal(draft.quickEditTargetId,references[1].referenceId);

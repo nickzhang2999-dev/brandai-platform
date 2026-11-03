@@ -511,6 +511,10 @@ describe("quality archive integration: real local PNG bytes with simulated persi
     const beforeReads = f.readBytes.mock.calls.length;
     const receipt = await readStudioDecompositions("w", "u", { projectId: "p", requestId: "request" });
     expect(receipt).toMatchObject({ quality: { status: "COMPOSITE_MATCH", humanReviewRequired: true } });
+    expect(row().outputJson).toBeNull();
+    expect(receipt.layers.map(layer => layer.resolution)).toEqual([0, 1].map(() => ({ sourceWidth: 8, sourceHeight: 8,
+      providerWidth: 8, providerHeight: 8, publishedWidth: 8, publishedHeight: 8,
+      scaleX: 1, scaleY: 1, resampling: "NONE", rgbSource: "PROVIDER" })));
     expect(f.readBytes).toHaveBeenCalledTimes(beforeReads); expect(f.paid).toHaveBeenCalledOnce();
   });
   it("scores against the decrypted, hash-checked source of a recursive layer request", async () => {

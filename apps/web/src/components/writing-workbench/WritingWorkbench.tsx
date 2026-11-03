@@ -6,6 +6,7 @@ import { StudioWritingState, StudioWritingSaveResult, StudioWritingGenerateInput
   StudioWritingStyleExtractInput, StudioWritingMessages, StudioWritingVersions, STUDIO_WRITING_FILE_MAX_BYTES, type StudioWritingDocument,
   type StudioWritingSaveInput } from "@brandai/contracts";
 import { captureSelection, selectionIsCurrent, writingFetch, writingScope, type WritingSelection } from "./writing-state";
+import { writingRequestPrompt, writingPromptMatches, type WritingPurpose } from "./writing-purpose";
 import styles from "./writing-workbench.module.css";
 
 export type WritingWorkbenchProps = { workspaceId: string; projectId: string; userId: string; readOnly: boolean; projectName: string;
@@ -13,6 +14,7 @@ export type WritingWorkbenchProps = { workspaceId: string; projectId: string; us
   projectContextBlocked?: string;
   initialPrompt?: string; initialTaskId?: string; onSendToCanvas?(document: { documentId: string; revision: number; title: string; text: string }): Promise<void>;
   onReturnToCanvas?(): void; compact?: boolean; onToggleExpanded?(): void;
+  onUseAsImagePrompt?(text: string): Promise<void>;
   onInsertSuggestion?(text: string, taskId: string): Promise<void> };
 export type WritingWorkbenchHandle = { restoreHome(prompt: string, requestId: string): void; ready(): boolean; refresh(): Promise<void>;
   confirmLeave(): Promise<void>; selectReferences(ids: string[]): void };
@@ -53,6 +55,7 @@ export const WritingWorkbench = forwardRef<WritingWorkbenchHandle, WritingWorkbe
   const scope = writingScope(props.userId, props.workspaceId, props.projectId);
   const [state, setState] = useState<StudioWritingState | null>(null), [loadError, setLoadError] = useState("");
   const [title, setTitle] = useState(""), [text, setText] = useState(""), [prompt, setPrompt] = useState(props.initialPrompt || "");
+  const [purpose, setPurpose] = useState<WritingPurpose>("GENERAL");
   const [selectedIds, setSelectedIds] = useState<string[]>([]), [useStyle, setUseStyle] = useState(true);
   const [selection, setSelection] = useState<WritingSelection | null>(null), [mode, setMode] = useState<StudioWritingGenerateInput["mode"]>("GENERATE");
   const [drawer, setDrawer] = useState<"references" | "versions" | "style" | null>(null), [tab, setTab] = useState<"chat" | "document">("chat");
@@ -119,6 +122,7 @@ export const WritingWorkbench = forwardRef<WritingWorkbenchHandle, WritingWorkbe
         edit.current = { title: next.document.title, text: next.document.text }; setTitle(next.document.title); setText(next.document.text);
         try {
           const composer = JSON.parse(localStorage.getItem(scope + ":composer") || "null");
+          if (composer?.purpose === "IMAGE_PROMPT") setPurpose("IMAGE_PROMPT");
           if (composer && typeof composer.prompt === "string") setPrompt(composer.prompt.slice(0, 4000));
           const home = JSON.parse(localStorage.getItem(scope + ":home") || "null");
           if (home && typeof home.requestId === "string") { restoredHome.current = home.requestId; if (!composer && typeof home.prompt === "string") setPrompt(home.prompt.slice(0, 4000)); }
@@ -149,7 +153,7 @@ export const WritingWorkbench = forwardRef<WritingWorkbenchHandle, WritingWorkbe
     window.addEventListener("beforeunload", leaving); document.addEventListener("visibilitychange", visible);
     return () => { alive.current = false; clearInterval(interval); window.removeEventListener("beforeunload", leaving); document.removeEventListener("visibilitychange", visible); };
   }, [read]);
-  useEffect(() => { if (loaded.current) journal(":composer", { prompt, selectedIds }); }, [prompt, selectedIds, journal]); // Composition only; server owns submitted turns.
+  useEffect(() => { if (loaded.current) journal(":composer", { prompt, selectedIds, purpose }); }, [prompt, selectedIds, purpose, journal]); // Composition only; server owns submitted turns.
   useEffect(() => {
     if (!props.initialTaskId) return;
     let cancelled = false, readingTask = false, finished = false;
@@ -269,7 +273,7 @@ export const WritingWorkbench = forwardRef<WritingWorkbenchHandle, WritingWorkbe
     busy.current = true; setWorking(true); setError("");
     try {
       const result = StudioWritingTaskLookup.parse(await writingFetch(`${endpoint}/tasks?mutationId=${encodeURIComponent(pendingRef.current.mutationId)}`, { headers }));
-      if (result.task) { addTask(result.task); const input = pendingRef.current?.input; if (input && "mode" in input && promptRef.current.trim() === input.prompt) setPrompt(""); clearPending(); setNotice("已找到原任务，正在同步记录；没有重新提交。"); await read(); }
+      if (result.task) { addTask(result.task); const input = pendingRef.current?.input; if (input && "mode" in input && writingPromptMatches(promptRef.current, input.prompt)) setPrompt(""); clearPending(); setNotice("已找到原任务，正在同步记录；没有重新提交。"); await read(); }
       else { setPendingNotFound(true); setError("暂未找到这次提交。可以稍后核对；也可明确确认重发原请求，保留相同请求标识。"); }
     } catch (e) { setError(message(e)); }
     finally { busy.current = false; setWorking(false); }
@@ -281,10 +285,15 @@ export const WritingWorkbench = forwardRef<WritingWorkbenchHandle, WritingWorkbe
     try {
       const input = previous.kind === "generate" ? StudioWritingGenerateInput.parse(previous.input) : StudioWritingStyleExtractInput.parse(previous.input);
       const task = StudioWritingTask.parse(await writingFetch(endpoint + (previous.kind === "style" ? "/style/extract" : ""), { method: "POST", headers, body: JSON.stringify(input) }));
-      addTask(task); if ("mode" in input && promptRef.current.trim() === input.prompt) setPrompt(""); clearPending(); await read();
+      addTask(task); if ("mode" in input && writingPromptMatches(promptRef.current, input.prompt)) setPrompt(""); clearPending(); await read();
       setNotice("已使用原请求标识确认提交，没有创建第二个请求标识。");
     } catch (e) { if ((e as { status?: number }).status && (e as { status: number }).status < 500) clearPending(); setError(message(e)); }
     finally { busy.current = false; setWorking(false); }
+  }
+  async function applyAsImagePrompt(value: string) {
+    if (props.readOnly || !props.onUseAsImagePrompt || !value.trim()) return;
+    try { await props.onUseAsImagePrompt(value); }
+    catch (failure) { setError(message(failure)); }
   }
   async function send(event?: FormEvent) {
     event?.preventDefault(); if (props.readOnly || busy.current || pendingRef.current || !state || !prompt.trim() || saveBusy.current) return;
@@ -295,13 +304,14 @@ export const WritingWorkbench = forwardRef<WritingWorkbenchHandle, WritingWorkbe
       const current = await save(); if (!current) throw new Error("请先解决正文保存问题，再发送本轮需求。");
       if (edit.current.text !== capturedText || edit.current.title !== capturedTitle) throw new Error("发送前正文又有修改，请保存后重新发送。");
       if (mode === "SELECTION" && (!chosenSelection || capturedText.slice(chosenSelection.start, chosenSelection.end) !== chosenSelection.text)) throw new Error("原选段已变化，请重新选择。");
-      const input = StudioWritingGenerateInput.parse({ mutationId: crypto.randomUUID(), expectedRevision: current.revision, prompt,
+      if (writingRequestPrompt(prompt, purpose).length > 4000) throw new Error("需求加上用途说明后超过 4000 字，请精简后再发送；原输入已保留。");
+      const input = StudioWritingGenerateInput.parse({ mutationId: crypto.randomUUID(), expectedRevision: current.revision, prompt: writingRequestPrompt(prompt, purpose),
         mode, referenceIds: selectedIds, styleRevision: useStyle && state.style.confirmedAt ? state.style.revision : null,
         ...(props.projectContextRevision === undefined ? {} : { projectContextRevision: props.projectContextRevision }),
         ...(mode === "SELECTION" && chosenSelection ? { selection: { start: chosenSelection.start, end: chosenSelection.end, text: chosenSelection.text } } : {}) });
       if (!rememberPending({ kind: "generate", mutationId: input.mutationId, input })) return;
       const task = StudioWritingTask.parse(await writingFetch(endpoint, { method: "POST", headers, body: JSON.stringify(input) }));
-      addTask(task); clearPending(); if (promptRef.current.trim() === input.prompt) setPrompt(""); if (restoredHome.current) journal(":home", { requestId: restoredHome.current, prompt: "" }); setNotice("已受理，结果会保留在对话中；不会自动替换正文。"); await read();
+      addTask(task); clearPending(); if (writingPromptMatches(promptRef.current, input.prompt)) setPrompt(""); if (restoredHome.current) journal(":home", { requestId: restoredHome.current, prompt: "" }); setNotice("已受理，结果会保留在对话中；不会自动替换正文。"); await read();
     } catch (e) { if ((e as { status?: number }).status && (e as { status: number }).status < 500) clearPending(); setError(message(e)); }
     finally { busy.current = false; setWorking(false); }
   }
@@ -424,7 +434,7 @@ export const WritingWorkbench = forwardRef<WritingWorkbenchHandle, WritingWorkbe
       <nav className={styles.mobileTabs} aria-label="工作区切换"><Button variant={tab === "chat" ? "primary" : "outline"} className={buttonClass} onClick={() => setTab("chat")}>对话</Button><Button variant={tab === "document" ? "primary" : "outline"} className={buttonClass} onClick={() => setTab("document")}>当前稿</Button></nav>
       <div className={styles.layout}>
         <section className={`${styles.conversation} ${tab !== "chat" ? styles.mobileHidden : ""}`} aria-label="文案对话">
-          <div className={styles.paneTitle}><h2>一起把文案写好</h2><Button variant="ghost" size="sm" onClick={() => void read()}>刷新记录</Button></div>
+          <div className={styles.paneTitle}><h2>写作与生图提示词</h2><Button variant="ghost" size="sm" onClick={() => void read()}>刷新记录</Button></div>
           <div className={styles.history}>
             {!messagesEnded && (state.messages.length >= 50 || earlierMessages.length > 0) && <Button variant="ghost" size="sm" disabled={!!historyLoading} onClick={() => void loadHistory("messages")}>加载更早对话</Button>}
             {!turns.length && <div className={styles.empty}><h2>你想说什么，<br />我们一起写清楚。</h2><p className={styles.subtle}>告诉我受众、用途和你最想表达的内容。参考资料可以随时补充。</p></div>}
@@ -436,16 +446,18 @@ export const WritingWorkbench = forwardRef<WritingWorkbenchHandle, WritingWorkbe
                 {selectionOf(task) && <details className={styles.details}><summary>查看原选段</summary><pre>{selectionOf(task)!.text}</pre></details>}
                 <p>{task.result.text}</p>
                 {!!task.result.citations.length && <details className={styles.details}><summary>查看引用来源</summary>{task.result.citations.map((c, i) => <p className={styles.sourceLine} key={i}>{references.find(r => r.id === c.referenceId)?.name || "已移除的资料"} · {c.label}{c.pageNumber ? ` · 第 ${c.pageNumber} 页` : ""}</p>)}</details>}
-                <div className={styles.actions}>{task.result.scope === "DOCUMENT" && props.onInsertSuggestion && <Button size="sm" disabled={props.readOnly || working || !task.result.text.trim()} onClick={() => void insertSuggestion(task)}>加入画布</Button>}<Button variant="ghost" size="sm" onClick={() => void copy(task.result!.text)}>复制建议</Button>{["DOCUMENT", "SELECTION"].includes(task.result.scope) && <Button variant="outline" size="sm" className={buttonClass} disabled={props.readOnly || saving || working || dirty} onClick={() => void applyTask(task)}>{task.result.scope === "SELECTION" ? "采纳选段修改" : "设为当前稿"}</Button>}</div>
+                <div className={styles.actions}>{task.result.scope === "DOCUMENT" && props.onInsertSuggestion && <Button size="sm" disabled={props.readOnly || working || !task.result.text.trim()} onClick={() => void insertSuggestion(task)}>加入画布</Button>}<Button variant="ghost" size="sm" onClick={() => void copy(task.result!.text)}>复制建议</Button>{props.onUseAsImagePrompt && <Button variant="outline" size="sm" disabled={props.readOnly || working || !task.result.text.trim()} onClick={() => void applyAsImagePrompt(task.result!.text)}>作为生图需求</Button>}{["DOCUMENT", "SELECTION"].includes(task.result.scope) && <Button variant="outline" size="sm" className={buttonClass} disabled={props.readOnly || saving || working || dirty} onClick={() => void applyTask(task)}>{task.result.scope === "SELECTION" ? "采纳选段修改" : "设为当前稿"}</Button>}</div>
                 {task.result.baseRevision !== state.document.revision && task.result.scope !== "CHAT" && <p className={styles.sourceLine}>正文版本已变化，采纳前将重新核对。</p>}
               </div>}
             </article>)}
           </div>
           <form className={styles.composer} onSubmit={event => void send(event)}>
+            <div className={styles.actions} role="group" aria-label="写作用途">{([ ["GENERAL", "通用写作"], ["IMAGE_PROMPT", "生图提示词"] ] as const).map(([value, label]) => <Button type="button" size="sm" variant={purpose === value ? "primary" : "outline"} aria-pressed={purpose === value} disabled={props.readOnly || working || !!pending} key={value} onClick={() => setPurpose(value)}>{label}</Button>)}</div>
+            <p className={styles.subtle}>{purpose === "IMAGE_PROMPT" ? "按生图提示词组织内容，本轮具体要求优先。这里只写文字；交接后仍需确认发送才生图。" : "支持长文、改写、解释和提示词。按本轮要求写，不默认套社交帖格式。"}</p>
             {props.projectContextBlocked && <p role="alert" className={styles.warning}>{props.projectContextBlocked}</p>}
             {props.projectContextRevision !== undefined && <p className={styles.subtle}>本轮沿用已保存的项目资料 · 版本 {props.projectContextRevision}。图片仅在“添加资料”选用后读取。</p>}
             {mode === "SELECTION" && selection && <div className={styles.warning}>正在修改选中的 {selection.text.length} 个字符 <button type="button" className="text-primary underline" onClick={() => { setSelection(null); setMode("GENERATE"); }}>取消选段</button></div>}
-            <textarea className={styles.input} aria-label="本轮文案需求" maxLength={4000} value={prompt} readOnly={props.readOnly} onChange={e => setPrompt(e.target.value)} placeholder={mode === "SELECTION" ? "这段想怎么改？例如：保留信息，写得更直接一些。" : "例如：为新品写一篇发布文案，先讲清楚它解决了什么问题。"} />
+            <textarea className={styles.input} aria-label="本轮文案需求" maxLength={4000} value={prompt} readOnly={props.readOnly} onChange={e => setPrompt(e.target.value)} placeholder={mode === "SELECTION" ? "这段想怎么改？例如：保留信息，写得更直接一些。" : purpose === "IMAGE_PROMPT" ? "例如：写一份产品静物生图提示词，包含主体、构图和光线；不要社交文案。" : "例如：解释一个概念、改写这段文字，或写一份生图提示词。"} />
             {!!selectedRefs.length && <div className={styles.chips}>{selectedRefs.map(r => <span className={styles.chip} key={r.id}>{r.name}{r.status !== "READY" ? " · 未就绪" : ""}</span>)}</div>}
             {state.style.confirmedAt && <label className={styles.subtle}><input type="checkbox" checked={useStyle} onChange={e => setUseStyle(e.target.checked)} disabled={props.readOnly} /> 使用已确认的品牌风格</label>}
             <div className={styles.composerFooter}><Button type="button" variant="ghost" size="sm" onClick={() => setDrawer("references")}>＋ 添加资料</Button><Button type="submit" className={buttonClass} disabled={props.readOnly || !!props.projectContextBlocked || !state.enabled || working || saving || !!pending || !prompt.trim() || selectedRefs.some(r => r.status !== "READY") || selectedRefs.filter(r => r.kind === "IMAGE").length > 4}> {working ? "处理中…" : "发送需求"}</Button></div>
@@ -454,7 +466,7 @@ export const WritingWorkbench = forwardRef<WritingWorkbenchHandle, WritingWorkbe
         </section>
         <section className={`${styles.editor} ${tab !== "document" ? styles.mobileHidden : ""}`} aria-label="当前文案">
           <div className={styles.editorToolbar}><div className="min-w-0 flex-1"><label className="sr-only" htmlFor="writing-title">文案标题</label><input id="writing-title" className={styles.titleInput} value={title} maxLength={200} readOnly={props.readOnly} placeholder="当前稿" onChange={e => updateEdit({ ...edit.current, title: e.target.value })} /><p className={styles.subtle}>{saving ? "正在保存…" : conflict ? "版本冲突，手改已保留" : saveError ? "保存尚未确认" : dirty ? "有未保存修改" : `已保存 · 版本 ${state.document.revision}`}</p></div>
-            <div className={styles.actions}><Button size="sm" disabled={props.readOnly || !text.trim() || working || saving || !props.onSendToCanvas} onClick={() => void handoff()}>当前稿加入画布</Button><Button variant="ghost" size="sm" onClick={() => setDrawer("versions")}>版本记录</Button><Button variant="outline" size="sm" className={buttonClass} disabled={props.readOnly || saving || !dirty || conflict} onClick={() => void save()}>保存正文</Button></div></div>
+            <div className={styles.actions}>{props.onUseAsImagePrompt && <Button variant="outline" size="sm" disabled={props.readOnly || !text.trim() || working} onClick={() => void applyAsImagePrompt(text)}>当前稿作为生图需求</Button>}<Button size="sm" disabled={props.readOnly || !text.trim() || working || saving || !props.onSendToCanvas} onClick={() => void handoff()}>当前稿加入画布</Button><Button variant="ghost" size="sm" onClick={() => setDrawer("versions")}>版本记录</Button><Button variant="outline" size="sm" className={buttonClass} disabled={props.readOnly || saving || !dirty || conflict} onClick={() => void save()}>保存正文</Button></div></div>
           {(saveError || conflict) && <div className={styles.selection} role="alert">{saveError || "服务端正文已更新，你的修改仍保留。"}<div className={styles.actions}><Button variant="ghost" size="sm" onClick={() => void copy(text)}>复制当前修改</Button><Button variant="ghost" size="sm" onClick={() => void read()}>核对最新状态</Button>{conflict && <Button variant="outline" size="sm" onClick={() => { if (state) { acceptDocument(state.document, true); setSaveError(""); setConflict(false); conflictRef.current = false; journal(":draft", null); } }}>使用最新服务端稿</Button>}</div></div>}
           {selection && <div className={styles.selection}><strong>已选中 {selection.text.length} 个字符</strong><p className={styles.quote}>{selection.text}</p><Button variant="outline" size="sm" className={buttonClass} disabled={props.readOnly} onClick={() => { setMode("SELECTION"); setTab("chat"); }}>用一句话修改这段</Button></div>}
           <textarea ref={editor} className={styles.body} aria-label="当前稿正文" spellCheck={false} maxLength={60000} value={text} readOnly={props.readOnly} placeholder="文案会在这里展开。你也可以直接粘贴或写下第一段。\n\n选中一句或一段，再告诉我怎么改。" onChange={e => { updateEdit({ ...edit.current, text: e.target.value }); setSelection(null); if (mode === "SELECTION") setMode("GENERATE"); }} onSelect={e => { if (props.readOnly) return; const el = e.currentTarget; if (el.selectionEnd > el.selectionStart) setSelection(captureSelection(el.value, el.selectionStart, el.selectionEnd, server.current?.revision || 0)); }} />

@@ -30,6 +30,7 @@ export function OwnedLayerPanel({ api, workspaceId, projectId, userId, document,
   const [comparisonId, setComparisonId] = useState<string | null>(null);
   const [pending, setPending] = useState(false), [busy, setBusy] = useState(false), [reading, setReading] = useState(false);
   const [blocked, setBlocked] = useState(false), [notice, setNotice] = useState("");
+  const [downloads, setDownloads] = useState<Record<string, { state: "preparing" | "started" | "error"; message: string }>>({});
   const recovery = useRef<ReturnType<typeof createOwnedLayerRecovery> | null>(null), operation = useRef<DecompositionInput | null>(null);
   const alive = useRef(true), serial = useRef(false), readBusy = useRef(false);
   const activeScope = useRef({ api, workspaceId, projectId, userId });
@@ -74,7 +75,7 @@ export function OwnedLayerPanel({ api, workspaceId, projectId, userId, document,
 
 
   useEffect(() => {
-    alive.current = true; serial.current = false; readBusy.current = false; setBusy(false); setReading(false);
+    alive.current = true; serial.current = false; readBusy.current = false; setBusy(false); setReading(false); setDownloads({});
     operation.current = null; noticeTask.current = null; setNotice(""); setPending(false); setBlocked(false); setTasks([]); setRefineSourceId(null); setComparisonId(null); setLayerMode("AUTO"); setLayerCount(4);
     try {
       recovery.current = createOwnedLayerRecovery({ workspaceId, projectId, userId });
@@ -153,8 +154,9 @@ export function OwnedLayerPanel({ api, workspaceId, projectId, userId, document,
   async function download(task: DecompositionTask) {
     const context = activeScope.current, expected = context.api; if (!expected || serial.current || task.status !== "SUCCEEDED") return;
     serial.current = true; setBusy(true);
-    try { await downloadOwnedPsd(expected, task); if (current(context)) setNotice("PSD 已下载，包含图片图层，文字仍非原生文字层。原图和图层仍保留。"); }
-    catch (error) { if (current(context)) setNotice(message(error)); }
+    setDownloads(values => ({ ...values, [task.requestId]: { state: "preparing", message: "正在准备 PSD…正在读取已保存图层并打包，通常需要数秒，请稍候。" } }));
+    try { await downloadOwnedPsd(expected, task); if (current(context)) setDownloads(values => ({ ...values, [task.requestId]: { state: "started", message: "已开始下载 PSD，请在浏览器下载记录中查看。包含图片图层，文字仍非原生文字层。" } })); }
+    catch (error) { if (current(context)) setDownloads(values => ({ ...values, [task.requestId]: { state: "error", message: `${message(error)}可重新下载；只重新打包已保存图层，不会再次分层或扣取分层额度。` } })); }
     finally { if (current(context)) { serial.current = false; setBusy(false); } }
   }
   async function repair(task: DecompositionTask) {
@@ -182,8 +184,9 @@ export function OwnedLayerPanel({ api, workspaceId, projectId, userId, document,
           <button type="button" className={control + " w-full !px-2"} aria-label={`进一步分层：${label}`} disabled={!item || readOnly || busy || pending || blocked} onClick={() => { if (item) { setRefineSourceId(item.id); setLayerMode("AUTO"); setNotice(`已选择${label}。确认拆分后才会调用模型，原图层与其他图层仍保留。`); } }}>进一步分层</button></div>;
       })}</div>{task.layers.some(layer => layer.inkCoverage === 0) && <p className="text-xs leading-5 text-muted-foreground" data-testid="owned-layer-faint-note">标记为“几乎透明”的图层基本没有可见内容，可以在画布上隐藏或删除，不影响其他图层。</p>}<p className="text-xs leading-5 text-muted-foreground">展开到画布后，可选择其中一个图层继续细拆。</p></>}
       {task.status === "SUCCEEDED" && <div className="flex flex-wrap gap-2"><button type="button" className={control} disabled={readOnly || busy} onClick={() => void place(task)}>展开图片图层</button>
-        {api && <button type="button" className={control} disabled={busy} onClick={() => void download(task)} data-testid="owned-layer-psd-download">下载 PSD</button>}
+        {api && <button type="button" className={control} disabled={busy} onClick={() => void download(task)} data-testid="owned-layer-psd-download">{downloads[task.requestId]?.state === "preparing" ? "正在准备 PSD…" : downloads[task.requestId]?.state === "error" ? "重新下载 PSD" : "下载 PSD"}</button>}
       </div>}
+      {downloads[task.requestId] && <p role={downloads[task.requestId]!.state === "error" ? "alert" : "status"} className="rounded-xl bg-accent-soft p-3 text-xs leading-5" data-testid="owned-layer-download-status">{downloads[task.requestId]!.message}</p>}
       {task.status === "SUCCEEDED" && backgroundRepair && (() => {
         let reason = backgroundRepair.reason;
         if (!reason) { try { requireOwnedLayerRepairSource(document, task, projectId); } catch (error) { reason = message(error); } }

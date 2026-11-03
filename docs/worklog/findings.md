@@ -344,3 +344,7 @@ main 为 d896d7c，开发版为 c13a7c0。独立工作区以 main 为基线迁�
 ## 2026-10-29 PR #68 merge boundaries
 
 The source f83a8a9 and main 632ac2f contain parallel/cherry-picked history. Resolving only conflict markers in OwnedEditorClient would leave obsolete panel JSX beside the new workbench, so the reviewed development editor and its integration fixture are kept together. Main contributes enterprise provisioning, three copywriting inbox regressions and release-entry integrity checks. The inbox CI expectation is therefore 19, not the development branch's 16. This PR includes the development inspiration/Omni code; October 26/27 release-isolation notes describe those earlier deliveries, not this PR. Existing runtime enablement and membership checks are retained.
+
+## 2026-11-03 · 五项反馈证据边界
+
+WorkbenchBrandDraft不是CONFIRMED BrandRule；有规则传入不等于模型视觉遵守。新studio-writing不能与旧studio-copywriting的短文案模板混淆。正常浏览器测得输入区挤占高度，未测到几何覆盖。PSD接口200/文件头正确不能替代浏览器保存/Photoshop打开验收。分层存档尺寸回到源尺寸不能证明细节无损；PNG导出取画布bounds是另一条降尺寸机制。共享数据库历史记录不能直接归因某个当前预览。详见[排查报告](2026-11-03-product-five-issues.md)。

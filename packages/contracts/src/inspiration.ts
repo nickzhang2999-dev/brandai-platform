@@ -44,6 +44,12 @@ export const InspirationListResponse = z.object({
   enabled: z.boolean(), syncConfigured: z.boolean(), activeRelease: z.object({ id: InspirationId, sequence: z.number().int(), createdAt: z.string() }).nullable(),
   caseCount: z.number().int(), withdrawalSequence: z.number().int(), lastSyncAt: z.string().nullable(), error: z.string().nullable(),
   cases: z.array(InspirationCaseCard), searchMode: z.enum(['keyword-tags','hybrid']),
+  // A filtered list may be shorter than caseCount on purpose. Without these two
+  // fields the browser cannot tell "nothing else matched" from "there is more",
+  // and a truncated page silently reads as the whole library.
+  matchedCount: z.number().int().nonnegative().optional(),
+  hasMore: z.boolean().optional(),
+  nextCursor: z.string().nullable().optional(),
   syncStatus: InspirationSyncStatus.optional(),
 });
 export type InspirationListResponse = z.infer<typeof InspirationListResponse>;

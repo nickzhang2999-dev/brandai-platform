@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import sharp from "sharp";
-import { INK_ALPHA_THRESHOLD } from "@brandai/contracts";
+import { INK_ALPHA_THRESHOLD, type StudioDecompositionLayer } from "@brandai/contracts";
 import { ApiException } from "./api";
 import { artifactDeadline, STUDIO_ARTIFACT_MAX_BYTES } from "./studio-generation-artifacts-image";
 
@@ -47,6 +47,7 @@ export type StudioInspectedLayer = {
   alphaBounds: { left: number; top: number; width: number; height: number };
   inkCoverage: number;
   hasTransparency: boolean;
+  resolution: NonNullable<StudioDecompositionLayer["resolution"]>;
 };
 
 /** Only actual bounded bytes reach Sharp. A smaller full-frame image may be
@@ -88,7 +89,7 @@ export async function inspectStudioLayer(
       throw failure(`分层结果的尺寸超出原图，已保留原图。原图 ${sourceWidth}×${sourceHeight}，返回图层 ${width}×${height}；缺少完整画幅的缩放记录，未缩放发布。`);
     }
     image.rotate().toColourspace("srgb").ensureAlpha();
-    if (width !== sourceWidth || height !== sourceHeight) image.resize({ width: sourceWidth, height: sourceHeight, fit: "fill" });
+    if (width !== sourceWidth || height !== sourceHeight) image.resize({ width: sourceWidth, height: sourceHeight, fit: "fill", kernel: "lanczos3" });
     // Decode once to a bounded RGBA buffer. The PNG below is encoded from the
     // exact pixels analysed here, so its bounds/hash describe the public bytes.
     const decoded = await artifactDeadline(image.raw().toBuffer({ resolveWithObject: true }), signal);
@@ -122,6 +123,9 @@ export async function inspectStudioLayer(
     if (!output.length || output.length > STUDIO_ARTIFACT_MAX_BYTES) throw invalid();
     return { body: output, assetSha256: createHash("sha256").update(output).digest("hex"), mimeType: "image/png",
       width: sourceWidth, height: sourceHeight, sizeBytes: output.length,
+      resolution: { sourceWidth, sourceHeight, providerWidth: width, providerHeight: height,
+        publishedWidth: sourceWidth, publishedHeight: sourceHeight, scaleX: sourceWidth / width, scaleY: sourceHeight / height,
+        resampling: width === sourceWidth && height === sourceHeight ? "NONE" : "LANCZOS3", rgbSource: "PROVIDER" },
       alphaBounds: { left: minX, top: minY, width: maxX - minX + 1, height: maxY - minY + 1 },
       inkCoverage: ink / (sourceWidth * sourceHeight), hasTransparency };
   } catch (error) {

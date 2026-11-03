@@ -53,6 +53,42 @@ async def test_transparent_png_uses_existing_single_edit_adapter_and_preserves_f
     decoded = Image.open(io.BytesIO(base64.b64decode(response.versions[0].imageUrl.split(",")[1])))
     assert decoded.mode == "RGBA" and decoded.getchannel("A").getextrema() == (0, 255)
 
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("dimensions", [(96, 64), (192, 128)])
+async def test_cutout_keeps_source_rgb_texture_and_existing_alpha_with_provider_mask_only(dimensions):
+    source = Image.new("RGBA", (96, 64))
+    for y in range(64):
+        for x in range(96):
+            source.putpixel((x, y), ((x * 37) % 256, (y * 53) % 256, (x + y) % 256, 0 if x < 8 else 128 if x < 32 else 255))
+    req = request().model_copy(update={"imageUrl": data(source)})
+    mask_result = Image.new("RGBA", dimensions, (200, 200, 200, 0))
+    mask_result.paste((200, 200, 200, 255), (0, 0, dimensions[0] // 2, dimensions[1]))
+    calls = []
+    response = await run_studio_image_tool(req, provider(mask_result, calls=calls))
+    out = Image.open(io.BytesIO(base64.b64decode(response.versions[0].imageUrl.split(",")[1]))).convert("RGBA")
+    assert len(calls) == 1
+    for y in range(64):
+        for x in range(96):
+            assert out.getpixel((x, y))[:3] == source.getpixel((x, y))[:3]
+            assert out.getpixel((x, y))[3] <= source.getpixel((x, y))[3]
+    assert out.getpixel((0, 0))[3] == 0
+    assert out.getpixel((20, 20))[3] == 128
+    assert out.getpixel((40, 20))[3] == 255
+    assert out.getpixel((80, 20))[3] == 0
+    params = response.versions[0].params
+    assert params["sourcePixelProtection"] == "rgb-with-provider-alpha"
+    assert params["rgbSource"] == "SOURCE" and params["independentQuality"] == "not-reviewed"
+    assert (params["alphaWidth"], params["alphaHeight"]) == dimensions
+
+
+@pytest.mark.asyncio
+async def test_cutout_rejects_mask_that_cannot_retain_any_visible_source():
+    source = Image.new("RGBA", (96, 64), (10, 20, 30, 0)); source.paste((10, 20, 30, 255), (0, 0, 20, 64))
+    output = Image.new("RGBA", (96, 64), (100, 100, 100, 0)); output.paste((100, 100, 100, 255), (40, 0, 96, 64))
+    with pytest.raises(ImageResponseError, match="no overlap"):
+        await run_studio_image_tool(request().model_copy(update={"imageUrl": data(source)}), provider(output))
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("rgba", [(255,255,255,255), (0,0,0,0), (20,40,60,128)])
 async def test_opaque_white_and_lost_foreground_are_rejected(rgba):

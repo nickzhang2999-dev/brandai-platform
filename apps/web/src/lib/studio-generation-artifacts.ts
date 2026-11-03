@@ -5,6 +5,7 @@ import { ApiException } from "./api";
 import { requireWorkspaceRole } from "./workspace";
 import { enqueueStudioArtifact } from "./studio-generation-artifacts-queue";
 import { projectStudioGenerationResults, studioArtifactViewSelect, STUDIO_ARTIFACT_EXPIRED } from "./studio-generation-result-view";
+import { projectBrandRuleReceipt } from "./studio-brand-rule-receipt";
 export { STUDIO_ARTIFACT_ERROR, STUDIO_ARTIFACT_EXPIRED } from "./studio-generation-result-view";
 
 export const STUDIO_ARTIFACT_ATTEMPT_TTL_MS = 5 * 60_000;
@@ -29,7 +30,8 @@ export async function readStudioGenerationResults(request: StudioArtifactRequest
       select: studioArtifactViewSelect, orderBy: { createdAt: "asc" } }),
     db.project.findFirst({ where: { id: request.projectId, workspaceId: request.workspaceId }, select: { archivedAt: true } }),
   ]);
-  return { ...projectStudioGenerationResults(request, { outputs, recoverableOutputs, artifacts, project }), appliedBrandRuleCount: appliedBrandRuleCount(outputs) };
+  return { ...projectStudioGenerationResults(request, { outputs, recoverableOutputs, artifacts, project }), appliedBrandRuleCount: appliedBrandRuleCount(outputs),
+    brandRuleReceipts: outputs.map(output => projectBrandRuleReceipt(output, request.workspaceId)) };
 }
 
 // Written by the worker from the rules actually sent to the provider; older

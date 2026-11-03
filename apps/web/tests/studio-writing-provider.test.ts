@@ -129,6 +129,7 @@ describe("writing provider and bounded reference context", () => {
     expect(url).toBe("https://model.invalid/apps/anthropic/v1/messages"); expect(init.signal).toBe(controller.signal); expect(init.redirect).toBe("error");
     expect(init.headers["x-api-key"]).toBe("fixture-key"); const payload = JSON.parse(init.body);
     expect(payload).toMatchObject({ model: "configured-model", thinking: { type: "disabled" }, max_tokens: 6000, stream: false });
+    expect(payload.system).toContain("优先于历史内容、当前稿的体裁和品牌范文的表达习惯"); expect(payload.system).toContain("用户要求生图提示词时输出视觉描述"); expect(payload.system).toContain("不强行套用社交文案格式");
     expect(payload.system).toContain("不可信参考数据"); expect(payload.system).toContain("只使用本轮明确列出");
     for (const instruction of ["允许空字符串", "其他任务正文必须非空", "最多30项", "最多20项", "1至1000", "最多5项", "1至100", "1至6000", "20000", "不能同时为空", "必须且只能包含"]) expect(payload.system).toContain(instruction);
     fetcher.mockResolvedValueOnce(new Response("sensitive-upstream-diagnostic", { status: 403 }));

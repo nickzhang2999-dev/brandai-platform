@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { DecompositionTask } from "./owned-editor-api";
 import { LAYER_COMPARISON_TIMEOUT_MS, loadOwnedLayerComparison, type LayerComparisonImages } from "./owned-layer-comparison";
 import { ownedLayerQualityLabel } from "./owned-layer-options";
+import { OwnedLayerResolution } from "./OwnedLayerResolution";
 
 const control = "rounded-full border border-border bg-card px-3 py-2 text-xs text-foreground disabled:opacity-40";
 const checkerboard = { backgroundColor: "rgb(var(--background))", backgroundImage: "conic-gradient(rgb(var(--muted)) 25%, transparent 0 50%, rgb(var(--muted)) 0 75%, transparent 0)", backgroundSize: "16px 16px" };
@@ -13,6 +14,7 @@ export function OwnedLayerQualitySummary({ task }: { task: DecompositionTask }) 
   const quality = task.quality;
   return <div className="space-y-1 rounded-xl bg-accent-soft p-3 text-xs leading-5" data-testid="owned-layer-quality" data-quality={quality?.status ?? "UNCHECKED"}>
     <p className="font-medium">{ownedLayerQualityLabel(task)}</p>
+    <OwnedLayerResolution task={task} />
     <p>重合成相似还不够：请单独查看背景、移开主体，核对补丁、残影与投影；切换底色检查主体杂点和边缘。独立图层质量尚未审核。</p>
     <p>像素初检不判断文字正确性、主体完整性或分组合理性。</p>
     {quality?.warnings.length ? <ul className="list-inside list-disc">{quality.warnings.map(warning => <li key={warning}>{warningLabels[warning] ?? "请查看原图与图层对照"}</li>)}</ul> : null}

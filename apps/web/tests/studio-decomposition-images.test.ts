@@ -47,6 +47,8 @@ describe("Studio decomposition image boundary (local fixtures; no provider or DB
   it("normalizes a smaller same-aspect full frame to source dimensions without flattening", async () => {
     const result = await inspectStudioLayer(await fixture(12, 8, { left: 3, top: 2, width: 4, height: 3 }), 24, 16, signal());
     expect(result).toMatchObject({ width: 24, height: 16, hasTransparency: true });
+    expect(result.resolution).toEqual({ sourceWidth: 24, sourceHeight: 16, providerWidth: 12, providerHeight: 8,
+      publishedWidth: 24, publishedHeight: 16, scaleX: 2, scaleY: 2, resampling: "LANCZOS3", rgbSource: "PROVIDER" });
     expect(result.alphaBounds.left).toBeGreaterThan(0);
     expect(result.alphaBounds.top).toBeGreaterThan(0);
     expect(result.alphaBounds.left + result.alphaBounds.width).toBeLessThan(24);
@@ -80,6 +82,7 @@ describe("Studio decomposition image boundary (local fixtures; no provider or DB
     // Content at 25%..50% of the provider frame must land at 25%..50% of the source.
     const result = await inspectStudioLayer(await fixture(544, 736, { left: 136, top: 184, width: 136, height: 184 }), 1920, 2560, signal(), { provider: "FalLayerProvider", model: "fal-ai/qwen-image-layered" });
     expect(result).toMatchObject({ width: 1920, height: 2560, hasTransparency: true });
+    expect(result.resolution).toMatchObject({ providerWidth: 544, providerHeight: 736, scaleX: 1920 / 544, scaleY: 2560 / 736, rgbSource: "PROVIDER" });
     const { left, top, width, height } = result.alphaBounds;
     // ~3.5× upscaling blurs edges by a few pixels; misplacement would be hundreds.
     expect(Math.abs(left - 480)).toBeLessThanOrEqual(8); expect(Math.abs(top - 640)).toBeLessThanOrEqual(8);

@@ -86,6 +86,7 @@ async function handle(req,res) {
     if(imageToolResponse==='hold'){await new Promise(resolve=>{releaseImageTool=resolve;});return json(res,{error:'Fixture old-scope rejection'},422);}
     return json(res,contracts.StudioGenerationView.parse({mode:'modify',sourceShapeId:input.target.shapeId,requestId:'fixture-repair',mutationId:input.mutationId,projectId:fixture.projectId,generationId:'fixture-repair-generation',status:'PENDING',progress:null,expiresAt:'2099-01-01T00:00:00.000Z',archiveExpiresAt:null,archiveProcessingExpiresAt:null,displayText:input.instruction,resultState:'NOT_REQUESTED',results:[],error:null,archiveError:null,canRetryArchive:false}),202);
   }
+  if(url.pathname==='/api/studio/brand-knowledge/status') return json(res,{workspaceId:fixture.workspaceId,brandName:'交互测试品牌',applicationEnabled:true,confirmedCount:0,draftCount:0,savedDraftAvailable:false});
   if(url.pathname.startsWith('/api/')&&url.pathname.includes('/studio-writing')) return writingFixture.handle(req,res,url);
   if(url.pathname.endsWith('/studio-copywriting')) {
     if(req.method==='POST') {const input=JSON.parse((await body(req)).toString());copywritingPosts++;let task=copywritingTasks.find(t=>t.mutationId===input.mutationId);
@@ -291,6 +292,19 @@ async function fixtureSettled(condition) {const deadline=Date.now()+10000;while(
     await panel.getByRole('textbox',{name:'本轮文案需求',exact:true}).fill('写一组短标题和正文');
     await panel.getByRole('button',{name:'发送需求',exact:true}).click();await panel.getByRole('button',{name:'加入画布',exact:true}).waitFor();
     await page.setViewportSize({width:1366,height:600});const composerBounds=await panel.getByRole('button',{name:'发送需求',exact:true}).boundingBox();assert.ok(composerBounds&&composerBounds.y>=0&&composerBounds.y+composerBounds.height<=600,'History must scroll instead of pushing the composer below the viewport');check('docked-history-keeps-send-action-visible-in-short-viewport');await page.setViewportSize({width:1366,height:850});
+    stage='writing-to-generation-draft';
+    const imagePostsBefore=conversationPosts.length, writingPostsBefore=copywritingPosts;
+    const suggestionText=writingFixture.state.tasks.find(task=>task.operation==='GENERATE').result.text;
+    await panel.getByRole('button',{name:'作为生图需求',exact:true}).click();
+    const imageDraft=page.getByRole('textbox',{name:'对话设计需求',exact:true});await imageDraft.waitFor();assert.equal(await imageDraft.inputValue(),suggestionText);
+    assert.equal(await panel.isVisible(),false);assert.equal(conversationPosts.length,imagePostsBefore);assert.equal(copywritingPosts,writingPostsBefore);
+    await imageDraft.fill('用户已有的未发送需求');await page.waitForFunction(()=>document.querySelector('[data-testid="conversation-draft-status"]')?.dataset.saved==='true');
+    await open();await panel.getByRole('button',{name:'作为生图需求',exact:true}).click();await page.getByRole('region',{name:'确认写作交接'}).waitFor();assert.equal(await imageDraft.inputValue(),'用户已有的未发送需求');
+    await page.getByRole('button',{name:'取消交接',exact:true}).click();assert.equal(await imageDraft.inputValue(),'用户已有的未发送需求');
+    await open();await panel.getByRole('button',{name:'作为生图需求',exact:true}).click();await page.getByRole('button',{name:'追加到现有需求',exact:true}).click();assert.equal(await imageDraft.inputValue(),'用户已有的未发送需求\n\n'+suggestionText);
+    assert.equal(conversationPosts.length,imagePostsBefore);assert.equal(copywritingPosts,writingPostsBefore);
+    check('real-editor-writing-handoff-opens-image-composer-and-requires-append-without-overwrite-or-paid-submit');
+    await imageDraft.fill('');await page.waitForFunction(()=>document.querySelector('[data-testid="conversation-draft-status"]')?.dataset.saved==='true');await open();
     const beforeDirect=JSON.stringify(writingFixture.state.document);await panel.getByRole('button',{name:'加入画布',exact:true}).click();await fixtureSettled(()=>shapes().length===1&&writes>0);
     assert.equal(JSON.stringify(writingFixture.state.document),beforeDirect);assert.equal(await surface.isVisible(),true);assert.equal(await panel.isVisible(),true);assert.equal(copywritingPosts,1);check('suggestion-inserts-directly-without-adopting-draft-or-extra-model-call');
     await panel.getByRole('button',{name:'加入画布',exact:true}).click();await page.waitForTimeout(150);assert.equal(shapes().length,1);check('direct-suggestion-insertion-is-idempotent');

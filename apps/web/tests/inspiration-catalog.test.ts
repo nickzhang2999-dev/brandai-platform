@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { InspirationCaseCard } from '@brandai/contracts';
-import { catalogKeywordScore, catalogMetadata, filterCatalog, tagLabel } from '@/lib/inspiration/catalog';
+import { CATALOG_MAX_PAGE_SIZE, catalogKeywordScore, catalogMetadata, filterCatalog, pageCatalog, tagLabel } from '@/lib/inspiration/catalog';
 
 function card(id: string, overrides: Partial<InspirationCaseCard> = {}): InspirationCaseCard {
   return { caseId: id, revision: 1, title: '项目', summary: '审核案例', brandOrTeam: '团队', analysisAllowed: false,
@@ -32,9 +32,42 @@ describe('reviewed inspiration catalog', () => {
     expect(tagLabel('medium', 'digital')).toBe('数字界面');
     expect(tagLabel('unknown-group', 'existing-tag')).toBe('existing-tag');
   });
-  it('keeps deterministic ordering, preserves inputs and bounds results', () => {
+  it('keeps deterministic ordering and preserves inputs without silently truncating', () => {
     const cards = Array.from({ length: 205 }, (_, n) => card(`case-${String(n).padStart(3, '0')}`)).reverse();
-    const first = cards[0]; expect(filterCatalog(cards)).toHaveLength(200);
+    const first = cards[0];
+    // filterCatalog is the pure match+sort step. It must not cap the result:
+    // a silent cap here is what made 229 stored cases render as 200.
+    expect(filterCatalog(cards)).toHaveLength(205);
     expect(filterCatalog(cards)[0]?.caseId).toBe('case-000'); expect(cards[0]).toBe(first);
+  });
+  it('pages a filtered catalog by caseId cursor and reports the full matched total', () => {
+    const cards = Array.from({ length: 205 }, (_, n) => card(`case-${String(n).padStart(3, '0')}`));
+    const first = pageCatalog(cards, {}, { limit: 50 });
+    expect(first.cases).toHaveLength(50); expect(first.matchedCount).toBe(205); expect(first.hasMore).toBe(true);
+    expect(first.nextCursor).toBe('case-049');
+    const second = pageCatalog(cards, {}, { limit: 50, cursor: first.nextCursor });
+    expect(second.cases[0]?.caseId).toBe('case-050'); expect(second.nextCursor).toBe('case-099');
+    // Walk to the end: every case is reachable, and the last page closes the cursor.
+    const ids = new Set<string>(); let page = first; let guard = 0;
+    while (page.cases.length) {
+      for (const item of page.cases) ids.add(item.caseId);
+      if (!page.hasMore) { expect(page.nextCursor).toBeNull(); break; }
+      page = pageCatalog(cards, {}, { limit: 50, cursor: page.nextCursor });
+      if (++guard > 10) throw new Error('Cursor did not terminate');
+    }
+    expect(ids.size).toBe(205);
+  });
+  it('applies filters before paging so the total describes the filtered result, not the library', () => {
+    const cards = [card('pack'), ...Array.from({ length: 80 }, (_, n) => card(`ad-${n}`, { contentType: 'advertisement' }))];
+    const page = pageCatalog(cards, { kind: 'advertisement' }, { limit: 50 });
+    expect(page.matchedCount).toBe(80); expect(page.cases).toHaveLength(50); expect(page.hasMore).toBe(true);
+  });
+  it('never resurrects a filtered-out cursor and never exceeds the page ceiling', () => {
+    const cards = Array.from({ length: 5 }, (_, n) => card(`case-${n}`));
+    // A cursor that no longer matches the filters ends the walk instead of
+    // silently restarting from the top.
+    expect(pageCatalog(cards, { kind: 'advertisement' }, { limit: 2, cursor: 'case-1' }).cases).toEqual([]);
+    const many = Array.from({ length: CATALOG_MAX_PAGE_SIZE + 50 }, (_, n) => card(`big-${String(n).padStart(3, '0')}`));
+    expect(pageCatalog(many, {}, { limit: 10_000 }).cases).toHaveLength(CATALOG_MAX_PAGE_SIZE);
   });
 });

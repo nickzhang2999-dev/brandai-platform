@@ -84,6 +84,18 @@ describe("real generation worker pre-provider ordering (isolated dependencies)",
     expect(f.edit).toHaveBeenCalledOnce();expect(f.generate).not.toHaveBeenCalled();
     expect(f.edit.mock.calls[0][0]).toMatchObject({imageTool:{operation:"remove-background"},generation:{providerRetryPolicy:"never",brandRules:[],aiConstraints:{referenceImages:[]}}});
     expect(f.stage.mock.calls[0][1].params.studioPostprocess).toMatchObject({imageTool:"remove-background",watermarkOverlays:[],automaticBrandLogoAssetId:null,brandRules:[]});
+    expect(f.stage.mock.calls[0][1].params).toMatchObject({ appliedBrandRuleCount: 0, appliedRuleIds: [], brandConstraintMode: "FREE", brandRuleApplicationReason: "IMAGE_TOOL" });
+  });
+
+  it("records only the final policy's applied rules, with an explicit zero reason", async () => {
+    await runGenerateJob(job());
+    expect(f.stage.mock.calls[0][1].params).toMatchObject({ appliedBrandRuleCount: 0, brandConstraintMode: "FREE", brandRuleApplicationReason: "NO_APPLICABLE_RULES" });
+    f.stage.mockClear();
+    const rule = { id: "rule-at-generation", workspaceId: "w", type: "color", status: "CONFIRMED", strength: "STRONG", summary: "Purple", value: {}, evidence: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+    f.rules.mockResolvedValue([rule]);
+    await runGenerateJob(job());
+    expect(f.stage.mock.calls[0][1].params).toMatchObject({ appliedBrandRuleCount: 1, appliedRuleIds: [rule.id], brandConstraintMode: "BRANDED", brandRuleApplicationReason: "APPLIED" });
+    expect(f.generate.mock.calls.at(-1)?.[0].brandRules).toEqual([rule]);
   });
 
   it("dispatches a saved edit through the image-edit service once, preserves its source recipe privately and never calls text generation", async () => {
