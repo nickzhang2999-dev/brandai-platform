@@ -196,6 +196,14 @@ model Membership {
 }
 
 model BrandWorkspace {
+  legacyInspirationState LegacyInspirationState?
+  legacyInspirationRelease LegacyInspirationRelease[]
+  legacyInspirationRecord LegacyInspirationRecord[]
+  legacyInspirationImage LegacyInspirationImage[]
+  legacyInspirationChat LegacyInspirationChat[]
+  legacyInspirationBookmark LegacyInspirationBookmark[]
+  legacyInspirationEmbedding LegacyInspirationEmbedding[]
+  legacyInspirationFeedback LegacyInspirationFeedback[]
   studioWritingDocuments StudioWritingDocument[]
   studioWritingStyle StudioWritingStyle?
   privateInspirationLibrary InspirationLibrary?
@@ -1175,6 +1183,7 @@ model InspirationLibraryIdentity {
 }
 
 model InspirationLibrary {
+  libraryTasks InspirationLibraryTask[]
   id String @id
   kind InspirationLibraryKind
   ownerId String
@@ -1211,6 +1220,7 @@ model InspirationState {
   lastWithdrawalFailedAt DateTime?
   withdrawalError    String?
   updatedAt          DateTime       @updatedAt
+  @@map("InspirationLibraryState")
 }
 
 model InspirationRelease {
@@ -1224,8 +1234,9 @@ model InspirationRelease {
   snapshot     Json
   createdAt    DateTime       @default(now())
 
-  @@unique([libraryId, releaseId])
-  @@unique([libraryId, sequence])
+  @@unique([libraryId, releaseId], map: "InspirationLibraryRelease_identity_key")
+  @@unique([libraryId, sequence], map: "InspirationLibraryRelease_sequence_key")
+  @@map("InspirationLibraryRelease")
 }
 
 model InspirationRecord {
@@ -1241,8 +1252,9 @@ model InspirationRecord {
   body        Json
   createdAt   DateTime       @default(now())
 
-  @@unique([libraryId, caseId, revision])
-  @@index([libraryId, caseId])
+  @@unique([libraryId, caseId, revision], map: "InspirationLibraryRecord_revision_key")
+  @@index([libraryId, caseId], map: "InspirationLibraryRecord_case_idx")
+  @@map("InspirationLibraryRecord")
 }
 
 model InspirationImage {
@@ -1255,7 +1267,8 @@ model InspirationImage {
   mimeType    String
   bytes       Bytes
 
-  @@unique([libraryId, releaseId, path])
+  @@unique([libraryId, releaseId, path], map: "InspirationLibraryImage_file_key")
+  @@map("InspirationLibraryImage")
 }
 
 model InspirationChat {
@@ -1282,9 +1295,10 @@ model InspirationChat {
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
 
-  @@unique([workspaceId, userId, requestId])
-  @@index([workspaceId, userId, conversationId, createdAt])
-  @@index([status, expiresAt])
+  @@unique([workspaceId, userId, requestId], map: "InspirationLibraryChat_request_key")
+  @@index([workspaceId, userId, conversationId, createdAt], map: "InspirationLibraryChat_conversation_idx")
+  @@index([status, expiresAt], map: "InspirationLibraryChat_status_idx")
+  @@map("InspirationLibraryChat")
 }
 
 model InspirationBookmark {
@@ -1301,8 +1315,9 @@ model InspirationBookmark {
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @updatedAt
 
-  @@unique([workspaceId, userId, libraryId, caseId, projectId])
-  @@index([workspaceId, projectId])
+  @@unique([workspaceId, userId, libraryId, caseId, projectId], map: "InspirationLibraryBookmark_identity_key")
+  @@index([workspaceId, projectId], map: "InspirationLibraryBookmark_project_idx")
+  @@map("InspirationLibraryBookmark")
 }
 
 model InspirationEmbedding {
@@ -1313,7 +1328,8 @@ model InspirationEmbedding {
   payloadJson Json
   createdAt   DateTime       @default(now())
 
-  @@unique([workspaceId, key])
+  @@unique([workspaceId, key], map: "InspirationLibraryEmbedding_identity_key")
+  @@map("InspirationLibraryEmbedding")
 }
 
 model InspirationFeedback {
@@ -1330,6 +1346,176 @@ model InspirationFeedback {
   status String @default("OPEN")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  @@index([workspaceId, userId, createdAt], map: "InspirationLibraryFeedback_user_idx")
+  @@index([workspaceId, status, createdAt], map: "InspirationLibraryFeedback_status_idx")
+  @@map("InspirationLibraryFeedback")
+}
+
+
+// Stable legacy SQL interfaces for older deployed clients. These remain private
+// workspace stores and do not receive writes from the independent library replica.
+model LegacyInspirationState {
+  workspaceId        String         @id
+  workspace          BrandWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  activeRelease      String?
+  releaseSequence    Int            @default(0)
+  withdrawalSequence Int            @default(0)
+  withdrawalHash     String?
+  withdrawn          Json           @default("[]")
+  lastSyncAt         DateTime?
+  lastError          String?
+  lastSyncAttemptAt  DateTime?
+  lastSyncFailedAt   DateTime?
+  syncError          String?
+  lastWithdrawalAttemptAt DateTime?
+  lastWithdrawalAt   DateTime?
+  lastWithdrawalFailedAt DateTime?
+  withdrawalError    String?
+  updatedAt          DateTime       @updatedAt
+  @@map("InspirationState")
+}
+
+model LegacyInspirationRelease {
+  id           String         @id @default(cuid())
+  workspaceId  String
+  workspace    BrandWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  releaseId    String
+  sequence     Int
+  manifestHash String
+  manifest     Json
+  snapshot     Json
+  createdAt    DateTime       @default(now())
+
+  @@unique([workspaceId, releaseId])
+  @@unique([workspaceId, sequence])
+  @@map("InspirationRelease")
+}
+
+model LegacyInspirationRecord {
+  id          String         @id @default(cuid())
+  workspaceId String
+  workspace   BrandWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  caseId      String
+  revision    Int
+  contentHash String
+  imageHash   String
+  releaseId   String
+  deleted     Boolean        @default(false)
+  body        Json
+  createdAt   DateTime       @default(now())
+
+  @@unique([workspaceId, caseId, revision])
+  @@index([workspaceId, caseId])
+  @@map("InspirationRecord")
+}
+
+model LegacyInspirationImage {
+  id          String         @id @default(cuid())
+  workspaceId String
+  workspace   BrandWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  releaseId   String
+  path        String
+  sha256      String
+  mimeType    String
+  bytes       Bytes
+
+  @@unique([workspaceId, releaseId, path])
+  @@map("InspirationImage")
+}
+
+model LegacyInspirationChat {
+  selectedImages Json @default("[]")
+  latencyMs Int @default(0)
+  requestId      String
+  id             String         @id @default(cuid())
+  workspaceId    String
+  workspace      BrandWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  userId         String
+  conversationId String
+  question       String
+  caseIds        Json
+  status         JobStatus      @default(PENDING)
+  answer         String?
+  citations      Json           @default("[]")
+  error          String?
+  model          String?
+  inputTokens    Int            @default(0)
+  outputTokens   Int            @default(0)
+  expiresAt      DateTime
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@unique([workspaceId, userId, requestId])
+  @@index([workspaceId, userId, conversationId, createdAt])
+  @@index([status, expiresAt])
+  @@map("InspirationChat")
+}
+
+model LegacyInspirationBookmark {
+  id          String         @id @default(cuid())
+  workspaceId String
+  workspace   BrandWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  userId      String
+  caseId      String
+  revision    Int
+  projectId   String         @default("")
+  note        String         @default("")
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@unique([workspaceId, userId, caseId, projectId])
+  @@index([workspaceId, projectId])
+  @@map("InspirationBookmark")
+}
+
+model LegacyInspirationEmbedding {
+  id          String         @id @default(cuid())
+  workspaceId String
+  workspace   BrandWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  key         String
+  payloadJson Json
+  createdAt   DateTime       @default(now())
+
+  @@unique([workspaceId, key])
+  @@map("InspirationEmbedding")
+}
+
+model LegacyInspirationFeedback {
+  id String @id @default(cuid())
+  workspaceId String
+  workspace BrandWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  userId String
+  caseId String
+  revision Int
+  kind String
+  note String @default("")
+  status String @default("OPEN")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
   @@index([workspaceId, userId, createdAt])
   @@index([workspaceId, status, createdAt])
+  @@map("InspirationFeedback")
+}
+
+// Isolated durable queue: older workers must never discover new library jobs.
+model InspirationLibraryTask {
+  id String @id @default(cuid())
+  workspaceId String
+  inspirationLibraryId String?
+  inspirationLibrary InspirationLibrary? @relation(fields: [inspirationLibraryId], references: [id], onDelete: SetNull)
+  kind String
+  status JobStatus @default(PENDING)
+  progress Int @default(0)
+  jobId String?
+  refId String?
+  refCount Int @default(0)
+  error String?
+  inputJson Json?
+  resultJson Json?
+  expiresAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([workspaceId, kind, createdAt], map: "InspirationLibraryTask_workspace_idx")
+  @@index([inspirationLibraryId, kind, createdAt], map: "InspirationLibraryTask_library_idx")
+  @@index([refId], map: "InspirationLibraryTask_ref_idx")
 }

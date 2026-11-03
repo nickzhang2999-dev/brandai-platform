@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks=vi.hoisted(()=>({chatUpdate:vi.fn(),chatFind:vi.fn(),taskUpdate:vi.fn(),taskFind:vi.fn(),states:vi.fn(),sync:vi.fn(),withdrawals:vi.fn(),transaction:vi.fn(),library:vi.fn(),receiver:vi.fn()}));
-vi.mock('@brandai/db',()=>({prisma:{inspirationLibrary:{findUnique:mocks.library},inspirationChat:{updateMany:mocks.chatUpdate,findFirst:mocks.chatFind},asyncTask:{findFirst:mocks.taskFind,updateMany:mocks.taskUpdate},inspirationState:{findMany:mocks.states},$transaction:mocks.transaction}}));
+vi.mock('@brandai/db',()=>({prisma:{inspirationLibrary:{findUnique:mocks.library},inspirationChat:{updateMany:mocks.chatUpdate,findFirst:mocks.chatFind},inspirationLibraryTask:{findFirst:mocks.taskFind,updateMany:mocks.taskUpdate},inspirationState:{findMany:mocks.states},$transaction:mocks.transaction}}));
 vi.mock('@/lib/inspiration/service',()=>({listCases:vi.fn()}));vi.mock('@/lib/inspiration/provider',()=>({answerEvidence:vi.fn()}));
 vi.mock('@/lib/inspiration/selected-images',()=>({loadSelectedImages:vi.fn()}));vi.mock('@/lib/inspiration/access',()=>({requireActiveEditor:vi.fn(),requireCurrentEvidence:vi.fn(),requireLibraryReceiver:mocks.receiver}));vi.mock('@/lib/inspiration/retrieval',()=>({retrieveInspirationCases:vi.fn()}));
 vi.mock('@/lib/inspiration/replica',()=>({syncReplica:mocks.sync,syncWithdrawals:mocks.withdrawals,lockWorkspace:vi.fn()}));

@@ -29,7 +29,7 @@ suite('shared inspiration real PostgreSQL boundaries',()=>{
   let image:Buffer;
   beforeAll(async()=>{
     const url=new URL(isolated!);
-    if(url.hostname!=='127.0.0.1'||url.port!=='55439'||url.pathname!=='/nova_shared_inspiration_test'||process.env.DATABASE_URL!==isolated)throw new Error('Explicit isolated library PostgreSQL required');
+    if(url.hostname!=='127.0.0.1'||url.port!=='55439'||!['/nova_shared_inspiration_test','/nova_inspiration_compat_test'].includes(url.pathname)||process.env.DATABASE_URL!==isolated)throw new Error('Explicit isolated library PostgreSQL required');
     const prefix='library-test-'+randomUUID();[owner,other,member,admin]=['owner','other','member','admin'].map(x=>prefix+'-'+x);ids=[owner,other,member,admin];[a,b,foreign]=['a','b','foreign'].map(x=>prefix+'-'+x);spaces=[a,b,foreign];
     library={id:prefix+'-shared',kind:'SHARED',ownerId:owner,legacyWorkspaceId:null};
     await prisma.user.createMany({data:ids.map(id=>({id,email:id+'@example.invalid',isActive:true}))});
@@ -46,13 +46,13 @@ suite('shared inspiration real PostgreSQL boundaries',()=>{
     vi.stubEnv('INSPIRATION_SHARED_LIBRARY_ID',library.id);vi.stubEnv('INSPIRATION_ENABLED','true');vi.stubEnv('INSPIRATION_CONTENT_SYNC_MODE','manual');vi.stubEnv('INSPIRATION_RECEIVER_ORIGIN',origin);
     vi.stubEnv('INSPIRATION_PUBLISHER_URL','https://publisher.example.invalid/knowledge/v1');vi.stubEnv('INSPIRATION_SHARED_PUBLISHER_URL','https://publisher.example.invalid/knowledge/v2/libraries/'+library.id);vi.stubEnv('INSPIRATION_READ_TOKEN','synthetic-only');vi.stubEnv('INSPIRATION_TRUSTED_KEYS_JSON',JSON.stringify(keys));
     vi.stubGlobal('fetch',vi.fn(()=>{throw new Error('No real network or model calls in isolated library tests');}));
-    await prisma.asyncTask.deleteMany({where:{workspaceId:{in:spaces}}});
+    await prisma.inspirationLibraryTask.deleteMany({where:{workspaceId:{in:spaces}}});
     await prisma.inspirationChat.deleteMany({where:{workspaceId:{in:spaces}}});await prisma.inspirationBookmark.deleteMany({where:{workspaceId:{in:spaces}}});
     const where={libraryId:{in:[...spaces,library.id]}};
     await prisma.inspirationState.deleteMany({where});await prisma.inspirationRelease.deleteMany({where});await prisma.inspirationRecord.deleteMany({where});await prisma.inspirationImage.deleteMany({where});
   });
   afterEach(()=>{vi.unstubAllGlobals();vi.unstubAllEnvs();});
-  afterAll(async()=>{if(ids){await prisma.asyncTask.deleteMany({where:{workspaceId:{in:spaces}}});await prisma.user.deleteMany({where:{id:{in:ids}}});await prisma.inspirationLibraryIdentity.deleteMany({where:{id:{in:[library.id,...extraIdentities]}}});}await prisma.$disconnect();});
+  afterAll(async()=>{if(ids){await prisma.inspirationLibraryTask.deleteMany({where:{workspaceId:{in:spaces}}});await prisma.user.deleteMany({where:{id:{in:ids}}});await prisma.inspirationLibraryIdentity.deleteMany({where:{id:{in:[library.id,...extraIdentities]}}});}await prisma.$disconnect();});
 
   function pack(scope:LibraryScope=library,options:{version?:1|2;recipientId?:string;title?:string;release?:string;sequence?:number;kind?:'full'|'delta';parent?:string;caseId?:string}={}) {
     const version=options.version??(scope.kind==='SHARED'?2:1),recipient=version===2?{kind:'library',origin,library_id:options.recipientId??scope.id}:{origin,workspace_id:scope.id};
@@ -99,9 +99,9 @@ suite('shared inspiration real PostgreSQL boundaries',()=>{
   });
   it('shares one durable reception job across brands while preserving member permissions and running actor identity',async()=>{
     const replies=await Promise.all([receive(request(),context(a)),receive(request(),context(b))]);expect(replies.map(r=>r.status)).toEqual([202,202]);
-    const first=await replies[0]!.json(),second=await replies[1]!.json();expect(first.id).toBe(second.id);expect(await prisma.asyncTask.count({where:{inspirationLibraryId:library.id}})).toBe(1);
+    const first=await replies[0]!.json(),second=await replies[1]!.json();expect(first.id).toBe(second.id);expect(await prisma.inspirationLibraryTask.count({where:{inspirationLibraryId:library.id}})).toBe(1);
     for(const ws of [a,b])expect((await (await receiveStatus(request(),context(ws))).json()).task.id).toBe(first.id);
-    const before=await prisma.asyncTask.update({where:{id:first.id},data:{status:'RUNNING'}});await receive(request(),context(a));const after=await prisma.asyncTask.findUniqueOrThrow({where:{id:first.id}});expect(after.inputJson).toEqual(before.inputJson);expect(after.workspaceId).toBe(before.workspaceId);
+    const before=await prisma.inspirationLibraryTask.update({where:{id:first.id},data:{status:'RUNNING'}});await receive(request(),context(a));const after=await prisma.inspirationLibraryTask.findUniqueOrThrow({where:{id:first.id}});expect(after.inputJson).toEqual(before.inputJson);expect(after.workspaceId).toBe(before.workspaceId);
     auth.user={id:member,email:member+'@example.invalid'};expect((await (await receiveStatus(request(),context(b))).json()).canReceive).toBe(false);expect((await receive(request(),context(b))).status).toBe(403);
     auth.user={id:other,email:other+'@example.invalid'};expect((await (await receiveStatus(request(),context(foreign))).json()).task).toBeNull();
   });

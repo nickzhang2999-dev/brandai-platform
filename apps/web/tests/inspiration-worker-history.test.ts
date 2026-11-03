@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { InspirationCaseCard } from '@brandai/contracts';
 const mocks=vi.hoisted(()=>({find:vi.fn(),update:vi.fn(),history:vi.fn(),taskUpdate:vi.fn(),list:vi.fn(),settings:vi.fn()}));
-vi.mock('@brandai/db',()=>({prisma:{inspirationChat:{findUnique:mocks.find,updateMany:mocks.update,findMany:mocks.history},asyncTask:{updateMany:mocks.taskUpdate}}}));
+vi.mock('@brandai/db',()=>({prisma:{inspirationChat:{findUnique:mocks.find,updateMany:mocks.update,findMany:mocks.history},inspirationLibraryTask:{updateMany:mocks.taskUpdate}}}));
 vi.mock('../src/lib/inspiration/service',()=>({listCases:mocks.list}));
 vi.mock('../src/lib/settings',()=>({getEffectiveAiSettings:mocks.settings}));
 vi.mock('../src/lib/studio-copywriting-provider',()=>({copywritingConfig:()=>({}),copywritingEndpoint:()=>''}));

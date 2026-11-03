@@ -19,31 +19,40 @@ async function owner(db: Db, workspaceId: string, userId: string) {
 }
 
 async function impact(db: Db, workspaceId: string, userId: string, name: string) {
-  const [projects, assets, rules, terms, prohibitions, inspirationCases, members,
-    asyncRows, generationRows, requestRows, conversationRows, layerRows, chatRows, materialRows] = await Promise.all([
+  const [projects, assets, rules, terms, prohibitions, privateRecords, legacyRecords, members,
+    asyncRows, libraryTaskRows, generationRows, requestRows, conversationRows, layerRows, chatRows, legacyChatRows, materialRows] = await Promise.all([
     db.project.count({ where: { workspaceId } }), db.asset.count({ where: { workspaceId } }),
     db.brandRule.count({ where: { workspaceId } }), db.complianceTerm.count({ where: { workspaceId } }),
     // Shared-library content survives deleting a consuming brand. Legacy private
     // libraries retain their workspace identity and are the only owned content.
-    db.prohibitionRule.count({ where: { workspaceId } }), db.inspirationRecord.count({ where: { libraryId: workspaceId } }),
+    db.prohibitionRule.count({ where: { workspaceId } }),
+    db.inspirationRecord.findMany({ where: { library: { kind: "WORKSPACE", legacyWorkspaceId: workspaceId } }, select: { id: true } }),
+    db.legacyInspirationRecord.findMany({ where: { workspaceId }, select: { id: true } }),
     db.membership.count({ where: { workspaceId } }),
     db.asyncTask.findMany({ where: { workspaceId, status: { in: [...active] } }, select: { id: true } }),
+    db.inspirationLibraryTask.findMany({ where: { workspaceId, status: { in: [...active] } }, select: { id: true } }),
     db.generation.findMany({ where: { workspaceId, status: { in: [...active] } }, select: { id: true } }),
     db.studioGenerationRequest.findMany({ where: { workspaceId, status: { in: [...active] } }, select: { generationId: true } }),
     db.studioConversationMessage.findMany({ where: { conversation: { workspaceId }, status: { in: [...active] } }, select: { id: true } }),
     db.studioDecompositionRequest.findMany({ where: { workspaceId, OR: [{ status: { in: [...active] } }, { archiveToken: { not: null } }] }, select: { id: true } }),
     db.inspirationChat.findMany({ where: { workspaceId, status: { in: [...active] } }, select: { id: true } }),
+    db.legacyInspirationChat.findMany({ where: { workspaceId, status: { in: [...active] } }, select: { id: true } }),
     db.studioGeneratedMaterial.findMany({ where: { workspaceId, status: { in: [...active] } }, select: { outputId: true } }),
   ]);
   // Some tasks have both a domain receipt and an AsyncTask projection; count
   // those once. Generation requests share their generation identity.
   const tasks = new Set<string>(asyncRows.map(row => row.id));
+  for (const row of libraryTaskRows) tasks.add(row.id);
   for (const row of generationRows) tasks.add(`generation:${row.id}`);
   for (const row of requestRows) tasks.add(`generation:${row.generationId}`);
   for (const row of conversationRows) tasks.add(`conversation:${row.id}`);
   for (const row of layerRows) tasks.add(`layers:${row.id}`);
   for (const row of chatRows) tasks.add(row.id);
+  for (const row of legacyChatRows) tasks.add(row.id);
   for (const row of materialRows) tasks.add(`material:${row.outputId}`);
+  // The compatibility copy preserves ids. Count that copy once, while keeping
+  // later records written independently by either runtime in the deletion scope.
+  const inspirationCases = new Set([...privateRecords, ...legacyRecords].map(row => row.id)).size;
   const counts = { projects, assets, rules, terms, prohibitions, inspirationCases, members };
   const activeTasks = tasks.size;
   return BrandDeletionPreview.parse({ workspaceId, name, counts, activeTasks, canDelete: !activeTasks,

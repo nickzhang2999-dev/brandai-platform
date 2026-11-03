@@ -15,7 +15,7 @@ export async function runInspirationChat(id:string,stopSignal?:AbortSignal) {
   const startedAt=Date.now();
   const row=await prisma.inspirationChat.findUnique({where:{id}});if(!row || row.status!=='PENDING')return;
   if(!(await prisma.inspirationChat.updateMany({where:{id,status:'PENDING',expiresAt:{gt:new Date()}},data:{status:'RUNNING'}})).count)return;
-  await prisma.asyncTask.updateMany({where:{id,kind:'INSPIRATION_CHAT',status:'PENDING'},data:{status:'RUNNING',progress:10}});
+  await prisma.inspirationLibraryTask.updateMany({where:{id,kind:'INSPIRATION_CHAT',status:'PENDING'},data:{status:'RUNNING',progress:10}});
   const cancelled=new AbortController(),deadline=AbortSignal.timeout(Math.max(1,Math.min(240000,row.expiresAt.getTime()-Date.now()))),signal=AbortSignal.any([cancelled.signal,deadline,...(stopSignal?[stopSignal]:[])]);
   let checking=false;const cancellationTimer=setInterval(()=>{if(checking)return;checking=true;void prisma.inspirationChat.findUnique({where:{id},select:{status:true}}).then(current=>{if(current?.status!=='RUNNING')cancelled.abort();}).catch(()=>cancelled.abort()).finally(()=>{checking=false;});},2000);cancellationTimer.unref();
   try {
@@ -63,7 +63,7 @@ export async function runInspirationChat(id:string,stopSignal?:AbortSignal) {
     console.warn('[inspiration-chat] failed',inspirationFailureDiagnostic(error,signal.aborted));
     await prisma.inspirationChat.updateMany({where:{id,status:'RUNNING'},data:{status:'FAILED',error:error instanceof Error && safeMessages.has(error.message)?error.message:terminalError}});
   }
-  finally {clearInterval(cancellationTimer);await prisma.inspirationChat.updateMany({where:{id},data:{latencyMs:Date.now()-startedAt}});const current=await prisma.inspirationChat.findUnique({where:{id}});if(current)await prisma.asyncTask.updateMany({where:{id,kind:'INSPIRATION_CHAT',status:{in:['PENDING','RUNNING']}},data:{status:current.status,progress:current.status==='SUCCEEDED'?100:10,error:current.error}});}
+  finally {clearInterval(cancellationTimer);await prisma.inspirationChat.updateMany({where:{id},data:{latencyMs:Date.now()-startedAt}});const current=await prisma.inspirationChat.findUnique({where:{id}});if(current)await prisma.inspirationLibraryTask.updateMany({where:{id,kind:'INSPIRATION_CHAT',status:{in:['PENDING','RUNNING']}},data:{status:current.status,progress:current.status==='SUCCEEDED'?100:10,error:current.error}});}
 }
 export function createInspirationWorker() {
   let stopped=false,busy=false,withdrawalBusy=false;const abort=new AbortController(),attempted=new Map<string,number>();
@@ -71,11 +71,11 @@ export function createInspirationWorker() {
     if(stopped || busy || !inspirationEnabled())return;busy=true;
     try {
       await prisma.inspirationChat.updateMany({where:{status:{in:['PENDING','RUNNING']},expiresAt:{lte:new Date()}},data:{status:'FAILED',error:'任务已超时，请重试。'}});
-      await prisma.asyncTask.updateMany({where:{kind:'INSPIRATION_CHAT',status:{in:['PENDING','RUNNING']},expiresAt:{lte:new Date()}},data:{status:'FAILED',error:'任务已超时，请重试。'}});
+      await prisma.inspirationLibraryTask.updateMany({where:{kind:'INSPIRATION_CHAT',status:{in:['PENDING','RUNNING']},expiresAt:{lte:new Date()}},data:{status:'FAILED',error:'任务已超时，请重试。'}});
       const pending=await prisma.inspirationChat.findFirst({where:{status:'PENDING',expiresAt:{gt:new Date()}},orderBy:{createdAt:'asc'}});if(pending)await runInspirationChat(pending.id,abort.signal);
-      const task=await prisma.asyncTask.findFirst({where:{kind:'INSPIRATION_SYNC',inspirationLibraryId:{not:null},status:'PENDING',expiresAt:{gt:new Date()},
+      const task=await prisma.inspirationLibraryTask.findFirst({where:{kind:'INSPIRATION_SYNC',inspirationLibraryId:{not:null},status:'PENDING',expiresAt:{gt:new Date()},
         ...(contentSyncMode()==='manual'?{inputJson:{path:['trigger'],equals:'manual'}}:{})},orderBy:{createdAt:'asc'}});
-      if(task && (await prisma.asyncTask.updateMany({where:{id:task.id,status:'PENDING',expiresAt:{gt:new Date()}},data:{status:'RUNNING',progress:10}})).count) {
+      if(task && (await prisma.inspirationLibraryTask.updateMany({where:{id:task.id,status:'PENDING',expiresAt:{gt:new Date()}},data:{status:'RUNNING',progress:10}})).count) {
         try {
           const library=task.inspirationLibraryId?await prisma.inspirationLibrary.findUnique({where:{id:task.inspirationLibraryId}}):null;
           if(!library)throw new Error('Publication recipient mismatch');
@@ -89,7 +89,7 @@ export function createInspirationWorker() {
           };
           await recheck();
           await syncReplica(library,AbortSignal.any([abort.signal,AbortSignal.timeout(Math.max(1,Math.min(240000,task.expiresAt!.getTime()-Date.now())))]),recheck);
-          await prisma.asyncTask.updateMany({where:{id:task.id,status:'RUNNING',expiresAt:{gt:new Date()}},data:{status:'SUCCEEDED',progress:100,error:null,resultJson:{libraryId:library.id}}});
+          await prisma.inspirationLibraryTask.updateMany({where:{id:task.id,status:'RUNNING',expiresAt:{gt:new Date()}},data:{status:'SUCCEEDED',progress:100,error:null,resultJson:{libraryId:library.id}}});
         } catch(error) {
           const scope=error instanceof Error&&error.message==='Publication recipient mismatch';
           const access=error instanceof Error&&error.message==='Library receiver access changed';
@@ -97,17 +97,17 @@ export function createInspirationWorker() {
           const failureCode=scope?'LIBRARY_SCOPE_MISMATCH':access?'RECEIVER_ACCESS_CHANGED':timedOut?'SYNC_TIMEOUT':'SYNC_FAILED';
           const message=scope?'发布包与当前灵感库的接收范围不一致，请联系管理员检查库配置。':access?'接收权限已变化，请由当前灵感库管理员重新确认。':timedOut?'灵感接收超时，已有内容保留。':terminalError;
           console.warn('[inspiration-sync] failed',{failureCode});
-          await prisma.asyncTask.updateMany({where:{id:task.id,status:'RUNNING'},data:{status:'FAILED',error:message,resultJson:{failureCode}}});
+          await prisma.inspirationLibraryTask.updateMany({where:{id:task.id,status:'RUNNING'},data:{status:'FAILED',error:message,resultJson:{failureCode}}});
         }
       }
-      await prisma.asyncTask.updateMany({where:{kind:'INSPIRATION_SYNC',status:{in:['PENDING','RUNNING']},expiresAt:{lte:new Date()}},data:{status:'FAILED',error:'同步任务已超时，请重试。'}});
+      await prisma.inspirationLibraryTask.updateMany({where:{kind:'INSPIRATION_SYNC',status:{in:['PENDING','RUNNING']},expiresAt:{lte:new Date()}},data:{status:'FAILED',error:'同步任务已超时，请重试。'}});
       if(contentSyncMode()==='automatic') {
         const due=await prisma.inspirationState.findMany({where:{OR:[{lastSyncAt:null},{lastSyncAt:{lt:new Date(Date.now()-5*60000)}}]},include:{library:true},take:20});
         for(const state of due) {
           if(!syncConfigured(state.library.kind)||Date.now()-(attempted.get(state.libraryId)??0)<5*60000)continue;attempted.set(state.libraryId,Date.now());
           const workspaceId=state.library.legacyWorkspaceId||(await prisma.brandWorkspace.findFirst({where:{ownerId:state.library.ownerId},select:{id:true}}))?.id;
           if(!workspaceId)continue;
-          await prisma.$transaction(async tx=>{await lockWorkspace(tx,state.libraryId);const pending=await tx.asyncTask.count({where:{inspirationLibraryId:state.libraryId,kind:'INSPIRATION_SYNC',status:{in:['PENDING','RUNNING']}}});if(!pending)await tx.asyncTask.create({data:{workspaceId,inspirationLibraryId:state.libraryId,kind:'INSPIRATION_SYNC',expiresAt:new Date(Date.now()+6*60000),inputJson:{trigger:'automatic'}}});});
+          await prisma.$transaction(async tx=>{await lockWorkspace(tx,state.libraryId);const pending=await tx.inspirationLibraryTask.count({where:{inspirationLibraryId:state.libraryId,kind:'INSPIRATION_SYNC',status:{in:['PENDING','RUNNING']}}});if(!pending)await tx.inspirationLibraryTask.create({data:{workspaceId,inspirationLibraryId:state.libraryId,kind:'INSPIRATION_SYNC',expiresAt:new Date(Date.now()+6*60000),inputJson:{trigger:'automatic'}}});});
         }
       }
     } finally {busy=false;}

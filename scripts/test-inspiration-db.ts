@@ -14,7 +14,11 @@ import { createServer } from 'node:http';
 async function main() {
   if(process.env.INSPIRATION_DB_TEST!=='1')throw new Error('Explicit INSPIRATION_DB_TEST=1 required');
   const dbUrl=new URL(process.env.DATABASE_URL||'');
-  if(!['127.0.0.1','localhost','[::1]'].includes(dbUrl.hostname)||!dbUrl.pathname.includes('nova'))throw new Error('Only isolated local Nova test DB allowed');
+  if(!['127.0.0.1','localhost','[::1]'].includes(dbUrl.hostname)||!/^\/nova(?:_[a-z0-9]+)*_test$/.test(dbUrl.pathname))throw new Error('Only isolated local Nova *_test DB allowed');
+  // This harness covers preserved v1 private libraries. A host's shared-library
+  // configuration must not redirect its synthetic private fixtures.
+  delete process.env.INSPIRATION_SHARED_LIBRARY_ID;
+  delete process.env.INSPIRATION_SHARED_PUBLISHER_URL;
   const fixture=resolve('.novart-build/inspiration-integration',randomUUID());mkdirSync(fixture,{recursive:true});
   const python=process.env.OMNI_TEST_PYTHON||'D:/coding/OmniSignal/.venv/Scripts/python.exe';
   const omni=process.env.OMNI_TEST_ROOT||'D:/coding/OmniSignal-ad-workbench';
@@ -68,8 +72,10 @@ print('test fixtures created')
   try {
     await prisma.user.createMany({data:[{id:userId,email:`${run}@integration.invalid`,name:'Integration fixture'},{id:otherId,email:`other-${run}@integration.invalid`,name:'Integration isolation'}]});
     await prisma.brandWorkspace.createMany({data:[{id:ws1,ownerId:userId,name:'Synthetic integration fixture'},{id:ws2,ownerId:otherId,name:'Synthetic isolation fixture'},{id:wsCatalog,ownerId:userId,name:'Synthetic taxonomy fixture'}]});
+    await prisma.inspirationLibrary.createMany({data:[ws1,ws2,wsCatalog].map(id=>({id,kind:'WORKSPACE',ownerId:id===ws2?otherId:userId,legacyWorkspaceId:id}))});
     await install(wsCatalog,'r5');
     const references=await listCases(wsCatalog,{kind:'reference',industry:'food-beverage',medium:'packaging',task:'series'});
+    assert.deepEqual(references.sourceLibrary,{id:wsCatalog,kind:'WORKSPACE'});assert.equal(references.cases[0]?.libraryId,wsCatalog);
     assert.deepEqual(references.cases.map(c=>c.caseId),['catalog-reference']);assert.equal(references.cases[0]?.taxonomyStatus,'reviewed');assert.equal(references.cases[0]?.analysisAllowed,false);
     assert.deepEqual((await listCases(wsCatalog,{kind:'advertisement',industry:'technology',medium:'poster',task:'campaign'})).cases.map(c=>c.caseId),['catalog-ad']);
     pass('real Omni reviewed taxonomy adapter survives signing, database installation, and combined B-side filters');
@@ -79,9 +85,9 @@ print('test fixtures created')
     const legacyBody=(await activeRecords(wsCatalog)).records.find(r=>r.caseId==='catalog-legacy')!.body as {tags:{medium:string[]}};assert.deepEqual(legacyBody.tags.medium,['digital']);
     pass('legacy fallback labels remain absent from catalog while original signed record is preserved');
     await install(ws1,'r1');assert.equal((await activeRecords(ws1)).records.length,2);assert.equal((await getCase(ws1,'a')).case.title,' 测试包装 1 ');pass('actual Python signed full package and Unicode/whitespace interoperability');
-    await install(ws1,'r1');assert.equal(await prisma.inspirationRelease.count({where:{workspaceId:ws1}}),1);pass('immutable replay is idempotent');
+    await install(ws1,'r1');assert.equal(await prisma.inspirationRelease.count({where:{libraryId:ws1}}),1);pass('immutable replay is idempotent');
     const bad=load('r2');bad.files.set('images/a.png',Buffer.from('tampered'));await assert.rejects(installPackage(ws1,bad.raw,bad.files,keys));assert.equal((await activeRecords(ws1)).state?.activeRelease,'r1');pass('bad image hash preserves active release');
-    await Promise.all([install(ws1,'r2'),install(ws1,'r2')]);assert.equal((await getCase(ws1,'a')).case.revision,2);assert.equal(await prisma.inspirationRelease.count({where:{workspaceId:ws1}}),2);pass('parallel same-release installation serializes safely');
+    await Promise.all([install(ws1,'r2'),install(ws1,'r2')]);assert.equal((await getCase(ws1,'a')).case.revision,2);assert.equal(await prisma.inspirationRelease.count({where:{libraryId:ws1}}),2);pass('parallel same-release installation serializes safely');
     await assert.rejects(requireWorkspaceRole(ws1,otherId,'VIEWER'));assert.equal((await listCases(ws2)).cases.length,0);pass('workspace membership and storage isolation');
     const card=(await getCase(ws1,'a')).case;assert.equal(card.sources[0]?.url,'https://example.com/test-only');assert.equal((card as unknown as {metadata?:unknown}).metadata,undefined);assert.ok(card.images[0]!.url.startsWith(`/api/workspaces/${ws1}/`));pass('case cards expose evidence and local scoped image URLs only');
     await prisma.membership.create({data:{workspaceId:ws1,userId:otherId,role:'VIEWER'}});
@@ -91,10 +97,10 @@ print('test fixtures created')
     assert.equal((await listInspirationFeedback(ws1,userId,'review')).items.length,2);assert.equal((await listInspirationFeedback(ws2,otherId,'review')).items.length,0);pass('feedback own versus owner review scope stays inside workspace and user');
     await assert.rejects(listInspirationFeedback(ws1,otherId,'review'));await assert.rejects(reviewInspirationFeedback(ws1,otherId,ownFeedback.id,{status:'RESOLVED'}));await assert.rejects(reviewInspirationFeedback(ws2,otherId,ownFeedback.id,{status:'RESOLVED'}));pass('nonowner and foreign workspace cannot review or resolve feedback');
     await reviewInspirationFeedback(ws1,userId,memberFeedback.id,{status:'RESOLVED'});const persistedFeedback=await prisma.inspirationFeedback.findUniqueOrThrow({where:{id:memberFeedback.id}});assert.equal(persistedFeedback.note,'成员测试反馈说明');assert.equal(persistedFeedback.status,'RESOLVED');assert.equal((await listInspirationFeedback(ws1,userId,'review')).items.length,1);pass('owner resolution preserves note and removes only resolved review queue item');
-    const chat=await prisma.inspirationChat.create({data:{workspaceId:ws1,userId,requestId:randomUUID(),conversationId:randomUUID(),question:'测试历史',caseIds:['a'],status:'SUCCEEDED',answer:'需要撤回的测试回答',citations:[{caseId:'a',revision:2}],expiresAt:new Date(Date.now()+60000)}});
-    await prisma.inspirationBookmark.create({data:{workspaceId:ws1,userId,caseId:'a',revision:2,note:'用户自己的笔记'}});
+    const chat=await prisma.inspirationChat.create({data:{workspaceId:ws1,libraryId:ws1,userId,requestId:randomUUID(),conversationId:randomUUID(),question:'测试历史',caseIds:['a'],status:'SUCCEEDED',answer:'需要撤回的测试回答',citations:[{caseId:'a',revision:2}],expiresAt:new Date(Date.now()+60000)}});
+    await prisma.inspirationBookmark.create({data:{workspaceId:ws1,libraryId:ws1,userId,caseId:'a',revision:2,note:'用户自己的笔记'}});
     const request={requestId:randomUUID(),question:'并发幂等问题'};
-    const requests=await Promise.all([createChat(ws1,userId,request),createChat(ws1,userId,request)]);assert.equal(requests[0].id,requests[1].id);await assert.rejects(createChat(ws1,userId,{...request,question:'不同内容'}));pass('real transaction chat idempotency and conflicting payload rejection');
+    const requests=await Promise.all([createChat(ws1,userId,request),createChat(ws1,userId,request)]);assert.equal(requests[0].id,requests[1].id);assert.equal(requests[0].libraryId,ws1);await assert.rejects(createChat(ws1,userId,{...request,question:'不同内容'}));pass('real transaction chat idempotency, pinned private library and conflicting payload rejection');
     await install(ws1,'r3');await assert.rejects(getCase(ws1,'b'));await install(ws1,'r4');assert.equal((await activeRecords(ws1)).records.length,1);pass('delta deletion and full checkpoint materialization');
     await install(ws2,'r1');await applyWithdrawal(ws1,readFileSync(join(fixture,'publisher','withdrawals','1.json')),keys);
     assert.equal((await listCases(ws1)).cases.length,0);await assert.rejects(getCase(ws1,'a'));const hidden=await getChat(ws1,userId,chat.id);assert.equal(hidden.citations.length,0);assert.ok(!hidden.answer?.includes('需要撤回的测试回答'));assert.equal((await listCases(ws2)).cases.length,2);pass('withdrawal hides case/media lookup and historical answer without crossing tenants');
@@ -140,7 +146,7 @@ print('test fixtures created')
     writeFileSync(join(fixture,'result.json'),JSON.stringify({synthetic:true,realDatabase:true,realPythonPublisher:true,paidModelCalls:0,checks:results},null,2));
   } finally {
     // IDs are freshly generated here, never taken from external input or broad prefixes.
-    await prisma.$transaction(async tx=>{await tx.brandWorkspace.deleteMany({where:{id:{in:[ws1,ws2,wsCatalog]},ownerId:{in:[userId,otherId]}}});await tx.user.deleteMany({where:{id:{in:[userId,otherId]}}});});
+    await prisma.$transaction(async tx=>{await tx.inspirationChat.deleteMany({where:{workspaceId:{in:[ws1,ws2,wsCatalog]},userId:{in:[userId,otherId]}}});await tx.inspirationLibraryTask.deleteMany({where:{workspaceId:{in:[ws1,ws2,wsCatalog]},kind:'INSPIRATION_CHAT'}});await tx.brandWorkspace.deleteMany({where:{id:{in:[ws1,ws2,wsCatalog]},ownerId:{in:[userId,otherId]}}});await tx.user.deleteMany({where:{id:{in:[userId,otherId]}}});});
     await prisma.$disconnect();
   }
   console.log(JSON.stringify({passed:results.length,syntheticFixtures:true,retainedFixturePath:fixture,cleanup:'only created test users/workspaces'}));

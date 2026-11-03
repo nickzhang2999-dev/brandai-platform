@@ -75,6 +75,6 @@ export async function createChat(workspaceId:string,userId:string,input:ChatInpu
     if(await tx.inspirationChat.count({where:{workspaceId,userId,conversationId,status:{in:['PENDING','RUNNING']},expiresAt:{gt:new Date()}}})) throw new ApiException(409,'本轮回答尚未完成，请稍后继续。');
     const expiresAt=new Date(Date.now()+6*60000);
     const row=await tx.inspirationChat.create({data:{workspaceId,userId,libraryId:library.id,requestId:input.requestId,conversationId,question:input.question,caseIds:input.caseIds ?? [],selectedImages:input.selectedImages ?? [],expiresAt}});
-    await tx.asyncTask.create({data:{id:row.id,workspaceId,kind:'INSPIRATION_CHAT',expiresAt,inputJson:{userId,conversationId}}});return row;
+    await tx.inspirationLibraryTask.create({data:{id:row.id,workspaceId,inspirationLibraryId:library.id,kind:'INSPIRATION_CHAT',expiresAt,inputJson:{userId,conversationId}}});return row;
   });
 }

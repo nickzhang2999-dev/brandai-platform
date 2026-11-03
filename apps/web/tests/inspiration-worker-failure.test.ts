@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks=vi.hoisted(()=>({find:vi.fn(),update:vi.fn(),history:vi.fn(),taskUpdate:vi.fn(),list:vi.fn(),answer:vi.fn()}));
-vi.mock('@brandai/db',()=>({prisma:{inspirationChat:{findUnique:mocks.find,updateMany:mocks.update,findMany:mocks.history},asyncTask:{updateMany:mocks.taskUpdate}}}));
+vi.mock('@brandai/db',()=>({prisma:{inspirationChat:{findUnique:mocks.find,updateMany:mocks.update,findMany:mocks.history},inspirationLibraryTask:{updateMany:mocks.taskUpdate}}}));
 vi.mock('../src/lib/inspiration/service',()=>({listCases:mocks.list}));
 vi.mock('../src/lib/inspiration/provider',()=>({answerEvidence:mocks.answer}));
 vi.mock('../src/lib/inspiration/access',()=>({requireActiveEditor:async()=>{},requireCurrentEvidence:async()=>{}}));

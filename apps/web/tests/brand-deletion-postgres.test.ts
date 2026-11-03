@@ -13,7 +13,9 @@ suite("brand deletion real PostgreSQL isolation and concurrent admission", () =>
   beforeAll(() => {
     const url = new URL(isolated!);
     const allowed = (url.port === "55438" && url.pathname === "/brand_deletion_test")
-      || (url.port === "55439" && url.pathname === "/nova_shared_inspiration_test");
+      || (url.port === "55439" && url.pathname === "/nova_shared_inspiration_test")
+      || (url.port === "55439" && url.pathname === "/nova_inspiration_compat_test")
+      || (url.port === "55440" && url.pathname === "/nova_compat_test");
     if (url.hostname !== "127.0.0.1" || !allowed || process.env.DATABASE_URL !== isolated) throw new Error("Explicit isolated local brand deletion database required");
   });
   beforeEach(async () => {
@@ -29,6 +31,9 @@ suite("brand deletion real PostgreSQL isolation and concurrent admission", () =>
   });
   afterEach(async () => {
     await prisma.asyncTask.deleteMany({ where: { workspaceId: { in: spaces } } });
+    await prisma.inspirationLibraryTask.deleteMany({ where: { workspaceId: { in: spaces } } });
+    await prisma.inspirationChat.deleteMany({ where: { workspaceId: { in: spaces } } });
+    await prisma.legacyInspirationChat.deleteMany({ where: { workspaceId: { in: spaces } } });
     await prisma.studioDecompositionRequest.deleteMany({ where: { workspaceId: { in: spaces } } });
     await prisma.brandDeletionReceipt.deleteMany({ where: { userId: { in: users } } });
     await prisma.user.deleteMany({ where: { id: { in: users } } });
@@ -37,6 +42,9 @@ suite("brand deletion real PostgreSQL isolation and concurrent admission", () =>
   afterAll(async () => { await prisma.$disconnect(); });
   const request = async () => { const preview = await previewBrandDeletion(spaces[0], users[0]); return { confirmationName: preview.name, confirmationToken: preview.confirmationToken, mutationId: randomUUID() }; };
   const task = (status: "PENDING" | "RUNNING" | "FAILED" | "SUCCEEDED" = "PENDING") => prisma.asyncTask.create({ data: { workspaceId: spaces[0], kind: "SYNTHETIC_TEST", status } });
+  const libraryTask = (status: "PENDING" | "RUNNING" | "FAILED" | "SUCCEEDED" = "PENDING", id?: string) => prisma.inspirationLibraryTask.create({ data: {
+    ...(id ? { id } : {}), workspaceId: spaces[0], kind: "INSPIRATION_SYNC", status, inputJson: { userId: users[0] },
+  } });
   const layer = (status: "FAILED" | "SUCCEEDED" | "PENDING" = "FAILED") => prisma.studioDecompositionRequest.create({ data: {
     workspaceId: spaces[0], userId: users[0], projectId: project, mutationId: randomUUID(), payloadHash: "a".repeat(64),
     sourceShapeId: "shape", assetId: "synthetic-asset", assetSha256: "a".repeat(64), documentRevision: 1, layerCount: 2,
@@ -84,12 +92,18 @@ suite("brand deletion real PostgreSQL isolation and concurrent admission", () =>
     await prisma.inspirationRecord.createMany({ data: [
       { ...content, libraryId: spaces[0] }, { ...content, libraryId: sharedId },
     ] });
+    const copied = await prisma.inspirationRecord.findFirstOrThrow({ where: { libraryId: spaces[0] } });
+    await prisma.legacyInspirationRecord.createMany({ data: [
+      { ...content, id: copied.id, workspaceId: spaces[0] },
+      { ...content, caseId: "legacy-only-case", workspaceId: spaces[0] },
+    ] });
     await prisma.inspirationImage.create({ data: { libraryId: sharedId, releaseId: "synthetic-release", path: "images/a.png", sha256: "c".repeat(64), mimeType: "image/png", bytes: new Uint8Array([1, 2, 3]) } });
     await prisma.inspirationBookmark.create({ data: { workspaceId: spaces[0], libraryId: sharedId, userId: users[0], caseId: "synthetic-case", revision: 1 } });
-    expect((await previewBrandDeletion(spaces[0], users[0])).counts.inspirationCases).toBe(1);
+    expect((await previewBrandDeletion(spaces[0], users[0])).counts.inspirationCases).toBe(2);
     await deleteBrand(spaces[0], users[0], await request());
     expect(await prisma.inspirationLibrary.count({ where: { id: spaces[0] } })).toBe(0);
     expect(await prisma.inspirationRecord.count({ where: { libraryId: spaces[0] } })).toBe(0);
+    expect(await prisma.legacyInspirationRecord.count({ where: { workspaceId: spaces[0] } })).toBe(0);
     expect(await prisma.inspirationBookmark.count({ where: { workspaceId: spaces[0] } })).toBe(0);
     expect(await prisma.inspirationLibrary.count({ where: { id: sharedId, ownerId: users[0], kind: "SHARED" } })).toBe(1);
     expect(await prisma.inspirationRecord.count({ where: { libraryId: sharedId } })).toBe(1);
@@ -136,6 +150,41 @@ suite("brand deletion real PostgreSQL isolation and concurrent admission", () =>
     expect(await previewBrandDeletion(spaces[0], users[0])).toMatchObject({ canDelete: false, activeTasks: 1, blockedReason: expect.any(String) });
     await expect(deleteBrand(spaces[0], users[0], body)).rejects.toMatchObject({ status: 409 });
     expect(await prisma.asyncTask.count({ where: { id: row.id } })).toBe(1);
+  });
+  it.each(["PENDING", "RUNNING"] as const)("blocks isolated library %s work even when expired and deduplicates copied ids", async status => {
+    const body = await request(), old = await task(status), row = await libraryTask(status, old.id);
+    await prisma.inspirationLibraryTask.update({ where: { id: row.id }, data: { expiresAt: new Date(0) } });
+    expect(await previewBrandDeletion(spaces[0], users[0])).toMatchObject({ canDelete: false, activeTasks: 1 });
+    await expect(deleteBrand(spaces[0], users[0], body)).rejects.toMatchObject({ status: 409 });
+    expect(await prisma.inspirationLibraryTask.count({ where: { id: row.id } })).toBe(1);
+  });
+  it("protects new active library work from an old client's direct brand delete, while terminal receipts and shared content survive", async () => {
+    const sharedId = "shared-" + randomUUID();
+    await prisma.inspirationLibrary.create({ data: { id: sharedId, kind: "SHARED", ownerId: users[0] } });
+    const row = await libraryTask();
+    await prisma.inspirationLibraryTask.update({ where: { id: row.id }, data: { inspirationLibraryId: sharedId } });
+    await expect(prisma.brandWorkspace.delete({ where: { id: spaces[0] } })).rejects.toThrow();
+    expect(await prisma.brandWorkspace.count({ where: { id: spaces[0] } })).toBe(1);
+    expect(await prisma.asyncTask.count({ where: { id: row.id } })).toBe(0);
+    await prisma.inspirationLibraryTask.update({ where: { id: row.id }, data: { status: "SUCCEEDED" } });
+    await prisma.brandWorkspace.delete({ where: { id: spaces[0] } });
+    expect(await prisma.inspirationLibrary.count({ where: { id: sharedId } })).toBe(1);
+    expect(await prisma.inspirationLibraryTask.count({ where: { id: row.id } })).toBe(1);
+    await expect(prisma.inspirationLibraryTask.update({ where: { id: row.id }, data: { status: "PENDING" } })).rejects.toThrow();
+    await expect(prisma.inspirationLibraryTask.update({ where: { id: row.id }, data: { workspaceId: spaces[1] } })).rejects.toThrow();
+  });
+  it("blocks active chat domain rows from either physical store even when a task projection is missing", async () => {
+    await prisma.inspirationLibrary.create({ data: { id: spaces[0], kind: "WORKSPACE", ownerId: users[0], legacyWorkspaceId: spaces[0] } });
+    const data = { id: "chat-" + randomUUID(), workspaceId: spaces[0], userId: users[0], requestId: randomUUID(),
+      conversationId: randomUUID(), question: "Synthetic only", caseIds: [], expiresAt: new Date(0) };
+    await prisma.legacyInspirationChat.create({ data });
+    await prisma.inspirationChat.create({ data: { ...data, libraryId: spaces[0] } });
+    expect((await previewBrandDeletion(spaces[0], users[0])).activeTasks).toBe(1);
+    await expect(prisma.brandWorkspace.delete({ where: { id: spaces[0] } })).rejects.toThrow();
+    await prisma.inspirationChat.update({ where: { id: data.id }, data: { status: "FAILED" } });
+    expect((await previewBrandDeletion(spaces[0], users[0])).activeTasks).toBe(1);
+    await prisma.legacyInspirationChat.update({ where: { id: data.id }, data: { status: "FAILED" } });
+    expect((await previewBrandDeletion(spaces[0], users[0])).canDelete).toBe(true);
   });
   it("preserves terminal task/object-cleanup receipts and blocks their resurrection or identity rebinding", async () => {
     const row = await task("FAILED"), decomposition = await layer();
@@ -186,5 +235,31 @@ suite("brand deletion real PostgreSQL isolation and concurrent admission", () =>
     await deletion;
     expect(await insertion).toHaveProperty("error");
     expect(await prisma.asyncTask.count({ where: { workspaceId: spaces[0] } })).toBe(0);
+  });
+  it("an admitted library task holds deletion until commit, then deletion refuses active work", async () => {
+    const body = await request(), admitted = deferred(), release = deferred();
+    const writer = prisma.$transaction(async tx => {
+      await tx.inspirationLibraryTask.create({ data: { workspaceId: spaces[0], kind: "INSPIRATION_SYNC" } });
+      admitted.resolve(); await release.promise;
+    });
+    await admitted.promise;
+    let settled = false;
+    const deletion = deleteBrand(spaces[0], users[0], body).then(value => ({ value }), error => ({ error })).finally(() => { settled = true; });
+    try { await new Promise(resolve => setTimeout(resolve, 80)); expect(settled).toBe(false); } finally { release.resolve(); }
+    await writer; expect(await deletion).toMatchObject({ error: { status: 409 } });
+    expect(await prisma.brandWorkspace.count({ where: { id: spaces[0] } })).toBe(1);
+  });
+  it("a new library task insert waiting behind an old client's deletion lock cannot leave an orphan", async () => {
+    const locked = deferred(), release = deferred();
+    const deletion = prisma.$transaction(async tx => {
+      await tx.$queryRaw`SELECT "id" FROM "BrandWorkspace" WHERE "id" = ${spaces[0]} FOR UPDATE`;
+      locked.resolve(); await release.promise; await tx.brandWorkspace.delete({ where: { id: spaces[0] } });
+    });
+    await locked.promise;
+    let settled = false;
+    const insertion = libraryTask().then(value => ({ value }), error => ({ error })).finally(() => { settled = true; });
+    try { await new Promise(resolve => setTimeout(resolve, 80)); expect(settled).toBe(false); } finally { release.resolve(); }
+    await deletion; expect(await insertion).toHaveProperty("error");
+    expect(await prisma.inspirationLibraryTask.count({ where: { workspaceId: spaces[0] } })).toBe(0);
   });
 });

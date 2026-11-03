@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { InspirationReceiveStatus } from '@brandai/contracts';
 const mocks=vi.hoisted(()=>({ user:vi.fn(), role:vi.fn(), find:vi.fn(), create:vi.fn(), update:vi.fn(), upsert:vi.fn(), lock:vi.fn(), transaction:vi.fn(), enabled:vi.fn(), configured:vi.fn() }));
-vi.mock('@brandai/db',()=>({prisma:{$transaction:mocks.transaction,asyncTask:{findFirst:mocks.find}}}));
+vi.mock('@brandai/db',()=>({prisma:{$transaction:mocks.transaction,inspirationLibraryTask:{findFirst:mocks.find}}}));
 vi.mock('@/lib/api',()=>({ApiException:class extends Error{constructor(public status:number,message:string){super(message);}},requireUser:mocks.user,ok:(data:unknown,init?:ResponseInit)=>Response.json(data,init),handleError:(error:{status?:number;message:string})=>Response.json({error:error.message},{status:error.status??500})}));
 vi.mock('@/lib/workspace',()=>({requireWorkspaceRole:mocks.role}));
 vi.mock('@/lib/inspiration/service',()=>({requireEnabled:()=>{if(!mocks.enabled())throw Object.assign(new Error('disabled'),{status:503});}}));
@@ -23,7 +23,7 @@ beforeEach(()=>{
     && (!where.status || (where.status.in.includes(task.status)&&!!task.expiresAt&&task.expiresAt>now()))?task:null);
   mocks.create.mockImplementation(async({data})=>task={...data,id:`task-${++nextId}`,status:'PENDING',createdAt:now(),updatedAt:now()});
   mocks.update.mockImplementation(async({where,data})=>{expect(where.id).toBe(task?.id);if(where.status&&where.status!==task!.status)return {count:0};Object.assign(task!,data);return {count:1};});
-  mocks.transaction.mockImplementation((fn)=>{const next=tail.then(()=>fn({inspirationState:{upsert:mocks.upsert},asyncTask:{findFirst:mocks.find,create:mocks.create,updateMany:mocks.update}}));tail=next.catch(()=>{});return next;});
+  mocks.transaction.mockImplementation((fn)=>{const next=tail.then(()=>fn({inspirationState:{upsert:mocks.upsert},inspirationLibraryTask:{findFirst:mocks.find,create:mocks.create,updateMany:mocks.update}}));tail=next.catch(()=>{});return next;});
 });
 afterEach(()=>vi.useRealTimers());
 

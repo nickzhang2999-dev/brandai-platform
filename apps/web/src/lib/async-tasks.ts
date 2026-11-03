@@ -92,7 +92,26 @@ export async function getTask(
   taskId: string,
   userId?: string,
 ): Promise<TaskState | null> {
-  const t = await prisma.asyncTask.findUnique({ where: { id: taskId } });
+  // Existing task ids keep their original identity, including when the caller
+  // cannot read that row. A new library row must never shadow a legacy task.
+  let t = await prisma.asyncTask.findUnique({ where: { id: taskId } });
+  if (!t) {
+    const libraryTask = await prisma.inspirationLibraryTask.findUnique({
+      where: { id: taskId },
+      include: { inspirationLibrary: { select: { ownerId: true, legacyWorkspaceId: true, kind: true } } },
+    });
+    if (!libraryTask || libraryTask.workspaceId !== workspaceId
+      || !["INSPIRATION_CHAT", "INSPIRATION_SYNC"].includes(libraryTask.kind)) return null;
+    // The dedicated sync endpoint exposes the library-wide status projection.
+    // Generic task polling is private to the requesting user for both kinds.
+    const input = libraryTask.inputJson as { userId?: unknown } | null;
+    if (!userId || input?.userId !== userId) return null;
+    const library = libraryTask.inspirationLibrary;
+    const workspace = await prisma.brandWorkspace.findUnique({ where: { id: workspaceId }, select: { ownerId: true } });
+    if (!workspace || !library || library.ownerId !== workspace.ownerId
+      || (library.kind === "WORKSPACE" && library.legacyWorkspaceId !== workspaceId)) return null;
+    t = libraryTask;
+  }
   if (!t || t.workspaceId !== workspaceId) return null;
   // Service-only image analysis is polled through its fixed bearer scope.
   if (t.kind === "OMNI_INSPIRATION_ANALYSIS") return null;

@@ -24,11 +24,11 @@ export async function GET(_req: Request, { params }: { params: Promise<{ wsId: s
     ] } : {};
     // Disabled installations expose capability state, never stored task history.
     const select = { id: true, status: true, createdAt: true, updatedAt: true, expiresAt: true, error:true } as const;
-    const pending = enabled&&library ? await prisma.asyncTask.findFirst({
+    const pending = enabled&&library ? await prisma.inspirationLibraryTask.findFirst({
       where: { inspirationLibraryId: library!.id, kind: 'INSPIRATION_SYNC', status: { in: ['PENDING', 'RUNNING'] }, expiresAt: { gt: now }, ...visibleTasks },
       orderBy: { createdAt: 'desc' }, select,
     }) : null;
-    const latest = pending ?? (enabled&&library ? await prisma.asyncTask.findFirst({
+    const latest = pending ?? (enabled&&library ? await prisma.inspirationLibraryTask.findFirst({
       where: { inspirationLibraryId: library!.id, kind: 'INSPIRATION_SYNC', ...visibleTasks }, orderBy: { createdAt: 'desc' }, select,
     }) : null);
     const expired = latest && active.includes(latest.status) && (!latest.expiresAt || latest.expiresAt <= now);
@@ -53,17 +53,17 @@ export async function POST(_req: Request, { params }: { params: Promise<{ wsId: 
       await lockWorkspace(tx,library.id);
       await ensureLibrary(tx,library);
       await tx.inspirationState.upsert({ where: { libraryId:library.id }, create: { libraryId:library.id }, update: {} });
-      const existing = await tx.asyncTask.findFirst({ where: { inspirationLibraryId: library!.id, kind: 'INSPIRATION_SYNC', status: { in: ['PENDING', 'RUNNING'] }, expiresAt: { gt: new Date() } } });
+      const existing = await tx.inspirationLibraryTask.findFirst({ where: { inspirationLibraryId: library!.id, kind: 'INSPIRATION_SYNC', status: { in: ['PENDING', 'RUNNING'] }, expiresAt: { gt: new Date() } } });
       // A click also confirms a queued task from an older automatic worker.
       // Keep its identity instead of creating a second importer.
       if(existing){
         // A running importer keeps the actor/brand whose authority it validates.
         // The queue's original workspace identity is immutable. The confirmed
         // consumer context is independently pinned with the actor in inputJson.
-        if(existing.status==='PENDING')await tx.asyncTask.updateMany({where:{id:existing.id,status:'PENDING'},data:{inputJson:{trigger:'manual',userId:user.id,workspaceId:wsId}}});
+        if(existing.status==='PENDING')await tx.inspirationLibraryTask.updateMany({where:{id:existing.id,status:'PENDING'},data:{inputJson:{trigger:'manual',userId:user.id,workspaceId:wsId}}});
         return existing;
       }
-      return tx.asyncTask.create({ data: {workspaceId:wsId,inspirationLibraryId:library.id,kind:'INSPIRATION_SYNC', expiresAt: new Date(Date.now() + 6 * 60000), inputJson: { trigger: 'manual', userId: user.id,workspaceId:wsId } } });
+      return tx.inspirationLibraryTask.create({ data: {workspaceId:wsId,inspirationLibraryId:library.id,kind:'INSPIRATION_SYNC', expiresAt: new Date(Date.now() + 6 * 60000), inputJson: { trigger: 'manual', userId: user.id,workspaceId:wsId } } });
     });
     return ok({ id: task.id, status: task.status }, { status: 202 });
   } catch (error) { return handleError(error); }
