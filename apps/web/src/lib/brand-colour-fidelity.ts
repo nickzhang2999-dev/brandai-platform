@@ -106,12 +106,13 @@ export function deltaE(a: Rgb, b: Rgb): number {
  * channel to 4 bits and counts buckets. Returns buckets covering at least
  * `MIN_REPORTED_SHARE` of the sampled pixels, most common first.
  */
-export async function dominantColours(image: Buffer, maxColours = 8): Promise<Array<{ hex: string; share: number }>> {
+export async function dominantColours(image: Buffer, maxColours = 8, minShare = MIN_REPORTED_SHARE): Promise<Array<{ hex: string; share: number }>> {
   const { data, info } = await sharp(image, { failOn: "warning" })
     .resize(SAMPLE_EDGE, SAMPLE_EDGE, { fit: "inside", withoutEnlargement: true })
     // Flatten transparency onto white: a transparent PNG must not read as black.
     .flatten({ background: "#ffffff" })
     .removeAlpha()
+    .toColourspace("srgb")
     .raw()
     .toBuffer({ resolveWithObject: true });
   const channels = info.channels;
@@ -135,7 +136,7 @@ export async function dominantColours(image: Buffer, maxColours = 8): Promise<Ar
       hex: toHex([entry.r / entry.count, entry.g / entry.count, entry.b / entry.count]),
       share: entry.count / total,
     }))
-    .filter(entry => entry.share >= MIN_REPORTED_SHARE)
+    .filter(entry => entry.share >= minShare)
     .sort((left, right) => right.share - left.share)
     .slice(0, maxColours);
 }
@@ -157,7 +158,7 @@ export async function checkBrandColourFidelity(input: ColourFidelityInput): Prom
 
   let detected: Array<{ hex: string; share: number }>;
   try {
-    detected = await dominantColours(input.image);
+    detected = await dominantColours(input.image, 4096, 0);
   } catch {
     return { ...empty, reason: "图片无法读取，未做颜色核对" };
   }
@@ -174,6 +175,7 @@ export async function checkBrandColourFidelity(input: ColourFidelityInput): Prom
       neutral.push(entry.hex);
       continue;
     }
+    let matchedShare = 0;
     let best: { hex: string; share: number; deltaE: number } | null = null;
     for (const candidate of detected) {
       const rgb = parseHex(candidate.hex);
@@ -182,18 +184,19 @@ export async function checkBrandColourFidelity(input: ColourFidelityInput): Prom
       // a saturated palette entry through a loose threshold.
       if (deltaE(rgb, [255, 255, 255]) <= NEUTRAL_DELTA_E || deltaE(rgb, [0, 0, 0]) <= NEUTRAL_DELTA_E) continue;
       const distance = deltaE(entry.rgb, rgb);
+      if (distance <= threshold) matchedShare += candidate.share;
       if (!best || distance < best.deltaE) best = { hex: candidate.hex, share: candidate.share, deltaE: distance };
     }
     // Presence needs both a close colour and enough coverage: a 1-pixel hit in
     // a large render is noise, not the brand colour being used.
-    if (best && best.deltaE <= threshold && best.share >= MIN_PRESENCE_SHARE) {
-      present.push({ hex: entry.hex, share: best.share, closestDetected: best.hex, deltaE: Math.round(best.deltaE * 10) / 10 });
+    if (best && best.deltaE <= threshold && matchedShare >= MIN_PRESENCE_SHARE) {
+      present.push({ hex: entry.hex, share: Math.min(1, matchedShare), closestDetected: best.hex, deltaE: Math.round(best.deltaE * 10) / 10 });
     } else {
       missing.push(entry.hex);
     }
   }
 
-  return { checked: true, present, missing, neutral, detected, withinBrand: present.length > 0 };
+  return { checked: true, present, missing, neutral, detected: detected.filter(entry => entry.share >= MIN_REPORTED_SHARE).slice(0, 8), withinBrand: present.length > 0 };
 }
 
 /** One short Chinese sentence for the result card. Empty when nothing to say. */
@@ -201,12 +204,12 @@ export function colourFidelityMessage(result: ColourFidelityResult): string {
   if (!result.checked) return "";
   if (result.withinBrand) {
     return result.missing.length
-      ? `颜色核对：品牌色找到 ${result.present.length} 个，${result.missing.length} 个未出现。`
-      : "颜色核对：品牌色均已出现。";
+      ? `颜色抽样：近似品牌色找到 ${result.present.length} 个，${result.missing.length} 个未检出。`
+      : "颜色抽样：检测到所有非中性品牌色的近似颜色。";
   }
   // Only neutrals in the palette: there is no diagnostic colour to judge by.
-  if (result.neutral.length && !result.missing.length) return "颜色核对：品牌色均为中性色，无法据此判断是否遵循。";
-  return "颜色核对：未检测到任何品牌色，模型可能未遵循颜色规范。";
+  if (result.neutral.length && !result.missing.length) return "颜色抽样：品牌色均为中性色，无法据此判断是否遵循。";
+  return "颜色抽样：未检出足够的近似品牌色，请人工检查。";
 }
 
 /**

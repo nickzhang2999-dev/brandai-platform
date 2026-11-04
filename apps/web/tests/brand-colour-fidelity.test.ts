@@ -52,7 +52,7 @@ describe("brand colour fidelity", () => {
     expect(result.withinBrand).toBe(true);
     expect(result.present.map(entry => entry.hex)).toEqual(["#7C5CFF"]);
     expect(result.missing).toEqual([]);
-    expect(colourFidelityMessage(result)).toBe("颜色核对：品牌色均已出现。");
+    expect(colourFidelityMessage(result)).toBe("颜色抽样：检测到所有非中性品牌色的近似颜色。");
   });
 
   it("flags the reported defect: a green subject rendered red against a green palette", async () => {
@@ -61,7 +61,7 @@ describe("brand colour fidelity", () => {
     expect(result.checked).toBe(true);
     expect(result.withinBrand).toBe(false);
     expect(result.missing).toEqual(["#34A853"]);
-    expect(colourFidelityMessage(result)).toBe("颜色核对：未检测到任何品牌色，模型可能未遵循颜色规范。");
+    expect(colourFidelityMessage(result)).toBe("颜色抽样：未检出足够的近似品牌色，请人工检查。");
   });
 
   it("reports which palette entries are missing when only some are used", async () => {
@@ -70,7 +70,7 @@ describe("brand colour fidelity", () => {
     expect(result.checked).toBe(true);
     expect(result.present.map(entry => entry.hex)).toEqual(["#7C5CFF"]);
     expect(result.missing).toEqual(["#1B7F3A"]);
-    expect(colourFidelityMessage(result)).toBe("颜色核对：品牌色找到 1 个，1 个未出现。");
+    expect(colourFidelityMessage(result)).toBe("颜色抽样：近似品牌色找到 1 个，1 个未检出。");
   });
 
   it("does not claim a near-white palette entry was used just because the image is white", async () => {
@@ -83,7 +83,7 @@ describe("brand colour fidelity", () => {
     expect(tinted.present).toEqual([]);
     expect(tinted.missing).toEqual([]);
     expect(tinted.withinBrand).toBe(false);
-    expect(colourFidelityMessage(tinted)).toBe("颜色核对：品牌色均为中性色，无法据此判断是否遵循。");
+    expect(colourFidelityMessage(tinted)).toBe("颜色抽样：品牌色均为中性色，无法据此判断是否遵循。");
   });
 
   it("ignores a palette colour that only covers a stray sliver", async () => {
@@ -114,4 +114,13 @@ describe("brand colour fidelity", () => {
     expect(strict.withinBrand).toBe(false);
     expect(loose.withinBrand).toBe(true);
   });
+});
+
+it("finds a 0.75 percent patch below the dominant-colour reporting cutoff", async () => {
+  const base = await solid("#ffffff", 96, 96);
+  const patch = await solid("#7c5cff", 8, 9);
+  const image = await sharp(base).composite([{ input: patch, left: 0, top: 0 }]).png().toBuffer();
+  const result = await checkBrandColourFidelity({ palette: ["#7c5cff"], image });
+  expect(result.present).toHaveLength(1);
+  expect(result.present[0]!.share).toBeCloseTo(72 / 9216);
 });

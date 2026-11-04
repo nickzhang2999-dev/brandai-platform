@@ -255,6 +255,16 @@ async function fixtureSettled(condition) {const deadline=Date.now()+10000;while(
   stage='open-owned-editor';await page.goto(origin+'/studio-editor');
   await page.getByTestId('owned-canvas').waitFor();
   const surface=page.getByTestId('owned-canvas');
+  if(process.env.NOVART_OWNED_EXPORT_ONLY === '1') {
+    const doc=contracts.emptyOwnedDocument(),id='export-source';
+    const image={id,assetId:id,assetSha256:'a'.repeat(64),kind:'image',mimeType:'image/png',fileName:'export-source.png',sizeBytes:4096,width:1024,height:1024,url:`/api/workspaces/${fixture.workspaceId}/assets/${id}/raw`};experienceAssets.set(id,image);
+    doc.items=[{id:'shape:export-image',kind:'image',imageNumber:1,parentId:doc.pageId,x:0,y:0,w:900,h:900,rotation:0,opacity:1,url:image.url,assetId:id,assetSha256:image.assetSha256}];
+    canvas=await contracts.encodeOwnedCanvas(doc);revision++;let before=canvas;
+    await page.reload();await surface.waitFor();await page.waitForFunction(()=>document.querySelector('[data-testid="owned-editor"]')?.dataset.saveState==='saved');
+    await page.waitForTimeout(1200);before=canvas;
+    await require('./check-owned-export-interactions.cjs').runOwnedExportChecks({page,check,canvasTool,sourceUrl:origin+image.url,unchanged:()=>canvas===before});
+    assert.deepEqual(report.externalRequests,[]);assert.deepEqual(report.errors,[]);report.passed=true;return;
+  }
   if(projectContextOnly) {
     const doc=contracts.emptyOwnedDocument();for(let i=0;i<2;i++){
       const id='context-'+String.fromCharCode(97+i),bytes=fixturePng(192,128,()=>i?[180,120,240,255]:[124,92,255,255]);

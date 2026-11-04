@@ -20,6 +20,27 @@ class StudioAppliedBrandRule(StrictModel):
     strength: str
 
 
+class StudioBrandColourMatch(StrictModel):
+    hex: str
+    share: float
+    closestDetected: str
+    deltaE: float
+
+
+class StudioDetectedColour(StrictModel):
+    hex: str
+    share: float
+
+
+class StudioBrandColourFidelity(StrictModel):
+    checked: bool = Field(strict=True)
+    present: list[StudioBrandColourMatch]
+    missing: list[str]
+    neutral: list[str] = Field(default_factory=list)
+    detected: list[StudioDetectedColour]
+    withinBrand: bool = Field(strict=True)
+
+
 class StudioBrandRuleReceipt(StrictModel):
     outputId: str = Field(min_length=1)
     appliedRuleCount: int | None = Field(ge=0, strict=True)
@@ -28,3 +49,4 @@ class StudioBrandRuleReceipt(StrictModel):
     rules: list[StudioAppliedBrandRule]
     detailsComplete: bool = Field(strict=True)
     promptAdditionCount: int | None = Field(ge=0, strict=True)
+    colourFidelity: StudioBrandColourFidelity | None = None

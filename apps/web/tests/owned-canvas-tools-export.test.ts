@@ -1,7 +1,7 @@
 import sharp from "sharp";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { emptyOwnedDocument, parseOwnedDocument, serializeOwnedDocument, type OwnedCanvasItem } from "../src/lib/owned-canvas-model";
-import { exportOwnedSvg, getExportDocument, getOwnedBounds, selectOwnedExportScene } from "../src/lib/owned-canvas-export";
+import { exportOwnedPng, exportOwnedSvg, getExportDocument, getOwnedBounds, selectOwnedExportScene } from "../src/lib/owned-canvas-export";
 import { getOwnedImageLayout, getOwnedTextLayout } from "../src/lib/owned-canvas-style";
 
 const item = (id: string, patch: Partial<OwnedCanvasItem> = {}): OwnedCanvasItem => ({
@@ -23,6 +23,20 @@ beforeEach(() => vi.stubGlobal("createImageBitmap", vi.fn(async (blob: Blob) => 
 afterEach(() => vi.unstubAllGlobals());
 
 describe("owned tools self-contained export", () => {
+  it("rejects explicit PNG allocation overflow before fetching assets without changing the document", async () => {
+    const document = scene([item("large", { kind: "image", w: 3000, h: 3000, url: "/asset.png" })]);
+    const before = structuredClone(document), fetcher = vi.fn();
+    await expect(exportOwnedPng(document, { pngResolution: 2, origin, fetcher })).rejects.toThrow("1600 万");
+    expect(fetcher).not.toHaveBeenCalled(); expect(document).toEqual(before);
+  });
+  it("rejects unsupported PNG resolution values instead of silently downgrading", async () => {
+    await expect(exportOwnedPng(scene([item("one")]), { pngResolution: 3 as 2 })).rejects.toThrow("请选择");
+  });
+  it("does not apply PNG resolution to SVG geometry or frame dimensions", async () => {
+    const document = scene([item("frame", { kind: "frame", w: 300, h: 200 })]);
+    expect(await exportOwnedSvg(document, { pngResolution: 2, frameId: "shape:frame" })).toContain('width="300" height="200" viewBox="0 0 300 200"');
+  });
+
   it("lets a single-image raster tool omit group siblings without changing normal group export", () => {
     const document = scene([item("image", { kind: "image", url: "/image.png", groupId: "group:one" }), item("text", { kind: "text", text: "sibling", groupId: "group:one" })]);
     expect(selectOwnedExportScene(document, { itemIds: ["shape:image"] }).document.items).toHaveLength(2);

@@ -22,20 +22,19 @@ export function GenerationBrandRuleReceipt({ task }: { task: Pick<GenerationTask
         {receipt.rules.length > 0 && <ul className="space-y-1">{receipt.rules.map(rule => <li key={rule.id}><span className="font-medium">{types[rule.type] ?? rule.type}</span> · {rule.summary} <span>（{rule.strength === "FORBIDDEN" ? "禁止项" : rule.strength === "STRONG" ? "强约束" : rule.strength === "WEAK" ? "弱约束" : rule.strength}）</span></li>)}</ul>}
         {!receipt.detailsComplete && <p>部分历史规则明细未记录，无法据此还原完整规范。</p>}
         {receipt.promptAdditionCount !== null && <p>生成回执记录 {receipt.promptAdditionCount} 条附加约束（可能包含项目要求和禁用项）。</p>}
-        {/* The check compares finished pixels with the palette that was sent, so
-            a miss means "the model did not follow", not "the rule was missing". */}
+        {/* Coarse whole-image colour presence is not a subject or compliance verdict. */}
         {receipt.colourFidelity ? <div data-testid="generation-colour-fidelity" className={receipt.colourFidelity.withinBrand ? "" : "text-primary"}>
           <p>{receipt.colourFidelity.withinBrand
             ? receipt.colourFidelity.missing.length
-              ? `颜色核对：品牌色找到 ${receipt.colourFidelity.present.length} 个，${receipt.colourFidelity.missing.length} 个未出现。`
-              : "颜色核对：品牌色均已出现。"
+              ? `颜色抽样：近似品牌色找到 ${receipt.colourFidelity.present.length} 个，${receipt.colourFidelity.missing.length} 个未检出。`
+              : "颜色抽样：检测到所有非中性品牌色的近似颜色。"
             : receipt.colourFidelity.neutral.length && !receipt.colourFidelity.missing.length
-              ? "颜色核对：品牌色均为中性色，无法据此判断是否遵循。"
-              : "颜色核对：未检测到任何品牌色，模型可能未遵循颜色规范。"}</p>
+              ? "颜色抽样：品牌色均为中性色，无法据此判断是否遵循。"
+              : "颜色抽样：未检出足够的近似品牌色，请人工检查。"}</p>
           {!!receipt.colourFidelity.present.length && <p>{receipt.colourFidelity.present.map(item => `${item.hex}（${Math.round(item.share * 100)}%）`).join("、")}</p>}
-          {!!receipt.colourFidelity.missing.length && receipt.colourFidelity.withinBrand && <p>未出现：{receipt.colourFidelity.missing.join("、")}</p>}
-        </div> : receipt.appliedRuleCount ? <p>这次生成没有颜色核对记录（检查上线前的结果，或品牌未声明颜色）。</p> : null}
-        <p>以上为生成时的传入记录；图片是否遵守规范仍需检查。</p>
+          {!!receipt.colourFidelity.missing.length && receipt.colourFidelity.withinBrand && <p>未检出：{receipt.colourFidelity.missing.join("、")}</p>}
+        </div> : receipt.appliedRuleCount ? <p>这次生成没有可用的颜色抽样记录（历史结果、未声明颜色或检查未完成）。</p> : null}
+        <p>颜色抽样只检查整图的近似色及覆盖比例，不能证明主体颜色、配色比例或品牌规范合格，仍需人工检查。</p>
       </div>
     </details>)}
   </div>;

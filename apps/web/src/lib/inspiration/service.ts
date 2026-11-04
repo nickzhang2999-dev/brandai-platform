@@ -13,7 +13,7 @@ export function card(workspaceId:string, value:unknown,libraryId=workspaceId): I
   const c=PublishedCase.parse(value);
   const analysisAllowed=[c,...c.sources,...c.images].every(entity=>(entity.permissions as {analysis?:string}|undefined)?.analysis==='allowed');
   return {libraryId,caseId:c.case_id,revision:c.revision,title:c.title,summary:c.summary_zh,brandOrTeam:c.brand_or_team,analysisAllowed,...catalogMetadata(c),
-    images:c.images.map(i=>({imageId:i.image_id,url:`/api/workspaces/${encodeURIComponent(workspaceId)}/inspiration/cases/${encodeURIComponent(c.case_id)}/images/${encodeURIComponent(i.image_id)}?revision=${c.revision}&libraryId=${encodeURIComponent(libraryId)}`})),
+    images:c.images.map(i=>({imageId:i.image_id,url:`/api/workspaces/${encodeURIComponent(workspaceId)}/inspiration/cases/${encodeURIComponent(c.case_id)}/images/${encodeURIComponent(i.image_id)}?cachePolicy=2&revision=${c.revision}&libraryId=${encodeURIComponent(libraryId)}`})),
     sources:c.sources.map(s=>({sourceId:s.source_id,url:s.url})),claims:c.claims.map(x=>({claimId:x.claim_id,kind:x.kind,text:x.text,sourceIds:x.source_ids,imageIds:x.image_ids}))};
 }
 export function keywordScore(c:InspirationCaseCard, query:string) {

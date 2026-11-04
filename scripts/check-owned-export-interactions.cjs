@@ -1,0 +1,21 @@
+const assert=require('node:assert/strict'),fs=require('node:fs');
+exports.runOwnedExportChecks=async({page,check,canvasTool,sourceUrl,unchanged})=>{
+ const button=name=>page.getByRole('button',{name,exact:true});
+ const download=async control=>{const pending=page.waitForEvent('download');await control.click();const file=await pending;assert.equal(await file.failure(),null);return fs.readFileSync(await file.path());};
+ const dimensions=async bytes=>page.evaluate(async base64=>{const blob=await(await fetch('data:image/png;base64,'+base64)).blob();const bitmap=await createImageBitmap(blob);const size=[bitmap.width,bitmap.height];bitmap.close();return size;},bytes.toString('base64'));
+ const header=page.locator('header details');await header.locator('summary').click();
+ assert.equal(await header.getByRole('combobox').inputValue(),'source');
+ assert.deepEqual(await dimensions(await download(header.getByRole('button',{name:'PNG',exact:true}))),[1024,1024]);
+ await header.getByRole('combobox').selectOption('1');assert.deepEqual(await dimensions(await download(header.getByRole('button',{name:'PNG',exact:true}))),[900,900]);
+ await header.getByRole('combobox').selectOption('2');assert.deepEqual(await dimensions(await download(header.getByRole('button',{name:'PNG',exact:true}))),[1800,1800]);
+ const svg=await download(header.getByRole('button',{name:'SVG',exact:true}));assert.match(svg.toString(),/width="900" height="900" viewBox="0 0 900 900"/);
+ const json=JSON.parse((await download(header.getByRole('button',{name:'JSON',exact:true}))).toString());assert.ok(json);
+ await header.getByRole('combobox').selectOption('source');await header.locator('summary').click();check('export-header-native-1024-layout-900-1x-2x-svg-json');
+ await canvasTool('导出');assert.deepEqual(await dimensions(await download(button('导出PNG'))),[1024,1024]);
+ await page.locator('[data-owned-id="shape:export-image"]').click();await canvasTool('导出');assert.deepEqual(await dimensions(await download(button('导出选中元素PNG'))),[1024,1024]);
+ await button('更多图片操作').click();assert.equal(await page.getByTestId('owned-object-menu').getByRole('combobox').inputValue(),'source');
+ const original=await download(page.getByRole('menuitem',{name:'下载原文件',exact:true}));const response=await page.request.get(sourceUrl);assert.deepEqual(original,await response.body());
+ assert.deepEqual(await dimensions(await download(page.getByRole('menuitem',{name:'下载选中图片PNG',exact:true}))),[1024,1024]);
+ check('export-canvas-selection-context-native-pixels-and-original-byte-identical');
+ assert.equal(unchanged(),true,'Every export must leave persisted layout and document untouched');check('all-export-entrypoints-leave-document-unchanged');
+};

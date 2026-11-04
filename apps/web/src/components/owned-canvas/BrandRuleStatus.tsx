@@ -8,7 +8,7 @@ export function brandRuleStatusMessage(status: Status) {
   // Rules reach the model as prompt text, not as a hard constraint. Saying
   // "已应用" made users read a color deviation as a bug in the rule library,
   // so state the actual mechanism and where deviations surface instead.
-  if (status.confirmedCount > 0) return `本次生图会带上 ${status.confirmedCount} 条已启用规则；模型可能不完全遵循，偏差以生成后的颜色核对为准。`;
+  if (status.confirmedCount > 0) return `本次生图会带上 ${status.confirmedCount} 条已启用规则；模型可能不完全遵循，生成后的颜色抽样仅供参考，仍需人工检查。`;
   if (status.draftCount > 0) return "尚无已启用规则；请在品牌知识页核对草稿并启用。";
   if (status.savedDraftAvailable) return "已保存颜色/字体资料，但尚无已启用规则；请在品牌知识页导入草稿并核对启用。";
   return "尚无品牌规则；可在品牌知识页上传识别或手动添加，核对后启用。";

@@ -64,10 +64,11 @@ function InspirationWorkspace({ wsId, workspaceName, canEdit }: { wsId: string; 
   const list = useQuery({ queryKey: key, queryFn: ({ signal }) => apiFetch<InspirationListResponse>(`${base}?${new URLSearchParams(applied)}`, { signal, cache: "no-store" }), placeholderData: previous => previous, retry: false, refetchInterval: 300000, refetchIntervalInBackground: false });
   // Later pages are fetched on demand from the cursor the server returned. They
   // are keyed by the same filter set state, so changing filters drops them.
-  const [more, setMore] = useState<{ cursor: string; cases: InspirationCaseCard[]; hasMore: boolean; nextCursor: string | null }[]>([]);
+  const [more, setMore] = useState<{ scope: string; cursor: string; cases: InspirationCaseCard[]; hasMore: boolean; nextCursor: string | null }[]>([]);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [autoLoadBlocked, setAutoLoadBlocked] = useState(false);
   const appliedKey = JSON.stringify(applied);
-  useEffect(() => { setMore([]); }, [appliedKey]);
+
   // Only a user-initiated filter change should say "updating"; the 60s background
   // poll must not flicker the result line the reader is looking at.
   const appliedRef = useRef(applied);
@@ -98,6 +99,16 @@ function InspirationWorkspace({ wsId, workspaceName, canEdit }: { wsId: string; 
   const history = useQuery({ queryKey: ["inspiration-chat", wsId, conversationId], queryFn: ({ signal }) => apiFetch<{ items: InspirationChatState[] }>(`${base}/chat?conversationId=${encodeURIComponent(conversationId!)}`, { signal, cache: "no-store" }), enabled: enabled && Boolean(conversationId), retry: false,
     refetchInterval: (q) => q.state.data?.items.some((item) => ["PENDING", "RUNNING"].includes(item.status)) ? 2000 : false });
   const contentEpoch = list.data ? `${list.data.sourceLibrary?.id ?? "legacy"}:${list.data.activeRelease?.id ?? "empty"}:${list.data.withdrawalSequence}` : null;
+  const pageScope = JSON.stringify([wsId, appliedKey, contentEpoch, enabled, accessRevokedAt]);
+  const activePageScope = useRef(pageScope);
+  activePageScope.current = pageScope;
+  const pendingPage = useRef<AbortController | null>(null);
+  useEffect(() => {
+    setMore([]); setLoadingMore(false); setAutoLoadBlocked(false);
+    pendingPage.current?.abort(); pendingPage.current = null;
+    return () => { pendingPage.current?.abort(); pendingPage.current = null; };
+  }, [pageScope]);
+  const currentMore = more.filter(page => page.scope === pageScope);
   const previousEpoch = useRef<string | null>(null);
   useEffect(() => {
     if (!contentEpoch) return;
@@ -137,20 +148,30 @@ function InspirationWorkspace({ wsId, workspaceName, canEdit }: { wsId: string; 
   // deduplicated by library+case so a case republished mid-walk cannot appear twice.
   const items = (() => {
     const seen = new Set<string>();
-    const all = [...(list.data?.cases ?? []), ...more.flatMap(page => page.cases)];
+    const all = [...(list.data?.cases ?? []), ...currentMore.flatMap(page => page.cases)];
     return all.filter(item => { const id = `${item.libraryId}:${item.caseId}`; if (seen.has(id)) return false; seen.add(id); return true; });
   })();
-  const hasMore = (more.length ? more[more.length - 1]!.hasMore : list.data?.hasMore) === true;
+  const hasMore = (currentMore.length ? currentMore[currentMore.length - 1]!.hasMore : list.data?.hasMore) === true;
   async function loadMore() {
-    const cursor = more.length ? more[more.length - 1]!.nextCursor : list.data?.nextCursor;
-    if (!cursor || loadingMore) return;
-    setLoadingMore(true);
+    const cursor = currentMore.length ? currentMore[currentMore.length - 1]!.nextCursor : list.data?.nextCursor;
+    if (!cursor || pendingPage.current || !enabled || list.isPlaceholderData || list.isError) return;
+    const controller = new AbortController(); pendingPage.current = controller;
+    const requestScope = pageScope;
+    setAutoLoadBlocked(false); setLoadingMore(true);
     try {
-      const page = await apiFetch<InspirationListResponse>(`${base}?${new URLSearchParams({ ...applied, cursor })}`, { cache: "no-store" });
-      if (!alive.current) return;
-      setMore(previous => [...previous, { cursor, cases: page.cases, hasMore: page.hasMore === true, nextCursor: page.nextCursor ?? null }]);
-    } catch (error) { if (alive.current) setMessage(errorText(error)); }
-    finally { if (alive.current) setLoadingMore(false); }
+      const page = await apiFetch<InspirationListResponse>(`${base}?${new URLSearchParams({ ...applied, cursor })}`, { cache: "no-store", signal: controller.signal });
+      if (!alive.current || controller.signal.aborted || activePageScope.current !== requestScope) return;
+      const responseEpoch = `${page.sourceLibrary?.id ?? "legacy"}:${page.activeRelease?.id ?? "empty"}:${page.withdrawalSequence}`;
+      if (!page.enabled || responseEpoch !== contentEpoch) { setMore([]); void list.refetch(); return; }
+      setMore(previous => [...previous.filter(entry => entry.scope === requestScope), { scope: requestScope, cursor, cases: page.cases, hasMore: page.hasMore === true, nextCursor: page.nextCursor ?? null }]);
+    } catch (error) {
+      if (alive.current && !controller.signal.aborted && activePageScope.current === requestScope) {
+        if (accessError(error)) { setAccessRevokedAt(Date.now()); setMore([]); }
+        setAutoLoadBlocked(true); setMessage(errorText(error));
+      }
+    } finally {
+      if (pendingPage.current === controller) { pendingPage.current = null; if (alive.current) setLoadingMore(false); }
+    }
   }
   async function cancel(id: string) {
     setCancelling(id); setMessage("");
@@ -166,19 +187,20 @@ function InspirationWorkspace({ wsId, workspaceName, canEdit }: { wsId: string; 
   loadMoreRef.current = loadMore;
   useEffect(() => {
     const node = sentinel.current;
-    if (!node || !hasMore || loadingMore) return;
+    if (!node || !hasMore || loadingMore || autoLoadBlocked || list.isPlaceholderData || list.isError) return;
     if (typeof IntersectionObserver === "undefined") return;
     const observer = new IntersectionObserver(entries => {
       if (entries.some(entry => entry.isIntersecting)) void loadMoreRef.current();
     }, { rootMargin: "200px 0px" });
     observer.observe(node);
     return () => observer.disconnect();
-  }, [hasMore, loadingMore, items.length]);
+  }, [hasMore, loadingMore, items.length, autoLoadBlocked, list.isPlaceholderData, list.isError]);
   const dirty = JSON.stringify(filters) !== JSON.stringify(applied);
   return <div data-testid="inspiration-page">
     <PageHeader title="统一灵感库" subtitle="Omni 将案例整理到公司灵感库，各品牌按需收藏和引用，用图片与来源理解设计方法。" />
     {list.isPending && <p role="status" className="py-10 text-muted-foreground">正在读取灵感库…</p>}
     {list.isError && <div role="alert" className="rounded-2xl border border-border p-5"><p>{errorText(list.error)}</p><Button className="mt-3" onClick={() => void list.refetch()}>重新读取</Button></div>}
+    {accessDenied && !permissionError && <div role="alert" className="rounded-2xl border border-border p-5"><p>当前品牌的灵感库访问权限已失效，请重新读取。</p><Button className="mt-3" onClick={() => void list.refetch()}>重新读取</Button></div>}
     {list.data?.enabled === false && <div role="status" className="rounded-2xl border border-border bg-card p-8"><h2 className="text-lg font-semibold">灵感库尚未开放</h2><p className="mt-2 text-sm text-muted-foreground">接通审核案例后，这里会显示可浏览和引用的设计内容。</p></div>}
     {enabled && list.data && <>
       <InspirationReceive key={wsId} wsId={wsId} />

@@ -10,8 +10,8 @@ export type StudioBrandRuleStatus = z.infer<typeof StudioBrandRuleStatus>;
 
 /**
  * Result of comparing a finished render against the palette that was actually
- * sent to the model. Brand rules reach the model as prompt text, so a deviation
- * here means "the model did not follow", not "the rule was missing".
+ * sent to the model. This is coarse whole-image colour presence only; it cannot
+ * prove subject colour, palette proportions or compliance with brand rules.
  */
 export const StudioBrandColourFidelity = z.object({
   checked: z.boolean(),

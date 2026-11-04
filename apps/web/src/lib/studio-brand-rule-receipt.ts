@@ -10,10 +10,10 @@ const share = (value: unknown) => typeof value === "number" && Number.isFinite(v
 /** Only the exact worker-written shape is accepted; anything else reads as "not recorded". */
 function colourFidelity(params: Record<string, unknown>) {
   const raw = object(params.colourFidelity);
-  if (raw.checked !== true) return null;
+  if (raw.checked !== true || !Array.isArray(raw.present) || !Array.isArray(raw.detected)) return null;
   const present = Array.isArray(raw.present) ? raw.present.flatMap(entry => {
     const item = object(entry);
-    const value = share(item.share), delta = typeof item.deltaE === "number" && Number.isFinite(item.deltaE) ? item.deltaE : null;
+    const value = share(item.share), delta = typeof item.deltaE === "number" && Number.isFinite(item.deltaE) && item.deltaE >= 0 ? item.deltaE : null;
     return typeof item.hex === "string" && typeof item.closestDetected === "string" && value !== null && delta !== null
       ? [{ hex: item.hex, share: value, closestDetected: item.closestDetected, deltaE: delta }] : [];
   }) : [];
@@ -23,7 +23,7 @@ function colourFidelity(params: Record<string, unknown>) {
     return typeof item.hex === "string" && value !== null ? [{ hex: item.hex, share: value }] : [];
   }) : [];
   const missing = strings(raw.missing);
-  if (!missing || typeof raw.withinBrand !== "boolean") return null;
+  if (!missing || !strings(raw.neutral) || typeof raw.withinBrand !== "boolean" || present.length !== raw.present.length || detected.length !== raw.detected.length || raw.withinBrand !== (present.length > 0)) return null;
   return { checked: true, present, missing, neutral: strings(raw.neutral) ?? [], detected, withinBrand: raw.withinBrand };
 }
 

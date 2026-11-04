@@ -60,7 +60,7 @@ describe("frozen generation evidence", () => {
     // Generations made before the check existed must stay null, not become "passed".
     expect(projectBrandRuleReceipt({ id: "output", params: params() }, "w").colourFidelity).toBeNull();
     // Malformed worker evidence is discarded rather than rendered as a verdict.
-    for (const bad of [{ checked: false }, { checked: true, missing: "x", withinBrand: true }, { checked: true, missing: [], withinBrand: "yes" }]) {
+    for (const bad of [{ checked: true, present: [], detected: [], neutral: [], missing: [], withinBrand: true }, { checked: false }, { checked: true, missing: "x", withinBrand: true }, { checked: true, missing: [], withinBrand: "yes" }]) {
       expect(projectBrandRuleReceipt({ id: "output", params: { ...params(), colourFidelity: bad } }, "w").colourFidelity).toBeNull();
     }
   });
@@ -73,7 +73,7 @@ describe("frozen generation evidence", () => {
   it("renders historical summaries and explicit uncertainty, with no implied visual compliance", () => {
     const receipt = projectBrandRuleReceipt({ id: "o", params: params() }, "w");
     const html = renderToStaticMarkup(React.createElement(GenerationBrandRuleReceipt, { task: { status: "SUCCEEDED", appliedBrandRuleCount: 1, brandRuleReceipts: [receipt] } }));
-    expect(html).toContain(snapshot.summary); expect(html).toContain("图片是否遵守规范仍需检查");
+    expect(html).toContain(snapshot.summary); expect(html).toContain("不能证明主体颜色");
     const old = renderToStaticMarkup(React.createElement(GenerationBrandRuleReceipt, { task: { status: "SUCCEEDED", appliedBrandRuleCount: null } }));
     expect(old).toContain("未记录"); expect(old).not.toContain("未应用");
     const zero = renderToStaticMarkup(React.createElement(GenerationBrandRuleReceipt, { task: { status: "SUCCEEDED", appliedBrandRuleCount: 0, brandRuleReceipts: [projectBrandRuleReceipt({ id: "o", params: { appliedBrandRuleCount: 0 } }, "w")] } }));

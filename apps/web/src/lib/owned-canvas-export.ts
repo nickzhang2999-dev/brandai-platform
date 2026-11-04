@@ -2,7 +2,8 @@ import { assertOwnedDocumentWritable, type OwnedCanvasDocument, type OwnedCanvas
 import { getOwnedArrowBoundsPoints, getOwnedArrowMarker, getOwnedImageLayout, getOwnedLinePoints, getOwnedTextLayout } from "./owned-canvas-style";
 
 export type OwnedExportScope = { itemIds?: string[]; frameId?: string; expandGroups?: boolean };
-export type OwnedExportOptions = OwnedExportScope & { origin?: string; fetcher?: typeof fetch };
+export type OwnedPngResolution = "source" | 1 | 2;
+export type OwnedExportOptions = OwnedExportScope & { origin?: string; fetcher?: typeof fetch; pngResolution?: OwnedPngResolution };
 type ExportBounds = { x: number; y: number; w: number; h: number };
 export type OwnedExportScene = { document: OwnedCanvasDocument; bounds: ExportBounds; frame?: OwnedCanvasItem };
 const MAX_PIXELS = 16_000_000, MAX_SIDE = 8192, MAX_IMAGE_BYTES = 10 * 1024 * 1024;
@@ -116,7 +117,7 @@ function rasterSize(bytes: Uint8Array, mime: string): { w: number; h: number } |
   return null;
 }
 
-async function embeddedImage(url: string, options: OwnedExportOptions, budget: number): Promise<{ data: string; bytes: number }> {
+async function embeddedImage(url: string, options: OwnedExportOptions, budget: number): Promise<{ data: string; bytes: number; w: number; h: number }> {
   const base = options.origin ?? (typeof location === "undefined" ? undefined : location.origin);
   if (!base) throw new Error("导出图片需要同源浏览器环境。");
   const origin = new URL(base).origin, resolved = new URL(url, origin);
@@ -156,7 +157,7 @@ async function embeddedImage(url: string, options: OwnedExportOptions, budget: n
     finally { bitmap.close(); }
     let binary = "";
     for (let i = 0; i < bytes.length; i += 32768) binary += String.fromCharCode(...bytes.subarray(i, i + 32768));
-    return { data: `data:${mime};base64,${btoa(binary)}`, bytes: length };
+    return { data: `data:${mime};base64,${btoa(binary)}`, bytes: length, ...size };
   } finally { clearTimeout(timer); }
 }
 
@@ -194,26 +195,38 @@ function shapeMarkup(item: OwnedCanvasItem, index: number, image?: string): stri
 }
 
 /** The selected scene has already passed full-source validation before filtering. */
-async function renderOwnedSvg(scene: OwnedExportScene, options: OwnedExportOptions): Promise<string> {
+async function renderOwnedSvg(scene: OwnedExportScene, options: OwnedExportOptions, raster?: { resolution: OwnedPngResolution; w: number; h: number }): Promise<string> {
   const { document: doc, bounds, frame } = scene; safeDimensions(bounds);
   const images = new Map<string, string>();
+  const sizes = new Map<string, { w: number; h: number }>();
   let fetchedBytes = 0, embeddedCharacters = 0;
   // Sequential and deduplicated to bound network and decoded-image pressure.
   for (const item of doc.items) if (item.kind === "image") {
     if (!images.has(item.url!)) {
       const image = await embeddedImage(item.url!, options, MAX_EXPORT_BYTES - fetchedBytes);
-      fetchedBytes += image.bytes; images.set(item.url!, image.data);
+      fetchedBytes += image.bytes; images.set(item.url!, image.data); sizes.set(item.url!, image);
     }
     // Each occurrence is embedded in the SVG, even when its fetch is shared.
     embeddedCharacters += images.get(item.url!)!.length;
     if (embeddedCharacters > MAX_EXPORT_BYTES) throw exportTooLarge();
+  }
+  if (raster) {
+    // One common scale preserves composition and frame clipping. Source mode
+    // retains cropped source pixels without shrinking vector/text-only scenes.
+    let scale: number = raster.resolution === "source" ? 1 : raster.resolution;
+    if (raster.resolution === "source") for (const item of doc.items) if (item.kind === "image") {
+      const size = sizes.get(item.url!)!, crop = item.crop ?? { w: 1, h: 1 };
+      scale = Math.max(scale, size.w * crop.w / item.w, size.h * crop.h / item.h);
+    }
+    raster.w = Math.ceil(bounds.w * scale); raster.h = Math.ceil(bounds.h * scale);
+    safeDimensions(raster);
   }
   let content = doc.items.map((item, index) => shapeMarkup(item, index, item.url ? images.get(item.url) : undefined)).join("");
   // Scene children stay in world coordinates. Inverse frame transform maps them
   // into output pixels; the outer clip is expressed in unrotated frame space.
   if (frame) content = `<defs><clipPath id="owned-export-frame"><rect width="${frame.w}" height="${frame.h}"/></clipPath></defs><g clip-path="url(#owned-export-frame)"><g transform="rotate(${-frame.rotation * 180 / Math.PI}) translate(${-frame.x} ${-frame.y})">${content}</g></g>`;
   const viewBox = frame ? `0 0 ${frame.w} ${frame.h}` : `${bounds.x} ${bounds.y} ${bounds.w} ${bounds.h}`;
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${bounds.w}" height="${bounds.h}" viewBox="${viewBox}">${content}</svg>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${raster?.w ?? bounds.w}" height="${raster?.h ?? bounds.h}" viewBox="${viewBox}">${content}</svg>`;
   if (new TextEncoder().encode(svg).byteLength > MAX_EXPORT_BYTES) throw exportTooLarge();
   return svg;
 }
@@ -224,7 +237,12 @@ export async function exportOwnedSvg(doc: OwnedCanvasDocument, options: OwnedExp
 }
 
 export async function exportOwnedPng(doc: OwnedCanvasDocument, options: OwnedExportOptions = {}): Promise<Blob> {
-  const scene = selectOwnedExportScene(doc, options), svg = await renderOwnedSvg(scene, options), bounds = scene.bounds;
+  const resolution = options.pngResolution ?? 1;
+  if (resolution !== "source" && resolution !== 1 && resolution !== 2) throw new Error("请选择原图像素、1× 或 2× PNG 导出。");
+  const scene = selectOwnedExportScene(doc, options);
+  const bounds = { resolution, w: scene.bounds.w, h: scene.bounds.h };
+  if (resolution !== "source") safeDimensions({ w: Math.ceil(bounds.w * resolution), h: Math.ceil(bounds.h * resolution) });
+  const svg = await renderOwnedSvg(scene, options, bounds);
   const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
   try {
     const image = new Image();
@@ -237,7 +255,7 @@ export async function exportOwnedPng(doc: OwnedCanvasDocument, options: OwnedExp
     const canvas = document.createElement("canvas"); canvas.width = bounds.w; canvas.height = bounds.h;
     const context = canvas.getContext("2d");
     if (!context) throw new Error("浏览器无法创建导出画布。");
-    context.drawImage(image, 0, 0);
+    context.drawImage(image, 0, 0, bounds.w, bounds.h);
     return await new Promise<Blob>((resolve, reject) => canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error("PNG 导出失败。")), "image/png"));
   } finally { URL.revokeObjectURL(url); }
 }
