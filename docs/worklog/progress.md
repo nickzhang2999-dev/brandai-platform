@@ -1,5 +1,24 @@
 # Integration progress
 
+## 2026-11-03 品牌色核对：把「已应用」改成可验证的事实
+
+- 定位「绿苹果变红苹果」性质：品牌规则经 `ai-constraints.ts` 折成 `promptAdditions` 文本下发，属**软约束**，模型可不遵循。界面用「已应用 N 条」措辞让人误以为强制生效，是**可见性与表述缺口**，非规则库缺陷。
+- 新增 `lib/brand-colour-fidelity.ts`：sharp 缩样取主色（4 bit 分桶 + 均值），Lab 空间 CIE76 ΔE 比对品牌 palette；近白/近黑条目判为中性色不计入结论（否则白底图为任何浅色规则「作证」），覆盖占比低于 0.5% 的杂色不算存在。
+- 生成 worker 在出图后按**实际下发的** `baseFields.brandRules` 取 palette 做核对，结果写入版本 `params.colourFidelity`；读图或核对失败一律 fail-soft，不把可用结果变成失败。
+- 契约 `StudioBrandRuleColourFidelity` + 回执投影严格只认 worker 写入的形状；非法或缺失一律 `null`，历史任务不会被推断为「已通过」。
+- 界面措辞改为「本次生图会带上 N 条已启用规则；模型可能不完全遵循，偏差以生成后的颜色核对为准」，回执按核对结果显示找到/未出现的品牌色。
+- 验证：`pnpm test` 2433 全绿（新增 11 条），`pnpm test:ai` 851，typecheck、clean build 通过；对话回归 58、文案回归 32。
+
+## 2026-11-03 灵感库检索修复与画布对话区重做
+
+- 灵感库 `filterCatalog` 去掉硬截断 `.slice(0,200)`，改游标分页（`caseId` 游标，默认 50、上限 200）；契约加 `matchedCount/hasMore/nextCursor`，接口读 `cursor/limit`，前端补「加载更多」。此前「库内 229 / 显示 200」的 29 条无任何可达路径。
+- 案例图片接口改用强 ETag + 304 + 长私有缓存，存盘 sha256 只在首次读取校验，不再每请求重算全量哈希。
+- `apiFetch` 把网络层失败包成 `ApiFetchError(status 0)`，页面不再透出 `Failed to fetch`。
+- 画布右侧对话区按参考稿重做：消息分左右两侧带头像、输入区从 400px+ 压到约 300px、品牌规范折叠、修改对象单行 chip、比例画质并入操作行、字数计数入壳。
+- 修掉三个门禁卡点（属五项改动那批）：`useAsImagePrompt` 改名 `applyAsImagePrompt` 解 `rules-of-hooks`；`owned-generation-card.test.tsx` 三处断言与实现对齐（已传入≠已应用）。
+- 验证：typecheck、`next build`（带 lint）、`pnpm test`（ui 42 / web 2421）、`pnpm test:ai` 851 全绿；对话回归 58、画布回归全通过、灵感库三份 28/16/28。
+- 已推 `claude/layer-quality` 到 `f10d043`，**未部署**，预览仍 `2b79559`。完整记录见[本轮日志](2026-11-03-conversation-pane-and-inspiration-ui.md)。
+
 ## 2026-10-31 两端上线与真实接收完成
 
 - Omni 046e3bf 健康运行，919项完整Python回归通过；每日目标100采集/120分析，今天实际53新增、87分析成功、33失败、85项AI复核；人工完成未知，自动发布关闭。

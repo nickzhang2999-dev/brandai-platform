@@ -70,4 +70,16 @@ describe('reviewed inspiration catalog', () => {
     const many = Array.from({ length: CATALOG_MAX_PAGE_SIZE + 50 }, (_, n) => card(`big-${String(n).padStart(3, '0')}`));
     expect(pageCatalog(many, {}, { limit: 10_000 }).cases).toHaveLength(CATALOG_MAX_PAGE_SIZE);
   });
+  it('never lets a single shared bigram turn an unrelated query into a hit', () => {
+    const prose = card('prose', { summary: '这套方案存在明显的视觉层级问题，包装的正面信息偏满。' });
+    // "不存在的词" shares the bigram "存在" with the summary, but that alone must
+    // not surface the case: a lone bigram is too weak to mean anything.
+    expect(catalogKeywordScore(prose, '不存在的词')).toBe(0);
+    expect(filterCatalog([prose], { q: '不存在的词' })).toEqual([]);
+    // A phrase the text really contains still matches, whole word first.
+    expect(catalogKeywordScore(prose, '视觉层级')).toBeGreaterThan(0);
+    expect(filterCatalog([prose], { q: '视觉层级' })).toHaveLength(1);
+    // Unrelated Chinese queries stay empty.
+    for (const query of ['量子力学', '区块链', '雪山']) expect(filterCatalog([prose], { q: query })).toEqual([]);
+  });
 });

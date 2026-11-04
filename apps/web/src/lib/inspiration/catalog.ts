@@ -35,13 +35,32 @@ export function catalogMetadata(record: { tags: Record<string, string[]>; editor
   return { contentType, taxonomyStatus, tags } as const;
 }
 
+/**
+ * Relevance score for a keyword query, or 0 for "does not match".
+ *
+ * Chinese has no spaces, so a multi-character query is also tried as bigrams.
+ * A bigram alone is far too weak an anchor: "不存在的词" contains the bigram
+ * "存在", which matches almost any prose and produced a false hit. Bigrams
+ * therefore only count toward the score of a card the whole word already
+ * matched, or where several distinct bigrams match together; a lone bigram hit
+ * never qualifies as a result.
+ */
 export function catalogKeywordScore(card: InspirationCaseCard, query: string) {
   const tagTerms = Object.entries(card.tags).flatMap(([group, values]) => values.flatMap(value => [value, tagLabel(group, value), ...(aliases[value] ?? [])]));
   const text = [card.title, card.summary, card.brandOrTeam, ...tagTerms, ...card.claims.map(claim => claim.text)].join(' ').toLocaleLowerCase();
   const words = query.toLocaleLowerCase().match(/[a-z0-9]+|[\u3400-\u9fff]+/gu) ?? [];
-  const terms = words.flatMap(word => /[\u3400-\u9fff]/u.test(word) && word.length > 2
-    ? [word, ...Array.from({ length: word.length - 1 }, (_, index) => word.slice(index, index + 2))] : [word]);
-  return [...new Set(terms)].reduce((score, term) => score + (text.includes(term) ? term.length : 0), 0);
+  let score = 0;
+  for (const word of words) {
+    const isCjk = /[\u3400-\u9fff]/u.test(word);
+    if (text.includes(word)) { score += word.length * 2; continue; }
+    if (!isCjk || word.length <= 2) continue;
+    // Whole word missed: require at least two distinct bigrams before the card
+    // counts as a match at all, then score the supporting bigrams only.
+    const bigrams = [...new Set(Array.from({ length: word.length - 1 }, (_, index) => word.slice(index, index + 2)))];
+    const hits = bigrams.filter(bigram => text.includes(bigram));
+    if (hits.length >= 2) score += hits.reduce((sum, bigram) => sum + bigram.length, 0);
+  }
+  return score;
 }
 
 export function filterCatalog(cards: InspirationCaseCard[], filters: CatalogFilters = {}) {

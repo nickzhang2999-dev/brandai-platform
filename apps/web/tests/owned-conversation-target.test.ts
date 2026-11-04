@@ -82,14 +82,14 @@ describe("canvas-selected conversation target", () => {
 describe("honest pre-submit dimensions from existing server rules", () => {
   it("shows original target pixels even when controls select 2K", () => {
     const value = draft({ references: [ref("a")], quickEditTargetId: "shape:a", sizeSelection: { ratioKey: "3:4", resolutionTier: "2K" } });
-    expect(ownedConversationSizePreview(value)).toEqual({ source: "target", text: "保留修改对象原图：1200 × 900 像素" });
+    expect(ownedConversationSizePreview(value)).toEqual({ source: "target", text: "保留原图：1200 × 900" });
     expect(ownedConversationSizePreview({ ...value, text: "" })).toMatchObject({ source: "target", text: expect.stringContaining("1200 × 900") });
   });
   it("gives explicit pixels precedence, then text ratio/tier, then controls for a new image", () => {
     const value = draft({ references: [ref("a")], quickEditTargetId: "shape:a" });
-    expect(ownedConversationSizePreview({ ...value, text: "背景改为蓝色，1080×1920" })).toEqual({ source: "dialog-pixels", text: "文字指定像素：1080 × 1920 像素" });
-    expect(ownedConversationSizePreview({ ...value, text: "背景改为蓝色，比例3:4，2K" })).toEqual({ source: "dialog-ratio", text: "文字指定比例 / 清晰度：1920 × 2560 像素" });
-    expect(ownedConversationSizePreview(draft({ text: "生成一张蓝色海报" }))).toEqual({ source: "control", text: "下拉默认：1024 × 1024 像素" });
+    expect(ownedConversationSizePreview({ ...value, text: "背景改为蓝色，1080×1920" })).toEqual({ source: "dialog-pixels", text: "文字指定：1080 × 1920" });
+    expect(ownedConversationSizePreview({ ...value, text: "背景改为蓝色，比例3:4，2K" })).toEqual({ source: "dialog-ratio", text: "文字比例：1920 × 2560" });
+    expect(ownedConversationSizePreview(draft({ text: "生成一张蓝色海报" }))).toEqual({ source: "control", text: "下拉：1024 × 1024" });
   });
   it("does not mistake quoted poster copy for output dimensions or conceal conflicts", () => {
     const value = draft({ references: [ref("a")], quickEditTargetId: "shape:a" });

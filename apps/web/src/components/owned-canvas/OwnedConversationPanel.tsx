@@ -23,6 +23,9 @@ type Props = { workspaceId: string; projectId: string; userId: string; readOnly:
   isImagePlaced?(image: PersistentImage): boolean; onNotice(message: string): void; onGeneration(task: GenerationTask): void; onInsert(image: PersistentImage, sourceShapeId?: string): Promise<void>;
   onInsertLayers(task: DecompositionTask, source: PersistentImage): Promise<void>; onAddReference?(): void; onAdvancedSettings?(): void; outputFrameId?: string; activity?: ReactNode };
 const button = "rounded-full border border-border px-3 py-2 text-xs disabled:opacity-40";
+// Narrower variant for the composer action row: five controls share a 360px
+// pane, and the default padding pushed the send button onto a second line.
+const compact = "rounded-full border border-border bg-card px-2 py-1.5 text-[11px] leading-none shrink-0 disabled:opacity-40";
 const empty = (): Draft => ({ text: "", references: [], quickEditTargetId: null, sizeSelection: { ratioKey: "1:1", resolutionTier: "1K" } });
 const draftValue = (value: StudioConversationDraftInput): Draft => ({ text: value.text, references: value.references, quickEditTargetId: value.quickEditTargetId, sizeSelection: value.sizeSelection, ...(value.psdLayerMode ? { psdLayerMode: value.psdLayerMode, ...(value.psdLayerCount ? { psdLayerCount: value.psdLayerCount } : {}) } : {}) });
 const same = ownedConversationDraftEqual;
@@ -277,10 +280,12 @@ export const OwnedConversationPanel = forwardRef<OwnedConversationHandle, Props>
     props.onNotice("需求已放回输入框，请确认图片和内容后点击发送。"); input.current?.focus();
   }
   return <section className="flex h-full min-h-0 flex-col" data-testid="owned-conversation" data-conversation-ready={ready}>
-    {(error || paused) && <div className="flex shrink-0 justify-end px-3 pt-2"><button className="rounded-full px-2 py-1 text-xs text-muted-foreground disabled:opacity-40" disabled={sending || saving} onClick={() => { setPaused(false); void read(); }}>检查任务状态</button></div>}
+    {(error || paused) && <div className="flex shrink-0 justify-end px-3.5 pt-2"><button className="rounded-full px-2 py-1 text-xs text-muted-foreground disabled:opacity-40" disabled={sending || saving} onClick={() => { setPaused(false); void read(); }}>检查任务状态</button></div>}
     <div ref={history} className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-3.5 pb-3 pt-4" onScroll={event => { const node = event.currentTarget; follow.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80; }} aria-label="项目对话记录">
       {nextCursor && <button className={button + " w-full"} onClick={() => { const context = api.current, order = ++requestOrder.current; if (context) void context.list(nextCursor).then(page => { if (!mounted.current || api.current !== context) return; page.messages.forEach(message => accept(message, order)); if (order >= cursorOrder.current) { cursorOrder.current = order; setNextCursor(page.nextCursor); } }).catch(failure => { if (mounted.current && api.current === context) setError(explain(failure)); }); }}>读取更早对话</button>}
-      {!messages.length && <div className="mx-auto max-w-56 py-12 text-center text-xs leading-6 text-muted-foreground"><p className="mb-2 text-2xl text-accent" aria-hidden="true">✦</p><p>描述想法开始创作。</p><p>选中画布图片即可指定修改对象；点击发送才会开始处理。</p></div>}
+      {/* Empty state: one short line. The long explanation wrapped mid-phrase in a
+          360px pane and pushed the composer down; the placeholder carries the rest. */}
+      {!messages.length && <div className="mx-auto max-w-[15rem] py-10 text-center"><p className="mb-3 text-xl text-accent" aria-hidden="true">✦</p><p className="text-xs leading-6 text-muted-foreground">选中画布图片，或直接描述想法</p></div>}
       {messages.map(message => <article key={message.messageId} className="space-y-3" data-message-id={message.messageId}>
         {/* 用户需求：右侧气泡 + 头像，与参考稿一致 */}
         <div className="flex items-start justify-end gap-2">
@@ -309,12 +314,16 @@ export const OwnedConversationPanel = forwardRef<OwnedConversationHandle, Props>
       </article>)}
       {props.activity}
     </div>
-    {error && <div role="alert" className="mx-3 mb-2 rounded-xl bg-accent-soft p-3 text-xs leading-6">{error}{ready && !unknown && <button className="ml-2 underline" onClick={() => { setError(""); void flush().catch(() => undefined); }}>确认草稿</button>}</div>}
-    {unknown && <div className="mx-3 mb-2 space-y-2 rounded-xl border border-border p-3"><p className="text-xs leading-6">上次提交的结果还没确认，需求和引用先保留不动。点“检查上次提交”会读取同一次请求，不会重复扣费。</p><button className={button} disabled={sending || !pending.current || props.readOnly} onClick={() => void send().catch(() => undefined)}>检查上次提交</button></div>}
+    {error && <div role="alert" className="mx-3.5 mb-2 rounded-xl bg-accent-soft p-3 text-xs leading-6">{error}{ready && !unknown && <button className="ml-2 underline" onClick={() => { setError(""); void flush().catch(() => undefined); }}>确认草稿</button>}</div>}
+    {unknown && <div className="mx-3.5 mb-2 space-y-2 rounded-xl border border-border p-3"><p className="text-xs leading-6">上次提交的结果还没确认，需求和引用先保留不动。点“检查上次提交”会读取同一次请求，不会重复扣费。</p><button className={button} disabled={sending || !pending.current || props.readOnly} onClick={() => void send().catch(() => undefined)}>检查上次提交</button></div>}
     <div className="mt-auto flex min-h-0 max-h-[65%] shrink-0 flex-col border-t border-border bg-card" data-testid="conversation-composer">
-      <div className="flex shrink-0 items-center justify-between gap-2 px-3 pt-2">
+      <div className="flex shrink-0 items-center justify-between gap-2 px-3.5 pt-2.5">
         <span className="truncate text-xs font-medium text-muted-foreground">{composerCollapsed ? `${draft.text.length ? `草稿 ${draft.text.length} 字 · ` : ""}${draft.references.length ? `${draft.references.length} 张引用 · ` : ""}${target ? "有修改对象" : "创作新图"}` : "生图需求"}</span>
-        <button type="button" className="shrink-0 rounded-full px-2 py-1 text-xs text-primary" aria-expanded={!composerCollapsed} aria-controls="conversation-composer-controls" onClick={() => { if (composing.current) { props.onNotice("请先完成当前中文输入，再收起输入区。"); return; } setComposerCollapsed(value => !value); }}>{composerCollapsed ? "展开输入" : "收起输入"}</button>
+        {/* 箭头表示折叠方向：收起时朝上（可展开），展开时朝下（可收起）。
+            无障碍名称保留完整文案，读屏仍能听到「展开输入 / 收起输入」。 */}
+        <button type="button" className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-primary disabled:opacity-40" aria-label={composerCollapsed ? "展开输入" : "收起输入"} title={composerCollapsed ? "展开输入" : "收起输入"} aria-expanded={!composerCollapsed} aria-controls="conversation-composer-controls" onClick={() => { if (composing.current) { props.onNotice("请先完成当前中文输入，再收起输入区。"); return; } setComposerCollapsed(value => !value); }}>
+          <span aria-hidden="true" className="text-[11px] leading-none">{composerCollapsed ? "▲" : "▼"}</span>
+        </button>
       </div>
       <div id="conversation-composer-controls" hidden={composerCollapsed} className="min-h-0 space-y-2 overflow-y-auto overscroll-contain px-3 pb-2 pt-1.5" style={{ display: composerCollapsed ? "none" : "block" }}>
       <details className="text-[11px] text-muted-foreground" data-testid="conversation-brand-rules"><summary className="cursor-pointer">品牌规范</summary><div className="pt-1"><BrandRuleStatus workspaceId={props.workspaceId} userId={props.userId} /></div></details>
@@ -330,36 +339,37 @@ export const OwnedConversationPanel = forwardRef<OwnedConversationHandle, Props>
         }}>追加到现有需求</button><button type="button" className={button} onClick={() => { setWritingPrompt(null); setWritingHandoffError(""); }}>取消交接</button>
       </section>}
 
-      {/* 修改对象：单行 chip，样式对齐参考稿 */}
-      <section aria-label="本轮修改对象" data-testid="conversation-target">
-        {target ? <div className="flex items-center gap-2 rounded-lg border border-border px-2 py-1.5">
-          <img src={`/api/workspaces/${encodeURIComponent(props.workspaceId)}/assets/${encodeURIComponent(target.assetId)}/raw`} alt="" className="h-6 w-8 shrink-0 rounded object-contain" loading="lazy" />
-          <span className="min-w-0 flex-1"><span className="block truncate text-xs">{target.name}</span><span className="block text-[11px] text-muted-foreground">修改对象 · 本轮修改这张图，原图保留</span></span>
-          <button type="button" className="shrink-0 rounded-full px-1 text-muted-foreground disabled:opacity-40" aria-label="取消修改对象" disabled={locked} onClick={() => { try { chooseCanvasTarget(null); } catch (failure) { setError(explain(failure)); } }}>×</button>
-        </div> : <p className="rounded-lg border border-dashed border-border px-2 py-1.5 text-[11px] leading-5 text-muted-foreground">选中画布中的一张图片，或直接描述要创作的新图。</p>}
-      </section>
-      {!!referenceOnly.length && <section aria-label="仅参考图片"><div className="flex gap-1.5 overflow-x-auto pb-0.5">{referenceOnly.map(value => <div key={value.referenceId} className="relative w-16 shrink-0 rounded-lg border border-border p-1">
-        <img src={`/api/workspaces/${encodeURIComponent(props.workspaceId)}/assets/${encodeURIComponent(value.assetId)}/raw`} alt="" className="h-9 w-full rounded object-contain" loading="lazy" />
-        <button type="button" aria-label={`移除参考 ${value.name}`} className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full border border-border bg-card text-[11px] leading-none text-muted-foreground disabled:opacity-40" disabled={locked} onClick={() => edit({ references: draft.references.filter(ref => ref.referenceId !== value.referenceId) })}>×</button>
-        <span className="mt-0.5 block truncate text-[10px] text-muted-foreground">{value.name}</span>
-        {value.shapeId && <button type="button" className="block truncate text-[10px] text-primary disabled:opacity-40" aria-label={`设为修改对象 ${value.name}`} title={value.purpose === "EXACT" ? "请先在素材用途中明确调整严格保留规则" : undefined} disabled={locked || value.purpose === "EXACT"} onClick={() => { try { chooseCanvasTarget(value); } catch (failure) { setError(explain(failure)); } }}>设为修改对象</button>}
-      </div>)}</div></section>}
-
-      {/* 输入框：带字数计数的输入壳 */}
-      <div className="relative overflow-hidden rounded-xl border border-border bg-background focus-within:border-primary/60 focus-within:ring-2 focus-within:ring-ring/20">
-        <textarea ref={input} aria-label="对话设计需求" className="block max-h-40 min-h-[72px] w-full resize-none bg-transparent px-2.5 pb-6 pt-2.5 text-sm leading-6 outline-none" placeholder={draft.quickEditTargetId ? "描述这张图片要怎么修改" : "输入想法，或添加图片作为参考"} value={draft.text} maxLength={4000} disabled={locked} onChange={event => edit({ text: event.target.value })} onCompositionStart={() => { composing.current = true; if (timer.current) clearTimeout(timer.current); }} onCompositionEnd={() => { composing.current = false; if (timer.current) clearTimeout(timer.current); timer.current = setTimeout(() => void flush().catch(() => undefined), 700); }} onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && !composing.current) { event.preventDefault(); if (draftRef.current.text.trim()) void send().catch(() => undefined); } }} />
-        <span aria-hidden="true" className="pointer-events-none absolute bottom-1.5 right-2 text-[10px] text-muted-foreground">{draft.text.length}/4000</span>
-      </div>
-      {props.projectContext && <div className="space-y-1 rounded-xl bg-muted px-2 py-2 text-xs" data-testid="conversation-project-context">
-        <div className="flex flex-wrap items-center justify-between gap-2"><label className="flex items-center gap-2"><input type="checkbox" aria-label="沿用项目资料" checked={props.projectContext.enabled} disabled={locked || !props.projectContext.available && !props.projectContext.enabled} onChange={event => props.projectContext?.onChange(event.target.checked)} />沿用项目资料</label><button type="button" className="text-primary underline" onClick={props.projectContext.onOpen}>查看资料</button></div>
-        <p className="leading-5 text-muted-foreground">{props.projectContext.blocked ? "资料有未保存修改或来源变化，请先确认；也可关闭本轮沿用。" : props.projectContext.enabled ? "使用已保存的目标、文案和参考；本轮要求与修改对象优先。" : props.projectContext.available ? "本轮只使用当前需求和所选参考。" : "先在项目资料中确认目标、文案和素材职责。"}</p>
-      </div>}
-      {/* 操作行：参考 · 比例 · 清晰度 · 更多 · 发送 */}
-      <div className="flex flex-wrap items-center gap-1.5" aria-label="本轮输出规格">
-        {props.onAddReference && <button type="button" className={button + " mr-auto"} aria-label="添加参考图片" title="从素材库添加参考图片" disabled={locked} onClick={props.onAddReference}>＋ 参考</button>}
-        <label className="text-xs"><span className="sr-only">比例</span><select aria-label="对话图片比例" className={button} value={draft.sizeSelection.ratioKey} disabled={locked} onChange={event => edit({ sizeSelection: { ratioKey: event.target.value as Draft["sizeSelection"]["ratioKey"], resolutionTier: draft.sizeSelection.resolutionTier, ...(event.target.value === "custom" ? { customRatio: { width: 1, height: 1 } } : {}) } })}>{GenerationAspectRatioKey.options.map(value => <option key={value} value={value}>{value === "custom" ? "自定义" : value}</option>)}</select></label>
-        <label className="text-xs"><span className="sr-only">画质</span><select aria-label="对话图片画质" className={button} value={draft.sizeSelection.resolutionTier} disabled={locked} onChange={event => edit({ sizeSelection: { ...draft.sizeSelection, resolutionTier: event.target.value as "1K" | "2K" } })}><option>1K</option><option>2K</option></select></label>
-        <details className="contents" data-testid="conversation-settings"><summary className={button + " cursor-pointer list-none"} aria-label="生成设置">更多</summary>
+      {/* 一个大框装下修改对象、参考图、输入和"沿用项目资料"：
+          边框只在最外层出现一次，内部各段不再画框，避免被切成多条。 */}
+      <div className="overflow-hidden rounded-2xl border border-border bg-background focus-within:border-primary/50">
+        <section aria-label="本轮修改对象" data-testid="conversation-target" className="px-3 pt-2.5">
+          {target ? <div className="flex items-center gap-2 rounded-xl bg-muted px-2 py-1.5">
+            <img src={`/api/workspaces/${encodeURIComponent(props.workspaceId)}/assets/${encodeURIComponent(target.assetId)}/raw`} alt="" className="h-7 w-9 shrink-0 rounded object-contain" loading="lazy" />
+            <span className="min-w-0 flex-1"><span className="block truncate text-xs">{target.name}</span></span>
+            <button type="button" className="shrink-0 rounded-full px-1 text-muted-foreground disabled:opacity-40" aria-label="取消修改对象" disabled={locked} onClick={() => { try { chooseCanvasTarget(null); } catch (failure) { setError(explain(failure)); } }}>×</button>
+          </div> : <p className="text-[11px] leading-5 text-muted-foreground">选中画布图片，或直接描述</p>}
+        </section>
+        {!!referenceOnly.length && <section aria-label="仅参考图片" className="px-3 pt-2"><div className="flex gap-1.5 overflow-x-auto pb-0.5">{referenceOnly.map(value => <div key={value.referenceId} className="relative w-16 shrink-0 rounded-lg border border-border p-1">
+          <img src={`/api/workspaces/${encodeURIComponent(props.workspaceId)}/assets/${encodeURIComponent(value.assetId)}/raw`} alt="" className="h-9 w-full rounded object-contain" loading="lazy" />
+          <button type="button" aria-label={`移除参考 ${value.name}`} className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full border border-border bg-card text-[11px] leading-none text-muted-foreground disabled:opacity-40" disabled={locked} onClick={() => edit({ references: draft.references.filter(ref => ref.referenceId !== value.referenceId) })}>×</button>
+          <span className="mt-0.5 block truncate text-[10px] text-muted-foreground">{value.name}</span>
+          {value.shapeId && <button type="button" className="block truncate text-[10px] text-primary disabled:opacity-40" aria-label={`设为修改对象 ${value.name}`} title={value.purpose === "EXACT" ? "请先在素材用途中明确调整严格保留规则" : undefined} disabled={locked || value.purpose === "EXACT"} onClick={() => { try { chooseCanvasTarget(value); } catch (failure) { setError(explain(failure)); } }}>设为修改对象</button>}
+        </div>)}</div></section>}
+        <div className="relative">
+          <textarea ref={input} aria-label="对话设计需求" className="block max-h-56 min-h-[88px] w-full resize-none bg-transparent px-3 pb-6 pt-3 text-sm leading-6 outline-none" placeholder={draft.quickEditTargetId ? "描述这张图片要怎么修改" : "输入想法，或添加图片作为参考"} value={draft.text} maxLength={4000} disabled={locked} onChange={event => edit({ text: event.target.value })} onCompositionStart={() => { composing.current = true; if (timer.current) clearTimeout(timer.current); }} onCompositionEnd={() => { composing.current = false; if (timer.current) clearTimeout(timer.current); timer.current = setTimeout(() => void flush().catch(() => undefined), 700); }} onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && !composing.current) { event.preventDefault(); if (draftRef.current.text.trim()) void send().catch(() => undefined); } }} />
+          <span aria-hidden="true" className="pointer-events-none absolute bottom-1.5 right-3 text-[10px] text-muted-foreground">{draft.text.length}/4000</span>
+        </div>
+        {props.projectContext && <div className="mx-3 mb-2 space-y-1 rounded-xl bg-muted px-2.5 py-2 text-xs" data-testid="conversation-project-context">
+          <div className="flex flex-wrap items-center justify-between gap-2"><label className="flex items-center gap-2"><input type="checkbox" aria-label="沿用项目资料" checked={props.projectContext.enabled} disabled={locked || !props.projectContext.available && !props.projectContext.enabled} onChange={event => props.projectContext?.onChange(event.target.checked)} />沿用项目资料</label><button type="button" className="text-primary underline" onClick={props.projectContext.onOpen}>查看资料</button></div>
+          {props.projectContext.blocked && <p className="leading-5 text-muted-foreground">资料有未保存修改，请先确认</p>}
+        </div>}
+        {/* 操作行放进同一个框的底部，用一条细分隔线收口。
+            收窄的下拉/按钮让整行在 360px 面板内也放得下，发送按钮不再换行。 */}
+        <div className="flex flex-nowrap items-center gap-1 border-t border-border px-3 py-2" aria-label="本轮输出规格">
+          {props.onAddReference && <button type="button" className={compact + " mr-auto"} aria-label="添加参考图片" title="从素材库添加参考图片" disabled={locked} onClick={props.onAddReference}>＋ 参考</button>}
+          <label className="text-xs"><span className="sr-only">比例</span><select aria-label="对话图片比例" className={compact + " max-w-[68px]"} value={draft.sizeSelection.ratioKey} disabled={locked} onChange={event => edit({ sizeSelection: { ratioKey: event.target.value as Draft["sizeSelection"]["ratioKey"], resolutionTier: draft.sizeSelection.resolutionTier, ...(event.target.value === "custom" ? { customRatio: { width: 1, height: 1 } } : {}) } })}>{GenerationAspectRatioKey.options.map(value => <option key={value} value={value}>{value === "custom" ? "自定义" : value}</option>)}</select></label>
+          <label className="text-xs"><span className="sr-only">画质</span><select aria-label="对话图片画质" className={compact + " max-w-[62px]"} value={draft.sizeSelection.resolutionTier} disabled={locked} onChange={event => edit({ sizeSelection: { ...draft.sizeSelection, resolutionTier: event.target.value as "1K" | "2K" } })}><option>1K</option><option>2K</option></select></label>
+          <details className="contents" data-testid="conversation-settings"><summary className={compact + " cursor-pointer list-none"} aria-label="生成设置">更多</summary>
           <div className="mt-2 w-full space-y-3 rounded-2xl border border-border bg-card p-4 shadow-lg">
             <label className="flex items-center gap-2 text-xs"><input type="checkbox" aria-label="同时准备可编辑PSD" checked={!!draft.psdLayerMode} disabled={locked} onChange={event => edit({ psdLayerMode: event.target.checked ? "AUTO" : undefined, psdLayerCount: undefined })} />同时准备 PSD</label>
             {draft.psdLayerMode && <><select aria-label="PSD分层方式" className={button} disabled={locked} value={draft.psdLayerMode} onChange={event => edit({ psdLayerMode: event.target.value as "AUTO" | "MANUAL", psdLayerCount: event.target.value === "MANUAL" ? 4 : undefined })}><option value="AUTO">按内容自动分层</option><option value="MANUAL">指定层数</option></select>{draft.psdLayerMode === "MANUAL" && <input aria-label="PSD图层数量" className="w-16 rounded border border-border" type="number" min={2} max={10} value={draft.psdLayerCount} disabled={locked} onChange={event => edit({ psdLayerCount: Number(event.target.value) })} />}<p className="text-xs text-muted-foreground">会额外使用分层服务额度，原图先可用。</p></>}
@@ -367,11 +377,12 @@ export const OwnedConversationPanel = forwardRef<OwnedConversationHandle, Props>
           </div>
         </details>
         <span role="status" className="min-w-0 truncate text-[11px] text-muted-foreground" data-testid="conversation-draft-status" data-saved={ready && !saving && same(draft, confirmedDraft.current!)}>{!ready ? "恢复中…" : saving || !same(draft, confirmedDraft.current!) ? "保存中…" : ""}</span>
-        <button className="ml-auto inline-flex items-center gap-1 rounded-full bg-primary px-4 py-2 text-sm text-primary-foreground disabled:opacity-40" disabled={locked || !draft.text.trim()} onClick={() => void send().catch(() => undefined)}>{sending ? "正在提交…" : "发送"}<span aria-hidden="true">↑</span></button>
+        <button className="ml-auto inline-flex shrink-0 items-center gap-1 rounded-full bg-primary px-3 py-1.5 text-xs text-primary-foreground disabled:opacity-40" disabled={locked || !draft.text.trim()} onClick={() => void send().catch(() => undefined)}>{sending ? "提交中" : "发送"}<span aria-hidden="true">↑</span></button>
+        </div>
       </div>
-      {draft.sizeSelection.ratioKey === "custom" && <div className="flex gap-2">{(["width", "height"] as const).map(axis => <input key={axis} aria-label={axis === "width" ? "自定义比例宽" : "自定义比例高"} className="w-20 rounded border border-border bg-background px-2 py-1 text-xs" type="number" min={1} max={10000} disabled={locked} value={draft.sizeSelection.customRatio?.[axis] ?? 1} onChange={event => edit({ sizeSelection: { ...draft.sizeSelection, customRatio: { width: 1, height: 1, ...draft.sizeSelection.customRatio, [axis]: Number(event.target.value) } } })} />)}</div>}
+      {draft.sizeSelection.ratioKey === "custom" && <div className="flex gap-2 px-1">{(["width", "height"] as const).map(axis => <input key={axis} aria-label={axis === "width" ? "自定义比例宽" : "自定义比例高"} className="w-20 rounded border border-border bg-background px-2 py-1 text-xs" type="number" min={1} max={10000} disabled={locked} value={draft.sizeSelection.customRatio?.[axis] ?? 1} onChange={event => edit({ sizeSelection: { ...draft.sizeSelection, customRatio: { width: 1, height: 1, ...draft.sizeSelection.customRatio, [axis]: Number(event.target.value) } } })} />)}</div>}
       <p className="text-[11px] leading-5 text-muted-foreground" role="status" data-testid="conversation-size-preview" data-source={sizePreview.source}>{sizePreview.text}</p>
-      <details className="text-[11px] text-muted-foreground"><summary className="cursor-pointer">尺寸规则</summary><p className="mt-1 leading-5">文字像素优先，其次是文字中的比例 / 1K、2K；修改图片且文字未指定尺寸时保留原图像素。其余情况使用上方下拉。要改变修改图尺寸，请在需求里写明；矛盾要求会先确认。这里只预览现有规则，发送后还会校验素材和生成能力。</p></details>
+      <details className="text-[11px] text-muted-foreground"><summary className="cursor-pointer">尺寸规则</summary><p className="mt-1 leading-5">需求里写明尺寸时以文字为准；改图未写明则保留原图像素；其余用上方下拉。发送后仍会按素材和模型能力校验。</p></details>
       </div>
     </div>
   </section>;

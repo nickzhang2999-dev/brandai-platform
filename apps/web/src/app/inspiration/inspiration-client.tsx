@@ -57,7 +57,11 @@ function InspirationWorkspace({ wsId, workspaceName, canEdit }: { wsId: string; 
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const key = ["inspiration", wsId, applied];
-  const list = useQuery({ queryKey: key, queryFn: ({ signal }) => apiFetch<InspirationListResponse>(`${base}?${new URLSearchParams(applied)}`, { signal, cache: "no-store" }), placeholderData: previous => previous, retry: false, refetchInterval: 60000 });
+  // A full page is ~500KB, so background polling is limited to what the reader
+  // can actually see: no timer on a hidden tab, and a slower cadence once the
+  // first page is on screen (the release id already gates real changes, and the
+  // manual "刷新状态" button covers the impatient case).
+  const list = useQuery({ queryKey: key, queryFn: ({ signal }) => apiFetch<InspirationListResponse>(`${base}?${new URLSearchParams(applied)}`, { signal, cache: "no-store" }), placeholderData: previous => previous, retry: false, refetchInterval: 300000, refetchIntervalInBackground: false });
   // Later pages are fetched on demand from the cursor the server returned. They
   // are keyed by the same filter set state, so changing filters drops them.
   const [more, setMore] = useState<{ cursor: string; cases: InspirationCaseCard[]; hasMore: boolean; nextCursor: string | null }[]>([]);
@@ -154,6 +158,22 @@ function InspirationWorkspace({ wsId, workspaceName, canEdit }: { wsId: string; 
     catch (error) { if (alive.current) setMessage(errorText(error)); }
     finally { if (alive.current) setCancelling(null); }
   }
+  // Infinite scroll: when the sentinel below the grid becomes visible, fetch the
+  // next page. The button stays as a keyboard/manual fallback and as the
+  // no-observer path, so neither is the only way to reach the remaining cases.
+  const sentinel = useRef<HTMLDivElement>(null);
+  const loadMoreRef = useRef(loadMore);
+  loadMoreRef.current = loadMore;
+  useEffect(() => {
+    const node = sentinel.current;
+    if (!node || !hasMore || loadingMore) return;
+    if (typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(entries => {
+      if (entries.some(entry => entry.isIntersecting)) void loadMoreRef.current();
+    }, { rootMargin: "200px 0px" });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [hasMore, loadingMore, items.length]);
   const dirty = JSON.stringify(filters) !== JSON.stringify(applied);
   return <div data-testid="inspiration-page">
     <PageHeader title="统一灵感库" subtitle="Omni 将案例整理到公司灵感库，各品牌按需收藏和引用，用图片与来源理解设计方法。" />
@@ -177,10 +197,11 @@ function InspirationWorkspace({ wsId, workspaceName, canEdit }: { wsId: string; 
                 <CatalogSelect label="媒介筛选" all="全部媒介" values={taxonomy.medium} value={filters.medium} onChange={medium => setFilters(previous => ({ ...previous, medium }))} />
                 <CatalogSelect label="设计任务" all="全部任务" values={taxonomy.task} value={filters.task} onChange={task => setFilters(previous => ({ ...previous, task }))} />
               </div>
-              <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground"><span role="status">{filterPending ? "正在更新筛选结果…" : `当前显示 ${items.length} 个案例${hasMore ? `（共 ${list.data.matchedCount ?? list.data.caseCount} 个）` : ""}`}</span>{hasMore && !filterPending && <button type="button" className="text-primary underline disabled:opacity-50" disabled={loadingMore} onClick={() => void loadMore()}>{loadingMore ? "正在加载…" : "加载更多"}</button>}{dirty ? <span className="text-primary">筛选条件有改动，点“查找”后生效</span> : null}<button type="button" className="text-primary underline" onClick={() => applyFilters(emptyFilters)}>清除筛选</button></div>
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground"><span role="status">{filterPending ? "正在更新筛选结果…" : `当前显示 ${items.length} 个案例${hasMore ? `（共 ${list.data.matchedCount ?? list.data.caseCount} 个）` : ""}`}</span>{dirty ? <span className="text-primary">筛选条件有改动，点“查找”后生效</span> : null}<button type="button" className="text-primary underline" onClick={() => applyFilters(emptyFilters)}>清除筛选</button></div>
             </form>
             {!items.length && <div className="rounded-2xl border border-dashed border-border p-10 text-center" role="status"><h2 className="font-medium">{list.data.caseCount ? "没有符合这些条件的案例" : "等待第一批审核案例"}</h2><p className="mt-2 text-sm text-muted-foreground">{list.data.caseCount ? "试着减少筛选条件，或换一个关键词。" : "案例完成审核并同步后，会在这里出现图片、中文分析和原始出处。"}</p></div>}
             <div className="grid gap-4 sm:grid-cols-2">{items.map((item) => <CaseTile key={`${item.libraryId}:${item.caseId}`} item={item} onOpen={() => setSelected({ caseId: item.caseId, libraryId: item.libraryId })} />)}</div>
+            {hasMore && <div ref={sentinel} className="flex justify-center py-6" data-testid="inspiration-sentinel"><button type="button" className="rounded-full border border-border px-4 py-2 text-xs text-primary disabled:opacity-50" disabled={loadingMore} onClick={() => void loadMore()}>{loadingMore ? "正在加载…" : "加载更多案例"}</button></div>}
           </> : view === "feedback" ? <FeedbackQueue base={base} wsId={wsId} onOpen={setSelected} /> : <div className="space-y-3">
             {bookmarks.isPending && <p role="status">正在读取收藏…</p>}
             {bookmarks.isError && <p role="alert">{errorText(bookmarks.error)}</p>}

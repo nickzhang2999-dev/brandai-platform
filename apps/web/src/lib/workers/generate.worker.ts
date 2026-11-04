@@ -6,6 +6,8 @@ import { studioExactIntent, preflightStudioExactSources, assertStudioExactNotMod
 import { loadStudioEditSource, assertStudioEditNotModelReference, type StudioEditSourceSnapshot } from "@/lib/studio-generation-edit";
 import { requireStudioBaseEncryption } from "@/lib/studio-generation-base";
 import { studioImageToolPixelEvidence } from "@/lib/studio-layer-repair";
+import { brandPaletteFromRules, checkBrandColourFidelity } from "@/lib/brand-colour-fidelity";
+import { readArtifactImageBytes } from "@/lib/studio-generation-artifacts-image";
 import { StudioEditRequest, StudioEditResponse, type StudioImageToolSpec } from "@brandai/contracts";
 import { Worker, type Job } from "bullmq";
 import { prisma, Prisma } from "@brandai/db";
@@ -1105,6 +1107,13 @@ export async function runGenerateJob(
     // 刻意不发品牌规则（baseFields.brandRules = []），若仍把全量 confirmed
     // 规则 id 盖进版本 params，导出/审计会声称这些规则塑造了图——与事实相反。
     const appliedRuleIds = job.data.studioImageTool ? [] : baseFields.brandRules.map((r) => r.id);
+    // Brand colours reach the model as prompt text, so a render can ignore them
+    // (a green subject coming back red). Check the finished pixels against the
+    // palette that was actually sent, and record the outcome on the version.
+    // Only the rules that really went out count: chat-origin paths strip
+    // brandRules, and claiming a check against rules that were never sent would
+    // repeat the overclaiming this is meant to fix.
+    const brandPalette = brandPaletteFromRules(baseFields.brandRules);
 
     async function persist(
       v: GenerateResponse["versions"][number],
@@ -1113,8 +1122,16 @@ export async function runGenerateJob(
     ): Promise<string> {
       signal.throwIfAborted();
       if (studio) {
+        // Fail soft: the user already paid for this image. A colour check that
+        // cannot run must never turn a usable result into a failure.
+        const colourFidelity = brandPalette.length
+          ? await readArtifactImageBytes({ imageUrl: v.imageUrl }, signal)
+              .then(bytes => checkBrandColourFidelity({ palette: brandPalette, image: bytes }))
+              .catch(() => null)
+          : null;
         return stageStudioGenerationOutput(studio, { imageUrl: v.imageUrl, width: v.width, height: v.height,
           params: { ...studioProviderParams(v.params), appliedRuleIds, appliedBrandRuleCount: appliedRuleIds.length,
+            ...(colourFidelity ? { colourFidelity } : {}),
             brandConstraintMode: appliedRuleIds.length ? "BRANDED" : "FREE",
             brandRuleApplicationReason: job.data.studioImageTool ? "IMAGE_TOOL" : appliedRuleIds.length ? "APPLIED" : "NO_APPLICABLE_RULES", sceneType, ...constraintEcho,
             ...(job.data.studioImageTool ? { imageTool: job.data.studioImageTool.operation } : {}),

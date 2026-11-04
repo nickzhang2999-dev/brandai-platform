@@ -37,7 +37,7 @@ describe("read-only brand status", () => {
   it("offers a workspace-pinned knowledge link without guessing empty state during loading", () => {
     const html = renderToStaticMarkup(React.createElement(BrandRuleStatus, { workspaceId: "a&b", userId: "u" }));
     expect(html).toContain("workspaceId=a%26b"); expect(html).toContain('target="_blank"');
-    expect(html).toContain("正在读取"); expect(html).not.toContain("已启用 0");
+    expect(html).toContain("读取中"); expect(html).not.toContain("已启用 0");
   });
 });
 
@@ -53,8 +53,18 @@ describe("frozen generation evidence", () => {
     expect(foreign.rules).toEqual([]); expect(foreign.detailsComplete).toBe(false);
     expect(projectBrandRuleReceipt({ id: "output", params: { ...params(), appliedRuleIds: ["missing"] } }, "w")).toMatchObject({ rules: [], detailsComplete: false });
   });
-  it("distinguishes unknown historical fields from zero and rejects guessed counts", () => {
-    for (const value of [undefined, null, "1", -1, 0.5, true]) {
+  it("carries the colour check only when the worker actually recorded one", () => {
+    const withCheck = { ...params(), colourFidelity: { checked: true, present: [{ hex: "#7C5CFF", share: 0.31, closestDetected: "#7a5cfa", deltaE: 1.4 }], missing: ["#34A853"], neutral: [], detected: [{ hex: "#7a5cfa", share: 0.31 }], withinBrand: true } };
+    const receipt = projectBrandRuleReceipt({ id: "output", params: withCheck }, "w");
+    expect(StudioBrandRuleReceipt.parse(receipt).colourFidelity).toMatchObject({ checked: true, withinBrand: true, missing: ["#34A853"] });
+    // Generations made before the check existed must stay null, not become "passed".
+    expect(projectBrandRuleReceipt({ id: "output", params: params() }, "w").colourFidelity).toBeNull();
+    // Malformed worker evidence is discarded rather than rendered as a verdict.
+    for (const bad of [{ checked: false }, { checked: true, missing: "x", withinBrand: true }, { checked: true, missing: [], withinBrand: "yes" }]) {
+      expect(projectBrandRuleReceipt({ id: "output", params: { ...params(), colourFidelity: bad } }, "w").colourFidelity).toBeNull();
+    }
+  });
+  it("distinguishes unknown historical fields from zero and rejects guessed counts", () => {    for (const value of [undefined, null, "1", -1, 0.5, true]) {
       expect(projectBrandRuleReceipt({ id: "o", params: { appliedBrandRuleCount: value } }, "w").appliedRuleCount).toBeNull();
     }
     expect(projectBrandRuleReceipt({ id: "o", params: null }, "w")).toMatchObject({ appliedRuleCount: null, rules: [], detailsComplete: false, reason: null, promptAdditionCount: null });

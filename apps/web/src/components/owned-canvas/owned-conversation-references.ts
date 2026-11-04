@@ -72,12 +72,14 @@ export function ownedConversationSizePreview(draft: Omit<StudioConversationDraft
     if (!draft.text.trim()) {
       const target = draft.references.find(value => value.referenceId === draft.quickEditTargetId);
       const size = target ?? resolveGenerationSize(draft.sizeSelection);
-      return { source: target ? "target" : "control", text: `${target ? "修改默认保留原图" : "下拉默认"}：${size.width} × ${size.height} 像素` };
+      // Keep the source label: it is the only place that says which rule won
+      // (target image vs. dropdown), so the number is not a guess.
+      return { source: target ? "target" : "control", text: `${target ? "保留原图" : "下拉"}：${size.width} × ${size.height}` };
     }
     const intent = parseStudioConversationIntent({ ...draft, mutationId: "00000000-0000-4000-8000-000000000000", documentRevision: 0, workflowRevision: 0,
       ...(outputFrameId ? { outputFrameId } : {}) });
     if (!intent.requestedSize) return { source: "clarify", text: `发送前待确认：${intent.clarification ?? "请明确需求和尺寸。"}` };
-    const labels = { "dialog-pixels": "文字指定像素", "dialog-ratio": "文字指定比例 / 清晰度", control: "下拉默认", target: "保留修改对象原图", default: "默认尺寸" };
-    return { source: intent.sizeSource, text: `${labels[intent.sizeSource]}：${intent.requestedSize.width} × ${intent.requestedSize.height} 像素` };
-  } catch { return { source: "clarify", text: "当前尺寸无效，请检查比例、清晰度和自定义宽高。" }; }
+    const labels = { "dialog-pixels": "文字指定", "dialog-ratio": "文字比例", control: "下拉", target: "保留原图", default: "默认" };
+    return { source: intent.sizeSource, text: `${labels[intent.sizeSource]}：${intent.requestedSize.width} × ${intent.requestedSize.height}` };
+  } catch { return { source: "clarify", text: "尺寸无效，请检查比例和宽高。" }; }
 }

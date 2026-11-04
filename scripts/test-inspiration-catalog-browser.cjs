@@ -209,7 +209,7 @@ async function noOverflow(page) {assert.equal(await page.evaluate(()=>document.d
     const detail=page.getByRole('dialog',{name:'案例详情',exact:true});
     await detail.getByRole('checkbox',{name:'fixture-image',exact:true}).check();
     phase='disabled';
-    await page.clock.fastForward(60001);
+    await page.clock.fastForward(300001); // background poll is 300s; see inspiration-client refetchInterval
     await page.getByRole('heading',{name:'灵感库尚未开放',exact:true}).waitFor();
     assert.equal(await page.getByRole('dialog',{name:'案例详情',exact:true}).count(),0);
     assert.equal(await page.getByText('已缓存的测试回答',{exact:true}).count(),0);
@@ -217,12 +217,12 @@ async function noOverflow(page) {assert.equal(await page.evaluate(()=>document.d
     const requestsAfterDisabled=contentRequests.length;
     await page.evaluate(()=>{const url=new URL(location.href);url.searchParams.set('kind','advertisement');history.replaceState(null,'',url);});
     await page.waitForFunction(()=>location.search.includes('kind=advertisement'));
-    await page.clock.fastForward(60001);
+    await page.clock.fastForward(300001); // background poll is 300s; see inspiration-client refetchInterval
     assert.equal(contentRequests.length,requestsAfterDisabled,'Disabled content queries must stop');
     assert.equal(await page.getByTestId('inspiration-case').count(),0,'Previously cached filter results must not revive disabled content');
     check(spec.name+': disabling hides an open detail, historical answer and case data, then stops content reads');
     await page.evaluate(()=>{const url=new URL(location.href);url.searchParams.delete('kind');history.replaceState(null,'',url);});
-    phase='healthy';await page.clock.fastForward(60001);await displayed(page,4);
+    phase='healthy';await page.clock.fastForward(300001); // background poll is 300s; see inspiration-client refetchIntervalawait displayed(page,4);
     phase='detail-error';await tea.click();await detail.getByRole('alert').waitFor();
     assert.equal(await detail.getByRole('heading',{name:'茶饮包装测试',exact:true}).count(),0,'A failed fresh detail read must not reveal a pre-disable cached detail');
     await detail.getByRole('button',{name:'关闭详情',exact:true}).click();phase='healthy';
