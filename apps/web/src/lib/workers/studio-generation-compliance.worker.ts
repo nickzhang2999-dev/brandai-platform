@@ -1,14 +1,17 @@
 import { Worker, type Job } from "bullmq";
 import { prisma, Prisma } from "@brandai/db";
-import { ComplianceCheckRequest, ComplianceCheckResponse } from "@brandai/contracts";
+import { ComplianceCheckRequest, ComplianceCheckResponse, type VisualFidelitySourceImage } from "@brandai/contracts";
 import { connection, queuePrefix } from "@/lib/queue";
 import { ApiException } from "@/lib/api";
 import { ai } from "@/lib/ai";
 import { loadTermLib } from "@/lib/compliance";
 import { recordUsage } from "@/lib/usage";
 import { requireArtifactWrite } from "@/lib/studio-generation-artifacts";
-import { artifactDeadline, inspectArtifactImage, readArtifactImageBytes } from "@/lib/studio-generation-artifacts-image";
+import { artifactDeadline, inspectArtifactImage, readArtifactImageBytes, STUDIO_ARTIFACT_MAX_BYTES } from "@/lib/studio-generation-artifacts-image";
 import { loadStudioComplianceReferences } from "@/lib/studio-generation-compliance-images";
+import { loadStudioEditSource, lockStudioEditPublicationSource } from "@/lib/studio-generation-edit";
+import { loadStudioFidelityReferences, assertStudioFidelityReferenceBindings } from "@/lib/studio-visual-fidelity-images";
+import { reviewFidelity } from "@/lib/studio-visual-fidelity-review";
 import { complianceObject, dispatchStudioGenerationCompliance, loadStudioComplianceSource, requireStudioVlm,
   STUDIO_COMPLIANCE_ERROR, STUDIO_COMPLIANCE_EXPIRED, STUDIO_COMPLIANCE_KIND, studioComplianceTaskId } from "@/lib/studio-generation-compliance";
 
@@ -50,15 +53,46 @@ export async function runStudioGenerationComplianceJob(job: CheckJob) {
     const meta = await inspectArtifactImage(bytes, signal);
     if (meta.sha256 !== row.sha256 || meta.width !== row.width || meta.height !== row.height) throw new ApiException(422, "归档图片内容已发生变化，未执行视觉检查，请联系管理员检查素材。");
     const [termLib, references] = await artifactDeadline(Promise.all([loadTermLib(row.workspaceId), loadStudioComplianceReferences(row.workspaceId, signal, bytes.length)]), signal);
-    const request = ComplianceCheckRequest.parse({ imageUrl: `data:${meta.mimeType};base64,${bytes.toString("base64")}`, brandRules: source.brandRules, termLib, referenceImages: references.referenceImages, providerRetryPolicy: "never" });
+    const snapshot = source.fidelitySnapshot;
+    let fidelitySourceImages: VisualFidelitySourceImage[] = [];
+    let fidelityReferenceBindings: Awaited<ReturnType<typeof loadStudioFidelityReferences>>["bindings"] = [];
+    let sourceError: string | undefined;
+    if (snapshot?.plan && !snapshot.unavailableReason) {
+      try {
+        let totalBytes = references.totalBytes;
+        if (snapshot.editSource) {
+          const original = await loadStudioEditSource(row.workspaceId, row.projectId, snapshot.editSource, signal, true);
+          if (original.sha256 !== snapshot.editSource.sha256) throw new Error("source changed");
+          totalBytes += original.sizeBytes;
+          if (!Number.isSafeInteger(totalBytes) || totalBytes > STUDIO_ARTIFACT_MAX_BYTES) throw new Error("source budget exceeded");
+          fidelitySourceImages.push({ url: original.imageUrl, sha256: original.sha256, sourceHint: "UPLOAD", id: snapshot.editSource.assetId, role: "edit-source" });
+        }
+        const context = await loadStudioFidelityReferences(row.workspaceId, snapshot.referenceImages, signal, totalBytes);
+        fidelitySourceImages.push(...context.images);
+        fidelityReferenceBindings = context.bindings;
+      } catch { sourceError = "主体或参考图片已失效、无法读取或合计超过32MB，未能完成保真核验。"; fidelitySourceImages = []; }
+    }
+    async function checkSourceBindings(tx: Prisma.TransactionClient) {
+      if (!snapshot?.plan || snapshot.unavailableReason || sourceError) return;
+      try {
+        if (snapshot.editSource) await lockStudioEditPublicationSource(tx, row.workspaceId, row.projectId, snapshot.editSource, true);
+        await assertStudioFidelityReferenceBindings(tx, row.workspaceId, snapshot.referenceImages, fidelityReferenceBindings);
+      } catch { sourceError = "主体或参考素材在检查期间已变更或停用，本次保真结果待重新核验。"; }
+    }
     await artifactDeadline(prisma.$transaction(async tx => {
       await requireArtifactWrite(tx, row.workspaceId, row.projectId, row.userId);
       const active = await tx.asyncTask.findUnique({ where: { id: taskId } });
       if (!active || active.kind !== STUDIO_COMPLIANCE_KIND || active.status !== "RUNNING" || active.jobId !== jobId || !active.expiresAt || active.expiresAt.getTime() <= Date.now()) throw new ApiException(409, "检查任务已结束，未重复调用视觉服务。");
+      await checkSourceBindings(tx);
     }, { timeout: 10_000 }), signal);
+    const fidelityRequest = snapshot?.plan && !snapshot.unavailableReason && !sourceError
+      ? { visualFidelityPlan: snapshot.plan, outputSha256: row.sha256, fidelitySourceImages } : {};
+    const request = ComplianceCheckRequest.parse({ imageUrl: `data:${meta.mimeType};base64,${bytes.toString("base64")}`, brandRules: source.brandRules, termLib, referenceImages: references.referenceImages, providerRetryPolicy: "never", ...fidelityRequest });
     signal.throwIfAborted();
     providerStarted = true;
-    const { report, visualCheckPerformed } = ComplianceCheckResponse.parse(await ai.complianceCheck(request, { signal, maxResponseBytes: 4 * 1024 * 1024, requireRealVlmProvider: true }));
+    const rawResponse = await ai.complianceCheck(request, { signal, maxResponseBytes: 4 * 1024 * 1024, requireRealVlmProvider: true });
+    // Malformed optional subject evidence must not discard a valid brand check.
+    const { report, visualCheckPerformed } = ComplianceCheckResponse.parse({ ...rawResponse, visualFidelityReport: undefined });
     // The company endpoint retains legacy fallback scores. Only explicit
     // real-model execution evidence may promote a product check to completed.
     if (visualCheckPerformed !== true) throw new ApiException(502, "视觉服务未完成有效检查，图片仍视为尚未检查，请重试检查。");
@@ -69,11 +103,14 @@ export async function runStudioGenerationComplianceJob(job: CheckJob) {
       const update = await tx.asyncTask.updateMany({ where: { id: taskId, kind: STUDIO_COMPLIANCE_KIND, jobId, status: "RUNNING", expiresAt: { gt: new Date() } }, data: { status: "SUCCEEDED", progress: 100, error: null, refCount: 1 } });
       if (!update.count) throw new ApiException(409, "检查任务已结束，迟到报告未覆盖当前结果。");
       const current = await loadStudioComplianceSource(tx, row.workspaceId, row.versionId!, row.projectId, row.userId);
-      if (current.row.sha256 !== row.sha256 || current.row.objectKey !== row.objectKey || current.row.assetId !== row.assetId || current.rulesHash !== source.rulesHash) throw new ApiException(409, "检查期间图片或品牌快照发生变化，报告未发布，请重试检查。");
+      if (current.row.sha256 !== row.sha256 || current.row.objectKey !== row.objectKey || current.row.assetId !== row.assetId || current.rulesHash !== source.rulesHash || current.fidelityHash !== source.fidelityHash) throw new ApiException(409, "检查期间图片或品牌快照发生变化，报告未发布，请重试检查。");
+      await checkSourceBindings(tx);
+      const visualFidelityReport = reviewFidelity(snapshot, row.sha256!, complianceObject(rawResponse).visualFidelityReport, fidelitySourceImages.length > 0, sourceError);
       signal.throwIfAborted();
       await tx.generationVersion.update({ where: { id: row.versionId! }, data: {
         complianceReport: report as Prisma.InputJsonValue,
-        params: { ...complianceObject(current.row.version!.params), studioCompliance: { taskId, jobId, imageSha256: row.sha256, rulesHash: source.rulesHash,
+        params: { ...complianceObject(current.row.version!.params), visualFidelityReport, studioCompliance: { taskId, jobId, imageSha256: row.sha256, rulesHash: source.rulesHash,
+          fidelityInputSha256: snapshot?.inputSha256 ?? null, fidelitySnapshotHash: source.fidelityHash ?? null,
           referenceAssets: references.audit } } as Prisma.InputJsonValue,
       } });
       signal.throwIfAborted();

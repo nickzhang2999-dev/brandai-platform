@@ -7,6 +7,7 @@ import { ownedPsdSelection, ownedLayerTaskStatus, ownedLayerTaskTitle, ownedLaye
 import { useBoundedTaskPoll } from "../../lib/use-bounded-task-poll";
 import { OwnedLayerResolution } from "./OwnedLayerResolution";
 import { GenerationBrandRuleReceipt } from "./GenerationBrandRuleReceipt";
+import { GenerationVisualFidelity } from "./GenerationVisualFidelity";
 
 type Props = { task: GenerationTask; api: ReturnType<typeof createOwnedEditorApi> | null; canEdit: boolean;
   isImagePlaced?(image: PersistentImage): boolean; compact?: boolean; activityNotice?: string; recoveryDisabled?: boolean; onReedit?(): void;
@@ -133,6 +134,7 @@ export function OwnedGenerationCard({ task, api, canEdit, onTask, onNotice, onIn
       return <div className="space-y-2" key={image.versionId} data-version-id={image.versionId}>
         <img src={image.url} alt="生成结果" className="max-h-52 w-full rounded-xl object-contain" loading="lazy" />
         {!isImagePlaced?.(image) && <button type="button" className={button} disabled={!canEdit || busy} onClick={() => void action(() => onInsert(image))}>{compact ? "恢复到画布" : "加入画布"}</button>}
+        <GenerationVisualFidelity report={check?.visualFidelityReport} outputSha256={image.assetSha256} compact={compact} />
         <details open={compact ? undefined : true}>
         <summary hidden={!compact} className="cursor-pointer text-xs text-muted-foreground">品牌检查</summary>
         <p className="text-xs leading-5 text-muted-foreground" data-testid="owned-compliance-status">{label}</p>

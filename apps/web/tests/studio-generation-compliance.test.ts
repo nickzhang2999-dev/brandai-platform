@@ -34,6 +34,30 @@ beforeEach(() => {
 });
 
 describe("product compliance receipts, outbox and explicit recovery", () => {
+  it("only exposes fidelity evidence bound to the completed attempt and immutable snapshot", async () => {
+    const inputSha256 = "b".repeat(64);
+    material.output.params.visualFidelitySnapshot = { revision: "visual-fidelity-guard/1", inputSha256, imageTool: false, editSource: null, unavailableReason: null,
+      plan: { revision: "visual-fidelity-guard/1", inputSha256, constraints: [{ id: "color", target: "苹果", attribute: "color", expected: "绿色", strength: "hard", source: "user" }] } };
+    task = await registerStudioGenerationCompliance(tx, "w", "v"); task.status = "SUCCEEDED";
+    const source = await loadStudioComplianceSource(tx, "w", "v");
+    material.version.complianceReport = { overall: "PASS", textResults: [], visualResults: [], checkedAt: "2026-10-09T12:00:00Z" };
+    material.version.params.studioCompliance = { taskId: task.id, jobId: task.jobId, imageSha256: sha, rulesHash: source.rulesHash, fidelityInputSha256: inputSha256, fidelitySnapshotHash: source.fidelityHash };
+    material.version.params.visualFidelityReport = { revision: "visual-fidelity-guard/1", inputSha256, outputSha256: sha, overall: "pass", checkPerformed: true,
+      checks: [{ id: "color", status: "fail", objectRegion: "左侧苹果", observation: "苹果变红", evidence: "区域核验" }], warnings: [] };
+    expect(await readStudioGenerationCompliance("w", "u", input)).toMatchObject({ visualFidelityReport: { overall: "fail" }, canRetry: false });
+    material.version.params.studioCompliance.fidelitySnapshotHash = "old";
+    expect(await readStudioGenerationCompliance("w", "u", input)).toMatchObject({ status: "SUCCEEDED", visualFidelityReport: { overall: "unknown" }, canRetry: true });
+    expect(f.enqueue).not.toHaveBeenCalled(); // Reading never starts another paid check.
+    const firstJobId = task.jobId;
+    await retryStudioGenerationCompliance("w", "u", input);
+    expect(task.status).toBe("PENDING"); expect(task.jobId).not.toBe(firstJobId); expect(f.enqueue).toHaveBeenCalledTimes(1);
+    await retryStudioGenerationCompliance("w", "u", input);
+    expect(f.update.mock.calls.filter(([args]) => args.where.id && args.data.status === "PENDING")).toHaveLength(1);
+    task.status = "SUCCEEDED";
+    material.version.params.studioCompliance.jobId = task.jobId;
+    delete material.output.params.visualFidelitySnapshot;
+    expect(await readStudioGenerationCompliance("w", "u", input)).toMatchObject({ visualFidelityReport: null, canRetry: false });
+  });
   it("registers stable version identity once with a real stored deadline", async () => {
     const first = await registerStudioGenerationCompliance(tx, "w", "v"), second = await registerStudioGenerationCompliance(tx, "w", "v");
     expect(first.id).toBe(studioComplianceTaskId("v")); expect(second.jobId).toBe(first.jobId); expect(second.expiresAt).toEqual(first.expiresAt);

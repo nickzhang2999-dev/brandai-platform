@@ -2,14 +2,20 @@ import { InspirationLibraryCreateInput, InspirationLibraryCreateResult } from '@
 import { prisma } from '@brandai/db';
 import { requireAdmin } from '@/lib/admin';
 import { ApiException, handleError, ok, parse } from '@/lib/api';
-import { sharedLibraryId, sourceLibrary } from '@/lib/inspiration/library';
+import { sharedLibrarySetupId, sourceLibrary } from '@/lib/inspiration/library';
 
 export async function POST(request:Request) {
   try {
     await requireAdmin();const input=parse(InspirationLibraryCreateInput,await request.json());
-    if(input.libraryId!==sharedLibraryId())throw new ApiException(409,'请先配置指定的公司灵感库。');
+    if(input.libraryId!==sharedLibrarySetupId())throw new ApiException(409,'请先配置指定的公司灵感库。');
     const result=await prisma.$transaction(async tx=>{
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`inspiration-library:${input.libraryId}`}))`;
+      // Pin the administrator's selected brand until the permanent owner binding
+      // commits. A stale page must not initialize for a brand's previous owner.
+      if(input.workspaceId){
+        const brands=await tx.$queryRaw<Array<{ownerId:string}>>`SELECT "ownerId" FROM "BrandWorkspace" WHERE "id"=${input.workspaceId} FOR SHARE`;
+        if(brands[0]?.ownerId!==input.ownerId)throw new ApiException(409,'所选品牌归属已变化或品牌不可用，请刷新后重新确认。');
+      }
       const identity=await tx.inspirationLibraryIdentity.findUnique({where:{id:input.libraryId}});
       if(identity&&identity.ownerId!==input.ownerId)throw new ApiException(409,'该库标识已绑定原所有者，不能重新分配。');
       const existing=await tx.inspirationLibrary.findUnique({where:{id:input.libraryId}});

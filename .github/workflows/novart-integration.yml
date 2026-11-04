@@ -104,6 +104,9 @@ jobs:
           node scripts/test-owned-layer-quality-browser.cjs
           NOVART_IMAGE_CONTEXT_REPORT=apps/web/.novart-ui-artifacts/image-context-fixture.json node scripts/test-novart-image-context-browser.cjs
           NOVART_CONVERSATION_REPORT=apps/web/.novart-ui-artifacts/conversation-fixture.json node scripts/test-novart-conversation-browser.cjs
+          NOVART_INSPIRATION_RECEIVE_REPORT=apps/web/.novart-ui-artifacts/inspiration-receive-fixture.json node scripts/test-inspiration-receive-browser.cjs
+          NOVART_INSPIRATION_ADMIN_REPORT=apps/web/.novart-ui-artifacts/inspiration-admin-fixture.json node scripts/test-inspiration-admin-browser.cjs
+          node tests/interaction/visual-fidelity-fixture.mjs
           node scripts/test-writing-workbench-browser.cjs
           NOVART_OWNED_COPYWRITING_ONLY=1 NOVART_OWNED_REPORT=.novart-build/writing-workbench-integration/summary.json node scripts/test-novart-owned-canvas-browser.cjs
           NOVART_OWNED_TARGET_ONLY=1 NOVART_OWNED_REPORT=apps/web/.novart-ui-artifacts/target-fixture.json node scripts/test-novart-owned-canvas-browser.cjs
@@ -113,6 +116,15 @@ jobs:
           import json
           from pathlib import Path
           root = Path('apps/web/.novart-ui-artifacts')
+          for filename, expected in [('inspiration-receive-fixture.json', 30), ('inspiration-admin-fixture.json', 7)]:
+              report = json.loads((root / filename).read_text())
+              assert report['passed'] is True and report['isolated'] is True
+              assert report['realBackend'] is False and report['realProvider'] is False and report['realAuthentication'] is False
+              assert report['providerCalls'] == 0 and len(report['checks']) == expected
+              assert not report['externalRequests'] and not report['unexpectedRequests'] and not report['errors']
+          assert {'authorization rejection never reports success',
+                  'uncertain response disables retries until authoritative refresh',
+                  'double click submits once through existing API with workspace ownership evidence'} <= set(report['checks'])
           for filename, minimum in [('project-context-fixture.json', 14), ('layer-repair-fixture.json', 4)]:
               report = json.loads((root / filename).read_text())
               assert report['passed'] and report['isolated'] and len(report['checks']) >= minimum

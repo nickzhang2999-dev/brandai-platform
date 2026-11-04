@@ -15,6 +15,14 @@ class InspirationLibraryCreateInput(BaseModel):
     model_config = ConfigDict(extra='forbid')
     libraryId: InspirationId
     ownerId: str = Field(min_length=1, max_length=128)
+    workspaceId: str | None = Field(default=None, min_length=1, max_length=128)
+
+    @model_validator(mode='before')
+    @classmethod
+    def omit_null_workspace(cls, value):
+        if isinstance(value, dict) and 'workspaceId' in value and value['workspaceId'] is None:
+            raise ValueError('Omit optional fields instead of null')
+        return value
 
 
 class InspirationLibraryCreateResult(BaseModel):

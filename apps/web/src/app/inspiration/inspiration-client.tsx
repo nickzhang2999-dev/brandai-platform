@@ -197,12 +197,17 @@ function InspirationWorkspace({ wsId, workspaceName, canEdit }: { wsId: string; 
   }, [hasMore, loadingMore, items.length, autoLoadBlocked, list.isPlaceholderData, list.isError]);
   const dirty = JSON.stringify(filters) !== JSON.stringify(applied);
   return <div data-testid="inspiration-page">
-    <PageHeader title="统一灵感库" subtitle="Omni 将案例整理到公司灵感库，各品牌按需收藏和引用，用图片与来源理解设计方法。" />
+    <PageHeader title="统一灵感库" subtitle="浏览已接入的设计案例，用图片与来源理解设计方法，按需收藏到当前品牌或项目。" />
     {list.isPending && <p role="status" className="py-10 text-muted-foreground">正在读取灵感库…</p>}
     {list.isError && <div role="alert" className="rounded-2xl border border-border p-5"><p>{errorText(list.error)}</p><Button className="mt-3" onClick={() => void list.refetch()}>重新读取</Button></div>}
     {accessDenied && !permissionError && <div role="alert" className="rounded-2xl border border-border p-5"><p>当前品牌的灵感库访问权限已失效，请重新读取。</p><Button className="mt-3" onClick={() => void list.refetch()}>重新读取</Button></div>}
     {list.data?.enabled === false && <div role="status" className="rounded-2xl border border-border bg-card p-8"><h2 className="text-lg font-semibold">灵感库尚未开放</h2><p className="mt-2 text-sm text-muted-foreground">接通审核案例后，这里会显示可浏览和引用的设计内容。</p></div>}
     {enabled && list.data && <>
+      {list.data.sourceLibrary && <p role="status" className="mb-4 rounded-2xl border border-border bg-card px-4 py-3 text-sm" data-testid="inspiration-library-scope">
+        {list.data.sourceLibrary.kind === "SHARED"
+          ? "当前为公司共享灵感库：同公司内具有品牌访问权限的成员可浏览，收藏与对话仍按品牌隔离。"
+          : "当前为品牌私有灵感库：仅当前品牌成员可浏览，尚未接入公司共享库。切换品牌不会共享这里的案例。"}
+      </p>}
       <InspirationReceive key={wsId} wsId={wsId} />
       <p className="mb-3 text-xs leading-5 text-muted-foreground">当前品牌：{workspaceName}。收藏、项目借鉴与对话保留在所选品牌中。{!canEdit && "你在此品牌具有只读权限；收藏与问答需要编辑权限。"}</p>
       <div className="mb-3 flex flex-wrap items-center gap-3 text-xs text-muted-foreground"><span>库内 {list.data.caseCount} 个案例</span><span>{list.data.searchMode === "hybrid" ? "关键词与语义检索" : "关键词与标签检索"}</span><button className="text-primary underline" onClick={() => { void list.refetch(); void bookmarks.refetch(); void cache.invalidateQueries({ queryKey: ["inspiration-receive", wsId] }); if (conversationId) void history.refetch(); }}>刷新状态</button><span>读取已同步内容，不会触发新的模型分析。</span></div>

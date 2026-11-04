@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const f = vi.hoisted(() => ({ tx: vi.fn(), read: vi.fn(), change: vi.fn(), source: vi.fn(), gate: vi.fn(), config: vi.fn(), bytes: vi.fn(), inspect: vi.fn(), refs: vi.fn(), terms: vi.fn(), check: vi.fn(), save: vi.fn(), usage: vi.fn() }));
+const f = vi.hoisted(() => ({ fidelityRefs: vi.fn(), fidelityBindings: vi.fn(), editBinding: vi.fn(), edit: vi.fn(), tx: vi.fn(), read: vi.fn(), change: vi.fn(), source: vi.fn(), gate: vi.fn(), config: vi.fn(), bytes: vi.fn(), inspect: vi.fn(), refs: vi.fn(), terms: vi.fn(), check: vi.fn(), save: vi.fn(), usage: vi.fn() }));
+vi.mock("@/lib/studio-generation-edit", async importOriginal => ({ ...await importOriginal<any>(), loadStudioEditSource: f.edit, lockStudioEditPublicationSource: f.editBinding }));
+vi.mock("@/lib/studio-visual-fidelity-images", () => ({ loadStudioFidelityReferences: f.fidelityRefs, assertStudioFidelityReferenceBindings: f.fidelityBindings }));
 vi.mock("../../../packages/db/src/index", () => ({ Prisma: {}, prisma: { $transaction: f.tx, asyncTask: { updateMany: f.change } } }));
 vi.mock("@/lib/api", () => ({ ApiException: class extends Error { constructor(public status: number, message: string) { super(message); } } }));
 vi.mock("@/lib/queue", () => ({ connection: {}, queuePrefix: "test" }));
@@ -7,7 +9,7 @@ vi.mock("@/lib/ai", () => ({ ai: { complianceCheck: f.check } }));
 vi.mock("@/lib/compliance", () => ({ loadTermLib: f.terms }));
 vi.mock("@/lib/usage", () => ({ recordUsage: f.usage }));
 vi.mock("@/lib/studio-generation-artifacts", () => ({ requireArtifactWrite: f.gate }));
-vi.mock("@/lib/studio-generation-artifacts-image", () => ({ artifactDeadline: async (work: Promise<any>, signal: AbortSignal) => { signal.throwIfAborted(); return work; }, readArtifactImageBytes: f.bytes, inspectArtifactImage: f.inspect }));
+vi.mock("@/lib/studio-generation-artifacts-image", () => ({ STUDIO_ARTIFACT_MAX_BYTES: 32 * 1024 * 1024, artifactDeadline: async (work: Promise<any>, signal: AbortSignal) => { signal.throwIfAborted(); return work; }, readArtifactImageBytes: f.bytes, inspectArtifactImage: f.inspect }));
 vi.mock("@/lib/studio-generation-compliance-images", () => ({ loadStudioComplianceReferences: f.refs }));
 vi.mock("@/lib/studio-generation-compliance", () => ({ loadStudioComplianceSource: f.source, requireStudioVlm: f.config, dispatchStudioGenerationCompliance: vi.fn(),
   STUDIO_COMPLIANCE_KIND: "STUDIO_COMPLIANCE", STUDIO_COMPLIANCE_ERROR: "Check incomplete; retry check only", STUDIO_COMPLIANCE_EXPIRED: "Check expired", studioComplianceTaskId: (id: string) => `check-${id}`,
@@ -33,11 +35,86 @@ beforeEach(() => {
   });
   f.source.mockImplementation(async () => structuredClone(source)); f.bytes.mockResolvedValue(image);
   f.inspect.mockResolvedValue({ sha256: sha, mimeType: "image/png", width: 48, height: 32 });
-  f.terms.mockResolvedValue([]); f.refs.mockResolvedValue({ referenceImages: [], audit: [] });
+  f.terms.mockResolvedValue([]); f.refs.mockResolvedValue({ referenceImages: [], audit: [], totalBytes: image.length });
+  f.fidelityRefs.mockResolvedValue({ images: [], totalBytes: image.length, bindings: [] });
   f.check.mockImplementation(async () => ({ results: [], report: structuredClone(report), visualCheckPerformed: true })); f.usage.mockResolvedValue(undefined);
 });
 
 describe("durable product visual compliance (isolated fixtures; no real provider)", () => {
+  function fidelity() {
+    const inputSha256 = "b".repeat(64);
+    source.fidelityHash = "snapshot-hash";
+    source.fidelitySnapshot = { revision: "visual-fidelity-guard/1", inputSha256, unavailableReason: null, imageTool: false, referenceImages: [],
+      editSource: { assetId: "src", sha256: "c".repeat(64) }, plan: { revision: "visual-fidelity-guard/1", inputSha256,
+        constraints: [{ id: "color", target: "苹果", attribute: "color", expected: "绿色", strength: "hard", source: "source" }] } };
+    f.edit.mockResolvedValue({ imageUrl: "data:image/png;base64,c3Jj", sha256: "c".repeat(64), sizeBytes: 3 });
+    const visualFidelityReport = { revision: "visual-fidelity-guard/1", inputSha256, outputSha256: sha, overall: "pass", checkPerformed: true,
+      checks: [{ id: "color", status: "fail", objectRegion: "左侧苹果", observation: "苹果变成红色", evidence: "已读取原图和输出并对比表皮" }], warnings: [] };
+    f.check.mockResolvedValue({ results: [], report, visualCheckPerformed: true, visualFidelityReport });
+  }
+  it("reuses one VLM call, reads displayed source and persists computed failure without discarding image", async () => {
+    fidelity(); await runStudioGenerationComplianceJob(job());
+    expect(task.status).toBe("SUCCEEDED"); expect(f.check).toHaveBeenCalledTimes(1);
+    expect(f.edit).toHaveBeenCalledWith("w", "p", source.fidelitySnapshot.editSource, expect.any(AbortSignal), true);
+    expect(f.check.mock.calls[0][0]).toMatchObject({ outputSha256: sha, visualFidelityPlan: source.fidelitySnapshot.plan, fidelitySourceImages: [{ sha256: "c".repeat(64), sourceHint: "UPLOAD" }] });
+    expect(f.save.mock.calls[0][0].data.params).toMatchObject({ visualFidelityReport: { overall: "fail" }, studioCompliance: { fidelityInputSha256: "b".repeat(64), fidelitySnapshotHash: "snapshot-hash" } });
+  });
+  it.each(["revoked", "changed"])("source %s keeps brand check successful and fidelity unknown", async reason => {
+    fidelity();
+    if (reason === "revoked") f.edit.mockRejectedValue(new Error("private signed URL"));
+    else f.edit.mockResolvedValue({ sha256: "d".repeat(64), imageUrl: "data:image/png;base64,c3Jj" });
+    await runStudioGenerationComplianceJob(job());
+    expect(task.status).toBe("SUCCEEDED"); expect(f.check).toHaveBeenCalledTimes(1);
+    expect(f.check.mock.calls[0][0].visualFidelityPlan).toBeUndefined();
+    expect(f.save.mock.calls[0][0].data.params.visualFidelityReport.overall).toBe("unknown");
+    expect(JSON.stringify(f.save.mock.calls)).not.toContain("private signed URL");
+  });
+  it("rejects a snapshot changed while the provider runs", async () => {
+    fidelity(); f.check.mockImplementation(async () => { source.fidelityHash = "new-hash"; return { results: [], report, visualCheckPerformed: true }; });
+    await runStudioGenerationComplianceJob(job()); expect(task.status).toBe("FAILED"); expect(f.save).not.toHaveBeenCalled();
+  });
+  it("does not discard a completed brand check when optional fidelity evidence is malformed", async () => {
+    fidelity(); f.check.mockResolvedValue({ results: [], report, visualCheckPerformed: true, visualFidelityReport: { overall: "pass" } });
+    await runStudioGenerationComplianceJob(job());
+    expect(task.status).toBe("SUCCEEDED"); expect(f.save.mock.calls[0][0].data.params.visualFidelityReport.overall).toBe("unknown");
+  });
+  it("passes non-edit reference context through the same paid call and accounts for all image bytes", async () => {
+    fidelity(); source.fidelitySnapshot.editSource = null;
+    source.fidelitySnapshot.referenceImages = [{ assetId: "ref", sha256: "d".repeat(64), source: "asset:ref", polarity: "positive", mode: "STRICT", note: "ASSET_USAGE:ADAPTIVE:1" }];
+    const images = [{ url: "data:image/png;base64,cmVm", sha256: "d".repeat(64), sourceHint: "UPLOAD", id: "reference-1", role: "reference-context", note: "ADAPTIVE reference" }];
+    const bindings = [{ assetId: "ref", url: "private-ref", storageKey: "w/ref" }];
+    f.refs.mockResolvedValue({ referenceImages: [], audit: [], totalBytes: image.length + 7 });
+    f.fidelityRefs.mockResolvedValue({ images, bindings, totalBytes: image.length + 10 });
+    await runStudioGenerationComplianceJob(job());
+    expect(f.edit).not.toHaveBeenCalled();
+    expect(f.fidelityRefs).toHaveBeenCalledWith("w", source.fidelitySnapshot.referenceImages, expect.any(AbortSignal), image.length + 7);
+    expect(f.fidelityBindings).toHaveBeenCalledTimes(2);
+    expect(f.fidelityBindings).toHaveBeenLastCalledWith(tx, "w", source.fidelitySnapshot.referenceImages, bindings);
+    expect(f.check).toHaveBeenCalledTimes(1); expect(f.check.mock.calls[0][0].fidelitySourceImages).toEqual(images);
+    expect(task.status).toBe("SUCCEEDED");
+  });
+  it("adds edit bytes to prohibition/output budget and keeps over-budget fidelity unknown", async () => {
+    fidelity(); f.refs.mockResolvedValue({ referenceImages: [], audit: [], totalBytes: 32 * 1024 * 1024 - 2 });
+    await runStudioGenerationComplianceJob(job());
+    expect(f.fidelityRefs).not.toHaveBeenCalled(); expect(f.check).toHaveBeenCalledTimes(1);
+    expect(f.check.mock.calls[0][0].fidelitySourceImages).toBeUndefined();
+    expect(f.save.mock.calls[0][0].data.params.visualFidelityReport.overall).toBe("unknown");
+  });
+  it("adds output, prohibition and edit bytes before reading reference context", async () => {
+    fidelity(); f.refs.mockResolvedValue({ referenceImages: [], audit: [], totalBytes: image.length + 7 });
+    await runStudioGenerationComplianceJob(job());
+    expect(f.fidelityRefs).toHaveBeenCalledWith("w", [], expect.any(AbortSignal), image.length + 10);
+  });
+  it.each(["read", "pre-call", "publication"])("reference failure at %s keeps brand result and prevents fidelity pass", async phase => {
+    fidelity();
+    if (phase === "read") f.fidelityRefs.mockRejectedValue(new Error("foreign or changed ref"));
+    else if (phase === "pre-call") f.fidelityBindings.mockRejectedValue(new Error("revoked"));
+    else f.fidelityBindings.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("revoked"));
+    await runStudioGenerationComplianceJob(job());
+    expect(f.check).toHaveBeenCalledTimes(1); expect(task.status).toBe("SUCCEEDED");
+    expect(f.save.mock.calls[0][0].data.params.visualFidelityReport.overall).toBe("unknown");
+    if (phase !== "publication") expect(f.check.mock.calls[0][0].visualFidelityPlan).toBeUndefined();
+  });
   it("reads authoritative private bytes, reuses original rules and atomically binds the report", async () => {
     await runStudioGenerationComplianceJob(job());
     expect(task.status).toBe("SUCCEEDED"); expect(task.progress).toBe(100);

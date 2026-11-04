@@ -5,6 +5,13 @@ const base = { taskId: "task", versionId: "version", status: "PENDING", progress
   expiresAt: "2026-10-09T12:06:00Z", checkedImageSha256: null, report: null, error: null, canRetry: false };
 const report = { overall: "RISK", textResults: [], visualResults: [{ level: "RISK", reason: "Brand color differs" }], checkedAt: "2026-10-09T12:01:00Z", score: 82.5 };
 describe("product compliance is a real task, not an assumed pass", () => {
+  it("keeps subject evidence independent and defaults historical receipts to null", () => {
+    expect(StudioGenerationComplianceView.parse(base).visualFidelityReport).toBeNull();
+    expect(StudioGenerationComplianceView.parse({ ...base, visualFidelityReport: null }).visualFidelityReport).toBeNull();
+    const fidelity = { revision: "visual-fidelity-guard/1", inputSha256: "b".repeat(64), outputSha256: "a".repeat(64), overall: "unknown", checkPerformed: false, checks: [], warnings: ["No subject evidence"] };
+    expect(StudioGenerationComplianceView.parse({ ...base, visualFidelityReport: fidelity }).visualFidelityReport).toEqual(fidelity);
+    expect(StudioGenerationComplianceView.safeParse({ ...base, visualFidelityReport: { ...fidelity, outputSha256: "invalid" } }).success).toBe(false);
+  });
   it("accepts only a project/version identity, never browser reports or user identity", () => {
     expect(StudioGenerationComplianceInput.parse({ projectId: "project", versionId: "version" })).toEqual({ projectId: "project", versionId: "version" });
     for (const extra of [{ userId: "other" }, { report }, { versionId: "version\n" }]) {

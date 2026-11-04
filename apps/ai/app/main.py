@@ -438,7 +438,7 @@ async def _generate(req: GenerateRequest, provider: ImageProvider, *, studio_sou
         negative = list(req.aiConstraints.negativePrompt or [])
         prompt_additions = list(req.aiConstraints.promptAdditions or [])
         machine_rules = dict(req.aiConstraints.machineRules or {})
-        if prompt_additions and (not direct_mode or studio_source is not None):
+        if prompt_additions and (not direct_mode or studio_source is not None or req.visualFidelityRevision is not None):
             compiled = "[COMPILED BRAND CONSTRAINTS] " + " | ".join(prompt_additions)
             if branded_direct_mode:
                 # Keep both brand blocks ahead of the user brief: model/provider
@@ -1161,6 +1161,9 @@ async def compliance_check(
     req: ComplianceCheckRequest,
     vlm: VLMProvider = Depends(resolve_vlm_provider),
 ):
+    from .visual_fidelity import aggregate_fidelity
+    from .providers.http_providers import HttpVLMProvider
+    fidelity_report = aggregate_fidelity(req.visualFidelityPlan, req.outputSha256) if req.visualFidelityPlan else None
     text_results = _scan_text(req.text or "", req.termLib)
     visual_results: list[ComplianceResult] = []
     score: int | None = None
@@ -1173,10 +1176,18 @@ async def compliance_check(
             ref_kwargs["references"] = [
                 r.model_dump(exclude_none=True) for r in req.referenceImages
             ]
+        if req.visualFidelityPlan and isinstance(vlm, HttpVLMProvider):
+            ref_kwargs.update(
+                visual_fidelity_plan=req.visualFidelityPlan.model_dump(),
+                output_sha256=req.outputSha256,
+                fidelity_source_images=[r.model_dump(exclude_none=True) for r in req.fidelitySourceImages or []],
+            )
         visual = await call_with_retry_policy(
-            req.providerRetryPolicy, vlm.check_visual_compliance,
+            "never" if req.visualFidelityPlan else req.providerRetryPolicy, vlm.check_visual_compliance,
             req.imageUrl, [r.model_dump() for r in req.brandRules], **ref_kwargs
         )
+        if req.visualFidelityPlan and isinstance(vlm, HttpVLMProvider):
+            fidelity_report = visual.get("visualFidelityReport", fidelity_report)
         visual_results = [ComplianceResult(**r) for r in visual.get("results", [])]
         score = visual.get("score")
         # Mock providers and pre-evidence implementations intentionally default
@@ -1210,4 +1221,5 @@ async def compliance_check(
     return ComplianceCheckResponse(
         results=text_results + visual_results, report=report,
         visualCheckPerformed=visual_check_performed,
+        **({"visualFidelityReport": fidelity_report} if fidelity_report is not None else {}),
     )

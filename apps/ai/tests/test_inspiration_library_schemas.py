@@ -14,7 +14,11 @@ IMAGE = {'caseId': 'same-case', 'imageId': 'image-1', 'revision': 1}
 
 def test_admin_library_creation_input_is_explicit_bounded_and_strict():
     value = {'libraryId': LIBRARY['id'], 'ownerId': 'synthetic-owner'}
-    assert InspirationLibraryCreateInput(**value).model_dump() == value
+    assert InspirationLibraryCreateInput(**value).model_dump(exclude_unset=True) == value
+    assert InspirationLibraryCreateInput(**value, workspaceId='selected-brand').workspaceId == 'selected-brand'
+    for invalid_workspace in ['', None, 'a' * 129]:
+        with pytest.raises(ValidationError):
+            InspirationLibraryCreateInput(**value, workspaceId=invalid_workspace)
     for invalid in [{'ownerId': ''}, {'ownerId': None}, {'ownerId': 'a' * 129}, {'libraryId': '../escape'}, {'kind': 'SHARED'}, {'created': True}]:
         with pytest.raises(ValidationError):
             InspirationLibraryCreateInput(**{**value, **invalid})

@@ -3,7 +3,7 @@ import { z } from 'zod';
 export const InspirationId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/);
 export const InspirationSourceLibrary = z.object({ id: InspirationId, kind: z.enum(['SHARED', 'WORKSPACE']) });
 export type InspirationSourceLibrary = z.infer<typeof InspirationSourceLibrary>;
-export const InspirationLibraryCreateInput = z.object({ libraryId: InspirationId, ownerId: z.string().min(1).max(128) }).strict();
+export const InspirationLibraryCreateInput = z.object({ libraryId: InspirationId, ownerId: z.string().min(1).max(128), workspaceId: z.string().min(1).max(128).optional() }).strict();
 export type InspirationLibraryCreateInput = z.infer<typeof InspirationLibraryCreateInput>;
 export const InspirationLibraryCreateResult = z.object({ sourceLibrary: InspirationSourceLibrary, created: z.boolean() });
 export type InspirationLibraryCreateResult = z.infer<typeof InspirationLibraryCreateResult>;

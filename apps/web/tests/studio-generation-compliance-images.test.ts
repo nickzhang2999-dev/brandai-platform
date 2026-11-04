@@ -16,6 +16,7 @@ describe("visual compliance private and complete example transport", () => {
     expect(f.bytes).toHaveBeenCalledWith({ imageUrl: "http://private/w/asset", objectKey: "w/asset" }, expect.any(AbortSignal));
     expect(out.referenceImages[0]).toMatchObject({ sourceHint: "UPLOAD", polarity: "positive", source: "prohibition:rule", url: "data:image/png;base64,aW1hZ2U=" });
     expect(out.audit[0]).toEqual({ assetId: "asset", sha256: "a".repeat(64), source: "prohibition:rule", polarity: "positive" });
+    expect(out.totalBytes).toBe(15);
   });
   it("fails for missing or foreign assets instead of silently dropping active references", async () => {
     f.assets.mockResolvedValue([]); await expect(loadStudioComplianceReferences("w", signal(), 10)).rejects.toMatchObject({ status: 422 }); expect(f.bytes).not.toHaveBeenCalled();

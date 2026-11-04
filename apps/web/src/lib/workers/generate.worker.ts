@@ -1,3 +1,4 @@
+import { buildStudioVisualFidelitySnapshot, STUDIO_VISUAL_FIDELITY_PROMPT } from "@/lib/studio-visual-fidelity";
 import { createWorkerDeadline, generationRunBudgetMs, settleWorkerCleanup, GENERATION_TARGET_MS } from "../worker-deadline";
 import { inlineStudioGenerationReferences, studioProviderParams } from "@/lib/studio-generation-references";
 import { claimStudioGeneration, assertStudioGenerationReady, finishStudioGeneration, stageStudioGenerationOutput } from "@/lib/studio-generation-lifecycle";
@@ -1066,6 +1067,9 @@ export async function runGenerateJob(
     if (studioReferences) assertStudioExactNotModelInput(studioExact!.layout, studioReferences.audit);
     if (studioEdit && job.data.studioEdit && studioReferences) assertStudioEditNotModelReference(job.data.studioEdit, studioExact?.layout, studioReferences.audit);
     if (studioReferences) aiConstraints = { ...aiConstraints, referenceImages: studioReferences.references };
+    if (studio && !job.data.studioImageTool) aiConstraints = { ...aiConstraints,
+      promptAdditions: [...aiConstraints.promptAdditions, STUDIO_VISUAL_FIDELITY_PROMPT] };
+
     // All product source/geometry checks precede even the optional paid text
     // precheck; the company legacy sequence remains unchanged.
     if (studio) {
@@ -1077,6 +1081,7 @@ export async function runGenerateJob(
     }
 
     const baseFields = {
+      ...(studio && !job.data.studioImageTool ? { visualFidelityRevision: "visual-fidelity-guard/1" as const } : {}),
       providerRetryPolicy: "never" as const,
       sceneType: generation.sceneType,
       sellingPoint: generation.sellingPoint,
@@ -1088,9 +1093,17 @@ export async function runGenerateJob(
       // M3 — forward the chosen text mode (defaults to "direct" when a job was
       // enqueued before this field existed, preserving legacy behavior).
       textMode: job.data.textMode ?? "direct",
-      ...(constraintsEnabled() || hasExplicitPicks ? { aiConstraints } : {}),
+      ...((studio && !job.data.studioImageTool) || constraintsEnabled() || hasExplicitPicks ? { aiConstraints } : {}),
       ...(imageSystemPrompt ? { systemPrompt: imageSystemPrompt } : {}),
     };
+    // Bind the final request after the static instruction has been appended.
+    // Reference bytes participate only in the hash, never the public receipt.
+    const visualFidelitySnapshot = studio ? buildStudioVisualFidelitySnapshot({
+      prompt: generation.sellingPoint, brandRules: chatBrandPolicy.brandRules,
+      editSource: studioEdit ? job.data.studioEdit ?? null : null,
+      referenceAudit: studioReferences?.audit ?? [], imageTool: job.data.studioImageTool,
+      effectiveConstraints: baseFields.aiConstraints,
+    }) : null;
     const constraintEcho = (studio || constraintsEnabled())
       ? {
           // Persist the FINAL policy-adjusted payload, not the pre-chat draft,
@@ -1130,7 +1143,7 @@ export async function runGenerateJob(
               .catch(() => null)
           : null;
         return stageStudioGenerationOutput(studio, { imageUrl: v.imageUrl, width: v.width, height: v.height,
-          params: { ...studioProviderParams(v.params), appliedRuleIds, appliedBrandRuleCount: appliedRuleIds.length,
+          params: { ...studioProviderParams(v.params), visualFidelitySnapshot, appliedRuleIds, appliedBrandRuleCount: appliedRuleIds.length,
             ...(colourFidelity ? { colourFidelity } : {}),
             brandConstraintMode: appliedRuleIds.length ? "BRANDED" : "FREE",
             brandRuleApplicationReason: job.data.studioImageTool ? "IMAGE_TOOL" : appliedRuleIds.length ? "APPLIED" : "NO_APPLICABLE_RULES", sceneType, ...constraintEcho,

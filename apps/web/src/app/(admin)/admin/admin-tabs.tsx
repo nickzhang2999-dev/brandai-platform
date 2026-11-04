@@ -14,6 +14,7 @@ const TABS: { href: string; label: string }[] = [
   { href: "/admin/users", label: "用户管理" },
   { href: "/admin/plans", label: "订阅额度" },
   { href: "/admin/workspaces", label: "全部空间" },
+  { href: "/admin/inspiration", label: "共享灵感库" },
   { href: "/admin/usage", label: "用量看板" },
   { href: "/admin/activity", label: "运行日志" },
 ];

@@ -31,5 +31,5 @@ export async function loadStudioComplianceReferences(workspaceId: string, signal
       sourceHint: "UPLOAD", ...(example.rule.description.trim() ? { note: example.rule.description.trim() } : {}) });
     audit.push({ assetId: asset.id, sha256: meta.sha256, source, polarity: example.polarity });
   }
-  return { referenceImages, audit };
+  return { referenceImages, audit, totalBytes };
 }

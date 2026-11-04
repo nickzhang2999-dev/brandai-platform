@@ -46,3 +46,5 @@ export * from "./inspiration";
 export * from "./omni-analysis";
 export * from "./omni-asset-workflow";
 export * from "./omni-workflow-evidence";
+
+export * from "./visual-fidelity";

@@ -10,6 +10,8 @@ describe('inspiration source library wire identity', () => {
   it('requires explicit bounded admin input and rejects caller-provided library attributes', () => {
     const input = { libraryId: library.id, ownerId: 'synthetic-owner' };
     expect(InspirationLibraryCreateInput.parse(input)).toEqual(input);
+    expect(InspirationLibraryCreateInput.parse({ ...input, workspaceId: 'selected-brand' }).workspaceId).toBe('selected-brand');
+    for (const workspaceId of ['', null, 'a'.repeat(129)]) expect(InspirationLibraryCreateInput.safeParse({ ...input, workspaceId }).success).toBe(false);
     for (const extra of [{ ownerId: '' }, { ownerId: null }, { ownerId: 'a'.repeat(129) }, { libraryId: '../escape' }, { kind: 'SHARED' }, { created: true }]) {
       expect(InspirationLibraryCreateInput.safeParse({ ...input, ...extra }).success).toBe(false);
     }

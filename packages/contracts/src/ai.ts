@@ -1,3 +1,4 @@
+import { VisualFidelityPlan, VisualFidelityReport, VisualFidelitySha256, VisualFidelitySourceImage } from "./visual-fidelity";
 import { z } from "zod";
 import { EditOp, RuleStrength, RuleType, SceneType } from "./enums";
 import {
@@ -374,6 +375,8 @@ export type AIConstraints = z.infer<typeof AIConstraints>;
 
 // POST /v1/generate
 export const GenerateRequest = z.object({
+  /** Internal Studio opt-in: keep the fidelity instructions in direct generation. */
+  visualFidelityRevision: z.literal("visual-fidelity-guard/1").optional(),
   /** Server-only opt-in: a product task never repeats an upstream paid POST. */
   providerRetryPolicy: z.literal("never").optional(),
   sceneType: SceneType,
@@ -556,6 +559,9 @@ export type DecomposeQueuePollResponse = z.infer<typeof DecomposeQueuePollRespon
 export const ComplianceCheckRequest = z.object({
   /** Server-only retry policy, never part of model instructions. */
   providerRetryPolicy: z.literal("never").optional(),
+  visualFidelityPlan: VisualFidelityPlan.optional(),
+  outputSha256: VisualFidelitySha256.optional(),
+  fidelitySourceImages: z.array(VisualFidelitySourceImage).max(9).optional(),
   text: z.string().optional(),
   imageUrl: z.string().optional(),
   brandRules: z.array(BrandRule).default([]),
@@ -574,10 +580,12 @@ export const ComplianceCheckRequest = z.object({
    * `positive` one) is flagged. Frozen-additive: defaults to `[]`.
    */
   referenceImages: z.array(ReferenceImage).default([]),
-});
+}).refine(r => Boolean(r.visualFidelityPlan) === Boolean(r.outputSha256)
+  && (!r.fidelitySourceImages || Boolean(r.visualFidelityPlan)), "Fidelity requires plan and output binding");
 export type ComplianceCheckRequest = z.infer<typeof ComplianceCheckRequest>;
 
 export const ComplianceCheckResponse = z.object({
+  visualFidelityReport: VisualFidelityReport.optional(),
   results: z.array(ComplianceResult),
   report: ComplianceReport,
   // Product workers require explicit evidence that a real model evaluated the

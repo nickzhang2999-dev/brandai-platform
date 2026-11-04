@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-const f = vi.hoisted(() => ({ request: vi.fn(), claim: vi.fn(), ready: vi.fn(), finish: vi.fn(), stage: vi.fn(), archive: vi.fn(), exact: vi.fn(), refs: vi.fn(), rules: vi.fn(), precheck: vi.fn(), generate: vi.fn(), generation: vi.fn(), update: vi.fn(), updateMany: vi.fn(), tx: vi.fn(), createVersion: vi.fn(), upload: vi.fn(), assets: vi.fn(), roots: vi.fn(), usage: vi.fn(), settings: vi.fn(), editSource: vi.fn(), edit: vi.fn(), editGuard: vi.fn(), brandPolicy: vi.fn() }));
+const f = vi.hoisted(() => ({ request: vi.fn(), claim: vi.fn(), ready: vi.fn(), finish: vi.fn(), stage: vi.fn(), archive: vi.fn(), exact: vi.fn(), refs: vi.fn(), rules: vi.fn(), precheck: vi.fn(), generate: vi.fn(), generation: vi.fn(), update: vi.fn(), updateMany: vi.fn(), tx: vi.fn(), createVersion: vi.fn(), upload: vi.fn(), assets: vi.fn(), roots: vi.fn(), usage: vi.fn(), settings: vi.fn(), editSource: vi.fn(), edit: vi.fn(), editGuard: vi.fn(), brandPolicy: vi.fn(), constraints: vi.fn() }));
 vi.mock("../../../packages/db/src/index", () => ({ Prisma: {}, prisma: {
   studioGenerationRequest: { findUnique: f.request }, generation: { findUnique: f.generation, update: f.update, updateMany: f.updateMany }, $transaction: f.tx,
   brandWorkspace: { findUnique: async () => ({ ownerId: "u" }) }, prohibitionRule: { findMany: async () => [] },
@@ -12,7 +12,7 @@ vi.mock("@/lib/studio-generation-artifacts", () => ({ ensureStudioGenerationArti
 vi.mock("@/lib/studio-generation-exact", () => ({ studioExactIntent: () => ({ layout: null, modelExpected: {} }), preflightStudioExactSources: f.exact, assertStudioExactNotModelInput: vi.fn() }));
 vi.mock("@/lib/studio-generation-references", () => ({ inlineStudioGenerationReferences: f.refs, studioProviderParams: () => ({}) }));
 vi.mock("@/lib/ai", () => ({ ai: { generate: f.generate, studioEdit: f.edit } }));
-vi.mock("@/lib/studio-generation-edit", () => ({ loadStudioEditSource: f.editSource, assertStudioEditNotModelReference: f.editGuard }));
+vi.mock("@/lib/studio-generation-edit", async (importOriginal) => ({ ...await importOriginal<typeof import("../src/lib/studio-generation-edit")>(), loadStudioEditSource: f.editSource, assertStudioEditNotModelReference: f.editGuard }));
 vi.mock("@/lib/studio-generation-base", () => ({ requireStudioBaseEncryption: vi.fn() }));
 vi.mock("@/lib/s3", () => ({ uploadDataUrlImage: f.upload }));
 vi.mock("@/lib/asset-mirror", () => ({ mirrorGenerationVersionToAsset: vi.fn() }));
@@ -22,7 +22,7 @@ vi.mock("@/lib/precheck", () => ({ runPrecheck: f.precheck }));
 vi.mock("@/lib/prohibitions", () => ({ loadAssetUrlMap: async () => new Map(), loadProhibitionReferenceImages: vi.fn(), serializeProhibition: vi.fn() }));
 vi.mock("@/lib/compliance", () => ({ loadTermLib: vi.fn() }));
 vi.mock("@/lib/generations", () => ({ setVersionComplianceReport: vi.fn() }));
-vi.mock("@/lib/ai-constraints", () => ({ constraintsEnabled: () => true, compileAIConstraints: () => ({ blockers: [], aiConstraints: { promptAdditions: [], negativePrompt: [], hardBlocks: [], referenceImages: [] } }) }));
+vi.mock("@/lib/ai-constraints", () => ({ constraintsEnabled: f.constraints, compileAIConstraints: () => ({ blockers: [], aiConstraints: { promptAdditions: [], negativePrompt: [], hardBlocks: [], referenceImages: [] } }) }));
 vi.mock("@/lib/usage", () => ({ recordUsage: f.usage, fromGenerateUsage: () => ({}) }));
 vi.mock("@/lib/settings", () => ({ getEffectiveAiSettings: f.settings }));
 vi.mock("@/lib/chat-brand-policy", () => ({ resolveChatBrandPolicy: f.brandPolicy }));
@@ -33,7 +33,7 @@ let row: any, events: string[];
 const conflict = () => Object.assign(new Error("Brand rules changed before dispatch"), { status: 409 });
 const job = () => ({ data: { ...row.jobData }, updateProgress: vi.fn().mockResolvedValue(undefined) } as any);
 beforeEach(() => {
-  vi.resetAllMocks(); events = [];
+  vi.resetAllMocks(); events = []; f.constraints.mockReturnValue(true);
   row = { id: "request", workspaceId: "w", projectId: "p", userId: "u", generationId: "g", status: "RUNNING", providerStartedAt: new Date(), expiresAt: new Date(Date.now() + 60000),
     jobData: { generationId: "g", generationAttemptToken: "synthetic-attempt", workspaceId: "w", versionCount: 1, targets: [{ key: "square", label: "Square", width: 1024, height: 1024 }] } };
   f.request.mockImplementation(async () => row); f.claim.mockImplementation(async () => row);
@@ -111,14 +111,14 @@ describe("real generation worker pre-provider ordering (isolated dependencies)",
     expect(f.stage.mock.calls[0][1].params).toMatchObject({ imageKind: "EDITED", studioPostprocess: { editSource: row.jobData.studioEdit } });
   });
   it("blocks a flattened protected target in the final reference audit before any provider request", async () => {
-    row.jobData.studioEdit = { assetId: "source" };
+    row.jobData.studioEdit = { assetId: "source", sha256: "a".repeat(64), shapeId: "shape:source", width: 48, height: 32, recipeHash: "b".repeat(64) };
     f.editSource.mockResolvedValue({ imageUrl: "data:image/png;base64,YQ==" });
     f.editGuard.mockImplementation(() => { throw Object.assign(new Error("Protected target supplied as model reference"), { status: 422 }); });
     await expect(runGenerateJob(job())).rejects.toThrow("Protected target supplied as model reference");
     expect(f.precheck).not.toHaveBeenCalled(); expect(f.edit).not.toHaveBeenCalled(); expect(f.generate).not.toHaveBeenCalled();
   });
   it("never dispatches an unavailable source, and does not fall back after an edit-provider error", async () => {
-    row.jobData.studioEdit = { assetId: "source" };
+    row.jobData.studioEdit = { assetId: "source", sha256: "a".repeat(64), shapeId: "shape:source", width: 48, height: 32, recipeHash: "b".repeat(64) };
     f.editSource.mockRejectedValue(new Error("Source SHA mismatch"));
     await expect(runGenerateJob(job())).rejects.toThrow("Source SHA mismatch");
     expect(f.precheck).not.toHaveBeenCalled(); expect(f.edit).not.toHaveBeenCalled(); expect(f.generate).not.toHaveBeenCalled();
@@ -265,5 +265,29 @@ describe("legacy generation cancellation and multi-size budget (unit provider fi
     expect(f.upload.mock.calls[0][2].aborted).toBe(true); expect(f.createVersion).toHaveBeenCalledOnce();
     late("https://synthetic.invalid/late.png"); await vi.advanceTimersByTimeAsync(0);
     expect(f.createVersion).toHaveBeenCalledOnce();
+  });
+});
+
+
+describe("studio fidelity generation wiring", () => {
+  it("passes the execution instruction with constraints disabled and freezes a server-owned plan", async () => {
+    f.constraints.mockReturnValue(false);
+    f.generate.mockResolvedValue({ versions: [{ imageUrl: "data:image/png;base64,YQ==", width: 1024, height: 1024,
+      params: { visualFidelitySnapshot: { inputSha256: "forged" } } }] });
+    await runGenerateJob(job());
+    expect(f.generate.mock.calls[0][0].visualFidelityRevision).toBe("visual-fidelity-guard/1");
+    expect(f.generate.mock.calls[0][0].aiConstraints.promptAdditions.join("\n")).toContain("品牌色仅用于规则指定的对象或背景");
+    const snapshot = f.stage.mock.calls[0][1].params.visualFidelitySnapshot;
+    expect(snapshot.inputSha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(snapshot.plan.constraints[0]).toMatchObject({ id: "user-request", expected: "Poster", strength: "hard" });
+    expect(snapshot.plan.inputSha256).toBe(snapshot.inputSha256);
+    expect(snapshot.plan.constraints.find((c: any) => c.id === "compiled-context").expected).toContain("主体与品牌约束");
+  });
+  it("retains generated images when the full rule inventory cannot fit the checker contract", async () => {
+    f.generation.mockResolvedValue({ id: "g", projectId: "p", workspaceId: "w", sceneType: "SOCIAL_POSTER", sellingPoint: "x".repeat(4001), scene: "", chatContext: null });
+    await runGenerateJob(job());
+    const snapshot = f.stage.mock.calls[0][1].params.visualFidelitySnapshot;
+    expect(snapshot.plan).toBeNull(); expect(snapshot.unavailableReason).toBeTruthy();
+    expect(f.finish).toHaveBeenCalledWith(row, "SUCCEEDED", null);
   });
 });

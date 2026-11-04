@@ -73,7 +73,11 @@ export default function InspirationReceive({ wsId }: { wsId: string }) {
   return <section aria-label="接收 Omni 灵感" className="mb-4 rounded-2xl border border-border bg-card p-4">
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div className="min-w-0"><h2 className="text-sm font-semibold">接收 Omni 灵感</h2><p className="mt-1 text-xs leading-5 text-muted-foreground">
-        {status.data?.mode === "automatic" ? "Omni 自动整理并发布，公司灵感库自动更新；需要时可立即接收。" : "Omni 自动整理并发布。点击接收后，最新案例进入公司灵感库，各品牌按需收藏引用；撤回持续自动同步。"}
+        {status.data?.sourceLibrary?.kind === "SHARED"
+          ? status.data.mode === "automatic" ? "Omni 自动整理并发布，公司灵感库自动更新；需要时可立即接收。" : "Omni 自动整理并发布。点击接收后，最新案例进入公司灵感库，各品牌按需收藏引用；撤回持续自动同步。"
+          : status.data?.sourceLibrary?.kind === "WORKSPACE"
+            ? "接收与当前品牌匹配的已发布案例，仅更新当前品牌私有库；公司共享库需由管理员另行接入。"
+            : "读取当前灵感库的接收范围和后台状态，确认后可接收已发布案例。"}
       </p></div>
       <Button type="button" onClick={() => void receive()} disabled={Boolean(disabledReason) || submitting || running}>
         {submitting ? "正在提交…" : running ? task?.status === "PENDING" ? "接收排队中…" : "正在接收…" : "接收最新灵感"}

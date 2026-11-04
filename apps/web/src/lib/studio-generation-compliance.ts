@@ -6,6 +6,7 @@ import { requireWorkspaceRole } from "./workspace";
 import { requireArtifactWrite } from "./studio-generation-artifacts";
 import { getEffectiveAiSettings } from "./settings";
 import { enqueueStudioCompliance } from "./studio-generation-compliance-queue";
+import { readFidelitySnapshot, reviewFidelity, unknownFidelity } from "./studio-visual-fidelity-review";
 
 export const STUDIO_COMPLIANCE_KIND = "STUDIO_COMPLIANCE";
 export const STUDIO_COMPLIANCE_TTL_MS = 6 * 60_000;
@@ -58,7 +59,7 @@ export async function loadStudioComplianceSource(db: Db, workspaceId: string, ve
   const parsedRules = BrandRule.array().safeParse(snapshot.brandRules);
   if (!parsedRules.success) throw new ApiException(422, "原始品牌规则快照不可用，未进行视觉检查。");
   const rulesHash = createHash("sha256").update(JSON.stringify(parsedRules.data)).digest("hex");
-  return { row, brandRules: parsedRules.data, rulesHash };
+  return { row, brandRules: parsedRules.data, rulesHash, ...readFidelitySnapshot(complianceObject(row.output.params).visualFidelitySnapshot) };
 }
 export type StudioComplianceSource = Awaited<ReturnType<typeof loadStudioComplianceSource>>;
 
@@ -68,6 +69,23 @@ export function studioComplianceReport(source: StudioComplianceSource, task: Tas
   if (binding.taskId !== task.id || binding.jobId !== task.jobId || binding.imageSha256 !== source.row.sha256 || binding.rulesHash !== source.rulesHash) return null;
   const parsed = ComplianceReport.safeParse(source.row.version!.complianceReport);
   return parsed.success ? parsed.data : null;
+}
+
+export function studioFidelityReport(source: StudioComplianceSource, task: Task | null) {
+  const snapshot = source.fidelitySnapshot;
+  if (!snapshot) return null;
+  if (snapshot.unavailableReason || !snapshot.plan) return unknownFidelity(snapshot, source.row.sha256!, snapshot.unavailableReason || "本次保真约束清单不可用。");
+  const params = complianceObject(source.row.version!.params), binding = complianceObject(params.studioCompliance);
+  if (!studioComplianceReport(source, task) || binding.fidelityInputSha256 !== snapshot.inputSha256 || binding.fidelitySnapshotHash !== source.fidelityHash)
+    return unknownFidelity(snapshot, source.row.sha256!, "当前图片尚无匹配的主体级核验回执。");
+  return reviewFidelity(snapshot, source.row.sha256!, params.visualFidelityReport, true);
+}
+
+/** Existing explicit retry only. Historical jobs never acquire new review scope. */
+export function studioFidelityNeedsRetry(source: StudioComplianceSource, task: Task | null) {
+  if (!source.fidelitySnapshot?.plan || source.fidelitySnapshot.unavailableReason) return false;
+  const report = studioFidelityReport(source, task);
+  return report !== null && (report.overall === "unknown" || !report.checkPerformed);
 }
 
 export async function expireStudioGenerationCompliance() {
@@ -106,9 +124,9 @@ export async function readStudioGenerationCompliance(workspaceId: string, userId
   const status = invalidResult ? "FAILED" : task?.status ?? "NOT_REQUESTED";
   return StudioGenerationComplianceView.parse({ taskId: task?.id ?? null, versionId, status,
     progress: task?.progress ?? 0, expiresAt: task?.expiresAt?.toISOString() ?? null,
-    checkedImageSha256: report ? source.row.sha256 : null, report,
+    checkedImageSha256: report ? source.row.sha256 : null, report, visualFidelityReport: studioFidelityReport(source, task),
     error: invalidResult ? "检查结果与当前图片或品牌快照不一致，请重新检查。" : task?.error ?? (status === "NOT_REQUESTED" ? configurationError : null),
-    canRetry: (status === "FAILED" || status === "NOT_REQUESTED") && !project.archivedAt && (role === "EDITOR" || role === "OWNER") && configured });
+    canRetry: (status === "FAILED" || status === "NOT_REQUESTED" || status === "SUCCEEDED" && studioFidelityNeedsRetry(source, task)) && !project.archivedAt && (role === "EDITOR" || role === "OWNER") && configured });
 }
 
 /** Explicit retry consumes another VLM check only; image generation is never touched. */
@@ -123,7 +141,7 @@ export async function retryStudioGenerationCompliance(workspaceId: string, userI
     const existing = await tx.asyncTask.findUnique({ where: { id: studioComplianceTaskId(versionId) } });
     if (!existing) return registerStudioGenerationCompliance(tx, workspaceId, versionId);
     if (existing.workspaceId !== workspaceId || existing.kind !== STUDIO_COMPLIANCE_KIND || existing.refId !== versionId) throw new ApiException(404, "视觉检查任务不存在。");
-    if (existing.status === "PENDING" || existing.status === "RUNNING" || studioComplianceReport(source, existing)) return existing;
+    if (existing.status === "PENDING" || existing.status === "RUNNING" || studioComplianceReport(source, existing) && !studioFidelityNeedsRetry(source, existing)) return existing;
     const jobId = attemptId(), expiresAt = new Date(Date.now() + STUDIO_COMPLIANCE_TTL_MS);
     const changed = await tx.asyncTask.updateMany({ where: { id: existing.id, kind: STUDIO_COMPLIANCE_KIND, jobId: existing.jobId, status: existing.status },
       data: { status: "PENDING", progress: 0, error: null, refCount: 0, jobId, expiresAt } });

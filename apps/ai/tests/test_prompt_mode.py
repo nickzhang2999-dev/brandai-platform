@@ -84,3 +84,31 @@ def test_branded_direct_puts_compact_brand_boundary_before_user_brief():
     assert "让 [图1] 仿照 [图2] 的风格绘画" in prompt
     assert "Scene:" not in prompt
     assert params["appliedRules"] == ["r1"]
+
+
+def test_studio_fidelity_instruction_reaches_actual_http_provider_payload():
+    import json
+    import httpx
+    from app.providers import resolve_image_provider
+    from app.providers.http_providers import HttpImageProvider
+    captured = []
+    def transport(request):
+        captured.append(json.loads(request.content))
+        return httpx.Response(200, json={"data": [{"url": "https://image.invalid/result.png"}]})
+    provider = HttpImageProvider("https://api.openai.com/v1", "synthetic-only", transport=httpx.MockTransport(transport))
+    previous = dict(app.dependency_overrides)
+    app.dependency_overrides[resolve_image_provider] = lambda: provider
+    try:
+        base = _base(promptMode="direct", brandRules=[], providerRetryPolicy="never", aiConstraints={
+            "promptAdditions": ["主体保持绿色，背景允许品牌红"], "negativePrompt": [], "hardBlocks": [], "referenceImages": []})
+        response = client.post("/v1/generate", json={**base, "visualFidelityRevision": "visual-fidelity-guard/1"})
+        assert response.status_code == 200
+        assert "主体保持绿色，背景允许品牌红" in captured[-1]["prompt"]
+        response = client.post("/v1/generate", json=base)
+        assert response.status_code == 200
+        assert "主体保持绿色，背景允许品牌红" not in captured[-1]["prompt"]
+        assert captured[-1]["prompt"] == base["sellingPoint"]
+        assert len(captured) == 2
+    finally:
+        app.dependency_overrides.clear()
+        app.dependency_overrides.update(previous)

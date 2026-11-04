@@ -8,6 +8,14 @@ def receipt():
 def report():
     return dict(overall="RISK",textResults=[],visualResults=[dict(level="RISK",reason="Brand color differs")],checkedAt="2026-10-09T12:01:00Z",score=82.5)
 
+def test_subject_evidence_is_independent_and_historical_default_is_null():
+    assert StudioGenerationComplianceView.model_validate(receipt()).visualFidelityReport is None
+    assert StudioGenerationComplianceView.model_validate(receipt() | dict(visualFidelityReport=None)).visualFidelityReport is None
+    fidelity = dict(revision="visual-fidelity-guard/1",inputSha256="b"*64,outputSha256="a"*64,overall="unknown",checkPerformed=False,checks=[],warnings=["No subject evidence"])
+    assert StudioGenerationComplianceView.model_validate(receipt() | dict(visualFidelityReport=fidelity)).visualFidelityReport.model_dump() == fidelity
+    with pytest.raises(ValidationError):
+        StudioGenerationComplianceView.model_validate(receipt() | dict(visualFidelityReport=fidelity | dict(outputSha256="invalid")))
+
 def test_check_identity_and_mirrored_task_kinds():
     assert StudioGenerationComplianceInput.model_validate(dict(projectId="project",versionId="version")).versionId == "version"
     assert TypeAdapter(AsyncTaskKind).validate_python("STUDIO_COMPLIANCE") == "STUDIO_COMPLIANCE"

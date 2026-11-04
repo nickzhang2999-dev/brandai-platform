@@ -472,6 +472,15 @@ class SizeSpec(BaseModel):
 
 
 class GenerateRequest(BaseModel):
+    visualFidelityRevision: Optional[Literal["visual-fidelity-guard/1"]] = None
+
+    @field_validator("visualFidelityRevision", mode="before")
+    @classmethod
+    def fidelity_revision_not_null(cls, value):
+        if value is None:
+            raise ValueError("visualFidelityRevision must be omitted, not null")
+        return value
+
     # Internal transport policy. Explicit null is rejected like Zod optional().
     providerRetryPolicy: Optional[Literal["never"]] = None
 
@@ -649,7 +658,25 @@ class TermIn(BaseModel):
     replacement: Optional[str] = None
 
 
+from .visual_fidelity_schemas import VisualFidelityPlan, VisualFidelityReport, VisualFidelitySourceImage, Sha256
+
+
 class ComplianceCheckRequest(BaseModel):
+    visualFidelityPlan: VisualFidelityPlan | None = None
+    outputSha256: Sha256 | None = None
+    fidelitySourceImages: list[VisualFidelitySourceImage] | None = Field(default=None, max_length=9)
+
+    @model_validator(mode="before")
+    @classmethod
+    def fidelity_no_null(cls, value):
+        if isinstance(value, dict):
+            for key in ("visualFidelityPlan", "outputSha256", "fidelitySourceImages"):
+                if key in value and value[key] is None:
+                    raise ValueError(f"{key} must be omitted, not null")
+        if isinstance(value, dict) and (bool(value.get("visualFidelityPlan")) != bool(value.get("outputSha256")) or ("fidelitySourceImages" in value and not value.get("visualFidelityPlan"))):
+            raise ValueError("Fidelity requires plan and output binding")
+        return value
+
     providerRetryPolicy: Optional[Literal["never"]] = None
 
     @field_validator("providerRetryPolicy", mode="before")
@@ -688,6 +715,7 @@ class ComplianceReport(BaseModel):
 
 
 class ComplianceCheckResponse(BaseModel):
+    visualFidelityReport: VisualFidelityReport | None = None
     results: list[ComplianceResult]
     report: ComplianceReport
     # Additive evidence; omit rather than null on old/text-only responses.
@@ -696,8 +724,10 @@ class ComplianceCheckResponse(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def no_explicit_visual_check_null(cls, value):
-        if isinstance(value, dict) and "visualCheckPerformed" in value and value["visualCheckPerformed"] is None:
-            raise ValueError("visualCheckPerformed must be omitted, not null")
+        if isinstance(value, dict):
+            for key in ("visualCheckPerformed", "visualFidelityReport"):
+                if key in value and value[key] is None:
+                    raise ValueError(f"{key} must be omitted, not null")
         return value
 
 

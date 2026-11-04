@@ -72,7 +72,7 @@ describe("owned editor product API", () => {
   it("reads and explicitly retries only the existing image check", async () => {
     const receipt = { taskId: null, versionId: "version-a", status: "NOT_REQUESTED", progress: 0, expiresAt: null, checkedImageSha256: null, report: null, error: null, canRetry: true };
     const fetcher = vi.fn().mockImplementation(async () => response(receipt));
-    expect(await setup(fetcher).readCompliance("version-a")).toEqual(receipt);
+    expect(await setup(fetcher).readCompliance("version-a")).toEqual({ ...receipt, visualFidelityReport: null });
     expect(fetcher.mock.calls[0]![0]).toBe("/studio/generation/compliance?projectId=owned-p&versionId=version-a&workspaceId=owned-w");
     await setup(fetcher).readCompliance("version-a", true);
     expect(fetcher.mock.calls[1]![0]).toBe("/studio/generation/compliance/retry?projectId=owned-p&workspaceId=owned-w");

@@ -3,6 +3,7 @@ from datetime import datetime
 from typing import Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 from .studio_workflow_schemas import StrictModel, ProjectId, Sha256
+from .visual_fidelity_schemas import VisualFidelityReport
 
 Level = Literal["PASS", "RISK", "FORBIDDEN"]
 
@@ -50,6 +51,7 @@ class StudioGenerationComplianceView(StrictModel):
     expiresAt: str | None
     checkedImageSha256: Sha256 | None
     report: StudioComplianceReport | None
+    visualFidelityReport: VisualFidelityReport | None = None
     error: str | None
     canRetry: bool
 

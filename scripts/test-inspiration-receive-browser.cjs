@@ -17,7 +17,7 @@ const report = {isolated:true,realBackend:false,realAuthentication:false,realPro
 const scenarios = new Map(); let server,browser;
 const check = name => report.checks.push(name);
 const json=(res,data,status=200)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(data));};
-const fresh=()=>({task:null,allowed:true,configured:true,reason:null,posts:0,count:1,mode:'manual',getFailure:false,loseResponse:false});
+const fresh=()=>({libraryKind:'SHARED',task:null,allowed:true,configured:true,reason:null,posts:0,count:1,mode:'manual',getFailure:false,loseResponse:false});
 const task=(status,id='isolated-receipt')=>({id,status,error:status==='FAILED'?'知识包校验未通过，请检查发布端。':null,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),expiresAt:new Date(Date.now()+360000).toISOString()});
 function state(ws){if(!scenarios.has(ws))scenarios.set(ws,fresh());return scenarios.get(ws);}
 
@@ -41,11 +41,11 @@ async function start(){
   if(suffix==='/sync'){
    if(req.method==='POST'){s.posts++;s.task=task('PENDING',match[1]+'-'+s.posts);return setTimeout(()=>json(res,s.loseResponse?{error:'Isolated lost response'}:{id:s.task.id,status:s.task.status},s.loseResponse?502:202),200);}
    if(s.getFailure)return json(res,{error:'Isolated status unavailable'},503);
-   return json(res,{enabled:true,configured:s.configured,mode:s.mode,canReceive:s.allowed&&s.configured,canReceiveReason:s.reason,sourceLibrary:{id:'shared-fixture',kind:'SHARED'},task:s.task});
+   return json(res,{enabled:true,configured:s.configured,mode:s.mode,canReceive:s.allowed&&s.configured,canReceiveReason:s.reason,sourceLibrary:{id:'shared-fixture',kind:s.libraryKind},task:s.task});
   }
   if(req.method!=='GET'){report.unexpectedRequests.push(req.method+':'+url.pathname);return json(res,{error:'Forbidden isolated write'},405);}
   if(suffix==='/bookmarks')return json(res,{items:[]});
-  if(suffix==='')return json(res,{enabled:true,syncConfigured:true,activeRelease:{id:'isolated-'+s.count,sequence:s.count,createdAt:new Date().toISOString()},caseCount:s.count,withdrawalSequence:0,lastSyncAt:null,error:null,searchMode:'keyword-tags',cases:Array.from({length:s.count},(_,i)=>({caseId:match[1]+'-case-'+i,revision:1,title:'隔离案例 '+i,summary:'只验证交互的合成记录',brandOrTeam:'测试',analysisAllowed:false,tags:{},images:[],sources:[],claims:[]}))});
+  if(suffix==='')return json(res,{enabled:true,sourceLibrary:{id:'shared-fixture',kind:s.libraryKind},syncConfigured:true,activeRelease:{id:'isolated-'+s.count,sequence:s.count,createdAt:new Date().toISOString()},caseCount:s.count,withdrawalSequence:0,lastSyncAt:null,error:null,searchMode:'keyword-tags',cases:Array.from({length:s.count},(_,i)=>({caseId:match[1]+'-case-'+i,revision:1,title:'隔离案例 '+i,summary:'只验证交互的合成记录',brandOrTeam:'测试',analysisAllowed:false,tags:{},images:[],sources:[],claims:[]}))});
   report.unexpectedRequests.push(url.pathname);return json(res,{error:'Unknown isolated route'},404);
  });
  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));return 'http://127.0.0.1:'+server.address().port;
@@ -62,7 +62,9 @@ async function enabled(locator){await locator.waitFor();await locator.page().wai
   const page=await context.newPage();page.setDefaultTimeout(10000);page.on('pageerror',error=>report.errors.push(error.message));
   await page.goto(origin+'/inspiration?workspaceId=receive-a');
   const receive=()=>page.getByRole('button',{name:'接收最新灵感',exact:true});
-  await enabled(receive());await refresh(page);assert.equal(s.posts,0);check(spec.name+': refresh is read-only');
+  await enabled(receive());await page.getByTestId('inspiration-library-scope').filter({hasText:'当前为公司共享灵感库'}).waitFor();
+  s.libraryKind='WORKSPACE';await refresh(page);await page.getByTestId('inspiration-library-scope').filter({hasText:'当前为品牌私有灵感库'}).waitFor();await page.getByText('接收与当前品牌匹配的已发布案例，仅更新当前品牌私有库；公司共享库需由管理员另行接入。',{exact:true}).waitFor();assert.equal(await page.getByText(/公司灵感库自动更新|最新案例进入公司灵感库/).count(),0);check(spec.name+': private library never promises company-wide sharing');
+  s.libraryKind='SHARED';await refresh(page);await page.getByTestId('inspiration-library-scope').filter({hasText:'当前为公司共享灵感库'}).waitFor();assert.equal(s.posts,0);check(spec.name+': refresh is read-only');
   await receive().evaluate(button=>{button.click();button.click();});
   await page.getByRole('button',{name:'接收排队中…'}).waitFor();assert.equal(s.posts,1);check(spec.name+': rapid double click submits once');
   await page.reload();await page.getByRole('button',{name:'接收排队中…'}).waitFor();assert.equal(s.posts,1);check(spec.name+': refresh restores durable pending task');

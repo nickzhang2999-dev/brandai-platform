@@ -2,10 +2,19 @@ import { prisma, type Prisma } from '@brandai/db';
 import { ApiException } from '../api';
 import type { LibraryScope } from './library-scope';
 export {sourceLibrary} from './library-scope';
-export function sharedLibraryId() {
-  const id=process.env.INSPIRATION_SHARED_LIBRARY_ID?.trim();
+function validatedLibraryId(value:string|undefined) {
+  const id=value?.trim();
   if(id&&!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(id))throw new ApiException(503,'公司灵感库配置无效。');
   return id||null;
+}
+export function sharedLibraryId() {
+  return validatedLibraryId(process.env.INSPIRATION_SHARED_LIBRARY_ID);
+}
+/** Administrator preparation only; never changes the library resolved for readers. */
+export function sharedLibrarySetupId() {
+  const setup=validatedLibraryId(process.env.INSPIRATION_SHARED_SETUP_LIBRARY_ID);
+  const active=sharedLibraryId();
+  return setup||active;
 }
 /** Caller must first check brand membership. Storage ownership never follows a client ID. */
 export async function resolveLibrary(workspaceId:string,requestedId?:string|null):Promise<LibraryScope> {
