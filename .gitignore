@@ -30,3 +30,4 @@ prisma/*.db
 dump.rdb
 *.rdb
 .novart-tmp/
+apps/web/.novart-ui-artifacts/
