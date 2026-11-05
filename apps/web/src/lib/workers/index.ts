@@ -18,8 +18,7 @@ import { createOmniAnalysisWorker } from "../omni-analysis/worker";
 import { createStudioCopywritingWorker } from "./studio-copywriting.worker";
 import { createStudioWritingWorker } from "./studio-writing.worker";
 import http from "node:http";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { watchSourceRevision } from "./source-revision";
 import { createRecognizeWorker } from "./recognize.worker";
 import { createParseManualWorker } from "./parse-manual.worker";
 import { createGenerateWorker } from "./generate.worker";
@@ -54,7 +53,6 @@ const workers: { close: () => Promise<void> }[] = [];
 let workersReady = false;
 let bootError: string | null = null;
 let aiService: AiServiceResolution | null = null;
-const execFileAsync = promisify(execFile);
 
 // Bind the health server before constructing anything. Reports:
 //   { worker: "starting" }            — port bound, workers not yet created
@@ -156,28 +154,8 @@ try {
   void dispatchStudio();
   setInterval(() => { void dispatchStudio(); }, 15_000).unref();
 
-  // CDS bind-mounts the branch worktree into this long-lived process. A pull
-  // can therefore replace source files without recreating the container.
-  // Detect that drift and exit cleanly; Docker/CDS restarts the worker so the
-  // next job cannot keep executing an older in-memory module graph.
-  const deployedCommit = process.env.CDS_COMMIT_SHA;
-  if (deployedCommit) {
-    setInterval(() => {
-      void execFileAsync("git", ["rev-parse", "HEAD"], { cwd: "/app" })
-        .then(({ stdout }) => {
-          const currentCommit = stdout.trim();
-          if (currentCommit && currentCommit !== deployedCommit) {
-            console.log(
-              `[workers] source changed ${deployedCommit.slice(0, 12)} -> ${currentCommit.slice(0, 12)}; restarting`,
-            );
-            void shutdown();
-          }
-        })
-        .catch((error) =>
-          console.error("[workers] source revision check failed:", error),
-        );
-    }, 15_000).unref();
-  }
+  watchSourceRevision(process.env.CDS_COMMIT_SHA, shutdown);
+
 } catch (err) {
   bootError = String(err);
   console.error("[workers] FAILED to construct workers:", err);

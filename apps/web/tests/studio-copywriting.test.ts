@@ -1,3 +1,4 @@
+vi.mock("@/lib/settings", () => ({ getEffectiveAiSettings: async () => ({ vlm: { provider: "openai", apiKey: "", baseUrl: "", model: "" } }) }));
 import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/api", () => ({ ApiException: class extends Error { constructor(public status: number, message: string) { super(message); } } }));
 import { StudioCopywritingInput } from "@brandai/contracts";
@@ -23,8 +24,8 @@ describe("canvas copywriting provider", () => {
     expect(()=>parseCopywritingResponse({...envelope,stop_reason:"max_tokens"})).toThrow("不完整");
     expect(()=>parseCopywritingResponse({...envelope,content:[{type:"text",text:'{"candidates":[]}'}]})).toThrow();
   });
-  it("fails closed when the dedicated model is not configured",()=>{
-    vi.stubEnv("COPYWRITING_API_KEY",""); vi.stubEnv("COPYWRITING_BASE_URL","");expect(copywritingEnabled()).toBe(false);
+  it("fails closed when no model is configured",async()=>{
+    vi.stubEnv("COPYWRITING_API_KEY",""); vi.stubEnv("COPYWRITING_BASE_URL","");expect(await copywritingEnabled()).toBe(false);
   });
   it("sends one Anthropic request, with image data and no client-provided URL", async()=>{
     vi.stubEnv("COPYWRITING_API_KEY","unit-secret"); vi.stubEnv("COPYWRITING_BASE_URL","https://example.test/apps/anthropic"); vi.stubEnv("COPYWRITING_MODEL","qwen3.7-plus");

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks=vi.hoisted(()=>({find:vi.fn(),update:vi.fn(),history:vi.fn(),taskUpdate:vi.fn(),list:vi.fn(),answer:vi.fn()}));
 vi.mock('@brandai/db',()=>({prisma:{inspirationChat:{findUnique:mocks.find,updateMany:mocks.update,findMany:mocks.history},inspirationLibraryTask:{updateMany:mocks.taskUpdate}}}));
-vi.mock('../src/lib/inspiration/service',()=>({listCases:mocks.list}));
+vi.mock('../src/lib/inspiration/service',()=>({currentCases:mocks.list}));
 vi.mock('../src/lib/inspiration/provider',()=>({answerEvidence:mocks.answer}));
 vi.mock('../src/lib/inspiration/access',()=>({requireActiveEditor:async()=>{},requireCurrentEvidence:async()=>{}}));
 vi.mock('../src/lib/inspiration/selected-images',()=>({loadSelectedImages:async()=>[]}));
@@ -24,7 +24,7 @@ describe('inspiration worker safe terminal diagnostics',()=>{
   it.each([new InspirationFailure('provider_http_error',400),new Error('private-provider-key/response')])('keeps frontend generic, logs safe fields and never retries',async(error)=>{
     mocks.answer.mockRejectedValue(error);const log=vi.spyOn(console,'warn').mockImplementation(()=>{});
     await runInspirationChat('job');
-    expect(mocks.answer).toHaveBeenCalledOnce();expect(mocks.list.mock.calls.every(args=>args[0]==='ws'&&args[2]==='library-fixed')).toBe(true);
+    expect(mocks.answer).toHaveBeenCalledOnce();expect(mocks.list.mock.calls.every(args=>args[0]==='ws'&&args[1]==='library-fixed')).toBe(true);
     expect(log).toHaveBeenCalledWith('[inspiration-chat] failed',error instanceof InspirationFailure?{code:'provider_http_error',status:400}:{code:'task_failed'});
     const failure=mocks.update.mock.calls.find(([arg])=>arg.data.status==='FAILED')?.[0];
     expect(failure.data.error).toBe('灵感任务未完成，请检查接入配置或稍后重试。');

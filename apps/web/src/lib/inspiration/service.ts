@@ -19,6 +19,15 @@ export function card(workspaceId:string, value:unknown,libraryId=workspaceId): I
 export function keywordScore(c:InspirationCaseCard, query:string) {
   return catalogKeywordScore(c,query);
 }
+/** Internal evidence reads never inherit the UI's page size. Resolve the
+ * authorized library and withdrawal-filtered active release on every call. */
+export async function currentCases(workspaceId:string, libraryId?:string, caseIds?:readonly string[]): Promise<{cases:InspirationCaseCard[]}> {
+  if(!inspirationEnabled())return {cases:[]};
+  const library=await resolveLibrary(workspaceId,libraryId);
+  const {records}=await activeRecords(library);
+  const ids=caseIds ? new Set(caseIds) : null;
+  return {cases:records.filter(r=>!ids||ids.has(r.caseId)).map(r=>card(workspaceId,r.body,library.id))};
+}
 export async function listCases(workspaceId:string, filters:CatalogFilters={},libraryId?:string, page:CatalogPage={}): Promise<InspirationListResponse> {
   const enabled=inspirationEnabled();
   // A disabled response exposes status only: do not read stored content or history.

@@ -26,7 +26,8 @@ export class StudioLayerQualityCheck {
   private computeRemainingMs = 30_000;
   private computeDeadline = Infinity;
 
-  constructor(private readonly expected: Source, private readonly layerCount: number, private readonly signal: AbortSignal) {
+  constructor(private readonly expected: Source, private readonly layerCount: number, private readonly signal: AbortSignal, private readonly topDown = false) {
+    this.nextOrder = topDown ? layerCount - 1 : 0;
     const scale = Math.min(1, 1024 / Math.max(expected.sourceWidth, expected.sourceHeight));
     this.sampleWidth = Math.max(1, Math.floor(expected.sourceWidth * scale));
     this.sampleHeight = Math.max(1, Math.floor(expected.sourceHeight * scale));
@@ -102,11 +103,17 @@ export class StudioLayerQualityCheck {
         for (let offset = 0; offset < layer.length; offset += 4) {
           if (offset % 65_536 === 0) this.checkpoint();
           const alpha = layer[offset + 3]! / 255, inverse = 1 - alpha;
-          for (let channel = 0; channel < 3; channel++) this.composite![offset + channel] = layer[offset + channel]! * alpha + this.composite![offset + channel]! * inverse;
-          this.composite![offset + 3] = alpha + this.composite![offset + 3]! * inverse;
+          if (this.topDown) {
+            const remaining = 1 - this.composite![offset + 3]!;
+            for (let channel = 0; channel < 3; channel++) this.composite![offset + channel] = this.composite![offset + channel]! + layer[offset + channel]! * alpha * remaining;
+            this.composite![offset + 3] = this.composite![offset + 3]! + alpha * remaining;
+          } else {
+            for (let channel = 0; channel < 3; channel++) this.composite![offset + channel] = layer[offset + channel]! * alpha + this.composite![offset + channel]! * inverse;
+            this.composite![offset + 3] = alpha + this.composite![offset + 3]! * inverse;
+          }
         }
       });
-      this.nextOrder++;
+      this.nextOrder += this.topDown ? -1 : 1;
     } catch { this.unavailable(this.signal.aborted ? "CHECK_ABORTED" : "CHECK_FAILED"); }
   }
   noteLayer(layer: { inkCoverage: number; assetSha256: string }) {
@@ -122,7 +129,7 @@ export class StudioLayerQualityCheck {
     try {
       this.signal.throwIfAborted();
       if (!this.reason) {
-        if (!this.source || !this.composite || this.nextOrder !== this.layerCount) throw new Error("Incomplete quality composite");
+        if (!this.source || !this.composite || this.nextOrder !== (this.topDown ? -1 : this.layerCount)) throw new Error("Incomplete quality composite");
         this.compute(() => {
         let colorError = 0, alphaError = 0, changed = 0;
         const totals = new Uint32Array(16), changes = new Uint32Array(16);
@@ -180,11 +187,11 @@ export class StudioLayerQualityCheck {
   }
 }
 
-export async function createStudioLayerQualityCheck(source: Source, layerCount: number, signal: AbortSignal, loadSource: (signal: AbortSignal) => Promise<Buffer>) {
+export async function createStudioLayerQualityCheck(source: Source, layerCount: number, signal: AbortSignal, loadSource: (signal: AbortSignal) => Promise<Buffer>, topDown = false) {
   assertStudioLayerBudget(source.sourceWidth, source.sourceHeight, layerCount);
   // Source I/O/decode has its own deadline. The cumulative 30s computation
   // budget excludes time spent downloading/uploading the individual layers.
-  const check = new StudioLayerQualityCheck(source, layerCount, signal);
+  const check = new StudioLayerQualityCheck(source, layerCount, signal, topDown);
   try { await check.initialize(loadSource, AbortSignal.any([signal, AbortSignal.timeout(10_000)])); }
   catch { check.unavailable(signal.aborted ? "CHECK_ABORTED" : "CHECK_FAILED"); }
   return check;

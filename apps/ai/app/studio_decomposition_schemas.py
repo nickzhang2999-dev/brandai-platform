@@ -93,10 +93,23 @@ class StudioLayerResolution(StrictModel):
     scaleX: float = Field(gt=0, allow_inf_nan=False)
     scaleY: float = Field(gt=0, allow_inf_nan=False)
     resampling: Literal["NONE", "LANCZOS3"]
-    rgbSource: Literal["PROVIDER"]
+    rgbSource: Literal["PROVIDER", "SOURCE_VISIBLE"]
+    sourcePixelCount: int | None = Field(default=None, ge=0)
+    sourcePixelPolicy: Literal["visible-opaque-v1"] | None = None
+
+    @field_validator("sourcePixelCount", "sourcePixelPolicy", mode="before")
+    @classmethod
+    def no_null_pixel_provenance(cls, value):
+        if value is None:
+            raise ValueError("Pixel provenance must be omitted, not null")
+        return value
 
     @model_validator(mode="after")
     def measured_scaling(self):
+        if ((self.sourcePixelCount is not None) != (self.sourcePixelPolicy is not None)
+            or (self.rgbSource == "SOURCE_VISIBLE") != ((self.sourcePixelCount or 0) > 0)
+            or (self.sourcePixelCount or 0) > self.sourceWidth * self.sourceHeight):
+            raise ValueError("Source pixel provenance must match the measured restoration")
         if (self.sourceWidth != self.publishedWidth or self.sourceHeight != self.publishedHeight
             or abs(self.scaleX - self.publishedWidth / self.providerWidth) > 1e-9
             or abs(self.scaleY - self.publishedHeight / self.providerHeight) > 1e-9

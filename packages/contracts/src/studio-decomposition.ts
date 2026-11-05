@@ -53,8 +53,14 @@ export const StudioLayerResolution = z.object({
   providerWidth: dimension, providerHeight: dimension,
   publishedWidth: dimension, publishedHeight: dimension,
   scaleX: z.number().finite().positive(), scaleY: z.number().finite().positive(),
-  resampling: z.enum(["NONE", "LANCZOS3"]), rgbSource: z.literal("PROVIDER"),
+  resampling: z.enum(["NONE", "LANCZOS3"]), rgbSource: z.enum(["PROVIDER", "SOURCE_VISIBLE"]),
+  sourcePixelCount: z.number().int().nonnegative().optional(),
+  sourcePixelPolicy: z.literal("visible-opaque-v1").optional(),
 }).strict().superRefine((value, context) => {
+  if ((value.sourcePixelCount !== undefined) !== (value.sourcePixelPolicy !== undefined)
+    || (value.rgbSource === "SOURCE_VISIBLE") !== ((value.sourcePixelCount ?? 0) > 0)
+    || (value.sourcePixelCount ?? 0) > value.sourceWidth * value.sourceHeight)
+    context.addIssue({ code: "custom", message: "Source pixel provenance must match the measured restoration" });
   if (value.sourceWidth !== value.publishedWidth || value.sourceHeight !== value.publishedHeight
     || Math.abs(value.scaleX - value.publishedWidth / value.providerWidth) > 1e-9
     || Math.abs(value.scaleY - value.publishedHeight / value.providerHeight) > 1e-9

@@ -1,3 +1,4 @@
+vi.mock("@/lib/settings", () => ({ getEffectiveAiSettings: async () => ({ vlm: { provider: "openai", apiKey: "", baseUrl: "", model: "" } }) }));
 import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/api", () => ({ ApiException: class extends Error { constructor(public status: number, message: string) { super(message); } } }));
 import { StudioWritingGenerateInput, StudioWritingSaveInput, StudioWritingStyleSaveInput } from "@brandai/contracts";

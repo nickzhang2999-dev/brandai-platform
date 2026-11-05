@@ -87,10 +87,16 @@ it("binds the full effective constraints while keeping image data out of public 
   const baseline = build({ ...input, effectiveConstraints: constraints });
   for (const changed of [{ negativePrompt: ["blue apple"] }, { promptAdditions: ["hard shadows"] }, { hardBlocks: [] }, { machineRules: { aspect_ratio: "3:2" } }, { referenceImages: [{ ...constraints.referenceImages[0]!, url: "data:image/png;base64,BBBB" }] }])
     expect(build({ ...input, effectiveConstraints: { ...constraints, ...changed } }).inputSha256).not.toBe(baseline.inputSha256);
-  const compiled = baseline.plan?.constraints.find(c => c.id === "compiled-context");
-  expect(compiled?.expected).toContain('"hardBlocks"');
-  expect(compiled?.expected).toContain("negativePrompt是需要避免的内容");
-  expect(compiled?.expected).toContain("风格偏好不升级为硬要求");
+  expect(baseline.plan?.constraints.find(c => c.id === "compiled-negative-1")?.expected).toContain("需要避免");
+  expect(baseline.plan?.constraints.find(c => c.id === "compiled-block-1")?.expected).toContain("forbidden logo");
+  expect(baseline.plan?.constraints.find(c => c.id === "compiled-prompt-1")?.expected).toContain("风格偏好不升级为硬要求");
   expect(JSON.stringify(baseline)).not.toContain("base64");
   expect(build({ ...input, effectiveConstraints: { ...constraints, promptAdditions: ["x".repeat(4001)] } }).plan).toBeNull();
+});
+
+it("keeps a twelve-rule plan even when the compiled aggregate exceeds 4000 characters", () => {
+  const rules = Array.from({length:12}, (_,index)=>({...rule(`large-${index}`),summary:"保留主体颜色与细节".repeat(45)}));
+  const result=build({...input,brandRules:rules,effectiveConstraints:{negativePrompt:[],promptAdditions:rules.map(r=>r.summary),hardBlocks:[],machineRules:{}}});
+  expect(result.plan).not.toBeNull();expect(result.plan?.constraints.filter(c=>c.id.startsWith("brand-"))).toHaveLength(12);
+  expect(result.plan?.constraints.filter(c=>c.id.startsWith("compiled-prompt-"))).toHaveLength(1);
 });

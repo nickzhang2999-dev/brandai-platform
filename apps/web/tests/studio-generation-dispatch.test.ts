@@ -281,7 +281,7 @@ describe("studio fidelity generation wiring", () => {
     expect(snapshot.inputSha256).toMatch(/^[a-f0-9]{64}$/);
     expect(snapshot.plan.constraints[0]).toMatchObject({ id: "user-request", expected: "Poster", strength: "hard" });
     expect(snapshot.plan.inputSha256).toBe(snapshot.inputSha256);
-    expect(snapshot.plan.constraints.find((c: any) => c.id === "compiled-context").expected).toContain("主体与品牌约束");
+    expect(snapshot.plan.constraints.find((c: any) => c.id === "compiled-prompt-1").expected).toContain("主体与品牌约束");
   });
   it("retains generated images when the full rule inventory cannot fit the checker contract", async () => {
     f.generation.mockResolvedValue({ id: "g", projectId: "p", workspaceId: "w", sceneType: "SOCIAL_POSTER", sellingPoint: "x".repeat(4001), scene: "", chatContext: null });

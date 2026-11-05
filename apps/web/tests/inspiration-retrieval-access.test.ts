@@ -3,7 +3,7 @@ import type { InspirationCaseCard } from '@brandai/contracts';
 const mocks=vi.hoisted(()=>({list:vi.fn(),user:vi.fn(),role:vi.fn(),embed:vi.fn(),rank:vi.fn(),resolve:vi.fn()}));
 vi.mock('@brandai/db',()=>({prisma:{user:{findUnique:mocks.user},inspirationEmbedding:{findUnique:vi.fn(),upsert:vi.fn()}}}));
 vi.mock('../src/lib/workspace',()=>({requireWorkspaceRole:mocks.role}));
-vi.mock('../src/lib/inspiration/service',()=>({listCases:mocks.list,keywordScore:()=>1}));
+vi.mock('../src/lib/inspiration/service',()=>({currentCases:mocks.list,keywordScore:()=>1}));
 vi.mock('../src/lib/inspiration/semantic',()=>({embeddingConfig:()=>({dimensions:2}),embedTexts:mocks.embed,rankHybrid:mocks.rank}));
 vi.mock('../src/lib/inspiration/library',()=>({resolveLibrary:mocks.resolve}));
 import { retrieveInspirationCases } from '../src/lib/inspiration/retrieval';
@@ -15,7 +15,7 @@ describe('outbound retrieval permission checkpoints',()=>{
   it('removes a withdrawn candidate before the next external batch, including final ranking',async()=>{
     let call=0;mocks.embed.mockImplementation(async(_config,texts:string[])=>{call++;if(call===2)current=current.filter(c=>c.caseId!=='c16');return{ok:true,space:'s',vectors:texts.map(()=>[1,0])};});
     const result=await retrieveInspirationCases('ws','user','QUESTION',AbortSignal.timeout(5000));
-    expect(mocks.list.mock.calls.every(args=>args[0]==='ws'&&args[2]==='shared-library')).toBe(true);expect(mocks.embed.mock.calls.every(args=>args[3].scope==='ws:shared-library')).toBe(true);expect(mocks.embed).toHaveBeenCalledTimes(2);expect(result.some(c=>c.caseId==='c16')).toBe(false);expect(JSON.stringify(mocks.embed.mock.calls)).not.toContain('CASE16');
+    expect(mocks.list.mock.calls.every(args=>args[0]==='ws'&&args[1]==='shared-library')).toBe(true);expect(mocks.embed.mock.calls.every(args=>args[3].scope==='ws:shared-library')).toBe(true);expect(mocks.embed).toHaveBeenCalledTimes(2);expect(result.some(c=>c.caseId==='c16')).toBe(false);expect(JSON.stringify(mocks.embed.mock.calls)).not.toContain('CASE16');
   });
   it('rejects an updated revision or newly denied analysis permission even if cached vectors exist',async()=>{
     mocks.embed.mockImplementation(async(_config,texts:string[])=>{current=current.map(c=>c.caseId==='c0'?{...c,revision:2}:c.caseId==='c1'?{...c,analysisAllowed:false}:c);return{ok:true,space:'s',vectors:texts.map(()=>[1,0])};});

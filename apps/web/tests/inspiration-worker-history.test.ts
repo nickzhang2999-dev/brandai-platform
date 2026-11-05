@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { InspirationCaseCard } from '@brandai/contracts';
 const mocks=vi.hoisted(()=>({find:vi.fn(),update:vi.fn(),history:vi.fn(),taskUpdate:vi.fn(),list:vi.fn(),settings:vi.fn()}));
 vi.mock('@brandai/db',()=>({prisma:{inspirationChat:{findUnique:mocks.find,updateMany:mocks.update,findMany:mocks.history},inspirationLibraryTask:{updateMany:mocks.taskUpdate}}}));
-vi.mock('../src/lib/inspiration/service',()=>({listCases:mocks.list}));
+vi.mock('../src/lib/inspiration/service',()=>({currentCases:mocks.list}));
 vi.mock('../src/lib/settings',()=>({getEffectiveAiSettings:mocks.settings}));
 vi.mock('../src/lib/studio-copywriting-provider',()=>({copywritingConfig:()=>({}),copywritingEndpoint:()=>''}));
 vi.mock('../src/lib/inspiration/access',()=>({requireActiveEditor:async()=>{},requireCurrentEvidence:async()=>{}}));
@@ -49,7 +49,7 @@ describe('legacy answers never reenter outbound model history',()=>{
     expect(JSON.stringify(payload)).not.toMatch(/digital|other|数字界面|已过期的案例回答|已无分析权限/);
     expect(JSON.stringify(storedHistory)).toBe(before);
     expect(mocks.history).toHaveBeenCalledWith(expect.objectContaining({where:expect.objectContaining({workspaceId:'ws',userId:'user',conversationId:'conversation'})}));
-    expect(mocks.update.mock.calls.every(([input])=>input.where.id==='job')).toBe(true);expect(mocks.list.mock.calls.every(args=>args[0]==='ws'&&args[2]==='library-fixed')).toBe(true);
+    expect(mocks.update.mock.calls.every(([input])=>input.where.id==='job')).toBe(true);expect(mocks.list.mock.calls.every(args=>args[0]==='ws'&&args[1]==='library-fixed')).toBe(true);
   });
   it('keeps ordinal references usable while sending only current cleaned evidence, not the old answer',async()=>{
     job.caseIds=[];job.question='比较第一个案例的字体';await runInspirationChat('job');

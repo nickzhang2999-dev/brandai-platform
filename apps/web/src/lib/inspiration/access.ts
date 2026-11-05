@@ -1,7 +1,7 @@
 import { prisma } from '@brandai/db';
 import type { InspirationCaseCard } from '@brandai/contracts';
 import { requireWorkspaceRole } from '../workspace';
-import { listCases } from './service';
+import { currentCases } from './service';
 import { canReceiveLibrary, resolveLibrary } from './library';
 import type { LibraryScope } from './library-scope';
 
@@ -26,7 +26,7 @@ export async function requireActiveEditor(workspaceId:string,userId:string) {
 /** Re-read permission and version immediately before each paid external batch. */
 export async function currentAnalysisCases<T extends InspirationCaseCard>(workspaceId:string,userId:string,candidates:T[],libraryId?:string):Promise<T[]> {
   await requireActiveEditor(workspaceId,userId);
-  const current=(await listCases(workspaceId,{},libraryId)).cases;
+  const current=(await currentCases(workspaceId,libraryId,candidates.map(c=>c.caseId))).cases;
   return candidates.filter(c=>current.some(now=>now.caseId===c.caseId&&now.revision===c.revision&&now.analysisAllowed));
 }
 export async function requireCurrentEvidence(workspaceId:string,userId:string,cases:InspirationCaseCard[],libraryId?:string) {

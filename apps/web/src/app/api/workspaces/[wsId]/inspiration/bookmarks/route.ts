@@ -2,11 +2,11 @@ import { prisma } from '@brandai/db';
 import { InspirationBookmarkInput } from '@brandai/contracts';
 import { ApiException, handleError, ok, parse, requireUser } from '@/lib/api';
 import { requireWorkspaceRole } from '@/lib/workspace';
-import { getCase, listCases, requireEnabled } from '@/lib/inspiration/service';
+import { getCase, currentCases, requireEnabled } from '@/lib/inspiration/service';
 export async function GET(_req:Request,{params}:{params:Promise<{wsId:string}>}) {
   try {const user=await requireUser(),{wsId}=await params;await requireWorkspaceRole(wsId,user.id,'VIEWER');requireEnabled();
     const rows=await prisma.inspirationBookmark.findMany({where:{workspaceId:wsId,userId:user.id},orderBy:{updatedAt:'desc'},take:200});
-    const libraries=new Map(await Promise.all([...new Set(rows.map(r=>r.libraryId))].map(async id=>[id,await listCases(wsId,{},id)] as const)));
+    const libraries=new Map(await Promise.all([...new Set(rows.map(r=>r.libraryId))].map(async id=>[id,await currentCases(wsId,id)] as const)));
     return ok({items:rows.map(r=>{const c=libraries.get(r.libraryId)?.cases.find(c=>c.caseId===r.caseId&&c.revision===r.revision)??null;return{id:r.id,libraryId:r.libraryId,caseId:r.caseId,revision:r.revision,projectId:r.projectId||null,note:r.note,case:c,unavailable:!c};})},{headers:{'Cache-Control':'no-store'}});
   }catch(e){return handleError(e);}
 }

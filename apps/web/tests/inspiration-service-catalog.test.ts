@@ -8,7 +8,7 @@ vi.mock('@/lib/inspiration/config', () => ({ inspirationEnabled: mocks.enabled, 
 vi.mock('@/lib/settings', () => ({ getEffectiveAiSettings: mocks.settings }));
 vi.mock('@/lib/studio-copywriting-provider', () => ({ copywritingConfig: () => ({}), copywritingEndpoint: () => '' }));
 vi.mock('@/lib/inspiration/library', () => ({ resolveLibrary: mocks.resolve, sourceLibrary: (library: {id:string;kind:string}) => ({id:library.id,kind:library.kind}) }));
-import { getCase, listCases } from '@/lib/inspiration/service';
+import { getCase, listCases, currentCases } from '@/lib/inspiration/service';
 import { answerEvidence } from '@/lib/inspiration/provider';
 
 function record() {
@@ -29,6 +29,17 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 describe('catalog service visibility and model evidence', () => {
+  it('keeps internal evidence beyond pages 1 and 4, while UI remains paginated and disabled reads stay closed', async () => {
+    const records=Array.from({length:201},(_,index)=>({caseId:`case-${String(index).padStart(3,'0')}`,revision:1,body:{...record(),case_id:`case-${String(index).padStart(3,'0')}`}}));
+    mocks.records.mockResolvedValue({state:null,release:null,records});
+    expect((await listCases('workspace')).cases).toHaveLength(50);
+    expect((await currentCases('workspace')).cases).toHaveLength(201);
+    expect((await currentCases('workspace','workspace',['case-050','case-200'])).cases.map(c=>c.caseId)).toEqual(['case-050','case-200']);
+    mocks.records.mockResolvedValue({state:null,release:null,records:records.slice(0,200)});
+    expect((await currentCases('workspace','workspace',['case-200'])).cases).toEqual([]);
+    mocks.enabled.mockReturnValue(false);mocks.records.mockClear();
+    expect((await currentCases('workspace')).cases).toEqual([]);expect(mocks.records).not.toHaveBeenCalled();
+  });
   it('returns only disabled capability state without reading replica content', async () => {
     mocks.enabled.mockReturnValue(false);
     mocks.records.mockRejectedValue(new Error('Stored replica must never be read while disabled'));

@@ -23,12 +23,12 @@ export async function listCopywriting(workspaceId: string, projectId: string, us
   await requireStudioMaterialProject(workspaceId, userId, projectId);
   await expireCopywriting(workspaceId);
   const rows = await prisma.asyncTask.findMany({ where: copyScope(workspaceId, projectId, userId), orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: 20 });
-  return { enabled: copywritingEnabled(), tasks: rows.map(copyTaskView) };
+  return { enabled: await copywritingEnabled(), tasks: rows.map(copyTaskView) };
 }
 export async function submitCopywriting(workspaceId: string, projectId: string, userId: string, raw: unknown) {
   const request = StudioCopywritingInput.parse(raw);
   await requireStudioMaterialProject(workspaceId, userId, projectId, true);
-  if (!copywritingEnabled()) throw new ApiException(503, "文案模型尚未配置，请管理员完成接入。");
+  if (!await copywritingEnabled()) throw new ApiException(503, "文案模型尚未配置，请管理员完成接入。");
   const input = { userId, request };
   const id = copyTaskId(workspaceId, projectId, userId, request.mutationId);
   const row = await prisma.$transaction(async tx => {

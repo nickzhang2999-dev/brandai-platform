@@ -18,6 +18,7 @@ import { encryptStudioBase, decryptStudioBase, requireStudioBaseEncryption } fro
 import { getObjectStream, uploadBuffer, deleteObject } from "./s3";
 import { nodeStreamToBuffer } from "./image-preview";
 import { assertStudioLayerBudget, inspectStudioLayer, STUDIO_LAYER_TOTAL_PIXELS } from "./studio-decomposition-images";
+import { createStudioLayerPixelPreserver } from "./studio-layer-pixels";
 import { createStudioLayerQualityCheck } from "./studio-layer-quality";
 import { StudioLayerQualityReport } from "@brandai/contracts";
 import { enqueueStudioDecomposition } from "./studio-decomposition-queue";
@@ -438,25 +439,29 @@ async function archiveLayers(row: Row, signal: AbortSignal) {
   // Authorization/ancestry/EXACT guards are mandatory, including archive-only
   // recovery. They must never be downgraded into an optional quality warning.
   await sourceAsset(row.workspaceId, row.projectId, row.assetId, row.assetSha256);
+  let sourceBody: Buffer | null = null;
   const quality = await createStudioLayerQualityCheck(row, count, signal, async qualitySignal => {
-    return row.sourceObjectKey.startsWith(`${row.workspaceId}/studio-layer-assets/`)
+    sourceBody = await ( row.sourceObjectKey.startsWith(`${row.workspaceId}/studio-layer-assets/`)
       ? readStudioLayerAsset(row.workspaceId, { id: row.assetId, storageKey: row.sourceObjectKey }, qualitySignal)
-      : readArtifactImageBytes({ imageUrl: "", objectKey: row.sourceObjectKey }, qualitySignal);
-  });
+      : readArtifactImageBytes({ imageUrl: "", objectKey: row.sourceObjectKey }, qualitySignal));
+    return sourceBody;
+  }, true);
   if (quality.failureReason === "SOURCE_MISMATCH" || quality.failureReason === "SOURCE_INVALID")
     throw new ApiException(422, "原图片的实际内容与受理记录不一致或已损坏，未发布图层。");
+  const protection = await createStudioLayerPixelPreserver(sourceBody, row.sourceWidth, row.sourceHeight, signal);
+  sourceBody = null;
   const layers: Layer[] = []; let transparent = false;
   // Read/process/store one layer at a time. Bytes remain encrypted even on a
   // legacy public bucket; only the authenticated raw handler decrypts them.
-  for (let index = 0; index < count; index++) {
+  for (let index = count - 1; index >= 0; index--) {
     signal.throwIfAborted();
     const raw = await readArtifactImageBytes({ imageUrl: output.result.layers[index]!.imageUrl }, signal);
-    const image = await inspectStudioLayer(raw, row.sourceWidth, row.sourceHeight, signal, output.result.usage, pixels => quality.addDecoded(pixels, index)); transparent ||= image.hasTransparency;
+    const image = await inspectStudioLayer(raw, row.sourceWidth, row.sourceHeight, signal, output.result.usage, pixels => quality.addDecoded(pixels, index), protection ? (pixels, w, h) => protection.apply(pixels, w, h) : undefined); transparent ||= image.hasTransparency;
     quality.noteLayer(image);
     const assetId = `sdl_${row.id}_${index}`;
     await artifactDeadline(uploadBuffer(encryptStudioBase(image.body, { workspaceId: row.workspaceId, projectId: row.projectId, outputId: `${row.id}_${index}` }), "application/octet-stream", prefix, signal, objectKeys[index]), signal);
     const { body: _body, hasTransparency: _transparent, ...meta } = image;
-    layers.push(StudioDecompositionLayer.parse({ ...meta, assetId, order: index, url: `/api/workspaces/${row.workspaceId}/assets/${assetId}/raw` }));
+    layers[index] = StudioDecompositionLayer.parse({ ...meta, assetId, order: index, url: `/api/workspaces/${row.workspaceId}/assets/${assetId}/raw` });
   }
   if (!transparent) throw new ApiException(422, "模型结果没有透明前景，未将普通图片冒充分层结果。");
   if (layers.filter(layer => layer.inkCoverage > 0).length < 2) {

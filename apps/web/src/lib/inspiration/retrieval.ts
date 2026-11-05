@@ -1,13 +1,13 @@
 import { resolveLibrary } from './library';
 import { Prisma, prisma } from '@brandai/db';
 import { currentAnalysisCases, requireActiveEditor } from './access';
-import { keywordScore, listCases } from './service';
+import { keywordScore, currentCases } from './service';
 import { embeddingConfig, embedTexts, rankHybrid, type CachedEmbedding } from './semantic';
 
 export async function retrieveInspirationCases(workspaceId:string,userId:string,question:string,signal:AbortSignal,libraryId?:string) {
   await requireActiveEditor(workspaceId,userId);
   const library=await resolveLibrary(workspaceId,libraryId);
-  let candidates=(await listCases(workspaceId,{},library.id)).cases.filter(c=>c.analysisAllowed).map(c=>({...c,allowed:true,keywordScore:keywordScore(c,question),embedding:undefined as CachedEmbedding|undefined}));
+  let candidates=(await currentCases(workspaceId,library.id)).cases.filter(c=>c.analysisAllowed).map(c=>({...c,allowed:true,keywordScore:keywordScore(c,question),embedding:undefined as CachedEmbedding|undefined}));
   const config=embeddingConfig();let query:CachedEmbedding|null=null;
   if(config && candidates.length) {
     const cache={scope:`${workspaceId}:${library.id}`,cache:{get:async(key:string)=>(await prisma.inspirationEmbedding.findUnique({where:{workspaceId_key:{workspaceId,key:`${library.id}:${key}`}}}))?.payloadJson,

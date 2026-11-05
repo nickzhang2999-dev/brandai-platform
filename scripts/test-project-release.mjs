@@ -12,7 +12,7 @@ test('preview startup overrides only an explicit valid origin before migration a
   const root = mkdtempSync(path.join(tmpdir(), 'novart-preview-origin-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   mkdirSync(path.join(root, 'apps/web/scripts'), { recursive: true });
-  for (const file of ['runtime-security.mjs', 'scripts/check-runtime-security.mjs', 'scripts/resolve-preview-origin.mjs']) {
+  for (const file of ['runtime-security.mjs', 'runtime-data-scope.mjs', 'scripts/check-runtime-security.mjs', 'scripts/resolve-preview-origin.mjs']) {
     copyFileSync(path.join('apps/web', file), path.join(root, 'apps/web', file));
   }
   const start = path.join(root, 'start-web.sh');

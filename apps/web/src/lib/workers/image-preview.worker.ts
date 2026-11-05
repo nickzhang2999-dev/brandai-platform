@@ -11,6 +11,7 @@ import {
 import { deleteObject, getObjectStream, uploadBuffer } from "@/lib/s3";
 import { mirrorGenerationVersionToAsset } from "@/lib/asset-mirror";
 import { safeFetch } from "@/lib/ssrf";
+import { isMissingStorageObject } from "../storage-failure";
 
 export interface ImagePreviewJobData {
   workspaceId: string;
@@ -114,7 +115,15 @@ async function buildImagePreview(
   }
   if (asset.previewStorageKey) {
     signal.throwIfAborted();
-    return { assetId: asset.id, storageKey: asset.previewStorageKey };
+    try {
+      const existing = await getObjectStream(asset.previewStorageKey, signal);
+      existing.body.destroy();
+      return { assetId: asset.id, storageKey: asset.previewStorageKey };
+    } catch (error) {
+      if (!isMissingStorageObject(error)) throw error;
+      const cleared = await prisma.asset.updateMany({ where: { id: asset.id, workspaceId, previewStorageKey: asset.previewStorageKey }, data: { previewStorageKey: null } });
+      if (!cleared.count) throw new Error("preview changed during missing-object recovery; re-read required");
+    }
   }
 
   // `storageKey` is canonical for both shapes: an object key for uploaded /

@@ -78,12 +78,20 @@ export function buildStudioVisualFidelitySnapshot(input: StudioVisualFidelityInp
   if (input.imageTool) constraints.push({ id: "image-tool", target: "指定工具处理的源图及允许变化范围", attribute: "image-tool",
     expected: `执行${input.imageTool.operation}，只改变该工具与本次指令允许的范围；未授权主体属性保持原样。${input.imageTool.mask ? "局部修复仅允许指定蒙版区域；没有蒙版定位证据时区域保真未知，不能声称像素完全不变。" : "移除背景而保留主体外观及数量。"}`, strength: "hard", source: "user" });
   if (input.effectiveConstraints && !input.imageTool) {
-    const compiled = { negativePrompt: input.effectiveConstraints.negativePrompt,
-      promptAdditions: input.effectiveConstraints.promptAdditions, hardBlocks: input.effectiveConstraints.hardBlocks,
-      machineRules: input.effectiveConstraints.machineRules ?? {} };
-    constraints.push({ id: "compiled-context", target: "实际生成请求中已发送的编译约束所指定对象及区域", attribute: "compiled-context",
-      expected: "逐项核对以下实际发送的编译上下文。negativePrompt是需要避免的内容，hardBlocks是前置阻断/禁止条件，绝不是要添加到画面的元素。promptAdditions保留原要求的强弱和参考角色，风格偏好不升级为硬要求；只有明确硬项违反才能判fail，软偏离在观察中说明。machineRules仅核验有实际视觉证据的要求，不能声称供应商支持了未验证参数。复合内容未逐项覆盖或无法视觉核验时unknown。\n" + JSON.stringify(canonical(compiled)),
-      strength: "hard", source: "user" });
+    // Keep individual requirements bounded instead of duplicating the entire
+    // rule inventory into a single 4000-character expected field. Machine
+    // execution settings remain bound by inputSha256, not asserted by vision.
+    const groups = [
+      ["negative", input.effectiveConstraints.negativePrompt, "需要避免的视觉内容，不能添加到画面。"],
+      ["prompt", input.effectiveConstraints.promptAdditions, "遵守原要求的强弱和参考角色；风格偏好不升级为硬要求。"],
+      ["block", input.effectiveConstraints.hardBlocks.map(item => item.reason), "禁止条件，不能添加到画面。"],
+    ] as const;
+    for (const [kind, values, context] of groups) [...new Set(values)].forEach((value, index) => {
+      if (!value.trim()) return;
+      constraints.push({ id: `compiled-${kind}-${index + 1}`, target: "本项实际发送的约束所指定对象或区域",
+        attribute: `compiled-${kind}`, expected: `${context}仅依据可见证据判断，无法核验时unknown。\n${value}`,
+        strength: "hard", source: "user" });
+    });
   }
   const parsed = VisualFidelityPlan.safeParse({ revision: "visual-fidelity-guard/1", inputSha256, constraints });
   return StudioVisualFidelitySnapshot.parse({ revision: "visual-fidelity-guard/1", inputSha256,

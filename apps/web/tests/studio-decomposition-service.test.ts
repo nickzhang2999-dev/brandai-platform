@@ -318,7 +318,7 @@ describe("once-only worker claim and atomic publication", () => {
     f.layer.mockResolvedValueOnce({ ...layers()[0], body: bytes, hasTransparency: true, inkCoverage: 0 });
     await runStudioDecomposition("request");
     expect(row().status).toBe("SUCCEEDED"); expect(publishedAssets).toHaveLength(3);
-    expect(row().publishedLayers[0].inkCoverage).toBe(0); expect(f.paid).not.toHaveBeenCalled();
+    expect(row().publishedLayers[2].inkCoverage).toBe(0); expect(f.paid).not.toHaveBeenCalled();
   });
   it("rejects a group of only faint noise and records the actual validation reason", async () => {
     seed(); f.layer.mockResolvedValue({ ...layers()[0], body: bytes, hasTransparency: true, inkCoverage: 0 });
@@ -514,7 +514,7 @@ describe("quality archive integration: real local PNG bytes with simulated persi
     expect(row().outputJson).toBeNull();
     expect(receipt.layers.map(layer => layer.resolution)).toEqual([0, 1].map(() => ({ sourceWidth: 8, sourceHeight: 8,
       providerWidth: 8, providerHeight: 8, publishedWidth: 8, publishedHeight: 8,
-      scaleX: 1, scaleY: 1, resampling: "NONE", rgbSource: "PROVIDER" })));
+      scaleX: 1, scaleY: 1, resampling: "NONE", rgbSource: "SOURCE_VISIBLE", sourcePixelCount: 12, sourcePixelPolicy: "visible-opaque-v1" })));
     expect(f.readBytes).toHaveBeenCalledTimes(beforeReads); expect(f.paid).toHaveBeenCalledOnce();
   });
   it("scores against the decrypted, hash-checked source of a recursive layer request", async () => {

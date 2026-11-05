@@ -80,7 +80,7 @@ export async function writingState(s: WritingScope) {
     prisma.studioWritingStyle.findUnique({ where: { workspaceId: s.workspaceId } }),
     prisma.asyncTask.findMany({ where: taskWhere(s), orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: 30 }),
   ]);
-  return { enabled: copywritingEnabled(), document: writingDocumentView(document, s), versions: versions.map(writingVersionView),
+  return { enabled: await copywritingEnabled(), document: writingDocumentView(document, s), versions: versions.map(writingVersionView),
     messages: messages.reverse().map(r => ({ id: r.id, role: r.role, text: r.text, taskId: r.taskId, citations: r.citations, createdAt: r.createdAt.toISOString() })),
     references: references.map(r => writingReferenceView(r, s)), style: writingStyleView(style), tasks: tasks.map(writingTaskView) };
 }
@@ -177,7 +177,7 @@ export async function submitWriting(s: WritingScope, raw: unknown, styleExtract 
     const contextRevision = styleExtract ? undefined : (request as StudioWritingGenerateInput).projectContextRevision;
     const projectContext = contextRevision === undefined ? undefined
       : await freezeStudioProjectContext(tx, s.workspaceId, s.projectId, contextRevision);
-    if (!copywritingEnabled()) throw new ApiException(503, "文案模型尚未配置，请管理员完成接入。");
+    if (!await copywritingEnabled()) throw new ApiException(503, "文案模型尚未配置，请管理员完成接入。");
     await admission(tx, s, operation);
     const document = await ensureDocument(tx, s);
     if (!styleExtract) {

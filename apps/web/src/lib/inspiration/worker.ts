@@ -2,7 +2,7 @@ import { prisma } from '@brandai/db';
 import { InspirationSelectedImage } from '@brandai/contracts';
 import { contentSyncMode, inspirationEnabled, syncConfigured } from './config';
 import { syncReplica, syncWithdrawals, lockWorkspace } from './replica';
-import { listCases } from './service';
+import { currentCases } from './service';
 import { answerEvidence } from './provider';
 import { loadSelectedImages } from './selected-images';
 import { requireActiveEditor, requireCurrentEvidence, requireLibraryReceiver } from './access';
@@ -21,7 +21,7 @@ export async function runInspirationChat(id:string,stopSignal?:AbortSignal) {
   try {
     await requireActiveEditor(row.workspaceId,row.userId);
     const selectedImages=InspirationSelectedImage.array().max(2).parse(row.selectedImages);
-    const all=await listCases(row.workspaceId,{},row.libraryId);const ids=[...new Set([...(row.caseIds as string[]),...selectedImages.map(i=>i.caseId)])];
+    const all=await currentCases(row.workspaceId,row.libraryId);const ids=[...new Set([...(row.caseIds as string[]),...selectedImages.map(i=>i.caseId)])];
     if(ids.some(id=>all.cases.some(c=>c.caseId===id&&!c.analysisAllowed)))throw new Error('所选案例未授权外部模型分析，可继续本地浏览。');
     all.cases=all.cases.filter(c=>c.analysisAllowed);
     const previous=await prisma.inspirationChat.findMany({where:{workspaceId:row.workspaceId,userId:row.userId,conversationId:row.conversationId,libraryId:row.libraryId,status:'SUCCEEDED',createdAt:{lt:row.createdAt}},orderBy:{createdAt:'desc'},take:6});
@@ -45,11 +45,11 @@ export async function runInspirationChat(id:string,stopSignal?:AbortSignal) {
       await prisma.inspirationChat.updateMany({where:{id,status:'RUNNING',expiresAt:{gt:new Date()}},data:{status:'SUCCEEDED',answer:'当前本地知识库中没有足够相关的已审核案例。请调整关键词，或等待新的知识包同步。',citations:[]}});return;
     }
     await requireActiveEditor(row.workspaceId,row.userId);
-    const beforeModel=await listCases(row.workspaceId,{},row.libraryId);if(selected.some(c=>!beforeModel.cases.some(n=>n.caseId===c.caseId&&n.revision===c.revision&&n.analysisAllowed)))throw new Error('引用内容已更新，请重新提问。');
+    const beforeModel=await currentCases(row.workspaceId,row.libraryId);if(selected.some(c=>!beforeModel.cases.some(n=>n.caseId===c.caseId&&n.revision===c.revision&&n.analysisAllowed)))throw new Error('引用内容已更新，请重新提问。');
     const images=await loadSelectedImages(row.workspaceId,selectedImages,signal,row.libraryId);
     // Image conversion/cache work may take time: perform the final gate afterwards.
     await requireCurrentEvidence(row.workspaceId,row.userId,selected,row.libraryId);
-    const historyCurrent=await listCases(row.workspaceId,{},row.libraryId);
+    const historyCurrent=await currentCases(row.workspaceId,row.libraryId);
     // Old answers may repeat the historic fabricated taxonomy defaults. Keep
     // stored/UI history and ordinal references, but do not reuse those answers
     // as model context even when their signed case revision is unchanged.
@@ -57,7 +57,7 @@ export async function runInspirationChat(id:string,stopSignal?:AbortSignal) {
     const result=await answerEvidence(row.question,selected,history,signal,images);signal.throwIfAborted();
     await requireActiveEditor(row.workspaceId,row.userId);
     // A revocation may arrive during inference: never persist an answer against stale evidence.
-    const now=await listCases(row.workspaceId,{},row.libraryId);if(result.citations.some(c=>!now.cases.some(n=>n.caseId===c.caseId&&n.revision===c.revision)))throw new Error('引用内容已更新，请重新提问。');
+    const now=await currentCases(row.workspaceId,row.libraryId);if(result.citations.some(c=>!now.cases.some(n=>n.caseId===c.caseId&&n.revision===c.revision)))throw new Error('引用内容已更新，请重新提问。');
     await prisma.inspirationChat.updateMany({where:{id,status:'RUNNING',expiresAt:{gt:new Date()}},data:{status:'SUCCEEDED',answer:result.answer,citations:result.citations.map(c=>({caseId:c.caseId,revision:c.revision})),model:result.model,inputTokens:result.inputTokens,outputTokens:result.outputTokens}});
   } catch(error) {
     console.warn('[inspiration-chat] failed',inspirationFailureDiagnostic(error,signal.aborted));

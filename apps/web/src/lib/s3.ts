@@ -1,3 +1,4 @@
+import { scopedObjectKey } from "../../runtime-data-scope.mjs";
 import {
   S3Client,
   PutObjectCommand,
@@ -105,7 +106,7 @@ export async function uploadDataUrlImage(
   const upload = client.send(
     new PutObjectCommand({
       Bucket: cfg.bucket,
-      Key: key,
+      Key: scopedObjectKey(key),
       Body: body,
       ContentType: contentType,
     }),
@@ -115,7 +116,7 @@ export async function uploadDataUrlImage(
   signal?.throwIfAborted();
 
   const base = cfg.publicUrl.replace(/\/+$/, "");
-  return `${base}/${key}`;
+  return `${base}/${scopedObjectKey(key)}`;
 }
 
 /**
@@ -161,7 +162,7 @@ export async function uploadBuffer(
   await client.send(
     new PutObjectCommand({
       Bucket: cfg.bucket,
-      Key: key,
+      Key: scopedObjectKey(key),
       Body: body,
       ContentType: contentType,
     }),
@@ -169,7 +170,7 @@ export async function uploadBuffer(
   );
 
   const base = cfg.publicUrl.replace(/\/+$/, "");
-  return { key, url: `${base}/${key}` };
+  return { key, url: `${base}/${scopedObjectKey(key)}` };
 }
 
 /**
@@ -194,7 +195,7 @@ export async function getObjectStream(key: string, signal?: AbortSignal): Promis
     },
   });
   const res = await client.send(
-    new GetObjectCommand({ Bucket: cfg.bucket, Key: key }),
+    new GetObjectCommand({ Bucket: cfg.bucket, Key: scopedObjectKey(key) }),
     { abortSignal: signal },
   );
   return {
@@ -220,7 +221,7 @@ export async function deleteObject(
     },
   });
   await client.send(
-    new DeleteObjectCommand({ Bucket: cfg.bucket, Key: key }),
+    new DeleteObjectCommand({ Bucket: cfg.bucket, Key: scopedObjectKey(key) }),
     { abortSignal: signal },
   );
 }

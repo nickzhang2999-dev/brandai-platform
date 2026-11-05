@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { PHASE_PRODUCTION_SERVER } from "next/constants.js";
 import { assertProductionAuthSecret } from "./runtime-security.mjs";
+import { assertRuntimeDataScope } from "./runtime-data-scope.mjs";
 
 const lowMemoryBuild = process.env.NOVART_LOW_MEMORY_BUILD === "1";
 
@@ -60,6 +61,6 @@ const nextConfig = {
 export default function configureNext(phase) {
   // Config loading is awaited before Next reports Ready. Instrumentation alone
   // can fail after production's lazy prepare has already opened the listener.
-  if (phase === PHASE_PRODUCTION_SERVER) assertProductionAuthSecret();
+  if (phase === PHASE_PRODUCTION_SERVER) { assertProductionAuthSecret(); assertRuntimeDataScope(); }
   return nextConfig;
 }

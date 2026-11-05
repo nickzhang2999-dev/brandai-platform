@@ -14,6 +14,7 @@ import {
 } from "@/lib/image-preview";
 import { enqueueImagePreview } from "@/lib/queue";
 import { readStudioLayerAsset } from "@/lib/studio-decomposition";
+import { isMissingStorageObject } from "@/lib/storage-failure";
 
 /**
  * M-A · 资产公网代理 — streams an asset's bytes back over the canonical public
@@ -75,6 +76,7 @@ export async function GET(
     const cacheControl = "private, max-age=3600";
 
     if (previewWidth && asset.previewStorageKey) {
+      try {
       const readSignal = AbortSignal.timeout(10_000);
       const object = await getObjectStream(asset.previewStorageKey, readSignal);
       const preview = await nodeStreamToBuffer(
@@ -89,6 +91,12 @@ export async function GET(
           "x-content-type-options": "nosniff",
         },
       });
+      } catch (error) {
+        if (!isMissingStorageObject(error)) throw error;
+        // Do not clear a newer preview produced while this read was in flight.
+        await prisma.asset.updateMany({ where: { id: assetId, workspaceId: wsId, previewStorageKey: asset.previewStorageKey }, data: { previewStorageKey: null } });
+        console.warn("[asset-preview] missing derived object; rebuild requested", { assetId });
+      }
     }
 
     if (previewWidth) {
@@ -156,6 +164,7 @@ export async function GET(
     if (!isImg) headers["content-disposition"] = "attachment";
     return new Response(Readable.toWeb(body) as ReadableStream, { headers });
   } catch (err) {
+    if (isMissingStorageObject(err)) return handleError(new ApiException(404, "原图片文件暂不可用，请联系管理员恢复文件。"));
     return handleError(err);
   }
 }

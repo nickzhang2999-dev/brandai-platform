@@ -61,6 +61,7 @@ export async function inspectStudioLayer(
   signal: AbortSignal,
   provider?: { provider?: string; model?: string },
   onDecoded?: (pixels: { data: Buffer; width: number; height: number }) => void,
+  preserveVisible?: (pixels: { data: Buffer; width: number; height: number }, providerWidth: number, providerHeight: number) => Promise<number>,
 ): Promise<StudioInspectedLayer> {
   signal.throwIfAborted();
   if (!validDimensions(sourceWidth, sourceHeight) || sourceWidth * sourceHeight > STUDIO_LAYER_TOTAL_PIXELS) {
@@ -96,7 +97,9 @@ export async function inspectStudioLayer(
     signal.throwIfAborted();
     if (decoded.info.width !== sourceWidth || decoded.info.height !== sourceHeight || decoded.info.channels !== 4
       || decoded.data.length !== sourceWidth * sourceHeight * 4) throw invalid();
-    onDecoded?.({ data: decoded.data, width: sourceWidth, height: sourceHeight });
+    const pixels = { data: decoded.data, width: sourceWidth, height: sourceHeight };
+    const sourcePixelCount = preserveVisible ? await preserveVisible(pixels, width, height) : 0;
+    onDecoded?.(pixels);
     let ink = 0, minX = sourceWidth, minY = sourceHeight, maxX = -1, maxY = -1;
     let hasTransparency = false;
     for (let y = 0; y < sourceHeight; y++) {
@@ -125,7 +128,8 @@ export async function inspectStudioLayer(
       width: sourceWidth, height: sourceHeight, sizeBytes: output.length,
       resolution: { sourceWidth, sourceHeight, providerWidth: width, providerHeight: height,
         publishedWidth: sourceWidth, publishedHeight: sourceHeight, scaleX: sourceWidth / width, scaleY: sourceHeight / height,
-        resampling: width === sourceWidth && height === sourceHeight ? "NONE" : "LANCZOS3", rgbSource: "PROVIDER" },
+        resampling: width === sourceWidth && height === sourceHeight ? "NONE" : "LANCZOS3", rgbSource: sourcePixelCount ? "SOURCE_VISIBLE" : "PROVIDER",
+        ...(preserveVisible ? { sourcePixelCount, sourcePixelPolicy: "visible-opaque-v1" as const } : {}) },
       alphaBounds: { left: minX, top: minY, width: maxX - minX + 1, height: maxY - minY + 1 },
       inkCoverage: ink / (sourceWidth * sourceHeight), hasTransparency };
   } catch (error) {
