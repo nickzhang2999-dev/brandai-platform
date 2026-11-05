@@ -1,9 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { InspirationListResponse } from '@brandai/contracts';
-import { CONTENT_SYNC_ERROR, WITHDRAWAL_SYNC_ERROR, LEGACY_SYNC_ERROR, inspirationSyncStatus } from '../src/lib/inspiration/sync-status';
+import { CONTENT_SYNC_ERROR, WITHDRAWAL_SYNC_ERROR, LEGACY_SYNC_ERROR, DAILY_IMAGE_LIMIT_CODE, DAILY_IMAGE_LIMIT_MANUAL, DAILY_IMAGE_LIMIT_AUTOMATIC, inspirationSyncStatus } from '../src/lib/inspiration/sync-status';
 
 const now=Date.parse('2026-10-26T05:00:00Z'), recent=new Date(now-30_000), old=new Date(now-11*60_000);
 describe('independent inspiration sync status',()=>{
+  it('reports an intact deferred package as a daily quota issue, with retry language matching current mode',()=>{
+    const state={lastSyncAt:recent,lastWithdrawalAt:recent,syncError:DAILY_IMAGE_LIMIT_CODE};
+    const manual=inspirationSyncStatus(state,'a'.repeat(64),true,true,now,'manual');
+    expect(manual.content).toMatchObject({state:'error',error:DAILY_IMAGE_LIMIT_MANUAL});expect(manual.content.error).not.toContain('自动');
+    expect(manual.withdrawals.state).toBe('healthy');expect(manual.activeManifestHash).toBe('a'.repeat(64));
+    expect(inspirationSyncStatus(state,null,true,true,now,'automatic').content.error).toBe(DAILY_IMAGE_LIMIT_AUTOMATIC);
+  });
   it('never infers healthy checks from an installed release or a withdrawal hash',()=>{
     const result=inspirationSyncStatus({withdrawalHash:'a'.repeat(64)},'b'.repeat(64),true,true,now);
     expect(result.content.state).toBe('unknown');expect(result.withdrawals.state).toBe('unknown');

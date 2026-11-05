@@ -1,9 +1,10 @@
 import { Prisma, prisma } from '@brandai/db';
 import { Manifest, Withdrawal, canonical, checkedPackageSize, sha256, validatePackage, validatePackageMetadata, verifySigned, type PublishedCase } from './protocol';
 import { boundedBody, receiverOrigin, syncConfig, syncSizeLimits } from './config';
-import { CONTENT_SYNC_ERROR, WITHDRAWAL_SYNC_ERROR } from './sync-status';
+import { CONTENT_SYNC_ERROR, WITHDRAWAL_SYNC_ERROR, DAILY_IMAGE_LIMIT_CODE } from './sync-status';
 import { assertEnvelopeScope, assertPublicationScope, publicationUseBasis } from './publication-scope';
 import { libraryScope, type LibraryInput, type LibraryScope } from './library-scope';
+import { beginDailyReceipt, dailyReceiptsEnabled, recordDailyReceipt, DailyReceiptLimit } from './daily-receipts';
 
 type Tx = Prisma.TransactionClient;
 const json = (v: unknown) => JSON.parse(JSON.stringify(v)) as Prisma.InputJsonValue;
@@ -22,12 +23,12 @@ async function beginCheck(libraryId: string, channel: SyncChannel) {
     return startedAt;
   });
 }
-async function finishCheck(libraryId: string, channel: SyncChannel, startedAt: Date, succeeded: boolean) {
+async function finishCheck(libraryId: string, channel: SyncChannel, startedAt: Date, succeeded: boolean, dailyLimit=false) {
   const finishedAt = new Date();
   // A slow older check must not erase a newer attempt's failure or success.
   const where = channel === 'content' ? {libraryId, lastSyncAttemptAt: startedAt} : {libraryId, lastWithdrawalAttemptAt: startedAt};
   const data = channel === 'content'
-    ? succeeded ? {lastSyncAt: finishedAt, syncError: null, lastError: null} : {lastSyncFailedAt: finishedAt, syncError: CONTENT_SYNC_ERROR}
+    ? succeeded ? {lastSyncAt: finishedAt, syncError: null, lastError: null} : {lastSyncFailedAt: finishedAt, syncError: dailyLimit?DAILY_IMAGE_LIMIT_CODE:CONTENT_SYNC_ERROR}
     : succeeded ? {lastWithdrawalAt: finishedAt, withdrawalError: null} : {lastWithdrawalFailedAt: finishedAt, withdrawalError: WITHDRAWAL_SYNC_ERROR};
   await prisma.inspirationState.updateMany({where, data});
 }
@@ -73,6 +74,10 @@ export async function installPackage(input: LibraryInput, raw: Buffer, files: Ma
     const state=await tx.inspirationState.upsert({where:{libraryId},create:{libraryId},update:{}});
     const previous=await tx.inspirationRelease.findUnique({where:{libraryId_releaseId:{libraryId,releaseId:m.release_id}}});
     if(previous) { if(previous.manifestHash!==digest || previous.sequence!==m.sequence) throw new Error('Immutable release conflict'); return; }
+    const candidateOwner=dailyReceiptsEnabled()?await tx.inspirationLibrary.findUnique({where:{id:libraryId},select:{ownerId:true}}):null;
+    if(dailyReceiptsEnabled()&&!candidateOwner)throw new Error('Unknown receipt library owner');
+    const receiptOwner=candidateOwner&&dailyReceiptsEnabled(candidateOwner.ownerId)?candidateOwner:null;
+    const receiptPolicy=receiptOwner?await beginDailyReceipt(tx,receiptOwner.ownerId):null;
     if(m.sequence<=state.releaseSequence) throw new Error('Release rollback');
     if(m.kind==='delta' && (m.sequence!==state.releaseSequence+1 || m.parent_release_id!==state.activeRelease)) throw new Error('Missing delta predecessor; publish a full checkpoint');
     const active=state.activeRelease ? await tx.inspirationRelease.findUnique({where:{libraryId_releaseId:{libraryId,releaseId:state.activeRelease}}}) : null;
@@ -101,6 +106,11 @@ export async function installPackage(input: LibraryInput, raw: Buffer, files: Ma
     signal?.throwIfAborted();
     await beforeImport?.();
     await tx.inspirationState.update({where:{libraryId},data:{activeRelease:m.release_id,releaseSequence:m.sequence}});
+    if(receiptOwner&&receiptPolicy) {
+      const hashes=records.filter(r=>r.op==='upsert'&&r.case?.display_permission==='allowed'&&snapshot[r.case_id]&&!withdrawn.has(r.case_id))
+        .flatMap(r=>r.case!.images.map(image=>m.files.find(file=>file.path===image.path)!.sha256));
+      await recordDailyReceipt(tx,{ownerId:receiptOwner.ownerId,libraryId,releaseId:m.release_id,hashes,target:receiptPolicy.target});
+    }
   },{timeout:120000,maxWait:10000});
 }
 export async function rollbackReplica(input:LibraryInput, releaseId:string) {
@@ -122,7 +132,7 @@ export async function syncReplica(input: LibraryInput, signal: AbortSignal,befor
     signal.throwIfAborted();
     await finishCheck(libraryId, 'content', startedAt, true);
   } catch (error) {
-    await finishCheck(libraryId, 'content', startedAt, false);
+    await finishCheck(libraryId, 'content', startedAt, false,error instanceof DailyReceiptLimit);
     throw error;
   }
 }

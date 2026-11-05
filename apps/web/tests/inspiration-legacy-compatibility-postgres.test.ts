@@ -11,8 +11,9 @@ suite('legacy and shared inspiration physical-store isolation', () => {
   let owner: string, workspace: string, shared: string, extraWorkspace: string;
   beforeAll(() => {
     const url = new URL(isolated!);
-    if (url.hostname !== '127.0.0.1' || url.port !== '55439'
-      || !['/nova_shared_inspiration_test', '/nova_inspiration_compat_test'].includes(url.pathname)
+    const allowed = (url.port === '55439' && ['/nova_shared_inspiration_test', '/nova_inspiration_compat_test'].includes(url.pathname))
+      || (url.port === '55455' && url.pathname === '/nova_receipts_20261105_test');
+    if (url.hostname !== '127.0.0.1' || !allowed
       || process.env.DATABASE_URL !== isolated) throw new Error('Explicit isolated library PostgreSQL required');
   });
   beforeEach(async () => {

@@ -48,3 +48,4 @@ export * from "./omni-asset-workflow";
 export * from "./omni-workflow-evidence";
 
 export * from "./visual-fidelity";
+export * from "./inspiration-receipts";

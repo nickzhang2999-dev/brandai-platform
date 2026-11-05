@@ -858,3 +858,4 @@ from .omni_analysis_schemas import OmniAnalysisInput, OmniAnalysisSuggestion, Om
 
 from .brand_kit_import_schemas import *  # noqa: F403 — mirrored additive BFF contracts
 from .brand_deletion_schemas import BrandDeletionCounts, BrandDeletionPreview, BrandDeletionInput, BrandDeletionResult
+from .inspiration_receipt_schemas import InspirationReceiptPreflightInput, InspirationReceiptPolicyInput, InspirationReceiptDailyResult, InspirationReceiptPreflightResult

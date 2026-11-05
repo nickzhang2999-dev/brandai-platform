@@ -8,6 +8,8 @@ import { loadSelectedImages } from './selected-images';
 import { requireActiveEditor, requireCurrentEvidence, requireLibraryReceiver } from './access';
 import { retrieveInspirationCases } from './retrieval';
 import { inspirationFailureDiagnostic } from './failure';
+import { DailyReceiptLimit } from './daily-receipts';
+import { DAILY_IMAGE_LIMIT_CODE,dailyImageLimitMessage } from './sync-status';
 
 const terminalError='灵感任务未完成，请检查接入配置或稍后重试。';
 const safeMessages=new Set(['案例已撤回或更新。','历史引用已撤回或更新，请重新选择案例。','历史对话中没有这个序号的案例，请重新选择。','引用内容已更新，请重新提问。','灵感问答模型未配置。','请先在 Nova 后台配置支持 OpenAI 协议的问答模型。','模型地址需为受信任 HTTPS 接口。','模型回答被截断，请缩小问题范围。','模型引用了未检索到的证据，回答未保存。','引用上下文过大，请减少选定案例。','所选案例未授权外部模型分析，可继续本地浏览。']);
@@ -94,8 +96,9 @@ export function createInspirationWorker() {
           const scope=error instanceof Error&&error.message==='Publication recipient mismatch';
           const access=error instanceof Error&&error.message==='Library receiver access changed';
           const timedOut=error instanceof Error&&['AbortError','TimeoutError'].includes(error.name);
-          const failureCode=scope?'LIBRARY_SCOPE_MISMATCH':access?'RECEIVER_ACCESS_CHANGED':timedOut?'SYNC_TIMEOUT':'SYNC_FAILED';
-          const message=scope?'发布包与当前灵感库的接收范围不一致，请联系管理员检查库配置。':access?'接收权限已变化，请由当前灵感库管理员重新确认。':timedOut?'灵感接收超时，已有内容保留。':terminalError;
+          const dailyLimit=error instanceof DailyReceiptLimit;
+          const failureCode=dailyLimit?DAILY_IMAGE_LIMIT_CODE:scope?'LIBRARY_SCOPE_MISMATCH':access?'RECEIVER_ACCESS_CHANGED':timedOut?'SYNC_TIMEOUT':'SYNC_FAILED';
+          const message=dailyLimit?dailyImageLimitMessage(contentSyncMode()):scope?'发布包与当前灵感库的接收范围不一致，请联系管理员检查库配置。':access?'接收权限已变化，请由当前灵感库管理员重新确认。':timedOut?'灵感接收超时，已有内容保留。':terminalError;
           console.warn('[inspiration-sync] failed',{failureCode});
           await prisma.inspirationLibraryTask.updateMany({where:{id:task.id,status:'RUNNING'},data:{status:'FAILED',error:message,resultJson:{failureCode}}});
         }

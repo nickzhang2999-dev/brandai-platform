@@ -9,6 +9,7 @@ import { resolveLibrary } from '../src/lib/inspiration/library';
 import type { LibraryScope } from '../src/lib/inspiration/library-scope';
 import { canonical,sha256,type PublishedCase } from '../src/lib/inspiration/protocol';
 import { activeRecords,applyWithdrawal,installPackage,syncReplica } from '../src/lib/inspiration/replica';
+import { initializeDailyPolicy, chinaDay } from '../src/lib/inspiration/daily-receipts';
 import { createChat,getChat,listCases } from '../src/lib/inspiration/service';
 import { requireLibraryReceiver } from '../src/lib/inspiration/access';
 import { POST as initialize } from '../src/app/api/admin/inspiration/libraries/route';
@@ -29,7 +30,8 @@ suite('shared inspiration real PostgreSQL boundaries',()=>{
   let image:Buffer;
   beforeAll(async()=>{
     const url=new URL(isolated!);
-    if(url.hostname!=='127.0.0.1'||url.port!=='55439'||!['/nova_shared_inspiration_test','/nova_inspiration_compat_test'].includes(url.pathname)||process.env.DATABASE_URL!==isolated)throw new Error('Explicit isolated library PostgreSQL required');
+    const allowed=(url.port==='55439'&&['/nova_shared_inspiration_test','/nova_inspiration_compat_test'].includes(url.pathname))||(url.port==='55455'&&url.pathname==='/nova_receipts_20261105_test');
+    if(url.hostname!=='127.0.0.1'||!allowed||process.env.DATABASE_URL!==isolated)throw new Error('Explicit isolated library PostgreSQL required');
     const prefix='library-test-'+randomUUID();[owner,other,member,admin]=['owner','other','member','admin'].map(x=>prefix+'-'+x);ids=[owner,other,member,admin];[a,b,foreign]=['a','b','foreign'].map(x=>prefix+'-'+x);spaces=[a,b,foreign];
     library={id:prefix+'-shared',kind:'SHARED',ownerId:owner,legacyWorkspaceId:null};
     await prisma.user.createMany({data:ids.map(id=>({id,email:id+'@example.invalid',isActive:true}))});
@@ -49,10 +51,11 @@ suite('shared inspiration real PostgreSQL boundaries',()=>{
     await prisma.inspirationLibraryTask.deleteMany({where:{workspaceId:{in:spaces}}});
     await prisma.inspirationChat.deleteMany({where:{workspaceId:{in:spaces}}});await prisma.inspirationBookmark.deleteMany({where:{workspaceId:{in:spaces}}});
     const where={libraryId:{in:[...spaces,library.id]}};
+    await prisma.inspirationImageReceipt.deleteMany({where:{ownerId:{in:ids}}});await prisma.inspirationDailyPolicy.deleteMany({where:{ownerId:{in:ids}}});
     await prisma.inspirationState.deleteMany({where});await prisma.inspirationRelease.deleteMany({where});await prisma.inspirationRecord.deleteMany({where});await prisma.inspirationImage.deleteMany({where});
   });
   afterEach(()=>{vi.unstubAllGlobals();vi.unstubAllEnvs();});
-  afterAll(async()=>{if(ids){await prisma.inspirationLibraryTask.deleteMany({where:{workspaceId:{in:spaces}}});await prisma.user.deleteMany({where:{id:{in:ids}}});await prisma.inspirationLibraryIdentity.deleteMany({where:{id:{in:[library.id,...extraIdentities]}}});}await prisma.$disconnect();});
+  afterAll(async()=>{if(ids){await prisma.inspirationLibraryTask.deleteMany({where:{workspaceId:{in:spaces}}});await prisma.inspirationImageReceipt.deleteMany({where:{ownerId:{in:ids}}});await prisma.inspirationDailyPolicy.deleteMany({where:{ownerId:{in:ids}}});await prisma.user.deleteMany({where:{id:{in:ids}}});await prisma.inspirationLibraryIdentity.deleteMany({where:{id:{in:[library.id,...extraIdentities]}}});}await prisma.$disconnect();});
 
   function pack(scope:LibraryScope=library,options:{version?:1|2;recipientId?:string;title?:string;release?:string;sequence?:number;kind?:'full'|'delta';parent?:string;caseId?:string}={}) {
     const version=options.version??(scope.kind==='SHARED'?2:1),recipient=version===2?{kind:'library',origin,library_id:options.recipientId??scope.id}:{origin,workspace_id:scope.id};
@@ -161,5 +164,46 @@ suite('shared inspiration real PostgreSQL boundaries',()=>{
     const withdrawal={schema_version:2,recipient,sequence:1,created_at:'2026-11-02T00:00:00Z',case_ids:['common-case']};
     await expect(applyWithdrawal(library,Buffer.from(JSON.stringify(signed({...withdrawal,recipient:{...recipient,library_id:'wrong'}}))),keys)).rejects.toThrow('recipient');
     await applyWithdrawal(library,Buffer.from(JSON.stringify(signed(withdrawal))),keys);expect((await activeRecords(library)).records).toHaveLength(0);expect((await listCases(a)).caseCount).toBe(0);expect((await listCases(b)).caseCount).toBe(0);
+  });
+  it('backfills old images without new gains and deduplicates the same hash across company libraries',async()=>{
+    const old=pack();await installPackage(library,old.raw,old.files,keys);
+    await initializeDailyPolicy(owner);vi.stubEnv('INSPIRATION_DAILY_RECEIPTS_ENABLED','true');vi.stubEnv('INSPIRATION_RECEIPT_OWNER_ID',owner);
+    const legacy=pack({id:a,kind:'WORKSPACE',ownerId:owner,legacyWorkspaceId:a});
+    await installPackage({id:a,kind:'WORKSPACE',ownerId:owner,legacyWorkspaceId:a},legacy.raw,legacy.files,keys);
+    expect(await prisma.inspirationImageReceipt.count({where:{ownerId:owner,receivedDay:null}})).toBe(1);
+    expect(await prisma.inspirationImageReceipt.count({where:{ownerId:owner,receivedDay:chinaDay()}})).toBe(0);
+  });
+  it('rolls all image/record/release writes back at the cap and can accept the unchanged package on a later day',async()=>{
+    await initializeDailyPolicy(owner);vi.stubEnv('INSPIRATION_DAILY_RECEIPTS_ENABLED','true');vi.stubEnv('INSPIRATION_RECEIPT_OWNER_ID',owner);
+    // Isolated fixture receipts model an already full day; these never touch production data.
+    await prisma.inspirationImageReceipt.createMany({data:Array.from({length:100},(_,i)=>({ownerId:owner,sha256:sha256(`isolated-existing-${i}`),receivedDay:chinaDay(),receivedAt:new Date()}))});
+    const f=pack();await expect(installPackage(library,f.raw,f.files,keys)).rejects.toThrow('package_deferred');
+    expect(await prisma.inspirationImage.count({where:{libraryId:library.id}})).toBe(0);
+    expect(await prisma.inspirationRecord.count({where:{libraryId:library.id}})).toBe(0);
+    expect(await prisma.inspirationRelease.count({where:{libraryId:library.id}})).toBe(0);
+    await prisma.inspirationImageReceipt.updateMany({where:{ownerId:owner},data:{receivedDay:'2026-01-01',receivedAt:new Date('2026-01-01T00:00:00Z')}});
+    await installPackage(library,f.raw,f.files,keys);await installPackage(library,f.raw,f.files,keys);
+    expect(await prisma.inspirationImageReceipt.count({where:{ownerId:owner,receivedDay:chinaDay()}})).toBe(1);
+    expect((await activeRecords(library)).records).toHaveLength(1);
+    await prisma.inspirationImageReceipt.deleteMany({where:{ownerId:owner}});await prisma.inspirationDailyPolicy.deleteMany({where:{ownerId:owner}});
+  });
+  it('does not block another owner when only one company opts into daily receipts',async()=>{
+    vi.stubEnv('INSPIRATION_DAILY_RECEIPTS_ENABLED','true');vi.stubEnv('INSPIRATION_RECEIPT_OWNER_ID',owner);
+    const scope:LibraryScope={id:foreign,kind:'WORKSPACE',ownerId:other,legacyWorkspaceId:foreign},f=pack(scope);
+    await installPackage(scope,f.raw,f.files,keys);
+    expect((await activeRecords(scope)).records).toHaveLength(1);
+    expect(await prisma.inspirationImageReceipt.count({where:{ownerId:other}})).toBe(0);
+  });
+  it('serializes two concurrent libraries against the same last daily slot',async()=>{
+    await initializeDailyPolicy(owner);vi.stubEnv('INSPIRATION_DAILY_RECEIPTS_ENABLED','true');vi.stubEnv('INSPIRATION_RECEIPT_OWNER_ID',owner);
+    await prisma.inspirationImageReceipt.createMany({data:Array.from({length:99},(_,i)=>({ownerId:owner,sha256:sha256(`isolated-race-${i}`),receivedDay:chinaDay(),receivedAt:new Date()}))});
+    const shared=pack(),scope:LibraryScope={id:a,kind:'WORKSPACE',ownerId:owner,legacyWorkspaceId:a};
+    const original=image;image=await sharp({create:{width:3,height:3,channels:3,background:'#dd2277'}}).png().toBuffer();
+    const second=pack(scope);image=original;
+    const results=await Promise.allSettled([installPackage(library,shared.raw,shared.files,keys),installPackage(scope,second.raw,second.files,keys)]);
+    expect(results.filter(result=>result.status==='fulfilled')).toHaveLength(1);
+    expect(results.filter(result=>result.status==='rejected')).toHaveLength(1);
+    expect(await prisma.inspirationImageReceipt.count({where:{ownerId:owner,receivedDay:chinaDay()}})).toBe(100);
+    expect(await prisma.inspirationImage.count({where:{libraryId:{in:[library.id,a]}}})).toBe(1);
   });
 });

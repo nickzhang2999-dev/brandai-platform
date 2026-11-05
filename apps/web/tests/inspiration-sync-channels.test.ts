@@ -4,7 +4,8 @@ const mocks=vi.hoisted(()=>({upsert:vi.fn(),update:vi.fn(),updateMany:vi.fn(),fi
 vi.mock('@brandai/db',()=>({prisma:{$transaction:mocks.transaction,inspirationState:{upsert:mocks.upsert,update:mocks.update,updateMany:mocks.updateMany,findUnique:mocks.find},inspirationRelease:{findUnique:mocks.release}}}));
 import { applyWithdrawal, syncReplica, syncWithdrawals } from '../src/lib/inspiration/replica';
 import { canonical, sha256 } from '../src/lib/inspiration/protocol';
-import { CONTENT_SYNC_ERROR, WITHDRAWAL_SYNC_ERROR } from '../src/lib/inspiration/sync-status';
+import { CONTENT_SYNC_ERROR, WITHDRAWAL_SYNC_ERROR,DAILY_IMAGE_LIMIT_CODE } from '../src/lib/inspiration/sync-status';
+import {DailyReceiptLimit} from '../src/lib/inspiration/daily-receipts';
 
 const key=generateKeyPairSync('ed25519'),keys={test:key.publicKey.export({format:'pem',type:'spki'}).toString()};
 function signed<T extends object>(value:T){const payload={...value,key_id:'test'};return {...payload,signature:sign(null,Buffer.from(canonical(payload)),key.privateKey).toString('base64')};}
@@ -27,6 +28,11 @@ beforeEach(()=>{
 afterEach(()=>{vi.useRealTimers();vi.unstubAllEnvs();vi.unstubAllGlobals();});
 
 describe('replica check channel persistence',()=>{
+  it('persists only the safe quota reason and retains the active release when a daily admission is deferred',async()=>{
+    state.activeRelease='old-release';state.releaseSequence=1;
+    await expect(syncReplica('ws',new AbortController().signal,async()=>{throw new DailyReceiptLimit(25,10);})).rejects.toBeInstanceOf(DailyReceiptLimit);
+    expect(state.syncError).toBe(DAILY_IMAGE_LIMIT_CODE);expect(state.activeRelease).toBe('old-release');expect(state.releaseSequence).toBe(1);
+  });
   it.each([false,true])('applies operator checkpoint sizes before any file downloads (expanded=%s)',async expanded=>{
     const manifest=signed({schema_version:1,release_id:'r1',sequence:1,kind:'full',parent_release_id:null,created_at:'2026-10-26T00:00:00Z',taxonomy_version:'nova-1',records_count:0,files:Array.from({length:9},(_,i)=>({path:`images/${i}.png`,size:19*1024*1024,sha256:'a'.repeat(64)}))});
     const raw=JSON.stringify(manifest);

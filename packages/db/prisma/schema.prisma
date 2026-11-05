@@ -1182,6 +1182,31 @@ model InspirationLibraryIdentity {
   createdAt DateTime @default(now())
 }
 
+// Permanent owner-scoped receipt identities survive library deletion/recreation.
+// Baselines have no receivedDay: historical import times are deliberately unknown.
+model InspirationImageReceipt {
+  ownerId String
+  sha256 String
+  receivedDay String?
+  receivedAt DateTime?
+  libraryId String?
+  releaseId String?
+  @@id([ownerId, sha256])
+  @@index([ownerId, receivedDay])
+}
+
+model InspirationDailyPolicy {
+  ownerId String @id
+  startedAt DateTime @default(now())
+  startDay String
+  target Int @default(100)
+  qualityDay String?
+  qualityEvidence String?
+  qualityReviewedBy String?
+  qualityReviewedAt DateTime?
+  updatedAt DateTime @updatedAt
+}
+
 model InspirationLibrary {
   libraryTasks InspirationLibraryTask[]
   id String @id

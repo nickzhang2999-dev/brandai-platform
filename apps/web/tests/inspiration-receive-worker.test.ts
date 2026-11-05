@@ -6,6 +6,8 @@ vi.mock('@/lib/inspiration/selected-images',()=>({loadSelectedImages:vi.fn()}));
 vi.mock('@/lib/inspiration/replica',()=>({syncReplica:mocks.sync,syncWithdrawals:mocks.withdrawals,lockWorkspace:vi.fn()}));
 import { createInspirationWorker } from '../src/lib/inspiration/worker';
 import { contentSyncMode, receiverOrigin } from '../src/lib/inspiration/config';
+import {DailyReceiptLimit} from '../src/lib/inspiration/daily-receipts';
+import {DAILY_IMAGE_LIMIT_CODE,DAILY_IMAGE_LIMIT_MANUAL} from '../src/lib/inspiration/sync-status';
 let worker:ReturnType<typeof createInspirationWorker>|undefined;
 beforeEach(()=>{
   vi.clearAllMocks();vi.useFakeTimers();vi.setSystemTime(new Date('2026-11-02T06:00:00Z'));
@@ -14,6 +16,11 @@ beforeEach(()=>{
 });
 afterEach(async()=>{await worker?.close();worker=undefined;vi.useRealTimers();vi.unstubAllEnvs();});
 describe('manual content reception preserves automatic withdrawals',()=>{
+  it('records a safe quota terminal reason without promising automatic retry in manual mode',async()=>{
+    mocks.taskFind.mockResolvedValueOnce({id:'task',workspaceId:'workspace-a',inspirationLibraryId:'workspace-a',inputJson:{trigger:'manual',userId:'user',workspaceId:'workspace-a'},expiresAt:new Date(Date.now()+360000)});
+    mocks.sync.mockRejectedValue(new DailyReceiptLimit(25,10));worker=createInspirationWorker();await vi.advanceTimersByTimeAsync(10001);
+    expect(mocks.sync).toHaveBeenCalledOnce();expect(mocks.taskUpdate).toHaveBeenCalledWith(expect.objectContaining({data:{status:'FAILED',error:DAILY_IMAGE_LIMIT_MANUAL,resultJson:{failureCode:DAILY_IMAGE_LIMIT_CODE}}}));
+  });
   it('does not discover or enqueue content while withdrawals run immediately and every minute',async()=>{
     worker=createInspirationWorker();await vi.advanceTimersByTimeAsync(1);
     expect(mocks.taskFind.mock.calls[0]![0].where.inputJson).toEqual({path:['trigger'],equals:'manual'});expect(mocks.transaction).not.toHaveBeenCalled();expect(mocks.sync).not.toHaveBeenCalled();expect(mocks.withdrawals).toHaveBeenCalledOnce();

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {DAILY_IMAGE_LIMIT_AUTOMATIC,DAILY_IMAGE_LIMIT_MANUAL} from '../src/lib/inspiration/sync-status';
 import { InspirationReceiveStatus } from '@brandai/contracts';
 const mocks=vi.hoisted(()=>({ user:vi.fn(), role:vi.fn(), find:vi.fn(), create:vi.fn(), update:vi.fn(), upsert:vi.fn(), lock:vi.fn(), transaction:vi.fn(), enabled:vi.fn(), configured:vi.fn() }));
 vi.mock('@brandai/db',()=>({prisma:{$transaction:mocks.transaction,inspirationLibraryTask:{findFirst:mocks.find}}}));
@@ -77,6 +78,11 @@ describe('one-click workspace-scoped inspiration reception',()=>{
     const response=await GET(req(),context());expect(response.headers.get('Cache-Control')).toBe('no-store');
     const data=InspirationReceiveStatus.parse(await response.json());expect(data.canReceive).toBe(false);expect(data.mode).toBe('manual');expect(data.task?.error).toContain('接收未完成');expect(JSON.stringify(data)).not.toContain('private-');
     expect(mocks.find.mock.calls.at(-1)![0].select).not.toHaveProperty('inputJson');
+  });
+  it('keeps the quota explanation and renders it for current manual mode rather than an obsolete automatic promise',async()=>{
+    await POST(req(),context());task!.status='FAILED';task!.error=DAILY_IMAGE_LIMIT_AUTOMATIC;
+    const result=InspirationReceiveStatus.parse(await (await GET(req(),context())).json());
+    expect(result.task?.error).toBe(DAILY_IMAGE_LIMIT_MANUAL);expect(result.task?.error).not.toContain('发布连接');
   });
   it('keeps disabled or unconfigured reception unavailable',async()=>{
     mocks.enabled.mockReturnValue(false);expect((await POST(req(),context())).status).toBe(503);

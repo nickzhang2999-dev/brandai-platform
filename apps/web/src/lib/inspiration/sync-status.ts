@@ -3,6 +3,11 @@ import type { InspirationSyncChannel, InspirationSyncStatus } from '@brandai/con
 export const CONTENT_SYNC_ERROR = '内容同步失败，请管理员检查发布连接或校验结果。';
 export const WITHDRAWAL_SYNC_ERROR = '撤回检查失败，最新撤回状态尚未确认，请管理员检查发布连接。';
 export const LEGACY_SYNC_ERROR = '历史同步检查曾失败，等待新一轮检查确认。';
+export const DAILY_IMAGE_LIMIT_CODE = 'DAILY_IMAGE_LIMIT';
+export const DAILY_IMAGE_LIMIT_MANUAL = '本批新增图片超过今日剩余接收额度，本批未入库，已有内容保留。北京时间次日可再接收。';
+export const DAILY_IMAGE_LIMIT_AUTOMATIC = '本批新增图片超过今日剩余接收额度，本批未入库，已有内容保留。北京时间次日系统会自动再次检查。';
+export const dailyImageLimitMessage=(mode:'manual'|'automatic')=>mode==='manual'?DAILY_IMAGE_LIMIT_MANUAL:DAILY_IMAGE_LIMIT_AUTOMATIC;
+export const isDailyImageLimitMessage=(value:unknown)=>value===DAILY_IMAGE_LIMIT_MANUAL||value===DAILY_IMAGE_LIMIT_AUTOMATIC;
 export const CONTENT_STALE_MS = 10 * 60_000;
 export const WITHDRAWAL_STALE_MS = 3 * 60_000;
 
@@ -21,7 +26,7 @@ export function inspirationSyncStatus(state: State | null, manifestHash: string 
       : now - success.getTime() > maxAge || success.getTime() > now + 60_000 ? 'stale' : 'healthy';
     return {state: status, lastAttemptAt: iso(attempt), lastSuccessAt: iso(success), lastFailureAt: iso(failure), error};
   }
-  const contentError = state?.syncError ? CONTENT_SYNC_ERROR : state?.lastError ? LEGACY_SYNC_ERROR : null;
+  const contentError = state?.syncError===DAILY_IMAGE_LIMIT_CODE ? dailyImageLimitMessage(mode) : state?.syncError ? CONTENT_SYNC_ERROR : state?.lastError ? LEGACY_SYNC_ERROR : null;
   return {
     // Manual reception does not promise periodic content freshness. Preserve
     // failures and clock-skew detection; withdrawal freshness remains mandatory.

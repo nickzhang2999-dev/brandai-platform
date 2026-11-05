@@ -6,6 +6,7 @@ import { contentSyncMode, inspirationEnabled, syncConfigured } from '@/lib/inspi
 import { lockWorkspace } from '@/lib/inspiration/replica';
 import { InspirationReceiveStatus } from '@brandai/contracts';
 import { canReceiveLibrary, ensureLibrary, resolveLibrary, sourceLibrary } from '@/lib/inspiration/library';
+import {dailyImageLimitMessage,isDailyImageLimitMessage} from '@/lib/inspiration/sync-status';
 
 const timeoutMessage = '接收任务已超时，可重新接收；已接收的内容保留。';
 const failureMessage = '接收未完成，请重试或联系管理员检查发布连接。已接收的内容保留。';
@@ -34,7 +35,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ wsId: s
     const expired = latest && active.includes(latest.status) && (!latest.expiresAt || latest.expiresAt <= now);
     const task = latest ? {
       id: latest.id, status: expired ? 'FAILED' : latest.status,
-      error: expired ? timeoutMessage : latest.status === 'FAILED' ? (['发布包与当前灵感库的接收范围不一致，请联系管理员检查库配置。','接收权限已变化，请由当前灵感库管理员重新确认。','灵感接收超时，已有内容保留。'].includes(latest.error||'')?latest.error:failureMessage) : null,
+      error: expired ? timeoutMessage : latest.status === 'FAILED' ? (isDailyImageLimitMessage(latest.error)?dailyImageLimitMessage(mode):['发布包与当前灵感库的接收范围不一致，请联系管理员检查库配置。','接收权限已变化，请由当前灵感库管理员重新确认。','灵感接收超时，已有内容保留。'].includes(latest.error||'')?latest.error:failureMessage) : null,
       createdAt: latest.createdAt.toISOString(), updatedAt: latest.updatedAt.toISOString(), expiresAt: latest.expiresAt?.toISOString() ?? null,
     } : null;
     return ok(InspirationReceiveStatus.parse({ enabled, configured, mode, canReceive,canReceiveReason:canReceive?null:configured?'只有公司灵感库管理员或所有者可以接收新内容。':'灵感库连接尚未配置。',sourceLibrary:library?sourceLibrary(library):null,task }), { headers: { 'Cache-Control': 'no-store' } });
