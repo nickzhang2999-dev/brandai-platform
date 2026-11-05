@@ -5,7 +5,7 @@ vi.mock("@/lib/api", () => ({ ApiException: class extends Error { constructor(pu
 vi.mock("@/lib/queue", () => ({ connection: {}, queuePrefix: "synthetic-brand-kit" }));
 vi.mock("@/lib/ai", () => ({ ai: { recognize: f.recognize, parseManual: f.parseManual } }));
 vi.mock("@/lib/usage", () => ({ recordUsage: f.usage }));
-vi.mock("@/lib/s3", () => ({ uploadDataUrlImage: f.upload }));
+vi.mock("@/lib/s3", () => ({ uploadBuffer: f.upload }));
 vi.mock("@/lib/assets", () => ({ decodeImageResolution: () => undefined }));
 import { prisma } from "@brandai/db";
 import { brandKitImportTask, readBrandKitImportTask } from "@/lib/brand-kit-import";
@@ -26,7 +26,7 @@ suite("Brand Kit real PostgreSQL receipts and worker persistence with synthetic 
     await prisma.user.create({ data: { id: userId, email: userId + "@example.invalid", isActive: true } });
     await prisma.brandWorkspace.create({ data: { id: workspaceId, ownerId: userId, name: "合成品牌套件" } });
     await prisma.asset.createMany({ data: [sourceId, manualId].map(id => ({ id, workspaceId, category: id === manualId ? "VI_DOC" : "LOGO", libraryKind: "BRAND_KIT", fileName: "synthetic", url: "https://synthetic.invalid/" + id, storageKey: id, mimeType: id === manualId ? "application/pdf" : "image/png", sizeBytes: 1, source: "UPLOAD", availableForGeneration: true })) });
-    f.upload.mockResolvedValue("https://synthetic.invalid/crop.png");
+    f.upload.mockResolvedValue({ key: `${workspaceId}/brand-kit/actual-upload.png`, url: "https://synthetic.invalid/crop.png" });
   });
   afterEach(async () => {
     await prisma.asyncTask.deleteMany({ where: { workspaceId } });
@@ -97,7 +97,7 @@ suite("Brand Kit real PostgreSQL receipts and worker persistence with synthetic 
   it("manual revoked during crop upload does not persist derived assets or rules", async () => {
     const mutationId = randomUUID(), task = await brandKitImportTask(workspaceId, userId, "PARSE_MANUAL", mutationId, { assetId: manualId, mutationId });
     f.parseManual.mockResolvedValue({ rules: [rule("late manual", "logo")], extractedAssets: [{ ref: "crop", type: "logo", page: 1, label: "test", dataUrl: "data:image/png;base64,aGVsbG8=" }], warnings: [] });
-    f.upload.mockImplementation(async () => { await prisma.asset.update({ where: { id: manualId }, data: { availableForGeneration: false } }); return "https://synthetic.invalid/crop.png"; });
+    f.upload.mockImplementation(async () => { await prisma.asset.update({ where: { id: manualId }, data: { availableForGeneration: false } }); return { key: `${workspaceId}/brand-kit/actual-upload.png`, url: "https://synthetic.invalid/crop.png" }; });
     await expect(runParseManualJob(job(task.id, { assetId: manualId, url: "https://synthetic.invalid/manual.pdf" }))).rejects.toThrow();
     expect(f.parseManual).toHaveBeenCalledOnce(); expect(f.upload).toHaveBeenCalledOnce();
     expect(f.usage).toHaveBeenCalledOnce(); expect(f.usage).toHaveBeenCalledWith(expect.objectContaining({ status: "SUCCEEDED", kind: "PARSE_MANUAL", workspaceId }));
@@ -111,6 +111,9 @@ suite("Brand Kit real PostgreSQL receipts and worker persistence with synthetic 
       { ref: "crop-logo", type: "logo", page: 2, label: "合成截取", dataUrl: "data:image/png;base64,aGVsbG8=" }] });
     const result = await runParseManualJob(job(task.id, { assetId: manualId, url: "https://synthetic.invalid/manual.pdf", targetType: "layout" }));
     expect(result.ruleIds).toHaveLength(2); expect(result.assetIds).toHaveLength(1);
+    expect(await prisma.asset.findUnique({ where: { id: result.assetIds[0] } })).toMatchObject({
+      storageKey: `${workspaceId}/brand-kit/actual-upload.png`, url: "https://synthetic.invalid/crop.png", mimeType: "image/png",
+    });
     const rows = await prisma.brandRule.findMany({ where: { workspaceId } });
     expect(rows.every(row => row.type === "layout" && row.status === "DRAFT")).toBe(true);
     expect((rows.find(row => row.summary === "图形规范")?.evidence as any[])[0]).toMatchObject({ assetId: result.assetIds[0], page: 2 });

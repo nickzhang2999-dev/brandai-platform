@@ -25,6 +25,8 @@ export const Evidence = z.object({
   bbox: z.tuple([z.number(), z.number(), z.number(), z.number()]).optional(),
   note: z.string().optional(),
   thumbnailUrl: z.string().optional(),
+  /** Read-side asset metadata; resolved by the server within the owning workspace. */
+  mimeType: z.string().optional(),
   /**
    * parse-manual bridge fields. `sourceRef` points at an extracted visual in
    * ParseManualResponse until the web worker persists it as a real Asset and

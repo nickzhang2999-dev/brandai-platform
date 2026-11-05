@@ -35,7 +35,23 @@ export async function GET(
       },
       orderBy: { createdAt: "desc" },
     });
-    return ok(rules);
+    // PDF/manual evidence is not an image. Resolve authoritative MIME types in
+    // the same workspace instead of trusting legacy/model-supplied metadata.
+    const evidenceItems = (value: Prisma.JsonValue) =>
+      Array.isArray(value) ? value.filter((item): item is Prisma.JsonObject =>
+        item !== null && typeof item === "object" && !Array.isArray(item)) : [];
+    const assetIds = [...new Set(rules.flatMap(rule => evidenceItems(rule.evidence)
+      .flatMap(item => typeof item.assetId === "string" ? [item.assetId] : [])))];
+    const assets = assetIds.length ? await prisma.asset.findMany({
+      where: { workspaceId: wsId, id: { in: assetIds } },
+      select: { id: true, mimeType: true },
+    }) : [];
+    const mimeById = new Map(assets.map(asset => [asset.id, asset.mimeType]));
+    return ok(rules.map(rule => ({ ...rule, evidence: evidenceItems(rule.evidence).map(item => {
+      const { mimeType: _untrustedMime, ...evidence } = item;
+      const mimeType = typeof item.assetId === "string" ? mimeById.get(item.assetId) : undefined;
+      return { ...evidence, ...(mimeType ? { mimeType } : {}) };
+    }) })));
   } catch (err) {
     return handleError(err);
   }

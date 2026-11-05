@@ -11,7 +11,7 @@ import { recordUsage } from "@/lib/usage";
 import {
   setProgress,
 } from "@/lib/async-tasks";
-import { uploadDataUrlImage } from "@/lib/s3";
+import { uploadBuffer } from "@/lib/s3";
 import { decodeImageResolution } from "@/lib/assets";
 
 /**
@@ -116,8 +116,9 @@ export async function runParseManualJob(
     for (const extracted of result.extractedAssets) {
       ctx.check();
       const { bytes, mimeType } = decodeDataUrl(extracted.dataUrl);
-      const url = await uploadDataUrlImage(
-        extracted.dataUrl,
+      const { key, url } = await uploadBuffer(
+        bytes,
+        mimeType,
         `${data.workspaceId}/brand-kit`,
         ctx.signal,
       );
@@ -131,7 +132,9 @@ export async function runParseManualJob(
           category: ASSET_CATEGORY_BY_RULE[extracted.type],
           libraryKind: "BRAND_KIT",
           fileName: `${extracted.label || safeRef}.jpg`,
-          storageKey: `brand-kit/${taskId ?? job.id}/${safeRef}.jpg`,
+          // The authenticated raw endpoint reads this exact object key. Never
+          // invent a task/ref key independently of the completed upload.
+          storageKey: key,
           url,
           mimeType,
           sizeBytes: bytes.length,

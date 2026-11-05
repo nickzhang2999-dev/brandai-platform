@@ -27,6 +27,7 @@ import type { BrandWorkspace, WorkspaceRole } from "@brandai/contracts";
 import { KnowledgeManagementPanels, ManualRuleForm } from "./KnowledgeManagementPanels";
 import { DraftImportPanel } from "./DraftImportPanel";
 import { canEditKnowledge, ruleReplacementMessage } from "./knowledge-state";
+import { evidencePreviewKind } from "./evidence-preview";
 import { groupBrandKitRules, uniqueBrandKitFiles, BRAND_KIT_BATCH_LIMIT, type BrandKitUploadEntry } from "./brand-kit-state";
 function Chip({ children }: { children: React.ReactNode }) {
   return <span className="rounded-full border border-border bg-muted px-2.5 py-1 text-[11px] text-muted-foreground">{children}</span>;
@@ -869,7 +870,7 @@ function RuleGroup({ rules, ...props }: Omit<RuleCardProps, "rule"> & { rules: B
   </div>;
 }
 
-function RuleCard({
+export function RuleCard({
   rule,
   wsId,
   onEdit,
@@ -895,6 +896,9 @@ function RuleCard({
   const previewUrl = evidence?.assetId
     ? assetThumbUrl(wsId, evidence.assetId, evidence.thumbnailUrl ?? "")
     : null;
+  const previewKind = evidencePreviewKind(evidence?.mimeType);
+  const [failedPreviewUrl, setFailedPreviewUrl] = useState<string | null>(null);
+  const showImage = previewKind === "image" && !!previewUrl && failedPreviewUrl !== previewUrl;
   const swatch = rule.type === "color" ? extractSwatches(value)[0] : null;
   const font = rule.type === "font" ? extractFonts(value)[0] : null;
   return (
@@ -903,7 +907,7 @@ function RuleCard({
         type="button"
         disabled={busy}
         onClick={() => {
-          if (previewUrl) {
+          if (showImage && previewUrl) {
             onPreview({ src: previewUrl, alt: evidence?.note ?? rule.summary });
           } else {
             onEdit(rule);
@@ -911,13 +915,25 @@ function RuleCard({
         }}
         className="flex aspect-square w-full cursor-pointer items-center justify-center overflow-hidden rounded-lg border border-border bg-muted/45 transition-colors duration-200 hover:border-primary/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:opacity-60"
       >
-        {previewUrl ? (
+        {showImage && previewUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={previewUrl}
             alt={evidence?.note ?? rule.summary}
+            onError={() => setFailedPreviewUrl(previewUrl)}
             className="h-full w-full object-contain p-3"
           />
+        ) : previewUrl && previewKind !== "image" ? (
+          <span className="flex flex-col items-center gap-2 px-4 text-center text-muted-foreground">
+            <FileText className="h-7 w-7" />
+            <span className="text-xs">{previewKind === "pdf" ? "来源为 PDF 手册" : "来源文件"}</span>
+            <span className="text-[10px] leading-relaxed">尚无独立图片预览{evidence?.page ? ` · 第 ${evidence.page} 页` : ""}</span>
+          </span>
+        ) : previewUrl && failedPreviewUrl === previewUrl ? (
+          <span className="flex flex-col items-center gap-2 px-4 text-center text-muted-foreground">
+            <ImageIcon className="h-7 w-7" /><span className="text-xs">原图暂不可用</span>
+            <span className="text-[10px]">可查看来源文件或稍后刷新</span>
+          </span>
         ) : swatch ? (
           <span
             className="h-full w-full"
@@ -943,6 +959,8 @@ function RuleCard({
         <span className="block truncate text-[10px] text-muted-foreground">
           {evidence?.note ?? rule.summary}
         </span>
+        {previewUrl && !showImage && <a href={previewUrl} target="_blank" rel="noopener noreferrer"
+          className="mt-1 inline-block text-[10px] text-primary underline">查看来源文件</a>}
       </div>
       {canEdit && <div ref={menuRef} className="absolute right-1 top-1 z-20" onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setOpenRuleMenu(null); }}>
         <button type="button" ref={triggerRef} aria-label="规则操作" aria-haspopup="menu" aria-expanded={menuOpen}

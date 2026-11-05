@@ -353,6 +353,7 @@ class Evidence(BaseModel):
     bbox: Optional[list[float]] = None
     note: Optional[str] = None
     thumbnailUrl: Optional[str] = None
+    mimeType: Optional[str] = None
     # parse-manual bridge: sourceRef is rewritten to a persisted Asset id by
     # the web worker; page remains as human-verifiable provenance.
     sourceRef: Optional[str] = None
