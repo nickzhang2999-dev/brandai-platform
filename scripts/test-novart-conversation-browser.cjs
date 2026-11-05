@@ -106,7 +106,7 @@ function Fixture(){const panel=useRef<any>(null),[selected,setSelected]=useState
  const run=(fn:any)=>{try{Promise.resolve(fn()).catch(e=>setNotice(e.message))}catch(e:any){setNotice(e.message)}};
  return <><fieldset><legend>交互测试夹具 · 非业务验收</legend><button onClick={()=>setSelected([refs[0]])}>选择图片1</button><button onClick={()=>setSelected([refs[1],refs[0]])}>选择图片2和1</button><button onClick={()=>run(()=>panel.current.addReferences(selected))}>加入当前选择</button><button onClick={()=>run(()=>panel.current.addReferences([refs[1]],refs[1].referenceId))}>固定快捷目标图片2</button><button onClick={()=>run(async()=>{await panel.current.flush();setNotice('离页草稿已确认')} )}>模拟品牌离页保存</button><p role="status">{notice}</p></fieldset>
  <button onClick={()=>setProjectId('fixture-other-project')}>切换另一个项目</button><button onClick={()=>run(()=>panel.current.startHome('首页生成一张海报','605a9288-8aae-4ccd-8ced-99c05e32b2bd',[Object.fromEntries(Object.entries(refs[0]).reverse())]))}>首页开始创作</button><button onClick={()=>run(()=>panel.current.quickEdit(refs[0],'后来的快捷编辑不应篡改原请求'))}>直接快捷修改图片1</button>
- <div className="fixture-panel"><OwnedConversationPanel ref={panel} {...${JSON.stringify(fixture)}} projectId={projectId} readOnly={readOnly} api={ownedApi} prepare={async()=>{(window as any).__conversationPrepareCalls=((window as any).__conversationPrepareCalls||0)+1;return {documentRevision:1,workflowRevision:0}}} selectedReferenceIds={references=>references.filter(ref=>selected.some(value=>value.shapeId===ref.shapeId)).map(ref=>ref.referenceId)} onNotice={setNotice} onGeneration={()=>{}} onInsert={async()=>{}} onInsertLayers={async()=>{}} /></div></>}
+ <div className="fixture-panel"><OwnedConversationPanel ref={panel} {...${JSON.stringify(fixture)}} projectId={projectId} readOnly={readOnly} api={ownedApi} prepare={async()=>{(window as any).__conversationPrepareCalls=((window as any).__conversationPrepareCalls||0)+1;return {documentRevision:1,workflowRevision:0}}} selectedReferenceIds={references=>references.filter(ref=>selected.some(value=>value.shapeId===ref.shapeId)).map(ref=>ref.referenceId)} onAddReference={()=>setNotice("打开素材库")} onAdvancedSettings={()=>{(window as any).__advancedSettingsOpened=((window as any).__advancedSettingsOpened||0)+1;}} onNotice={setNotice} onGeneration={()=>{}} onInsert={async()=>{}} onInsertLayers={async()=>{}} /></div></>}
 createRoot(document.getElementById('root')!).render(<Fixture/>);`);
   await esbuild.build({entryPoints:[entry],outfile:path.join(directory,'app.js'),bundle:true,platform:'browser',format:'iife',jsx:'automatic',tsconfig:path.join(repo,'apps/web/tsconfig.json'),nodePaths:[path.join(repo,'apps/web/node_modules')],define:{'process.env.NODE_ENV':'"development"'},logLevel:'silent'});
   fs.writeFileSync(path.join(directory, 'schemas.ts'), `export {StudioConversationInput,StudioConversationDraftInput,StudioConversationMessage} from '${absolute('packages/contracts/src/studio-conversation')}';export {StudioGenerationView,StudioGenerationArchiveRetryInput} from '${absolute('packages/contracts/src/studio-generation')}';export {parseStudioConversationIntent} from '${absolute('apps/web/src/lib/studio-conversation-intent')}';`);
@@ -333,7 +333,46 @@ createRoot(document.getElementById('root')!).render(<Fixture/>);`);
   await page.reload();await ready();assert.equal(await page.getByRole('combobox',{name:'对话图片比例'}).inputValue(),'16:9');
   assert.equal(await page.getByRole('checkbox',{name:'同时准备可编辑PSD'}).isVisible(),false);await page.getByLabel('生成设置',{exact:true}).click();
   check('collapsed-settings-remain-editable-and-persist-after-refresh');
+  stage='expanded-settings-layout';
+  const originalPanelStyle=await page.locator('.fixture-panel').getAttribute('style');
+  for(const {width,zoom} of [{width:360,zoom:1},{width:320,zoom:1},{width:360,zoom:1.25}]){
+    await page.locator('body').evaluate((el,zoom)=>{el.style.zoom=String(zoom);},zoom);
+    await page.locator('.fixture-panel').evaluate((el,width)=>{el.style.width=width+'px';},width);
+    const geometry=await page.getByTestId('conversation-settings').evaluate(el=>{
+      const row=el.parentElement, panel=document.getElementById(el.getAttribute('aria-controls')), summary=el;
+      const r=row.getBoundingClientRect(),p=panel.getBoundingClientRect(),s=summary.getBoundingClientRect(),style=getComputedStyle(row),send=row.querySelector('button.bg-primary').getBoundingClientRect();
+      return {rowWidth:r.width, available:(row.clientWidth-parseFloat(style.paddingLeft)-parseFloat(style.paddingRight))*(r.width/row.offsetWidth),panelWidth:p.width,panelTop:p.top,summaryBottom:s.bottom,sendBottom:send.bottom,scrollWidth:row.scrollWidth,clientWidth:row.clientWidth,panelScrollWidth:panel.scrollWidth,panelClientWidth:panel.clientWidth};
+    });
+    if(process.env.NOVART_SETTINGS_SCREENSHOT) await page.getByTestId('conversation-composer').screenshot({path:process.env.NOVART_SETTINGS_SCREENSHOT});
+    assert(geometry.panelWidth>=geometry.available-2,'Expanded settings must occupy a full row: '+JSON.stringify({width,zoom,...geometry}));
+    assert(geometry.panelTop>=geometry.summaryBottom,'Expanded settings must sit below the compact controls');
+    assert(geometry.panelTop>=geometry.sendBottom,'Expanded settings must sit below the send control even when it wraps');
+    assert(geometry.scrollWidth<=geometry.clientWidth+1,'Output controls must not overflow horizontally');
+    assert(geometry.panelScrollWidth<=geometry.panelClientWidth+1,'Expanded settings content must not overflow horizontally');
+  }
+  await page.locator('body').evaluate(el=>{el.style.zoom='';});
+  await page.locator('.fixture-panel').evaluate((el,style)=>{if(style===null)el.removeAttribute('style');else el.setAttribute('style',style);},originalPanelStyle);
+  const keyboardPosts=postInputs.length, settingsSummary=page.getByLabel('生成设置',{exact:true});
+  await settingsSummary.focus();await page.keyboard.press('Enter');
+  assert.equal(await page.getByRole('checkbox',{name:'同时准备可编辑PSD',exact:true}).isVisible(),false);
+  await page.keyboard.press('Tab');assert.equal(await page.getByRole('checkbox',{name:'同时准备可编辑PSD',exact:true,includeHidden:true}).evaluate(el=>el===document.activeElement),false);
+  await settingsSummary.focus();await page.keyboard.press('Enter');await page.keyboard.press('Tab');
+  if(await button('发送').evaluate(el=>el===document.activeElement)) await page.keyboard.press('Tab');
+  assert.equal(await page.getByRole('checkbox',{name:'同时准备可编辑PSD',exact:true}).evaluate(el=>el===document.activeElement),true);
+  await page.keyboard.press('Escape');assert.equal(postInputs.length,keyboardPosts);
+  const beforeAdvanced=structuredClone(draft), beforeAdvancedPosts=postInputs.length;
+  await page.getByRole('button',{name:'素材用途与输出画框',exact:true}).click();
+  assert.equal(await page.evaluate(()=>window.__advancedSettingsOpened),1);
+  assert.equal(await page.getByTestId('conversation-settings').getAttribute('aria-expanded'),'false');
+  assert.deepEqual(draft,beforeAdvanced);assert.equal(postInputs.length,beforeAdvancedPosts);
+  await page.getByLabel('生成设置',{exact:true}).click();
+  check('expanded-settings-use-full-row-at-360-320-and-css-125-percent-zoom-with-safe-advanced-navigation');
   stage='psd-options-persist-and-send';await page.getByRole('checkbox',{name:'同时准备可编辑PSD',exact:true}).check();await page.getByRole('combobox',{name:'PSD分层方式',exact:true}).selectOption('MANUAL');await page.getByRole('spinbutton',{name:'PSD图层数量',exact:true}).fill('6');await saved();
+  for(const width of [320,360]){
+    await page.locator('.fixture-panel').evaluate((el,width)=>{el.style.width=width+'px';},width);
+    assert(await page.getByTestId('conversation-settings-panel').evaluate(el=>el.scrollWidth<=el.clientWidth+1),'Manual PSD controls must fit the full-width settings panel');
+  }
+  await page.locator('.fixture-panel').evaluate((el,style)=>{if(style===null)el.removeAttribute('style');else el.setAttribute('style',style);},originalPanelStyle);
   await page.reload();await ready();await page.getByLabel('生成设置',{exact:true}).click();assert.equal(await page.getByRole('checkbox',{name:'同时准备可编辑PSD',exact:true}).isChecked(),true);assert.equal(await page.getByRole('combobox',{name:'PSD分层方式',exact:true}).inputValue(),'MANUAL');assert.equal(await page.getByRole('spinbutton',{name:'PSD图层数量',exact:true}).inputValue(),'6');
   await page.getByLabel('生成设置',{exact:true}).click();await input().fill('生成一张星空海报');const beforePsd=postInputs.length;await button('发送').click();await until(()=>postInputs.length>beforePsd);await saved();assert.equal(postInputs.at(-1).psdLayerMode,'MANUAL');assert.equal(postInputs.at(-1).psdLayerCount,6);assert.equal(generationPosts,0);
   check('manual-psd-options-restore-and-travel-with-one-conversation-request');

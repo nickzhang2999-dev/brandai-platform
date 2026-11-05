@@ -1,6 +1,6 @@
 "use client";
 
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState, type ReactNode } from "react";
+import { forwardRef, useCallback, useEffect, useId, useImperativeHandle, useRef, useState, type ReactNode } from "react";
 import { GenerationAspectRatioKey, StudioConversationInput, StudioConversationMessage, type StudioConversationDraftInput, type StudioConversationReference, type StudioConversationMessage as Message } from "@brandai/contracts";
 import type { z } from "zod";
 import { NovartApiError } from "../../lib/novart-api-client";
@@ -23,8 +23,7 @@ type Props = { workspaceId: string; projectId: string; userId: string; readOnly:
   isImagePlaced?(image: PersistentImage): boolean; onNotice(message: string): void; onGeneration(task: GenerationTask): void; onInsert(image: PersistentImage, sourceShapeId?: string): Promise<void>;
   onInsertLayers(task: DecompositionTask, source: PersistentImage): Promise<void>; onAddReference?(): void; onAdvancedSettings?(): void; outputFrameId?: string; activity?: ReactNode };
 const button = "rounded-full border border-border px-3 py-2 text-xs disabled:opacity-40";
-// Narrower variant for the composer action row: five controls share a 360px
-// pane, and the default padding pushed the send button onto a second line.
+// Compact controls share the available composer width and may wrap on narrow panes.
 const compact = "rounded-full border border-border bg-card px-2 py-1.5 text-[11px] leading-none shrink-0 disabled:opacity-40";
 const empty = (): Draft => ({ text: "", references: [], quickEditTargetId: null, sizeSelection: { ratioKey: "1:1", resolutionTier: "1K" } });
 const draftValue = (value: StudioConversationDraftInput): Draft => ({ text: value.text, references: value.references, quickEditTargetId: value.quickEditTargetId, sizeSelection: value.sizeSelection, ...(value.psdLayerMode ? { psdLayerMode: value.psdLayerMode, ...(value.psdLayerCount ? { psdLayerCount: value.psdLayerCount } : {}) } : {}) });
@@ -35,6 +34,8 @@ const explain = (error: unknown) => error instanceof Error ? error.message : "�
  * Local storage is only an unacknowledged mutation journal; server state is authoritative. */
 export const OwnedConversationPanel = forwardRef<OwnedConversationHandle, Props>(function OwnedConversationPanel(props, ref) {
   const [composerCollapsed, setComposerCollapsed] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsPanelId = useId();
   const [writingPrompt, setWritingPrompt] = useState<string | null>(null);
   const [writingHandoffError, setWritingHandoffError] = useState("");
   const appendWritingButton = useRef<HTMLButtonElement>(null);
@@ -363,21 +364,19 @@ export const OwnedConversationPanel = forwardRef<OwnedConversationHandle, Props>
           <div className="flex flex-wrap items-center justify-between gap-2"><label className="flex items-center gap-2"><input type="checkbox" aria-label="沿用项目资料" checked={props.projectContext.enabled} disabled={locked || !props.projectContext.available && !props.projectContext.enabled} onChange={event => props.projectContext?.onChange(event.target.checked)} />沿用项目资料</label><button type="button" className="text-primary underline" onClick={props.projectContext.onOpen}>查看资料</button></div>
           {props.projectContext.blocked && <p className="leading-5 text-muted-foreground">资料有未保存修改，请先确认</p>}
         </div>}
-        {/* 操作行放进同一个框的底部，用一条细分隔线收口。
-            收窄的下拉/按钮让整行在 360px 面板内也放得下，发送按钮不再换行。 */}
-        <div className="flex flex-nowrap items-center gap-1 border-t border-border px-3 py-2" aria-label="本轮输出规格">
+        {/* 设置展开体必须占独立整行；侧栏宽度还会被多层内边距扣减，不能强制全部控件不换行。 */}
+        <div className="flex flex-wrap items-center gap-1 border-t border-border px-3 py-2" aria-label="本轮输出规格">
           {props.onAddReference && <button type="button" className={compact + " mr-auto"} aria-label="添加参考图片" title="从素材库添加参考图片" disabled={locked} onClick={props.onAddReference}>＋ 参考</button>}
           <label className="text-xs"><span className="sr-only">比例</span><select aria-label="对话图片比例" className={compact + " max-w-[68px]"} value={draft.sizeSelection.ratioKey} disabled={locked} onChange={event => edit({ sizeSelection: { ratioKey: event.target.value as Draft["sizeSelection"]["ratioKey"], resolutionTier: draft.sizeSelection.resolutionTier, ...(event.target.value === "custom" ? { customRatio: { width: 1, height: 1 } } : {}) } })}>{GenerationAspectRatioKey.options.map(value => <option key={value} value={value}>{value === "custom" ? "自定义" : value}</option>)}</select></label>
           <label className="text-xs"><span className="sr-only">画质</span><select aria-label="对话图片画质" className={compact + " max-w-[62px]"} value={draft.sizeSelection.resolutionTier} disabled={locked} onChange={event => edit({ sizeSelection: { ...draft.sizeSelection, resolutionTier: event.target.value as "1K" | "2K" } })}><option>1K</option><option>2K</option></select></label>
-          <details className="contents" data-testid="conversation-settings"><summary className={compact + " cursor-pointer list-none"} aria-label="生成设置">更多</summary>
-          <div className="mt-2 w-full space-y-3 rounded-2xl border border-border bg-card p-4 shadow-lg">
-            <label className="flex items-center gap-2 text-xs"><input type="checkbox" aria-label="同时准备可编辑PSD" checked={!!draft.psdLayerMode} disabled={locked} onChange={event => edit({ psdLayerMode: event.target.checked ? "AUTO" : undefined, psdLayerCount: undefined })} />同时准备 PSD</label>
-            {draft.psdLayerMode && <><select aria-label="PSD分层方式" className={button} disabled={locked} value={draft.psdLayerMode} onChange={event => edit({ psdLayerMode: event.target.value as "AUTO" | "MANUAL", psdLayerCount: event.target.value === "MANUAL" ? 4 : undefined })}><option value="AUTO">按内容自动分层</option><option value="MANUAL">指定层数</option></select>{draft.psdLayerMode === "MANUAL" && <input aria-label="PSD图层数量" className="w-16 rounded border border-border" type="number" min={2} max={10} value={draft.psdLayerCount} disabled={locked} onChange={event => edit({ psdLayerCount: Number(event.target.value) })} />}<p className="text-xs text-muted-foreground">会额外使用分层服务额度，原图先可用。</p></>}
-            {props.onAdvancedSettings && <button className={button} type="button" onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); props.onAdvancedSettings?.(); }}>素材用途与输出画框</button>}
-          </div>
-        </details>
+          <button type="button" className={compact} data-testid="conversation-settings" aria-label="生成设置" aria-expanded={settingsOpen} aria-controls={settingsPanelId} onClick={() => setSettingsOpen(value => !value)}>更多</button>
         <span role="status" className="min-w-0 truncate text-[11px] text-muted-foreground" data-testid="conversation-draft-status" data-saved={ready && !saving && same(draft, confirmedDraft.current!)}>{!ready ? "恢复中…" : saving || !same(draft, confirmedDraft.current!) ? "保存中…" : ""}</span>
-        <button className="ml-auto inline-flex shrink-0 items-center gap-1 rounded-full bg-primary px-3 py-1.5 text-xs text-primary-foreground disabled:opacity-40" disabled={locked || !draft.text.trim()} onClick={() => void send().catch(() => undefined)}>{sending ? "提交中" : "发送"}<span aria-hidden="true">↑</span></button>
+        <button type="button" className="ml-auto inline-flex shrink-0 items-center gap-1 rounded-full bg-primary px-3 py-1.5 text-xs text-primary-foreground disabled:opacity-40" disabled={locked || !draft.text.trim()} onClick={() => void send().catch(() => undefined)}>{sending ? "提交中" : "发送"}<span aria-hidden="true">↑</span></button>
+          <div id={settingsPanelId} hidden={!settingsOpen} className="mt-2 w-full min-w-0 shrink-0 basis-full space-y-3 rounded-2xl border border-border bg-card p-4 shadow-lg" data-testid="conversation-settings-panel">
+            <label className="flex items-center gap-2 text-xs"><input type="checkbox" aria-label="同时准备可编辑PSD" checked={!!draft.psdLayerMode} disabled={locked} onChange={event => edit({ psdLayerMode: event.target.checked ? "AUTO" : undefined, psdLayerCount: undefined })} />同时准备 PSD</label>
+            {draft.psdLayerMode && <><div className="flex flex-wrap items-center gap-2"><select aria-label="PSD分层方式" className={button} disabled={locked} value={draft.psdLayerMode} onChange={event => edit({ psdLayerMode: event.target.value as "AUTO" | "MANUAL", psdLayerCount: event.target.value === "MANUAL" ? 4 : undefined })}><option value="AUTO">按内容自动分层</option><option value="MANUAL">指定层数</option></select>{draft.psdLayerMode === "MANUAL" && <input aria-label="PSD图层数量" className="w-16 rounded border border-border" type="number" min={2} max={10} value={draft.psdLayerCount} disabled={locked} onChange={event => edit({ psdLayerCount: Number(event.target.value) })} />}</div><p className="text-xs text-muted-foreground">会额外使用分层服务额度，原图先可用。</p></>}
+            {props.onAdvancedSettings && <button className={button} type="button" onClick={() => { setSettingsOpen(false); props.onAdvancedSettings?.(); }}>素材用途与输出画框</button>}
+          </div>
         </div>
       </div>
       {draft.sizeSelection.ratioKey === "custom" && <div className="flex gap-2 px-1">{(["width", "height"] as const).map(axis => <input key={axis} aria-label={axis === "width" ? "自定义比例宽" : "自定义比例高"} className="w-20 rounded border border-border bg-background px-2 py-1 text-xs" type="number" min={1} max={10000} disabled={locked} value={draft.sizeSelection.customRatio?.[axis] ?? 1} onChange={event => edit({ sizeSelection: { ...draft.sizeSelection, customRatio: { width: 1, height: 1, ...draft.sizeSelection.customRatio, [axis]: Number(event.target.value) } } })} />)}</div>}

@@ -104,12 +104,12 @@ async function openConversation(frame: Frame) {
   await expect(frame.getByTestId("owned-conversation")).toBeVisible();
   await expect(frame.getByTestId("owned-conversation")).toHaveAttribute("data-conversation-ready", "true");
   const settings = frame.getByTestId("conversation-settings");
-  if (await settings.getAttribute("open") !== null) await settings.locator("summary").click();
+  if (await settings.getAttribute("aria-expanded") === "true") await settings.click();
 }
 async function openAdvancedGeneration(frame: Frame) {
   await openConversation(frame);
   const settings = frame.getByTestId("conversation-settings");
-  if (await settings.getAttribute("open") === null) await frame.getByLabel("生成设置", { exact: true }).click();
+  if (await settings.getAttribute("aria-expanded") === "false") await frame.getByLabel("生成设置", { exact: true }).click();
   await expect(frame.getByRole("textbox", { name: "对话设计需求", exact: true })).toBeVisible();
 }
 async function openWorkflow(frame: Frame) {
