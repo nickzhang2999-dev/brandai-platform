@@ -65,3 +65,24 @@ Checks: `node --test scripts/test-novart-production.mjs`, full repository gates,
 real CDS preflight/release/history, container image revisions, persistent volume
 identity, all three HTTPS origins and served-resource digests. Unit fixtures only
 test deployment guards; they are not provider or business-data acceptance.
+
+
+## One-time GPT Image 2.6 configuration upgrade
+
+The versioned release entry runs `apps/web/scripts/upgrade-image26.ts` inside the
+production Web container after services start. It requires the production queue,
+release identity and existing decryptable OpenAI configuration. It checks that
+the configured upstream advertises `gpt-image-2.6-sunburst`, then makes one actual
+1024-square low-quality generation request before changing the stored model.
+The returned PNG and JSON receipt (requested/returned model, upstream request ID,
+SHA-256 and release commit) are retained in configured object storage under
+`__model_verification/`. A real successful call is recorded as
+`UsageLog.kind=IMAGE_MODEL_UPGRADE`; no credentials are printed or changed.
+The database switch uses an optimistic lock against the original settings row.
+An unavailable model, failed generation/storage or concurrent settings edit
+stops the upgrade. Subsequent releases detect the completed audit and preserve
+later explicit administrator model choices without repeating a paid request.
+Code rollback remains compatible with `gpt-image-2`; changing the configured
+model back is an explicit administrator operation, not an automatic release
+side effect. Production proof distinguishes the submitted model ID from a
+returned model ID, which some upstreams omit.

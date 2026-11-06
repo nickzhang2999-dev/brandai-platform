@@ -440,3 +440,10 @@ P1 local gates complete: e0725bd owned shell/export;6ce5de0 routes;601a3c1 exact
 - [x] Preserve enterprise-only login and pre-hydration guards; retain committed release-entry verification.
 - [x] Run full local gates and relevant browser regression checks.
 - [ ] Push the resolved merge to devUpdate1012 and verify PR checks; do not merge main or release production.
+
+
+## 2026-11-06 · GPT Image 2.6 migration (in progress)
+
+User requests production model-ID verification and upgrade, and explicitly chose reuse of the existing production API key. Isolated worktree `brandai-image26`, branch `claude/image26-migration`, based on production commit `3272951480c2a737886a9f4921c30504e7e3cc66`. Target: `gpt-image-2.6-sunburst`; Flare remains an explicit supported alternative.
+
+Code compatibility and defaults prepared. Still required: production AppSetting/model request evidence, upstream model availability, all-green Linux AI checks, ordinary CI/image gates and CDS production release, then persisted configuration update and one actual generation/edit verification. No production configuration change, key rotation, push, PR or release performed.

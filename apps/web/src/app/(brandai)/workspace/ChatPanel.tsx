@@ -1190,7 +1190,7 @@ export function ChatPanel({
                 aria-hidden
                 className="inline-block h-1.5 w-1.5 rounded-full bg-primary"
               />
-              gpt-image-2
+              AI 生图
             </span>
             <button
               type="button"

@@ -184,7 +184,11 @@ def _snap_openai_size(width: int, height: int) -> str:
 
 
 def _is_gpt_image_2_model(model: str | None) -> bool:
-    return bool(model) and str(model).split("/")[-1] == "gpt-image-2"
+    # Explicit IDs only: keep legacy size handling for other image models.
+    return bool(model) and str(model).split("/")[-1] in {
+        "gpt-image-2", "gpt-image-2-2026-04-21",
+        "gpt-image-2.6-sunburst", "gpt-image-2.6-flare",
+    }
 
 
 def _validate_gpt_image_2_size(width: int, height: int) -> None:
@@ -308,6 +312,11 @@ def _estimate_cost_usd(
     n: int,
     model: str | None = None,
 ) -> float | None:
+    if kind == "openai" and str(model).split("/")[-1] in {
+        "gpt-image-2.6-sunburst", "gpt-image-2.6-flare",
+    }:
+        # Do not reuse GPT Image 2's per-size estimates for the new models.
+        return None
     if kind == "openai" and _is_gpt_image_2_model(model):
         per = _GPT_IMAGE_2_PRICE_USD.get(
             quality or _DEFAULT_IMAGE_QUALITY, {}
@@ -594,7 +603,7 @@ class HttpImageProvider(ImageProvider):
                 f"at most {_MAX_IMG2IMG_REFS} image inputs are supported; "
                 f"got {len(refs)}"
             )
-        effective_model = model or self.model or "gpt-image-2"
+        effective_model = model or self.model or "gpt-image-2.6-sunburst"
         size = _resolve_openai_size(width, height, effective_model)
         started = time.perf_counter()
         failure_stage = "source"
@@ -703,7 +712,7 @@ class HttpImageProvider(ImageProvider):
                         files=files,
                         data={
                             "prompt": _edit_prompt(op, payload),
-                            "model": self.model or "gpt-image-2",
+                            "model": self.model or "gpt-image-2.6-sunburst",
                             "size": size,
                             "n": "1",
                             **({"output_format": "png"} if payload.get("studioImageTool") else {}),
