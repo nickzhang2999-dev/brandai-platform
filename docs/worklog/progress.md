@@ -583,3 +583,17 @@ Implemented persistent writing documents, versioned selection replacement, bound
 ## 2026-10-29 PR #68 conflict resolution
 
 Integrated main 632ac2f into devUpdate1012 f83a8a9 in an isolated worktree. Preserved the persistent writing workbench and inspiration/Omni implementation, combined enterprise-only login with hydration protection, and kept main's committed production-script verification. Added desktop/mobile regression assertions that registration stays hidden and retained the copywriting inbox navigation checks. Local validation passed: pnpm test (Web 2147, contracts 312, UI 39; 31 database-gated tests skipped), AI 712, typecheck, production build with the existing low-memory option, lint (0 errors / 17 warnings), release check and 7 release-contract tests. Isolated Chrome regression passed: login 15, inbox 19, canvas core 55, writing standalone 31, writing embedded 22, shell layout 11 and inspiration activity 9. Shell export tests 8 and CI branch-policy tests 2 also passed. Browser checks use synthetic local fixtures and do not establish live provider or database acceptance. Remote checks remain pending; no main merge or production release performed.
+
+
+## 2026-11-06 · GPT Image 2.6 migration prepared, not released
+
+Target `gpt-image-2.6-sunburst`, existing production key reuse authorized. Updated Web/AI fallback defaults, admin hints, family recognition for generation/edit/reference paths, cost-estimate handling and paired generation revision `gpt-image-2-6-size-quality-r2`. The workspace badge no longer asserts a hardcoded model name. Explicit admin/DB/env overrides remain authoritative; the production DB model has not been changed.
+
+Validation: contracts 312 passed; UI 39 passed; Web 2147 passed / 31 skipped; typecheck and production build passed; release-script check and 7 release-contract tests passed. Final AI suite: 715 passed / 1 failed. The failure is `tests/test_studio_writing.py::test_production_subprocess_and_real_endpoint` (`WritingParseError: invalid_document`), also reproduced in the unchanged original workspace on macOS/Python 3.14. The initial Web test attempt preceded Prisma generation and failed initialization; after generation the complete retry passed. Used repository-pinned pnpm 9.15.0 after the bundled pnpm 11 dependency-build policy prevented initial installation. No policy change retained.
+
+Not pushed or released: G-VERIFY still requires the complete AI suite green on a compatible environment. Production model-ID verification and real 2.6 provider acceptance are also outstanding due to the CDS host-management access denial recorded in findings. No paid provider calls performed.
+
+
+### 2026-11-06 · PR/release continuation
+
+User explicitly authorized PR, production release and runtime model-ID verification. Full AI suite now passes on local Podman Linux/Python 3.12: 716 passed. The first container mount omitted the contracts source and failed the literal-mirror check; corrected by mounting the repository root, after which the complete suite passed. Earlier macOS parser failure remains environment-specific and was not suppressed or changed. Existing contracts/UI/Web/typecheck/build/release checks remain passed; no intervening changes affect those checks. CDS CLI authentication and project container inspection work. Official operator discovery requires human authentication; project credentials are not used to bypass that boundary. Production settings upgrade/verification will be part of the project-owned release contract.

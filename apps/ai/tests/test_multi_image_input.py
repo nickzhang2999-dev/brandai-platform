@@ -375,3 +375,16 @@ def test_multi_strict_refs_fallback_edit_path_keeps_all_urls(client):
         "https://cdn/a.png",
         "https://cdn/b.png",
     ]
+
+
+def test_image_26_gateway_strict_references_use_image_edit_endpoint(client):
+    provider = _RecordingOpenAIProvider()
+    provider.kind = "generic"
+    provider.model = "openai/gpt-image-2.6-sunburst"
+    refs = [_strict_ref("https://cdn/a.png", source="asset:fixture")]
+    response = _post_with(client, provider, _payload(aiConstraints=_constraints(refs)))
+    assert response.status_code == 200
+    assert len(provider.ref_calls) == 1
+    assert provider.generate_calls == []
+    assert provider.edit_calls == []
+    assert response.json()["versions"][0]["params"]["generationPath"] == "strict_image_input"

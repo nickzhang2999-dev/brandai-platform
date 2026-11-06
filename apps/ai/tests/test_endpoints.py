@@ -5,7 +5,7 @@ def test_health(client):
     assert client.get("/health").json() == {
         "status": "ok",
         "parserRevision": "grounded-six-slot-r6",
-        "generationRevision": "gpt-image-2-size-quality-r1",
+        "generationRevision": "gpt-image-2-6-size-quality-r2",
         "visualCheckRevision": "studio-visual-check-evidence-r1",
         "providerRetryRevision": "single-provider-attempt-r2",
         "studioEditRevision": "studio-whole-image-edit-r1",

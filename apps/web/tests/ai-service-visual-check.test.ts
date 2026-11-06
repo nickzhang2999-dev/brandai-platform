@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const f = vi.hoisted(() => ({ dns: vi.fn(), fetch: vi.fn() }));
 vi.mock("node:dns/promises", () => ({ resolve4: f.dns }));
-const current = { parserRevision: "grounded-six-slot-r6", generationRevision: "gpt-image-2-size-quality-r1", visualCheckRevision: "studio-visual-check-evidence-r1", providerRetryRevision: "single-provider-attempt-r2" };
+const current = { parserRevision: "grounded-six-slot-r6", generationRevision: "gpt-image-2-6-size-quality-r2", visualCheckRevision: "studio-visual-check-evidence-r1", providerRetryRevision: "single-provider-attempt-r2" };
 const older = { parserRevision: current.parserRevision, generationRevision: current.generationRevision };
 const editable = { ...current, studioEditRevision: "studio-whole-image-edit-r1" };
 const layered = { ...current, studioDecompositionRevision: "studio-real-layer-single-attempt-r1" };

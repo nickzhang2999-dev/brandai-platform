@@ -296,3 +296,14 @@ main 为 d896d7c，开发版为 c13a7c0。独立工作区以 main 为基线迁�
 ## 2026-10-29 PR #68 merge boundaries
 
 The source f83a8a9 and main 632ac2f contain parallel/cherry-picked history. Resolving only conflict markers in OwnedEditorClient would leave obsolete panel JSX beside the new workbench, so the reviewed development editor and its integration fixture are kept together. Main contributes enterprise provisioning, three copywriting inbox regressions and release-entry integrity checks. The inbox CI expectation is therefore 19, not the development branch's 16. This PR includes the development inspiration/Omni code; October 26/27 release-isolation notes describe those earlier deliveries, not this PR. Existing runtime enablement and membership checks are retained.
+
+
+## 2026-11-06 · GPT Image 2.6 evidence and boundaries
+
+Official source: https://developers.openai.com/api/docs/guides/image-generation . Explicit IDs are `gpt-image-2.6-sunburst` and `gpt-image-2.6-flare`, not a bare `gpt-image-2.6`. Both retain custom pixel dimensions; current medium/high rendering-quality choices remain supported. No new complexity/output-format feature added in this migration.
+
+Production `https://deepflare.cn/api/health` reports queue `brandai-prod`, worker commit `3272951480c2`, image provider `openai`, config source `db`, generation revision `gpt-image-2-size-quality-r1`. This does NOT establish the runtime model ID. Production admin AI endpoint requires authentication. The CDS main preview was separately verified with queue `main`; its settings must not be reported as production settings.
+
+Existing CDS project authorization was found at the original workspace `.cds/credentials.json` and verified without printing secrets. Browser login also confirmed. Project branch APIs/container inspection work, but attempted operator/remote-host metadata requests returned Cloudflare HTTP 403, error 1010 `browser_signature_banned`, `retryable=false`, `owner_action_required=true` (rays `a560f4eafc5f284e`, `a560f4eaf949fe59`). No retry of the blocked interfaces or privilege workaround. Production DB/model requests remain unverified.
+
+Compatibility defect: Python `_is_gpt_image_2_model` accepted only an exact old ID, and the STRICT-reference route separately repeated that check. Merely changing the DB model would cause size snapping, edit capability rejection or incorrect reference routing. Both checks now recognize explicit 2.6 IDs including gateway namespaces. New generation revision isolates workers from old AI services. New model cost estimates return unknown instead of incorrectly reusing the old per-size table.

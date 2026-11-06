@@ -14,12 +14,8 @@ class Settings:
     # endpoint table keyed by provider name (registry._IMAGE_ENDPOINTS).
     image_base_url: str = os.getenv("IMAGE_PROVIDER_BASE_URL", "")
     vlm_base_url: str = os.getenv("VLM_PROVIDER_BASE_URL", "")
-    # Model ids. Gateways like OpenRouter require a namespaced id
-    # ("openai/gpt-image-2", "openai/gpt-4o"); OpenAI direct takes the bare id
-    # ("gpt-image-2", "gpt-4o"). 铁律：图像模型固定 gpt-image-2（写死默认），
-    # 仍可被 IMAGE_MODEL env / AppSetting 覆盖为兼容网关的命名空间 id；empty
-    # vlm_model → "gpt-4o"。
-    image_model: str = os.getenv("IMAGE_MODEL", "gpt-image-2")
+    # Gateways may require namespaced IDs; explicit request/DB config wins.
+    image_model: str = os.getenv("IMAGE_MODEL", "gpt-image-2.6-sunburst")
     vlm_model: str = os.getenv("VLM_MODEL", "")
     # 图层分解上游。与 image/vlm 分开配置：fal 的 qwen-image-layered 是原生协议，
     # 和 OpenAI 的 /images/generations 形状毫无共同点，塞进同一组配置只会让
