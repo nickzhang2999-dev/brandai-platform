@@ -88,3 +88,11 @@ test('both PR CI and immutable image CI execute the same project script contract
   assert.match(readFileSync('CLAUDE.md', 'utf8'), /策略为 `project-script`/);
   assert.doesNotMatch(readFileSync('CLAUDE.md', 'utf8'), /策略为 `generated-compose`/);
 });
+
+
+test('production model upgrade follows service readiness and precedes final served verification', () => {
+  const start = script.indexOf('up -d --remove-orphans');
+  const upgrade = script.indexOf('web pnpm -F web exec tsx scripts/upgrade-image26.ts');
+  const final = script.indexOf('for origin in https://deepflare.cn');
+  assert.ok(start >= 0 && upgrade > start && final > upgrade);
+});
