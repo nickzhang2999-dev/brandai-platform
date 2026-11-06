@@ -16,7 +16,7 @@ export async function listInspirationFeedback(workspaceId:string,userId:string,s
   requireEnabled();
   const {role}=await requireWorkspaceRole(workspaceId,userId,scope==='review'?'OWNER':'VIEWER');
   const rows=await prisma.inspirationFeedback.findMany({where:{workspaceId,...(scope==='review'?{status:'OPEN'}:{userId})},select,orderBy:{createdAt:'desc'},take:100});
-  const libraries=new Map(await Promise.all([...new Set(rows.map(r=>r.libraryId))].map(async id=>[id,await activeRecords(await resolveLibrary(workspaceId,id))] as const)));
+  const libraries=new Map(await Promise.all([...new Set(rows.map(r=>r.libraryId))].map(async id=>[id,await activeRecords(await resolveLibrary(workspaceId,id),{caseIds:rows.filter(row=>row.libraryId===id).map(row=>row.caseId)})] as const)));
   return {scope,canReview:role==='OWNER',items:rows.map(row=>{
     const current=libraries.get(row.libraryId)?.records.find(r=>r.caseId===row.caseId&&r.revision===row.revision);
     const title=current && typeof current.body==='object' && current.body && !Array.isArray(current.body) && typeof current.body.title==='string' ? current.body.title : null;

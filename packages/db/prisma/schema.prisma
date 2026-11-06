@@ -1191,8 +1191,10 @@ model InspirationImageReceipt {
   receivedAt DateTime?
   libraryId String?
   releaseId String?
+  initializationId String?
   @@id([ownerId, sha256])
   @@index([ownerId, receivedDay])
+  @@index([ownerId, initializationId])
 }
 
 model InspirationDailyPolicy {
@@ -1224,6 +1226,10 @@ model InspirationLibrary {
   bookmarks InspirationBookmark[]
   feedback InspirationFeedback[]
   syncTasks AsyncTask[]
+  snapshotImports InspirationSnapshotImport[]
+  snapshotObjects InspirationSnapshotObject[]
+  catalogParts InspirationSnapshotCatalogPart[]
+  snapshotReleaseParts InspirationSnapshotReleasePart[]
   @@index([ownerId, kind])
 }
 
@@ -1276,6 +1282,7 @@ model InspirationRecord {
   deleted     Boolean        @default(false)
   body        Json
   createdAt   DateTime       @default(now())
+  catalogEntries InspirationSnapshotCatalogEntry[]
 
   @@unique([libraryId, caseId, revision], map: "InspirationLibraryRecord_revision_key")
   @@index([libraryId, caseId], map: "InspirationLibraryRecord_case_idx")
@@ -1294,6 +1301,112 @@ model InspirationImage {
 
   @@unique([libraryId, releaseId, path], map: "InspirationLibraryImage_file_key")
   @@map("InspirationLibraryImage")
+}
+
+// Snapshot v3 staging is invisible until release bindings and activeRelease commit.
+model InspirationSnapshotImport {
+  id String @id @default(cuid())
+  libraryId String
+  library InspirationLibrary @relation(fields: [libraryId], references: [id], onDelete: Cascade)
+  releaseId String
+  sequence Int
+  rootHash String
+  manifest Json
+  status String @default("DISCOVERED")
+  nextPart Int @default(0)
+  leaseOwner String?
+  leaseEpoch Int @default(0)
+  leaseUntil DateTime?
+  lastError String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  parts InspirationSnapshotImportPart[]
+  @@unique([libraryId, releaseId])
+  @@index([libraryId, status])
+}
+
+model InspirationSnapshotObject {
+  libraryId String
+  library InspirationLibrary @relation(fields: [libraryId], references: [id], onDelete: Cascade)
+  sha256 String
+  size Int
+  mime String
+  width Int
+  height Int
+  bytes Bytes
+  createdAt DateTime @default(now())
+  @@id([libraryId, sha256])
+}
+
+model InspirationSnapshotCatalogPart {
+  libraryId String
+  library InspirationLibrary @relation(fields: [libraryId], references: [id], onDelete: Cascade)
+  sha256 String
+  prefix String
+  size Int
+  recordCount Int
+  createdAt DateTime @default(now())
+  entries InspirationSnapshotCatalogEntry[]
+  objects InspirationSnapshotPartObject[]
+  imports InspirationSnapshotImportPart[]
+  releases InspirationSnapshotReleasePart[]
+  @@id([libraryId, sha256])
+}
+
+model InspirationSnapshotCatalogEntry {
+  libraryId String
+  partHash String
+  caseId String
+  recordId String
+  searchText String
+  contentType String
+  industry String[]
+  medium String[]
+  task String[]
+  record InspirationRecord @relation(fields: [recordId], references: [id], onDelete: NoAction)
+  part InspirationSnapshotCatalogPart @relation(fields: [libraryId, partHash], references: [libraryId, sha256], onDelete: Cascade)
+  @@id([libraryId, partHash, caseId])
+  @@index([recordId])
+  @@index([libraryId, contentType])
+  @@index([industry], type: Gin)
+  @@index([medium], type: Gin)
+  @@index([task], type: Gin)
+}
+
+model InspirationSnapshotPartObject {
+  libraryId String
+  partHash String
+  path String
+  sha256 String
+  size Int
+  mime String
+  width Int
+  height Int
+  part InspirationSnapshotCatalogPart @relation(fields: [libraryId, partHash], references: [libraryId, sha256], onDelete: Cascade)
+  @@id([libraryId, partHash, path])
+  @@index([libraryId, sha256])
+}
+
+model InspirationSnapshotImportPart {
+  importId String
+  import InspirationSnapshotImport @relation(fields: [importId], references: [id], onDelete: Cascade)
+  ordinal Int
+  libraryId String
+  partHash String
+  part InspirationSnapshotCatalogPart @relation(fields: [libraryId, partHash], references: [libraryId, sha256], onDelete: NoAction)
+  @@id([importId, ordinal])
+  @@unique([importId, partHash])
+}
+
+model InspirationSnapshotReleasePart {
+  libraryId String
+  library InspirationLibrary @relation(fields: [libraryId], references: [id], onDelete: Cascade)
+  releaseId String
+  ordinal Int
+  partHash String
+  part InspirationSnapshotCatalogPart @relation(fields: [libraryId, partHash], references: [libraryId, sha256], onDelete: NoAction)
+  @@id([libraryId, releaseId, ordinal])
+  @@unique([libraryId, releaseId, partHash])
 }
 
 model InspirationChat {

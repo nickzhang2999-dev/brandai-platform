@@ -52,7 +52,7 @@ describe('catalog service visibility and model evidence', () => {
     mocks.enabled.mockReturnValue(false); await listCases('workspace');
     mocks.enabled.mockReturnValue(true); mocks.records.mockResolvedValue({ state: null, release: null, records: [{ caseId: 'legacy-case', revision: 1, body: record() }] });
     expect((await listCases('workspace')).cases[0]?.caseId).toBe('legacy-case');
-    expect(mocks.records).toHaveBeenCalledOnce(); expect(mocks.records).toHaveBeenCalledWith({id:'workspace',kind:'WORKSPACE',ownerId:'tenant',legacyWorkspaceId:'workspace'});
+    expect(mocks.records).toHaveBeenCalledOnce(); expect(mocks.records).toHaveBeenCalledWith({id:'workspace',kind:'WORKSPACE',ownerId:'tenant',legacyWorkspaceId:'workspace'},{skipSnapshotRecords:true});
   });
   it('excludes legacy defaults from filters, case details and the actual model request payload', async () => {
     const original = record(), before = JSON.stringify(original);

@@ -5,6 +5,8 @@ import { CONTENT_SYNC_ERROR, WITHDRAWAL_SYNC_ERROR, DAILY_IMAGE_LIMIT_CODE } fro
 import { assertEnvelopeScope, assertPublicationScope, publicationUseBasis } from './publication-scope';
 import { libraryScope, type LibraryInput, type LibraryScope } from './library-scope';
 import { beginDailyReceipt, dailyReceiptsEnabled, recordDailyReceipt, DailyReceiptLimit } from './daily-receipts';
+import {isSnapshotRelease,assertSnapshotReadScope} from './snapshot-catalog';
+import type {SnapshotContinuation} from './snapshot-sync';
 
 type Tx = Prisma.TransactionClient;
 const json = (v: unknown) => JSON.parse(JSON.stringify(v)) as Prisma.InputJsonValue;
@@ -118,31 +120,42 @@ export async function rollbackReplica(input:LibraryInput, releaseId:string) {
   await prisma.$transaction(async tx=> { await lockLibrary(tx,libraryId);
     const target=await tx.inspirationRelease.findUnique({where:{libraryId_releaseId:{libraryId,releaseId}}}); if(!target) throw new Error('Unknown local release');
     const state=await tx.inspirationState.findUnique({where:{libraryId}});
-    await assertSnapshotScope(tx,library,target.snapshot,new Set(strings(state?.withdrawn)));
+    if(isSnapshotRelease(target))assertSnapshotReadScope(target,library);
+    else await assertSnapshotScope(tx,library,target.snapshot,new Set(strings(state?.withdrawn)));
     // High-water marks and withdrawals are deliberately not rolled back.
     await tx.inspirationState.update({where:{libraryId},data:{activeRelease:releaseId}});
   });
 }
-export async function syncReplica(input: LibraryInput, signal: AbortSignal,beforeImport?:()=>Promise<void>) {
+export async function syncReplica(input: LibraryInput, signal: AbortSignal,beforeImport?:()=>Promise<void>,continuation:SnapshotContinuation={}) {
   const library=libraryScope(input),libraryId=library.id;
   const startedAt = await beginCheck(libraryId, 'content');
   try {
     await beforeImport?.();
-    await syncReplicaContent(library, signal,beforeImport);
+    const result=await syncReplicaContent(library, signal,beforeImport,continuation);
     signal.throwIfAborted();
+    if(result&&!result.complete)return result;
     await finishCheck(libraryId, 'content', startedAt, true);
+    return result;
   } catch (error) {
     await finishCheck(libraryId, 'content', startedAt, false,error instanceof DailyReceiptLimit);
     throw error;
   }
 }
-async function syncReplicaContent(library: LibraryScope, signal: AbortSignal,beforeImport?:()=>Promise<void>) {
+async function syncReplicaContent(library: LibraryScope, signal: AbortSignal,beforeImport?:()=>Promise<void>,continuation:SnapshotContinuation={}) {
   const libraryId=library.id;
   const c=syncConfig(library.kind); if(!c) throw new Error('Publisher is not configured');
   const limits=syncSizeLimits();
   const fetchPath=async(path:string,max:number)=>boundedBody(await fetch(`${c.baseUrl}${path}`,{headers:{Authorization:`Bearer ${c.token}`},redirect:'error',signal,cache:'no-store'}),max);
   // Withdrawal failure stops sync; content never advances while revocations are unknown.
   await syncWithdrawals(library, signal);
+  if(library.kind==='SHARED'&&process.env.INSPIRATION_SNAPSHOT_V3_ENABLED==='true') {
+    const {synchronizeSnapshot}=await import('./snapshot-sync');
+    const result=await synchronizeSnapshot(library,signal,beforeImport??(async()=>{}),continuation);
+    if(result)return result;
+    const state=await prisma.inspirationState.findUnique({where:{libraryId}});
+    const current=state?.activeRelease?await prisma.inspirationRelease.findUnique({where:{libraryId_releaseId:{libraryId,releaseId:state.activeRelease}}}):null;
+    if(isSnapshotRelease(current))throw new Error('Snapshot discovery rollback');
+  }else if(continuation.sessionId)throw new Error('snapshot_v3_disabled');
   const latest=JSON.parse((await fetchPath('/latest',65536)).toString('utf8'));
   assertEnvelopeScope({...latest,schema_version:latest.schema_version??1},library,receiverOrigin());
   if(latest.status==='empty') {
@@ -212,13 +225,19 @@ export async function syncWithdrawals(input:LibraryInput,signal:AbortSignal) {
     throw error;
   }
 }
-export async function activeRecords(input:LibraryInput) {
+export async function activeRecords(input:LibraryInput,options:{caseIds?:readonly string[];skipSnapshotRecords?:boolean;take?:number}={}) {
   const library=libraryScope(input),libraryId=library.id;
   const state=await prisma.inspirationState.findUnique({where:{libraryId}});
   const release=state?.activeRelease ? await prisma.inspirationRelease.findUnique({where:{libraryId_releaseId:{libraryId,releaseId:state.activeRelease}}}) : null;
+  if(isSnapshotRelease(release)) {
+    assertSnapshotReadScope(release!,library);
+    const {readSnapshotCatalog}=await import('./snapshot-import');
+    const records=options.skipSnapshotRecords||options.caseIds?.length===0?[]:await readSnapshotCatalog(libraryId,release!.releaseId,{caseIds:options.caseIds?[...options.caseIds]:undefined,take:options.take??Math.max(500,options.caseIds?.length??0),excludedCaseIds:strings(state?.withdrawn)});
+    return {state,release,records:records.filter(row=>{try{const body=row.body as unknown as PublishedCase;assertPublicationScope(body,library,receiverOrigin());return body.display_permission==='allowed';}catch{return false;}})};
+  }
   const withdrawn=new Set(strings(state?.withdrawn)); const snapshot=(release?.snapshot ?? {}) as Record<string,string>;
   const ids=Object.entries(snapshot).filter(([id])=>!withdrawn.has(id)).map(([,id])=>id);
-  const records=await prisma.inspirationRecord.findMany({where:{libraryId,id:{in:ids},deleted:false}});
+  const records=await prisma.inspirationRecord.findMany({where:{libraryId,id:{in:ids},deleted:false,...(options.caseIds?{caseId:{in:[...options.caseIds]}}:{})}});
   return {state,release,records:records.filter(r=>{
     const body=r.body as unknown as PublishedCase;
     if(body.display_permission!=='allowed')return false;

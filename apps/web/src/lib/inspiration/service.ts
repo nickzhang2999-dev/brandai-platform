@@ -7,6 +7,7 @@ import { PublishedCase } from './protocol';
 import { catalogMetadata, catalogKeywordScore, pageCatalog, type CatalogFilters, type CatalogPage } from './catalog';
 import { inspirationSyncStatus } from './sync-status';
 import { ensureLibrary, resolveLibrary, sourceLibrary } from './library';
+import {isSnapshotRelease,snapshotCatalogPage,assertSnapshotReadScope} from './snapshot-catalog';
 
 export function requireEnabled() { if(!inspirationEnabled()) throw new ApiException(503,'灵感库尚未启用，请联系管理员完成接入。'); }
 export function card(workspaceId:string, value:unknown,libraryId=workspaceId): InspirationCaseCard {
@@ -21,10 +22,14 @@ export function keywordScore(c:InspirationCaseCard, query:string) {
 }
 /** Internal evidence reads never inherit the UI's page size. Resolve the
  * authorized library and withdrawal-filtered active release on every call. */
-export async function currentCases(workspaceId:string, libraryId?:string, caseIds?:readonly string[]): Promise<{cases:InspirationCaseCard[]}> {
+export async function currentCases(workspaceId:string, libraryId?:string, caseIds?:readonly string[],retrieval?:{query:string}): Promise<{cases:InspirationCaseCard[]}> {
   if(!inspirationEnabled())return {cases:[]};
   const library=await resolveLibrary(workspaceId,libraryId);
-  const {records}=await activeRecords(library);
+  const {records,release}=await activeRecords(library,{caseIds,skipSnapshotRecords:!!retrieval});
+  if(retrieval&&isSnapshotRelease(release)) {
+    const page=await snapshotCatalogPage(library.id,release!.releaseId,{q:retrieval.query.slice(0,500)},{limit:96},{analysisOnly:true});
+    return {cases:page.records.map(row=>card(workspaceId,row.body,library.id))};
+  }
   const ids=caseIds ? new Set(caseIds) : null;
   return {cases:records.filter(r=>!ids||ids.has(r.caseId)).map(r=>card(workspaceId,r.body,library.id))};
 }
@@ -35,7 +40,13 @@ export async function listCases(workspaceId:string, filters:CatalogFilters={},li
     withdrawalSequence:0,lastSyncAt:null,error:null,cases:[],searchMode:'keyword-tags',matchedCount:0,hasMore:false,nextCursor:null,
     syncStatus:inspirationSyncStatus(null,null,false,false,Date.now(),contentSyncMode())};
   const library=await resolveLibrary(workspaceId,libraryId),configured=syncConfigured(library.kind);
-  const {state,release,records}=await activeRecords(library);
+  const {state,release,records}=await activeRecords(library,{skipSnapshotRecords:true});
+  if(isSnapshotRelease(release)) {
+    assertSnapshotReadScope(release!,library);
+    const paged=await snapshotCatalogPage(library.id,release!.releaseId,filters,page);
+    const syncStatus=inspirationSyncStatus(state,release!.manifestHash,enabled,configured,Date.now(),contentSyncMode());
+    return {sourceLibrary:sourceLibrary(library),enabled,syncConfigured:configured,activeRelease:{id:release!.releaseId,sequence:release!.sequence,createdAt:release!.createdAt.toISOString()},caseCount:paged.caseCount,withdrawalSequence:state?.withdrawalSequence??0,lastSyncAt:state?.lastSyncAt?.toISOString()??null,error:[syncStatus.content.error,syncStatus.withdrawals.error].filter(Boolean).join(' ')||null,cases:paged.records.map(row=>card(workspaceId,row.body,library.id)),searchMode:'keyword-tags',matchedCount:paged.matchedCount,hasMore:paged.hasMore,nextCursor:paged.nextCursor,syncStatus};
+  }
   const all=records.map(r=>card(workspaceId,r.body,library.id));
   const paged=pageCatalog(all,filters,page);
   const syncStatus=inspirationSyncStatus(state,release?.manifestHash ?? null,enabled,configured,Date.now(),contentSyncMode());
@@ -43,8 +54,8 @@ export async function listCases(workspaceId:string, filters:CatalogFilters={},li
 }
 export async function getCase(workspaceId:string, caseId:string, revision?:number,libraryId?:string) {
   const library=await resolveLibrary(workspaceId,libraryId);
-  const {records}=await activeRecords(library); const row=records.find(r=>r.caseId===caseId && (revision===undefined || r.revision===revision));
-  if(!row) throw new ApiException(404,'案例已撤回、版本已更新或不可访问。'); return {row,case:card(workspaceId,row.body,library.id),library};
+  const {records,release}=await activeRecords(library,{caseIds:[caseId]}); const row=records.find(r=>r.caseId===caseId && (revision===undefined || r.revision===revision));
+  if(!row) throw new ApiException(404,'案例已撤回、版本已更新或不可访问。'); return {row,case:card(workspaceId,row.body,library.id),library,activeRelease:release?.releaseId,snapshotVersion:isSnapshotRelease(release)?3:2};
 }
 export async function getChat(workspaceId:string,userId:string,id:string): Promise<InspirationChatState> {
   const row=await prisma.inspirationChat.findFirst({where:{workspaceId,userId,id}}); if(!row) throw new ApiException(404,'对话不存在。');
@@ -52,7 +63,8 @@ export async function getChat(workspaceId:string,userId:string,id:string): Promi
     await prisma.inspirationChat.updateMany({where:{id,workspaceId,userId,status:{in:['PENDING','RUNNING']}},data:{status:'FAILED',error:'任务已超时，请重试。'}}); row.status='FAILED';row.error='任务已超时，请重试。';
   }
   const library=await resolveLibrary(workspaceId,row.libraryId);
-  const {records}=await activeRecords(library); const refs=(Array.isArray(row.citations)?row.citations:[]) as unknown as Array<{caseId:string;revision:number}>;
+  const refs=(Array.isArray(row.citations)?row.citations:[]) as unknown as Array<{caseId:string;revision:number}>;
+  const {records}=await activeRecords(library,{caseIds:refs.map(ref=>ref.caseId)});
   const citations=refs.flatMap(ref=>{const r=records.find(r=>r.caseId===ref.caseId && r.revision===ref.revision);return r?[card(workspaceId,r.body,library.id)]:[];});
   const invalid=citations.length!==refs.length;
   return {sourceLibrary:sourceLibrary(library),id:row.id,conversationId:row.conversationId,status:row.status,question:row.question,answer:invalid?'引用内容已撤回或更新，请重新检索后提问。':row.answer,citations,error:row.error,createdAt:row.createdAt.toISOString()};

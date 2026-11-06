@@ -35,6 +35,13 @@ export function catalogMetadata(record: { tags: Record<string, string[]>; editor
   return { contentType, taxonomyStatus, tags } as const;
 }
 
+/** Search projection only; never modifies or re-signs source evidence. */
+export function catalogSearchText(record:{title:string;summary_zh:string;brand_or_team:string;tags:Record<string,string[]>;claims:Array<{text:string}>;editorial?:unknown}) {
+  const {tags}=catalogMetadata(record);
+  const tagTerms=Object.entries(tags).flatMap(([group,values])=>values.flatMap(value=>[value,tagLabel(group,value),...(aliases[value]??[])]));
+  return [record.title,record.summary_zh,record.brand_or_team,...tagTerms,...record.claims.map(claim=>claim.text)].join(' ').toLocaleLowerCase();
+}
+
 /**
  * Relevance score for a keyword query, or 0 for "does not match".
  *

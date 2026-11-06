@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-const mocks=vi.hoisted(()=>({chatUpdate:vi.fn(),chatFind:vi.fn(),taskUpdate:vi.fn(),taskFind:vi.fn(),states:vi.fn(),sync:vi.fn(),withdrawals:vi.fn(),transaction:vi.fn(),library:vi.fn(),receiver:vi.fn()}));
-vi.mock('@brandai/db',()=>({prisma:{inspirationLibrary:{findUnique:mocks.library},inspirationChat:{updateMany:mocks.chatUpdate,findFirst:mocks.chatFind},inspirationLibraryTask:{findFirst:mocks.taskFind,updateMany:mocks.taskUpdate},inspirationState:{findMany:mocks.states},$transaction:mocks.transaction}}));
+const mocks=vi.hoisted(()=>({chatUpdate:vi.fn(),chatFind:vi.fn(),taskUpdate:vi.fn(),taskFind:vi.fn(),taskCurrent:vi.fn(),states:vi.fn(),sync:vi.fn(),withdrawals:vi.fn(),transaction:vi.fn(),library:vi.fn(),receiver:vi.fn()}));
+vi.mock('@brandai/db',()=>({Prisma:{AnyNull:'synthetic-json-null'},prisma:{inspirationLibrary:{findUnique:mocks.library},inspirationChat:{updateMany:mocks.chatUpdate,findFirst:mocks.chatFind},inspirationLibraryTask:{findFirst:mocks.taskFind,findUnique:mocks.taskCurrent,updateMany:mocks.taskUpdate},inspirationState:{findMany:mocks.states},$transaction:mocks.transaction}}));
 vi.mock('@/lib/inspiration/service',()=>({currentCases:vi.fn()}));vi.mock('@/lib/inspiration/provider',()=>({answerEvidence:vi.fn()}));
 vi.mock('@/lib/inspiration/selected-images',()=>({loadSelectedImages:vi.fn()}));vi.mock('@/lib/inspiration/access',()=>({requireActiveEditor:vi.fn(),requireCurrentEvidence:vi.fn(),requireLibraryReceiver:mocks.receiver}));vi.mock('@/lib/inspiration/retrieval',()=>({retrieveInspirationCases:vi.fn()}));
 vi.mock('@/lib/inspiration/replica',()=>({syncReplica:mocks.sync,syncWithdrawals:mocks.withdrawals,lockWorkspace:vi.fn()}));
@@ -13,6 +13,7 @@ beforeEach(()=>{
   vi.clearAllMocks();vi.useFakeTimers();vi.setSystemTime(new Date('2026-11-02T06:00:00Z'));
   vi.stubEnv('INSPIRATION_ENABLED','true');vi.stubEnv('INSPIRATION_CONTENT_SYNC_MODE','manual');vi.stubEnv('INSPIRATION_PUBLISHER_URL','https://publisher.invalid/knowledge/v1');vi.stubEnv('INSPIRATION_READ_TOKEN','synthetic');vi.stubEnv('INSPIRATION_TRUSTED_KEYS_JSON','{"test":"synthetic"}');
   mocks.chatUpdate.mockResolvedValue({count:0});mocks.chatFind.mockResolvedValue(null);mocks.taskFind.mockResolvedValue(null);mocks.taskUpdate.mockResolvedValue({count:1});mocks.states.mockResolvedValue([{libraryId:'workspace-a',library:{id:'workspace-a',kind:'WORKSPACE',ownerId:'user',legacyWorkspaceId:'workspace-a'}}]);mocks.library.mockResolvedValue({id:'workspace-a',kind:'WORKSPACE',ownerId:'user',legacyWorkspaceId:'workspace-a'});mocks.receiver.mockResolvedValue(undefined);mocks.sync.mockResolvedValue(undefined);mocks.withdrawals.mockResolvedValue(undefined);
+  mocks.taskCurrent.mockImplementation(async()=>{const claim=[...mocks.taskUpdate.mock.calls].reverse().find(([call])=>call.data.inputJson?.syncClaimId)?.[0];return claim?{status:'RUNNING',expiresAt:claim.where.expiresAt,inputJson:claim.data.inputJson}:null;});
 });
 afterEach(async()=>{await worker?.close();worker=undefined;vi.useRealTimers();vi.unstubAllEnvs();});
 describe('manual content reception preserves automatic withdrawals',()=>{

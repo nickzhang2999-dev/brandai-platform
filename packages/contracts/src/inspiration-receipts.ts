@@ -8,7 +8,7 @@ export const InspirationReceiptDailyResult=z.object({
   schema_version:z.literal(1),timezone:z.literal('Asia/Shanghai'),day:z.string(),enabled:z.boolean(),initialized:z.boolean(),
   started_at:z.string().nullable(),start_day:z.string().nullable(),metric:z.literal('first_successful_unique_image_sha256'),
   received:z.number().int().nonnegative(),target:z.number().int().nullable(),remaining:z.number().int().nonnegative().nullable(),
-  baseline_count:z.number().int().nonnegative(),receipt_revision:z.string().nullable(),baseline_revision:z.string().nullable(),
+  baseline_count:z.number().int().nonnegative(),initialized_count:z.number().int().nonnegative().default(0),receipt_revision:z.string().nullable(),baseline_revision:z.string().nullable(),
   human_reviewed:z.null(),quality_review:z.object({day:z.string(),reviewed_at:z.string().nullable()}).nullable(),notice:z.string(),
 });
 export const InspirationReceiptPreflightResult=InspirationReceiptDailyResult.extend({known_sha256:z.array(z.string()),new_unique_images:z.number().int().nonnegative(),fits:z.boolean(),advisory:z.literal(true),atomic_package_required:z.literal(true)});

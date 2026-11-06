@@ -42,6 +42,7 @@ class InspirationReceiptDailyResult(StrictModel):
     target: int | None
     remaining: Annotated[int, Field(ge=0)] | None
     baseline_count: int = Field(ge=0)
+    initialized_count: int = Field(default=0, ge=0)
     receipt_revision: str | None
     baseline_revision: str | None
     human_reviewed: None

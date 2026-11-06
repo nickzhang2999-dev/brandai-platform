@@ -41,6 +41,31 @@ describe('one-click workspace-scoped inspiration reception',()=>{
     await POST(req(),context());task!.inputJson={trigger:'automatic'};mocks.create.mockClear();
     await POST(req(),context());expect(task!.inputJson).toEqual({trigger:'manual',userId:'user',workspaceId:'workspace-a'});expect(mocks.create).not.toHaveBeenCalled();
   });
+  it('keeps the fixed snapshot root, initial deadline and chunk counter when reconfirming pending work',async()=>{
+    await POST(req(),context());
+    const pinned={trigger:'automatic',snapshotSessionId:'fixed-session',snapshotStartedAt:'2026-11-02T05:00:00.000Z',snapshotChunks:17};
+    task!.inputJson=pinned;mocks.create.mockClear();mocks.update.mockClear();
+    const version=task!.updatedAt;
+    expect((await POST(req(),context())).status).toBe(202);
+    expect(task!.inputJson).toEqual({...pinned,trigger:'manual',userId:'user',workspaceId:'workspace-a'});
+    expect(mocks.update).toHaveBeenCalledWith(expect.objectContaining({where:expect.objectContaining({id:task!.id,status:'PENDING',updatedAt:version})}));
+    expect(mocks.create).not.toHaveBeenCalled();
+  });
+  it('does not replace a running snapshot actor or its pinned continuation on another receive click',async()=>{
+    await POST(req(),context());task!.status='RUNNING';
+    const original={trigger:'manual',userId:'original-actor',workspaceId:'original-brand',snapshotSessionId:'fixed-session',snapshotStartedAt:'2026-11-02T05:00:00.000Z',snapshotChunks:17};
+    task!.inputJson=original;mocks.update.mockClear();mocks.create.mockClear();
+    expect((await POST(req(),context())).status).toBe(202);
+    expect(task!.inputJson).toEqual(original);expect(mocks.update).not.toHaveBeenCalled();expect(mocks.create).not.toHaveBeenCalled();
+  });
+  it('does not overwrite a continuation advanced after the pending task was read',async()=>{
+    await POST(req(),context());const original={trigger:'manual',userId:'original',snapshotSessionId:'fixed-session',snapshotStartedAt:'2026-11-02T05:00:00.000Z',snapshotChunks:17};task!.inputJson=original;
+    mocks.update.mockImplementationOnce(async({where})=>{
+      expect(where.updatedAt).toEqual(now());task!.updatedAt=new Date(now().getTime()+1);task!.inputJson={...original,snapshotChunks:18};
+      return {count:0};
+    });
+    expect((await POST(req(),context())).status).toBe(202);expect(task!.inputJson).toEqual({...original,snapshotChunks:18});
+  });
   it('keeps reception available for old automatic or untagged pending work, then restores confirmed progress',async()=>{
     await POST(req(),context());
     for(const inputJson of [{trigger:'automatic'},null]){
@@ -83,6 +108,12 @@ describe('one-click workspace-scoped inspiration reception',()=>{
     await POST(req(),context());task!.status='FAILED';task!.error=DAILY_IMAGE_LIMIT_AUTOMATIC;
     const result=InspirationReceiveStatus.parse(await (await GET(req(),context())).json());
     expect(result.task?.error).toBe(DAILY_IMAGE_LIMIT_MANUAL);expect(result.task?.error).not.toContain('发布连接');
+  });
+  it('keeps the safe storage-capacity explanation without exposing task internals',async()=>{
+    await POST(req(),context());task!.status='FAILED';task!.error='灵感库存储容量不足，已保存接收进度，已有内容保留。';
+    task!.inputJson={trigger:'manual',snapshotSessionId:'private-session',snapshotChunks:19};
+    const result=InspirationReceiveStatus.parse(await (await GET(req(),context())).json());
+    expect(result.task?.error).toBe(task!.error);expect(JSON.stringify(result)).not.toContain('private-session');
   });
   it('keeps disabled or unconfigured reception unavailable',async()=>{
     mocks.enabled.mockReturnValue(false);expect((await POST(req(),context())).status).toBe(503);

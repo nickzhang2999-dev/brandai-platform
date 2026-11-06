@@ -35,7 +35,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ wsId: s
     const expired = latest && active.includes(latest.status) && (!latest.expiresAt || latest.expiresAt <= now);
     const task = latest ? {
       id: latest.id, status: expired ? 'FAILED' : latest.status,
-      error: expired ? timeoutMessage : latest.status === 'FAILED' ? (isDailyImageLimitMessage(latest.error)?dailyImageLimitMessage(mode):['发布包与当前灵感库的接收范围不一致，请联系管理员检查库配置。','接收权限已变化，请由当前灵感库管理员重新确认。','灵感接收超时，已有内容保留。'].includes(latest.error||'')?latest.error:failureMessage) : null,
+      error: expired ? timeoutMessage : latest.status === 'FAILED' ? (isDailyImageLimitMessage(latest.error)?dailyImageLimitMessage(mode):['发布包与当前灵感库的接收范围不一致，请联系管理员检查库配置。','接收权限已变化，请由当前灵感库管理员重新确认。','灵感接收超时，已有内容保留。','灵感库存储容量不足，已保存接收进度，已有内容保留。'].includes(latest.error||'')?latest.error:failureMessage) : null,
       createdAt: latest.createdAt.toISOString(), updatedAt: latest.updatedAt.toISOString(), expiresAt: latest.expiresAt?.toISOString() ?? null,
     } : null;
     return ok(InspirationReceiveStatus.parse({ enabled, configured, mode, canReceive,canReceiveReason:canReceive?null:configured?'只有公司灵感库管理员或所有者可以接收新内容。':'灵感库连接尚未配置。',sourceLibrary:library?sourceLibrary(library):null,task }), { headers: { 'Cache-Control': 'no-store' } });
@@ -61,7 +61,12 @@ export async function POST(_req: Request, { params }: { params: Promise<{ wsId: 
         // A running importer keeps the actor/brand whose authority it validates.
         // The queue's original workspace identity is immutable. The confirmed
         // consumer context is independently pinned with the actor in inputJson.
-        if(existing.status==='PENDING')await tx.inspirationLibraryTask.updateMany({where:{id:existing.id,status:'PENDING'},data:{inputJson:{trigger:'manual',userId:user.id,workspaceId:wsId}}});
+        if(existing.status==='PENDING') {
+          // Reconfirm the actor without resetting an in-progress fixed snapshot
+          // or its overall deadline. A racing chunk must keep its newer state.
+          const previous=existing.inputJson&&typeof existing.inputJson==='object'&&!Array.isArray(existing.inputJson)?existing.inputJson:{};
+          await tx.inspirationLibraryTask.updateMany({where:{id:existing.id,status:'PENDING',updatedAt:existing.updatedAt},data:{inputJson:{...previous,trigger:'manual',userId:user.id,workspaceId:wsId}}});
+        }
         return existing;
       }
       return tx.inspirationLibraryTask.create({ data: {workspaceId:wsId,inspirationLibraryId:library.id,kind:'INSPIRATION_SYNC', expiresAt: new Date(Date.now() + 6 * 60000), inputJson: { trigger: 'manual', userId: user.id,workspaceId:wsId } } });
