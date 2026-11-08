@@ -84,6 +84,17 @@ suite('shared inspiration real PostgreSQL boundaries',()=>{
     expect((await resolveLibrary(a)).id).toBe(a);
     auth.user={id:other,email:other+'@example.invalid'};expect((await ownerInitialize(request({}),context(foreign))).status).toBe(403);
   });
+  it('initializes a deployed 500 policy once for an existing library without manufacturing quality evidence',async()=>{
+    vi.stubEnv('INSPIRATION_SHARED_SETUP_OWNER_ID',owner);vi.stubEnv('INSPIRATION_SHARED_INITIAL_DAILY_TARGET','500');
+    vi.stubEnv('INSPIRATION_DAILY_RECEIPTS_ENABLED','true');vi.stubEnv('INSPIRATION_RECEIPT_OWNER_ID',owner);
+    const replies=await Promise.all([ownerInitialize(request({}),context(a)),ownerInitialize(request({}),context(b))]);expect(replies.map(r=>r.status)).toEqual([200,200]);
+    const policy=await prisma.inspirationDailyPolicy.findUniqueOrThrow({where:{ownerId:owner}});
+    expect(policy).toMatchObject({target:500,qualityDay:null,qualityEvidence:null,qualityReviewedBy:null,qualityReviewedAt:null});
+    expect((await ownerInitialize(request({}),context(a))).status).toBe(200);
+    expect(await prisma.inspirationDailyPolicy.findUniqueOrThrow({where:{ownerId:owner}})).toEqual(policy);
+    vi.stubEnv('INSPIRATION_SHARED_INITIAL_DAILY_TARGET','100');expect((await ownerInitialize(request({}),context(a))).status).toBe(409);
+    expect((await prisma.inspirationDailyPolicy.findUniqueOrThrow({where:{ownerId:owner}})).target).toBe(500);
+  });
   it('does not grant setup to an OWNER membership or reassign a permanent identity',async()=>{
     const id=library.id+'-owner-bound';extraIdentities.push(id);
     vi.stubEnv('INSPIRATION_SHARED_SETUP_LIBRARY_ID',id);vi.stubEnv('INSPIRATION_SHARED_SETUP_OWNER_ID',member);

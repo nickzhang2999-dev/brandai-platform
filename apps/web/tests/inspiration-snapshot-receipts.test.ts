@@ -24,11 +24,31 @@ describe('500-image receipt and explicit first snapshot initialization',()=>{
   });
   it.each([
     {ownerId:'different-owner'}, {libraryId:'different-library'}, {releaseId:'different-root'},
-    {maxImages:500}, {maxImages:1_000_001}, {maxImages:'1000'}, {extra:true},
   ])('does not widen a mismatched or oversized bootstrap policy %j',async patch=>{
     vi.stubEnv('INSPIRATION_SNAPSHOT_BOOTSTRAP',JSON.stringify({...input,hashes:undefined,target:undefined,maxImages:1000,...patch}));
     await expect(recordSnapshotDailyReceipt(tx,input,now)).rejects.toBeInstanceOf(DailyReceiptLimit);
     expect(db.inspirationImageReceipt.createMany).not.toHaveBeenCalled();
+  });
+  it.each([{maxImages:500,error:'snapshot_initialization_image_limit'},{maxImages:1_000_001,error:'invalid_snapshot_initialization_policy'},{maxImages:'1000',error:'invalid_snapshot_initialization_policy'},{extra:true,error:'invalid_snapshot_initialization_policy'}])('rejects bootstrap bounds or malformed fields %j',async ({error,...patch})=>{
+    vi.stubEnv('INSPIRATION_SNAPSHOT_BOOTSTRAP',JSON.stringify({ownerId:input.ownerId,libraryId:input.libraryId,releaseId:input.releaseId,maxImages:1000,...patch}));
+    await expect(recordSnapshotDailyReceipt(tx,input,now)).rejects.toThrow(error);expect(db.inspirationImageReceipt.createMany).not.toHaveBeenCalled();
+  });
+  it('accounts for a small explicitly scoped history import as initialization even below 500',async()=>{
+    vi.stubEnv('INSPIRATION_SNAPSHOT_BOOTSTRAP',JSON.stringify({ownerId:input.ownerId,libraryId:input.libraryId,releaseId:input.releaseId,maxImages:3}));
+    expect(await recordSnapshotDailyReceipt(tx,{...input,hashes:hashes(3)},now)).toMatchObject({initialized:3,newly_received:0,received:0,remaining:500});
+    expect(db.inspirationImageReceipt.createMany.mock.calls[0]![0].data.every((row:{receivedDay:unknown})=>row.receivedDay===null)).toBe(true);
+  });
+  it.each([{ownerId:null},{ownerId:17},{libraryId:''},{libraryId:['synthetic-library']},{releaseId:false},{releaseId:'../outside'},{releaseId:'x'.repeat(129)}])('fails closed on malformed bootstrap identity even below daily allowance %j',async patch=>{
+    vi.stubEnv('INSPIRATION_SNAPSHOT_BOOTSTRAP',JSON.stringify({ownerId:input.ownerId,libraryId:input.libraryId,releaseId:input.releaseId,maxImages:3,...patch}));
+    await expect(recordSnapshotDailyReceipt(tx,{...input,hashes:hashes(1)},now)).rejects.toThrow('invalid_snapshot_initialization_policy');
+    expect(db.inspirationImageReceipt.createMany).not.toHaveBeenCalled();
+  });
+  it('deduplicates the same owner history across libraries without reassigning old receipts',async()=>{
+    vi.stubEnv('INSPIRATION_SNAPSHOT_BOOTSTRAP',JSON.stringify({ownerId:input.ownerId,libraryId:input.libraryId,releaseId:input.releaseId,maxImages:3}));
+    db.inspirationImageReceipt.findMany.mockResolvedValue([{sha256:hashes(1)[0]}]);
+    expect(await recordSnapshotDailyReceipt(tx,{...input,hashes:hashes(3)},now)).toMatchObject({initialized:2,newly_received:0});
+    expect(db.inspirationImageReceipt.findMany).toHaveBeenCalledWith(expect.objectContaining({where:{ownerId:input.ownerId,sha256:{in:hashes(3)}}}));
+    expect(db.inspirationImageReceipt.createMany.mock.calls[0]![0].data).toHaveLength(2);
   });
   it('keeps initialization separate from daily gains and batches SQL writes',async()=>{
     vi.stubEnv('INSPIRATION_SNAPSHOT_BOOTSTRAP',JSON.stringify({ownerId:input.ownerId,libraryId:input.libraryId,releaseId:input.releaseId,maxImages:2500}));

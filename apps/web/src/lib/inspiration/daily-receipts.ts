@@ -44,6 +44,21 @@ export async function initializeDailyPolicy(ownerId: string, now = new Date()) {
     return tx.inspirationDailyPolicy.upsert({where:{ownerId}, update:{}, create:{ownerId, startDay:chinaDay(now), startedAt:now, target:100}});
   });
 }
+/** Explicit deployment initialization only; not a promotion and never rewrites an existing policy. */
+export async function initializeConfiguredDailyPolicy(tx: Tx, ownerId: string, target: number, now = new Date()) {
+  if (!RECEIPT_TARGETS.includes(target as typeof RECEIPT_TARGETS[number])) throw new DailyReceiptError(503, '首次接收目标配置无效。');
+  if (!dailyReceiptsEnabled(ownerId)) throw new DailyReceiptError(503, '请先启用指定公司的接收计量。');
+  await lockReceiptOwner(tx, ownerId);
+  const existing = await tx.inspirationDailyPolicy.findUnique({where:{ownerId}});
+  if (existing) {
+    if (existing.target !== target) throw new DailyReceiptError(409, '公司已有不同的接收目标，首次初始化不会覆盖现有政策。');
+    return existing;
+  }
+  const owner = await tx.user.findUnique({where:{id:ownerId},select:{isActive:true}});
+  if (!owner?.isActive) throw new DailyReceiptError(404, '公司所有者不可用。');
+  await baselineExistingImages(tx, ownerId);
+  return tx.inspirationDailyPolicy.create({data:{ownerId,startDay:chinaDay(now),startedAt:now,target}});
+}
 /** Called before writes while holding the owner lock; tracking must be explicitly initialized. */
 export async function beginDailyReceipt(tx: Tx, ownerId: string) {
   await lockReceiptOwner(tx, ownerId);
@@ -66,25 +81,29 @@ export async function recordDailyReceipt(tx: Tx, input: ReceiptInput, now = new 
 /** Only an explicitly named, bounded first import may be recorded separately
  * from daily gains. Pending CAS bytes never qualify as historical baseline. */
 export async function recordSnapshotDailyReceipt(tx:Tx,input:ReceiptInput,now=new Date()) {
-  try { return await recordDailyReceipt(tx,input,now); }
-  catch(error) {
-    if(!(error instanceof DailyReceiptLimit))throw error;
-    const raw=process.env.INSPIRATION_SNAPSHOT_BOOTSTRAP?.trim();
-    if(!raw)throw error;
+  if(!RECEIPT_TARGETS.includes(input.target as typeof RECEIPT_TARGETS[number]))throw new Error('invalid_daily_receipt_target');
+  const raw=process.env.INSPIRATION_SNAPSHOT_BOOTSTRAP?.trim();
+  if(raw) {
     let policy:unknown;try {policy=JSON.parse(raw);}catch{throw new Error('invalid_snapshot_initialization_policy');}
     const p=policy as Record<string,unknown>;
     if(!p||Array.isArray(p)||Object.keys(p).sort().join(',')!=='libraryId,maxImages,ownerId,releaseId'
-      ||p.ownerId!==input.ownerId||p.libraryId!==input.libraryId||p.releaseId!==input.releaseId
-      ||!Number.isInteger(p.maxImages)||Number(p.maxImages)<1||Number(p.maxImages)>1_000_000)throw error;
-    const state=await tx.inspirationState.findUnique({where:{libraryId:input.libraryId},select:{activeRelease:true}});
-    if(state?.activeRelease)throw error;
-    const fresh=await freshReceiptHashes(tx,input.ownerId,input.hashes);
-    if(fresh.length>Number(p.maxImages))throw error;
-    const initializationId=`${input.libraryId}:${input.releaseId}`;
-    for(let start=0;start<fresh.length;start+=1000)await tx.inspirationImageReceipt.createMany({data:fresh.slice(start,start+1000).map(sha256=>({ownerId:input.ownerId,sha256,receivedDay:null,receivedAt:now,libraryId:input.libraryId,releaseId:input.releaseId,initializationId}))});
-    const received=await tx.inspirationImageReceipt.count({where:{ownerId:input.ownerId,receivedDay:chinaDay(now)}});
-    return {day:chinaDay(now),newly_received:0,received,remaining:Math.max(0,input.target-received),initialized:fresh.length};
+      ||![p.ownerId,p.libraryId,p.releaseId].every(value=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value))
+      ||!Number.isInteger(p.maxImages)||Number(p.maxImages)<1||Number(p.maxImages)>1_000_000)throw new Error('invalid_snapshot_initialization_policy');
+    if(p.ownerId===input.ownerId&&p.libraryId===input.libraryId&&p.releaseId===input.releaseId) {
+      const state=await tx.inspirationState.findUnique({where:{libraryId:input.libraryId},select:{activeRelease:true}});
+      if(!state?.activeRelease) {
+        // Explicit first-import provenance applies even below today's allowance.
+        // The bound covers the whole distinct snapshot, not only previously unseen hashes.
+        if(new Set(input.hashes).size>Number(p.maxImages))throw new Error('snapshot_initialization_image_limit');
+        const fresh=await freshReceiptHashes(tx,input.ownerId,input.hashes);
+        const initializationId=`${input.libraryId}:${input.releaseId}`;
+        for(let start=0;start<fresh.length;start+=1000)await tx.inspirationImageReceipt.createMany({data:fresh.slice(start,start+1000).map(sha256=>({ownerId:input.ownerId,sha256,receivedDay:null,receivedAt:now,libraryId:input.libraryId,releaseId:input.releaseId,initializationId}))});
+        const received=await tx.inspirationImageReceipt.count({where:{ownerId:input.ownerId,receivedDay:chinaDay(now)}});
+        return {day:chinaDay(now),newly_received:0,received,remaining:Math.max(0,input.target-received),initialized:fresh.length};
+      }
+    }
   }
+  return recordDailyReceipt(tx,input,now);
 }
 async function readDailyReceiptStatus(db:Tx,ownerId: string, day=chinaDay()) {
   if(!validDay(day)||day>chinaDay())throw new DailyReceiptError(400,'日报日期无效。');

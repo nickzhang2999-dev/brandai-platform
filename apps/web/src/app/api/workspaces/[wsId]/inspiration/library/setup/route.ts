@@ -18,7 +18,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ wsI
     if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).length !== 0) {
       throw new ApiException(422, '初始化请求不接受所有者、库标识或其他自定义字段。');
     }
-    const result = await initializeSharedLibrary({ ...configured, workspaceId: wsId });
+    const result = await initializeSharedLibrary({ ...configured, workspaceId: wsId }, { ownerSelfSetup: true });
     return ok(InspirationLibraryCreateResult.parse(result), { status: result.created ? 201 : 200 });
   } catch (error) { return handleError(error); }
 }

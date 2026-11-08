@@ -4,7 +4,7 @@ import { prisma } from '@brandai/db';
 import sharp from 'sharp';
 import type { LibraryScope } from '../src/lib/inspiration/library-scope';
 import { createSnapshotImport,syncSnapshotTick,readSnapshotCatalog,getSnapshotCatalogCount,getSnapshotObject,SnapshotLeaseLost } from '../src/lib/inspiration/snapshot-import';
-import { chinaDay,initializeDailyPolicy } from '../src/lib/inspiration/daily-receipts';
+import { chinaDay,initializeDailyPolicy,initializeConfiguredDailyPolicy } from '../src/lib/inspiration/daily-receipts';
 import { canonical,sha256 } from '../src/lib/inspiration/protocol';
 import { activeRecords } from '../src/lib/inspiration/replica';
 import { snapshotCatalogPage } from '../src/lib/inspiration/snapshot-catalog';
@@ -62,6 +62,19 @@ suite('snapshot v3 isolated PostgreSQL persistence',()=>{
     expect(Buffer.from((await getSnapshotObject(library.id,f.manifest.release_id,f.object.path))!.bytes)).toEqual(f.image);
     expect(await getSnapshotObject(library.id,'unknown-release',f.object.path)).toBeNull();
     expect(await prisma.inspirationImageReceipt.count({where:{ownerId:owner,receivedDay:chinaDay()}})).toBe(1);
+  });
+  it('activates under explicit initial 500 accounting and keeps small historical bootstrap out of daily gains',async()=>{
+    await prisma.inspirationDailyPolicy.delete({where:{ownerId:owner}});
+    await prisma.$transaction(tx=>initializeConfiguredDailyPolicy(tx,owner,500));
+    const f=await setup(2);
+    vi.stubEnv('INSPIRATION_SNAPSHOT_BOOTSTRAP',JSON.stringify({ownerId:owner,libraryId:library.id,releaseId:f.manifest.release_id,maxImages:1}));
+    expect((await syncSnapshotTick(library,f.options)).complete).toBe(true);
+    expect((await prisma.inspirationState.findUniqueOrThrow({where:{libraryId:library.id}})).activeRelease).toBe(f.manifest.release_id);
+    expect(await prisma.inspirationImageReceipt.count({where:{ownerId:owner,receivedDay:chinaDay()}})).toBe(0);
+    expect(await prisma.inspirationImageReceipt.count({where:{ownerId:owner,initializationId:library.id+':'+f.manifest.release_id}})).toBe(1);
+    expect((await prisma.inspirationDailyPolicy.findUniqueOrThrow({where:{ownerId:owner}}))).toMatchObject({target:500,qualityDay:null,qualityEvidence:null,qualityReviewedBy:null});
+    expect((await syncSnapshotTick(library,f.options)).complete).toBe(true);
+    expect(await prisma.inspirationImageReceipt.count({where:{ownerId:owner}})).toBe(1);
   });
   it('reuses immutable catalog parts and CAS across a newer snapshot with no download or duplicate receipt',async()=>{
     const f=await setup();await syncSnapshotTick(library,f.options);
