@@ -1,14 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {DAILY_IMAGE_LIMIT_AUTOMATIC,DAILY_IMAGE_LIMIT_MANUAL} from '../src/lib/inspiration/sync-status';
 import { InspirationReceiveStatus } from '@brandai/contracts';
-const mocks=vi.hoisted(()=>({ user:vi.fn(), role:vi.fn(), find:vi.fn(), create:vi.fn(), update:vi.fn(), upsert:vi.fn(), lock:vi.fn(), transaction:vi.fn(), enabled:vi.fn(), configured:vi.fn() }));
+const mocks=vi.hoisted(()=>({ user:vi.fn(), role:vi.fn(), find:vi.fn(), create:vi.fn(), update:vi.fn(), upsert:vi.fn(), lock:vi.fn(), transaction:vi.fn(), enabled:vi.fn(), configured:vi.fn(), resolve:vi.fn() }));
 vi.mock('@brandai/db',()=>({prisma:{$transaction:mocks.transaction,inspirationLibraryTask:{findFirst:mocks.find}}}));
 vi.mock('@/lib/api',()=>({ApiException:class extends Error{constructor(public status:number,message:string){super(message);}},requireUser:mocks.user,ok:(data:unknown,init?:ResponseInit)=>Response.json(data,init),handleError:(error:{status?:number;message:string})=>Response.json({error:error.message},{status:error.status??500})}));
 vi.mock('@/lib/workspace',()=>({requireWorkspaceRole:mocks.role}));
 vi.mock('@/lib/inspiration/service',()=>({requireEnabled:()=>{if(!mocks.enabled())throw Object.assign(new Error('disabled'),{status:503});}}));
 vi.mock('@/lib/inspiration/config',()=>({contentSyncMode:()=> 'manual',inspirationEnabled:mocks.enabled,syncConfigured:mocks.configured}));
 vi.mock('@/lib/inspiration/replica',()=>({lockWorkspace:mocks.lock}));
-vi.mock('@/lib/inspiration/library',()=>({resolveLibrary:async(id:string)=>({id,kind:'WORKSPACE',ownerId:'user',legacyWorkspaceId:id}),ensureLibrary:vi.fn(),sourceLibrary:(x:{id:string;kind:string})=>({id:x.id,kind:x.kind}),canReceiveLibrary:async(_library:unknown,_user:unknown,role:string)=>role==='OWNER'}));
+vi.mock('@/lib/inspiration/library',()=>({resolveLibrary:mocks.resolve,ensureLibrary:vi.fn(),sourceLibrary:(x:{id:string;kind:string})=>({id:x.id,kind:x.kind}),canReceiveLibrary:async(_library:unknown,_user:unknown,role:string)=>role==='OWNER'}));
 import { GET, POST } from '../src/app/api/workspaces/[wsId]/inspiration/sync/route';
 
 type Task={id:string;workspaceId:string;inspirationLibraryId:string;status:'PENDING'|'RUNNING'|'SUCCEEDED'|'FAILED';createdAt:Date;updatedAt:Date;expiresAt:Date|null;inputJson:unknown;error?:string};
@@ -19,6 +19,7 @@ const now=()=>new Date('2026-11-02T06:00:00Z');
 beforeEach(()=>{
   vi.resetAllMocks();vi.useFakeTimers();vi.setSystemTime(now());task=null;nextId=0;tail=Promise.resolve();
   mocks.enabled.mockReturnValue(true);mocks.configured.mockReturnValue(true);mocks.user.mockResolvedValue({id:'user'});mocks.role.mockResolvedValue({role:'OWNER'});
+  mocks.resolve.mockImplementation(async(id:string)=>({id,kind:'WORKSPACE',ownerId:'user',legacyWorkspaceId:id}));
   mocks.find.mockImplementation(async({where})=>task && task.inspirationLibraryId===where.inspirationLibraryId
     && (!where.OR || task.status!=='PENDING' || (task.inputJson as {trigger?:string})?.trigger==='manual')
     && (!where.status || (where.status.in.includes(task.status)&&!!task.expiresAt&&task.expiresAt>now()))?task:null);
@@ -29,6 +30,33 @@ beforeEach(()=>{
 afterEach(()=>vi.useRealTimers());
 
 describe('one-click workspace-scoped inspiration reception',()=>{
+  it('preserves default selection without a library parameter',async()=>{
+    await POST(req(),context());await GET(req(),context());expect(mocks.resolve.mock.calls).toEqual([['workspace-a',undefined],['workspace-a',undefined]]);
+  });
+  it('receives an explicitly resolved shared library without switching the default',async()=>{
+    mocks.resolve.mockResolvedValue({id:'shared-company',kind:'SHARED',ownerId:'user'});
+    const request=()=>new Request(req().url+'?libraryId=shared-company',{method:'POST'});
+    expect((await POST(request(),context())).status).toBe(202);
+    expect(task?.inspirationLibraryId).toBe('shared-company');expect(task?.workspaceId).toBe('workspace-a');
+    const response=await GET(request(),context());expect((await response.json()).sourceLibrary).toEqual({id:'shared-company',kind:'SHARED'});
+    expect(mocks.resolve.mock.calls).toEqual([['workspace-a','shared-company'],['workspace-a','shared-company']]);
+  });
+  it('preserves resolver cross-owner denial before queue/read access',async()=>{
+    mocks.resolve.mockRejectedValue(Object.assign(new Error('not accessible'),{status:404}));
+    const request=()=>new Request(req().url+'?libraryId=foreign-library',{method:'POST'});
+    expect((await POST(request(),context())).status).toBe(404);expect((await GET(request(),context())).status).toBe(404);
+    expect(mocks.transaction).not.toHaveBeenCalled();expect(mocks.find).not.toHaveBeenCalled();
+  });
+  it('does not grant receive capability to a viewer through explicit selection',async()=>{
+    mocks.resolve.mockResolvedValue({id:'shared-company',kind:'SHARED',ownerId:'user'});mocks.role.mockResolvedValue({role:'VIEWER'});
+    const request=()=>new Request(req().url+'?libraryId=shared-company',{method:'POST'});
+    expect((await POST(request(),context())).status).toBe(403);expect((await (await GET(request(),context())).json()).canReceive).toBe(false);expect(mocks.create).not.toHaveBeenCalled();
+  });
+  it.each(['libraryId=','libraryId=..%2Fforeign','libraryId='+ 'x'.repeat(129),'libraryId=same&libraryId=same','libraryId=one&libraryId=two'])('rejects ambiguous or invalid query %s',async query=>{
+    const request=()=>new Request(req().url+'?'+query,{method:'POST'});
+    expect((await POST(request(),context())).status).toBe(422);expect((await GET(request(),context())).status).toBe(422);
+    expect(mocks.resolve).not.toHaveBeenCalled();expect(mocks.transaction).not.toHaveBeenCalled();expect(mocks.find).not.toHaveBeenCalled();
+  });
   it('durably queues once under concurrent clicks and replays the same running identity',async()=>{
     const replies=await Promise.all([POST(req(),context()),POST(req(),context())]);
     expect(replies.map(x=>x.status)).toEqual([202,202]);expect(await replies[0]!.json()).toEqual(await replies[1]!.json());

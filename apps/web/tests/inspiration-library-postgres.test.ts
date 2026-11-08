@@ -13,6 +13,7 @@ import { initializeDailyPolicy, chinaDay } from '../src/lib/inspiration/daily-re
 import { createChat,getChat,listCases } from '../src/lib/inspiration/service';
 import { requireLibraryReceiver } from '../src/lib/inspiration/access';
 import { POST as initialize } from '../src/app/api/admin/inspiration/libraries/route';
+import { POST as ownerInitialize } from '../src/app/api/workspaces/[wsId]/inspiration/library/setup/route';
 import { GET as receiveStatus,POST as receive } from '../src/app/api/workspaces/[wsId]/inspiration/sync/route';
 import { GET as imageRoute } from '../src/app/api/workspaces/[wsId]/inspiration/cases/[caseId]/images/[imageId]/route';
 import { GET as bookmarks,POST as bookmark } from '../src/app/api/workspaces/[wsId]/inspiration/bookmarks/route';
@@ -72,6 +73,41 @@ suite('shared inspiration real PostgreSQL boundaries',()=>{
     const same=await initialize(request({libraryId:library.id,ownerId:owner}));expect(same.status).toBe(200);expect(await same.json()).toEqual({sourceLibrary:{id:library.id,kind:'SHARED'},created:false});
     expect((await initialize(request({libraryId:library.id,ownerId:other}))).status).toBe(409);
     expect((await prisma.inspirationLibrary.findUniqueOrThrow({where:{id:library.id}})).ownerId).toBe(owner);
+  });
+  it('serializes configured owner setup across brands and keeps default private libraries',async()=>{
+    const id=library.id+'-owner-setup';extraIdentities.push(id);
+    vi.stubEnv('INSPIRATION_SHARED_LIBRARY_ID','');vi.stubEnv('INSPIRATION_SHARED_SETUP_LIBRARY_ID',id);vi.stubEnv('INSPIRATION_SHARED_SETUP_OWNER_ID',owner);
+    const responses=await Promise.all([ownerInitialize(request({}),context(a)),ownerInitialize(request({}),context(b))]);
+    expect(responses.map(r=>r.status).sort()).toEqual([200,201]);
+    expect(await prisma.inspirationLibrary.count({where:{id,ownerId:owner,kind:'SHARED'}})).toBe(1);
+    expect(await prisma.inspirationLibraryIdentity.count({where:{id,ownerId:owner}})).toBe(1);
+    expect((await resolveLibrary(a)).id).toBe(a);
+    auth.user={id:other,email:other+'@example.invalid'};expect((await ownerInitialize(request({}),context(foreign))).status).toBe(403);
+  });
+  it('does not grant setup to an OWNER membership or reassign a permanent identity',async()=>{
+    const id=library.id+'-owner-bound';extraIdentities.push(id);
+    vi.stubEnv('INSPIRATION_SHARED_SETUP_LIBRARY_ID',id);vi.stubEnv('INSPIRATION_SHARED_SETUP_OWNER_ID',member);
+    await prisma.membership.update({where:{userId_workspaceId:{userId:member,workspaceId:a}},data:{role:'OWNER'}});
+    try {
+      auth.user={id:member,email:member+'@example.invalid'};expect((await ownerInitialize(request({}),context(a))).status).toBe(403);
+      expect(await prisma.inspirationLibraryIdentity.findUnique({where:{id}})).toBeNull();
+    } finally {await prisma.membership.update({where:{userId_workspaceId:{userId:member,workspaceId:a}},data:{role:'VIEWER'}});}
+    await prisma.inspirationLibraryIdentity.create({data:{id,ownerId:other}});
+    vi.stubEnv('INSPIRATION_SHARED_SETUP_OWNER_ID',owner);auth.user={id:owner,email:owner+'@example.invalid'};
+    expect((await ownerInitialize(request({}),context(a))).status).toBe(409);
+    expect((await prisma.inspirationLibraryIdentity.findUniqueOrThrow({where:{id}})).ownerId).toBe(other);
+  });
+  it('receives an explicit same-owner shared library while leaving defaults and foreign owners isolated',async()=>{
+    vi.stubEnv('INSPIRATION_SHARED_LIBRARY_ID','');
+    const explicit=new Request(origin+'/api/test?libraryId='+library.id,{method:'POST'});
+    expect((await receive(explicit,context(a))).status).toBe(202);
+    expect((await (await receiveStatus(explicit,context(b))).json()).sourceLibrary.id).toBe(library.id);
+    expect((await (await receiveStatus(request(),context(a))).json()).sourceLibrary.id).toBe(a);
+    expect((await resolveLibrary(a)).id).toBe(a);
+    auth.user={id:other,email:other+'@example.invalid'};
+    expect((await receive(explicit,context(foreign))).status).toBe(404);
+    expect((await receiveStatus(explicit,context(foreign))).status).toBe(404);
+    expect(await prisma.inspirationLibraryTask.count({where:{inspirationLibraryId:library.id}})).toBe(1);
   });
   it('retains permanent recipient ownership after deleting library data and rejects identity updates',async()=>{
     await prisma.inspirationLibrary.delete({where:{id:library.id}});

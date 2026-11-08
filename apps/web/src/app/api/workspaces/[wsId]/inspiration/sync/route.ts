@@ -7,16 +7,18 @@ import { lockWorkspace } from '@/lib/inspiration/replica';
 import { InspirationReceiveStatus } from '@brandai/contracts';
 import { canReceiveLibrary, ensureLibrary, resolveLibrary, sourceLibrary } from '@/lib/inspiration/library';
 import {dailyImageLimitMessage,isDailyImageLimitMessage} from '@/lib/inspiration/sync-status';
+import { requestedLibraryId } from '@/lib/inspiration/library-query';
 
 const timeoutMessage = '接收任务已超时，可重新接收；已接收的内容保留。';
 const failureMessage = '接收未完成，请重试或联系管理员检查发布连接。已接收的内容保留。';
 const active = ['PENDING', 'RUNNING'];
 
-export async function GET(_req: Request, { params }: { params: Promise<{ wsId: string }> }) {
+export async function GET(request: Request, { params }: { params: Promise<{ wsId: string }> }) {
   try {
     const user = await requireUser(), { wsId } = await params;
     const { role } = await requireWorkspaceRole(wsId, user.id, 'VIEWER');
-    const enabled=inspirationEnabled(),library=enabled?await resolveLibrary(wsId):null,configured=library?syncConfigured(library.kind):false,mode=contentSyncMode(),now=new Date();
+    const requestedId=requestedLibraryId(request);
+    const enabled=inspirationEnabled(),library=enabled?await resolveLibrary(wsId,requestedId):null,configured=library?syncConfigured(library.kind):false,mode=contentSyncMode(),now=new Date();
     const canReceive=!!(enabled&&configured&&library&&await canReceiveLibrary(library,user,role));
     // In manual mode an old unconfirmed automatic queue item is not running
     // reception. Keep the button available so POST can confirm that same task.
@@ -42,12 +44,12 @@ export async function GET(_req: Request, { params }: { params: Promise<{ wsId: s
   } catch (error) { return handleError(error); }
 }
 
-export async function POST(_req: Request, { params }: { params: Promise<{ wsId: string }> }) {
+export async function POST(request: Request, { params }: { params: Promise<{ wsId: string }> }) {
   try {
     const user = await requireUser(), { wsId } = await params;
     const {role}=await requireWorkspaceRole(wsId,user.id,'VIEWER');
     requireEnabled();
-    const library=await resolveLibrary(wsId);
+    const library=await resolveLibrary(wsId,requestedLibraryId(request));
     if(!await canReceiveLibrary(library,user,role))throw new ApiException(403,'只有公司灵感库管理员或所有者可以接收新内容。');
     if (!syncConfigured(library.kind)) throw new ApiException(503, '知识发布连接尚未配置。');
     const task = await prisma.$transaction(async tx => {
