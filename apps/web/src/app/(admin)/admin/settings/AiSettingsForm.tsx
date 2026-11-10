@@ -59,7 +59,7 @@ const KIND_LABEL: Record<Kind, string> = {
  */
 const KIND_PLACEHOLDER: Record<Kind, { provider: string; model: string }> = {
   image: { provider: "openai", model: "gpt-image-2.6-sunburst" },
-  vlm: { provider: "openai", model: "gpt-4o" },
+  vlm: { provider: "openai", model: "gpt-6-luna" },
   layer: { provider: "fal", model: "fal-ai/qwen-image-layered" },
 };
 
@@ -70,7 +70,7 @@ const LABELS: Record<Kind, { title: string; hint: string }> = {
   },
   vlm: {
     title: "视觉理解 (VLM)",
-    hint: "识别/合规/抓站。OpenRouter 填 baseUrl=https://openrouter.ai/api/v1、model=openai/gpt-4o。",
+    hint: "用于识别、合规和抓站。直连 OpenAI 时可填 gpt-6-luna，应用会关闭推理。",
   },
   layer: {
     title: "图层分解 (AI 分层)",

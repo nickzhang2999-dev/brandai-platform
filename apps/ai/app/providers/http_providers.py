@@ -951,8 +951,9 @@ class HttpVLMProvider(VLMProvider):
         # Gateways often prefix the vendor ("openai/gpt-5.6"); match the final
         # path segment so a renamed route does not fall back to max_tokens.
         model_name = self.model.strip().rsplit("/", 1)[-1].lower()
-        reasoning = re.match(r"^(?:gpt-5(?:[.-]|$)|o[134](?:-|$))", model_name) is not None
-        if reasoning:
+        if model_name == "gpt-6-luna":
+            body.update(max_completion_tokens=max_tokens, reasoning_effort="none")
+        elif re.match(r"^(?:gpt-5(?:[.-]|$)|o[134](?:-|$))", model_name):
             body.update(max_completion_tokens=max_tokens, reasoning_effort="low")
         else:
             body.update(max_tokens=max_tokens, temperature=0.2)

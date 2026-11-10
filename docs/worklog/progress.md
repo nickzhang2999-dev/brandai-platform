@@ -1,3 +1,11 @@
+## 2026-11-10 OpenAI Luna production handoff (in progress)
+
+- Applied the supplied five-file Luna compatibility patch on origin/main 89130780ad1a068041024e10b4f365568e5b863c; exact gpt-6-luna model routes use max_completion_tokens and explicit reasoning_effort=none, without temperature/max_tokens. Model IDs remain runtime settings.
+- Local gates: AI 718 passed; Web 2154 passed and 31 DB tests skipped; contracts/UI passed; typecheck and production build exit 0. Build uses isolated placeholders and reports unavailable local backend connections; this is not production validation. Release check and 8 project-release tests pass using Git Bash.
+- Production configuration not changed. User reports no platform-admin identity. Existing project-scoped CDS access is valid and the canonical target uses cds-release.sh; no confirmed authorized production settings-write channel yet. Do not elevate application accounts or bypass admin routes.
+- Next: same-SHA remote CI, immutable images; establish normal settings operator access, inspect current provider/model/base URLs, validate new key with current model before rotation, publish only after key/model prerequisites, then three actual product tasks.
+- Key remains in user-supplied private file; never commit it or put it in logs.
+
 # Integration progress
 
 ## 2026-10-21 — Project-owned release contract

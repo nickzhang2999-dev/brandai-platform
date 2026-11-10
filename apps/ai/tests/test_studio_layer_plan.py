@@ -87,14 +87,18 @@ def test_vision_paid_post_is_not_retried_even_when_transport_returns_error():
     assert post().status_code == 502
     assert len(calls) == 1
 
-@pytest.mark.parametrize("model", ["gpt-5.6-sol", "gpt-5", "gpt-5-mini", "o3", "o4-mini", "openai/gpt-5.6-sol", "OpenAI/O4-mini"])
-def test_reasoning_vision_uses_supported_bounded_parameters_without_fallback(model):
+@pytest.mark.parametrize(("model", "effort"), [
+    ("gpt-5.6-sol", "low"), ("gpt-5", "low"), ("gpt-5-mini", "low"),
+    ("o3", "low"), ("o4-mini", "low"), ("openai/gpt-5.6-sol", "low"),
+    ("OpenAI/O4-mini", "low"), ("gpt-6-luna", "none"), ("openai/gpt-6-luna", "none"),
+])
+def test_reasoning_vision_uses_supported_bounded_parameters_without_fallback(model, effort):
     calls = configured(model=model)
     assert post().status_code == 200
     assert len(calls) == 1
     assert calls[0]["model"] == model
     assert calls[0]["max_completion_tokens"] == 2400
-    assert calls[0]["reasoning_effort"] == "low"
+    assert calls[0]["reasoning_effort"] == effort
     assert "max_tokens" not in calls[0] and "temperature" not in calls[0]
 
 @pytest.mark.parametrize("model", ["custom-vision", "openai/gpt-4o", "vendor/gpt-50-vision"])
