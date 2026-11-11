@@ -1004,3 +1004,20 @@ def test_host_is_private():
     # 公网字面 IP → 放行(用字面 IP 避免测试触发 DNS)
     assert not host_is_private("93.184.216.34")
     assert not host_is_private("8.8.8.8")
+
+
+@pytest.mark.parametrize("model", ["gpt-image-2.6-sunburst", "gpt-image-2.6-flare", "openai/gpt-image-2.6-sunburst"])
+def test_image_26_preserves_model_dimensions_quality_and_edit_support(model):
+    from app.providers.http_providers import _is_gpt_image_2_model, _resolve_openai_size
+    for base_url in [OPENAI, "https://gateway.example.com/v1"]:
+        provider = HttpImageProvider(base_url, "synthetic-fixture-key", model=model)
+        body = provider._build_body("brand KV", 2560, 1440, 1, ["blur"], {"quality": "high"})
+        assert body["model"] == model
+        assert body["size"] == "2560x1440"
+        assert body["quality"] == "high"
+        assert "negative_prompt" not in body
+    assert _is_gpt_image_2_model(model)
+    assert _resolve_openai_size(1440, 2560, model) == "1440x2560"
+    with pytest.raises(ValueError, match="multiples of 16"):
+        _resolve_openai_size(1920, 1080, model)
+    assert _estimate_cost_usd("openai", "1024x1024", "high", 1, model) is None

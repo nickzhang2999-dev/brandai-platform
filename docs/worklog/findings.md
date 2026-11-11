@@ -345,6 +345,21 @@ main 为 d896d7c，开发版为 c13a7c0。独立工作区以 main 为基线迁�
 
 The source f83a8a9 and main 632ac2f contain parallel/cherry-picked history. Resolving only conflict markers in OwnedEditorClient would leave obsolete panel JSX beside the new workbench, so the reviewed development editor and its integration fixture are kept together. Main contributes enterprise provisioning, three copywriting inbox regressions and release-entry integrity checks. The inbox CI expectation is therefore 19, not the development branch's 16. This PR includes the development inspiration/Omni code; October 26/27 release-isolation notes describe those earlier deliveries, not this PR. Existing runtime enablement and membership checks are retained.
 
+
+
+## 2026-11-06 · GPT Image 2.6 evidence and boundaries
+
+Official source: https://developers.openai.com/api/docs/guides/image-generation . Explicit IDs are `gpt-image-2.6-sunburst` and `gpt-image-2.6-flare`, not a bare `gpt-image-2.6`. Both retain custom pixel dimensions; current medium/high rendering-quality choices remain supported. No new complexity/output-format feature added in this migration.
+
+Production `https://deepflare.cn/api/health` reports queue `brandai-prod`, worker commit `3272951480c2`, image provider `openai`, config source `db`, generation revision `gpt-image-2-size-quality-r1`. This does NOT establish the runtime model ID. Production admin AI endpoint requires authentication. The CDS main preview was separately verified with queue `main`; its settings must not be reported as production settings.
+
+Existing CDS project authorization was found at the original workspace `.cds/credentials.json` and verified without printing secrets. Browser login also confirmed. Project branch APIs/container inspection work, but attempted operator/remote-host metadata requests returned Cloudflare HTTP 403, error 1010 `browser_signature_banned`, `retryable=false`, `owner_action_required=true` (rays `a560f4eafc5f284e`, `a560f4eaf949fe59`). No retry of the blocked interfaces or privilege workaround. Production DB/model requests remain unverified.
+
+Compatibility defect: Python `_is_gpt_image_2_model` accepted only an exact old ID, and the STRICT-reference route separately repeated that check. Merely changing the DB model would cause size snapping, edit capability rejection or incorrect reference routing. Both checks now recognize explicit 2.6 IDs including gateway namespaces. New generation revision isolates workers from old AI services. New model cost estimates return unknown instead of incorrectly reusing the old per-size table.
+
+
+## 分层分支历史记录保留（2026-11-11 合并）
+
 ## 2026-11-03 · 五项反馈证据边界
 
 WorkbenchBrandDraft不是CONFIRMED BrandRule；有规则传入不等于模型视觉遵守。新studio-writing不能与旧studio-copywriting的短文案模板混淆。正常浏览器测得输入区挤占高度，未测到几何覆盖。PSD接口200/文件头正确不能替代浏览器保存/Photoshop打开验收。分层存档尺寸回到源尺寸不能证明细节无损；PNG导出取画布bounds是另一条降尺寸机制。共享数据库历史记录不能直接归因某个当前预览。详见[排查报告](2026-11-03-product-five-issues.md)。

@@ -18,6 +18,9 @@ describe('shared OpenAI token options',()=>{
   it.each(['gpt-5.6-sol','gpt-5','gpt-5-mini','o1','o3-mini','o4-mini','OpenAI/O4-mini'])('uses explicit reasoning budget without temperature for %s',model=>{
     expect(openAiTokenOptions(model,3000,0.2)).toEqual({max_completion_tokens:3000,reasoning_effort:'low'});
   });
+  it.each(['gpt-6-luna','openai/gpt-6-luna'])('disables reasoning for %s',model=>{
+    expect(openAiTokenOptions(model,3000,0.2)).toEqual({max_completion_tokens:3000,reasoning_effort:'none'});
+  });
   it.each(['gpt-4o','vendor/gpt-50-vision','configured-model'])('keeps legacy temperature opt-in for %s',model=>{
     expect(openAiTokenOptions(model,3000)).toEqual({max_tokens:3000});
     expect(openAiTokenOptions(model,4000,0.2)).toEqual({max_tokens:4000,temperature:0.2});

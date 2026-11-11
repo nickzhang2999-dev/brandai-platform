@@ -1,3 +1,11 @@
+## 2026-11-10 OpenAI Luna production handoff (in progress)
+
+- Applied the supplied five-file Luna compatibility patch on origin/main 89130780ad1a068041024e10b4f365568e5b863c; exact gpt-6-luna model routes use max_completion_tokens and explicit reasoning_effort=none, without temperature/max_tokens. Model IDs remain runtime settings.
+- Local gates: AI 718 passed; Web 2154 passed and 31 DB tests skipped; contracts/UI passed; typecheck and production build exit 0. Build uses isolated placeholders and reports unavailable local backend connections; this is not production validation. Release check and 8 project-release tests pass using Git Bash.
+- Production configuration not changed. User reports no platform-admin identity. Existing project-scoped CDS access is valid and the canonical target uses cds-release.sh; no confirmed authorized production settings-write channel yet. Do not elevate application accounts or bypass admin routes.
+- Next: same-SHA remote CI, immutable images; establish normal settings operator access, inspect current provider/model/base URLs, validate new key with current model before rotation, publish only after key/model prerequisites, then three actual product tasks.
+- Key remains in user-supplied private file; never commit it or put it in logs.
+
 # Integration progress
 
 ## 2026-11-03 品牌色核对：把「已应用」改成可验证的事实
@@ -703,6 +711,30 @@ Implemented persistent writing documents, versioned selection replacement, bound
 Integrated main 632ac2f into devUpdate1012 f83a8a9 in an isolated worktree. Preserved the persistent writing workbench and inspiration/Omni implementation, combined enterprise-only login with hydration protection, and kept main's committed production-script verification. Added desktop/mobile regression assertions that registration stays hidden and retained the copywriting inbox navigation checks. Local validation passed: pnpm test (Web 2147, contracts 312, UI 39; 31 database-gated tests skipped), AI 712, typecheck, production build with the existing low-memory option, lint (0 errors / 17 warnings), release check and 7 release-contract tests. Isolated Chrome regression passed: login 15, inbox 19, canvas core 55, writing standalone 31, writing embedded 22, shell layout 11 and inspiration activity 9. Shell export tests 8 and CI branch-policy tests 2 also passed. Browser checks use synthetic local fixtures and do not establish live provider or database acceptance. Remote checks remain pending; no main merge or production release performed.
 
 
+
+## 2026-11-06 · GPT Image 2.6 migration prepared, not released
+
+Target `gpt-image-2.6-sunburst`, existing production key reuse authorized. Updated Web/AI fallback defaults, admin hints, family recognition for generation/edit/reference paths, cost-estimate handling and paired generation revision `gpt-image-2-6-size-quality-r2`. The workspace badge no longer asserts a hardcoded model name. Explicit admin/DB/env overrides remain authoritative; the production DB model has not been changed.
+
+Validation: contracts 312 passed; UI 39 passed; Web 2147 passed / 31 skipped; typecheck and production build passed; release-script check and 7 release-contract tests passed. Final AI suite: 715 passed / 1 failed. The failure is `tests/test_studio_writing.py::test_production_subprocess_and_real_endpoint` (`WritingParseError: invalid_document`), also reproduced in the unchanged original workspace on macOS/Python 3.14. The initial Web test attempt preceded Prisma generation and failed initialization; after generation the complete retry passed. Used repository-pinned pnpm 9.15.0 after the bundled pnpm 11 dependency-build policy prevented initial installation. No policy change retained.
+
+Not pushed or released: G-VERIFY still requires the complete AI suite green on a compatible environment. Production model-ID verification and real 2.6 provider acceptance are also outstanding due to the CDS host-management access denial recorded in findings. No paid provider calls performed.
+
+
+### 2026-11-06 · PR/release continuation
+
+User explicitly authorized PR, production release and runtime model-ID verification. Full AI suite now passes on local Podman Linux/Python 3.12: 716 passed. The first container mount omitted the contracts source and failed the literal-mirror check; corrected by mounting the repository root, after which the complete suite passed. Earlier macOS parser failure remains environment-specific and was not suppressed or changed. Existing contracts/UI/Web/typecheck/build/release checks remain passed; no intervening changes affect those checks. CDS CLI authentication and project container inspection work. Official operator discovery requires human authentication; project credentials are not used to bypass that boundary. Production settings upgrade/verification will be part of the project-owned release contract.
+
+
+Prepared the project-owned one-time production model migration and real provider receipt: upstream model discovery, one 1K low-quality actual call, PNG verification, storage of image/receipt, optimistic settings update and real usage audit. Future releases preserve subsequent admin overrides and do not repeat the paid call. No live provider call has yet run. Added five migration policy tests and release-order coverage; final Web suite is 2152 passed / 31 skipped, contracts 312 and UI 39 passed. Typecheck and production build passed. Production configuration remains unchanged until CDS executes the committed release contract.
+
+## 2026-11-11 main / layer 新模型对齐
+
+将 main 71a3132 合入分层分支，保留两边功能与历史记录，补齐 Sunburst 和 Luna none 参数兼容。本地 Web 2681 项、AI 911 项测试通过，contracts/UI 通过，类型检查与构建通过；数据库依赖测试仍按既有配置跳过。main 预览运行配置已切换；layer 等待本次提交 CI、镜像和部署后切换。正式站维持既有新模型配置。
+
+
+## 分层分支历史记录保留（2026-11-11 合并）
+
 ## 2026-11-02 · Omni自动发布与DeepFlare点击接收
 
 新增OWNER接收入口、服务端持久状态和manual内容模式；撤回仍自动同步。内部用途包按origin/workspace/图像身份验证，既有明确允许包兼容。代码与本地验证已完成，实际部署和接收状态见[交付日志](2026-11-02-omni-receive.md)，本轮不发布正式站。
@@ -711,13 +743,11 @@ Integrated main 632ac2f into devUpdate1012 f83a8a9 in an isolated worktree. Pres
 
 16:09最终A91d3d74/Bb06faf6均实际运行，补齐完整快照的数据卷暂存与有界接收预算，原自动发布策略恢复。实际B协议验证full+2delta共201可接收案例/191新增，签名、记录、范围和184,770,615字节链预算通过；新批次未代用户入库。完整日志见2026-11-02-omni-receive.md。
 
-
 ## 2026-11-02 · 公司统一接收、各品牌引用
 
 新增独立 InspirationLibrary 与永久身份账本。同owner品牌共用内容和接收状态，项目/收藏/对话仍品牌与用户隔离；旧workspace签名不重解释。数据库保全迁移、全链元数据预检、撤权重验和失败提示已实现。本地完整测试、生产构建、相关真实PG与浏览器检查通过；尚待本提交CI/镜像及实际接收，状态见[共享库改造日志](2026-11-02-shared-inspiration.md)。
 
 17:58暂停交接：A9818392/B2b795594已部署，B同SHA CI和镜像通过，三服务源文件/迁移/原数据保全实测通过。管理员初始化对现有验收账号返回403；用户要求先写日志。新库未初始化、真实共享接收0次；A恢复原v1自动发布，B撤回临时共享配置恢复原品牌库，等待下次正常管理员初始化。完整证据及恢复步骤见上方日志。本次日志和辅助DB测试脚本修改保留本地，没有另推新SHA。
-
 
 ## 2026-11-03 · 灵感共库兼容与体验交接
 
@@ -746,7 +776,6 @@ Integrated main 632ac2f into devUpdate1012 f83a8a9 in an isolated worktree. Pres
 ## 2026-11-05 · 画布更多设置布局修复
 
 已复现并修复右侧设置挤成竖条的问题。展开区改为独立整行，支持窄侧栏与键盘开闭，保留PSD参数和草稿。完整画布与PSD本地交互已通过；对话回归及部署结果见[本轮日志](2026-11-05-composer-settings-layout.md)。本节为本轮追加，既有未提交记录保留。
-
 
 ## 2026-11-06 · 大目录接收续作（本机）
 

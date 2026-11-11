@@ -1,7 +1,7 @@
 import { resolve4 } from "node:dns/promises";
 
 export const REQUIRED_AI_PARSER_REVISION = "grounded-six-slot-r6";
-export const REQUIRED_AI_GENERATION_REVISION = "gpt-image-2-size-quality-r1";
+export const REQUIRED_AI_GENERATION_REVISION = "gpt-image-2-6-size-quality-r2";
 export const REQUIRED_AI_VISUAL_CHECK_REVISION = "studio-visual-check-evidence-r1";
 export const REQUIRED_AI_PROVIDER_RETRY_REVISION = "single-provider-attempt-r2";
 export const REQUIRED_AI_STUDIO_EDIT_REVISION = "studio-whole-image-edit-r1";

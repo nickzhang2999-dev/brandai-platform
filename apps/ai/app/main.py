@@ -30,6 +30,7 @@ from .providers.http_providers import (
     LayerQueueConfigurationError,
     _DEFAULT_IMAGE_QUALITY,
     _estimate_cost_usd,
+    _is_gpt_image_2_model,
 )
 from .studio_layer_plan import LayerPlanRequest, LayerPlanResponse, LayerPlan, layer_plan_prompt, STUDIO_LAYER_PLAN_REVISION
 from .studio_conversation_model import ConversationModelRequest, ConversationModelResponse, run_conversation_model, STUDIO_CONVERSATION_MODEL_REVISION
@@ -157,7 +158,7 @@ _RISK_LEXICON = {
 }
 
 PARSER_REVISION = "grounded-six-slot-r6"
-GENERATION_REVISION = "gpt-image-2-size-quality-r1"
+GENERATION_REVISION = "gpt-image-2-6-size-quality-r2"
 VISUAL_CHECK_REVISION = "studio-visual-check-evidence-r1"
 PROVIDER_RETRY_REVISION = "single-provider-attempt-r2"
 STUDIO_DECOMPOSITION_REVISION = "studio-real-layer-single-attempt-r2"
@@ -699,7 +700,7 @@ async def _generate(req: GenerateRequest, provider: ImageProvider, *, studio_sou
         )
         openai_image_semantics = (
             kind == "openai"
-            or (model or "").split("/")[-1] == "gpt-image-2"
+            or _is_gpt_image_2_model(model)
         )
         if openai_image_semantics and hasattr(
             provider, "generate_with_references"

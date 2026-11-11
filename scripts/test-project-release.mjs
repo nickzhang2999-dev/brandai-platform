@@ -92,9 +92,9 @@ test('deploy uses the reviewed Compose only after check and stops on a failed pr
     assert.equal(commands[1 + index*2], `pull ${image}`);
     assert.equal(commands[2 + index*2], `image inspect ${image} --format {{json .Config.Env}}`);
   }
-  assert.deepEqual(commands.slice(5, 7), ['up -d --remove-orphans', 'logs --no-color release-check']);
-  assert.equal(commands.length, 10);
-  for (const [index, origin] of ['https://deepflare.cn', 'https://deepflare.com.cn', 'https://www.novartlab.com'].entries()) assert.equal(commands[index + 7], `exec -T -e NOVART_VERIFY_ORIGIN=${origin} -e CDS_RELEASE_ID=rel-test web node /release/verify.mjs served`);
+  assert.deepEqual(commands.slice(5, 8), ['up -d --remove-orphans', 'exec -T -e CDS_RELEASE_ID=rel-test web pnpm -F web exec tsx scripts/upgrade-image26.ts', 'logs --no-color release-check']);
+  assert.equal(commands.length, 11);
+  for (const [index, origin] of ['https://deepflare.cn', 'https://deepflare.com.cn', 'https://www.novartlab.com'].entries()) assert.equal(commands[index + 8], `exec -T -e NOVART_VERIFY_ORIGIN=${origin} -e CDS_RELEASE_ID=rel-test web node /release/verify.mjs served`);
   writeFileSync(log, '');
   const stale = spawnSync('bash', ['cds-release.sh', 'deploy'], { env: { ...env, CLI_IMAGE_SHA: '2'.repeat(40) }, encoding: 'utf8' });
   assert.notEqual(stale.status, 0);
@@ -119,4 +119,12 @@ test('both PR CI and immutable image CI execute the same project script contract
   }
   assert.match(readFileSync('CLAUDE.md', 'utf8'), /策略为 `project-script`/);
   assert.doesNotMatch(readFileSync('CLAUDE.md', 'utf8'), /策略为 `generated-compose`/);
+});
+
+
+test('production model upgrade follows service readiness and precedes final served verification', () => {
+  const start = script.indexOf('up -d --remove-orphans');
+  const upgrade = script.indexOf('web pnpm -F web exec tsx scripts/upgrade-image26.ts');
+  const final = script.indexOf('for origin in https://deepflare.cn');
+  assert.ok(start >= 0 && upgrade > start && final > upgrade);
 });

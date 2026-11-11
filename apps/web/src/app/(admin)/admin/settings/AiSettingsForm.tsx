@@ -58,19 +58,19 @@ const KIND_LABEL: Record<Kind, string> = {
  * 模型），照着填必然打不通 fal。占位符是给人抄的，抄错方向比留空更糟。
  */
 const KIND_PLACEHOLDER: Record<Kind, { provider: string; model: string }> = {
-  image: { provider: "openai", model: "gpt-image-2" },
-  vlm: { provider: "openai", model: "gpt-4o" },
+  image: { provider: "openai", model: "gpt-image-2.6-sunburst" },
+  vlm: { provider: "openai", model: "gpt-6-luna" },
   layer: { provider: "fal", model: "fal-ai/qwen-image-layered" },
 };
 
 const LABELS: Record<Kind, { title: string; hint: string }> = {
   image: {
     title: "出图 (Image)",
-    hint: "铁律：图像模型固定 gpt-image-2。provider=openai,model=gpt-image-2（留空亦默认 gpt-image-2）。",
+    hint: "默认 gpt-image-2.6-sunburst；快速迭代可选 gpt-image-2.6-flare。provider=openai，沿用现有密钥。",
   },
   vlm: {
     title: "视觉理解 (VLM)",
-    hint: "识别/合规/抓站。OpenRouter 填 baseUrl=https://openrouter.ai/api/v1、model=openai/gpt-4o。",
+    hint: "用于识别、合规和抓站。直连 OpenAI 时可填 gpt-6-luna，应用会关闭推理。",
   },
   layer: {
     title: "图层分解 (AI 分层)",

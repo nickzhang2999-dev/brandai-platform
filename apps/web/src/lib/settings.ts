@@ -75,10 +75,8 @@ export async function getEffectiveAiSettings(): Promise<EffectiveAiSettings> {
       ),
       apiKey: imageKey,
       baseUrl: row?.imageBaseUrl || process.env.IMAGE_PROVIDER_BASE_URL || "",
-      // 铁律：图像模型固定 gpt-image-2（写死默认）。AppSetting / IMAGE_MODEL env
-      // 仍可覆盖（如兼容网关需命名空间 id），但无配置时一律 gpt-image-2，绝不回退
-      // 上游默认（曾误用 gpt-image-1）。
-      model: row?.imageModel || process.env.IMAGE_MODEL || "gpt-image-2",
+      // Admin/DB overrides env; use the selected GPT Image 2.6 model by default.
+      model: row?.imageModel || process.env.IMAGE_MODEL || "gpt-image-2.6-sunburst",
     },
     vlm: {
       provider: resolveProvider(

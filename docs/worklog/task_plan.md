@@ -511,12 +511,21 @@ P1 local gates complete: e0725bd owned shell/export;6ce5de0 routes;601a3c1 exact
 - [ ] Push the resolved merge to devUpdate1012 and verify PR checks; do not merge main or release production.
 
 
+
+## 2026-11-06 · GPT Image 2.6 migration (in progress)
+
+User requests production model-ID verification and upgrade, and explicitly chose reuse of the existing production API key. Isolated worktree `brandai-image26`, branch `claude/image26-migration`, based on production commit `3272951480c2a737886a9f4921c30504e7e3cc66`. Target: `gpt-image-2.6-sunburst`; Flare remains an explicit supported alternative.
+
+Code compatibility and defaults prepared. Still required: production AppSetting/model request evidence, upstream model availability, all-green Linux AI checks, ordinary CI/image gates and CDS production release, then persisted configuration update and one actual generation/edit verification. No production configuration change, key rotation, push, PR or release performed.
+
+
+## 分层分支历史记录保留（2026-11-11 合并）
+
 ## 2026-11-02 · 点击接收Omni灵感
 
 - [x] 接收入口、持久状态、并发去重、手动内容模式与自动撤回。
 - [x] 内部用途包接收范围校验、契约镜像与隔离交互回归。
 - [x] 同提交CI/镜像、分层预览实际运行、正常登录/实际接收按钮与Omni自然自动发布验证；进度见2026-11-02-omni-receive.md。新包留给用户点击接收，本轮不代提交，不将入口验收等同新批次入库回执。
-
 
 ## 2026-11-02 · 公司统一灵感库
 
@@ -526,7 +535,6 @@ P1 local gates complete: e0725bd owned shell/export;6ce5de0 routes;601a3c1 exact
 - [x] 同提交CI/镜像与分层预览、三服务实际SHA/源文件以及线上原数据迁移保全。
 - [ ] 现有管理员正常登录并初始化共享库，启用新发布目标，实际接收及双品牌读取；见2026-11-02-shared-inspiration.md。
 - [x] 用户要求先写日志，暂停扩展工作；恢复原自动发布与原品牌接收配置，记录下次续接步骤。
-
 
 ## 2026-11-03 · 共库兼容收尾
 
@@ -584,7 +592,6 @@ P1 local gates complete: e0725bd owned shell/export;6ce5de0 routes;601a3c1 exact
 - [ ] 分层原像素保护与遮挡补全分流，核验边缘、纹理、独立图层与PSD。
 - [ ] 完整测试、构建、发布检查及实际产品验收，通过后推送/部署同SHA预览。
 - [ ] 统一交付修复清单、证据、未验证限制和回退方法。
-
 
 ## 2026-11-06 · Omni 分片接收与 500 档
 
