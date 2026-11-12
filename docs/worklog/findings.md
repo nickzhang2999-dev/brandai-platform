@@ -307,3 +307,7 @@ Production `https://deepflare.cn/api/health` reports queue `brandai-prod`, worke
 Existing CDS project authorization was found at the original workspace `.cds/credentials.json` and verified without printing secrets. Browser login also confirmed. Project branch APIs/container inspection work, but attempted operator/remote-host metadata requests returned Cloudflare HTTP 403, error 1010 `browser_signature_banned`, `retryable=false`, `owner_action_required=true` (rays `a560f4eafc5f284e`, `a560f4eaf949fe59`). No retry of the blocked interfaces or privilege workaround. Production DB/model requests remain unverified.
 
 Compatibility defect: Python `_is_gpt_image_2_model` accepted only an exact old ID, and the STRICT-reference route separately repeated that check. Merely changing the DB model would cause size snapping, edit capability rejection or incorrect reference routing. Both checks now recognize explicit 2.6 IDs including gateway namespaces. New generation revision isolates workers from old AI services. New model cost estimates return unknown instead of incorrectly reusing the old per-size table.
+
+## 2026-11-12 · DeepFlare 2.0 基线与边界
+
+最新 main=71a3132b68087f9e091777d7a7363f33f25453d9；layer-quality 的未合并功能不作为本批隐式依赖。现有 Studio 的工作单外层缺少方向审核持久状态，本批补独立域层、事务和 outbox；沿用现有栈，暂不引入 LangGraph。真实 Pg 并发/回滚10项与 Linux AI746项通过。详见 [当日日志](../deepflare-2.0/logs/2026-11-12-foundation.md)。

@@ -805,3 +805,10 @@ from .inspiration_schemas import InspirationCaseCard, InspirationListResponse, I
 from .omni_analysis_schemas import OmniAnalysisInput, OmniAnalysisSuggestion, OmniAnalysisResult, OmniAnalysisJob, OmniAnalysisConfig
 
 from .brand_kit_import_schemas import *  # noqa: F403 — mirrored additive BFF contracts
+
+# DeepFlare 2.0 wire mirror; no new public AI endpoint.
+from .deepflare_v2_schemas import (
+    DeepFlareV2Scope, DeepFlareV2InspirationRef, DeepFlareV2Brief,
+    DeepFlareV2Direction, DeepFlareV2CreateInput, DeepFlareV2CommandInput,
+    DeepFlareV2Task, DeepFlareV2State, DeepFlareV2Receipt,
+)

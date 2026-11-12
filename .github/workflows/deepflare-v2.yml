@@ -1,0 +1,46 @@
+name: DeepFlare 2.0 database foundation
+on:
+  pull_request:
+    branches: [claude/deepflare-2.0]
+  push:
+    branches: [claude/deepflare-2.0-foundation, claude/deepflare-2.0]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: deepflare-v2-db-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  database:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: integration
+          POSTGRES_PASSWORD: disposable-ci-only
+          POSTGRES_DB: deepflare_v2_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U integration -d deepflare_v2_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://integration:disposable-ci-only@127.0.0.1:5432/deepflare_v2_test
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:generate
+      - name: Apply committed migrations to disposable database
+        run: pnpm --filter @brandai/db exec prisma migrate deploy
+      - name: Reapply migrations to verify no-op
+        run: pnpm --filter @brandai/db exec prisma migrate deploy
+      - name: Verify real persistence, concurrency and authorization
+        run: pnpm --filter @brandai/web exec vitest run --config vitest.v2-db.config.ts
