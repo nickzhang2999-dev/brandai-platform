@@ -1,3 +1,4 @@
+import {PublisherReadError} from './publisher-fetch';
 import { randomUUID } from 'node:crypto';
 import { Prisma,prisma } from '@brandai/db';
 import { InspirationSelectedImage } from '@brandai/contracts';
@@ -137,8 +138,9 @@ export function createInspirationWorker() {
           const dailyLimit=error instanceof DailyReceiptLimit;
           const failureCode=dailyLimit?DAILY_IMAGE_LIMIT_CODE:scope?'LIBRARY_SCOPE_MISMATCH':access?'RECEIVER_ACCESS_CHANGED':timedOut?'SYNC_TIMEOUT':'SYNC_FAILED';
           const message=dailyLimit?dailyImageLimitMessage(contentSyncMode()):scope?'发布包与当前灵感库的接收范围不一致，请联系管理员检查库配置。':access?'接收权限已变化，请由当前灵感库管理员重新确认。':timedOut?'灵感接收超时，已有内容保留。':terminalError;
-          console.warn('[inspiration-sync] failed',{failureCode});
-          await prisma.inspirationLibraryTask.updateMany({where:claimWhere(),data:{status:'FAILED',error:message,resultJson:{failureCode}}});
+          const diagnostic=error instanceof PublisherReadError?{phase:error.phase,reason:error.reason,attempts:error.attempts,...(error.status?{httpStatus:error.status}:{})}:{};
+          console.warn('[inspiration-sync] failed',{failureCode,...diagnostic});
+          await prisma.inspirationLibraryTask.updateMany({where:claimWhere(),data:{status:'FAILED',error:message,resultJson:{failureCode,...diagnostic}}});
         }
       }
       await prisma.inspirationLibraryTask.updateMany({where:{kind:'INSPIRATION_SYNC',status:{in:['PENDING','RUNNING']},expiresAt:{lte:new Date()}},data:{status:'FAILED',error:'同步任务已超时，请重试。'}});

@@ -1,3 +1,4 @@
+import {readPublisher} from './publisher-fetch';
 import { Prisma, prisma } from '@brandai/db';
 import { Manifest, Withdrawal, canonical, checkedPackageSize, sha256, validatePackage, validatePackageMetadata, verifySigned, type PublishedCase } from './protocol';
 import { boundedBody, receiverOrigin, syncConfig, syncSizeLimits } from './config';
@@ -209,8 +210,8 @@ export async function syncWithdrawals(input:LibraryInput,signal:AbortSignal) {
   const startedAt = await beginCheck(libraryId, 'withdrawals');
   try {
     const c=syncConfig(library.kind);if(!c)throw new Error('Publisher is not configured');
-    const response=await fetch(`${c.baseUrl}/withdrawals/latest`,{headers:{Authorization:`Bearer ${c.token}`},redirect:'error',signal,cache:'no-store'});
-    const value=JSON.parse((await boundedBody(response,8*1024*1024)).toString('utf8'));
+    const raw=await readPublisher(`${c.baseUrl}/withdrawals/latest`,c.token,8*1024*1024,signal,'withdrawals');
+    const value=JSON.parse(raw.toString('utf8'));
     assertEnvelopeScope({...value,schema_version:value.schema_version??1},library,receiverOrigin());
     if(value.withdrawal)await applyWithdrawal(library,Buffer.from(JSON.stringify(value.withdrawal)),c.keys);
     else if(value.status!=='empty')throw new Error('Invalid withdrawal discovery');

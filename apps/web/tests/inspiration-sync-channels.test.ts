@@ -100,7 +100,7 @@ describe('replica check channel persistence',()=>{
     vi.stubGlobal('fetch',vi.fn(()=>{calls++;return calls===1?new Promise<Response>(resolve=>{resolveFirst=resolve;}):Promise.reject(new Error('newer failure'));}));
     const first=syncWithdrawals('ws',new AbortController().signal);
     await vi.waitFor(()=>expect(calls).toBe(1));
-    await expect(syncWithdrawals('ws',new AbortController().signal)).rejects.toThrow('newer failure');
+    await expect(syncWithdrawals('ws',new AbortController().signal)).rejects.toThrow('publisher_read_failed');
     resolveFirst(response({status:'empty'}));await first;
     expect(state.withdrawalError).toBe(WITHDRAWAL_SYNC_ERROR);expect(state.lastWithdrawalAt).toBeNull();
   });
