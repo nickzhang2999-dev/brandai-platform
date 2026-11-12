@@ -445,6 +445,7 @@ model ComplianceTerm {
 // Project = BrandAI **Campaign** 的物理底座（保留表名以零成本复用迁移过来的
 // 路由/worker/lib）。下列 BrandAI 业务字段 frozen-additive。
 model Project {
+  deepflareWorkOrders DeepFlareWorkOrder[]
   studioWritingDocuments StudioWritingDocument[]
   id          String         @id @default(cuid())
   workspaceId String
@@ -1256,4 +1257,54 @@ model InspirationFeedback {
   updatedAt DateTime @updatedAt
   @@index([workspaceId, userId, createdAt])
   @@index([workspaceId, status, createdAt])
+}
+
+// DeepFlare 2.0: isolated durable foundation. No executor consumes this outbox yet.
+model DeepFlareWorkOrder {
+  id String @id @default(cuid())
+  workspaceId String
+  projectId String
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy String
+  mutationId String
+  payloadHash String
+  revision Int @default(1)
+  state Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  events DeepFlareWorkOrderEvent[]
+  dispatches DeepFlareWorkOrderDispatch[]
+
+  @@unique([workspaceId, projectId, createdBy, mutationId], map: "DFWorkOrder_create_key")
+  @@index([workspaceId, projectId, createdAt])
+}
+
+model DeepFlareWorkOrderEvent {
+  id String @id @default(cuid())
+  workOrderId String
+  workOrder DeepFlareWorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  actorId String
+  mutationId String
+  payloadHash String
+  revision Int
+  command Json
+  snapshot Json
+  createdAt DateTime @default(now())
+
+  @@unique([workOrderId, actorId, mutationId], map: "DFWorkOrderEvent_mutation_key")
+  @@unique([workOrderId, revision])
+}
+
+model DeepFlareWorkOrderDispatch {
+  id String @id @default(cuid())
+  workOrderId String
+  workOrder DeepFlareWorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  planVersion Int
+  snapshot Json
+  // PENDING is a durable handoff, not evidence that generation has started.
+  status String @default("PENDING")
+  createdAt DateTime @default(now())
+
+  @@unique([workOrderId, planVersion])
+  @@index([status, createdAt])
 }

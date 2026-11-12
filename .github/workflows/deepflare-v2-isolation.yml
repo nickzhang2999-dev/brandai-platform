@@ -1,0 +1,20 @@
+name: DeepFlare 2.0 branch isolation
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited, ready_for_review]
+permissions:
+  contents: read
+jobs:
+  no-main-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enforce the current no-merge boundary
+        env:
+          HEAD_BRANCH: ${{ github.head_ref }}
+          BASE_BRANCH: ${{ github.base_ref }}
+        run: |
+          if [[ "$HEAD_BRANCH" == claude/deepflare-2.0* && "$BASE_BRANCH" == main ]] ||
+             [[ "$HEAD_BRANCH" == main && "$BASE_BRANCH" == claude/deepflare-2.0* ]]; then
+            echo 'DeepFlare 2.0 is isolated. Explicit owner authorization and a reviewed policy update are required for main integration.'
+            exit 1
+          fi

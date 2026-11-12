@@ -40,3 +40,5 @@ export * from "./studio-writing";
 export * from "./brand-kit-import";
 export * from "./inspiration";
 export * from "./omni-analysis";
+
+export * from "./deepflare-v2";

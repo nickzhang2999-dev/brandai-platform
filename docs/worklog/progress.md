@@ -608,3 +608,13 @@ User explicitly authorized PR, production release and runtime model-ID verificat
 
 
 Prepared the project-owned one-time production model migration and real provider receipt: upstream model discovery, one 1K low-quality actual call, PNG verification, storage of image/receipt, optimistic settings update and real usage audit. Future releases preserve subsequent admin overrides and do not repeat the paid call. No live provider call has yet run. Added five migration policy tests and release-order coverage; final Web suite is 2152 passed / 31 skipped, contracts 312 and UI 39 passed. Typecheck and production build passed. Production configuration remains unchanged until CDS executes the committed release contract.
+
+## 2026-11-12 · DeepFlare 2.0 独立骨架
+
+- 已完成独立 worktree / 分支、全部 2.0 材料归档、TODO 和交接入口。
+- 已完成工作单合同、版本化方向确认、三表持久化与原子待执行记录、角色/Ommi/记忆接口；没有接真实执行器。
+- 本地 Contracts340 / UI39 / Web2171（旧31 skip）、Linux AI746、typecheck、lint、build、发布检查及真实 PostgreSQL10 通过。
+- 草稿 PR 面向 2.0 集成分支；链接与 CI 状态以 [2.0 验证记录](../deepflare-2.0/verification.md) 为准。
+- 不合并 main、不发布正式环境、不改 Ommi 独立仓库。下一批按 [TODO](../deepflare-2.0/TODO.md) 交接。
+
+2026-11-12 2.0 交付回执：草稿 PR #70 已创建；骨架代码 896b104 的完整 CI43179204751、数据库 CI43179204594、隔离检查43179204801 全部成功。预览候选返回404未部署，已如实记录；本次回填仅改文档，不进行合并。

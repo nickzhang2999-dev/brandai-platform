@@ -447,3 +447,7 @@ P1 local gates complete: e0725bd owned shell/export;6ce5de0 routes;601a3c1 exact
 User requests production model-ID verification and upgrade, and explicitly chose reuse of the existing production API key. Isolated worktree `brandai-image26`, branch `claude/image26-migration`, based on production commit `3272951480c2a737886a9f4921c30504e7e3cc66`. Target: `gpt-image-2.6-sunburst`; Flare remains an explicit supported alternative.
 
 Code compatibility and defaults prepared. Still required: production AppSetting/model request evidence, upstream model availability, all-green Linux AI checks, ordinary CI/image gates and CDS production release, then persisted configuration update and one actual generation/edit verification. No production configuration change, key rotation, push, PR or release performed.
+
+## 2026-11-12 · 当前任务：DeepFlare 2.0 骨架优先
+
+S0/S1：独立分区、归档、合同、持久状态和完整 PR；S2：Ommi 消费合同与有界执行器；S3：粗构图与审核界面；S4：同项目记忆写回。逐项状态、角色、依赖、验收见 [2.0 TODO](../deepflare-2.0/TODO.md)。用户明确禁止未经授权与 main 合并；Ommi 本体不在本仓库工作范围。
