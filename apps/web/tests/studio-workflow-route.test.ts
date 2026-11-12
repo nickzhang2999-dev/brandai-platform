@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ZodError } from "zod";
 const f = vi.hoisted(() => ({ session: vi.fn(), read: vi.fn(), assets: vi.fn(), save: vi.fn(), image: vi.fn(), upload: vi.fn(), task: vi.fn(), materials: vi.fn(), generate: vi.fn(), generation: vi.fn(), retryArchive: vi.fn(), compliance: vi.fn(), retryCompliance: vi.fn() }));
 vi.mock("../src/lib/api", () => ({ ApiException: class extends Error { constructor(public status: number, message: string) { super(message); } } }));
+vi.mock("../src/lib/admin", () => ({ isAdminUser: vi.fn().mockResolvedValue(false) }));
 vi.mock("../src/lib/studio-session", () => ({ studioSession: f.session }));
 vi.mock("../src/lib/studio-assets", async importOriginal => ({ ...await importOriginal<typeof import("../src/lib/studio-assets")>(), studioAsset: vi.fn(), studioManifest: vi.fn() }));
 vi.mock("../src/lib/editor-documents", () => ({ readEditorDocument: vi.fn() }));
@@ -11,6 +12,7 @@ vi.mock("../src/lib/studio-materials", () => ({ submitStudioMaterial: f.upload, 
 vi.mock("../src/lib/studio-generation", () => ({ submitStudioGeneration: f.generate, readStudioGeneration: f.generation }));
 vi.mock("../src/lib/studio-generation-artifacts", () => ({ retryStudioGenerationArtifacts: f.retryArchive }));
 vi.mock("../src/lib/studio-generation-compliance", () => ({ readStudioGenerationCompliance: f.compliance, retryStudioGenerationCompliance: f.retryCompliance }));
+import { isAdminUser } from "../src/lib/admin";
 import { studioRoute } from "../src/lib/studio-route";
 import { studioAsset, studioManifest } from "../src/lib/studio-assets";
 import { readEditorDocument } from "../src/lib/editor-documents";
@@ -22,6 +24,7 @@ beforeEach(() => {
   vi.mocked(studioManifest).mockResolvedValue({ format: "novart-studio-assets-v1", files: {
     "/novart-product-bootstrap.js": { file: "novart-product-bootstrap.js", mime: "application/javascript", sha256: sha, bytes: 123 },
   }, external: {} });
+  vi.mocked(isAdminUser).mockResolvedValue(false);
   f.session.mockResolvedValue({ user: { id: "server-user" }, workspaceId: "server-workspace", session: {} });
   f.read.mockResolvedValue({ revision: 1 }); f.assets.mockResolvedValue({ assets: [] }); f.save.mockResolvedValue({ revision: 2 });
   f.image.mockResolvedValue("/api/workspaces/server-workspace/assets/a/raw");

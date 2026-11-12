@@ -127,6 +127,14 @@ const nextAuth: NextAuthResult = NextAuth({
           token.uid = user.id;
         }
       }
+      if (typeof token.uid !== "string") return null;
+      const current = await prisma.user.findUnique({
+        where: { id: token.uid },
+        select: { isActive: true, sessionVersion: true },
+      });
+      if (!current?.isActive) return null;
+      if (user) token.sessionVersion = current.sessionVersion;
+      if ((token.sessionVersion ?? 0) !== current.sessionVersion) return null;
       return token;
     },
     session({ session, token }) {

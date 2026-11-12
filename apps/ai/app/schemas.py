@@ -3,6 +3,12 @@ from typing import Annotated, Any, Literal, Optional
 from pydantic import BaseModel, Field, StringConstraints, field_validator, model_validator
 
 
+class AdminCreateUserInput(BaseModel):
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=40)]
+    email: Annotated[str, StringConstraints(strip_whitespace=True, to_lower=True, max_length=120, pattern=r"^[^\s@]+@[^\s@]+\.[^\s@]+$")]
+    password: Annotated[str, StringConstraints(min_length=8, max_length=128)]
+
+
 NativeProjectId = Annotated[str, StringConstraints(strict=True, min_length=1, max_length=128, pattern=r"^[a-zA-Z0-9_-]+$")]
 NativeProjectName = Annotated[str, StringConstraints(strict=True, strip_whitespace=True, min_length=1, max_length=200, pattern=r"^[^\x00-\x1f\x7f]+$")]
 

@@ -125,6 +125,7 @@ model User {
   // Account enabled flag (admin user-management, /admin/users). A disabled user
   // cannot sign in (auth.ts authorize) and is bounced from the app shell.
   isActive      Boolean          @default(true)
+  sessionVersion Int             @default(0)
   createdAt     DateTime         @default(now())
   workspaces    BrandWorkspace[]
   subscription  Subscription?

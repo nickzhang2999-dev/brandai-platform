@@ -110,7 +110,17 @@
           <div class="ns-setting-row"><div><label for="ns-settings-motion">动态效果</label><p>减少效果时，页面切换更直接</p></div><select id="ns-settings-motion"><option value="system">跟随系统偏好</option><option value="reduce">减少动态效果</option></select></div>
         </div>
         <div class="ns-form-footer"><span id="ns-settings-status" role="status">正在读取偏好…</span><button id="ns-settings-save" class="ns-primary" type="submit">保存偏好</button></div><button id="ns-settings-latest" class="ns-text-button" type="button" hidden>重新读取，保留草稿</button>
-      </form><p class="ns-panel-note ns-settings-note">修改会立即预览，点击保存后记住你的偏好。偏好随当前账号与品牌保存。</p>
+      </form>
+      <section class="ns-form-card ns-settings-card" aria-labelledby="ns-account-title">
+        <div class="ns-settings-section"><h2 id="ns-account-title">账号</h2>
+          <div class="ns-setting-row">
+            <a href="/admin/users" class="ns-secondary" id="ns-manage-accounts" hidden>账号管理</a>
+            <button class="ns-secondary" id="ns-sign-out" type="button">退出登录</button>
+          </div>
+          <p id="ns-sign-out-error" role="alert" hidden></p>
+        </div>
+      </section>
+      <p class="ns-panel-note ns-settings-note">修改会立即预览，点击保存后记住你的偏好。偏好随当前账号与品牌保存。</p>
     </section>
     <section data-page="workspace" class="ns-workspace-page" hidden><div id="ns-workspace-status" class="ns-workspace-status" role="status"></div><div class="ns-mobile-editor-note" id="ns-mobile-editor-note"><p>手机端可浏览项目与资源。<br>画布编辑请在桌面窗口继续。</p><a href="#/projects" class="ns-secondary">返回项目库</a></div></section>
     <div id="hs-handoff" class="hs-handoff" role="status" hidden></div>

@@ -11,7 +11,7 @@ import { usePathname } from "next/navigation";
  */
 const TABS: { href: string; label: string }[] = [
   { href: "/admin/settings", label: "平台设置" },
-  { href: "/admin/users", label: "用户管理" },
+  { href: "/admin/users", label: "账号管理" },
   { href: "/admin/plans", label: "订阅额度" },
   { href: "/admin/workspaces", label: "全部空间" },
   { href: "/admin/usage", label: "用量看板" },

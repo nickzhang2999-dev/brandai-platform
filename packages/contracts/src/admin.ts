@@ -34,6 +34,12 @@ export const AdminListUsersResponse = z.object({
 });
 export type AdminListUsersResponse = z.infer<typeof AdminListUsersResponse>;
 
+export const AdminCreateUserInput = z.object({
+  name: z.string().trim().min(1).max(40),
+  email: z.string().trim().toLowerCase().email().max(120),
+  password: z.string().min(8).max(128),
+});
+
 /** PATCH /api/admin/users/[userId] — enable/disable a user account. */
 export const AdminUpdateUserInput = z.object({
   isActive: z.boolean(),

@@ -140,9 +140,58 @@
     location.assign('/studio?workspaceId=' + encodeURIComponent(workspaceId) + (destination === 'brand' ? '#/brand' : '#/home'));
   }
   const message = text => { startup.replaceChildren(); const p = document.createElement('p'); p.textContent = text; const retry = document.createElement('button'); retry.className='ns-primary'; retry.textContent='重新打开'; retry.onclick=() => location.reload(); startup.append(p,retry); };
+  function bindSignOut(action, error) {
+    action.addEventListener('click', async () => {
+      action.disabled = true;
+      error.hidden = true;
+      try {
+        const csrf = await originalFetch('/api/auth/csrf', {cache: 'no-store', signal: AbortSignal.timeout(10000)});
+        if (!csrf.ok) throw new Error();
+        const {csrfToken} = await csrf.json();
+        if (!csrfToken) throw new Error();
+        const result = await originalFetch('/api/auth/signout', {
+          method: 'POST',
+          headers: {'X-Auth-Return-Redirect': '1'},
+          body: new URLSearchParams({csrfToken, callbackUrl: location.origin + '/login'}),
+          signal: AbortSignal.timeout(10000),
+        });
+        if (!result.ok) throw new Error();
+        const session = await originalFetch('/api/auth/session', {cache: 'no-store', signal: AbortSignal.timeout(10000)});
+        if (!session.ok || (await session.json())?.user) throw new Error();
+        document.cookie = 'usertoken=; Path=/; Max-Age=0';
+        location.replace('/login');
+      } catch {
+        error.textContent = '退出未完成，请重试。';
+        error.hidden = false;
+        action.disabled = false;
+      }
+    });
+  }
+
+  function startupAccountActions() {
+    const actions = document.createElement('div');
+    if (context.canManageAccounts === true) {
+      const manage = document.createElement('a');
+      manage.href = '/admin/users';
+      manage.className = 'ns-secondary';
+      manage.textContent = '账号管理';
+      actions.append(manage);
+    }
+    const logout = document.createElement('button');
+    logout.className = 'ns-secondary np-logout';
+    logout.type = 'button';
+    logout.textContent = '退出登录';
+    const error = document.createElement('p');
+    error.setAttribute('role', 'alert');
+    error.hidden = true;
+    bindSignOut(logout, error);
+    actions.append(logout, error);
+    return actions;
+  }
+
   async function createBrand() {
     startup.replaceChildren(); const form = document.createElement('form'), title = document.createElement('h1'), input = document.createElement('input'), submit = document.createElement('button'), status = document.createElement('p');
-    title.textContent='创建你的第一个品牌'; input.required=true; input.maxLength=60; input.placeholder='品牌名称'; input.setAttribute('aria-label','品牌名称'); submit.textContent='进入工作台'; submit.className='ns-primary'; status.setAttribute('role','status'); form.append(title,input,submit,status); startup.append(form);
+    title.textContent='创建你的第一个品牌'; input.required=true; input.maxLength=60; input.placeholder='品牌名称'; input.setAttribute('aria-label','品牌名称'); submit.textContent='进入工作台'; submit.className='ns-primary'; status.setAttribute('role','status'); form.append(title,input,submit,status); startup.append(form, startupAccountActions());
     let created = null, creationUncertain = false, saving = false;
     form.onsubmit=async event => { event.preventDefault(); if(saving||!input.value.trim())return; saving=true; submit.disabled=true; try {
       if (creationUncertain) {
@@ -150,7 +199,7 @@
         if (!knownWorkspaces.length) { status.textContent='列表暂未发现品牌，请稍后再次检查。创建结果仍未确认，不会重复提交。'; return; }
         const heading=document.createElement('h1'), note=document.createElement('p'), list=document.createElement('div');heading.textContent='检查已有品牌';note.textContent='创建结果尚未确认，请选择列表中已有品牌继续。不会按名称自动认领或再次创建。';
         for (const workspace of knownWorkspaces) { const pick=document.createElement('button');pick.type='button';pick.className='ns-primary';pick.textContent=workspace.name;pick.dataset.workspaceId=workspace.id;pick.onclick=async()=>{if(saving)return;saving=true;list.querySelectorAll('button').forEach(button=>{button.disabled=true;});try{await selectBrand(workspace.id);}catch(error){status.textContent=error.message;saving=false;list.querySelectorAll('button').forEach(button=>{button.disabled=false;});}};list.append(pick); }
-        startup.replaceChildren(heading,note,list,status); return;
+        startup.replaceChildren(heading,note,list,status,startupAccountActions()); return;
       }
       if (!created) created = await brandRequest('/api/workspaces', {name:input.value.trim()});
       if (!created.id) throw new Error('品牌创建结果尚未确认，请刷新品牌列表后检查。');
@@ -237,9 +286,8 @@
     const sidebar=document.querySelector('.ns-sidebar');
     if(sidebar) {
       installBrandSwitcher(sidebar);
-      const settings=document.getElementById('ns-settings-form'), logout=document.createElement('button');logout.className='ns-secondary np-logout';logout.type='button';logout.textContent='退出登录';
-      logout.onclick=async()=>{logout.disabled=true;try{const csrf=await (await originalFetch('/api/auth/csrf')).json();const result=await originalFetch('/api/auth/signout',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({csrfToken:csrf.csrfToken,callbackUrl:location.origin+'/login'})});if(!result.ok)throw Error('退出失败');document.cookie='usertoken=; Path=/; Max-Age=0';location.replace('/login?callbackUrl=%2Fstudio');}catch(_){logout.disabled=false;logout.textContent='退出失败，点击重试';}};
-      settings?.append(logout);
+      document.getElementById('ns-manage-accounts').hidden = context.canManageAccounts !== true;
+      bindSignOut(document.getElementById('ns-sign-out'), document.getElementById('ns-sign-out-error'));
     }
     window.NovartProductTaskInbox?.start();
     startup.remove();
