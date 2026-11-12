@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { StudioGenerationInput, StudioGenerationView, StudioGenerationComplianceView, StudioMaterial, StudioMaterialUploadView, StudioWorkflowView, StudioWorkflowAssets, StudioWorkflowSaveInput, StudioGeneratedPsdView } from "@brandai/contracts";
+import { StudioGenerationInput, StudioGenerationView, StudioBrandRulePreview, StudioGenerationComplianceView, StudioMaterial, StudioMaterialUploadView, StudioWorkflowView, StudioWorkflowAssets, StudioWorkflowSaveInput, StudioGeneratedPsdView } from "@brandai/contracts";
 import { createDocumentSession, createNovartApiClient, NovartApiError } from "../../lib/novart-api-client";
 import { StudioDecompositionInput, StudioDecompositionView } from "../../../../../packages/contracts/src/studio-decomposition";
 import { matchesOwnedDecomposition, matchesOwnedPsdSelection } from "./owned-layer-options";
@@ -202,6 +202,7 @@ export function createOwnedEditorApi(workspaceId: string, projectId: string, use
     },
     listMaterials: async () => (await request(endpoint("/studio/materials"), z.array(StudioMaterial))).map(image),
     listUploads: async () => (await request(endpoint("/studio/material-upload"), z.object({ tasks: z.array(StudioMaterialUploadView) }))).tasks.map(upload),
+    readBrandRulePreview: () => request(endpoint("/studio/generation/brand-rules"), StudioBrandRulePreview, {}, 8000),
     listGenerations: async () => (await request(endpoint("/studio/generation"), z.object({ requests: z.array(StudioGenerationView) }))).requests.map(generation),
     getUpload,
     async getGeneration(requestId: string) {

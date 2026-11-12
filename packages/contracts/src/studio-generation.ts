@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { NativeProjectQueryInput } from "./native-project";
 import { GenerationSizeSelection, GenerationAspectRatioKey, GenerationResolutionTier, CustomAspectRatio } from "./ai";
+import { BrandRule } from "./entities";
 import { StudioWorkflowTarget } from "./studio-workflow";
 
 export const STUDIO_GENERATION_TTL_MS = 6 * 60_000;
@@ -27,6 +28,12 @@ export const StudioGenerationQuery = NativeProjectQueryInput.pick({ projectId: t
 }).strict();
 export const StudioGenerationRetryInput = StudioGenerationQuery.required();
 export const StudioGenerationArchiveRetryInput = StudioGenerationRetryInput;
+export const StudioAppliedBrandRule = BrandRule.pick({ id: true, type: true, strength: true, summary: true }).extend({
+  colors: z.array(z.string().regex(/^#[0-9A-F]{6}$/)).max(6).optional(),
+}).strict();
+export type StudioAppliedBrandRule = z.infer<typeof StudioAppliedBrandRule>;
+export const StudioBrandRulePreview = z.object({ rules: z.array(StudioAppliedBrandRule) }).strict();
+
 export const StudioGenerationView = z.object({
   mode: z.enum(["generate", "modify"]).default("generate"),
   sourceShapeId: StudioWorkflowTarget.shape.shapeId.optional(),
@@ -44,6 +51,7 @@ export const StudioGenerationView = z.object({
     mimeType: z.enum(["image/png", "image/jpeg", "image/webp"]),
     url: z.string().regex(/^\/api\/workspaces\/[a-zA-Z0-9_-]+\/assets\/[a-zA-Z0-9_-]+\/raw$/).refine(v => !v.includes("\n")),
   }).strict()), error: z.string().nullable(), archiveError: z.string().nullable(), canRetryArchive: z.boolean(),
+  appliedBrandRules: z.array(StudioAppliedBrandRule).nullish(),
   appliedBrandRuleCount: z.number().int().min(0).nullable().default(null),
 }).strict().superRefine((value, context) => {
   if (value.sourceShapeId !== undefined && value.mode !== "modify") context.addIssue({ code: "custom", path: ["sourceShapeId"], message: "Only modified results have a source shape" });

@@ -1,5 +1,6 @@
 "use client";
 
+import { OwnedBrandRuleList } from "./OwnedBrandRuleDetails";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { createOwnedEditorApi, GenerationTask, GenerationCompliance, PersistentImage, GeneratedPsdTask, DecompositionTask } from "./owned-editor-api";
 import { downloadOwnedPsd } from "./owned-psd-download";
@@ -103,7 +104,21 @@ export function OwnedGenerationCard({ task, api, canEdit, onTask, onNotice, onIn
       <p role="alert" className="text-xs leading-6">{task.error?.startsWith("生成服务") ? task.error.split("。")[0] + "。" : "本次" + (task.mode === "modify" ? "修改" : "生成") + "未完成。"}{task.mode === "modify" ? "原图已保留。" : "需求已保留。"}</p>
       <div className="flex flex-wrap items-start gap-3 text-xs"><details className="min-w-0 flex-1"><summary className="cursor-pointer text-muted-foreground">查看详情</summary><p className="mt-2 break-words leading-6 text-muted-foreground">{task.error || "具体原因尚未确认，请查看任务状态。"}</p></details>{onReedit && <button type="button" className="rounded-full text-primary disabled:opacity-40" disabled={!canEdit || recoveryDisabled} onClick={onReedit}>重新编辑</button>}</div>
     </div> : <p role={task.resultState === "FAILED" ? "alert" : undefined} className="text-xs leading-5 text-muted-foreground">{task.status === "FAILED" ? task.error : task.resultState === "READY" ? "图片已生成并保存" : task.resultState === "FAILED" ? task.archiveError || "生成结果保存失败" : activityNotice ? activityNotice : task.status === "SUCCEEDED" ? "生成完成，正在保存图片" : compact && task.status === "RUNNING" ? (task.progress === null ? "正在创作…" : `正在创作 · ${task.progress}%`) : task.status === "RUNNING" ? "正在生成…" : "已提交，排队中"}</p>}
-    {task.status === "SUCCEEDED" && task.appliedBrandRuleCount !== null && <p className="text-xs text-muted-foreground" data-testid="owned-generation-rule-count">{task.appliedBrandRuleCount > 0 ? `已应用 ${task.appliedBrandRuleCount} 条品牌规则` : "本次未应用品牌规则"}</p>}
+    {task.status === "SUCCEEDED" && (
+      <details className="rounded-xl border border-border p-2.5 text-xs" data-testid="owned-generation-brand-rules">
+        <summary className="cursor-pointer text-muted-foreground" data-testid="owned-generation-rule-count">
+          {task.appliedBrandRuleCount === null ? "本次品牌规则未记录" : task.appliedBrandRuleCount === 0
+            ? "本次未应用品牌规则（0 条）" : `已应用 ${task.appliedBrandRuleCount} 条品牌规则`}
+        </summary>
+        <div className="mt-2 space-y-1.5">
+          {task.appliedBrandRules?.length ? <>
+            <OwnedBrandRuleList rules={task.appliedBrandRules} />
+            <p className="text-muted-foreground">这是生成时带入的规则。图片是否符合规则，可查看品牌检查。</p>
+          </> : <p className="text-muted-foreground">{task.appliedBrandRuleCount === 0
+            ? "本次没有带入品牌规则。" : "这次生成没有可读取的规则明细。"}</p>}
+        </div>
+      </details>
+    )}
     {task.canRetryArchive && <button type="button" className={button} disabled={!canEdit || busy} onClick={() => void action(retryArchive)}>重试保存结果</button>}
     {selection.requested && <details open={compact ? undefined : true} className="space-y-2 rounded-xl bg-accent-soft p-3" data-testid="owned-generated-psd" data-status={psd?.status ?? "LOADING"}>
       <summary hidden={!compact} className="cursor-pointer text-xs">PSD 与图层{psd?.status === "READY" ? " · 已就绪" : psd?.status === "FAILED" ? " · 未完成" : " · 准备中"}</summary>

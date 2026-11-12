@@ -1,5 +1,6 @@
 import { prisma, type Prisma } from "@brandai/db";
 import { StudioGenerationRetryInput } from "@brandai/contracts";
+import { appliedStudioBrandRules } from "./studio-brand-rule-details";
 import { ApiException } from "./api";
 import { requireWorkspaceRole } from "./workspace";
 import { enqueueStudioArtifact } from "./studio-generation-artifacts-queue";
@@ -28,14 +29,7 @@ export async function readStudioGenerationResults(request: StudioArtifactRequest
       select: studioArtifactViewSelect, orderBy: { createdAt: "asc" } }),
     db.project.findFirst({ where: { id: request.projectId, workspaceId: request.workspaceId }, select: { archivedAt: true } }),
   ]);
-  return { ...projectStudioGenerationResults(request, { outputs, recoverableOutputs, artifacts, project }), appliedBrandRuleCount: appliedBrandRuleCount(outputs) };
-}
-
-// Written by the worker from the rules actually sent to the provider; older
-// outputs predate the field and report null rather than a guessed zero.
-function appliedBrandRuleCount(outputs: Array<{ params: unknown }>) {
-  const value = (outputs[0]?.params as { appliedBrandRuleCount?: unknown } | null)?.appliedBrandRuleCount;
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
+  return { ...projectStudioGenerationResults(request, { outputs, recoverableOutputs, artifacts, project }), ...appliedStudioBrandRules(outputs[0]?.params) };
 }
 
 /** Recheck writer membership inside the same transaction as publication. */

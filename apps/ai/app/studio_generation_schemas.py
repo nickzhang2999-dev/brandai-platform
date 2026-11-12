@@ -87,6 +87,23 @@ class StudioGenerationResult(StrictModel):
     mimeType: Literal["image/png", "image/jpeg", "image/webp"]
     url: str = Field(pattern=r"^/api/workspaces/[a-zA-Z0-9_-]+/assets/[a-zA-Z0-9_-]+/raw\z")
 
+class StudioAppliedBrandRule(StrictModel):
+    id: str
+    type: Literal["logo", "color", "font", "copy", "imagery", "layout", "graphic"]
+    strength: Literal["STRONG", "WEAK", "FORBIDDEN"]
+    summary: str
+    colors: list[Annotated[str, Field(pattern=r"^#[0-9A-F]{6}\z")]] | None = Field(default=None, max_length=6)
+
+    @field_validator("colors", mode="before")
+    @classmethod
+    def colors_never_null(cls, value):
+        if value is None:
+            raise ValueError("colors must be omitted, not null")
+        return value
+
+class StudioBrandRulePreview(StrictModel):
+    rules: list[StudioAppliedBrandRule]
+
 class StudioGenerationView(StrictModel):
     mode: Literal["generate", "modify"] = "generate"
     sourceShapeId: ShapeId | None = None
@@ -107,6 +124,8 @@ class StudioGenerationView(StrictModel):
     error: str | None
     archiveError: str | None
     canRetryArchive: bool
+    appliedBrandRuleCount: int | None = Field(default=None, ge=0, strict=True)
+    appliedBrandRules: list[StudioAppliedBrandRule] | None = None
 
     @field_validator("sourceShapeId", mode="before")
     @classmethod

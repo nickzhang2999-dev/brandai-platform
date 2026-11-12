@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { prisma, Prisma } from "@brandai/db";
-import { StudioGenerationInput, StudioGenerationQuery, StudioGenerationView, StudioWorkflowTarget, STUDIO_GENERATION_TTL_MS } from "@brandai/contracts";
+import { StudioGenerationInput, StudioGenerationQuery, StudioGenerationView, StudioBrandRulePreview, StudioWorkflowTarget, STUDIO_GENERATION_TTL_MS } from "@brandai/contracts";
+import { getConfirmedRules } from "./rules";
+import { studioBrandRuleDetail } from "./studio-brand-rule-details";
 import { ApiException } from "./api";
 import { requireWorkspaceRole } from "./workspace";
 import { requireStudioMaterialProject } from "./studio-materials";
@@ -93,6 +95,17 @@ export async function submitStudioGeneration(workspaceId: string, userId: string
   if (!row) throw new ApiException(503, "生成请求未完成受理，请稍后重试。");
   if (row.status === "PENDING") await enqueueStudioGeneration(row.id, row.jobData as unknown as GenerateJobData);
   return receipt(row);
+}
+
+export async function readStudioBrandRulePreview(workspaceId: string, userId: string, raw: unknown) {
+  const { projectId } = StudioGenerationQuery.parse(raw);
+  await requireStudioMaterialProject(workspaceId, userId, projectId);
+  const confirmed = await getConfirmedRules(workspaceId, { order: "recency", respectKitAvailability: true });
+  const rules = confirmed.flatMap(rule => {
+    const detail = studioBrandRuleDetail(rule);
+    return detail ? [detail] : [];
+  });
+  return StudioBrandRulePreview.parse({ rules });
 }
 
 export async function readStudioGeneration(workspaceId: string, userId: string, raw: unknown) {

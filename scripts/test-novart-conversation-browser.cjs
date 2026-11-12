@@ -21,6 +21,8 @@ let browser, server, contracts, page, stage = 'compile', reject = false, loseRes
 let draft = null, postInputs = [], putInputs = [], messages = [], receipts = new Map(), decisions = new Map();
 let archiveRetries = [], generationPosts = 0, retryRelease = null, delayRetry = false;
 let delayedMessageRead = null, messageReadRelease = null;
+const blueRule = {id:'blue', type:'color', strength:'STRONG', summary:'海报以深蓝为主色', colors:['#0B1E4B']};
+let previewRules = [];
 const messageReads = new Map();
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jf6EAAAAASUVORK5CYII=', 'base64');
 const references = [1, 2].map(number => ({referenceId: `shape:image${number}`, shapeId: `shape:image${number}`, name: `图片${number}`, assetId: `asset${number}`,
@@ -35,6 +37,11 @@ async function handle(req, res) {
   if (url.pathname === '/app.css') {res.setHeader('Content-Type','text/css');return res.end(fs.readFileSync(path.join(directory,'tokens.css')));}
   if (url.pathname === '/') {res.setHeader('Content-Type', 'text/html'); return res.end('<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/app.css"><style>body{margin:12px}fieldset{font-size:12px;max-width:800px}fieldset button{padding:4px;margin:2px;border:1px solid var(--border);border-radius:8px}.fixture-panel{width:min(360px,100%);height:calc(100dvh - 200px);padding:16px;border:1px solid var(--border);border-radius:24px;min-height:320px}</style></head><body><div id="root"></div><script src="/app.js"></script></body></html>');}
   if (new RegExp(`^/api/workspaces/${fixture.workspaceId}/assets/(fixture-result|asset[12])/raw$`).test(url.pathname) && req.method === 'GET') {res.setHeader('Content-Type', 'image/png'); return res.end(png);}
+  if (url.pathname === '/studio/generation/brand-rules' && req.method === 'GET') {
+    assert.equal(req.headers['x-novart-user'], fixture.userId);
+    assert.equal(url.searchParams.get('workspaceId'), fixture.workspaceId);
+    return json(res, {rules: previewRules});
+  }
   if (url.pathname === '/studio/generation/retry-archive' && req.method === 'POST') {
     assert.equal(req.headers['x-novart-user'], fixture.userId); assert.equal(url.searchParams.get('workspaceId'), fixture.workspaceId);
     const input = contracts.StudioGenerationArchiveRetryInput.parse(await body(req)); assert.equal(input.projectId, fixture.projectId);
@@ -180,6 +187,28 @@ createRoot(document.getElementById('root')!).render(<Fixture/>);`);
   const pollCount = id => messageReads.get(id)??0;
   async function until(condition) {const end=Date.now()+7000;while(!condition()){assert.ok(Date.now()<end,'Expected conversation poll did not arrive');await new Promise(resolve=>setTimeout(resolve,50));}}
   const quiet = async (scenario, ids) => {const before=ids.map(pollCount);await page.waitForTimeout(4100);assert.deepEqual(ids.map(pollCount),before);report.terminalStateEvidence.push({scenario,messagePolls:ids.map((id,index)=>({messageId:id,before:before[index],after:pollCount(id)}))});};
+
+  stage = 'brand-rule-visibility';
+  previewRules = [blueRule];
+  await show([
+    row(task({status:'SUCCEEDED', appliedBrandRuleCount:1, appliedBrandRules:[blueRule]}), {status:'SUCCEEDED'}),
+    row(task({requestId:'no-brand-rule', status:'SUCCEEDED', appliedBrandRuleCount:0, appliedBrandRules:[]}),
+      {status:'SUCCEEDED', messageId:'no-brand-rule-message'})
+  ]);
+  const preview = page.getByTestId('owned-brand-rule-preview');
+  await preview.getByText('预计自动带入 1 条品牌规则',{exact:true}).waitFor();
+  await preview.getByText(blueRule.summary,{exact:true}).waitFor();
+  const card = page.locator('[data-task-id="terminal-request"]');
+  await card.getByText('已应用 1 条品牌规则',{exact:true}).click();
+  await card.getByText(blueRule.summary,{exact:true}).waitFor();
+  const noRuleCard = page.locator('[data-task-id="no-brand-rule"]');
+  await noRuleCard.getByText('本次未应用品牌规则（0 条）',{exact:true}).click();
+  await noRuleCard.getByText('本次没有带入品牌规则。',{exact:true}).waitFor();
+  previewRules = [];
+  await preview.getByRole('button',{name:'刷新规则'}).click();
+  await preview.getByText('本轮无品牌规则',{exact:true}).waitFor();
+  await card.getByText(blueRule.summary,{exact:true}).waitFor();
+  check('brand-preview-and-historical-result-details-distinguish-active-and-empty-rules');
 
   stage = 'failed-terminal';const failed=task({status:'FAILED',error:'夹具模型失败，未生成图片'});
   await show([row(failed,{status:'FAILED',error:'夹具模型失败，未生成图片'}),row(task({...failed,requestId:'stale-request',generationId:'stale-generation'}),{messageId:'stale-running-message',status:'RUNNING',text:'过时顶层状态仍然运行'})]);

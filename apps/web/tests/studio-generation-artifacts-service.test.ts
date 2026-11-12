@@ -26,11 +26,23 @@ beforeEach(() => {
 });
 
 describe("applied brand rule count", () => {
+  it("projects the recorded rules after library edits without exposing internal evidence", async () => {
+    const rule = { id: "blue", type: "color", strength: "STRONG", summary: "海报以深蓝为主色", colors: ["#0B1E4B"] };
+    outputs = [{ id: "output", expiresAt: future(), params: {
+      appliedBrandRuleCount: 1, appliedRuleIds: ["blue"],
+      studioPostprocess: { brandRules: [{ ...rule, colors: undefined, structured: { palette: [{ hex: "#0b1e4b" }] }, evidence: [{ url: "private-evidence" }] }] },
+    } }];
+    expect(await readStudioGenerationResults(request)).toMatchObject({ appliedBrandRuleCount: 1, appliedBrandRules: [rule] });
+    expect(JSON.stringify(await readStudioGenerationResults(request))).not.toContain("private-evidence");
+    outputs[0].params.appliedRuleIds = ["different-rule"];
+    expect((await readStudioGenerationResults(request)).appliedBrandRules).toBeNull();
+  });
+
   it("reports the worker-recorded count and null for outputs without it", async () => {
     outputs = [{ id: "output", expiresAt: future(), params: { appliedBrandRuleCount: 3 } }];
     expect((await readStudioGenerationResults(request)).appliedBrandRuleCount).toBe(3);
     outputs = [{ id: "output", expiresAt: future(), params: { appliedBrandRuleCount: 0 } }];
-    expect((await readStudioGenerationResults(request)).appliedBrandRuleCount).toBe(0);
+    expect(await readStudioGenerationResults(request)).toMatchObject({ appliedBrandRuleCount: 0, appliedBrandRules: [] });
     for (const params of [{}, null, { appliedBrandRuleCount: "3" }, { appliedBrandRuleCount: -1 }, { appliedBrandRuleCount: 1.5 }]) {
       outputs = [{ id: "output", expiresAt: future(), params }];
       expect((await readStudioGenerationResults(request)).appliedBrandRuleCount).toBeNull();

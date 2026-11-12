@@ -52,13 +52,13 @@ describe("owned generation card explicit actions", () => {
     expect((screen.getByRole("button", { name: "加入画布" }) as HTMLButtonElement).disabled).toBe(false);
     expect(screen.queryByRole("button", { name: "下载 PSD" })).toBeNull();
   });
-  it("shows the applied brand rule count only when the server recorded it", async () => {
+  it("distinguishes zero applied brand rules from unrecorded historical results", async () => {
     const f = fixture(task({ appliedBrandRuleCount: 3 })); await settle();
     expect(screen.getByTestId("owned-generation-rule-count").textContent).toBe("已应用 3 条品牌规则");
     f.rerender(<OwnedGenerationCard {...f.props} task={task({ appliedBrandRuleCount: 0 })} />);
-    expect(screen.getByTestId("owned-generation-rule-count").textContent).toBe("本次未应用品牌规则");
+    expect(screen.getByTestId("owned-generation-rule-count").textContent).toBe("本次未应用品牌规则（0 条）");
     f.rerender(<OwnedGenerationCard {...f.props} task={task({ appliedBrandRuleCount: null })} />);
-    expect(screen.queryByTestId("owned-generation-rule-count")).toBeNull();
+    expect(screen.getByTestId("owned-generation-rule-count").textContent).toBe("本次品牌规则未记录");
   });
   it("does not automatically generate, inspect, archive or insert on mount/rerender", async () => {
     const f = fixture(task({ canRetryArchive: true })); await settle(); f.rerender(<OwnedGenerationCard {...f.props} task={{ ...f.props.task }} />); await settle();

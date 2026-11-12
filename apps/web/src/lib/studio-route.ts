@@ -11,7 +11,7 @@ import { readEditorDocument } from "./editor-documents";
 import * as state from "./studio-state";
 import { readStudioWorkflow, readStudioWorkflowAssets, saveStudioWorkflow, studioWorkflowImage } from "./studio-workflow";
 import { submitStudioMaterial, readStudioMaterialUpload, listStudioMaterials } from "./studio-materials";
-import { submitStudioGeneration, readStudioGeneration } from "./studio-generation";
+import { submitStudioGeneration, readStudioGeneration, readStudioBrandRulePreview } from "./studio-generation";
 import { retryStudioGenerationArtifacts } from "./studio-generation-artifacts";
 import { readStudioGenerationCompliance, retryStudioGenerationCompliance } from "./studio-generation-compliance";
 const headers = { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "Referrer-Policy": "same-origin" };
@@ -76,6 +76,7 @@ export async function studioRoute(req: Request) {
         case "/studio/materials": return json(await listStudioMaterials(workspaceId, user.id, project));
         case "/studio/material-upload": return json(await readStudioMaterialUpload(workspaceId, user.id,
           { ...project, ...(url.searchParams.has("taskId") ? { taskId: url.searchParams.get("taskId") } : {}) }));
+        case "/studio/generation/brand-rules": return json(await readStudioBrandRulePreview(workspaceId, user.id, project));
         case "/studio/generation": return json(await readStudioGeneration(workspaceId, user.id,
           { ...project, ...(url.searchParams.has("requestId") ? { requestId: url.searchParams.get("requestId") } : {}) }));
         case "/studio/generation/compliance": return json(await readStudioGenerationCompliance(workspaceId, user.id,
