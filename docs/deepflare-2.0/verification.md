@@ -1,6 +1,6 @@
 # 2.0 验证记录
 
-更新：2026-11-12。本页只记录实际执行结果。远端 CI 与预览在 PR 建立后补回。
+更新：2026-11-12。本页只记录实际执行结果。代码提交与远端 CI 回执已核对；文档提交之后的最新检查可从 PR 查看。
 
 ## 本地门禁
 
@@ -31,4 +31,16 @@
 
 ## PR 与远端验证
 
-待建立草稿 PR 后记录链接和精确提交；保持目标为 claude/deepflare-2.0，不合并主分支，不开启自动合并。
+- [草稿 PR #70](https://github.com/nickzhang2999-dev/brandai-platform/pull/70)：base=claude/deepflare-2.0，未合并、未启用自动合并。
+- 骨架代码提交：`896b1044eb6334b12c1c5f385998b2f3c382f5be`。本次补交接回执的提交只修改文档，代码与上述验证版本一致。
+- [完整 CI](https://github.com/nickzhang2999-dev/brandai-platform/actions/runs/43179204751)：success；Web lint/typecheck/test/build、AI 全部通过。
+- [真实 PostgreSQL CI](https://github.com/nickzhang2999-dev/brandai-platform/actions/runs/43179204594)：success；迁移与并发/权限检查通过。
+- [分支隔离检查](https://github.com/nickzhang2999-dev/brandai-platform/actions/runs/43179204801)：success。
+- main 和 2.0 集成分支仍位于 `71a3132b68087f9e091777d7a7363f33f25453d9`；没有执行任何合并。
+- 本地临时测试容器已停止并自动清理；没有停止原有 Podman VM，也未操作业务数据库。
+
+## 预览状态
+
+按仓库 preview-url 技能执行脚本（显式项目 slug=brandai-platform）得到 [分区候选地址](https://deepflare-2-0-foundation-claude-brandai-platform.geole.me/)。脚本没有取得 CDS 的已部署回执，随后 GET /api/health 返回 HTTP 404、页面标题为“预览未部署”。因此它不是可用产品预览。
+
+此批交付入口是 PR 与文档。配置独立运行环境仍是 F-08；不把其他分区的页面拿来当 2.0 预览。
