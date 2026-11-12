@@ -2,6 +2,8 @@
 
 更新：2026-11-12。此目录是 2.0 的工程入口；原始方案和视觉材料一并保存在 references，离开聊天记录也能接手。
 
+首批交付：[草稿 PR #70](https://github.com/nickzhang2999-dev/brandai-platform/pull/70)。代码与 CI 证据见 [验证记录](verification.md)。
+
 ## 本次范围
 
 总负责人：Jason。产品核心是设计记忆宫殿，AI 团队在有限监督下自动执行；当前先完成可交接的工程骨架。Ommi（本次指令中称 omni）位于另一个仓库，本分支不修改、不复制其实现，只预留消费接口。
