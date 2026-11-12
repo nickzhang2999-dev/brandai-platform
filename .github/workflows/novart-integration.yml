@@ -236,6 +236,7 @@ jobs:
         run: |
           pnpm db:generate
           pnpm -F @brandai/db exec prisma migrate deploy
+          node scripts/test-novart-deploy-database.cjs
       - name: Start private disposable object storage
         shell: bash
         run: |

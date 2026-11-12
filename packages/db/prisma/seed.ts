@@ -1,5 +1,15 @@
 import { PrismaClient } from "@prisma/client";
 
+// Older CDS fallback profiles can still invoke db:seed after migrations.
+const deployed = Boolean(process.env.CDS_PROJECT_ID || process.env.CDS_COMMIT_SHA)
+  || process.env.NODE_ENV === "production"
+  || process.env.CI === "true";
+
+if (deployed) {
+  console.log("[db:seed] Deployment detected; skipped local demo data.");
+  process.exit(0);
+}
+
 const prisma = new PrismaClient();
 
 async function main() {
@@ -17,8 +27,9 @@ async function main() {
     { tier: "TEAM" as const, name: "Team", priceCentsMonthly: 9900, monthlyGenerationQuota: 12000, dailyGenerationLimit: 400, maxWorkspaces: -1 },
     { tier: "ENTERPRISE" as const, name: "Enterprise", priceCentsMonthly: 0, monthlyGenerationQuota: -1, dailyGenerationLimit: -1, maxWorkspaces: -1 },
   ];
+  // An explicit local seed also preserves any existing plan customization.
   for (const p of PLANS) {
-    await prisma.plan.upsert({ where: { tier: p.tier }, update: p, create: p });
+    await prisma.plan.upsert({ where: { tier: p.tier }, update: {}, create: p });
   }
 
   const ws = await prisma.brandWorkspace.create({

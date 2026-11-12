@@ -7,6 +7,7 @@ on:
     paths:
       - 'cds-release.sh'
       - 'scripts/test-project-release.mjs'
+      - 'scripts/prisma-deploy-safe.sh'
       - 'scripts/test-novart-production.mjs'
       - 'scripts/*novart*.py'
       - 'scripts/*novart*.cjs'

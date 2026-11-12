@@ -12,6 +12,12 @@
 # - Any other error is returned unchanged.
 set -eu
 
+# Legacy CDS profiles call the db:push alias. On a deployed database apply
+# tracked migrations only. An untracked schema requires operator review.
+if [ -n "${CDS_PROJECT_ID:-}${CDS_COMMIT_SHA:-}" ] || [ "${NODE_ENV:-}" = "production" ]; then
+  exec pnpm exec prisma migrate deploy --schema prisma/schema.prisma
+fi
+
 SCHEMA_PATH="prisma/schema.prisma"
 MIGRATIONS_DIR="prisma/migrations"
 DEPLOY_LOG=$(mktemp "${TMPDIR:-/tmp}/brandai-prisma-deploy.XXXXXX")
