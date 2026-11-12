@@ -601,3 +601,7 @@ Code compatibility and defaults prepared. Still required: production AppSetting/
 - [x] 最后集成回归与完整本地门禁通过；泄漏检查和本地提交结果见交接回执。
 - [ ] 网络恢复后正常推送、同 SHA 镜像/迁移/部署、真实接收按钮与逐站采集验收；不把本机通过标成上线。
 - 详细状态：[分片接收日志](2026-11-06-inspiration-snapshot-v3.md)。原有其他未提交记录保持。
+
+## 2026-11-12 · 当前任务：DeepFlare 2.0 骨架优先
+
+S0/S1：独立分区、归档、合同、持久状态和完整 PR；S2：Ommi 消费合同与有界执行器；S3：粗构图与审核界面；S4：同项目记忆写回。逐项状态、角色、依赖、验收见 [2.0 TODO](../deepflare-2.0/TODO.md)。用户明确禁止未经授权与 main 合并；Ommi 本体不在本仓库工作范围。

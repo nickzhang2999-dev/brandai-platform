@@ -1,0 +1,503 @@
+[
+  {
+    "name": "fine mode",
+    "schema": "create",
+    "value": {
+      "mutationId": "11111111-1111-4111-8111-111111111111",
+      "brief": {
+        "text": "香氛上新",
+        "mode": "DIRECTION_FIRST",
+        "deliverables": [
+          {
+            "id": "main",
+            "channel": "主视觉",
+            "width": 1024,
+            "height": 1024
+          }
+        ],
+        "inspiration": []
+      }
+    },
+    "valid": true
+  },
+  {
+    "name": "direct mode",
+    "schema": "create",
+    "value": {
+      "mutationId": "11111111-1111-4111-8111-111111111111",
+      "brief": {
+        "text": "香氛上新",
+        "mode": "DIRECT",
+        "deliverables": [
+          {
+            "id": "main",
+            "channel": "主视觉",
+            "width": 1024,
+            "height": 1024
+          }
+        ],
+        "inspiration": []
+      }
+    },
+    "valid": true
+  },
+  {
+    "name": "external pointer only",
+    "schema": "create",
+    "value": {
+      "mutationId": "11111111-1111-4111-8111-111111111111",
+      "brief": {
+        "text": "香氛上新",
+        "mode": "DIRECTION_FIRST",
+        "deliverables": [
+          {
+            "id": "main",
+            "channel": "主视觉",
+            "width": 1024,
+            "height": 1024
+          }
+        ],
+        "inspiration": [
+          {
+            "source": "ommi",
+            "caseId": "c1",
+            "sourceVersion": "v1",
+            "insightIds": [
+              "light"
+            ],
+            "application": "侧光"
+          }
+        ]
+      }
+    },
+    "valid": true
+  },
+  {
+    "name": "mutationId invalid",
+    "schema": "create",
+    "value": {
+      "mutationId": "bad",
+      "brief": {
+        "text": "香氛上新",
+        "mode": "DIRECTION_FIRST",
+        "deliverables": [
+          {
+            "id": "main",
+            "channel": "主视觉",
+            "width": 1024,
+            "height": 1024
+          }
+        ],
+        "inspiration": []
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "brief invalid",
+    "schema": "create",
+    "value": {
+      "mutationId": "11111111-1111-4111-8111-111111111111",
+      "brief": null
+    },
+    "valid": false
+  },
+  {
+    "name": "unknown invalid",
+    "schema": "create",
+    "value": {
+      "mutationId": "11111111-1111-4111-8111-111111111111",
+      "brief": {
+        "text": "香氛上新",
+        "mode": "DIRECTION_FIRST",
+        "deliverables": [
+          {
+            "id": "main",
+            "channel": "主视觉",
+            "width": 1024,
+            "height": 1024
+          }
+        ],
+        "inspiration": []
+      },
+      "unknown": true
+    },
+    "valid": false
+  },
+  {
+    "name": "inspiration invalid",
+    "schema": "create",
+    "value": {
+      "mutationId": "11111111-1111-4111-8111-111111111111",
+      "brief": {
+        "text": "香氛上新",
+        "mode": "DIRECTION_FIRST",
+        "deliverables": [
+          {
+            "id": "main",
+            "channel": "主视觉",
+            "width": 1024,
+            "height": 1024
+          }
+        ],
+        "inspiration": null
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "mode invalid",
+    "schema": "create",
+    "value": {
+      "mutationId": "11111111-1111-4111-8111-111111111111",
+      "brief": {
+        "text": "香氛上新",
+        "mode": "AUTO",
+        "deliverables": [
+          {
+            "id": "main",
+            "channel": "主视觉",
+            "width": 1024,
+            "height": 1024
+          }
+        ],
+        "inspiration": []
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "deliverables invalid",
+    "schema": "create",
+    "value": {
+      "mutationId": "11111111-1111-4111-8111-111111111111",
+      "brief": {
+        "text": "香氛上新",
+        "mode": "DIRECTION_FIRST",
+        "deliverables": [],
+        "inspiration": []
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "text invalid",
+    "schema": "create",
+    "value": {
+      "mutationId": "11111111-1111-4111-8111-111111111111",
+      "brief": {
+        "text": "",
+        "mode": "DIRECTION_FIRST",
+        "deliverables": [
+          {
+            "id": "main",
+            "channel": "主视觉",
+            "width": 1024,
+            "height": 1024
+          }
+        ],
+        "inspiration": []
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "inspiration must be explicit",
+    "schema": "create",
+    "value": {
+      "mutationId": "11111111-1111-4111-8111-111111111111",
+      "brief": {
+        "text": "香氛上新",
+        "mode": "DIRECTION_FIRST",
+        "deliverables": [
+          {
+            "id": "main",
+            "channel": "主视觉",
+            "width": 1024,
+            "height": 1024
+          }
+        ]
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "duplicate delivery IDs",
+    "schema": "create",
+    "value": {
+      "mutationId": "11111111-1111-4111-8111-111111111111",
+      "brief": {
+        "text": "香氛上新",
+        "mode": "DIRECTION_FIRST",
+        "deliverables": [
+          {
+            "id": "main",
+            "channel": "主视觉",
+            "width": 1024,
+            "height": 1024
+          },
+          {
+            "id": "main",
+            "channel": "主视觉",
+            "width": 1024,
+            "height": 1024
+          }
+        ],
+        "inspiration": []
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid width True",
+    "schema": "create",
+    "value": {
+      "mutationId": "11111111-1111-4111-8111-111111111111",
+      "brief": {
+        "text": "香氛上新",
+        "mode": "DIRECTION_FIRST",
+        "deliverables": [
+          {
+            "id": "main",
+            "channel": "主视觉",
+            "width": true,
+            "height": 1024
+          }
+        ],
+        "inspiration": []
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid width 32.5",
+    "schema": "create",
+    "value": {
+      "mutationId": "11111111-1111-4111-8111-111111111111",
+      "brief": {
+        "text": "香氛上新",
+        "mode": "DIRECTION_FIRST",
+        "deliverables": [
+          {
+            "id": "main",
+            "channel": "主视觉",
+            "width": 32.5,
+            "height": 1024
+          }
+        ],
+        "inspiration": []
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid width 8193",
+    "schema": "create",
+    "value": {
+      "mutationId": "11111111-1111-4111-8111-111111111111",
+      "brief": {
+        "text": "香氛上新",
+        "mode": "DIRECTION_FIRST",
+        "deliverables": [
+          {
+            "id": "main",
+            "channel": "主视觉",
+            "width": 8193,
+            "height": 1024
+          }
+        ],
+        "inspiration": []
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid width '1024'",
+    "schema": "create",
+    "value": {
+      "mutationId": "11111111-1111-4111-8111-111111111111",
+      "brief": {
+        "text": "香氛上新",
+        "mode": "DIRECTION_FIRST",
+        "deliverables": [
+          {
+            "id": "main",
+            "channel": "主视觉",
+            "width": "1024",
+            "height": 1024
+          }
+        ],
+        "inspiration": []
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "SET_DIRECTION",
+    "schema": "command",
+    "value": {
+      "mutationId": "11111111-1111-4111-8111-111111111111",
+      "expectedRevision": 3,
+      "command": {
+        "type": "SET_DIRECTION",
+        "direction": {
+          "summary": "侧光",
+          "composition": "右侧留白"
+        }
+      }
+    },
+    "valid": true
+  },
+  {
+    "name": "REVISE_BRIEF",
+    "schema": "command",
+    "value": {
+      "mutationId": "11111111-1111-4111-8111-111111111111",
+      "expectedRevision": 3,
+      "command": {
+        "type": "REVISE_BRIEF",
+        "brief": {
+          "text": "香氛上新",
+          "mode": "DIRECTION_FIRST",
+          "deliverables": [
+            {
+              "id": "main",
+              "channel": "主视觉",
+              "width": 1024,
+              "height": 1024
+            }
+          ],
+          "inspiration": []
+        }
+      }
+    },
+    "valid": true
+  },
+  {
+    "name": "SUBMIT",
+    "schema": "command",
+    "value": {
+      "mutationId": "11111111-1111-4111-8111-111111111111",
+      "expectedRevision": 3,
+      "command": {
+        "type": "SUBMIT"
+      }
+    },
+    "valid": true
+  },
+  {
+    "name": "CONFIRM_DIRECTION",
+    "schema": "command",
+    "value": {
+      "mutationId": "11111111-1111-4111-8111-111111111111",
+      "expectedRevision": 3,
+      "command": {
+        "type": "CONFIRM_DIRECTION",
+        "planVersion": 2
+      }
+    },
+    "valid": true
+  },
+  {
+    "name": "REQUEST_REVISION",
+    "schema": "command",
+    "value": {
+      "mutationId": "11111111-1111-4111-8111-111111111111",
+      "expectedRevision": 3,
+      "command": {
+        "type": "REQUEST_REVISION",
+        "reason": "标题压住瓶盖"
+      }
+    },
+    "valid": true
+  },
+  {
+    "name": "CANCEL",
+    "schema": "command",
+    "value": {
+      "mutationId": "11111111-1111-4111-8111-111111111111",
+      "expectedRevision": 3,
+      "command": {
+        "type": "CANCEL"
+      }
+    },
+    "valid": true
+  },
+  {
+    "name": "invalid command {'type': 'CONFIRM_DIRECTION', 'planVersion': True}",
+    "schema": "command",
+    "value": {
+      "mutationId": "11111111-1111-4111-8111-111111111111",
+      "expectedRevision": 3,
+      "command": {
+        "type": "CONFIRM_DIRECTION",
+        "planVersion": true
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid command {'type': 'CONFIRM_DIRECTION', 'planVersion': 0}",
+    "schema": "command",
+    "value": {
+      "mutationId": "11111111-1111-4111-8111-111111111111",
+      "expectedRevision": 3,
+      "command": {
+        "type": "CONFIRM_DIRECTION",
+        "planVersion": 0
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid command {'type': 'CONFIRM_DIRECTION', 'planVersion': None}",
+    "schema": "command",
+    "value": {
+      "mutationId": "11111111-1111-4111-8111-111111111111",
+      "expectedRevision": 3,
+      "command": {
+        "type": "CONFIRM_DIRECTION",
+        "planVersion": null
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid command {'type': 'SUBMIT', 'approved': True}",
+    "schema": "command",
+    "value": {
+      "mutationId": "11111111-1111-4111-8111-111111111111",
+      "expectedRevision": 3,
+      "command": {
+        "type": "SUBMIT",
+        "approved": true
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid command {'type': 'RUN_PROVIDER'}",
+    "schema": "command",
+    "value": {
+      "mutationId": "11111111-1111-4111-8111-111111111111",
+      "expectedRevision": 3,
+      "command": {
+        "type": "RUN_PROVIDER"
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid command {'type': 'REQUEST_REVISION', 'reason': ''}",
+    "schema": "command",
+    "value": {
+      "mutationId": "11111111-1111-4111-8111-111111111111",
+      "expectedRevision": 3,
+      "command": {
+        "type": "REQUEST_REVISION",
+        "reason": ""
+      }
+    },
+    "valid": false
+  }
+]

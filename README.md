@@ -1,5 +1,7 @@
 # DeepFlare — 品牌项目视觉 AI 生成平台
 
+2.0 独立开发与交接：[文档入口](docs/deepflare-2.0/README.md) · [TODO](docs/deepflare-2.0/TODO.md)。本分区未经明确授权不与 main 合并。
+
 正式发布配置与操作方式见 [NovartLab 生产发布](docs/novart-production-release.md)。
 默认发布入口为仓库根 `cds-release.sh`，PR CI 与镜像 CI 测试同一文件；CDS 只执行指定提交中的脚本，先核对镜像自身构建 SHA，再更新生产。生产 Compose、资源校验和入口配置均由项目版本管理。执行回执见 `docs/worklog/progress.md`。
 

@@ -50,3 +50,5 @@ export * from "./omni-workflow-evidence";
 export * from "./visual-fidelity";
 export * from "./inspiration-receipts";
 export * from "./inspiration-snapshot";
+
+export * from "./deepflare-v2";

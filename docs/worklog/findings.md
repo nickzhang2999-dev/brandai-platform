@@ -371,3 +371,7 @@ WorkbenchBrandDraft不是CONFIRMED BrandRule；有规则传入不等于模型视
 - 读取容器日志使用的CDS适配器会临时重定向全局stdout，因此首次在线程中并行调用失败。已改串行读取，实际三服务日志读取完成，未修改业务服务。
 
 首轮排查完成，确认6项问题。P1为跨部署任务恢复/领取、文案独立配置缺失及默认50条分页污染检索/引用/收藏。P2为缺失缩略图恢复、compiled-context超限令完整计划失效、镜像worker反复执行无效Git检查。现有305项回归通过，另6个用例复现4类错误行为。具体线上证据和剩余未知见 `2026-11-05-backend-audit.md`。
+
+## 2026-11-12 · DeepFlare 2.0 基线与边界
+
+最新 main=71a3132b68087f9e091777d7a7363f33f25453d9；layer-quality 的未合并功能不作为本批隐式依赖。现有 Studio 的工作单外层缺少方向审核持久状态，本批补独立域层、事务和 outbox；沿用现有栈，暂不引入 LangGraph。真实 Pg 并发/回滚10项与 Linux AI746项通过。详见 [当日日志](../deepflare-2.0/logs/2026-11-12-foundation.md)。

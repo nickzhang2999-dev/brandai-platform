@@ -796,3 +796,11 @@ Prepared the project-owned one-time production model migration and real provider
 ## 2026-11-06 · 大目录接收续作（本机）
 
 新增可选签名分片快照，v3 默认关闭；持久续传、图片 CAS、原子激活、SQL 分页、400/500 档和独立初始化分账已实现。实际 Python 2001/10000 合成案例互验及 19 项独立 PostgreSQL 测试通过；真实来源、模型质量、现网接收与 500 日产未验收。应用网络权限撤回后未推送/部署，仍继续本地修复和完整门禁。最终结果见[本轮日志](2026-11-06-inspiration-snapshot-v3.md)。
+
+## 2026-11-12 · DeepFlare 2.0 独立骨架
+
+- 已完成独立 worktree / 分支、全部 2.0 材料归档、TODO 和交接入口。
+- 已完成工作单合同、版本化方向确认、三表持久化与原子待执行记录、角色/Ommi/记忆接口；没有接真实执行器。
+- 本地 Contracts340 / UI39 / Web2171（旧31 skip）、Linux AI746、typecheck、lint、build、发布检查及真实 PostgreSQL10 通过。
+- 草稿 PR 面向 2.0 集成分支；链接与 CI 状态以 [2.0 验证记录](../deepflare-2.0/verification.md) 为准。
+- 不合并 main、不发布正式环境、不改 Ommi 独立仓库。下一批按 [TODO](../deepflare-2.0/TODO.md) 交接。

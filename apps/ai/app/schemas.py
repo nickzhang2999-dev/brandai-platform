@@ -861,3 +861,10 @@ from .brand_kit_import_schemas import *  # noqa: F403 — mirrored additive BFF 
 from .brand_deletion_schemas import BrandDeletionCounts, BrandDeletionPreview, BrandDeletionInput, BrandDeletionResult
 from .inspiration_receipt_schemas import InspirationReceiptPreflightInput, InspirationReceiptPolicyInput, InspirationReceiptDailyResult, InspirationReceiptPreflightResult
 from .inspiration_snapshot_schemas import InspirationSnapshotRecipient, InspirationSnapshotPartDescriptor, InspirationSnapshotObjectDescriptor, InspirationSnapshotRecord, InspirationSnapshotPart, InspirationSnapshotManifest
+
+# DeepFlare 2.0 wire mirror; no new public AI endpoint.
+from .deepflare_v2_schemas import (
+    DeepFlareV2Scope, DeepFlareV2InspirationRef, DeepFlareV2Brief,
+    DeepFlareV2Direction, DeepFlareV2CreateInput, DeepFlareV2CommandInput,
+    DeepFlareV2Task, DeepFlareV2State, DeepFlareV2Receipt,
+)
