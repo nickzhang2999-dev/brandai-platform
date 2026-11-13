@@ -9,7 +9,8 @@ function looksLikeCdsPreviewToolbar(el: HTMLElement) {
 
   const rect = el.getBoundingClientRect();
   if (rect.width < 120 || rect.height < 20 || rect.height > 90) return false;
-  if (rect.left > 520) return false;
+  // CDS can anchor the toolbar to either side of the preview viewport.
+  if (rect.left > 96 && window.innerWidth - rect.right > 96) return false;
   if (window.innerHeight - rect.bottom > 96) return false;
 
   const text = (el.textContent ?? "").replace(/\s+/g, " ").trim();
@@ -38,8 +39,12 @@ export function CdsPreviewToolbarGuard() {
   useEffect(() => {
     hideCdsPreviewToolbar();
     const observer = new MutationObserver(() => hideCdsPreviewToolbar());
-    observer.observe(document.body, { childList: true, subtree: true });
-    return () => observer.disconnect();
+    observer.observe(document.body, { childList: true, characterData: true, subtree: true });
+    window.addEventListener("resize", hideCdsPreviewToolbar);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", hideCdsPreviewToolbar);
+    };
   }, []);
 
   return null;

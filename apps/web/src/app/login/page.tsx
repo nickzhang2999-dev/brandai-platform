@@ -53,8 +53,8 @@ export default function LoginPage() {
       <CreamCard className="w-full max-w-sm p-8">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          src="/brand/nova-art-lab-logo.png"
-          alt="NOVA ART LAB"
+          src="/brand/nick-platform-logo.webp"
+          alt="Nick-Platform"
           className="h-20 w-full object-contain"
         />
         <h1 className="mt-3 font-serif text-3xl leading-tight text-foreground">

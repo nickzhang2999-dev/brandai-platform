@@ -105,9 +105,9 @@ export function BrandSidebar({
             <Link href="/" className="mb-7 flex items-center justify-center">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
-                src="/brand/nova-art-lab-logo.png"
-                alt="NOVA ART LAB"
-                className="h-14 w-[138px] object-contain"
+                src="/brand/nick-platform-logo.webp"
+                alt="Nick-Platform"
+                className="h-14 w-full object-contain"
               />
             </Link>
           ) : null}
