@@ -59,12 +59,10 @@ export default function LoginPage() {
       <CreamCard className="w-full max-w-[436px] rounded-[28px] p-6 sm:p-8">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          src="/brand/deepflare-logo.svg"
-          alt="DeepFlare · 曜影深蓝"
-          className="mx-auto h-16 w-full max-w-[252px] object-contain dark:hidden"
+          src="/brand/nick-platform-logo.webp"
+          alt="Nick-Platform"
+          className="mx-auto h-16 w-full max-w-[252px] object-contain"
         />
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/brand/deepflare-logo-dark.svg" alt="DeepFlare · 曜影深蓝" className="mx-auto hidden h-16 w-full max-w-[252px] object-contain dark:block" />
         <h1 className="mt-6 text-center text-[21px] font-semibold leading-snug text-foreground sm:text-[24px]">
           进入你的品牌视觉工作台
         </h1>
