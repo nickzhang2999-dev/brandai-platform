@@ -177,7 +177,7 @@ export async function listWorkspaceNotifications(
   // Deleted/foreign projects must not produce a misleading or unscoped link.
   const projectIds = uploads.flatMap(upload => upload.projectId ? [upload.projectId] : []);
   const projects = projectIds.length ? await prisma.project.findMany({
-    where: { workspaceId, id: { in: projectIds } }, select: { id: true },
+    where: { deletedAt: null, workspaceId, id: { in: projectIds } }, select: { id: true },
   }) : [];
   const visibleProjects = new Set(projects.map(project => project.id));
   for (const upload of uploads) {

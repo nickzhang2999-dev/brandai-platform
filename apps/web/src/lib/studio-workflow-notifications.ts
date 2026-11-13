@@ -13,7 +13,7 @@ export async function listStudioWorkflowNotifications(workspaceId: string, userI
       select: { assetId: true, workspaceId: true, userId: true, updatedAt: true, asset: { select: { workspaceId: true, deprecatedAt: true } }, task: { select: { status: true, updatedAt: true } } }, orderBy: { updatedAt: "desc" }, take: bounded }),
   ]);
   const ownMessages = messages.filter(row => row.conversation.workspaceId === workspaceId && row.conversation.userId === userId && ["CLARIFICATION", "FAILED"].includes(row.status));
-  const projects = ownMessages.length ? await prisma.project.findMany({ where: { workspaceId, id: { in: [...new Set(ownMessages.map(row => row.conversation.projectId))] } }, select: { id: true, workspaceId: true } }) : [];
+  const projects = ownMessages.length ? await prisma.project.findMany({ where: { deletedAt: null, workspaceId, id: { in: [...new Set(ownMessages.map(row => row.conversation.projectId))] } }, select: { id: true, workspaceId: true } }) : [];
   const visibleProjects = new Set(projects.filter(row => row.workspaceId === workspaceId).map(row => row.id));
   const items: NotificationItem[] = ownMessages.filter(row => visibleProjects.has(row.conversation.projectId)).map(row => ({
     id: `studio-conversation:${row.id}`, kind: "STUDIO_CONVERSATION", status: row.status === "FAILED" ? "FAILED" : "SUCCEEDED",

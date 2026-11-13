@@ -14,7 +14,7 @@ function view(projectId: string, workspaceId: string, readOnly: boolean, row: {
 
 export async function readEditorDocument(workspaceId: string, projectId: string, userId: string) {
   const { role } = await requireWorkspaceRole(workspaceId, userId, "VIEWER");
-  const project = await prisma.project.findFirst({ where: { id: projectId, workspaceId }, include: { editorDocument: true } });
+  const project = await prisma.project.findFirst({ where: { deletedAt: null, id: projectId, workspaceId }, include: { editorDocument: true } });
   if (!project) throw new EditorDocumentError(404, "PROJECT_NOT_FOUND", "项目不存在。");
   const row = project.editorDocument;
   if (row && row.workspaceId !== workspaceId) throw new EditorDocumentError(409, "INVALID_DOCUMENT_OWNER", "画布归属异常，请联系管理员。");
@@ -29,7 +29,7 @@ export async function saveEditorDocument(workspaceId: string, projectId: string,
     // Lock the Project row: concurrent first saves and archive changes must serialize.
     const rows = await tx.$queryRaw<Array<{ id: string; archivedAt: Date | null }>>`
       SELECT "id", "archivedAt" FROM "Project"
-      WHERE "id" = ${projectId} AND "workspaceId" = ${workspaceId} FOR UPDATE`;
+      WHERE "id" = ${projectId} AND "workspaceId" = ${workspaceId} AND "deletedAt" IS NULL FOR UPDATE`;
     if (!rows[0]) throw new EditorDocumentError(404, "PROJECT_NOT_FOUND", "项目不存在。");
     if (rows[0].archivedAt) throw new EditorDocumentError(409, "PROJECT_ARCHIVED", "项目已归档，请恢复后再编辑。");
     const current = await tx.editorDocument.findUnique({ where: { projectId } });

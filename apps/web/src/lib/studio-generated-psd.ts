@@ -81,7 +81,7 @@ export async function dispatchStudioGeneratedPsds() {
 export async function readStudioGeneratedPsd(workspaceId: string, userId: string, raw: unknown) {
   const input = StudioGeneratedPsdQuery.parse(raw);
   await requireWorkspaceRole(workspaceId, userId, "VIEWER");
-  if (!await prisma.project.findFirst({ where: { id: input.projectId, workspaceId }, select: { id: true } })) throw new ApiException(404, "项目不存在。");
+  if (!await prisma.project.findFirst({ where: { deletedAt: null, id: input.projectId, workspaceId }, select: { id: true } })) throw new ApiException(404, "项目不存在。");
   const row: Generation | null = await prisma.studioGenerationRequest.findFirst({ where: { id: input.requestId, workspaceId, userId, projectId: input.projectId } });
   if (!row) throw new ApiException(404, "生成请求不存在。");
   const base = { projectId: input.projectId, requestId: input.requestId, requested: generatedPsdLayerMode(row.jobData) !== null, error: null, decomposition: null, downloadUrl: null };

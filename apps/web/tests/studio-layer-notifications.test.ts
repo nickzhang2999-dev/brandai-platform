@@ -58,7 +58,7 @@ describe("actor-private Studio layer projections", () => {
     expect(result.requests[0]).toEqual({ id: "r0", requestId: "r0", projectId: "p", status: "PENDING", createdAt: "2026-10-12T00:00:00.000Z", expiresAt: "2026-10-12T00:06:00.000Z", layerCount: 4 });
     expect(f.list.mock.lastCall![0].take).toBe(50); expect(f.list.mock.lastCall![0].select).not.toHaveProperty("outputJson");
     expect(JSON.stringify(result)).not.toMatch(/private-provider|private intent|error|assetId|userId|workspaceId/);
-    expect(f.projects).toHaveBeenCalledWith({ where: { workspaceId: "w", id: { in: ["p"] } }, select: { id: true, workspaceId: true } });
+    expect(f.projects).toHaveBeenCalledWith({ where: { deletedAt: null, workspaceId: "w", id: { in: ["p"] } }, select: { id: true, workspaceId: true } });
   });
   it("keeps activity scoped even when cleanup left orphan requests", async () => {
     f.list.mockResolvedValue([row(), row({ id: "foreign", workspaceId: "other" }), row({ id: "someone", userId: "other" }), row({ id: "gone", projectId: "deleted" })]);

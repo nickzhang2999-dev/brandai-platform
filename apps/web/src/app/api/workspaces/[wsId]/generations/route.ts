@@ -34,7 +34,7 @@ export async function GET(
     if (!projectId) throw new ApiException(400, "projectId is required");
 
     const project = await prisma.project.findUnique({
-      where: { id: projectId },
+      where: { deletedAt: null, id: projectId },
     });
     if (!project || project.workspaceId !== wsId) {
       throw new ApiException(404, "Project not found in this workspace");

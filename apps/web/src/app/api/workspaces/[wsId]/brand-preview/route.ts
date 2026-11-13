@@ -41,7 +41,7 @@ export async function GET(
     await requireWorkspaceRole(wsId, user.id, "VIEWER");
 
     const project = await prisma.project.findFirst({
-      where: { workspaceId: wsId, name: "品牌预览" },
+      where: { deletedAt: null, workspaceId: wsId, name: "品牌预览" },
       select: { id: true },
       orderBy: { createdAt: "asc" },
     });

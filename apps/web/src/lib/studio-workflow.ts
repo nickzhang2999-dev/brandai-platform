@@ -23,7 +23,7 @@ function storedWorkflow(workspaceId: string, projectId: string, row: WorkflowRow
 }
 
 async function projectExists(db: Db, workspaceId: string, projectId: string) {
-  const project = await db.project.findFirst({ where: { id: projectId, workspaceId }, select: { id: true } });
+  const project = await db.project.findFirst({ where: { deletedAt: null, id: projectId, workspaceId }, select: { id: true } });
   if (!project) throw new ApiException(404, "项目不存在。");
 }
 
@@ -70,7 +70,7 @@ export async function saveStudioWorkflow(workspaceId: string, userId: string, ra
     // changes. Workflow has its own revision and never modifies brief/notes.
     const locked = await tx.$queryRaw<Array<{ archivedAt: Date | null; description: string | null }>>`
       SELECT "archivedAt", "description" FROM "Project"
-      WHERE "id" = ${input.projectId} AND "workspaceId" = ${workspaceId} FOR UPDATE`;
+      WHERE "id" = ${input.projectId} AND "workspaceId" = ${workspaceId} AND "deletedAt" IS NULL FOR UPDATE`;
     if (!locked[0]) throw new ApiException(404, "项目不存在。");
     if (locked[0].archivedAt) throw new ApiException(409, "项目已归档，请恢复后再修改素材设置。");
     const row = await tx.workbenchProjectState.findUnique({ where: { projectId: input.projectId }, select: stateSelect });

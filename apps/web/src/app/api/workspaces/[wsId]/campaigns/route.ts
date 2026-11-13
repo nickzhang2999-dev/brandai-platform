@@ -42,7 +42,7 @@ export async function POST(
     const input = parse(CampaignKitInput, await req.json());
 
     const project = await prisma.project.findUnique({
-      where: { id: input.projectId },
+      where: { deletedAt: null, id: input.projectId },
     });
     if (!project || project.workspaceId !== wsId) {
       throw new ApiException(404, "Project not found in this workspace");

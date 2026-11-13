@@ -48,7 +48,7 @@ const identity = (workspaceId: string, userId: string, input: z.infer<typeof Stu
 
 async function projectAccess(workspaceId: string, userId: string, projectId: string, write = false) {
   await requireWorkspaceRole(workspaceId, userId, write ? "EDITOR" : "VIEWER");
-  const project = await prisma.project.findFirst({ where: { id: projectId, workspaceId }, select: { id: true, archivedAt: true } });
+  const project = await prisma.project.findFirst({ where: { deletedAt: null, id: projectId, workspaceId }, select: { id: true, archivedAt: true } });
   if (!project) throw new ApiException(404, "项目不存在。");
   if (write && project.archivedAt) throw new ApiException(409, "项目已归档，请先恢复后再操作。");
   return project;
@@ -57,7 +57,7 @@ async function actorInTransaction(tx: Prisma.TransactionClient, row: Pick<Row, "
   const [workspace, user, project] = await Promise.all([
     tx.brandWorkspace.findUnique({ where: { id: row.workspaceId }, select: { ownerId: true } }),
     tx.user.findUnique({ where: { id: row.userId }, select: { isActive: true } }),
-    tx.project.findFirst({ where: { id: row.projectId, workspaceId: row.workspaceId }, select: { archivedAt: true } }),
+    tx.project.findFirst({ where: { deletedAt: null, id: row.projectId, workspaceId: row.workspaceId }, select: { archivedAt: true } }),
   ]);
   if (!workspace || !user?.isActive || !project || project.archivedAt) throw new ApiException(409, "账号或项目已不可编辑，原图片仍保留。");
   if (workspace.ownerId !== row.userId) {

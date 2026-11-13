@@ -71,7 +71,7 @@ describe("native project compatibility", () => {
     const project = await queryNativeProject("w", "u", { projectId: "p" });
     expect(project).toMatchObject({ canvas: payload.canvas, version: payload.version, readOnly: true, projectName: "Current name", canvasEvidenceEnabled: false });
     expect(project.updatedAt).toBe(project.createdAt);
-    expect(f.find.mock.calls[0][0].where).toEqual({ id: "p", workspaceId: "w" });
+    expect(f.find.mock.calls[0][0].where).toEqual({ deletedAt: null, id: "p", workspaceId: "w" });
   });
   it("lists only authorized unarchived projects without loading canvases", async () => {
     const result = await listNativeProjects("w", "u", { page: 1, pageSize: 2 });
@@ -85,7 +85,7 @@ describe("native project compatibility", () => {
   it("renames through a scoped, unarchived write and requires an editor", async () => {
     await renameNativeProject("w", "u", { projectId: "p", projectName: " New name " });
     expect(f.gate).toHaveBeenCalledWith("w", "u", "EDITOR");
-    expect(f.rename).toHaveBeenCalledWith({ where: { id: "p", workspaceId: "w", archivedAt: null }, data: { name: "New name" } });
+    expect(f.rename).toHaveBeenCalledWith({ where: { deletedAt: null, id: "p", workspaceId: "w", archivedAt: null }, data: { name: "New name" } });
     f.rename.mockResolvedValue({ count: 0 });
     await expect(renameNativeProject("w", "u", { projectId: "p", projectName: "New" })).rejects.toMatchObject({ code: "PROJECT_UNAVAILABLE" });
   });

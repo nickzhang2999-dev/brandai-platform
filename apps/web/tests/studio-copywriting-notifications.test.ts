@@ -10,7 +10,7 @@ it("scopes terminal notifications to the requesting workspace and account", asyn
   expect(f.tasks).toHaveBeenCalledWith(expect.objectContaining({ where: {
     workspaceId: "w", kind: "STUDIO_COPYWRITING", inputJson: { path: ["userId"], equals: "u" }, status: { in: ["SUCCEEDED", "FAILED"] },
   } }));
-  expect(f.projects).toHaveBeenCalledWith(expect.objectContaining({ where: { workspaceId: "w", id: { in: ["p"] } } }));
+  expect(f.projects).toHaveBeenCalledWith(expect.objectContaining({ where: { deletedAt: null, workspaceId: "w", id: { in: ["p"] } } }));
   expect(result[0]).toMatchObject({ kind: "STUDIO_COPYWRITING", title: "文案已生成", href: "/canvas?workspaceId=w&projectId=p" });
 });
 it("does not emit dead links or events belonging to a different task kind", async () => {

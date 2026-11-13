@@ -26,7 +26,7 @@ export async function getOrCreatePreviewProject(
   workspaceId: string,
 ): Promise<{ id: string }> {
   const existing = await prisma.project.findFirst({
-    where: { workspaceId, name: BRAND_PREVIEW_PROJECT_NAME },
+    where: { deletedAt: null, workspaceId, name: BRAND_PREVIEW_PROJECT_NAME },
     select: { id: true },
     orderBy: { createdAt: "asc" },
   });

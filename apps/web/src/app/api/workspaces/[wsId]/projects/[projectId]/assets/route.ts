@@ -23,7 +23,7 @@ import { serializeAsset } from "@/lib/assets";
  */
 
 async function loadScopedProject(wsId: string, projectId: string) {
-  const project = await prisma.project.findUnique({ where: { id: projectId } });
+  const project = await prisma.project.findUnique({ where: { deletedAt: null, id: projectId } });
   if (!project || project.workspaceId !== wsId) {
     throw new ApiException(404, "Project not found");
   }

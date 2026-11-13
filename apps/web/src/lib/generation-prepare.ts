@@ -74,7 +74,7 @@ export async function prepareGeneration(wsId: string, input: z.input<typeof Crea
     ].map((overlay) => WatermarkOverlayInput.parse(overlay));
 
     const project = await db.project.findUnique({
-      where: { id: input.projectId },
+      where: { deletedAt: null, id: input.projectId },
     });
     if (!project || project.workspaceId !== wsId) {
       throw new ApiException(404, "Project not found in this workspace");

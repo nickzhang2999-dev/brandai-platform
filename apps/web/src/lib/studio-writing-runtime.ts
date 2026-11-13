@@ -126,7 +126,7 @@ export async function processWritingTask(taskId: string, dependencies: Dependenc
       if (!input.context) throw new ApiException(422, "任务缺少已受理的上下文。");
       const [brand, project] = await Promise.all([
         prisma.brandWorkspace.findUniqueOrThrow({ where: { id: task.workspaceId }, select: { name: true } }),
-        prisma.project.findFirstOrThrow({ where: { id: task.refId, workspaceId: task.workspaceId }, select: { name: true } }),
+        prisma.project.findFirstOrThrow({ where: { deletedAt: null, id: task.refId, workspaceId: task.workspaceId }, select: { name: true } }),
       ]);
       const sources = await prepareWritingSources(scope, input, signal);
       const context: WritingProviderContext = { input, brandName: brand.name, projectName: project.name, sources };

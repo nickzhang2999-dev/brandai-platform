@@ -133,6 +133,18 @@ class WorkbenchArchiveInput(NativeProjectReference):
         return value
 
 
+class WorkbenchDeleteProjectInput(NativeProjectReference):
+    revision: WorkbenchRevision
+    projectVersion: str = Field(strict=True, pattern=r"^novart-(0|[1-9][0-9]{0,9})$")
+
+    @field_validator("projectVersion")
+    @classmethod
+    def revision_bound(cls, value):
+        if int(value[7:]) > 2147483646:
+            raise ValueError("Invalid document revision")
+        return value
+
+
 class WorkbenchDraftForm(BaseModel):
     model_config = {"extra": "allow", "strict": True}
     text: str

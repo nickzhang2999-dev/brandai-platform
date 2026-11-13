@@ -50,7 +50,7 @@ export async function validateComplianceTaskSource(workspaceId: string, kind: st
   await requireWorkspaceRole(workspaceId, input.userId, "EDITOR");
   if (kind !== "COMPLIANCE_PRECHECK" && !input.projectId) throw new ApiException(422, "检查任务项目来源不完整。");
   if (input.projectId) {
-    const project = await prisma.project.findFirst({ where: { id: input.projectId, workspaceId }, select: { id: true } });
+    const project = await prisma.project.findFirst({ where: { deletedAt: null, id: input.projectId, workspaceId }, select: { id: true } });
     if (!project) throw new ApiException(404, "项目不存在，检查未执行。");
   }
   if (kind !== "COMPLIANCE_RECHECK") return;

@@ -38,7 +38,7 @@ describe("private upload terminal notifications", () => {
   });
   it("filters deleted or mismatched projects before creating a product deep link", async () => {
     f.projects.mockResolvedValue([]); expect(await listWorkspaceNotifications("w", 30, "u")).toEqual([]);
-    expect(f.projects).toHaveBeenCalledWith({ where: { workspaceId: "w", id: { in: ["p"] } }, select: { id: true } });
+    expect(f.projects).toHaveBeenCalledWith({ where: { deletedAt: null, workspaceId: "w", id: { in: ["p"] } }, select: { id: true } });
   });
   it("shows the durable readable failure and preserves other task behavior", async () => {
     f.uploads.mockResolvedValue([{ ...upload, task: { ...upload.task, status: "FAILED", error: "图片已损坏，请重新选择。" } }]);

@@ -20,6 +20,7 @@ export const WorkbenchShellSaveInput = WorkbenchShellState.extend({ group: z.enu
 export const WorkbenchProjectCreateInput = z.object({ projectName: NativeProjectName, brief: z.string().max(6000), requestId: z.string().uuid() }).strict();
 export const WorkbenchContextSaveInput = WorkbenchProjectReference.extend({ revision, brief: z.string().max(6000), notes: z.string().max(4000) }).strict();
 export const WorkbenchArchiveInput = WorkbenchProjectReference.extend({ archived: z.boolean(), revision, projectVersion: NativeProjectVersion }).strict();
+export const WorkbenchDeleteProjectInput = WorkbenchArchiveInput.omit({ archived: true });
 // The native restore path requires text, and owns all other composer fields.
 // Preserve those fields verbatim instead of stripping them during validation.
 export const WorkbenchDraftForm = z.object({ text: z.string() }).passthrough();

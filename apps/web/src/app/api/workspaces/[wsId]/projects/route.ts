@@ -113,7 +113,7 @@ export async function PATCH(
     const input = parse(UpdateProjectInput, body);
     const extra = parse(BrandaiProjectFields, body);
     const existing = await prisma.project.findUnique({
-      where: { id: input.id },
+      where: { deletedAt: null, id: input.id },
     });
     if (!existing || existing.workspaceId !== wsId) {
       throw new ApiException(404, "Project not found");

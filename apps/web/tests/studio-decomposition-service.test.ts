@@ -189,7 +189,7 @@ describe("Studio decomposition intake: simulated DB, never a provider call", () 
   });
   it("does not accept a project outside the actual workspace", async () => {
     f.project.mockResolvedValue(null); await expect(submitStudioDecomposition("w", "u", input)).rejects.toMatchObject({ status: 404 });
-    expect(f.project).toHaveBeenCalledWith({ where: { id: "p", workspaceId: "w" }, select: { id: true, archivedAt: true } }); expect(f.create).not.toHaveBeenCalled();
+    expect(f.project).toHaveBeenCalledWith({ where: { deletedAt: null, id: "p", workspaceId: "w" }, select: { id: true, archivedAt: true } }); expect(f.create).not.toHaveBeenCalled();
   });
   it.each(["archived", "stale", "readOnly", "changedBeforeCommit"])("rejects %s source state before acceptance", async scenario => {
     if (scenario === "archived") f.project.mockResolvedValue({ id: "p", archivedAt: new Date() });

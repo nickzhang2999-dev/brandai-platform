@@ -12,7 +12,7 @@ async function visibleRequests<T extends ScopedRequest>(workspaceId: string, use
   const own = rows.filter(row => row.workspaceId === workspaceId && row.userId === userId);
   if (!own.length) return [];
   const projects = await prisma.project.findMany({
-    where: { workspaceId, id: { in: [...new Set(own.map(row => row.projectId))] } },
+    where: { deletedAt: null, workspaceId, id: { in: [...new Set(own.map(row => row.projectId))] } },
     select: { id: true, workspaceId: true },
   });
   const visible = new Set(projects.filter(project => project.workspaceId === workspaceId).map(project => project.id));

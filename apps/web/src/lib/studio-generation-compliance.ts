@@ -92,7 +92,7 @@ export async function readStudioGenerationCompliance(workspaceId: string, userId
   // snapshot so polling cannot mistake an in-flight completion for corruption.
   const { source, project, task } = await prisma.$transaction(async tx => ({
     source: await loadStudioComplianceSource(tx, workspaceId, versionId, projectId, userId),
-    project: await tx.project.findFirst({ where: { id: projectId, workspaceId }, select: { archivedAt: true } }),
+    project: await tx.project.findFirst({ where: { deletedAt: null, id: projectId, workspaceId }, select: { archivedAt: true } }),
     task: await tx.asyncTask.findUnique({ where: { id: studioComplianceTaskId(versionId) } }),
   }), { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead, timeout: 10_000 });
   if (!project) throw new ApiException(404, "项目不存在。");

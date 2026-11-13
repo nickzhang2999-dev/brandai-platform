@@ -38,7 +38,7 @@ function receipt(row: Upload) {
 
 export async function requireStudioMaterialProject(workspaceId: string, userId: string, projectId: string, write = false) {
   await requireWorkspaceRole(workspaceId, userId, write ? "EDITOR" : "VIEWER");
-  const project = await prisma.project.findFirst({ where: { id: projectId, workspaceId }, select: { archivedAt: true } });
+  const project = await prisma.project.findFirst({ where: { deletedAt: null, id: projectId, workspaceId }, select: { archivedAt: true } });
   if (!project) throw new ApiException(404, "项目不存在。");
   if (write && project.archivedAt) throw new ApiException(409, "项目已归档，无法上传图片。");
 }

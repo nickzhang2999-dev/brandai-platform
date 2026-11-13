@@ -244,7 +244,7 @@
     if (panel) { const cached = frames.get(id); if (cached) cached.pendingPanel = panel; else pendingPanels.set(id, panel); }
     go('/workspace/' + encodeURIComponent(id));
   }
-  let libraryScope = 'active', archiveBusy = false, archiveTarget = null, renameBusy = false, renameTarget = null, renameComposing = false, renameReturn = null;
+  let libraryScope = 'active', archiveBusy = false, archiveTarget = null, deleteTarget = null, deleteBusy = false, renameBusy = false, renameTarget = null, renameComposing = false, renameReturn = null;
   const readOnlyBrand = () => window.__NOVART_PRODUCT__?.readOnly === true || window.__NOVART_PRODUCT__?.workspaces?.find(value => value.id === window.__NOVART_PRODUCT__?.workspaceId)?.role === 'VIEWER';
   const projectEvent = typeof BroadcastChannel === 'function' ? new BroadcastChannel('novart-project-library') : null;
   function addProjectActions(card, p) {
@@ -257,8 +257,22 @@
       const rename = button('修改名称', '', () => { details.open = false; openRename(p, summary); });
       rename.dataset.action = 'rename-project'; rename.disabled = renameBusy || archiveBusy || readOnlyBrand(); menu.append(rename);
     }
-    action.disabled ||= readOnlyBrand() || renameBusy;
-    menu.append(action); details.append(summary, menu); card.append(details);
+    action.disabled ||= readOnlyBrand() || renameBusy || deleteBusy;
+    menu.append(action);
+    if (p.archivedAt) {
+      const remove = button('删除项目', '', () => {
+        details.open = false;
+        deleteTarget = p;
+        $('pl-delete-name').textContent = p.projectName || '未命名项目';
+        $('pl-delete-status').textContent = '';
+        $('pl-delete').showModal();
+        $('pl-delete-cancel').focus();
+      });
+      remove.dataset.action = 'delete-project';
+      remove.disabled = archiveBusy || deleteBusy || renameBusy || readOnlyBrand();
+      menu.append(remove);
+    }
+    details.append(summary, menu); card.append(details);
   }
   function openRename(p, source) {
     if (renameBusy || archiveBusy || p.archivedAt || readOnlyBrand()) return;
@@ -331,12 +345,12 @@
     return stored.data.version;
   }
   function confirmArchive(p) {
-    if (archiveBusy) return;
+    if (archiveBusy || deleteBusy) return;
     archiveTarget = p; $('pl-confirm-name').textContent = p.projectName || '未命名项目'; $('pl-confirm-status').textContent = '';
     $('pl-confirm').showModal(); $('pl-confirm-back').focus();
   }
   async function changeArchive(p, archived, openAfter = false) {
-    if (archiveBusy) return;
+    if (archiveBusy || deleteBusy) return;
     archiveBusy = true; $('pl-confirm-submit').disabled = true; $('pl-confirm-back').disabled = true; $('pl-confirm-close').disabled = true;
     $('pl-confirm-status').textContent = archived ? '正在确认内容已保存…' : ''; renderProjects();
     try {
@@ -359,6 +373,45 @@
       if (route.page === 'workspace' && project(route.projectId)?.archivedAt) showArchivedProject(route.projectId);
     }
   }
+  $('pl-delete-submit').addEventListener('click', async () => {
+    const p = deleteTarget;
+    if (!p || deleteBusy || archiveBusy || renameBusy || readOnlyBrand()) return;
+    deleteBusy = true;
+    $('pl-delete-submit').disabled = $('pl-delete-cancel').disabled = true;
+    $('pl-delete-status').textContent = '正在删除…';
+    try {
+      const result = await api('/studio/project-delete', {projectId: p.projectId, revision: p.archiveRevision || 0, projectVersion: p.version});
+      if (result?.projectId !== p.projectId || result?.deleted !== true) throw new Error('删除结果尚未确认，请刷新项目列表核对。');
+      projects = projects.filter(row => row.projectId !== p.projectId);
+      favoriteDraft = favoriteDraft.filter(id => id !== p.projectId);
+      const entry = frames.get(p.projectId);
+      if (entry) {
+        clearTimeout(entry.timer); entry.focusCleanup?.(); entry.slot.remove(); frames.delete(entry.id);
+      }
+      assetCache.delete(p.projectId);
+      if (lastWorkspaceId === p.projectId) {
+        lastWorkspaceId = '';
+        $('ns-current-workspace').hidden = true;
+      }
+      $('pl-delete').close();
+      renderProjects();
+      projectEvent?.postMessage({projectId: p.projectId, deleted: true});
+      await loadProjects(true);
+      await loadState(true);
+      notify('项目已删除。');
+      $('pl-archived').focus();
+    } catch (error) {
+      if (error.status === 409 || error.uncertain) await loadProjects(true);
+      $('pl-delete-status').textContent = error.uncertain ? '删除结果尚未确认，请刷新项目列表核对。' : error.message;
+    } finally {
+      deleteBusy = false;
+      $('pl-delete-submit').disabled = $('pl-delete-cancel').disabled = false;
+      renderProjects();
+    }
+  });
+  $('pl-delete-cancel').addEventListener('click', () => { if (!deleteBusy) $('pl-delete').close(); });
+  $('pl-delete').addEventListener('cancel', event => { if (deleteBusy) event.preventDefault(); });
+  $('pl-delete').addEventListener('close', () => { deleteTarget = null; });
   $('pl-confirm-submit').addEventListener('click', () => { if (archiveTarget) changeArchive(archiveTarget, true); });
   ['pl-confirm-back','pl-confirm-close'].forEach(id => $(id).addEventListener('click', () => { if (!archiveBusy) $('pl-confirm').close(); }));
   $('pl-confirm').addEventListener('cancel', event => { if (archiveBusy) event.preventDefault(); });

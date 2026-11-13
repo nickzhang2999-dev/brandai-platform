@@ -85,12 +85,13 @@ export async function studioRoute(req: Request) {
     }
     if (req.method === "POST") {
       if (pathname === "/studio/material-upload") return json(await submitStudioMaterial(workspaceId, user.id, req), 202);
-      if (!['/studio/state', '/compare/api/create', '/compare/api/context', '/studio/project-archive', '/studio/draft', '/workflow', '/studio/generation', '/studio/generation/retry-archive', '/studio/generation/compliance/retry'].includes(pathname)) throw new ApiException(503, "此功能正在接入，内容仍保留在当前页面。");
+      if (!['/studio/state', '/compare/api/create', '/compare/api/context', '/studio/project-archive', '/studio/project-delete', '/studio/draft', '/workflow', '/studio/generation', '/studio/generation/retry-archive', '/studio/generation/compliance/retry'].includes(pathname)) throw new ApiException(503, "此功能正在接入，内容仍保留在当前页面。");
       const body = await readWorkbenchJson(req, 270 * 1024);
       switch (pathname) {
         case "/studio/state": return json(await state.saveStudioState(workspaceId, user.id, body));
         case "/compare/api/create": return json(await state.createStudioProject(workspaceId, user.id, body));
         case "/compare/api/context": return json(await state.saveStudioContext(workspaceId, user.id, body));
+        case "/studio/project-delete": return json(await state.deleteArchivedStudioProject(workspaceId, user.id, body));
         case "/studio/project-archive": return json(await state.archiveStudioProject(workspaceId, user.id, body));
         case "/studio/draft": return json(await state.saveStudioDraft(workspaceId, user.id, body));
         case "/workflow": return json(await saveStudioWorkflow(workspaceId, user.id, body));

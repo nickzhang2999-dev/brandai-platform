@@ -47,7 +47,7 @@ const PatchProjectInput = z
 
 async function loadScoped(wsId: string, projectId: string) {
   const existing = await prisma.project.findUnique({
-    where: { id: projectId },
+    where: { deletedAt: null, id: projectId },
   });
   if (!existing || existing.workspaceId !== wsId) {
     throw new ApiException(404, "Project not found");

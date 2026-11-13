@@ -475,6 +475,7 @@ model Project {
   // break sibling branches that don't know it; an additive nullable column is
   // backward-compatible).
   archivedAt  DateTime?
+  deletedAt   DateTime?
   canvas      ProjectCanvas?
   editorDocument EditorDocument?
   workbenchState WorkbenchProjectState?

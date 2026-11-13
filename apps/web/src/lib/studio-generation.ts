@@ -111,7 +111,7 @@ export async function readStudioBrandRulePreview(workspaceId: string, userId: st
 export async function readStudioGeneration(workspaceId: string, userId: string, raw: unknown) {
   const { projectId, requestId } = StudioGenerationQuery.parse(raw);
   const { role } = await requireWorkspaceRole(workspaceId, userId, "VIEWER");
-  if (!await prisma.project.findFirst({ where: { id: projectId, workspaceId }, select: { id: true } })) throw new ApiException(404, "项目不存在。");
+  if (!await prisma.project.findFirst({ where: { deletedAt: null, id: projectId, workspaceId }, select: { id: true } })) throw new ApiException(404, "项目不存在。");
   await expireStudioGenerations();
   const rows = await prisma.studioGenerationRequest.findMany({ where: { workspaceId, userId, projectId, ...(requestId ? { id: requestId } : {}) }, orderBy: { createdAt: "desc" }, take: requestId ? 1 : 50 });
   const canWrite = role === "OWNER" || role === "EDITOR";

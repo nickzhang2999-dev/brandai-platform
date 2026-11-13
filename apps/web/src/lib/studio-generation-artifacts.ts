@@ -27,7 +27,7 @@ export async function readStudioGenerationResults(request: StudioArtifactRequest
     db.studioGenerationOutput.findMany({ where: { requestId: request.id, workspaceId: request.workspaceId, projectId: request.projectId, imageUrl: { not: null }, expiresAt: { gt: new Date() } }, select: { id: true } }),
     db.studioGeneratedMaterial.findMany({ where: { requestId: request.id, workspaceId: request.workspaceId, projectId: request.projectId },
       select: studioArtifactViewSelect, orderBy: { createdAt: "asc" } }),
-    db.project.findFirst({ where: { id: request.projectId, workspaceId: request.workspaceId }, select: { archivedAt: true } }),
+    db.project.findFirst({ where: { deletedAt: null, id: request.projectId, workspaceId: request.workspaceId }, select: { archivedAt: true } }),
   ]);
   return { ...projectStudioGenerationResults(request, { outputs, recoverableOutputs, artifacts, project }), ...appliedStudioBrandRules(outputs[0]?.params) };
 }

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { prisma, Prisma } from "@brandai/db";
 import { WorkbenchProfile, WorkbenchShellSaveInput, WorkbenchShellState, WorkbenchProjectCreateInput,
-  WorkbenchContextSaveInput, WorkbenchArchiveInput, WorkbenchDraftSaveInput, WorkbenchDraftView, NativeProjectQueryInput } from "@brandai/contracts";
+  WorkbenchContextSaveInput, WorkbenchArchiveInput, WorkbenchDeleteProjectInput, WorkbenchDraftSaveInput, WorkbenchDraftView, NativeProjectQueryInput } from "@brandai/contracts";
 import { ApiException } from "./api";
 import { requireWorkspaceRole } from "./workspace";
 import { readEditorDocument } from "./editor-documents";
@@ -14,10 +14,10 @@ const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(va
 async function lockWorkspace(tx: Db, workspaceId: string) {
   await tx.$queryRaw`SELECT "id" FROM "BrandWorkspace" WHERE "id" = ${workspaceId} FOR UPDATE`;
 }
-async function lockProject(tx: Db, workspaceId: string, projectId: string, archivedAllowed = false) {
-  const rows = await tx.$queryRaw<Array<{ id: string; archivedAt: Date | null; description: string | null }>>`
-    SELECT "id", "archivedAt", "description" FROM "Project" WHERE "id" = ${projectId} AND "workspaceId" = ${workspaceId} FOR UPDATE`;
-  if (!rows[0]) throw new ApiException(404, "项目不存在。");
+async function lockProject(tx: Db, workspaceId: string, projectId: string, archivedAllowed = false, deletedAllowed = false) {
+  const rows = await tx.$queryRaw<Array<{ id: string; archivedAt: Date | null; deletedAt: Date | null; description: string | null }>>`
+    SELECT "id", "archivedAt", "deletedAt", "description" FROM "Project" WHERE "id" = ${projectId} AND "workspaceId" = ${workspaceId} FOR UPDATE`;
+  if (!rows[0] || (rows[0].deletedAt && !deletedAllowed)) throw new ApiException(404, "项目不存在。");
   if (!archivedAllowed && rows[0].archivedAt) throw new ApiException(409, "项目已归档，请恢复后继续编辑。");
   return rows[0];
 }
@@ -52,7 +52,7 @@ export async function saveStudioState(workspaceId: string, userId: string, raw: 
     } else {
       const favorites = input.group === "favorites" ? [...new Set(input.favorites)] : current.favorites;
       if (input.group === "favorites") {
-        const count = await tx.project.count({ where: { workspaceId, id: { in: favorites } } });
+        const count = await tx.project.count({ where: { workspaceId, deletedAt: null, id: { in: favorites } } });
         if (count !== favorites.length) throw new ApiException(422, "收藏包含不属于当前品牌的项目。");
       }
       const profile = WorkbenchProfile.parse(input.group === "profile" ? input.profile : current.profile);
@@ -64,7 +64,7 @@ export async function saveStudioState(workspaceId: string, userId: string, raw: 
 }
 export async function studioProjects(workspaceId: string, userId: string) {
   await requireWorkspaceRole(workspaceId, userId, "VIEWER");
-  const rows = await prisma.project.findMany({ where: { workspaceId }, orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: 1000,
+  const rows = await prisma.project.findMany({ where: { deletedAt: null, workspaceId }, orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: 1000,
     select: { id: true, name: true, createdAt: true, archivedAt: true,
       workbenchState: { select: { archiveRevision: true, updatedAt: true } }, editorDocument: { select: { revision: true, updatedAt: true } } } });
   return { projects: rows.map(p => ({ projectId: p.id, projectName: p.name, version: version(p.editorDocument?.revision),
@@ -82,6 +82,7 @@ export async function createStudioProject(workspaceId: string, userId: string, r
     const prior = await tx.workbenchProjectState.findUnique({ where: { creationKey } });
     if (prior) {
       if (prior.workspaceId !== workspaceId || prior.creationChecksum !== creationChecksum) throw conflict();
+      if (!await tx.project.count({ where: { id: prior.projectId, workspaceId, deletedAt: null } })) throw new ApiException(404, "原项目已删除。");
       return { projectId: prior.projectId };
     }
     const p = await tx.project.create({ data: { workspaceId, name: input.projectName, description: input.brief.slice(0, 2000),
@@ -92,7 +93,7 @@ export async function createStudioProject(workspaceId: string, userId: string, r
 export async function studioContext(workspaceId: string, userId: string, raw: unknown) {
   await requireWorkspaceRole(workspaceId, userId, "VIEWER");
   const { projectId } = NativeProjectQueryInput.parse(raw);
-  const p = await prisma.project.findFirst({ where: { id: projectId, workspaceId }, select: { description: true, workbenchState: true } });
+  const p = await prisma.project.findFirst({ where: { deletedAt: null, id: projectId, workspaceId }, select: { description: true, workbenchState: true } });
   if (!p) throw new ApiException(404, "项目不存在。");
   return { projectId, brief: p.workbenchState?.brief ?? p.description ?? "", notes: p.workbenchState?.notes ?? "", revision: p.workbenchState?.revision ?? 0, updatedAt: now(p.workbenchState?.updatedAt) };
 }
@@ -120,10 +121,33 @@ export async function archiveStudioProject(workspaceId: string, userId: string, 
   });
   return { projectId: input.projectId, archived: input.archived };
 }
+export async function deleteArchivedStudioProject(workspaceId: string, userId: string, raw: unknown) {
+  await requireWorkspaceRole(workspaceId, userId, "EDITOR");
+  const input = WorkbenchDeleteProjectInput.parse(raw);
+  await prisma.$transaction(async tx => {
+    await lockWorkspace(tx, workspaceId);
+    const project = await lockProject(tx, workspaceId, input.projectId, true, true);
+    if (project.deletedAt) return;
+    if (!project.archivedAt) throw new ApiException(409, "只有已归档的项目可以删除。");
+    const [doc, state] = await Promise.all([
+      tx.editorDocument.findUnique({ where: { projectId: input.projectId }, select: { revision: true } }),
+      tx.workbenchProjectState.findUnique({ where: { projectId: input.projectId }, select: { archiveRevision: true } }),
+    ]);
+    if ((state?.archiveRevision ?? 0) !== input.revision || version(doc?.revision) !== input.projectVersion) throw conflict();
+    // Keep generation history for quotas and preserve assets shared by other projects.
+    await tx.project.update({ where: { id: input.projectId }, data: { deletedAt: new Date() } });
+    await tx.$executeRaw`
+      UPDATE "WorkbenchUserState"
+      SET "favorites" = array_remove("favorites", ${input.projectId}), "revision" = "revision" + 1, "updatedAt" = CURRENT_TIMESTAMP
+      WHERE "workspaceId" = ${workspaceId} AND ${input.projectId} = ANY("favorites")`;
+  });
+  return { projectId: input.projectId, deleted: true };
+}
+
 export async function studioStatus(workspaceId: string, userId: string, raw: unknown) {
   const { projectId } = NativeProjectQueryInput.parse(raw);
   const doc = await readEditorDocument(workspaceId, projectId, userId);
-  const p = await prisma.project.findFirstOrThrow({ where: { id: projectId, workspaceId }, select: { name: true } });
+  const p = await prisma.project.findFirstOrThrow({ where: { deletedAt: null, id: projectId, workspaceId }, select: { name: true } });
   return { projectId, projectName: p.name, version: version(doc.revision), savedAt: doc.updatedAt ? Date.parse(doc.updatedAt) : null, saveError: null };
 }
 

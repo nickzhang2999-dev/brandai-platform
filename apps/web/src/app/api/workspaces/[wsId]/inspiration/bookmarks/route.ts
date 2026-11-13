@@ -12,7 +12,7 @@ export async function GET(_req:Request,{params}:{params:Promise<{wsId:string}>})
 export async function POST(req:Request,{params}:{params:Promise<{wsId:string}>}) {
   try {const user=await requireUser(),{wsId}=await params;await requireWorkspaceRole(wsId,user.id,'EDITOR');requireEnabled();const input=parse(InspirationBookmarkInput,await req.json());const c=(await getCase(wsId,input.caseId)).case;
     if(c.revision!==input.revision)throw new ApiException(409,'案例版本已更新，请刷新后收藏。');
-    if(input.projectId && !await prisma.project.findFirst({where:{id:input.projectId,workspaceId:wsId}}))throw new ApiException(404,'项目不存在。');
+    if(input.projectId && !await prisma.project.findFirst({where:{deletedAt: null, id:input.projectId,workspaceId:wsId}}))throw new ApiException(404,'项目不存在。');
     const row=await prisma.inspirationBookmark.upsert({where:{workspaceId_userId_caseId_projectId:{workspaceId:wsId,userId:user.id,caseId:input.caseId,projectId:input.projectId??''}},create:{workspaceId:wsId,userId:user.id,caseId:input.caseId,revision:input.revision,projectId:input.projectId??'',note:input.note},update:{note:input.note,revision:input.revision}});
     return ok({id:row.id,caseId:row.caseId,revision:row.revision,projectId:row.projectId||null,note:row.note,case:c,unavailable:false});
   }catch(e){return handleError(e);}

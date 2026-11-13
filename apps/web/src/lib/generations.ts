@@ -261,7 +261,7 @@ export async function listWorkspaceProjects(
   // a Project, but it must NOT surface as a user Campaign anywhere this list
   // feeds — Campaign page / homepage / assets join dialog).
   const rows = await prisma.project.findMany({
-    where: { workspaceId, name: { not: BRAND_PREVIEW_PROJECT_NAME } },
+    where: { deletedAt: null, workspaceId, name: { not: BRAND_PREVIEW_PROJECT_NAME } },
     orderBy: { createdAt: "desc" },
     ...(options.take ? { take: options.take } : {}),
   });
@@ -304,7 +304,7 @@ export async function getProject(
   projectId: string,
 ): Promise<Project | null> {
   const row = await prisma.project.findUnique({
-    where: { id: projectId },
+    where: { deletedAt: null, id: projectId },
   });
   if (!row || row.workspaceId !== workspaceId) return null;
   return serializeProject(row);

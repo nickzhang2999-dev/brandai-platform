@@ -38,7 +38,7 @@ describe("durable compliance outbox", () => {
 describe("queued source revalidation", () => {
   it("requires active identity, editor role and current source ownership", async () => {
     await validateComplianceTaskSource("w", "COMPLIANCE_RECHECK", input);
-    expect(f.role).toHaveBeenCalledWith("w", "u", "EDITOR"); expect(f.project).toHaveBeenCalledWith({ where: { id: "p", workspaceId: "w" }, select: { id: true } });
+    expect(f.role).toHaveBeenCalledWith("w", "u", "EDITOR"); expect(f.project).toHaveBeenCalledWith({ where: { deletedAt: null, id: "p", workspaceId: "w" }, select: { id: true } });
   });
   it("blocks accounts disabled during the queue wait", async () => {
     f.user.mockResolvedValue({ isActive: false }); await expect(validateComplianceTaskSource("w", "COMPLIANCE_RECHECK", input)).rejects.toMatchObject({ status: 403 }); expect(f.version).not.toHaveBeenCalled();

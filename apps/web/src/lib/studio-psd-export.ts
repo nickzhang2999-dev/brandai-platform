@@ -18,7 +18,7 @@ export async function exportStudioDecompositionPsd(
   await requireWorkspaceRole(workspaceId, userId, "VIEWER");
   const [user, project, row] = await Promise.all([
     prisma.user.findUnique({ where: { id: userId }, select: { isActive: true } }),
-    prisma.project.findFirst({ where: { id: projectId, workspaceId }, select: { id: true } }),
+    prisma.project.findFirst({ where: { deletedAt: null, id: projectId, workspaceId }, select: { id: true } }),
     prisma.studioDecompositionRequest.findFirst({ where: { id: requestId, workspaceId, projectId }, select: {
       id: true, status: true, sourceWidth: true, sourceHeight: true, publishedLayers: true,
     } }),

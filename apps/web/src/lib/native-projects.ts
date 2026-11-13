@@ -20,7 +20,7 @@ export function nativeDocumentMutation(userId: string, workspaceId: string, inpu
 export async function queryNativeProject(workspaceId: string, userId: string, raw: unknown) {
   const { projectId } = NativeProjectQueryInput.parse(raw);
   const doc = await readEditorDocument(workspaceId, projectId, userId);
-  const project = await prisma.project.findFirst({ where: { id: projectId, workspaceId }, select: { name: true, createdAt: true } });
+  const project = await prisma.project.findFirst({ where: { deletedAt: null, id: projectId, workspaceId }, select: { name: true, createdAt: true } });
   if (!project) throw new EditorDocumentError(404, "PROJECT_NOT_FOUND", "项目不存在。");
   return {
     projectId, projectName: project.name, canvas: doc.canvas, version: version(doc.revision),
@@ -45,7 +45,7 @@ export async function listNativeProjects(workspaceId: string, userId: string, ra
   await requireWorkspaceRole(workspaceId, userId, "VIEWER");
   const { page, pageSize } = NativeProjectListInput.parse(raw);
   // Never read full multi-megabyte canvases for a library page.
-  const where = { workspaceId, archivedAt: null };
+  const where = { workspaceId, archivedAt: null, deletedAt: null };
   const [rows, total] = await prisma.$transaction([
     prisma.project.findMany({ where, orderBy: [{ createdAt: "desc" }, { id: "desc" }], skip: (page - 1) * pageSize, take: pageSize,
       select: { id: true, name: true, createdAt: true, editorDocument: { select: { revision: true, updatedAt: true } } } }),
@@ -64,7 +64,7 @@ export async function renameNativeProject(workspaceId: string, userId: string, r
   // Name edits are separate from document autosaves, as in the native client.
   // updateMany's scoped predicate also serializes with archive writes.
   const result = await prisma.project.updateMany({
-    where: { id: projectId, workspaceId, archivedAt: null }, data: { name: projectName },
+    where: { id: projectId, workspaceId, archivedAt: null, deletedAt: null }, data: { name: projectName },
   });
   if (!result.count) throw new EditorDocumentError(409, "PROJECT_UNAVAILABLE", "项目不存在或已归档，未修改名称。");
   return { projectId, projectName };

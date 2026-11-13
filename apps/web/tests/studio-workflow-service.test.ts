@@ -35,7 +35,7 @@ describe("project-scoped durable workflow service", () => {
     expect(f.gate).toHaveBeenCalledWith("w", "u", "VIEWER");
     const result = await readStudioWorkflowAssets("w", "u", { projectId: "p" });
     expect(result.assets[0]).toMatchObject({ shapeId: ref.shapeId, assetSha256: sha });
-    expect(f.project).toHaveBeenCalledWith({ where: { id: "p", workspaceId: "w" }, select: { id: true } });
+    expect(f.project).toHaveBeenCalledWith({ where: { deletedAt: null, id: "p", workspaceId: "w" }, select: { id: true } });
     expect(f.materials.mock.calls[0][0].where).toMatchObject({ workspaceId: "w", task: { workspaceId: "w", kind: "STUDIO_UPLOAD", status: "SUCCEEDED" }, asset: { workspaceId: "w", deprecatedAt: null, projectLinks: { some: { projectId: "p", project: { workspaceId: "w" } } }, OR: [{ id: { in: ["a"] } }, { url: { in: [url] } }] } });
   });
   it("checks membership and project scope before reading workflow, canvas or upload records", async () => {

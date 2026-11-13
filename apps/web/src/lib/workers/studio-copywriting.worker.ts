@@ -28,7 +28,7 @@ export async function runStudioCopywriting(job: Job<{ taskId: string }>) {
       await requireStudioMaterialProject(task.workspaceId, stored.userId, task.refId!, true);
     };
     await artifactDeadline(validate(), signal);
-    const project = await prisma.project.findFirstOrThrow({ where: { id: task.refId, workspaceId: task.workspaceId }, select: { name: true } });
+    const project = await prisma.project.findFirstOrThrow({ where: { deletedAt: null, id: task.refId, workspaceId: task.workspaceId }, select: { name: true } });
     const brand = await prisma.brandWorkspace.findUniqueOrThrow({ where: { id: task.workspaceId }, select: { name: true } });
     let imageBase64: string | undefined;
     if (input.image) {

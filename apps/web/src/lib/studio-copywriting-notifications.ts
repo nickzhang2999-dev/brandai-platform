@@ -5,7 +5,7 @@ export async function listCopywritingNotifications(workspaceId: string, userId: 
     select: { id: true, kind: true, refId: true, status: true, updatedAt: true }, orderBy: { updatedAt: "desc" }, take: limit });
   const eligible = rows.filter(row => row.kind === "STUDIO_COPYWRITING" && row.refId);
   if (!eligible.length) return [];
-  const projects = await prisma.project.findMany({ where: { workspaceId, id: { in: eligible.map(row => row.refId!) } }, select: { id: true } });
+  const projects = await prisma.project.findMany({ where: { deletedAt: null, workspaceId, id: { in: eligible.map(row => row.refId!) } }, select: { id: true } });
   return eligible.filter(row => projects.some(project => project.id === row.refId)).map(row => ({ id: `copywriting:${row.id}`, kind: "STUDIO_COPYWRITING", status: row.status === "SUCCEEDED" ? "SUCCEEDED" : "FAILED",
     title: row.status === "SUCCEEDED" ? "文案已生成" : "文案生成未完成", detail: "打开项目画布，点击文案查看记录。",
     href: `/canvas?workspaceId=${encodeURIComponent(workspaceId)}&projectId=${encodeURIComponent(row.refId!)}`, createdAt: row.updatedAt.toISOString() }));

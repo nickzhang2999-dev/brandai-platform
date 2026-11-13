@@ -42,7 +42,7 @@ describe("document service authorization and persistence", () => {
   it("reads projects with an explicit workspace filter and reflects viewer/archived state", async () => {
     f.gate.mockResolvedValue({ role: "VIEWER" });
     expect((await readEditorDocument("w", "p", "viewer")).readOnly).toBe(true);
-    expect(f.project.mock.calls[0][0].where).toEqual({ id: "p", workspaceId: "w" });
+    expect(f.project.mock.calls[0][0].where).toEqual({ deletedAt: null, id: "p", workspaceId: "w" });
     f.gate.mockResolvedValue({ role: "OWNER" }); f.project.mockResolvedValue({ archivedAt: new Date(), editorDocument: null });
     expect((await readEditorDocument("w", "p", "owner")).readOnly).toBe(true);
   });

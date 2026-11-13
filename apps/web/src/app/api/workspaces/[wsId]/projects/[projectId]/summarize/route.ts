@@ -22,7 +22,7 @@ export async function POST(
     await requireWorkspaceRole(wsId, user.id, "EDITOR");
 
     const project = await prisma.project.findFirst({
-      where: { id: projectId, workspaceId: wsId },
+      where: { deletedAt: null, id: projectId, workspaceId: wsId },
       select: { id: true, name: true, description: true },
     });
     if (!project) throw new ApiException(404, "Project not found");
