@@ -143,10 +143,10 @@ async function start() {
     }
     if (['/inspiration', '/studio'].includes(url.pathname) && req.method === 'GET') { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); return res.end('<h1>合成回调目的地</h1>'); }
     if (url.pathname === '/favicon.ico') { res.writeHead(204); return res.end(); }
-    const assets = ['/brand/deepflare-logo.svg', '/brand/deepflare-logo-dark.svg', '/fonts/inter-latin-400.woff2', '/fonts/inter-latin-500.woff2', '/fonts/inter-latin-600.woff2'];
+    const assets = ['/brand/nick-platform-logo.webp', '/fonts/inter-latin-400.woff2', '/fonts/inter-latin-500.woff2', '/fonts/inter-latin-600.woff2'];
     if (assets.includes(url.pathname) && req.method === 'GET') {
       const file = path.join(web, 'public', url.pathname);
-      if (fs.existsSync(file)) { res.setHeader('Content-Type', url.pathname.endsWith('.svg') ? 'image/svg+xml' : 'font/woff2'); return res.end(fs.readFileSync(file)); }
+      if (fs.existsSync(file)) { res.setHeader('Content-Type', url.pathname.endsWith('.webp') ? 'image/webp' : 'font/woff2'); return res.end(fs.readFileSync(file)); }
     }
     report.unexpectedRequests.push({ method: req.method, path: url.pathname }); return json(res, { error: 'Unknown isolated route' }, 404);
   });
