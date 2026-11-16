@@ -1,3 +1,7 @@
+## 2026-11-16 · 分层功能合入主干并正式上线（发布准备）
+
+用户授权正式上线。独立工作树合并分层功能及实际线上 0182346 的品牌更新；保留生产模型设置。本地 Web 2689、Contracts 407、UI 42、AI 911 项通过，类型检查、低内存生产构建和发布合同通过。当前待主干推送、同 SHA CI/镜像与正式发布；详见 [发布记录](2026-11-16-main-release.md)。
+
 ## 2026-11-10 OpenAI Luna production handoff (in progress)
 
 - Applied the supplied five-file Luna compatibility patch on origin/main 89130780ad1a068041024e10b4f365568e5b863c; exact gpt-6-luna model routes use max_completion_tokens and explicit reasoning_effort=none, without temperature/max_tokens. Model IDs remain runtime settings.
