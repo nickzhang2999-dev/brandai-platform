@@ -247,11 +247,11 @@
   let libraryScope = 'active', archiveBusy = false, archiveTarget = null, renameBusy = false, renameTarget = null, renameComposing = false, renameReturn = null;
   const readOnlyBrand = () => window.__NOVART_PRODUCT__?.readOnly === true || window.__NOVART_PRODUCT__?.workspaces?.find(value => value.id === window.__NOVART_PRODUCT__?.workspaceId)?.role === 'VIEWER';
   const projectEvent = typeof BroadcastChannel === 'function' ? new BroadcastChannel('novart-project-library') : null;
-  function addProjectActions(card, p) {
+  function addProjectActions(card, p, sidebar = false) {
     const details = node('details', 'pl-more'), summary = node('summary', '', '···');
     summary.dataset.action = 'more-project'; summary.setAttribute('aria-label', '更多操作：' + (p.projectName || '未命名项目'));
     details.addEventListener('toggle', () => { if (details.open) document.querySelectorAll('.pl-more[open]').forEach(other => { if (other !== details) other.open = false; }); });
-    const menu = node('div', 'pl-more-menu'), action = button(p.archivedAt ? '恢复项目' : '归档项目', '', () => { details.open = false; p.archivedAt ? changeArchive(p, false) : confirmArchive(p); });
+    const menu = node('div', 'pl-more-menu'), action = button(p.archivedAt ? '恢复项目' : sidebar ? '删除项目' : '归档项目', '', () => { details.open = false; p.archivedAt ? changeArchive(p, false) : confirmArchive(p, sidebar); });
     action.dataset.action = p.archivedAt ? 'restore-project' : 'archive-project'; action.disabled = archiveBusy;
     if (!p.archivedAt) {
       const rename = button('修改名称', '', () => { details.open = false; openRename(p, summary); });
@@ -288,11 +288,11 @@
       current.projectName = result.data.projectName; renamedProject(current); $('ns-rename-dialog').close(); renderProjects();
       projectEvent?.postMessage({projectId:current.projectId}); notify('项目名称已保存。');
     } catch (error) { $('ns-rename-status').textContent = error.message + (error.uncertain ? ' 当前输入仍保留，请先刷新项目库核对名称。' : ''); }
-    finally { renameBusy = false; ['ns-rename-name','ns-rename-close','ns-rename-cancel','ns-rename-submit'].forEach(id => { $(id).disabled = false; }); }
+    finally { renameBusy = false; ['ns-rename-name','ns-rename-close','ns-rename-cancel','ns-rename-submit'].forEach(id => { $(id).disabled = false; }); if (lastWorkspaceId) updateWorkspaceNav(lastWorkspaceId); }
   });
   ['ns-rename-close','ns-rename-cancel'].forEach(id => $(id).addEventListener('click', () => { if (!renameBusy) $('ns-rename-dialog').close(); }));
   $('ns-rename-dialog').addEventListener('cancel', event => { if (renameBusy || renameComposing) event.preventDefault(); });
-  $('ns-rename-dialog').addEventListener('close', () => { renameTarget = null; renameComposing = false; if (renameReturn?.isConnected) renameReturn.focus({preventScroll:true}); });
+  $('ns-rename-dialog').addEventListener('close', () => { renameTarget = null; renameComposing = false; if (renameReturn?.isConnected) renameReturn.focus({preventScroll:true}); else $('ns-current-project-actions').querySelector('summary')?.focus({preventScroll:true}); });
   function showArchivedProject(id) {
     const p = project(id); if (!p) return;
     frames.forEach(entry => { entry.slot.dataset.active = 'false'; entry.slot.style.visibility = 'hidden'; entry.slot.inert = true; entry.frame.setAttribute('aria-hidden', 'true'); });
@@ -330,8 +330,13 @@
     if (savedRevision !== undefined && stored.data.version !== 'novart-' + savedRevision) throw new Error('项目刚刚发生更新，尚未归档。请刷新后重试。');
     return stored.data.version;
   }
-  function confirmArchive(p) {
+  function confirmArchive(p, sidebar = false) {
     if (archiveBusy) return;
+    $('pl-confirm-title').textContent = sidebar ? '删除项目' : '归档项目';
+    $('pl-confirm-submit').textContent = sidebar ? '确认删除' : '归档项目';
+    $('pl-confirm-back').textContent = sidebar ? '取消' : '先不归档';
+    $('pl-confirm-close').setAttribute('aria-label', sidebar ? '关闭删除确认' : '关闭归档确认');
+    $('pl-confirm-description').textContent = sidebar ? '将从侧栏和使用中的项目列表移除。画布、需求和素材保留，可在项目库的“已归档”中恢复。' : '归档后从日常列表收起，画布、需求和素材都会保留。恢复后可以继续编辑。';
     archiveTarget = p; $('pl-confirm-name').textContent = p.projectName || '未命名项目'; $('pl-confirm-status').textContent = '';
     $('pl-confirm').showModal(); $('pl-confirm-back').focus();
   }
@@ -389,7 +394,22 @@
     entry.pendingPanel = '';
     if (upload) notify('请在品牌素材面板点击「上传」，保存后可选择加入画布。');
   }
-  function updateWorkspaceNav(id) { if (!id) return; lastWorkspaceId = id; const link = $('ns-current-workspace'); link.hidden = false; link.href = '#/workspace/' + encodeURIComponent(id); $('ns-workspace-label').textContent = project(id)?.projectName || '当前工作台'; link.title = '返回 ' + (project(id)?.projectName || '当前工作台') + '，保留编辑会话'; }
+  function updateWorkspaceNav(id) {
+    if (!id) return;
+    lastWorkspaceId = id;
+    const p = project(id), link = $('ns-current-workspace'), row = $('ns-current-project-row'), actions = $('ns-current-project-actions');
+    row.hidden = !p || Boolean(p.archivedAt); link.hidden = row.hidden;
+    link.href = '#/workspace/' + encodeURIComponent(id);
+    $('ns-workspace-label').textContent = p?.projectName || '当前工作台';
+    link.title = '返回 ' + (p?.projectName || '当前工作台') + '，保留编辑会话';
+    const signature = JSON.stringify([id,p?.projectName,row.hidden,archiveBusy,renameBusy,readOnlyBrand()]);
+    if (actions.dataset.signature !== signature) {
+      const focused = actions.contains(document.activeElement);
+      actions.dataset.signature = signature; actions.replaceChildren();
+      if (!row.hidden) addProjectActions(actions, p, true);
+      if (focused) actions.querySelector('summary')?.focus({preventScroll:true});
+    }
+  }
   function workspaceStartupFailed(entry, reason = 'timeout') {
     if (frames.get(entry.id) !== entry || (entry.ready && reason !== 'native-error')) return;
     if (entry.ready) entry.failedAfterReady = true;
@@ -736,6 +756,7 @@
   function clearProjectFilters() { $('ns-project-search').value = ''; favoriteFilter = false; $('ns-project-favorites').setAttribute('aria-pressed', 'false'); renderProjects(); $('ns-project-search').focus({preventScroll: true}); }
   $('ns-project-clear').addEventListener('click', clearProjectFilters);
   function renderProjectLists() {
+    if (lastWorkspaceId) updateWorkspaceNav(lastWorkspaceId);
     projectFeedback();
     ['active','archived'].forEach(scope => { const tab = $('pl-' + scope); tab.setAttribute('aria-selected', String(scope === libraryScope)); tab.tabIndex = scope === libraryScope ? 0 : -1; });
     const recent = $('ns-recent-projects'), library = $('ns-project-library'), targets = [recent, library];

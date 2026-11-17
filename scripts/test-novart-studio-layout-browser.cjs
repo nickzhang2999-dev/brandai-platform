@@ -283,6 +283,45 @@ async function verifyModeRecovery(browser,origin) {
     check('storage failure reports unchanged mode beside the controls and preserves text');
   } finally {await failing.close();}
 }
+async function verifySidebarDelete(browser, origin) {
+  stage='sidebar-project-delete';
+  const ctx=await browser.newContext({viewport:{width:1440,height:900}}), page=await ctx.newPage();
+  let writes=0, fail=true;
+  await page.route('**/api/canva/project/updateProjectName*', async route=>{const input=route.request().postDataJSON();project.projectName=input.projectName;return route.fulfill({json:{code:0,data:{projectId:project.projectId,projectName:project.projectName}}});});
+  await page.route('**/api/canva/project/queryProject*', route=>route.fulfill({json:{code:0,data:{...project,version:'novart-0'}}}));
+  await page.route('**/studio/project-archive*', async route=>{
+    writes++;const input=route.request().postDataJSON();assert.equal(input.projectId,project.projectId);
+    if(fail)return route.fulfill({status:403,json:{error:'无权删除此项目'}});
+    project.archivedAt=input.archived?'2026-11-17T00:00:00Z':null;project.archiveRevision++;
+    return route.fulfill({json:{...project}});
+  });
+  await page.goto(origin+'/studio#/workspace/'+project.projectId);
+  await page.waitForFunction(()=>window.NovartStudio?.snapshot().frames.some(f=>f.ready));
+  const frame=page.frames().find(f=>f.url().includes('/studio-editor'));
+  await frame.evaluate(()=>addEventListener('message',e=>{const d=e.data;if(d?.action==='confirm-save')parent.postMessage({...d,action:'confirm-save-result',status:'saved',revision:0},location.origin);}));
+  const menu=page.locator('#ns-current-project-actions summary');
+  await menu.click();await page.getByRole('button',{name:'修改名称',exact:true}).click();
+  await page.locator('#ns-rename-name').fill('改名后仍可删除');await page.locator('#ns-rename-submit').click();
+  await page.locator('#ns-rename-dialog').waitFor({state:'hidden'});
+  await page.waitForFunction(()=>document.activeElement===document.querySelector('#ns-current-project-actions summary'));
+  await menu.focus();await page.keyboard.press('Enter');
+  await page.getByRole('button',{name:'删除项目',exact:true}).click();
+  await page.getByRole('button',{name:'取消',exact:true}).click();assert.equal(writes,0);
+  await menu.click();await page.getByRole('button',{name:'删除项目',exact:true}).click();
+  await page.getByRole('button',{name:'确认删除',exact:true}).click();
+  await page.locator('#pl-confirm-status').filter({hasText:'无权删除'}).waitFor();
+  assert.equal(await page.locator('#ns-current-project-row').isVisible(),true);assert.equal(writes,1);
+  fail=false;await page.getByRole('button',{name:'确认删除',exact:true}).click();
+  await page.locator('#ns-current-project-row').waitFor({state:'hidden'});assert.equal(writes,2);
+  await page.locator('[data-testid="restore-and-open"]').click();
+  await page.locator('#ns-current-project-row').waitFor({state:'visible'});assert.equal(writes,3);
+  await page.setViewportSize({width:390,height:844});await menu.click();
+  const bounds=await page.getByRole('button',{name:'删除项目',exact:true}).boundingBox();assert.ok(bounds.x>=0&&bounds.x+bounds.width<=390);
+  await page.keyboard.press('Escape');assert.equal(await page.locator('#ns-current-project-actions details').getAttribute('open'),null);
+  await ctx.close();project.archivedAt=null;
+  report.checks.push({name:'sidebar-project-delete',cancelNoWrite:true,permissionFailureRetainsProject:true,archiveAndRestore:true,mobileMenuFits:true});
+}
+
 (async()=>{
   assert.ok(fs.existsSync(path.join(exported,'studio.html')),'Build Studio export before this interaction regression');
   report.webkitAvailable = fs.existsSync(webkit.executablePath());
@@ -294,6 +333,7 @@ async function verifyModeRecovery(browser,origin) {
   for (const spec of specs) await verifyViewport(browser,spec,origin);
   await verifyFreshOldCssCache(browser,origin);
   await verifyModeRecovery(browser,origin);
+  await verifySidebarDelete(browser,origin);
   assert.deepEqual(report.externalRequests,[]);assert.deepEqual(report.errors,[]);assert.equal(report.writeRequests,0);report.passed=true;
 })().catch(e=>{report.fatal={stage,message:e.message,stack:e.stack};process.exitCode=1;}).finally(async()=>{
   await browser?.close();if(server)await new Promise(resolve=>server.close(resolve));

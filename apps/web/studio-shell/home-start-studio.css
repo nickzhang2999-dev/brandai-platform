@@ -111,3 +111,13 @@ body[data-page=workspace] .ns-sidebar .np-brand-trigger{width:44px;min-height:44
 
 /* CDS injects its deployment toolbar outside the Studio shell. */
 #cds-widget { display: none !important; }
+
+/* Keep project actions separate from the navigation link, including touch. */
+.ns-current-project-row{position:relative;display:flex;align-items:center;min-width:0;gap:2px}
+.ns-current-project-row[hidden]{display:none}
+.ns-current-project-row>a{flex:1;min-width:0}
+.ns-current-project-row .pl-more{position:relative;inset:auto;flex:none}
+.ns-current-project-row .pl-more summary{display:flex;align-items:center;justify-content:center;width:32px;height:36px;cursor:pointer;border-radius:10px;color:var(--ns-muted,#686674)}
+.ns-current-project-row .pl-more summary:focus-visible{outline:2px solid var(--primary,#7C5CFF);outline-offset:2px}
+.ns-current-project-row .pl-more-menu{right:0;left:auto;min-width:132px;z-index:50}
+@media(max-width:960px){.ns-current-project-row{flex-direction:column}.ns-current-project-row>a{width:100%}.ns-current-project-row .pl-more-menu{left:0;right:auto}}
