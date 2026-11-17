@@ -3,7 +3,7 @@
 'use strict';
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
 const source=fs.readFileSync(path.join(__dirname,'../apps/web/studio-shell/home-start-studio.js'),'utf8').replace(/\r\n/g,'\n');
-const start=source.indexOf('  async function prepareArchive(p) {'),end=source.indexOf('  function confirmArchive(p) {',start);
+const start=source.indexOf('  async function prepareArchive(p) {'),end=source.indexOf('  function confirmArchive(',start);
 assert.ok(start>=0&&end>start,'Product archive guard boundary');
 const guard=source.slice(start,end).trim();
 let passed=0;
