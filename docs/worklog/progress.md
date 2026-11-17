@@ -1,3 +1,10 @@
+## 2026-11-17 灵感对象读取超时修复（本地验收通过，待部署）
+
+- 图片读取分开约束响应头、正文停滞与总期限；保留原安全检查和有限只读重试。
+- Web 2695、contracts 407、UI 42、AI 911 通过；95 项既有条件跳过。类型检查与低内存生产构建通过，首次本机内存失败保留记录。
+- 第 336 版真实接收尚未重新提交；生产回执未验收。详见 [本轮记录](2026-11-17-inspiration-object-timeout.md)。
+- 归因 R：统一 15 秒总读取预算不适合仍持续传输的大对象；失败对象身份未记入旧日志，不能据此归因某张图片。
+
 ## 2026-11-10 OpenAI Luna production handoff (in progress)
 
 - Applied the supplied five-file Luna compatibility patch on origin/main 89130780ad1a068041024e10b4f365568e5b863c; exact gpt-6-luna model routes use max_completion_tokens and explicit reasoning_effort=none, without temperature/max_tokens. Model IDs remain runtime settings.
