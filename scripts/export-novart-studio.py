@@ -24,7 +24,6 @@ SHELL_FILES = (
     'studio.html', 'home-start-studio.js', 'home-start-studio.css',
     'responsive-layout.js', 'responsive-layout.css',
     'project-library-studio.css', 'deepflare-logo.svg', 'deepflare-mark.svg',
-    'nick-platform-logo.webp', 'nick-platform-mark.webp',
     'm8-studio.css', 'm9-studio.css', 'm10-studio.css', 'm12-studio.css',
     'm13-studio.css', 'm13-motion.css', 'm14-studio.css', 'm15-studio.css',
     'm16-studio.css', 'm17-studio.css', 'm18-studio.css', 'm21-studio.css',
