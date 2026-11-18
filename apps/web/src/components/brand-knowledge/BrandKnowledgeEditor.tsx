@@ -51,6 +51,7 @@ export function BrandKnowledgeEditor({ wsId, brandName: initialName, userId, rol
   const [preview, setPreview] = useState<{ src: string; alt: string } | null>(null);
   const [suggestedType, setSuggestedType] = useState<string | null>(null);
   const [manualOpen, setManualOpen] = useState(false);
+  const [interactiveWorkspace, setInteractiveWorkspace] = useState<string | null>(null);
   const [openRuleMenu, setOpenRuleMenu] = useState<string | null>(null);
   const [titleDraft, setTitleDraft] = useState(initialName);
   const workspace = useQuery({ queryKey: ["knowledge-workspace", wsId, userId],
@@ -85,7 +86,7 @@ export function BrandKnowledgeEditor({ wsId, brandName: initialName, userId, rol
     }, onSuccess: refreshRules,
   });
   useEffect(() => { setTitleDraft(brandName); }, [brandName, wsId]);
-  useEffect(() => { setEditingRule(null); setPreview(null); setSuggestedType(null); setManualOpen(false); }, [wsId]);
+  useEffect(() => { setEditingRule(null); setPreview(null); setSuggestedType(null); setManualOpen(false); setInteractiveWorkspace(wsId); }, [wsId]);
   const busy = updateRule.isPending || deleteRule.isPending;
   const toggleRule = (rule: BrandRule) => {
     if (!canEdit) return;
@@ -123,7 +124,7 @@ export function BrandKnowledgeEditor({ wsId, brandName: initialName, userId, rol
     {tab === "rules" ? <>
       <DraftImportPanel wsId={wsId} userId={userId} canEdit={canEdit} onImported={refreshRules} />
       {canEdit && <div className="my-5 space-y-4"><AICoCreate key={wsId} wsId={wsId} userId={userId} suggestedType={suggestedType} hasContent={rules.length > 0} onSuggestionHandled={() => setSuggestedType(null)} />
-        <Button variant="outline" onClick={() => setManualOpen(value => !value)}>{manualOpen ? "收起手动添加" : "手动添加规则"}</Button>
+        <Button type="button" variant="outline" disabled={interactiveWorkspace !== wsId} aria-expanded={manualOpen} onClick={() => setManualOpen(value => !value)}>{manualOpen ? "收起手动添加" : "手动添加规则"}</Button>
         {manualOpen && <ManualRuleForm wsId={wsId} canEdit={canEdit} onSaved={() => { refreshRules(); setManualOpen(false); }} />}
       </div>}
       {rulesQuery.isLoading ? <p role="status">正在读取品牌规则…</p> : <div className="mt-7 space-y-8">
