@@ -319,7 +319,7 @@ async function verifySidebarDelete(browser, origin) {
   const bounds=await page.getByRole('button',{name:'删除项目',exact:true}).boundingBox();assert.ok(bounds.x>=0&&bounds.x+bounds.width<=390);
   await page.keyboard.press('Escape');assert.equal(await page.locator('#ns-current-project-actions details').getAttribute('open'),null);
   await ctx.close();project.archivedAt=null;
-  report.checks.push({name:'sidebar-project-delete',cancelNoWrite:true,permissionFailureRetainsProject:true,archiveAndRestore:true,mobileMenuFits:true});
+  check('sidebar-project-delete',{cancelNoWrite:true,permissionFailureRetainsProject:true,archiveAndRestore:true,mobileMenuFits:true});
 }
 
 (async()=>{

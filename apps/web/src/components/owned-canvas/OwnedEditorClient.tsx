@@ -122,7 +122,8 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
   const [generationRecoveryBlocked, setGenerationRecoveryBlocked] = useState(false);
   const [pendingUpload, setPendingUpload] = useState(false);
   const [pollPaused, setPollPaused] = useState(false);
-  const generationPoll = useBoundedTaskPoll({ taskKey: JSON.stringify([workspaceId, userId, projectId]), active: generations.some(activeGeneration) });
+  const hasActiveGeneration = generations.some(activeGeneration);
+  const generationPoll = useBoundedTaskPoll({ taskKey: hasActiveGeneration ? JSON.stringify([workspaceId, userId, projectId]) : null, active: hasActiveGeneration });
   const { timedOut: generationPollTimedOut, expired: generationPollExpired, remaining: generationPollRemaining, resume: resumeGenerationPoll } = generationPoll;
   const apiRef = useRef<ProductApi | null>(null), alive = useRef(false), docRef = useRef<OwnedCanvasDocument | null>(null);
   const viewRef = useRef<EditorDocumentView | null>(null), writableRef = useRef(false), savedSequence = useRef(0), sequence = useRef(0);
@@ -317,10 +318,10 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
     if (!api || refreshBusy.current) return;
     refreshBusy.current = true; if (!quiet) { setRefreshing(true); resumeGenerationPoll(); setPollPaused(false); }
     try {
-      const values = await Promise.allSettled([api.listMaterials(), api.listUploads(), api.listGenerations()]);
+      const values = await Promise.allSettled([quiet ? undefined : api.listMaterials(), quiet ? undefined : api.listUploads(), api.listGenerations()]);
       if (!alive.current || apiRef.current !== api) return;
-      if (values[0].status === "fulfilled") setMaterials(values[0].value);
-      if (values[1].status === "fulfilled") setUploads(values[1].value);
+      if (values[0].status === "fulfilled" && values[0].value) setMaterials(values[0].value);
+      if (values[1].status === "fulfilled" && values[1].value) setUploads(values[1].value);
       if (values[2].status === "fulfilled") {
         setGenerations(values[2].value);
         if (!psdSelectionRestored.current) {
@@ -553,10 +554,34 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
   }, [workspaceId, userId, projectId, saveSettled, save, send, openExistingTask, flushDraft, draftConfirmed, insertImage, openWriting, showSurface]);
 
   useEffect(() => {
-    if (!generations.some(activeGeneration) || pollPaused || generationPollTimedOut) return;
-    const timer = setTimeout(() => { if (!generationPollExpired()) void refresh(true); }, Math.min(3500, generationPollRemaining()));
-    return () => clearTimeout(timer);
-  }, [generations, pollPaused, refresh, generationPollTimedOut, generationPollExpired, generationPollRemaining]);
+    if (!hasActiveGeneration || pollPaused || generationPollTimedOut) return;
+    let stopped = false, timer: ReturnType<typeof setTimeout>;
+    const schedule = () => {
+      if (stopped || generationPollExpired()) return;
+      timer = setTimeout(async () => {
+        if (!stopped && !generationPollExpired() && !window.document.hidden) await refresh(true);
+        schedule();
+      }, Math.min(3500, Math.max(1, generationPollRemaining())));
+    };
+    schedule();
+    return () => { stopped = true; clearTimeout(timer); };
+  }, [hasActiveGeneration, pollPaused, refresh, generationPollTimedOut, generationPollExpired, generationPollRemaining]);
+  useEffect(() => {
+    if (!hasActiveGeneration) return;
+    const foreground = () => {
+      if (window.document.hidden) return;
+      resumeGenerationPoll(); setPollPaused(false); void refresh(true);
+    };
+    window.document.addEventListener("visibilitychange", foreground);
+    window.addEventListener("online", foreground);
+    return () => { window.document.removeEventListener("visibilitychange", foreground); window.removeEventListener("online", foreground); };
+  }, [hasActiveGeneration, resumeGenerationPoll, refresh]);
+  const previouslyActive = useRef<ProductApi | null>(null);
+  useEffect(() => {
+    const previous = previouslyActive.current;
+    previouslyActive.current = hasActiveGeneration ? apiRef.current : null;
+    if (!hasActiveGeneration && previous && previous === apiRef.current) void refresh();
+  }, [hasActiveGeneration, refresh]);
   useEffect(() => {
     if (generationPoll.timedOut) setNotice(TASK_POLL_PAUSED_MESSAGE);
   }, [generationPoll.timedOut]);

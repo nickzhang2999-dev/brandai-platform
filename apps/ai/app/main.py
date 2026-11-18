@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import io
 import logging
@@ -11,7 +12,7 @@ from fastapi.responses import JSONResponse
 
 from .config import settings
 from .ai_failure import ImageResponseError, failure_response
-from .ssrf import SSRFError, safe_get
+from .ssrf import safe_get
 
 logger = logging.getLogger("brandai.ai")
 from .providers import (
@@ -87,6 +88,9 @@ def _call_cost(
     )
 
 
+_IMAGE_HEADER_BYTES = 65535
+
+
 async def _probe_image_size(image_ref: str) -> tuple[int, int] | None:
     """K5 — decode the actual pixel W×H of a generated image.
 
@@ -100,10 +104,14 @@ async def _probe_image_size(image_ref: str) -> tuple[int, int] | None:
 
     try:
         if image_ref.startswith("data:"):
-            raw = base64.b64decode(image_ref.split(",", 1)[1])
+            offset = image_ref.index(",", 0, 256) + 1
+            raw = base64.b64decode(image_ref[offset:offset + (_IMAGE_HEADER_BYTES // 3) * 4])
         elif image_ref.startswith(("http://", "https://")):
-            async with httpx.AsyncClient(timeout=settings.http_timeout) as c:
-                r = await safe_get(c, image_ref, allow_private_initial=True)
+            async with httpx.AsyncClient(timeout=3) as c:
+                r = await asyncio.wait_for(safe_get(
+                    c, image_ref, allow_private_initial=True, prefix_bytes=_IMAGE_HEADER_BYTES,
+                    headers={"Range": f"bytes=0-{_IMAGE_HEADER_BYTES - 1}", "Accept-Encoding": "identity"},
+                ), timeout=3)
                 r.raise_for_status()
                 raw = r.content
         else:
@@ -113,7 +121,7 @@ async def _probe_image_size(image_ref: str) -> tuple[int, int] | None:
         if w > 0 and h > 0:
             return int(w), int(h)
         return None
-    except (SSRFError, Exception):  # noqa: BLE001 — best-effort; never break gen
+    except Exception:  # noqa: BLE001 — best-effort; never break gen
         return None
 
 

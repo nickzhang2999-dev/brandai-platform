@@ -58,11 +58,11 @@ import {
 function decodeImageSize(
   dataUrl: string,
 ): { width: number; height: number } | null {
-  const m = /^data:[^;,]*(;base64)?,(.*)$/s.exec(dataUrl);
-  if (!m || m[2] === undefined) return null;
+  const m = /^data:[^;,]*(;base64)?,/.exec(dataUrl.slice(0, 256));
+  if (!m) return null;
   let buf: Buffer;
   try {
-    buf = Buffer.from(m[2], m[1] ? "base64" : "utf8");
+    buf = Buffer.from(dataUrl.slice(m[0].length, m[0].length + (m[1] ? 87380 : 65535)), m[1] ? "base64" : "utf8");
   } catch {
     return null;
   }
@@ -353,8 +353,16 @@ export async function runGenerateJob(
   if (studioRow && !studio) return { generationId: studioRow.generationId, versionIds: [] };
   if (studio) {
     job.data = studio.jobData as unknown as GenerateJobData;
+    // A Redis progress update is advisory. It must not occupy both workers
+    // before the watchdog starts. The database receipt remains authoritative.
     const updateProgress = job.updateProgress.bind(job);
-    job.updateProgress = async value => { try { await updateProgress(value); } catch { /* receipt is authoritative */ } };
+    let reporting = false;
+    job.updateProgress = async value => {
+      if (reporting) return;
+      reporting = true;
+      void Promise.resolve().then(() => updateProgress(value)).catch(() => undefined)
+        .finally(() => { reporting = false; });
+    };
   }
   const controller = new AbortController();
   const transport = { signal: controller.signal, ...(studio ? { maxResponseBytes: 48 * 1024 * 1024, requireRealImageProvider: true, requestId: studio.id } : {}) };

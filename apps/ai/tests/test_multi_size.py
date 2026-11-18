@@ -70,6 +70,33 @@ def test_probe_image_size_decodes_data_url():
     assert out == (640, 480)
 
 
+def test_probe_remote_image_size_stops_when_cdn_ignores_range(monkeypatch):
+    import asyncio
+    import base64
+    import httpx
+    from app import main
+
+    png = base64.b64decode(_png_data_url(739, 381).partition(",")[2])
+    closed = []
+
+    class LargeImage(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield png.ljust(65536, b"\x00")
+            raise AssertionError("read beyond the image header")
+
+        async def aclose(self):
+            closed.append(True)
+
+    def handler(request):
+        assert request.headers["Range"] == "bytes=0-65534"
+        return httpx.Response(200, stream=LargeImage())
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kw: client)
+    assert asyncio.run(main._probe_image_size("https://images.example/test.png")) == (739, 381)
+    assert closed
+
+
 def test_probe_image_size_returns_none_on_undecodable():
     import asyncio
 

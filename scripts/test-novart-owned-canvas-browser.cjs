@@ -255,6 +255,24 @@ async function fixtureSettled(condition) {const deadline=Date.now()+10000;while(
   stage='open-owned-editor';await page.goto(origin+'/studio-editor');
   await page.getByTestId('owned-canvas').waitFor();
   const surface=page.getByTestId('owned-canvas');
+  if(process.env.NOVART_OWNED_FOREGROUND_ONLY === '1') {
+    stage='generation-foreground-recovery';
+    for (const id of ['one','two']) generations.set(id,{mode:'generate',requestId:id,mutationId:crypto.randomUUID(),projectId:fixture.projectId,generationId:'gen-'+id,status:'RUNNING',progress:null,expiresAt:'2099-01-01T00:00:00.000Z',archiveExpiresAt:null,archiveProcessingExpiresAt:null,displayText:'fixture '+id,resultState:'NOT_REQUESTED',results:[],error:null,archiveError:null,canRetryArchive:false});
+    await page.reload(); await page.getByRole('tab',{name:/任务记录/}).click(); await page.locator('[data-task-id="two"]').waitFor();
+    await page.clock.install();
+    const posts=generationPosts, materialsBefore=materialReads;
+    let read=page.waitForResponse(r=>new URL(r.url()).pathname==='/studio/generation');
+    await page.clock.fastForward(4000); await read;
+    assert.equal(materialReads,materialsBefore,'automatic refresh should not reload materials');
+    await page.evaluate(()=>{Object.defineProperty(document,'hidden',{configurable:true,value:true});document.dispatchEvent(new Event('visibilitychange'));});
+    await page.clock.fastForward(7*60_000);
+    for (const task of generations.values()) Object.assign(task,{status:'FAILED',error:'fixture completed while hidden'});
+    read=page.waitForResponse(r=>new URL(r.url()).pathname==='/studio/generation');
+    await page.evaluate(()=>{delete document.hidden;document.dispatchEvent(new Event('visibilitychange'));}); await read;
+    await page.waitForFunction(()=>Array.from(document.querySelectorAll('[data-task-id]')).filter(el=>el.textContent.includes('fixture completed while hidden')).length===2);
+    assert.equal(generationPosts,posts); assert.deepEqual(report.errors,[]); assert.deepEqual(report.externalRequests,[]);
+    check('two-active-jobs-reconcile-on-foreground-after-seven-minutes-without-submit');report.passed=true;return;
+  }
   if(process.env.NOVART_OWNED_EXPORT_ONLY === '1') {
     const doc=contracts.emptyOwnedDocument(),id='export-source';
     const image={id,assetId:id,assetSha256:'a'.repeat(64),kind:'image',mimeType:'image/png',fileName:'export-source.png',sizeBytes:4096,width:1024,height:1024,url:`/api/workspaces/${fixture.workspaceId}/assets/${id}/raw`};experienceAssets.set(id,image);

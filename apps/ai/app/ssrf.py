@@ -9,6 +9,7 @@ Two callers, two policies:
   =False`: both the initial host and every redirect hop must be public.
 """
 
+import asyncio
 import ipaddress
 import socket
 from typing import Any
@@ -63,6 +64,7 @@ async def safe_get(
     *,
     allow_private_initial: bool = False,
     max_redirects: int = 4,
+    prefix_bytes: int | None = None,
     **kwargs: Any,
 ) -> httpx.Response:
     """GET `url`, following redirects manually and refusing any hop into private
@@ -76,9 +78,22 @@ async def safe_get(
     current = url
     for hop in range(max_redirects + 1):
         skip_check = mocked or (hop == 0 and allow_private_initial)
-        if not skip_check and host_is_private(httpx.URL(current).host):
+        if not skip_check and await asyncio.to_thread(host_is_private, httpx.URL(current).host):
             raise SSRFError(f"blocked private host: {current}")
-        r = await client.get(current, follow_redirects=False, **kwargs)
+        if prefix_bytes is None:
+            r = await client.get(current, follow_redirects=False, **kwargs)
+        else:
+            if prefix_bytes <= 0:
+                raise ValueError("prefix_bytes must be positive")
+            async with client.stream("GET", current, follow_redirects=False, **kwargs) as r:
+                if not r.is_redirect:
+                    r.raise_for_status()
+                    prefix = bytearray()
+                    async for chunk in r.aiter_bytes(chunk_size=min(prefix_bytes, 16384)):
+                        prefix.extend(chunk[:prefix_bytes - len(prefix)])
+                        if len(prefix) >= prefix_bytes:
+                            break
+                    return httpx.Response(r.status_code, content=bytes(prefix), request=r.request)
         if r.is_redirect:
             loc = r.headers.get("location")
             if not loc:

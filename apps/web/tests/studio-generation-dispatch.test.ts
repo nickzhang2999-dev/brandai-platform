@@ -56,6 +56,15 @@ beforeEach(() => {
 });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
 
+it("finishes concurrent Studio jobs even when Redis progress never acknowledges", async () => {
+  const jobs = [job(), job()];
+  const writes = jobs.map(j => { const write = vi.fn(() => new Promise<void>(() => {})); j.updateProgress = write; return write; });
+  await Promise.all(jobs.map(j => runGenerateJob(j)));
+  expect(f.generate).toHaveBeenCalledTimes(2);
+  expect(f.finish).toHaveBeenCalledTimes(2);
+  for (const write of writes) expect(write).toHaveBeenCalledTimes(1);
+});
+
 describe("real generation worker pre-provider ordering (isolated dependencies)", () => {
   it.each([true, false])("adapts custom dialog model pixels while preserving archival pixels, edit=%s", async editing => {
     row.jobData.targets = [{ key: "conversation", label: "Dialog", width: 1024, height: 576 }];
