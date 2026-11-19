@@ -13,8 +13,8 @@ jobs:
           HEAD_BRANCH: ${{ github.head_ref }}
           BASE_BRANCH: ${{ github.base_ref }}
         run: |
-          if [[ "$HEAD_BRANCH" == claude/deepflare-2.0* && "$BASE_BRANCH" == main ]] ||
-             [[ "$HEAD_BRANCH" == main && "$BASE_BRANCH" == claude/deepflare-2.0* ]]; then
+          if [[ ( "$HEAD_BRANCH" == claude/deepflare-2.0* || "$HEAD_BRANCH" == df-2-sol ) && "$BASE_BRANCH" == main ]] ||
+             [[ "$HEAD_BRANCH" == main && ( "$BASE_BRANCH" == claude/deepflare-2.0* || "$BASE_BRANCH" == df-2-sol ) ]]; then
             echo 'DeepFlare 2.0 is isolated. Explicit owner authorization and a reviewed policy update are required for main integration.'
             exit 1
           fi

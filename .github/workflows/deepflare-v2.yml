@@ -1,9 +1,9 @@
 name: DeepFlare 2.0 database foundation
 on:
   pull_request:
-    branches: [claude/deepflare-2.0]
+    branches: [df-2-sol]
   push:
-    branches: [claude/deepflare-2.0-foundation, claude/deepflare-2.0]
+    branches: [df-2-sol]
   workflow_dispatch:
 permissions:
   contents: read

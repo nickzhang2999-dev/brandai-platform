@@ -806,3 +806,8 @@ Prepared the project-owned one-time production model migration and real provider
 - 不合并 main、不发布正式环境、不改 Ommi 独立仓库。下一批按 [TODO](../deepflare-2.0/TODO.md) 交接。
 
 2026-11-12 2.0 交付回执：草稿 PR #70 已创建；骨架代码 896b104 的完整 CI43179204751、数据库 CI43179204594、隔离检查43179204801 全部成功。预览候选返回404未部署，已如实记录；本次回填仅改文档，不进行合并。
+
+## 2026-11-20 · DF-2 Sol
+
+以 main c2a7196 承接工作单基础和研发蓝图。当前功能入口与开关见 [DF-2 Sol 工程目录](../deepflare-2.0/README.md)。
+本地验收通过：合约/UI/Web 测试、AI 940 项、Web 类型检查与生产构建、发布脚本检查。独立 PostgreSQL 应用迁移后再次运行无待处理迁移，工作单数据库集成 10 项通过。

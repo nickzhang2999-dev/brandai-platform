@@ -110,8 +110,8 @@ V0.02 把 `getConfirmedRules` 默认排序从 `createdAt asc` 翻成 `updatedAt 
 
 ## DeepFlare 2.0 独立分区（2026-11-12 用户明确约束）
 
-- 本批只在 `claude/deepflare-2.0*` 分支开发；工程入口为 [2.0 交接目录](docs/deepflare-2.0/README.md)。
-- 未经用户明确要求，不进行 2.0 与 main 之间任何方向的合并、rebase、挑选提交或正式发布。首批 PR 目标是 `claude/deepflare-2.0`，保持草稿，不启用自动合并。CI 防误操作检查不能替代用户授权，也不是仓库保护规则。
+- 当前集成分支为 `df-2-sol`；工程入口为 [2.0 交接目录](docs/deepflare-2.0/README.md)。
+- 未经用户明确要求，不进行 2.0 与 main 之间任何方向的合并、rebase、挑选提交或正式发布。旧 PR #70 仅作历史追溯。CI 防误操作检查不能替代用户授权，也不是仓库保护规则。
 - Ommi / omni 位于另一仓库；本任务不改它，只实现消费接口。不要将旧方案里的 Ommi 本体任务解释为当前授权。
 - 骨架优先；实际执行器、粗构图 UI、记忆写回尚未接通时明确记录，禁止以空成功/模拟图片冒充已实现。
 - 每个步骤更新 `docs/deepflare-2.0/logs/`、TODO 和验证记录；仓库 worklog 登记摘要。
