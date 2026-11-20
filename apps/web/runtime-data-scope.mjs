@@ -6,6 +6,11 @@ export function dataScope(env = process.env) {
 }
 export function assertRuntimeDataScope(env = process.env) {
   const scope = dataScope(env);
+  // This preview starts ordinary recovery workers even when Sol intake is off.
+  if (env.VITE_GIT_BRANCH === "df-2-sol" &&
+      (scope !== "novart_preview_df_2_sol" || env.BRANDAI_QUEUE_PREFIX !== "brandai-df-2-sol")) {
+    throw new Error("DF-2 Sol requires its dedicated database, queue and object namespace");
+  }
   if (!scope) return;
   try {
     const url = new URL(env.DATABASE_URL || "");

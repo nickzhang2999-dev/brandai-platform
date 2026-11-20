@@ -1,21 +1,30 @@
 import { randomUUID } from "node:crypto";
 import { beforeAll, afterAll, describe, it, expect, vi } from "vitest";
 import { prisma } from "@brandai/db";
+import { Queue } from "bullmq";
+import IORedis from "ioredis";
 import { createWorkOrder, readWorkOrder, commandWorkOrder } from "../src/lib/deepflare-v2/service";
 
 import { dispatchSolPrimary } from "../src/lib/deepflare-v2/native-dispatch";
 import { submitStudioGeneration, readStudioGeneration, dispatchStudioGenerations } from "../src/lib/studio-generation";
 import { enqueueStudioGeneration } from "../src/lib/studio-generation-queue";
 
-// Exercise the real DB, native preparation, quota and intake. No provider credentials or Redis delivery.
+// Keep database-only runs supported. CI also inspects jobs on a dedicated Redis instance.
 vi.mock("../src/auth", () => ({ auth: vi.fn() }));
-vi.mock("../src/lib/studio-generation-queue", () => ({ enqueueStudioGeneration: vi.fn(async () => false) }));
+vi.mock("../src/lib/studio-generation-queue", async importOriginal => {
+  if (process.env.DF_SOL_TEST_REDIS === "1") return importOriginal();
+  return { enqueueStudioGeneration: vi.fn(async () => false) };
+});
 vi.mock("../src/lib/studio-generation-policy", async importOriginal => ({
   ...await importOriginal<typeof import("../src/lib/studio-generation-policy")>(),
   requireStudioGenerationServices: vi.fn(async () => undefined),
 }));
 
 const url = new URL(process.env.DATABASE_URL ?? "http://missing");
+const realQueue = process.env.DF_SOL_TEST_REDIS === "1";
+if (realQueue && (!["localhost", "127.0.0.1"].includes(new URL(process.env.REDIS_URL ?? "http://missing").hostname)
+    || process.env.BRANDAI_QUEUE_PREFIX !== "df-sol-intake-test"))
+  throw new Error("Requires a disposable localhost Redis with the Sol test prefix");
 if (!["localhost", "127.0.0.1"].includes(url.hostname) || url.pathname !== "/deepflare_v2_test")
   throw new Error("Requires disposable localhost database deepflare_v2_test; refuses any shared database");
 const nonce = randomUUID().replaceAll("-", "");
@@ -222,7 +231,30 @@ describe("Sol to native Studio intake", () => {
         .toEqual({ status: "QUEUED", requestId: null, failureCode: "SOL_CAPACITY" });
       expect(await prisma.generation.count({ where: scope })).toBe(2);
       await dispatchStudioGenerations();
-      expect(vi.mocked(enqueueStudioGeneration).mock.calls.map(call => call[0])).toContain(nativeId);
+      if (realQueue) {
+        const connection = new IORedis(process.env.REDIS_URL!, { maxRetriesPerRequest: 1 });
+        const observer = new Queue("generate", { connection, prefix: process.env.BRANDAI_QUEUE_PREFIX });
+        const ids = [nativeId, ordinary.requestId];
+        try {
+          await vi.waitFor(async () => {
+            await dispatchStudioGenerations();
+            for (const id of ids) expect(await observer.getJobState(id)).toBe("waiting");
+          });
+          await dispatchStudioGenerations();
+          const jobs = (await observer.getWaiting()).filter(job => ids.includes(job.id!));
+          expect(jobs).toHaveLength(2);
+          for (const job of jobs) {
+            const request = await prisma.studioGenerationRequest.findUniqueOrThrow({ where: { id: job.id } });
+            expect(job.data.generationId).toBe(request.generationId);
+            expect(job.opts.attempts).toBe(1);
+          }
+        } finally {
+          try { for (const id of ids) await observer.remove(id); }
+          finally { await observer.close(); connection.disconnect(); }
+        }
+      } else {
+        expect(vi.mocked(enqueueStudioGeneration).mock.calls.map(call => call[0])).toContain(nativeId);
+      }
       vi.stubEnv("DEEPFLARE_V2_NATIVE_DISPATCH", "paused");
       expect((await readWorkOrder(scope, owner, work.id)).nativeDispatch?.requestId).toBe(nativeId);
       expect((await readWorkOrder(scope, viewer, work.id)).nativeDispatch?.requestId).toBeNull();

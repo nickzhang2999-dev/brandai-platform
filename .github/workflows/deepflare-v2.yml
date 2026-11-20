@@ -15,6 +15,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
       postgres:
         image: postgres:16-alpine
         env:
@@ -26,7 +31,10 @@ jobs:
           --health-cmd "pg_isready -U integration -d deepflare_v2_test"
           --health-interval 5s --health-timeout 5s --health-retries 10
     env:
-      DATABASE_URL: postgresql://integration:disposable-ci-only@127.0.0.1:5432/deepflare_v2_test
+      DF_SOL_TEST_REDIS: "1"
+      REDIS_URL: redis://127.0.0.1:6379
+      BRANDAI_QUEUE_PREFIX: df-sol-intake-test
+      DATABASE_URL: postgresql://integration:disposable-ci-only@127.0.0.1:5432/deepflare_v2_test?schema=novart_preview_df_2_sol
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -42,5 +50,11 @@ jobs:
         run: pnpm --filter @brandai/db exec prisma migrate deploy
       - name: Reapply migrations to verify no-op
         run: pnpm --filter @brandai/db exec prisma migrate deploy
+      - name: Verify migrations used only the designated preview schema
+        env:
+          PGPASSWORD: disposable-ci-only
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -h 127.0.0.1 -U integration -d deepflare_v2_test \
+            -f scripts/check-sol-test-schema.sql
       - name: Verify real persistence, concurrency and authorization
         run: pnpm --filter @brandai/web exec vitest run --config vitest.v2-db.config.ts
