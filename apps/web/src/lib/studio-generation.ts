@@ -47,6 +47,32 @@ export async function expireStudioGenerations() {
   });
 }
 
+/** Both native entry points reserve quota and create the durable request in the caller's transaction. */
+export async function acceptStudioGeneration(tx: Prisma.TransactionClient,
+  identity: { workspaceId: string; userId: string; projectId: string; mutationId: string },
+  input: StudioGenerationInput, payloadHash: string, accepted?: StudioConversationAcceptance, lease?: StudioGenerationLease) {
+  const { workspaceId, userId } = identity;
+  await lockStudioIntake(tx, 2);
+  if (lease) await requireConversationLease(tx, workspaceId, userId, input.projectId, lease);
+  const duplicate = await tx.studioGenerationRequest.findUnique({ where: { workspaceId_userId_projectId_mutationId: identity } });
+  if (duplicate) {
+    if (duplicate.payloadHash !== payloadHash) throw new ApiException(409, "生成请求标识已用于其他内容。");
+    return duplicate;
+  }
+  const unfinished: Prisma.StudioGenerationRequestWhereInput = { OR: [{ status: { in: ["PENDING", "RUNNING"] } }, { outputs: { some: { imageUrl: { not: null } } } }] };
+  const [local, global] = await Promise.all([tx.studioGenerationRequest.count({ where: { ...unfinished, workspaceId } }), tx.studioGenerationRequest.count({ where: unfinished })]);
+  assertStudioGenerationCapacity(local, global);
+  const prepared = await prepareStudioGeneration(tx, workspaceId, userId, input, accepted);
+  if (lease) await requireConversationLease(tx, workspaceId, userId, input.projectId, lease);
+  const generation = await reserveGenerationQuotaInTransaction(tx, { workspaceId, make: () => prepared.generationData });
+  const id = "sgr_" + randomUUID().replace(/-/g, "");
+  return tx.studioGenerationRequest.create({ data: { id, ...identity, payloadHash, prompt: input.prompt,
+    sizeSelection: input.sizeSelection as Prisma.InputJsonValue, workflowRevision: input.workflowRevision, documentRevision: input.documentRevision,
+    generationId: generation.id, contextHash: prepared.contextHash,
+    jobData: { ...prepared.jobData, generationId: generation.id } as unknown as Prisma.InputJsonValue,
+    expiresAt: new Date(Date.now() + STUDIO_GENERATION_TTL_MS) } });
+}
+
 export async function submitStudioGeneration(workspaceId: string, userId: string, raw: unknown, accepted?: StudioConversationAcceptance, lease?: StudioGenerationLease) {
   await requireWorkspaceRole(workspaceId, userId, "EDITOR");
   const input = StudioGenerationInput.parse(raw);
@@ -64,25 +90,7 @@ export async function submitStudioGeneration(workspaceId: string, userId: string
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       row = await prisma.$transaction(async tx => {
-        await lockStudioIntake(tx, 2);
-        if (lease) await requireConversationLease(tx, workspaceId, userId, input.projectId, lease);
-        const duplicate = await tx.studioGenerationRequest.findUnique({ where: { workspaceId_userId_projectId_mutationId: identity } });
-        if (duplicate) {
-          if (duplicate.payloadHash !== payloadHash) throw new ApiException(409, "生成请求标识已用于其他内容。");
-          return duplicate;
-        }
-        const unfinished: Prisma.StudioGenerationRequestWhereInput = { OR: [{ status: { in: ["PENDING", "RUNNING"] } }, { outputs: { some: { imageUrl: { not: null } } } }] };
-        const [local, global] = await Promise.all([tx.studioGenerationRequest.count({ where: { ...unfinished, workspaceId } }), tx.studioGenerationRequest.count({ where: unfinished })]);
-        assertStudioGenerationCapacity(local, global);
-        const prepared = await prepareStudioGeneration(tx, workspaceId, userId, input, accepted);
-        if (lease) await requireConversationLease(tx, workspaceId, userId, input.projectId, lease);
-        const generation = await reserveGenerationQuotaInTransaction(tx, { workspaceId, make: () => prepared.generationData });
-        const id = "sgr_" + randomUUID().replace(/-/g, "");
-        return tx.studioGenerationRequest.create({ data: { id, ...identity, payloadHash, prompt: input.prompt,
-          sizeSelection: input.sizeSelection as Prisma.InputJsonValue, workflowRevision: input.workflowRevision, documentRevision: input.documentRevision,
-          generationId: generation.id, contextHash: prepared.contextHash,
-          jobData: { ...prepared.jobData, generationId: generation.id } as unknown as Prisma.InputJsonValue,
-          expiresAt: new Date(Date.now() + STUDIO_GENERATION_TTL_MS) } });
+        return acceptStudioGeneration(tx, identity, input, payloadHash, accepted, lease);
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 15_000 });
       break;
     } catch (error) {

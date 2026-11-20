@@ -13,6 +13,7 @@
  * rejects it before any connection, consumer or health listener is created.
  */
 import "./runtime-env";
+import { dispatchSolPrimary } from "../deepflare-v2/native-dispatch";
 import { createInspirationWorker } from "../inspiration/worker";
 import { createOmniAnalysisWorker } from "../omni-analysis/worker";
 import { createStudioCopywritingWorker } from "./studio-copywriting.worker";
@@ -151,6 +152,17 @@ try {
     catch { console.error("[studio-generation] outbox recovery unavailable"); }
     finally { dispatchingStudio = false; }
   };
+  let dispatchingSol = false;
+  const dispatchSol = async () => {
+    if (dispatchingSol) return;
+    dispatchingSol = true;
+    try { await dispatchSolPrimary(); }
+    catch { console.error("[sol] native intake unavailable"); }
+    finally { dispatchingSol = false; }
+  };
+  void dispatchSol();
+  setInterval(() => { void dispatchSol(); }, 15_000).unref();
+
   void dispatchStudio();
   setInterval(() => { void dispatchStudio(); }, 15_000).unref();
 

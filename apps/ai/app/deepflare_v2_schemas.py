@@ -94,7 +94,13 @@ class DeepFlareV2State(StrictModel):
     revisionReason: str | None = Field(min_length=1, max_length=2000)
     tasks: list[DeepFlareV2Task] = Field(min_length=4, max_length=9)
 
+class NativeDispatch(StrictModel):
+    status: Literal["QUEUED", "LINKED", "BLOCKED"]
+    requestId: ProjectId | None
+    failureCode: str | None
+
 class DeepFlareV2Receipt(DeepFlareV2Scope):
     id: ProjectId
     state: DeepFlareV2State
-    executionAvailable: Literal[False]
+    executionAvailable: bool
+    nativeDispatch: NativeDispatch | None = None

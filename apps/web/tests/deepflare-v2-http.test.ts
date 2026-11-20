@@ -14,6 +14,7 @@ describe("2.0 HTTP boundary (service mocked, SQL has separate integration covera
   beforeEach(() => {
     vi.resetAllMocks();
     vi.stubEnv("DEEPFLARE_V2_ENABLED", "1");
+    vi.stubEnv("DEEPFLARE_V2_NATIVE_DISPATCH", "0");
     vi.stubEnv("DEEPFLARE_V2_WORKSPACE_IDS", "brand");
     vi.stubEnv("AUTH_URL", "http://localhost:3000");
     stubs.user.mockResolvedValue({ id: "user" });
@@ -49,6 +50,9 @@ describe("2.0 HTTP boundary (service mocked, SQL has separate integration covera
     expect(await response.json()).toEqual({ executionAvailable: false });
   });
   it("reads persistent state by work-order ID", async () => {
+    vi.stubEnv("DEEPFLARE_V2_NATIVE_DISPATCH", "paused");
+    expect((await handleV2WorkOrder(request(), context())).status).toBe(503);
+    expect(stubs.create).not.toHaveBeenCalled();
     stubs.read.mockResolvedValue({ id: "order" });
     const response = await handleV2WorkOrder(new Request("http://localhost:3000/api/v2/order"), {
       params: Promise.resolve({ wsId: "brand", projectId: "project", workOrderId: "order" }),

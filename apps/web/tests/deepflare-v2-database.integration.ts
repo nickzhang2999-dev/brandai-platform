@@ -1,7 +1,19 @@
 import { randomUUID } from "node:crypto";
-import { beforeAll, afterAll, describe, it, expect } from "vitest";
+import { beforeAll, afterAll, describe, it, expect, vi } from "vitest";
 import { prisma } from "@brandai/db";
 import { createWorkOrder, readWorkOrder, commandWorkOrder } from "../src/lib/deepflare-v2/service";
+
+import { dispatchSolPrimary } from "../src/lib/deepflare-v2/native-dispatch";
+import { submitStudioGeneration, readStudioGeneration, dispatchStudioGenerations } from "../src/lib/studio-generation";
+import { enqueueStudioGeneration } from "../src/lib/studio-generation-queue";
+
+// Exercise the real DB, native preparation, quota and intake. No provider credentials or Redis delivery.
+vi.mock("../src/auth", () => ({ auth: vi.fn() }));
+vi.mock("../src/lib/studio-generation-queue", () => ({ enqueueStudioGeneration: vi.fn(async () => false) }));
+vi.mock("../src/lib/studio-generation-policy", async importOriginal => ({
+  ...await importOriginal<typeof import("../src/lib/studio-generation-policy")>(),
+  requireStudioGenerationServices: vi.fn(async () => undefined),
+}));
 
 const url = new URL(process.env.DATABASE_URL ?? "http://missing");
 if (!["localhost", "127.0.0.1"].includes(url.hostname) || url.pathname !== "/deepflare_v2_test")
@@ -112,6 +124,7 @@ describe("2.0 actual PostgreSQL transactions", () => {
     await prisma.membership.update({ where: { userId_workspaceId: { userId: editor, workspaceId: scope.workspaceId } }, data: { role: "VIEWER" } });
     await expect(createWorkOrder(scope, editor, input)).rejects.toMatchObject({ status: 403 });
     await expect(command(row.id, 1, { type: "CANCEL" }, editor)).rejects.toMatchObject({ status: 403 });
+    await prisma.membership.update({ where: { userId_workspaceId: { userId: editor, workspaceId: scope.workspaceId } }, data: { role: "EDITOR" } });
   });
   it("does not modify an archived project or allow disabled users", async () => {
     const row = await create();
@@ -120,5 +133,99 @@ describe("2.0 actual PostgreSQL transactions", () => {
     await prisma.project.update({ where: { id: scope.projectId }, data: { archivedAt: null } });
     await prisma.user.update({ where: { id: viewer }, data: { isActive: false } });
     await expect(readWorkOrder(scope, viewer, row.id)).rejects.toMatchObject({ status: 403 });
+    await prisma.user.update({ where: { id: viewer }, data: { isActive: true } });
+  });
+});
+
+describe("Sol to native Studio intake", () => {
+  it("rejects direct work without an approved template and unsupported dimensions before reservation", async () => {
+    vi.stubEnv("DEEPFLARE_V2_ENABLED", "1");
+    vi.stubEnv("DEEPFLARE_V2_WORKSPACE_IDS", scope.workspaceId);
+    vi.stubEnv("DEEPFLARE_V2_NATIVE_DISPATCH", "1");
+    try {
+      const direct = await createWorkOrder(scope, owner, { mutationId: randomUUID(), brief: { ...brief, mode: "DIRECT" } });
+      await command(direct.id, 1, { type: "SUBMIT" });
+      await dispatchSolPrimary();
+      expect((await readWorkOrder(scope, owner, direct.id)).nativeDispatch?.failureCode).toBe("APPROVED_DIRECTION_REQUIRED");
+      const work = await createWorkOrder(scope, owner, { mutationId: randomUUID(),
+        brief: { ...brief, deliverables: [{ ...brief.deliverables[0], width: 765 }] } });
+      await command(work.id, 1, { type: "SET_DIRECTION", direction });
+      await command(work.id, 2, { type: "SUBMIT" });
+      await command(work.id, 3, { type: "CONFIRM_DIRECTION", planVersion: 2 });
+      await dispatchSolPrimary();
+      expect((await readWorkOrder(scope, owner, work.id)).nativeDispatch?.failureCode).toBe("UNSUPPORTED_PRIMARY_SIZE");
+      expect(await prisma.generation.count({ where: scope })).toBe(0);
+    } finally { vi.unstubAllEnvs(); }
+  });
+  it("leaves old approvals dormant and blocks a newly queued approval if its editor loses access", async () => {
+    vi.stubEnv("DEEPFLARE_V2_ENABLED", "1");
+    vi.stubEnv("DEEPFLARE_V2_WORKSPACE_IDS", scope.workspaceId);
+    vi.stubEnv("DEEPFLARE_V2_NATIVE_DISPATCH", "0");
+    const membership = { userId_workspaceId: { userId: editor, workspaceId: scope.workspaceId } };
+    try {
+      const make = () => createWorkOrder(scope, editor, { mutationId: randomUUID(), brief: { ...brief, mode: "DIRECT" } });
+      const old = await make();
+      await command(old.id, 1, { type: "SUBMIT" }, editor);
+      vi.stubEnv("DEEPFLARE_V2_NATIVE_DISPATCH", "1");
+      const work = await make();
+      expect((await command(work.id, 1, { type: "SUBMIT" }, editor)).nativeDispatch?.status).toBe("QUEUED");
+      await prisma.membership.update({ where: membership, data: { role: "VIEWER" } });
+      await dispatchSolPrimary();
+      const blocked = await readWorkOrder(scope, owner, work.id);
+      expect(blocked.executionAvailable).toBe(false);
+      expect(blocked.nativeDispatch).toEqual({ status: "BLOCKED", failureCode: "STUDIO_403", requestId: null });
+      expect((await readWorkOrder(scope, owner, old.id)).executionAvailable).toBe(false);
+      expect(await prisma.studioGenerationRequest.count({ where: scope })).toBe(0);
+    } finally {
+      await prisma.membership.update({ where: membership, data: { role: "EDITOR" } });
+      vi.unstubAllEnvs();
+    }
+  });
+  it("recovers an interrupted link transaction, keeps ordinary intake independent and redelivers the same native identity", async () => {
+    vi.stubEnv("DEEPFLARE_V2_ENABLED", "1");
+    vi.stubEnv("DEEPFLARE_V2_NATIVE_DISPATCH", "1");
+    vi.stubEnv("DEEPFLARE_V2_WORKSPACE_IDS", scope.workspaceId);
+    try {
+      const work = await waiting();
+      await command(work.id, 3, { type: "CONFIRM_DIRECTION", planVersion: 2 });
+      const ordinaryInput = {
+        projectId: scope.projectId, mutationId: randomUUID(), prompt: "普通 Studio 申请",
+        sizeSelection: { ratioKey: "1:1", resolutionTier: "1K" }, documentRevision: 0, workflowRevision: 0,
+      };
+      const dispatch = await prisma.deepFlareWorkOrderDispatch.findFirstOrThrow({ where: { workOrderId: work.id } });
+      // A transaction that cannot save the link must also roll back the native request and quota reservation.
+      await prisma.$executeRawUnsafe('ALTER TABLE "DeepFlareWorkOrderDispatch" ADD CONSTRAINT test_interrupt_link CHECK (status <> $$LINKED$$) NOT VALID');
+      try { await dispatchSolPrimary(); }
+      finally { await prisma.$executeRawUnsafe('ALTER TABLE "DeepFlareWorkOrderDispatch" DROP CONSTRAINT test_interrupt_link'); }
+      expect(await prisma.studioGenerationRequest.count({ where: { mutationId: dispatch.executionKey! } })).toBe(0);
+      expect(await prisma.generation.count({ where: scope })).toBe(0);
+      await prisma.deepFlareWorkOrderDispatch.update({ where: { id: dispatch.id }, data: { nextAttemptAt: new Date(0) } });
+      const [ordinary] = await Promise.all([
+        submitStudioGeneration(scope.workspaceId, editor, ordinaryInput), dispatchSolPrimary(), dispatchSolPrimary(),
+      ]);
+      // Move the retry clock forward if serializable contention deferred the Sol request.
+      await prisma.deepFlareWorkOrderDispatch.updateMany({ where: { id: dispatch.id, status: "QUEUED" }, data: { nextAttemptAt: new Date(0) } });
+      await prisma.$disconnect();
+      await dispatchSolPrimary();
+      const linked = await readWorkOrder(scope, owner, work.id);
+      expect(linked.nativeDispatch).toMatchObject({ status: "LINKED", failureCode: null });
+      const nativeId = linked.nativeDispatch!.requestId!;
+      expect(nativeId).not.toBe(ordinary.requestId);
+      expect(await readStudioGeneration(scope.workspaceId, editor, { projectId: scope.projectId, requestId: ordinary.requestId }))
+        .toMatchObject({ requestId: ordinary.requestId, status: "PENDING" });
+      expect(await prisma.studioGenerationRequest.count({ where: { mutationId: dispatch.executionKey! } })).toBe(1);
+      expect(await prisma.generation.count({ where: scope })).toBe(2);
+      const second = await waiting();
+      await command(second.id, 3, { type: "CONFIRM_DIRECTION", planVersion: 2 });
+      await dispatchSolPrimary();
+      expect((await readWorkOrder(scope, owner, second.id)).nativeDispatch)
+        .toEqual({ status: "QUEUED", requestId: null, failureCode: "SOL_CAPACITY" });
+      expect(await prisma.generation.count({ where: scope })).toBe(2);
+      await dispatchStudioGenerations();
+      expect(vi.mocked(enqueueStudioGeneration).mock.calls.map(call => call[0])).toContain(nativeId);
+      vi.stubEnv("DEEPFLARE_V2_NATIVE_DISPATCH", "paused");
+      expect((await readWorkOrder(scope, owner, work.id)).nativeDispatch?.requestId).toBe(nativeId);
+      expect((await readWorkOrder(scope, viewer, work.id)).nativeDispatch?.requestId).toBeNull();
+    } finally { vi.unstubAllEnvs(); }
   });
 });

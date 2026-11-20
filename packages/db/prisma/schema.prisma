@@ -1701,7 +1701,14 @@ model DeepFlareWorkOrderDispatch {
   workOrder DeepFlareWorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
   planVersion Int
   snapshot Json
-  // PENDING is a durable handoff, not evidence that generation has started.
+  // Only newly approved, opted-in work captures a native intake identity.
+  actorId String?
+  executionKey String? @unique
+  workflowRevision Int?
+  documentRevision Int?
+  nativeRequestId String? @unique
+  nextAttemptAt DateTime @default(now())
+  failureCode String?
   status String @default("PENDING")
   createdAt DateTime @default(now())
 

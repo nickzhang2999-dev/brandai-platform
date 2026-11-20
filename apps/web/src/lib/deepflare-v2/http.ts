@@ -21,6 +21,8 @@ export async function handleV2WorkOrder(req: Request, context: V2RouteContext) {
     if (req.method !== "GET" && !isWorkbenchSameOrigin(req)) throw new V2AccessError(403, "Cross-origin write rejected");
     const scope = { workspaceId: wsId, projectId };
     if (req.method === "GET" && workOrderId) return json(await readWorkOrder(scope, user.id, workOrderId));
+    if (process.env.DEEPFLARE_V2_NATIVE_DISPATCH === "paused")
+      return json({ error: "Sol 已暂停派发，历史工作单仍可查看。" }, 503);
     const body = await readWorkbenchJson(req, 64 * 1024);
     if (req.method === "POST" && !workOrderId) return json(await createWorkOrder(scope, user.id, body), 201);
     if (req.method === "PATCH" && workOrderId) return json(await commandWorkOrder(scope, user.id, workOrderId, body));

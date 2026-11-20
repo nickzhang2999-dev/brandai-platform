@@ -62,6 +62,10 @@ export const DeepFlareV2State = z.object({
 export type DeepFlareV2State = z.infer<typeof DeepFlareV2State>;
 export const DeepFlareV2Receipt = z.object({
   id: Id, workspaceId: Id, projectId: Id, state: DeepFlareV2State,
-  executionAvailable: z.literal(false),
+  executionAvailable: z.boolean(),
+  nativeDispatch: z.object({
+    status: z.enum(["QUEUED", "LINKED", "BLOCKED"]),
+    requestId: Id.nullable(), failureCode: z.string().nullable(),
+  }).strict().nullish(),
 }).strict();
 export type DeepFlareV2Receipt = z.infer<typeof DeepFlareV2Receipt>;

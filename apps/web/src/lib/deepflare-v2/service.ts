@@ -1,4 +1,5 @@
-import { createHash } from "node:crypto";
+import { nativeDispatchEnabled } from "./feature";
+import { createHash, randomUUID } from "node:crypto";
 import { prisma, Prisma } from "@brandai/db";
 import {
   DeepFlareV2CreateInput, DeepFlareV2CommandInput, DeepFlareV2State,
@@ -12,11 +13,23 @@ export class V2AccessError extends Error {
 type Db = Prisma.TransactionClient;
 const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const json = (value: unknown) => value as Prisma.InputJsonValue;
-const receipt = (id: string, scope: DeepFlareV2Scope, state: unknown) =>
-  DeepFlareV2Receipt.parse({ id, ...scope, state, executionAvailable: false });
+async function receipt(db: Db, userId: string, id: string, scope: DeepFlareV2Scope, snapshot: unknown) {
+  const state = DeepFlareV2State.parse(snapshot);
+  const dispatch = state.status === "READY"
+    ? await db.deepFlareWorkOrderDispatch.findUnique({
+      where: { workOrderId_planVersion: { workOrderId: id, planVersion: state.planVersion } },
+      select: { status: true, actorId: true, nativeRequestId: true, failureCode: true, executionKey: true },
+    }) : null;
+  const available = nativeDispatchEnabled(scope.workspaceId) && state.status !== "CANCELLED"
+    && (state.status !== "READY" || Boolean(dispatch?.executionKey && dispatch.status !== "BLOCKED"));
+  return DeepFlareV2Receipt.parse({ id, ...scope, state, executionAvailable: available,
+    ...(dispatch?.executionKey && { nativeDispatch: { status: dispatch.status,
+      requestId: dispatch.actorId === userId ? dispatch.nativeRequestId : null, failureCode: dispatch.failureCode } }),
+  });
+}
 
 /** Every read/write rechecks active account, membership, brand and project together. */
-async function authorize(db: Db, scope: DeepFlareV2Scope, userId: string, write: boolean) {
+export async function authorize(db: Db, scope: DeepFlareV2Scope, userId: string, write: boolean) {
   const user = await db.user.findUnique({ where: { id: userId }, select: { isActive: true } });
   if (!user?.isActive) throw new V2AccessError(403, "账号不可用");
   const project = await db.project.findFirst({ where: { id: scope.projectId, workspaceId: scope.workspaceId },
@@ -47,14 +60,14 @@ export async function createWorkOrder(rawScope: DeepFlareV2Scope, userId: string
     const existing = await db.deepFlareWorkOrder.findFirst({ where: { ...scope, createdBy: userId, mutationId: input.mutationId } });
     if (existing) {
       if (existing.payloadHash !== payloadHash) throw new V2AccessError(409, "同一次创建不能换成其他内容");
-      return receipt(existing.id, scope, existing.state);
+      return receipt(db, userId, existing.id, scope, existing.state);
     }
     const state = initialState(input.brief);
     const row = await db.deepFlareWorkOrder.create({ data: { ...scope, createdBy: userId,
       mutationId: input.mutationId, payloadHash, state: json(state),
       events: { create: { actorId: userId, mutationId: input.mutationId, payloadHash,
         revision: state.revision, command: { type: "CREATE" }, snapshot: json(state) } } } });
-    return receipt(row.id, scope, row.state);
+    return receipt(db, userId, row.id, scope, row.state);
   });
 }
 
@@ -64,7 +77,7 @@ export async function readWorkOrder(rawScope: DeepFlareV2Scope, userId: string, 
     await authorize(db, scope, userId, false);
     const row = await db.deepFlareWorkOrder.findFirst({ where: { id, ...scope } });
     if (!row) throw new V2AccessError(404, "工作单不存在");
-    return receipt(row.id, scope, row.state);
+    return receipt(db, userId, row.id, scope, row.state);
   });
 }
 
@@ -81,7 +94,7 @@ export async function commandWorkOrder(rawScope: DeepFlareV2Scope, userId: strin
     } });
     if (previous) {
       if (previous.payloadHash !== payloadHash) throw new V2AccessError(409, "同一次操作不能换成其他内容");
-      return receipt(row.id, scope, previous.snapshot);
+      return receipt(db, userId, row.id, scope, previous.snapshot);
     }
     if (row.revision !== input.expectedRevision) throw new V2AccessError(409, "工作单已更新，请读取最新版本");
     const state = transition(DeepFlareV2State.parse(row.state), input.command);
@@ -93,11 +106,17 @@ export async function commandWorkOrder(rawScope: DeepFlareV2Scope, userId: strin
     await db.deepFlareWorkOrderEvent.create({ data: { workOrderId: row.id, actorId: userId,
       mutationId: input.mutationId, payloadHash, revision: state.revision,
       command: json(input.command), snapshot: json(state) } });
-    // State + immutable approval evidence + dispatch are committed together.
-    // No Redis/provider call in the HTTP path; S2 will attach a bounded outbox consumer.
-    if (state.status === "READY") await db.deepFlareWorkOrderDispatch.create({
-      data: { workOrderId: row.id, planVersion: state.planVersion, snapshot: json(state) },
-    });
-    return receipt(row.id, scope, state);
+    if (state.status === "READY") {
+      const enabled = nativeDispatchEnabled(scope.workspaceId);
+      const workflow = enabled ? await db.workbenchProjectState.findUnique({ where: { projectId: scope.projectId }, select: { workflowRevision: true, workflowMode: true } }) : null;
+      const document = enabled ? await db.editorDocument.findUnique({ where: { projectId: scope.projectId }, select: { revision: true } }) : null;
+      const modify = workflow?.workflowMode === "modify";
+      await db.deepFlareWorkOrderDispatch.create({ data: {
+        workOrderId: row.id, planVersion: state.planVersion, snapshot: json(state),
+        ...(enabled && { status: modify ? "BLOCKED" : "QUEUED", failureCode: modify ? "CANVAS_IN_EDIT_MODE" : null,
+          actorId: userId, executionKey: randomUUID(), workflowRevision: workflow?.workflowRevision ?? 0, documentRevision: document?.revision ?? 0 }),
+      } });
+    }
+    return receipt(db, userId, row.id, scope, state);
   });
 }
