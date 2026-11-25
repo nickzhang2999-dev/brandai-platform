@@ -1,3 +1,4 @@
+import { checkBrandColourFidelity } from "@/lib/brand-colour-fidelity";
 import { createHash, randomUUID } from "node:crypto";
 import { Worker, type Job } from "bullmq";
 import { prisma, Prisma } from "@brandai/db";
@@ -82,6 +83,11 @@ export async function runStudioGenerationArtifactJob(job: Job<{ outputId: string
       }, { timeout: 10_000 });
     }
     if (!storage.configured) throw new ApiException(503, "对象存储未配置，生成结果已保留，可配置后重试归档。");
+    // Sample the original model pixels. A retry uses the already retained output.
+    const palette = processing.colourCheckPalette;
+    const colourFidelity = Array.isArray(palette) && palette.length && palette.every(hex => typeof hex === "string")
+      ? await checkBrandColourFidelity({ palette, image: raw }).catch(() => null)
+      : null;
     const conversationSize = object(processing.conversationSize);
     const sized = conversationSize.requestedSize === undefined ? null : await sizeStudioConversationImage(raw, conversationSize.requestedSize, signal);
     let composed = sized?.body ?? raw;
@@ -129,7 +135,7 @@ export async function runStudioGenerationArtifactJob(job: Job<{ outputId: string
       if (!current || current.status !== "RUNNING" || current.attemptToken !== token || current.expiresAt.getTime() <= Date.now() || current.output.expiresAt.getTime() <= Date.now()) throw new ApiException(409, "归档任务已结束或超时，迟到结果未发布。");
       signal.throwIfAborted();
       const { studioPostprocess: _privateSnapshot, studioSourceRetention: _privateRetention, imageToolPixelEvidence: pixelEvidence, layerRepair: _untrustedRepair, projectContext: _untrustedContext, ...publicParams } = params;
-      const finalParams = { ...publicParams, actualSize: { actualWidth: final.width, actualHeight: final.height },
+      const finalParams = { ...publicParams, ...(colourFidelity ? { colourFidelity } : {}), actualSize: { actualWidth: final.width, actualHeight: final.height },
         ...studioImageToolPixelEvidence(imageTool, object(pixelEvidence), final.width, final.height),
         ...(verifiedLayerRepair ? { layerRepair: verifiedLayerRepair } : {}),
         ...(projectContext ? { projectContext: { revision: projectContext.revision,
@@ -161,7 +167,7 @@ export async function runStudioGenerationArtifactJob(job: Job<{ outputId: string
         sha256: final.sha256, mimeType: final.mimeType, sizeBytes: final.sizeBytes, width: final.width, height: final.height, attemptToken: null, error: null } });
       // Only now can generic GenerationVersion APIs see the finished image.
       await tx.studioGenerationOutput.update({ where: { id: outputId }, data: { imageUrl: null,
-        ...(cleanBase ? { params: { ...params, studioPostprocess: { ...processing, cleanBase } } as Prisma.InputJsonValue } : {}) } });
+        ...(cleanBase || colourFidelity ? { params: { ...params, ...(colourFidelity ? { colourFidelity } : {}), ...(cleanBase ? { studioPostprocess: { ...processing, cleanBase } } : {}) } as Prisma.InputJsonValue } : {}) } });
       const check = await registerStudioGenerationCompliance(tx, row.workspaceId, versionId);
       signal.throwIfAborted();
       return check;

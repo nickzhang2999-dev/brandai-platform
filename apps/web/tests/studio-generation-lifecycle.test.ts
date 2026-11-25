@@ -10,6 +10,7 @@ import { ApiException } from "../src/lib/api";
 import { Prisma } from "../../../packages/db/src/index";
 import { AiServiceFailure } from "../src/lib/ai-failure";
 import { inspectStudioLayerRepair } from "../src/lib/studio-layer-repair";
+import { STUDIO_GENERATION_TTL_MS } from "@brandai/contracts";
 let row: any, tx: any;
 beforeEach(() => {
   vi.resetAllMocks(); row = { id: "sgr_1", workspaceId: "w", projectId: "p", userId: "u", generationId: "g", contextHash: "same", status: "PENDING", providerStartedAt: null, expiresAt: new Date(Date.now() + 60000), jobData: { generationId: "g", assetUsages: [] } };
@@ -48,6 +49,31 @@ describe("safe public generation failures", () => {
 });
 
 describe("product single execution and private output atomicity", () => {
+  it("lets an on-time response complete a delayed permission check but refuses a response first seen after expiry", async () => {
+    vi.useFakeTimers();
+    try {
+      const claim = (await claimStudioGeneration(row))!;
+      const end = claim.expiresAt.getTime(), output = { imageUrl: "data:image/png;base64,YQ==", width: 32, height: 32, params: {} };
+      vi.setSystemTime(end - 1);
+      f.gate.mockImplementationOnce(async () => { vi.setSystemTime(end + 100); });
+      await stageStudioGenerationOutput(claim, output, 0);
+      await expect(stageStudioGenerationOutput(claim, output, 0)).rejects.toThrow("期限");
+      expect(f.output).toHaveBeenCalledOnce();
+    } finally { vi.useRealTimers(); }
+  });
+  it("starts a fresh execution window once for a job claimed at the end of its queue window", async () => {
+    const now = Date.now();
+    vi.useFakeTimers(); vi.setSystemTime(now);
+    try {
+      row.expiresAt = new Date(now + 1);
+      const claimed = await claimStudioGeneration(row);
+      expect(claimed?.expiresAt.getTime()).toBe(now + STUDIO_GENERATION_TTL_MS);
+      expect(row.expiresAt).toEqual(claimed?.expiresAt);
+      vi.setSystemTime(now + 10_000);
+      expect(await claimStudioGeneration(row)).toBeNull();
+      expect(row.expiresAt.getTime()).toBe(now + STUDIO_GENERATION_TTL_MS);
+    } finally { vi.useRealTimers(); }
+  });
   it.each(["claim", "pre-provider"])("revalidates the durable layer parent at %s without replacing the accepted request", async stage => {
     const source = { assetId: "a", sha256: "a".repeat(64), shapeId: "shape:source", width: 96, height: 64 };
     const layerRepair = { decompositionRequestId: "parent", sourceShapeId: source.shapeId, assetId: source.assetId,
@@ -204,7 +230,8 @@ describe("product single execution and private output atomicity", () => {
   it("claims once, restores stored input and makes a duplicate/restarted provider invocation a no-op", async () => {
     const first = await claimStudioGeneration(row); expect(first?.status).toBe("RUNNING");
     expect(await claimStudioGeneration(row)).toBeNull(); expect(f.generation).toHaveBeenCalledTimes(1);
-    expect(f.update).toHaveBeenCalledWith({ where: expect.objectContaining({ status: "PENDING", providerStartedAt: null, expiresAt: { gt: expect.any(Date) } }), data: { status: "RUNNING", providerStartedAt: expect.any(Date) } });
+    expect(f.update).toHaveBeenCalledWith({ where: expect.objectContaining({ status: "PENDING", providerStartedAt: null, expiresAt: { gt: expect.any(Date) } }),
+      data: { status: "RUNNING", providerStartedAt: first!.providerStartedAt, expiresAt: first!.expiresAt } });
     expect(f.context).toHaveBeenCalledWith(tx, "w", "p", row.jobData);
   });
   it("rejects changed permissions or accepted source identity before claiming", async () => {

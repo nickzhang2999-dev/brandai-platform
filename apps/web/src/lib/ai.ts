@@ -28,10 +28,49 @@ import type {
   StudioConversationModelRequest,
   StudioConversationModelResponse,
 } from "@brandai/contracts";
+import { randomBytes } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 import { resolveAiService } from "@/lib/ai-service";
 import { getEffectiveAiSettings } from "@/lib/settings";
-import { readBoundedAiJson, withinAiDeadline, type AiCallOptions } from "@/lib/ai-response";
-import { readAiFailure } from "./ai-failure";
+import { readBoundedAiJson, UnreadableAiResponse, withinAiDeadline, type AiCallOptions } from "@/lib/ai-response";
+import { AiServiceFailure, readAiFailure, StudioImageReceiptUnavailable } from "./ai-failure";
+
+
+async function recoverStudioImage<T>(base: string, headers: Record<string, string>, signal: AbortSignal, limit: number): Promise<T> {
+  let consecutiveErrors = 0;
+  let registrationMisses = 0;
+  let seenPending = false;
+  for (;;) {
+    signal.throwIfAborted();
+    try {
+      const response = await withinAiDeadline(fetch(`${base}/v1/studio/image-receipt`, {
+        method: "GET", headers, signal, cache: "no-store", redirect: "error",
+      }), signal);
+      if (response.status === 200) return await readBoundedAiJson<T>(response, signal, limit);
+      void response.body?.cancel().catch(() => undefined);
+      if (response.status === 202) {
+        seenPending = true;
+        consecutiveErrors = 0;
+      } else if (response.status === 404 && !seenPending && ++registrationMisses < 4) {
+        // A disconnected POST can still be entering FastAPI dependency resolution.
+        consecutiveErrors = 0;
+      } else if ([408, 429, 500, 502, 503, 504].includes(response.status)) consecutiveErrors++;
+      else break;
+    } catch (error) {
+      signal.throwIfAborted();
+      if (!(error instanceof TypeError || error instanceof UnreadableAiResponse)) break;
+      consecutiveErrors++;
+    }
+    if (!seenPending && consecutiveErrors >= 3) break;
+    await delay(1000 * 2 ** Math.min(consecutiveErrors, 3), undefined, { signal });
+  }
+  throw new StudioImageReceiptUnavailable();
+}
+
+/** Read only the service selected by the original submission. */
+export function readSubmittedStudioImage(base: string, requestId: string, recoveryKey: string, signal: AbortSignal) {
+  return recoverStudioImage<unknown>(base, { "X-Novart-Request-Id": requestId, "X-Novart-Recovery-Key": recoveryKey }, signal, 48 * 1024 * 1024);
+}
 
 /**
  * Forward the admin-configured provider to the (stateless) AI service as
@@ -86,7 +125,10 @@ async function call<TReq, TRes>(path: string, body: TReq, options?: AiCallOption
   const requireStudioLayerPlan = path === "/v1/studio/layer-plan";
   const requireConversationIntent = path === "/v1/studio/conversation-intent";
   const requireSingleAttempt = path !== "/v1/diag";
+  const requestId = options?.requestId;
+  const studioImage = requestId && /^sgr_[a-f0-9]{32}$/.test(requestId) && (path === "/v1/generate" || requireStudioEdit);
   const setup = Promise.all([resolveAiService(requireVisualCheck || requireSingleAttempt ? {
+    ...(studioImage ? { preferImageReceipts: true } : {}),
     ...(requireVisualCheck ? { requireVisualCheck: true } : {}), ...(requireSingleAttempt ? { requireSingleAttempt: true } : {}),
     ...(requireStudioEdit ? { requireStudioEdit: true } : {}),
     ...(requireStudioImageTools ? { requireStudioImageTools: true } : {}),
@@ -101,19 +143,43 @@ async function call<TReq, TRes>(path: string, body: TReq, options?: AiCallOption
   )]);
   const [service, headers] = await withinAiDeadline(setup, signal);
   signal.throwIfAborted();
-  const res = await withinAiDeadline(fetch(`${service.base}${path}`, {
+  const recovery = studioImage && service.imageReceiptsAvailable
+    ? { "X-Novart-Request-Id": requestId, "X-Novart-Recovery-Key": randomBytes(32).toString("hex") } : undefined;
+  if (studioImage && options?.beforeStudioImagePost && process.env.DF_GENERATE_GLOBAL_CONCURRENCY && !recovery) {
+    throw new Error("生图服务尚未启用结果回执，请先检查服务版本。");
+  }
+  const limit = options?.maxResponseBytes ?? 48 * 1024 * 1024;
+  const init: RequestInit = {
     method: "POST",
     headers: { "content-type": "application/json", ...headers,
       ...(options?.requestId && /^s(?:gr|dr)_[a-f0-9]{32}$/.test(options.requestId) ? { "X-Novart-Request-Id": options.requestId } : {}),
+      ...recovery,
+      ...(studioImage && Number.isSafeInteger(options?.deadlineAt) ? { "X-Novart-Worker-Deadline": String(options?.deadlineAt) } : {}),
     },
     // The product's task claim is insufficient if a lower client layer retries
     // the paid POST. Enforce this also for its optional text precheck.
     body: JSON.stringify(requireSingleAttempt && !requireStudioEdit ? { ...body, providerRetryPolicy: "never" } : body),
     cache: "no-store",
+    ...(recovery ? { redirect: "error" } : {}),
     signal,
-  }), signal);
-  if (!res.ok) throw await readAiFailure(res, signal);
-  return readBoundedAiJson<TRes>(res, signal, options?.maxResponseBytes ?? 48 * 1024 * 1024);
+  };
+  if (recovery && options?.beforeStudioImagePost) {
+    await withinAiDeadline(options.beforeStudioImagePost(service.base, recovery["X-Novart-Recovery-Key"]), signal);
+    signal.throwIfAborted();
+  }
+  let res: Response;
+  try {
+    res = await withinAiDeadline(fetch(`${service.base}${path}`, init), signal);
+    if (res.ok) return await readBoundedAiJson<TRes>(res, signal, limit);
+  } catch (error) {
+    if (!recovery || signal.aborted || !(error instanceof TypeError || error instanceof UnreadableAiResponse)) throw error;
+    return recoverStudioImage<TRes>(service.base, recovery, signal, limit);
+  }
+  const error = await readAiFailure(res, signal);
+  if (recovery && !signal.aborted && [502, 503, 504].includes(res.status) && !(error instanceof AiServiceFailure)) {
+    return recoverStudioImage<TRes>(service.base, recovery, signal, limit);
+  }
+  throw error;
 }
 
 export const ai = {

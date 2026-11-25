@@ -1005,6 +1005,7 @@ model StudioGenerationRequest {
   generation Generation @relation(fields: [generationId], references: [id], onDelete: Cascade)
   jobData Json
   contextHash String
+  receiptCheckpoint String? @db.Text
   status JobStatus @default(PENDING)
   providerStartedAt DateTime?
   expiresAt DateTime

@@ -5,6 +5,10 @@ import { StudioWorkflowTarget } from "./studio-workflow";
 import { StudioBrandRuleReceipt } from "./studio-brand-rule-status";
 
 export const STUDIO_GENERATION_TTL_MS = 6 * 60_000;
+// Allow a response received in its execution or receipt-recovery window to commit.
+export const STUDIO_GENERATION_COMMIT_GRACE_MS = 15_000;
+/** A submitted task can read its existing private model receipt for three more minutes. */
+export const STUDIO_IMAGE_RECEIPT_RECOVERY_MS = 180_000;
 export const STUDIO_GENERATION_OUTPUT_TTL_MS = 24 * 60 * 60_000;
 export const StudioGenerationSizeSelection = z.object({ ratioKey: GenerationAspectRatioKey, resolutionTier: GenerationResolutionTier,
   customRatio: CustomAspectRatio.strict().optional() }).strict().superRefine((value, context) => {

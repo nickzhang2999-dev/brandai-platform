@@ -2,11 +2,13 @@
 
 
 def test_health(client):
+    import os
     assert client.get("/health").json() == {
         "status": "ok",
         "parserRevision": "grounded-six-slot-r6",
         "generationRevision": "gpt-image-2-6-size-quality-r2",
         "visualCheckRevision": "studio-visual-check-evidence-r1",
+        "studioImageReceiptRevision": "studio-private-image-receipt-r1" if os.getenv("DEEPFLARE_NATIVE_IMAGE_RECEIPTS") else None,
         "providerRetryRevision": "single-provider-attempt-r2",
         "studioEditRevision": "studio-whole-image-edit-r1",
         "studioImageToolsRevision": "studio-image-tools-r1",

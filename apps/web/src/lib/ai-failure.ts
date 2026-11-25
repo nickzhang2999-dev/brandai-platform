@@ -20,6 +20,20 @@ export class AiServiceFailure extends Error {
   }
 }
 
+export class StudioImageReceiptUnavailable extends Error {
+  constructor() {
+    super("图片服务连接中断，未能取回本次结果。当前无法确认模型是否已生成图片，系统未重新发起生图。");
+    this.name = "StudioImageReceiptUnavailable";
+  }
+}
+
+export class StudioOutputCommitUnconfirmed extends Error {
+  constructor() {
+    super("图片写入回执尚未确认，请稍后查看原任务。");
+    this.name = "StudioOutputCommitUnconfirmed";
+  }
+}
+
 export async function readAiFailure(response: Response, parentSignal?: AbortSignal): Promise<Error> {
   // An unhealthy gateway may send HTML, huge bodies or a stalled stream.
   // Bound diagnostic parsing separately; never delay the job until its TTL.

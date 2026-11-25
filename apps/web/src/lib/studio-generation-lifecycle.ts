@@ -1,12 +1,14 @@
 import { prisma, Prisma } from "@brandai/db";
-import { STUDIO_GENERATION_OUTPUT_TTL_MS } from "@brandai/contracts";
+import { STUDIO_IMAGE_RECEIPT_RECOVERY_MS } from "@brandai/contracts";
+import { STUDIO_GENERATION_OUTPUT_TTL_MS, STUDIO_GENERATION_TTL_MS, STUDIO_GENERATION_COMMIT_GRACE_MS } from "@brandai/contracts";
 import { ApiException } from "./api";
-import { AiServiceFailure } from "./ai-failure";
+import { AiServiceFailure, StudioImageReceiptUnavailable } from "./ai-failure";
 import { studioGenerationContextHash, requireStudioGenerationServices, validateStudioOutputSource } from "./studio-generation-policy";
 import { requireArtifactWrite } from "./studio-generation-artifacts";
 import { studioEditSourceFailureReason } from "./studio-generation-edit";
 export type StudioRequest = Prisma.StudioGenerationRequestGetPayload<Record<string, never>>;
 function publicFailure(error: unknown): string {
+  if (error instanceof StudioImageReceiptUnavailable) return new StudioImageReceiptUnavailable().message;
   if (error instanceof AiServiceFailure) return new AiServiceFailure(error.info).message;
   if (error instanceof ApiException) return error.message;
   // Only recognize our own guarded transport message. Never persist provider
@@ -25,22 +27,36 @@ function recordEditSourceFailure(requestId: string, stage: "claim" | "preflight"
   return reasonCode;
 }
 
+async function claimOnce(request: StudioRequest) {
+  return prisma.$transaction(async tx => {
+    const current = await tx.studioGenerationRequest.findUnique({ where: { id: request.id } });
+    if (!current || current.status !== "PENDING" || current.providerStartedAt || current.expiresAt <= new Date()) return null;
+    await requireArtifactWrite(tx, current.workspaceId, current.projectId, current.userId);
+    const contextHash = await studioGenerationContextHash(tx, current.workspaceId, current.projectId,
+      current.jobData as { assetUsages?: {assetId: string}[]; generationId?: string });
+    if (contextHash !== current.contextHash) throw new ApiException(409, "Accepted brand rules or image sources changed; confirm them before a new request.");
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + STUDIO_GENERATION_TTL_MS);
+    const claimed = await tx.studioGenerationRequest.updateMany({ where: { id: current.id, status: "PENDING", providerStartedAt: null, expiresAt: { gt: now } }, data: { status: "RUNNING", providerStartedAt: now, expiresAt } });
+    if (!claimed.count) return null;
+    await tx.generation.update({ where: { id: current.generationId }, data: { status: "RUNNING", startedAt: now, error: null } });
+    return { ...current, status: "RUNNING" as const, providerStartedAt: now, expiresAt };
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 15_000 });
+}
+
 export async function claimStudioGeneration(request: StudioRequest): Promise<StudioRequest | null> {
   try {
     await requireStudioGenerationServices();
-    return await prisma.$transaction(async tx => {
-      const current = await tx.studioGenerationRequest.findUnique({ where: { id: request.id } });
-      if (!current || current.status !== "PENDING" || current.providerStartedAt || current.expiresAt <= new Date()) return null;
-      await requireArtifactWrite(tx, current.workspaceId, current.projectId, current.userId);
-      const contextHash = await studioGenerationContextHash(tx, current.workspaceId, current.projectId,
-        current.jobData as { assetUsages?: {assetId: string}[]; generationId?: string });
-      if (contextHash !== current.contextHash) throw new ApiException(409, "Accepted brand rules or image sources changed; confirm them before a new request.");
-      const now = new Date();
-      const claimed = await tx.studioGenerationRequest.updateMany({ where: { id: current.id, status: "PENDING", providerStartedAt: null, expiresAt: { gt: now } }, data: { status: "RUNNING", providerStartedAt: now } });
-      if (!claimed.count) return null;
-      await tx.generation.update({ where: { id: current.generationId }, data: { status: "RUNNING", startedAt: now, error: null } });
-      return { ...current, status: "RUNNING" as const, providerStartedAt: now };
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 15_000 });
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await claimOnce(request);
+      } catch (error) {
+        // PostgreSQL has rolled the transaction back. This scope ends before any model call.
+        if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2034" || attempt >= 3) throw error;
+        const windowMs = 20 * 2 ** attempt;
+        await new Promise(resolve => setTimeout(resolve, windowMs + Math.random() * windowMs));
+      }
+    }
   } catch (error) {
     // A transaction conflict before claim has not invoked a provider. Keep it
     // PENDING for the DB outbox rather than converting contention to failure.
@@ -102,7 +118,7 @@ export async function finishStudioGeneration(request: StudioRequest, status: "FA
     // a worker that got no output. A late or duplicate worker cannot resurrect.
     if (status === "SUCCEEDED") return false;
     const message = publicFailure(error);
-    const changed = await tx.studioGenerationRequest.updateMany({ where: { id: request.id, status: "RUNNING", providerStartedAt: request.providerStartedAt }, data: { status: "FAILED", error: message } });
+    const changed = await tx.studioGenerationRequest.updateMany({ where: { id: request.id, status: "RUNNING", providerStartedAt: request.providerStartedAt }, data: { status: "FAILED", receiptCheckpoint: null, error: message } });
     if (!changed.count) return false;
     await tx.generation.updateMany({ where: { id: request.generationId }, data: { status: "FAILED", error: message, finishedAt: now, durationMs: now.getTime() - (request.providerStartedAt?.getTime() ?? now.getTime()) } });
     await tx.studioGenerationOutput.updateMany({ where: { requestId: request.id }, data: { imageUrl: null } });
@@ -120,15 +136,22 @@ export async function finishStudioGeneration(request: StudioRequest, status: "FA
 
 /** Commit paid output and its terminal receipt atomically. A crash immediately
  * after this commit is recovered by archive discovery without paying again. */
-export async function stageStudioGenerationOutput(request: StudioRequest, output: { imageUrl: string; width: number; height: number; params: Record<string, unknown> }, index: number) {
+export async function stageStudioGenerationOutput(request: StudioRequest, output: { imageUrl: string; width: number; height: number; params: Record<string, unknown> }, index: number, recoveryCheckpoint?: string) {
   if (index !== 0) throw new Error("产品生成只接受一个输出。");
+  const receivedAt = new Date();
+  const deadline = new Date(request.expiresAt.getTime() + (recoveryCheckpoint ? STUDIO_IMAGE_RECEIPT_RECOVERY_MS : 0));
+  if (!request.providerStartedAt || receivedAt >= deadline) throw new Error("生成结果超过本次执行期限。");
   const retention = validateStudioOutputSource(output.imageUrl);
   const id = `${request.id}-0`;
   return prisma.$transaction(async tx => {
     await requireArtifactWrite(tx, request.workspaceId, request.projectId, request.userId);
     const now = new Date();
-    const updated = await tx.studioGenerationRequest.updateMany({ where: { id: request.id, status: "RUNNING", providerStartedAt: request.providerStartedAt, expiresAt: { gt: now } },
-      data: { status: "SUCCEEDED", error: null } });
+    if (now.getTime() >= deadline.getTime() + STUDIO_GENERATION_COMMIT_GRACE_MS) throw new Error("生成结果写入期限已过。");
+    const updated = await tx.studioGenerationRequest.updateMany({ where: { id: request.id, workspaceId: request.workspaceId,
+      userId: request.userId, projectId: request.projectId, generationId: request.generationId, contextHash: request.contextHash,
+      status: "RUNNING", providerStartedAt: request.providerStartedAt,
+      ...(recoveryCheckpoint ? { receiptCheckpoint: recoveryCheckpoint, expiresAt: request.expiresAt } : { expiresAt: { gt: receivedAt } }) },
+      data: { status: "SUCCEEDED", receiptCheckpoint: null, error: null } });
     if (!updated.count) throw new Error("生成任务已结束或超时，未接收迟到结果。");
     await tx.studioGenerationOutput.create({ data: { id, requestId: request.id, workspaceId: request.workspaceId, projectId: request.projectId,
       imageUrl: output.imageUrl, widthHint: output.width, heightHint: output.height, index,

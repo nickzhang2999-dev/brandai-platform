@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { STUDIO_IMAGE_RECEIPT_RECOVERY_MS } from "@brandai/contracts";
 import { prisma, Prisma } from "@brandai/db";
-import { StudioGenerationInput, StudioGenerationQuery, StudioGenerationView, StudioWorkflowTarget, STUDIO_GENERATION_TTL_MS } from "@brandai/contracts";
+import { StudioGenerationInput, StudioGenerationQuery, StudioGenerationView, StudioWorkflowTarget, STUDIO_GENERATION_TTL_MS, STUDIO_GENERATION_COMMIT_GRACE_MS } from "@brandai/contracts";
 import { ApiException } from "./api";
 import { requireWorkspaceRole } from "./workspace";
 import { requireStudioMaterialProject } from "./studio-materials";
@@ -27,18 +28,32 @@ async function receipt(row: Receipt, canWrite = true) {
   const results = await readStudioGenerationResults(row);
   const edited = (row.jobData as {studioEdit?: {shapeId?: unknown}})?.studioEdit;
   const sourceShape = StudioWorkflowTarget.shape.shapeId.safeParse(edited?.shapeId);
+  const grace = STUDIO_GENERATION_COMMIT_GRACE_MS + (row.receiptCheckpoint ? STUDIO_IMAGE_RECEIPT_RECOVERY_MS : 0);
+  const visibleUntil = row.status === "RUNNING" ? new Date(row.expiresAt.getTime() + grace) : row.expiresAt;
   return StudioGenerationView.parse({ mode: (row.jobData as {studioEdit?: unknown})?.studioEdit ? "modify" : "generate", psdLayerCount: generatedPsdLayerCount(row.jobData), psdLayerMode: generatedPsdLayerMode(row.jobData), requestId: row.id, mutationId: row.mutationId, projectId: row.projectId, generationId: row.generationId,
     ...(edited && sourceShape.success ? { sourceShapeId: sourceShape.data } : {}),
-    status: row.status, progress: null, expiresAt: row.expiresAt.toISOString(), displayText: row.prompt, error: row.error,
+    status: row.status, progress: null, expiresAt: visibleUntil.toISOString(), displayText: row.prompt, error: row.error,
     ...results, canRetryArchive: canWrite && results.canRetryArchive });
 }
 
-export async function expireStudioGenerations() {
+const queueExpiryMessage = "生成任务排队超时，请重新提交。";
+const runningExpiryMessage = "生成任务超时，结果未确认；系统不会自动再次调用生成服务。";
+
+export async function expireStudioGenerations(scope?: { workspaceId: string; projectId: string; userId: string; id?: string }) {
+  const now = new Date();
+  const cutoff = new Date(now.getTime() - STUDIO_GENERATION_COMMIT_GRACE_MS);
+  const receiptCutoff = new Date(cutoff.getTime() - STUDIO_IMAGE_RECEIPT_RECOVERY_MS);
   return prisma.$transaction(async tx => {
-    const rows = await tx.studioGenerationRequest.findMany({ where: { status: { in: ["PENDING", "RUNNING"] }, expiresAt: { lte: new Date() } }, take: 100 });
+    const expired: Prisma.StudioGenerationRequestWhereInput = { ...scope, OR: [
+      { status: "PENDING", expiresAt: { lte: now } },
+      { status: "RUNNING", receiptCheckpoint: null, expiresAt: { lte: cutoff } },
+      { status: "RUNNING", receiptCheckpoint: { not: null }, expiresAt: { lte: receiptCutoff } },
+    ] };
+    const rows = await tx.studioGenerationRequest.findMany({ where: expired, take: 100,
+      select: { id: true, generationId: true, providerStartedAt: true } });
     for (const row of rows) {
-      const error = row.providerStartedAt ? "生成任务超时，结果未确认；系统不会自动再次调用生成服务。" : "生成任务排队超时，请重新提交。";
-      const changed = await tx.studioGenerationRequest.updateMany({ where: { id: row.id, status: { in: ["PENDING", "RUNNING"] }, expiresAt: { lte: new Date() } }, data: { status: "FAILED", error } });
+      const error = row.providerStartedAt ? runningExpiryMessage : queueExpiryMessage;
+      const changed = await tx.studioGenerationRequest.updateMany({ where: { id: row.id, ...expired, providerStartedAt: row.providerStartedAt }, data: { status: "FAILED", receiptCheckpoint: null, error } });
       if (changed.count) {
         await tx.generation.updateMany({ where: { id: row.generationId }, data: { status: "FAILED", error, finishedAt: new Date() } });
         await tx.studioGenerationOutput.updateMany({ where: { requestId: row.id }, data: { imageUrl: null } });
@@ -107,7 +122,7 @@ export async function readStudioGeneration(workspaceId: string, userId: string, 
   const { projectId, requestId } = StudioGenerationQuery.parse(raw);
   const { role } = await requireWorkspaceRole(workspaceId, userId, "VIEWER");
   if (!await prisma.project.findFirst({ where: { id: projectId, workspaceId }, select: { id: true } })) throw new ApiException(404, "项目不存在。");
-  await expireStudioGenerations();
+  await expireStudioGenerations({ workspaceId, userId, projectId, ...(requestId ? { id: requestId } : {}) });
   const rows = await prisma.studioGenerationRequest.findMany({ where: { workspaceId, userId, projectId, ...(requestId ? { id: requestId } : {}) }, orderBy: { createdAt: "desc" }, take: requestId ? 1 : 50 });
   const canWrite = role === "OWNER" || role === "EDITOR";
   if (requestId) { if (!rows[0]) throw new ApiException(404, "生成请求不存在。"); return receipt(rows[0], canWrite); }
@@ -118,5 +133,10 @@ export async function readStudioGeneration(workspaceId: string, userId: string, 
 export async function dispatchStudioGenerations() {
   await expireStudioGenerations();
   const pending = await prisma.studioGenerationRequest.findMany({ where: { status: "PENDING", providerStartedAt: null, expiresAt: { gt: new Date() } }, take: 32, orderBy: { createdAt: "asc" } });
-  await Promise.all(pending.map(row => enqueueStudioGeneration(row.id, row.jobData as unknown as GenerateJobData)));
+  const submitted = await prisma.studioGenerationRequest.findMany({ where: { status: "RUNNING", receiptCheckpoint: { not: null },
+      expiresAt: { gt: new Date(Date.now() - STUDIO_IMAGE_RECEIPT_RECOVERY_MS) } },
+    take: 32, orderBy: { expiresAt: "asc" }, select: { id: true, jobData: true } });
+  // The stable Bull job ID leaves a live original owner in place. A stalled
+  // delivery (or lost queue state) can only enter the worker's read-only branch.
+  await Promise.all([...pending, ...submitted].map(row => enqueueStudioGeneration(row.id, row.jobData as unknown as GenerateJobData)));
 }

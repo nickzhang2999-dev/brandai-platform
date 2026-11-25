@@ -36,7 +36,8 @@ beforeEach(() => {
   vi.resetAllMocks(); events = []; f.constraints.mockReturnValue(true);
   row = { id: "request", workspaceId: "w", projectId: "p", userId: "u", generationId: "g", status: "RUNNING", providerStartedAt: new Date(), expiresAt: new Date(Date.now() + 60000),
     jobData: { generationId: "g", generationAttemptToken: "synthetic-attempt", workspaceId: "w", versionCount: 1, targets: [{ key: "square", label: "Square", width: 1024, height: 1024 }] } };
-  f.request.mockImplementation(async () => row); f.claim.mockImplementation(async () => row);
+  f.request.mockImplementation(async () => ({ ...row, status: "PENDING", providerStartedAt: null }));
+  f.claim.mockImplementation(async () => row);
   f.generation.mockResolvedValue({ id: "g", projectId: "p", workspaceId: "w", sceneType: "SOCIAL_POSTER", sellingPoint: "Poster", scene: "", chatContext: null });
   f.exact.mockImplementation(async () => { events.push("sources"); });
   f.rules.mockImplementation(async () => { events.push("rules"); return []; });
@@ -66,6 +67,96 @@ it("finishes concurrent Studio jobs even when Redis progress never acknowledges"
 });
 
 describe("real generation worker pre-provider ordering (isolated dependencies)", () => {
+  it("preserves the unknown outcome when a Studio image receipt cannot be read", async () => {
+    const { StudioImageReceiptUnavailable } = await import("../src/lib/ai-failure");
+    const failure = new StudioImageReceiptUnavailable();
+    f.generate.mockRejectedValueOnce(failure);
+    await expect(runGenerateJob(job())).rejects.toBe(failure);
+    expect(f.finish.mock.calls.some(call => call[1] === "FAILED" && call[2] === failure)).toBe(true);
+    expect(f.generate).toHaveBeenCalledOnce();
+    expect(f.archive).not.toHaveBeenCalled();
+  });
+  it("keeps the original attempt when the database commit response is lost", async () => {
+    const { StudioOutputCommitUnconfirmed } = await import("../src/lib/ai-failure");
+    f.stage.mockRejectedValueOnce(new StudioOutputCommitUnconfirmed());
+    await expect(runGenerateJob(job())).rejects.toBeInstanceOf(StudioOutputCommitUnconfirmed);
+    expect(f.generate).toHaveBeenCalledOnce();
+    expect(f.finish).not.toHaveBeenCalled();
+    expect(f.usage.mock.calls.some(([event]) => event.kind === "GENERATE" && event.status === "FAILED")).toBe(false);
+  });
+  it("leaves a checkpointed request available for read-only outbox recovery on a temporary receipt outage", async () => {
+    const receipt = await import("../src/lib/studio-generation-receipt");
+    const saved = vi.spyOn(receipt, "saveStudioImageCheckpoint").mockResolvedValueOnce(undefined);
+    const { StudioImageReceiptUnavailable } = await import("../src/lib/ai-failure");
+    try {
+      f.generate.mockImplementationOnce(async (_request, options) => {
+        await options.beforeStudioImagePost("http://original", "fixture-key");
+        throw new StudioImageReceiptUnavailable();
+      });
+      await expect(runGenerateJob(job())).rejects.toBeInstanceOf(StudioImageReceiptUnavailable);
+      expect(saved).toHaveBeenCalledOnce();
+      expect(f.finish).not.toHaveBeenCalled();
+      expect(f.usage.mock.calls.some(([event]) => event.kind === "GENERATE" && event.status === "FAILED")).toBe(false);
+    } finally { saved.mockRestore(); }
+  });
+  it.each([true, false])("retains a result arriving after minute five within its real execution deadline, targets=%s", async withTargets => {
+    if (!withTargets) delete row.jobData.targets;
+    vi.useFakeTimers();
+    try {
+      row.expiresAt = new Date(Date.now() + 360_000);
+      f.generate.mockImplementationOnce(() => new Promise(resolve => setTimeout(() => resolve({
+        versions: [{ imageUrl: "data:image/png;base64,YQ==", width: 32, height: 32, params: {} }],
+      }), 310_000)));
+      const running = runGenerateJob(job());
+      await vi.advanceTimersByTimeAsync(311_000);
+      await running;
+      expect(f.stage).toHaveBeenCalledOnce();
+      expect(f.generate).toHaveBeenCalledOnce();
+      expect(f.archive).toHaveBeenCalledOnce();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("does not reclaim a legacy in-flight task without a durable ticket", async () => {
+    f.request.mockResolvedValueOnce(row);
+    await runGenerateJob(job());
+    expect(f.claim).not.toHaveBeenCalled();
+    expect(f.generate).not.toHaveBeenCalled();
+  });
+  it("redelivery after a committed result only resumes archive", async () => {
+    f.request.mockResolvedValueOnce({ ...row, status: "SUCCEEDED" });
+    await runGenerateJob(job());
+    expect(f.archive).toHaveBeenCalledWith(row.id);
+    expect(f.claim).not.toHaveBeenCalled();
+    expect(f.generate).not.toHaveBeenCalled();
+  });
+  it("wakes archive for a hosted image before waiting on accounting", async () => {
+    f.generate.mockResolvedValueOnce({ versions: [{ imageUrl: "https://images.example/temporary", width: 32, height: 32, params: {} }] });
+    let resume!: () => void;
+    const stalled = new Promise<void>(resolve => { resume = resolve; });
+    f.usage.mockImplementation(async (event: { kind: string }) => { if (event.kind === "GENERATE") await stalled; });
+    const running = runGenerateJob(job());
+    try {
+      await vi.waitFor(() => expect(f.usage).toHaveBeenCalledWith(expect.objectContaining({ kind: "GENERATE" })));
+      expect(f.stage).toHaveBeenCalledOnce();
+      expect(f.archive).toHaveBeenCalledWith(row.id);
+    } finally { resume(); await running; }
+    expect(f.archive).toHaveBeenCalledOnce();
+  });
+
+  it("a watchdog during an accepted result write does not race it with a failure", async () => {
+    vi.useFakeTimers();
+    try {
+      delete row.jobData.targets;
+      row.expiresAt = new Date(Date.now() + 1_000);
+      f.stage.mockImplementationOnce(() => new Promise(resolve => setTimeout(() => resolve("stored"), 1_900)));
+      const running = runGenerateJob(job());
+      await vi.advanceTimersByTimeAsync(2_000);
+      await running;
+      expect(f.finish.mock.calls.filter(call => call[1] === "FAILED")).toHaveLength(0);
+      expect(f.generate).toHaveBeenCalledOnce();
+      expect(f.archive).toHaveBeenCalledWith(row.id);
+    } finally { vi.useRealTimers(); }
+  });
   it.each([true, false])("adapts custom dialog model pixels while preserving archival pixels, edit=%s", async editing => {
     row.jobData.targets = [{ key: "conversation", label: "Dialog", width: 1024, height: 576 }];
     row.jobData.studioConversationSize = { requestedSize: { width: 1024, height: 576 }, sizeSource: "dialog-pixels", method: "deterministic-contain" };
@@ -182,6 +273,16 @@ describe("legacy generation cancellation and multi-size budget (unit provider fi
     value.data.targets = Array.from({ length: count }, (_, index) => ({ key: `size-${index}`, label: "Size", width: 1024, height: 1024 }));
     return value;
   }
+  it("archives all regular sizes when Redis stops acknowledging progress before the claim", async () => {
+    const value = legacyJob();
+    const progress = vi.fn(() => new Promise<void>(() => {}));
+    value.updateProgress = progress;
+    f.generate.mockResolvedValue(result());
+    const completed = await runGenerateJob(value);
+    expect(completed.versionIds).toHaveLength(2);
+    expect(f.updateMany.mock.calls.at(-1)?.[0].data.status).toBe("SUCCEEDED");
+    expect(progress).toHaveBeenCalledTimes(1);
+  });
   it("finishes two sequential sizes after five minutes without an early batch failure", async () => {
     const value = legacyJob();
     f.generate.mockImplementation(() => new Promise(resolve => setTimeout(() => resolve(result()), 165_000)));

@@ -40,7 +40,8 @@ import { sweepStaleLegacyTasks } from "@/lib/legacy-task-runtime";
 import { sweepStaleGenerations } from "@/lib/generations";
 import { dispatchStudioGenerations } from "@/lib/studio-generation";
 import { dispatchStudioGeneratedPsds } from "@/lib/studio-generated-psd";
-import { queuePrefix } from "@/lib/queue";
+import { generationPoolSettings, prepareGenerationPool } from "./generation-pool";
+import { generateQueue, queuePrefix } from "@/lib/queue";
 import {
   REQUIRED_AI_GENERATION_REVISION,
   REQUIRED_AI_PARSER_REVISION,
@@ -51,6 +52,8 @@ import {
 const healthPort = Number(process.env.WORKER_HEALTH_PORT ?? 3001);
 export const WORKER_REVISION = "ai-discovery-r2";
 const workers: { close: () => Promise<void> }[] = [];
+const startup = new AbortController();
+let pool: ReturnType<typeof generationPoolSettings> | undefined;
 let workersReady = false;
 let bootError: string | null = null;
 let aiService: AiServiceResolution | null = null;
@@ -72,6 +75,7 @@ http
         commit: process.env.CDS_COMMIT_SHA?.slice(0, 12) ?? null,
         count: workers.length,
         queuePrefix,
+        generationPool: pool,
         requiredAiParserRevision: REQUIRED_AI_PARSER_REVISION,
         requiredAiGenerationRevision: REQUIRED_AI_GENERATION_REVISION,
         aiResolution: aiService?.source ?? "checking",
@@ -85,7 +89,16 @@ http
     console.log(`[workers] health server on :${healthPort}`);
   });
 
-try {
+async function startWorkers() {
+  pool = generationPoolSettings();
+  await prepareGenerationPool(generateQueue, pool, startup.signal);
+  if (startup.signal.aborted) return;
+  if (pool.role === "generate") {
+    workers.push(createGenerateWorker(pool.local));
+    workersReady = true;
+    watchSourceRevision(process.env.CDS_COMMIT_SHA, shutdown);
+    return;
+  }
   workers.push(
     createInspirationWorker(),
     createOmniAnalysisWorker(),
@@ -93,7 +106,7 @@ try {
     createStudioWritingWorker(),
     createRecognizeWorker(),
     createParseManualWorker(),
-    createGenerateWorker(),
+    createGenerateWorker(pool.local),
     createEditWorker(),
     createDescribeWorker(),
     createIngestWorker(),
@@ -168,13 +181,15 @@ try {
 
   watchSourceRevision(process.env.CDS_COMMIT_SHA, shutdown);
 
-} catch (err) {
+}
+
+void startWorkers().catch((err) => {
   bootError = String(err);
   console.error("[workers] FAILED to construct workers:", err);
   // Deliberately do NOT exit — keep the health server up so the cause is
   // observable. CDS readiness already passed (placeholder); a crash here
   // would just produce an invisible stopped container.
-}
+});
 
 // The shared ioredis connection emits 'error' on an unreachable/misconfigured
 // Redis. An unhandled 'error' event on an EventEmitter throws and crashes the
@@ -190,6 +205,7 @@ process.on("unhandledRejection", (reason) => {
 });
 
 async function shutdown() {
+  startup.abort();
   console.log("[workers] shutting down…");
   await Promise.all(workers.map((w) => w.close()));
   process.exit(0);

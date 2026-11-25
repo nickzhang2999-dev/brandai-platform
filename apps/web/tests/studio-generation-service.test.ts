@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const f = vi.hoisted(() => ({ tx: vi.fn(), gate: vi.fn(), projectGate: vi.fn(), read: vi.fn(), many: vi.fn(), count: vi.fn(), create: vi.fn(), update: vi.fn(), gen: vi.fn(), clear: vi.fn(), query: vi.fn(), config: vi.fn(), prepare: vi.fn(), quota: vi.fn(), enqueue: vi.fn(), results: vi.fn() }));
+const f = vi.hoisted(() => ({ tx: vi.fn(), gate: vi.fn(), projectGate: vi.fn(), read: vi.fn(), many: vi.fn(), expiring: vi.fn(), count: vi.fn(), create: vi.fn(), update: vi.fn(), gen: vi.fn(), clear: vi.fn(), query: vi.fn(), config: vi.fn(), prepare: vi.fn(), quota: vi.fn(), enqueue: vi.fn(), results: vi.fn() }));
 vi.mock("../../../packages/db/src/index", () => ({ prisma: { $transaction: f.tx, studioGenerationRequest: { findUnique: f.read, findMany: f.many }, project: { findFirst: async () => ({ id: "p" }) } }, Prisma: { TransactionIsolationLevel: { Serializable: "Serializable" }, PrismaClientKnownRequestError: class extends Error {} } }));
 vi.mock("../src/lib/api", () => ({ ApiException: class extends Error { constructor(public status: number, message: string) { super(message); } } }));
 vi.mock("../src/lib/workspace", () => ({ requireWorkspaceRole: f.gate }));
@@ -12,10 +12,10 @@ import { submitStudioGeneration, readStudioGeneration, expireStudioGenerations, 
 const input = { projectId: "p", mutationId: "831a0280-2cf1-41ba-ac94-621053c4a4c6", prompt: "tree", sizeSelection: { ratioKey: "1:1", resolutionTier: "1K" }, workflowRevision: 0, documentRevision: 0 };
 let tx: any, row: any;
 beforeEach(() => {
-  vi.resetAllMocks(); row = undefined; f.read.mockResolvedValue(null); f.many.mockResolvedValue([]); f.count.mockResolvedValue(0); f.gate.mockResolvedValue({ role: "OWNER" });
+  vi.resetAllMocks(); row = undefined; f.read.mockResolvedValue(null); f.many.mockResolvedValue([]); f.expiring.mockResolvedValue([]); f.count.mockResolvedValue(0); f.gate.mockResolvedValue({ role: "OWNER" });
   f.prepare.mockResolvedValue({ contextHash: "context", generationData: { projectId: "p", workspaceId: "w" }, jobData: { workspaceId: "w", versionCount: 1 } }); f.quota.mockResolvedValue({ id: "g" }); f.enqueue.mockResolvedValue(false);
   f.create.mockImplementation(async ({ data }) => row = { ...data, status: "PENDING", error: null });
-  tx = { $queryRaw: f.query, studioGenerationRequest: { findUnique: f.read, findMany: f.many, count: f.count, create: f.create, updateMany: f.update }, generation: { updateMany: f.gen }, studioGenerationOutput: { updateMany: f.clear } };
+  tx = { $queryRaw: f.query, studioGenerationRequest: { findUnique: f.read, findMany: f.expiring, count: f.count, create: f.create, updateMany: f.update }, generation: { updateMany: f.gen }, studioGenerationOutput: { updateMany: f.clear } };
   f.tx.mockImplementation(fn => fn(tx)); f.results.mockResolvedValue({ resultState: "NOT_REQUESTED", results: [], archiveError: null, archiveExpiresAt: null, archiveProcessingExpiresAt: null, canRetryArchive: false });
 });
 describe("generation acceptance and DB outbox (transaction fixtures)", () => {
@@ -64,10 +64,19 @@ describe("generation acceptance and DB outbox (transaction fixtures)", () => {
     expect(f.many).toHaveBeenLastCalledWith(expect.objectContaining({ where: { workspaceId: "w", userId: "u", projectId: "p", id: row.id } }));
   });
   it("expiry atomically terminalizes unclaimed/claimed tasks and clears only outputs of the winner", async () => {
-    f.many.mockResolvedValue([{ id: "r", generationId: "g", providerStartedAt: new Date() }]); f.update.mockResolvedValue({ count: 1 }); await expireStudioGenerations(); expect(f.gen).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "FAILED" }) })); expect(f.clear).toHaveBeenCalled();
+    f.expiring.mockResolvedValue([{ id: "r", generationId: "g", providerStartedAt: new Date() }]); f.update.mockResolvedValue({ count: 1 }); await expireStudioGenerations(); expect(f.gen).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "FAILED" }) })); expect(f.clear).toHaveBeenCalled();
     f.clear.mockClear(); f.update.mockResolvedValue({ count: 0 }); await expireStudioGenerations(); expect(f.clear).not.toHaveBeenCalled();
   });
-  it("outbox dispatch only selects unclaimed PENDING tasks under a bounded deadline", async () => {
-    await dispatchStudioGenerations(); expect(f.many).toHaveBeenLastCalledWith({ where: { status: "PENDING", providerStartedAt: null, expiresAt: { gt: expect.any(Date) } }, take: 32, orderBy: { createdAt: "asc" } });
+  it("outbox dispatch selects pending claims and submitted single-image recovery before their deadlines", async () => {
+    await dispatchStudioGenerations(); expect(f.many).toHaveBeenCalledWith({ where: { status: "PENDING", providerStartedAt: null, expiresAt: { gt: expect.any(Date) } }, take: 32, orderBy: { createdAt: "asc" } });
+    expect(f.many).toHaveBeenCalledWith(expect.objectContaining({ where: { status: "RUNNING", receiptCheckpoint: { not: null }, expiresAt: { gt: expect.any(Date) } } }));
+  });
+  it("keeps the canvas polling while an on-time response can still be saved", async () => {
+    const pending = await submitStudioGeneration("w", "u", input);
+    expect(pending.expiresAt).toBe(row.expiresAt.toISOString());
+    row.status = "RUNNING";
+    f.many.mockImplementation(async ({ where }) => where.userId ? [row] : []);
+    const history = await readStudioGeneration("w", "u", { projectId: "p" }) as { requests: { expiresAt: string }[] };
+    expect(Date.parse(history.requests[0].expiresAt)).toBe(row.expiresAt.getTime() + 15_000);
   });
 });

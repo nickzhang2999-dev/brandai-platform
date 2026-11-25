@@ -33,11 +33,12 @@ export type AiServiceResolution = {
   studioLayerPlanRevision?: string;
   studioConversationIntentRevision?: string;
   studioWritingParserRevision?: string;
+  imageReceiptsAvailable?: boolean;
 };
 
-export type AiServiceRequirements = { requireVisualCheck?: boolean; requireSingleAttempt?: boolean; requireStudioEdit?: boolean; requireStudioDecomposition?: boolean; requireStudioDecompositionQueue?: boolean; requireStudioLayerPlan?: boolean; requireStudioImageTools?: boolean; requireStudioConversationIntent?: boolean; requireStudioWritingParser?: boolean };
+export type AiServiceRequirements = { preferImageReceipts?: boolean; requireVisualCheck?: boolean; requireSingleAttempt?: boolean; requireStudioEdit?: boolean; requireStudioDecomposition?: boolean; requireStudioDecompositionQueue?: boolean; requireStudioLayerPlan?: boolean; requireStudioImageTools?: boolean; requireStudioConversationIntent?: boolean; requireStudioWritingParser?: boolean };
 
-let cachedResolution: { value: AiServiceResolution; expiresAt: number } | null =
+let cachedResolution: { value: AiServiceResolution; expiresAt: number; checkedForReceipts?: boolean } | null =
   null;
 
 function candidateBase(configured: URL, address: string): string {
@@ -65,6 +66,7 @@ async function probe(base: string): Promise<AiServiceResolution | null> {
       studioLayerPlanRevision?: unknown;
       studioConversationIntentRevision?: unknown;
       studioWritingParserRevision?: unknown;
+      studioImageReceiptRevision?: unknown;
     };
     return {
       base,
@@ -89,6 +91,7 @@ async function probe(base: string): Promise<AiServiceResolution | null> {
       studioLayerPlanRevision: typeof body.studioLayerPlanRevision === "string" ? body.studioLayerPlanRevision : undefined,
       studioConversationIntentRevision: typeof body.studioConversationIntentRevision === "string" ? body.studioConversationIntentRevision : undefined,
       studioWritingParserRevision: typeof body.studioWritingParserRevision === "string" ? body.studioWritingParserRevision : undefined,
+      imageReceiptsAvailable: body.studioImageReceiptRevision === "studio-private-image-receipt-r1",
     };
   } catch {
     return null;
@@ -118,6 +121,7 @@ export async function resolveAiService(requirements: AiServiceRequirements = {})
   const requireStudioWritingParser = requirements.requireStudioWritingParser === true;
   const requireSingleAttempt = requirements.requireSingleAttempt === true || requireStudioEdit || requireStudioDecomposition || requireStudioDecompositionQueue || requireStudioLayerPlan || requireStudioImageTools || requireStudioConversationIntent;
   if (cachedResolution && cachedResolution.expiresAt > now &&
+      (!requirements.preferImageReceipts || cachedResolution.checkedForReceipts || cachedResolution.value.imageReceiptsAvailable) &&
       (!requireStudioEdit || cachedResolution.value.studioEditRevision === REQUIRED_AI_STUDIO_EDIT_REVISION) &&
       (!requireStudioImageTools || cachedResolution.value.studioImageToolsRevision === REQUIRED_AI_STUDIO_IMAGE_TOOLS_REVISION) &&
       (!requireStudioDecomposition || cachedResolution.value.studioDecompositionRevision === REQUIRED_AI_STUDIO_DECOMPOSITION_REVISION) &&
@@ -161,7 +165,7 @@ export async function resolveAiService(requirements: AiServiceRequirements = {})
       if (requireStudioWritingParser && health?.studioWritingParserRevision !== REQUIRED_AI_STUDIO_WRITING_PARSER_REVISION) throw new Error("Configured AI service does not support bounded writing text parsing");
       Object.assign(value, health, { source: "configured" });
     }
-    cachedResolution = { value, expiresAt: now + CACHE_MS };
+    cachedResolution = { value, expiresAt: now + CACHE_MS, checkedForReceipts: true };
     return value;
   }
 
@@ -171,6 +175,9 @@ export async function resolveAiService(requirements: AiServiceRequirements = {})
       candidateBase(configured, address),
     );
     const results = await Promise.all(candidates.map(probe));
+    if (requirements.preferImageReceipts) {
+      results.sort((a, b) => Number(!!b?.imageReceiptsAvailable) - Number(!!a?.imageReceiptsAvailable));
+    }
     const match = results.find(
       (result) =>
         result?.parserRevision === REQUIRED_AI_PARSER_REVISION &&
@@ -186,7 +193,7 @@ export async function resolveAiService(requirements: AiServiceRequirements = {})
         (!requireVisualCheck || result.visualCheckRevision === REQUIRED_AI_VISUAL_CHECK_REVISION),
     );
     if (match) {
-      cachedResolution = { value: match, expiresAt: now + CACHE_MS };
+      cachedResolution = { value: match, expiresAt: now + CACHE_MS, checkedForReceipts: requirements.preferImageReceipts };
       return match;
     }
   } catch (error) {

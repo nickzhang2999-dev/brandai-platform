@@ -7,9 +7,10 @@ from datetime import datetime, timezone
 from typing import Any
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
+from .studio_image_receipts import initialize_receipts, read_receipt, receipt_revision, run_with_receipt
 from .config import settings
 from .ai_failure import ImageResponseError, failure_response
 from .ssrf import safe_get
@@ -125,6 +126,7 @@ async def _probe_image_size(image_ref: str) -> tuple[int, int] | None:
         return None
 
 
+initialize_receipts()
 app = FastAPI(title="OpenVisual AI Service", version="0.1.0")
 
 # Internal worker-only text parsing; no model provider is used by this route.
@@ -188,6 +190,7 @@ async def health():
         "generationRevision": GENERATION_REVISION,
         "visualCheckRevision": VISUAL_CHECK_REVISION,
         "providerRetryRevision": PROVIDER_RETRY_REVISION,
+        "studioImageReceiptRevision": receipt_revision(),
         "studioEditRevision": STUDIO_EDIT_REVISION,
         "studioImageToolsRevision": STUDIO_IMAGE_TOOLS_REVISION,
         "studioDecompositionRevision": STUDIO_DECOMPOSITION_REVISION,
@@ -390,19 +393,26 @@ async def parse_manual(
 async def generate(
     req: GenerateRequest,
     provider: ImageProvider = Depends(resolve_image_provider),
+    request: Request = None,
 ):
-    return await _generate(req, provider)
+    return await run_with_receipt(request, lambda: _generate(req, provider))
+
+
+@app.get("/v1/studio/image-receipt", include_in_schema=False)
+def studio_image_receipt(request: Request):
+    return read_receipt(request)
 
 
 @app.post("/v1/studio/edit", response_model=GenerateResponse, response_model_exclude_none=True)
 async def studio_edit(
     req: StudioEditRequest,
     provider: ImageProvider = Depends(resolve_image_provider),
+    request: Request = None,
 ):
     if req.imageTool:
-        return await run_studio_image_tool(req, provider)
+        return await run_with_receipt(request, lambda: run_studio_image_tool(req, provider))
     prepare_studio_edit(req, provider)
-    return await _generate(req.generation, provider, studio_source=req.imageUrl)
+    return await run_with_receipt(request, lambda: _generate(req.generation, provider, studio_source=req.imageUrl))
 
 
 async def _generate(req: GenerateRequest, provider: ImageProvider, *, studio_source: str | None = None):

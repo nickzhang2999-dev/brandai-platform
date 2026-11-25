@@ -2,6 +2,9 @@
 export interface AiCallOptions {
   /** Server-owned task identity; forwarded only if its shape is valid. */
   requestId?: string;
+  /** Original Studio deadline (Unix milliseconds), shared with image retention. */
+  deadlineAt?: number;
+  beforeStudioImagePost?: (base: string, recoveryKey: string) => Promise<void>;
   signal?: AbortSignal;
   maxResponseBytes?: number;
   /** Server-only product boundary; never accepted from browser job payloads. */
@@ -23,6 +26,8 @@ export function withinAiDeadline<T>(promise: Promise<T>, signal: AbortSignal): P
   });
 }
 
+export class UnreadableAiResponse extends Error {}
+
 export async function readBoundedAiJson<T>(response: Response, signal: AbortSignal, maxBytes: number): Promise<T> {
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 128 * 1024 * 1024) {
     void response.body?.cancel().catch(() => undefined);
@@ -33,14 +38,19 @@ export async function readBoundedAiJson<T>(response: Response, signal: AbortSign
     void response.body?.cancel().catch(() => undefined);
     throw new Error("图片服务返回内容超过限制，请联系管理员检查服务。");
   }
-  if (!response.body) throw new Error("图片服务返回空响应。");
+  if (!response.body) throw new UnreadableAiResponse("图片服务返回空响应。");
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
   try {
     for (;;) {
       signal.throwIfAborted();
-      const next = await withinAiDeadline(reader.read(), signal);
+      // A closed native socket exposes Node's ECONNRESET/Error, whereas fetch may
+      // surface TypeError. Both mean the response body was lost after submission.
+      const next = await withinAiDeadline(reader.read(), signal).catch(() => {
+        signal.throwIfAborted();
+        throw new UnreadableAiResponse("图片服务响应传输中断。");
+      });
       if (next.done) break;
       size += next.value.byteLength;
       if (size > maxBytes) throw new Error("图片服务返回内容超过限制，请联系管理员检查服务。");
@@ -48,7 +58,7 @@ export async function readBoundedAiJson<T>(response: Response, signal: AbortSign
     }
     signal.throwIfAborted();
     try { return JSON.parse(Buffer.concat(chunks, size).toString("utf8")) as T; }
-    catch { throw new Error("图片服务返回格式无法识别，请联系管理员检查服务。"); }
+    catch { throw new UnreadableAiResponse("图片服务返回格式无法识别，请联系管理员检查服务。"); }
   } finally {
     // Cancel even when the upstream stream ignores AbortSignal. Do not await
     // a broken source's cancel promise after the request deadline has passed.
