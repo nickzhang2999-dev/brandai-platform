@@ -1,6 +1,6 @@
 import { createStudioBoundedQueue } from "./studio-bounded-queue";
 import type { GenerateJobData } from "./workers/generate.worker";
-const producer = createStudioBoundedQueue("generate");
+const producer = createStudioBoundedQueue("generate", { waitForColdStart: true });
 export async function enqueueStudioGeneration(requestId: string, data: GenerateJobData): Promise<boolean> {
   return producer.run(async (queue, assertCurrent) => {
     // A pre-provider DB conflict can complete/fail the Bull job while its
