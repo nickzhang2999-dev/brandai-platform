@@ -1,5 +1,6 @@
 "use client";
 
+import { trackStudioReceipt, trackStudioSubmit } from "./owned-delivery-observation";
 import { generationReadFailure } from "./owned-generation-read-policy";
 
 import { useBoundedTaskPoll, TASK_POLL_PAUSED_MESSAGE } from "../../lib/use-bounded-task-poll";
@@ -39,7 +40,7 @@ import { nextOwnedImagePosition } from "./owned-image-placement";
 import { createOwnedEditorApi, type Material, type UploadTask, type GenerationTask, type PersistentImage, type GenerationInput, type WorkflowInput, type DecompositionTask } from "./owned-editor-api";
 
 type InitialTask = { kind: "STUDIO_UPLOAD" | "STUDIO_GENERATION" | "STUDIO_DECOMPOSITION"; id: string };
-export type OwnedEditorClientProps = { workspaceId: string; projectId: string; userId: string; readOnly?: boolean; projectName?: string; initialTask?: InitialTask; initialSurface?: "canvas" | "writing"; writingTaskId?: string };
+export type OwnedEditorClientProps = { deliveryTiming?: boolean; workspaceId: string; projectId: string; userId: string; readOnly?: boolean; projectName?: string; initialTask?: InitialTask; initialSurface?: "canvas" | "writing"; writingTaskId?: string };
 type ProductApi = ReturnType<typeof createOwnedEditorApi>;
 const { decodeDocument: decodeOwnedCanvas, encodeDocument: encodeOwnedCanvas, serializeDocument: serializeOwnedDocument,
   exportPng: exportOwnedPng, exportSvg: exportOwnedSvg, getBounds: getOwnedBounds } = ownedCanvasEngine;
@@ -50,7 +51,7 @@ const mergeTask = <T,>(items: T[], item: T, identity: (value: T) => string) => [
 const button = "rounded-full border border-border bg-card px-3 py-2 text-xs text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40";
 const headerButton = "shrink-0 whitespace-nowrap rounded-full border border-border bg-card px-2 py-2 text-xs text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40 sm:px-3";
 
-export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = false, projectName = "创作项目", initialTask, initialSurface = "canvas", writingTaskId }: OwnedEditorClientProps) {
+export function OwnedEditorClient({ deliveryTiming, workspaceId, projectId, userId, readOnly = false, projectName = "创作项目", initialTask, initialSurface = "canvas", writingTaskId }: OwnedEditorClientProps) {
   const [document, setDocument] = useState<OwnedCanvasDocument | null>(null);
   const [view, setView] = useState<EditorDocumentView | null>(null);
   const [saveState, setSaveState] = useState<SaveState>("loading");
@@ -334,6 +335,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
       if (values[1].status === "fulfilled" && values[1].value) setUploads(values[1].value);
       const readError = values[2].status === "rejected" ? values[2].reason : undefined;
       if (values[2].status === "fulfilled") {
+        for (const task of values[2].value) trackStudioReceipt(task.mutationId, task.requestId, task.results);
         setGenerations(values[2].value);
         if (!psdSelectionRestored.current) {
           const selection = ownedPsdSelection(generationOperation.current ?? values[2].value[0]);
@@ -857,6 +859,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
   }
 
   async function submitGeneration() {
+    const clickTick = performance.now();
     const api = apiRef.current;
     if (!api || !writableRef.current || generationBusy.current || generationRecoveryBlocked) return;
     generationBusy.current = true; setSubmitting(true);
@@ -879,6 +882,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
         const intent = recoveryRef.current.store({ mode: current.mode, input: { projectId, mutationId: crypto.randomUUID(), prompt: savedDraft.prompt.trim(), sizeSelection: { ratioKey: savedDraft.ratio, resolutionTier: savedDraft.quality }, workflowRevision: current.revision, documentRevision: saved.revision,
           ...(preparePsd && current.mode === "generate" ? psdLayerMode === "AUTO" ? { psdLayerMode: "AUTO" as const } : { psdLayerMode: "MANUAL" as const, psdLayerCount } : {}),
           ...(needsFrame ? { outputFrameId: savedDraft.outputFrameId } : {}) } });
+        trackStudioSubmit(intent.input.mutationId, clickTick);
         generationOperation.current = intent.input; generationMode.current = intent.mode;
         setPendingGeneration(true);
       }
@@ -963,7 +967,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
   </>;
   const pngExportControl = <select aria-label="PNG 导出像素" className={button} value={pngResolution} onChange={event => setPngResolution(event.target.value === "source" ? "source" : Number(event.target.value) as 1 | 2)}><option value="source">原图像素（至少 1×）</option><option value="1">1× 画布像素</option><option value="2">2× 画布像素</option></select>;
   const saveLabel = saveState === "loading" ? "正在打开…" : saveState === "saving" ? "正在保存…" : saveState === "dirty" ? "有未保存修改" : saveState === "conflict" ? "保存冲突" : saveState === "error" ? "保存未确认" : view?.updatedAt ? "已保存 " + new Date(view.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "已打开";
-  return <div className="flex h-dvh min-h-0 overflow-hidden bg-background text-foreground" data-testid="owned-editor" data-save-state={saveState} data-document-revision={view?.revision} data-surface={surface}>
+  return <div className="flex h-dvh min-h-0 overflow-hidden bg-background text-foreground" data-testid="owned-editor" data-delivery-timing={deliveryTiming ? "enabled" : undefined} data-save-state={saveState} data-document-revision={view?.revision} data-surface={surface}>
     <div className={`${writingLayout.canvas} ${surface === "writing" ? writingExpanded ? writingLayout.hidden : writingLayout.dockedCanvas : ""}`}>
     <header className="flex min-h-14 shrink-0 flex-wrap items-center gap-1 border-b border-border bg-card px-2 sm:gap-3 sm:px-5">
       <picture className="shrink-0">

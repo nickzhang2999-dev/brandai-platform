@@ -351,6 +351,7 @@ export async function runGenerateJob(
   // Resolve product ownership by DB generation ID, never a Redis-only marker.
   const studioRow = await prisma.studioGenerationRequest.findUnique({ where: { generationId: job.data.generationId } });
   const studio = studioRow ? await claimStudioGeneration(studioRow) : null;
+  if (studio) traceStudioDelivery("generation_claimed", studio.id);
   if (studioRow && !studio) return { generationId: studioRow.generationId, versionIds: [] };
   if (studio) {
     job.data = studio.jobData as unknown as GenerateJobData;
@@ -1346,6 +1347,7 @@ export async function runGenerateJob(
           });
           targetSignal.throwIfAborted();
           const targetTransport = { ...transport, signal: targetSignal };
+          if (studio) traceStudioDelivery("model_request_started", studio.id);
           const result = studioEdit
             ? StudioEditResponse.parse(await ai.studioEdit(StudioEditRequest.parse({ imageUrl: studioEdit.imageUrl, generation: request, ...(job.data.studioImageTool ? { imageTool: job.data.studioImageTool } : {}) }), targetTransport))
             : GenerateResponse.parse(await ai.generate(request, targetTransport));
@@ -1429,6 +1431,7 @@ export async function runGenerateJob(
     let raw: unknown;
     try {
       controller.signal.throwIfAborted();
+      if (studio) traceStudioDelivery("model_request_started", studio.id);
       raw = await ai.generate(request, transport);
       if (studio) traceStudioDelivery("model_response_received", studio.id);
       controller.signal.throwIfAborted();

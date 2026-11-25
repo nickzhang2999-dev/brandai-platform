@@ -10,6 +10,7 @@ import httpx
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 
+from .delivery_timing import ImageTimingScope
 from .config import settings
 from .ai_failure import ImageResponseError, failure_response
 from .ssrf import safe_get
@@ -126,6 +127,7 @@ async def _probe_image_size(image_ref: str) -> tuple[int, int] | None:
 
 
 app = FastAPI(title="OpenVisual AI Service", version="0.1.0")
+app.add_middleware(ImageTimingScope)
 
 # Internal worker-only text parsing; no model provider is used by this route.
 from .studio_writing_schemas import StudioWritingParseRequest, StudioWritingParseResponse

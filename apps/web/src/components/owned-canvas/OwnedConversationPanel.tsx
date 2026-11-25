@@ -1,5 +1,6 @@
 "use client";
 
+import { trackStudioSubmit, trackStudioReceipt } from "./owned-delivery-observation";
 import { forwardRef, useCallback, useEffect, useId, useImperativeHandle, useRef, useState, type ReactNode } from "react";
 import { GenerationAspectRatioKey, StudioConversationInput, StudioConversationMessage, type StudioConversationDraftInput, type StudioConversationReference, type StudioConversationMessage as Message } from "@brandai/contracts";
 import type { z } from "zod";
@@ -67,7 +68,7 @@ export const OwnedConversationPanel = forwardRef<OwnedConversationHandle, Props>
     acceptedOrder.current.set(message.messageId, order);
     const current = [...messagesRef.current.filter(value => value.messageId !== message.messageId), message].sort((a, b) => a.createdAt.localeCompare(b.createdAt)).slice(-200);
     messagesRef.current = current; setMessages(current);
-    if (message.generation) latest.current.onGeneration(message.generation);
+    if (message.generation) { trackStudioReceipt(message.mutationId, message.generation.requestId, message.generation.results); latest.current.onGeneration(message.generation); }
   }, []);
   const acceptGeneration = useCallback((messageId: string, generation: GenerationTask) => {
     const current = messagesRef.current.find(message => message.messageId === messageId);
@@ -123,6 +124,7 @@ export const OwnedConversationPanel = forwardRef<OwnedConversationHandle, Props>
   const send = useCallback(async (home?: { mutationId: string }, decision?: { messageId: string; optionId: string; kind: ConversationDecisionKind }) => {
     const context = api.current;
     if (!context || !readyRef.current || latest.current.readOnly || composing.current || sendBusy.current) return;
+    const startedAt = performance.now();
     sendBusy.current = true; setSending(true);
     try {
       if (decision && pending.current) throw new Error("请先检查上次提交，再选择这条需求的处理方式。");
@@ -141,6 +143,7 @@ export const OwnedConversationPanel = forwardRef<OwnedConversationHandle, Props>
         operation = decision && source
           ? ownedConversationDecisionInput(source, decision.optionId, decision.kind, prepared, crypto.randomUUID(), selectedReferenceIds)
           : StudioConversationInput.parse({ ...structuredClone(draftRef.current), ...prepared, selectedReferenceIds, ...(projectContextRevision === undefined ? {} : { projectContextRevision }), mutationId: home?.mutationId ?? crypto.randomUUID(), ...(home ? { homeStart: true } : {}) });
+        trackStudioSubmit(operation.mutationId, startedAt);
         // Persist before sending. A storage error must not lead to an untracked paid request.
         localStorage.setItem(keyRef.current, JSON.stringify(operation)); pending.current = operation; setUnknown(true);
       }

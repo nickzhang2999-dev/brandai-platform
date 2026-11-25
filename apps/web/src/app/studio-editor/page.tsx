@@ -1,3 +1,4 @@
+import { studioTimingEnabled } from "@/lib/studio-delivery-trace";
 import { redirect } from "next/navigation";
 import { prisma } from "@brandai/db";
 import { ApiException } from "@/lib/api";
@@ -32,7 +33,7 @@ export default async function OwnedEditorPage({ searchParams }: {
     const previousWriting = !initialTask && !["canvas", "writing"].includes(query.get("surface") ?? "")
       ? await prisma.studioWritingDocument.findUnique({ where: { workspaceId_projectId_userId: { workspaceId, projectId, userId: user.id } }, select: { id: true } }) : null;
     const initialSurface = !initialTask && (query.get("surface") === "writing" || previousWriting) ? "writing" : "canvas";
-    return <OwnedEditorClient workspaceId={workspaceId} projectId={projectId} userId={user.id}
+    return <OwnedEditorClient deliveryTiming={studioTimingEnabled()} workspaceId={workspaceId} projectId={projectId} userId={user.id}
       readOnly={document.readOnly} projectName={project?.name ?? "项目画布"} initialTask={initialTask} initialSurface={initialSurface} writingTaskId={query.get("writingTaskId") ?? undefined} />;
   } catch (error) {
     if (error instanceof ApiException || error instanceof EditorDocumentError) {

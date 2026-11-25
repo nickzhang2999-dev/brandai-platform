@@ -26,6 +26,8 @@ from typing import Any
 from urllib.parse import urljoin, urlsplit
 
 import httpx
+
+from ..delivery_timing import image_http_client
 from bs4 import BeautifulSoup
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
@@ -463,7 +465,7 @@ class HttpImageProvider(ImageProvider):
         kwargs: dict[str, Any] = {"timeout": settings.http_timeout}
         if self._transport is not None:
             kwargs["transport"] = self._transport
-        return httpx.AsyncClient(**kwargs)
+        return image_http_client(**kwargs)
 
     @_retry
     async def generate(
