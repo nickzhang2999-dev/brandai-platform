@@ -1,3 +1,4 @@
+import { traceStudioDelivery } from "../studio-delivery-trace";
 import { createHash, randomUUID } from "node:crypto";
 import { Worker, type Job } from "bullmq";
 import { prisma, Prisma } from "@brandai/db";
@@ -44,6 +45,7 @@ export async function runStudioGenerationArtifactJob(job: Job<{ outputId: string
     return found;
   });
   if (!row) return;
+  traceStudioDelivery("worker_claimed", row.requestId, outputId);
   const signal = AbortSignal.timeout(Math.max(1, Math.min(STUDIO_ARTIFACT_RUN_MS, row.expiresAt.getTime() - Date.now(), row.output.expiresAt.getTime() - Date.now())));
   try {
     await prisma.$transaction(tx => requireArtifactWrite(tx, row.workspaceId, row.projectId, row.userId));
@@ -115,7 +117,7 @@ export async function runStudioGenerationArtifactJob(job: Job<{ outputId: string
     const stored = await artifactDeadline(uploadBuffer(final.body, final.mimeType, prefix, signal, objectKey), signal);
     const cleanBase = exact || processing.watermarkOverlays.length ? await storeStudioCleanBase(sized?.body ?? raw, { workspaceId: row.workspaceId, projectId: row.projectId, outputId }, signal) : null;
     signal.throwIfAborted();
-    const check = await prisma.$transaction(async tx => {
+    const { check, assetId } = await prisma.$transaction(async tx => {
       await requireArtifactWrite(tx, row.workspaceId, row.projectId, row.userId);
       if (projectContext) await assertStudioProjectContextSources(tx, row.workspaceId, row.projectId, projectContext, true);
       if (exact) await lockStudioExactPublicationSources(tx, row.workspaceId, row.projectId, exact);
@@ -164,8 +166,9 @@ export async function runStudioGenerationArtifactJob(job: Job<{ outputId: string
         ...(cleanBase ? { params: { ...params, studioPostprocess: { ...processing, cleanBase } } as Prisma.InputJsonValue } : {}) } });
       const check = await registerStudioGenerationCompliance(tx, row.workspaceId, versionId);
       signal.throwIfAborted();
-      return check;
+      return { check, assetId: asset.id };
     }, { timeout: 10_000 });
+    traceStudioDelivery("asset_persisted", row.requestId, outputId, assetId);
     // The committed task is the outbox. A queue outage cannot roll back a
     // published picture or cause the image provider to be called again.
     if (check.status === "PENDING" && check.jobId) await enqueueStudioCompliance(check.id, check.jobId).catch(() => false);
@@ -199,8 +202,10 @@ export async function sweepStudioGenerationArtifacts() {
     // A dead worker loses its DB claim. A late writer still must match token.
     await prisma.studioGeneratedMaterial.updateMany({ where: { status: "RUNNING", startedAt: { lt: new Date(Date.now() - STUDIO_ARTIFACT_RUN_MS - 30_000) }, expiresAt: { gt: new Date() } },
       data: { status: "PENDING", attemptToken: null } });
-    const pending = await prisma.studioGeneratedMaterial.findMany({ where: { status: "PENDING", expiresAt: { gt: new Date() } }, select: { outputId: true, expiresAt: true }, take: 100 });
-    await Promise.all(pending.map(row => enqueueStudioArtifact(row.outputId, row.expiresAt)));
+    const pending = await prisma.studioGeneratedMaterial.findMany({ where: { status: "PENDING", expiresAt: { gt: new Date() } }, select: { outputId: true, requestId: true, expiresAt: true }, take: 100 });
+    await Promise.all(pending.map(async row => {
+      if (await enqueueStudioArtifact(row.outputId, row.expiresAt)) traceStudioDelivery("artifact_enqueue", row.requestId, row.outputId);
+    }));
     const missing = await prisma.studioGenerationRequest.findMany({ where: { status: "SUCCEEDED", outputs: { some: { imageUrl: { not: null }, expiresAt: { gt: new Date() }, artifact: null } } }, select: { id: true }, take: 10 });
     // A bounded batch also keeps permission failures/Redis outages from making
     // a serial recovery sweep take longer than the attempt's entire lifetime.

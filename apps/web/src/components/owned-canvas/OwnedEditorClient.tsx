@@ -1,3 +1,4 @@
+import { generationReadFailure } from "./owned-generation-read-policy";
 "use client";
 
 import { useBoundedTaskPoll, TASK_POLL_PAUSED_MESSAGE } from "../../lib/use-bounded-task-poll";
@@ -121,6 +122,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
   const [pendingGeneration, setPendingGeneration] = useState(false);
   const [generationRecoveryBlocked, setGenerationRecoveryBlocked] = useState(false);
   const [pendingUpload, setPendingUpload] = useState(false);
+  const readRetry = useRef({ failures: 0, earliest: 0, throttleUntil: 0, permanent: false, stopped: false });
   const [pollPaused, setPollPaused] = useState(false);
   const hasActiveGeneration = generations.some(activeGeneration);
   const generationPoll = useBoundedTaskPoll({ taskKey: hasActiveGeneration ? JSON.stringify([workspaceId, userId, projectId]) : null, active: hasActiveGeneration });
@@ -316,12 +318,20 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
   const refresh = useCallback(async (quiet = false) => {
     const api = apiRef.current;
     if (!api || refreshBusy.current) return;
+    const retry = readRetry.current;
+    if (Date.now() < retry.throttleUntil) {
+      if (!quiet) setNotice("服务正在限制查询，请稍后刷新任务。");
+      return;
+    }
+    if (quiet && (retry.stopped || Date.now() < retry.earliest)) return;
+    if (!quiet) { retry.failures = 0; retry.stopped = false; }
     refreshBusy.current = true; if (!quiet) { setRefreshing(true); resumeGenerationPoll(); setPollPaused(false); }
     try {
       const values = await Promise.allSettled([quiet ? undefined : api.listMaterials(), quiet ? undefined : api.listUploads(), api.listGenerations()]);
       if (!alive.current || apiRef.current !== api) return;
       if (values[0].status === "fulfilled" && values[0].value) setMaterials(values[0].value);
       if (values[1].status === "fulfilled" && values[1].value) setUploads(values[1].value);
+      const readError = values[2].status === "rejected" ? values[2].reason : undefined;
       if (values[2].status === "fulfilled") {
         setGenerations(values[2].value);
         if (!psdSelectionRestored.current) {
@@ -334,9 +344,20 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
         }
       }
       const failure = values.find(value => value.status === "rejected");
-      if (failure?.status === "rejected") { setNotice(messageOf(failure.reason)); if (quiet) setPollPaused(true); }
+      if (readError) {
+        const decision = generationReadFailure(readError, ++retry.failures, generationPollRemaining());
+        retry.earliest = Date.now() + decision.delay;
+        retry.stopped = decision.stop;
+        retry.permanent = decision.permanent;
+        retry.throttleUntil = readError instanceof NovartApiError && readError.status === 429
+          ? Date.now() + (readError.retryAfterMs ?? 0) : 0;
+        if (decision.stop) { setNotice(decision.message); setPollPaused(true); }
+      } else {
+        retry.failures = 0; retry.earliest = 0; retry.throttleUntil = 0; retry.stopped = false; retry.permanent = false;
+        if (failure?.status === "rejected") setNotice(messageOf(failure.reason));
+      }
     } finally { if (apiRef.current === api) { refreshBusy.current = false; if (alive.current) setRefreshing(false); } }
-  }, [clearGenerationIntent, resumeGenerationPoll]);
+  }, [clearGenerationIntent, resumeGenerationPoll, generationPollRemaining]);
 
   const openExistingTask = useCallback(async (kind: InitialTask["kind"], id: string) => {
     const api = apiRef.current;
@@ -353,6 +374,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
   }, [showSurface]);
 
   useEffect(() => {
+    readRetry.current = { failures: 0, earliest: 0, throttleUntil: 0, permanent: false, stopped: false };
     alive.current = true; const controller = new AbortController();
     const api = createOwnedEditorApi(workspaceId, projectId, userId, { signal: controller.signal }); apiRef.current = api;
     const workflowSession = createOwnedWorkflowSession(api, { canWrite: () => writableRef.current, saveDocument: async () => {
@@ -554,14 +576,14 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
   }, [workspaceId, userId, projectId, saveSettled, save, send, openExistingTask, flushDraft, draftConfirmed, insertImage, openWriting, showSurface]);
 
   useEffect(() => {
-    if (!hasActiveGeneration || pollPaused || generationPollTimedOut) return;
+    if (!hasActiveGeneration || pollPaused || generationPollTimedOut || readRetry.current.stopped) return;
     let stopped = false, timer: ReturnType<typeof setTimeout>;
     const schedule = () => {
-      if (stopped || generationPollExpired()) return;
+      if (stopped || readRetry.current.stopped || generationPollExpired()) return;
       timer = setTimeout(async () => {
         if (!stopped && !generationPollExpired() && !window.document.hidden) await refresh(true);
         schedule();
-      }, Math.min(3500, Math.max(1, generationPollRemaining())));
+      }, Math.min(readRetry.current.failures && !window.document.hidden ? Math.max(100, readRetry.current.earliest - Date.now()) : 3500, Math.max(1, generationPollRemaining())));
     };
     schedule();
     return () => { stopped = true; clearTimeout(timer); };
@@ -569,7 +591,9 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
   useEffect(() => {
     if (!hasActiveGeneration) return;
     const foreground = () => {
-      if (window.document.hidden) return;
+      const retry = readRetry.current;
+      if (window.document.hidden || retry.permanent || Date.now() < retry.throttleUntil) return;
+      retry.failures = 0; retry.stopped = false; retry.earliest = 0;
       resumeGenerationPoll(); setPollPaused(false); void refresh(true);
     };
     window.document.addEventListener("visibilitychange", foreground);
@@ -990,7 +1014,7 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, readOnly = f
           {(pendingGeneration || pendingUpload || pendingImageTool || generationRecoveryBlocked) && <button className="text-left text-xs underline" onClick={() => setPanel("tasks")}>有尚未确认的操作，检查原任务</button>}
           <fieldset disabled={targetResolving} aria-busy={targetResolving} hidden={panel === "tasks"} style={{ display: panel === "tasks" ? "none" : "block" }} className="min-h-0 min-w-0 flex-1"><OwnedConversationPanel ref={conversationRef} workspaceId={workspaceId} projectId={projectId} userId={userId} readOnly={!canEdit || pendingGeneration || generationRecoveryBlocked || pendingImageTool} isImagePlaced={image => !!document?.items.some(item => item.assetId === image.assetId && item.assetSha256 === image.assetSha256)} api={apiRef.current} outputFrameId={outputFrameId || undefined} prepare={prepareConversation} projectContext={{ enabled: projectContextEnabled, available: hasProjectContext(projectContextState?.server),
             blocked: projectContextEnabled && (projectContextState?.status !== "ready" || !!projectContextState?.busy || !!projectContextState?.dirty || !!projectContextState?.server?.issues.length),
-            onChange: setUseProjectContext, onOpen: () => setProjectContentOpen(true), prepare: prepareProjectContext }} selectedReferenceIds={references => ownedConversationSelectedIds(docRef.current, selectedIds, references)} onAddReference={() => setPanel("materials")} onAdvancedSettings={() => { setPanel("settings"); if (!workflowRef.current?.snapshot().dirty) void refreshWorkflow(); }} activity={layerTasks.map(task => <button key={task.requestId} className="flex w-full items-center justify-between rounded-2xl border border-border px-3 py-3 text-xs" onClick={() => setPanel("layers")}><span>图片分层 · {task.layerMode === "AUTO" ? "按内容" : `${task.layerCount} 层`}</span><span>{task.status === "SUCCEEDED" ? "查看图层" : task.status === "FAILED" ? "未完成 · 查看" : "处理中…"}</span></button>)} onNotice={setNotice} onGeneration={task => { setGenerations(current => mergeTask(current, task, value => value.requestId)); generationPoll.resume(); setPollPaused(false); }} onInsert={(image, sourceShapeId) => insertImage(image, undefined, undefined, sourceShapeId)} onInsertLayers={insertLayers} /></fieldset>
+            onChange: setUseProjectContext, onOpen: () => setProjectContentOpen(true), prepare: prepareProjectContext }} selectedReferenceIds={references => ownedConversationSelectedIds(docRef.current, selectedIds, references)} onAddReference={() => setPanel("materials")} onAdvancedSettings={() => { setPanel("settings"); if (!workflowRef.current?.snapshot().dirty) void refreshWorkflow(); }} activity={layerTasks.map(task => <button key={task.requestId} className="flex w-full items-center justify-between rounded-2xl border border-border px-3 py-3 text-xs" onClick={() => setPanel("layers")}><span>图片分层 · {task.layerMode === "AUTO" ? "按内容" : `${task.layerCount} 层`}</span><span>{task.status === "SUCCEEDED" ? "查看图层" : task.status === "FAILED" ? "未完成 · 查看" : "处理中…"}</span></button>)} onNotice={setNotice} onGeneration={task => { setGenerations(current => mergeTask(current, task, value => value.requestId)); }} onInsert={(image, sourceShapeId) => insertImage(image, undefined, undefined, sourceShapeId)} onInsertLayers={insertLayers} /></fieldset>
           {panel === "tasks" && <section aria-label="项目任务记录" className="min-h-0 flex-1 space-y-3 overflow-y-auto">{taskHistory}</section>}
         </div>
       </aside>

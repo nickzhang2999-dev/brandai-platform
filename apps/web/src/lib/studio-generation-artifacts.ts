@@ -1,3 +1,4 @@
+import { traceStudioDelivery } from "./studio-delivery-trace";
 import { prisma, type Prisma } from "@brandai/db";
 import { lockTaskWorkspace } from "./workspace-task-lock";
 import { StudioGenerationRetryInput } from "@brandai/contracts";
@@ -69,7 +70,9 @@ export async function ensureStudioGenerationArtifacts(requestId: string) {
     }
     return pending;
   }, { timeout: 10_000 });
-  await Promise.all(rows.map(row => enqueueStudioArtifact(row.outputId, row.expiresAt)));
+  await Promise.all(rows.map(async row => {
+    if (await enqueueStudioArtifact(row.outputId, row.expiresAt)) traceStudioDelivery("artifact_enqueue", requestId, row.outputId);
+  }));
 }
 
 /** Explicit retry never changes Generation, quota, or the provider request. */

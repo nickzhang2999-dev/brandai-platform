@@ -1,7 +1,7 @@
 import { EditorDocumentSaveInput, EditorDocumentView, WorkbenchSession } from "@brandai/contracts";
 
 export class NovartApiError extends Error {
-  constructor(message: string, public status: number | null, public code?: string, public uncertain = false) { super(message); }
+  constructor(message: string, public status: number | null, public code?: string, public uncertain = false, public retryAfterMs?: number) { super(message); }
 }
 
 /** Shared by the reviewed shell and native-editor adapter. Auth is the HttpOnly session cookie. */

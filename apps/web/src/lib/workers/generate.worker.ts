@@ -1,3 +1,4 @@
+import { traceStudioDelivery } from "../studio-delivery-trace";
 import { buildStudioVisualFidelitySnapshot, STUDIO_VISUAL_FIDELITY_PROMPT } from "@/lib/studio-visual-fidelity";
 import { createWorkerDeadline, generationRunBudgetMs, settleWorkerCleanup, GENERATION_TARGET_MS } from "../worker-deadline";
 import { inlineStudioGenerationReferences, studioProviderParams } from "@/lib/studio-generation-references";
@@ -1348,6 +1349,7 @@ export async function runGenerateJob(
           const result = studioEdit
             ? StudioEditResponse.parse(await ai.studioEdit(StudioEditRequest.parse({ imageUrl: studioEdit.imageUrl, generation: request, ...(job.data.studioImageTool ? { imageTool: job.data.studioImageTool } : {}) }), targetTransport))
             : GenerateResponse.parse(await ai.generate(request, targetTransport));
+          if (studio) traceStudioDelivery("model_response_received", studio.id);
           targetSignal.throwIfAborted();
           if (settled) {
             console.warn(
@@ -1428,6 +1430,7 @@ export async function runGenerateJob(
     try {
       controller.signal.throwIfAborted();
       raw = await ai.generate(request, transport);
+      if (studio) traceStudioDelivery("model_response_received", studio.id);
       controller.signal.throwIfAborted();
     } catch (genErr) {
       await recordUsage({

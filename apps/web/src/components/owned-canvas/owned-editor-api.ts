@@ -1,3 +1,4 @@
+import { retryAfterMs } from "./owned-generation-read-policy";
 import { z } from "zod";
 import { StudioGenerationInput, StudioGenerationView, StudioGenerationComplianceView, StudioMaterial, StudioMaterialUploadView, StudioWorkflowView, StudioWorkflowAssets, StudioWorkflowSaveInput, StudioGeneratedPsdView } from "@brandai/contracts";
 import { createDocumentSession, createNovartApiClient, NovartApiError } from "../../lib/novart-api-client";
@@ -50,8 +51,9 @@ export function createOwnedEditorApi(workspaceId: string, projectId: string, use
     const writing = !["GET", "HEAD"].includes(init.method ?? "GET");
     try {
       const response = await scopedFetch(path, { ...init, signal: controller.signal });
-      const body = await response.json().catch(() => { throw new NovartApiError(controller.signal.aborted ? "响应超时，请刷新任务确认；已提交的任务会继续处理。" : "服务响应暂时无法读取，请刷新任务确认。", controller.signal.aborted || options.signal?.aborted ? null : response.status, undefined, writing); });
-      if (!response.ok) throw new NovartApiError(typeof body?.error === "string" ? body.error : "操作未完成，请重试。", response.status, body?.code, writing && response.status >= 500);
+      const retryDelay = response.status === 429 ? retryAfterMs(response.headers.get("Retry-After")) : undefined;
+      const body = await response.json().catch(() => { throw new NovartApiError(controller.signal.aborted ? "响应超时，请刷新任务确认；已提交的任务会继续处理。" : "服务响应暂时无法读取，请刷新任务确认。", controller.signal.aborted || options.signal?.aborted ? null : response.status, undefined, writing, retryDelay); });
+      if (!response.ok) throw new NovartApiError(typeof body?.error === "string" ? body.error : "操作未完成，请重试。", response.status, body?.code, writing && response.status >= 500, retryDelay);
       const parsed = schema.safeParse(body);
       if (!parsed.success) throw new NovartApiError("服务结果不完整，请刷新确认，原内容仍保留。", response.status, "INVALID_RECEIPT", writing);
       return parsed.data;
