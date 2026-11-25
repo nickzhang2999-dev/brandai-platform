@@ -19,6 +19,7 @@ DATABASE_URL=$(node --input-type=module -e '
 ')
 export DATABASE_URL
 case "${1:-}" in
+  guarded-command) shift; exec docker-entrypoint.sh "$@" ;;
   web) exec sh deploy/novart/start-web.sh ;;
   worker) exec pnpm -F web worker ;;
   *) exit 2 ;;
