@@ -3,10 +3,13 @@ import IORedis from "ioredis";
 import { queuePrefix } from "./queue-prefix";
 
 type QueueOperation = (queue: Queue, assertCurrent: () => void) => Promise<unknown>;
+const isReady = (connection: IORedis) => connection.status === "ready";
 type Dependencies = {
   createConnection?: () => IORedis;
   createQueue?: (name: string, connection: IORedis) => Queue;
   timeoutMs?: number;
+  /** Give the first local Redis handshake a chance to deliver interactive work. */
+  waitForColdStart?: boolean;
 };
 
 /** Postgres owns the durable intent. Redis is only a bounded delivery attempt.
@@ -20,7 +23,7 @@ export function createStudioBoundedQueue(name: string, dependencies: Dependencie
   }));
   const createQueue = dependencies.createQueue ?? ((queueName: string, connection: IORedis) => new Queue(queueName, { connection, prefix: queuePrefix }));
   const timeoutMs = Math.max(1, Math.min(2000, dependencies.timeoutMs ?? 1500));
-  type State = { connection: IORedis; queue?: Queue; retired: boolean };
+  type State = { connection: IORedis; queue?: Queue; retired: boolean; coldReady?: Promise<boolean> };
   let state: State | undefined;
   let closed = false;
 
@@ -38,6 +41,25 @@ export function createStudioBoundedQueue(name: string, dependencies: Dependencie
       const connection = createConnection();
       connection.on("error", () => undefined);
       state = { connection, retired: false };
+      if (dependencies.waitForColdStart && (connection.status === "connecting" || connection.status === "connect")) {
+        // One wait per new connection, shared by simultaneous submissions. A
+        // late handshake can serve the next sweep, never a timed-out caller.
+        state.coldReady = new Promise(resolve => {
+          const finish = (ready: boolean) => {
+            clearTimeout(timer);
+            connection.off("ready", onReady);
+            connection.off("close", onClose);
+            connection.off("end", onClose);
+            resolve(ready);
+          };
+          const onReady = () => finish(true);
+          const onClose = () => finish(false);
+          const timer = setTimeout(onClose, Math.min(250, timeoutMs));
+          connection.once("ready", onReady);
+          connection.once("close", onClose);
+          connection.once("end", onClose);
+        });
+      }
     }
     return state;
   }
@@ -45,12 +67,16 @@ export function createStudioBoundedQueue(name: string, dependencies: Dependencie
   return {
     async run(operation: QueueOperation): Promise<boolean> {
       if (closed) return false;
+      const deadline = performance.now() + timeoutMs;
       let current: State;
       try { current = connectedState(); } catch { return false; }
-      if (current.connection.status !== "ready") {
-        if (current.connection.status === "end") retire(current);
-        return false;
+      if (!isReady(current.connection)) {
+        if (current.connection.status === "end") { retire(current); return false; }
+        if (!current.coldReady || !await current.coldReady) return false;
+        if (closed || current.retired || state !== current || !isReady(current.connection)) return false;
       }
+      const remaining = deadline - performance.now();
+      if (remaining <= 0) return false;
       let timer: ReturnType<typeof setTimeout> | undefined;
       let active = true;
       const assertCurrent = () => {
@@ -70,7 +96,7 @@ export function createStudioBoundedQueue(name: string, dependencies: Dependencie
           return true;
         })();
         const timeout = new Promise<false>(resolve => {
-          timer = setTimeout(() => { active = false; retire(current); resolve(false); }, timeoutMs);
+          timer = setTimeout(() => { active = false; retire(current); resolve(false); }, remaining);
         });
         return await Promise.race([work, timeout]);
       } catch { retire(current); return false; }

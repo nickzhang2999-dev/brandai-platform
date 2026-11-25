@@ -1,5 +1,5 @@
 import { createStudioBoundedQueue } from "./studio-bounded-queue";
-const producer = createStudioBoundedQueue("studio-generation-artifact");
+const producer = createStudioBoundedQueue("studio-generation-artifact", { waitForColdStart: true });
 
 /** Postgres is the outbox. Redis being offline cannot leave HTTP waiting forever. */
 export async function enqueueStudioArtifact(outputId: string, expiresAt: Date): Promise<boolean> {

@@ -69,6 +69,40 @@ describe("bounded durable queue cold start and recovery (no network)", () => {
     for (let i = 0; i < 3; i++) expect(await h.producer.run(queue => queue.add("upload", { taskId: "same-id" }, { jobId: "same-id" }))).toBe(true);
     expect(h.createConnection).toHaveBeenCalledOnce(); expect(h.createQueue).toHaveBeenCalledOnce(); expect(h.queues[0].add).toHaveBeenCalledTimes(3);
   });
+  it("delivers simultaneous interactive requests on the first healthy handshake", async () => {
+    const raw = new DelayedRedis(), operation = vi.fn().mockResolvedValue(undefined);
+    const producer = createStudioBoundedQueue("interactive", { createConnection: () => raw as any, waitForColdStart: true });
+    cleanups.push(producer.close);
+    const requests = Array.from({ length: 3 }, () => producer.run(operation));
+    expect(raw.listenerCount("ready")).toBe(1);
+    expect(raw.infoCalls).toBe(0);
+    raw.ready();
+    expect(await Promise.all(requests)).toEqual([true, true, true]);
+    expect(raw.infoCalls).toBe(1);
+    expect(operation).toHaveBeenCalledTimes(3);
+  });
+  it("leaves expired cold submissions to recovery even when Redis becomes ready later", async () => {
+    vi.useFakeTimers();
+    const raw = new DelayedRedis(), original = vi.fn().mockResolvedValue(undefined);
+    const producer = createStudioBoundedQueue("interactive", { createConnection: () => raw as any, waitForColdStart: true });
+    cleanups.push(producer.close);
+    const pending = producer.run(original);
+    await vi.advanceTimersByTimeAsync(250);
+    expect(await pending).toBe(false);
+    expect(raw.listenerCount("ready")).toBe(0);
+    raw.ready();
+    expect(await producer.run(async () => undefined)).toBe(true);
+    expect(original).not.toHaveBeenCalled();
+  });
+  it("does not send a waiting request when its producer closes", async () => {
+    const raw = new DelayedRedis(), operation = vi.fn().mockResolvedValue(undefined);
+    const producer = createStudioBoundedQueue("interactive", { createConnection: () => raw as any, waitForColdStart: true });
+    const pending = producer.run(operation);
+    raw.ready();
+    producer.close();
+    expect(await pending).toBe(false);
+    expect(operation).not.toHaveBeenCalled();
+  });
   it("retires failed initialization and builds a fresh connection on the next sweep", async () => {
     const h = harness({ firstReady: Promise.reject(new Error("INFO failed")) }), operation = vi.fn().mockResolvedValue(undefined);
     expect(await h.producer.run(operation)).toBe(false); expect(operation).not.toHaveBeenCalled(); expect(h.connections[0]!.disconnect).toHaveBeenCalledOnce();

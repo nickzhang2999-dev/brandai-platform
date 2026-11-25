@@ -1,5 +1,6 @@
-import { generationReadFailure } from "./owned-generation-read-policy";
 "use client";
+
+import { generationReadFailure } from "./owned-generation-read-policy";
 
 import { useBoundedTaskPoll, TASK_POLL_PAUSED_MESSAGE } from "../../lib/use-bounded-task-poll";
 
