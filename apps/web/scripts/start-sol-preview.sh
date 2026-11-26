@@ -18,6 +18,7 @@ DATABASE_URL=$(node --input-type=module -e '
   } catch { process.exitCode = 1; }
 ')
 export DATABASE_URL
+node /app/apps/web/scripts/verify-sol-database-role.mjs
 case "${1:-}" in
   guarded-command) shift; exec docker-entrypoint.sh "$@" ;;
   web) exec sh deploy/novart/start-web.sh ;;

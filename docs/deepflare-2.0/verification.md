@@ -50,3 +50,6 @@
 按仓库 preview-url 技能执行脚本（显式项目 slug=brandai-platform）得到 [分区候选地址](https://deepflare-2-0-foundation-claude-brandai-platform.geole.me/)。脚本没有取得 CDS 的已部署回执，随后 GET /api/health 返回 HTTP 404、页面标题为“预览未部署”。因此它不是可用产品预览。
 
 此批交付入口是 PR 与文档。配置独立运行环境仍是 F-08；不把其他分区的页面拿来当 2.0 预览。
+
+
+2026-11-26 · [普通画布恢复与测试库权限](logs/2026-11-26-普通画布恢复与测试库权限.md)。本地故障恢复对照已完成；CDS 复用时的凭据分配和网页出图体验待验证。

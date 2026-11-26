@@ -1543,7 +1543,9 @@ export function createGenerateWorker(concurrency = 2) {
   const worker = new Worker<GenerateJobData, GenerateJobResult>(
     "generate",
     runGenerateJob,
-    { connection, prefix: queuePrefix, concurrency },
+    // A lost image worker leaves its job active until BullMQ detects the expired
+    // lock. Scan more often without shortening a live worker's renewable lease.
+    { connection, prefix: queuePrefix, concurrency, stalledInterval: 5_000 },
   );
   worker.on("failed", (job, err) => {
     console.error(`[generate] job ${job?.id} failed:`, err);

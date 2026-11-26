@@ -811,3 +811,6 @@ Prepared the project-owned one-time production model migration and real provider
 
 以 main c2a7196 承接工作单基础和研发蓝图。当前功能入口与开关见 [DF-2 Sol 工程目录](../deepflare-2.0/README.md)。
 本地验收通过：合约/UI/Web 测试、AI 940 项、Web 类型检查与生产构建、发布脚本检查。独立 PostgreSQL 应用迁移后再次运行无待处理迁移，工作单数据库集成 10 项通过。
+
+
+2026-11-26 · [普通画布恢复与测试库权限](../deepflare-2.0/logs/2026-11-26-普通画布恢复与测试库权限.md)。本地故障恢复对照已完成；CDS 复用时的凭据分配和网页出图体验待验证。
