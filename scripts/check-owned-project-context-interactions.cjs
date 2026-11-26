@@ -11,7 +11,7 @@ exports.runOwnedProjectContextChecks=async({page,fixture,check,fixtureSettled,se
   const input=()=>page.getByRole('textbox',{name:'对话设计需求',exact:true});
   const ready=async()=>{await page.waitForFunction(()=>document.querySelector('[data-testid="owned-conversation"]')?.dataset.conversationReady==='true');};
   const savedDraft=async()=>{await page.waitForFunction(()=>document.querySelector('[data-testid="conversation-draft-status"]')?.dataset.saved==='true');};
-  const open=async()=>{if(!await sidebar().isVisible())await page.getByRole('button',{name:'项目内容',exact:true}).click();if(!await info().getAttribute('open'))await info().locator('summary').click();await info().getByRole('textbox',{name:'项目目标',exact:true}).waitFor();};
+  const open=async()=>{if(!await sidebar().isVisible())await page.getByRole('button',{name:'项目内容',exact:true}).click();if(await info().getAttribute('open')===null)await info().locator('summary').click();await info().getByRole('textbox',{name:'项目目标',exact:true}).waitFor();};
   const save=async()=>{const before=context.current(fixture.projectId).revision;await info().getByRole('button',{name:'保存项目资料',exact:true}).click();await fixtureSettled(()=>context.current(fixture.projectId).revision===before+1);await page.waitForFunction(()=>document.querySelector('[data-testid="owned-project-context"] summary')?.textContent?.includes('已保存'));};
   const close=async()=>{if(await sidebar().isVisible())await sidebar().getByRole('button',{name:'收起项目内容',exact:true}).click();};
 
@@ -105,7 +105,11 @@ exports.runOwnedProjectContextChecks=async({page,fixture,check,fixtureSettled,se
   context.configure({failRead:false});await info().getByRole('button',{name:'读取最新',exact:true}).click();await info().getByRole('textbox',{name:'项目目标',exact:true}).waitFor();check('failed-context-load-never-invents-or-saves-empty-project-facts');
 
   setStage('project-context-switch-project');context.configure({delayRead:600});const reads=context.reads;await info().getByRole('button',{name:'读取最新',exact:true}).click();await fixtureSettled(()=>context.reads>reads);
-  const next=switchProject();await page.evaluate(projectId=>window.changeFixtureProject(projectId),next);context.configure({delayRead:0});await ready();await open();
+  const next=switchProject();
+  const nextConversation=page.waitForResponse(response=>response.request().method()==='GET' && response.ok()
+    && new URL(response.url()).pathname.endsWith('/projects/'+next+'/studio-conversation'));
+  await page.evaluate(projectId=>window.changeFixtureProject(projectId),next);context.configure({delayRead:0});
+  await nextConversation;await ready();await open();
   assert.equal(await info().getByRole('textbox',{name:'项目目标',exact:true}).inputValue(),'');await page.waitForTimeout(750);
   assert.equal(await info().getByRole('textbox',{name:'项目目标',exact:true}).inputValue(),'');assert.equal(context.current(originalProject).facts.goal,'我的未保存目标');
   assert.equal(await page.getByRole('checkbox',{name:'沿用项目资料',exact:true}).isChecked(),false);check('project-switch-clears-old-facts-usage-and-ignores-late-previous-project-reads');
