@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { prisma, type Prisma } from "@brandai/db";
-import { SolPosterConfirm, SolPosterInput, SolPosterModelInput, SolPosterModelReply, SolPosterReceipt, StudioGenerationInput } from "@brandai/contracts";
+import { SolImageSet, type SolImageRole, SolPosterConfirm, SolPosterInput, SolPosterModelInput, SolPosterModelReply, SolPosterReceipt, StudioGenerationInput } from "@brandai/contracts";
 import { acceptStudioGeneration, readStudioGeneration, expireStudioGenerations, runStudioGenerationIntake } from "./studio-generation";
 import { hashStudioPayload, requireStudioGenerationServices } from "./studio-generation-policy";
 import { lockStudioIntake } from "./studio-intake-lock";
@@ -18,6 +18,8 @@ import { getConfirmedRules } from "./rules";
 import { enqueueStudioCopywriting } from "./studio-copywriting-queue";
 import { recordUsage } from "./usage";
 import { z } from "zod";
+import { posterCopyPolicy } from "./sol-poster-copy";
+import { PosterSources, asSourceKey, searchPosterSources, sourceView, requireSelectedSource, sameSource } from "./sol-poster-references";
 import { planSessionBrief, SessionBinding, SolSessionReplyError } from "./sol-brief-session";
 
 const kind = "SOL_POSTER_BRIEF_V1";
@@ -25,6 +27,7 @@ const waitMs = 6 * 60_000;
 const active = ["PENDING", "RUNNING"] as const;
 const expired = "简报等待超时。模型回执可能尚未到达，请核对后再提交。";
 const Stored = z.object({ userId: z.string(), input: SolPosterInput, assetId: z.string(), facts: SolPosterModelInput,
+  inheritedSources: PosterSources.optional(),
   planner: z.enum(["dsh", "company"]).optional(),
   styleHash: SolPosterInput.shape.target.shape.assetSha256.optional(),
   brandRulesHash: z.string().regex(/^[a-f0-9]{64}$/).optional(), session:SessionBinding.optional() });
@@ -34,22 +37,27 @@ function hashBrandRules(rules: Awaited<ReturnType<typeof getConfirmedRules>>) {
   return hashStudioPayload([...rules].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 }
 
+function savedSources(row:Row) {
+  return z.object({sources:PosterSources.optional()}).parse(row.resultJson??{}).sources;
+}
+
 function receipt(row: Row) {
   const { input, facts, session } = Stored.parse(row.inputJson);
   const saved = row.status==="SUCCEEDED" ? SolPosterModelReply.extend({
-    imageRequestId: SolPosterReceipt.shape.imageRequestId,
+    imageRequestId: SolPosterReceipt.shape.imageRequestId, imageSet: SolPosterReceipt.shape.imageSet, sources:PosterSources.optional(),
     audit:z.object({nextStep:z.enum(["ask_audience","ready"]).optional()}).passthrough().optional(),
   }).parse(row.resultJson) : null;
   const result=saved;
+  const copy=posterCopyPolicy(session?.designNotes??"",facts.approvedCopy);
   return SolPosterReceipt.parse({ id: row.id, mutationId: input.mutationId, target: input.target,
-    product: facts.product, brand: facts.brand, createdAt: row.createdAt.toISOString(), status: row.status, imageRequestId: saved?.imageRequestId,
+    product: facts.product, brand: facts.brand, createdAt: row.createdAt.toISOString(), status: row.status, imageRequestId: saved?.imageRequestId, imageSet:saved?.imageSet,
     styleReference: input.styleAssetId && facts.styleReferenceName ? { assetId: input.styleAssetId, name: facts.styleReferenceName } : undefined,
     conversation: session && input.conversation && {message:input.conversation.message, audience:session.audience,
       designNotes:session.designNotes,
       question:saved && (saved.audit?.nextStep==="ask_audience" || (!saved.audit?.nextStep && !session.audience)) ? "这张海报主要给谁看？" : null,resumed:session.resume,
       reusedDirection:!!input.conversation.direction},
     contextRevision: input.contextRevision, documentRevision: input.documentRevision, error: row.error,
-    result: result && { choices: result.choices, approvedCopy: facts.approvedCopy, rules: facts.rules,
+    result: result && { choices: result.choices, approvedCopy: copy.copy, excludedCopy:copy.excluded, rules: facts.rules,
       visualRequirements: facts.visualRequirements } });
 }
 
@@ -64,7 +72,11 @@ export async function listPosterBriefs(workspaceId: string, projectId: string, u
   const where = { workspaceId, refId: projectId, kind, inputJson: { path: ["userId"], equals: userId } };
   await prisma.asyncTask.updateMany({ where: { ...where, status: { in: [...active] }, expiresAt: { lte: new Date() } },
     data: { status: "FAILED", error: expired } });
-  return (await prisma.asyncTask.findMany({ where, orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: 20 })).map(receipt);
+  const rows=await prisma.asyncTask.findMany({ where, orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: 20 });
+  return Promise.all(rows.map(async row=>{
+    const r=receipt(row), sources=savedSources(row);
+    return sources ? {...r,references:await sourceView(prisma,workspaceId,projectId,sources)} : r;
+  }));
 }
 
 export async function createPosterBrief(workspaceId: string, projectId: string, userId: string, raw: unknown) {
@@ -109,6 +121,7 @@ export async function createPosterBrief(workspaceId: string, projectId: string, 
       rules: rules.map(rule => rule.summary) });
     if (!parsed.success) throw new ApiException(422, "已确认的项目或品牌资料超过本次简报的容量，请检查资料。");
     let session: SessionBinding | undefined;
+    let inheritedSources: PosterSources | undefined;
     const planner = posterPlanner(workspaceId);
     if (input.conversation) {
       if (!planner) throw new ApiException(503, "当前环境未启用 Sol 连续对话。");
@@ -123,6 +136,17 @@ export async function createPosterBrief(workspaceId: string, projectId: string, 
         ? Stored.parse(last.inputJson) : undefined;
       const previousSession = previous?.session;
       const resume = previousSession?.affinity===affinity;
+      if(resume && last)inheritedSources=savedSources(last);
+      const pick=input.conversation.reference;
+      if(pick){
+        if(!inheritedSources)throw new ApiException(409,"参考列表已变化，请在当前商品重新查找。");
+        if(pick==="current-only")inheritedSources={...inheritedSources,selected:null,currentOnly:true};
+        else {
+          if(!inheritedSources.candidates.some(k=>sameSource(k,pick)))throw new ApiException(409,"请从本次找到的参考中选择。");
+          inheritedSources={...inheritedSources,selected:pick,currentOnly:false};
+          await requireSelectedSource(tx,workspaceId,projectId,inheritedSources);
+        }
+      }
       const history = resume ? previousSession?.designNotes || previous?.input.conversation?.message : undefined;
       const message = input.conversation.message;
       const designNotes = history && !history.endsWith("\n" + message) && history !== message ? history + "\n" + message : history || message;
@@ -131,35 +155,44 @@ export async function createPosterBrief(workspaceId: string, projectId: string, 
         audience:input.conversation.audience || (resume ? previousSession?.audience : "") || parsed.data.audience};
     }
     return tx.asyncTask.create({ data: { id, jobId: id, kind, workspaceId, refId: projectId,
-      inputJson: { userId, input, assetId, facts: parsed.data, brandRulesHash: hashBrandRules(rules),
+      inputJson: { userId, input, assetId, facts: parsed.data, ...(inheritedSources && {inheritedSources}), brandRulesHash: hashBrandRules(rules),
         ...(style && {styleHash: style.assetSha256}), ...(session && planner && {session, planner}) }, expiresAt: new Date(+now + waitMs) } });
   });
   return receipt(row);
 }
 
-/** Approval binds this immutable brief to one native request in the same database transaction. */
-export async function confirmPosterAppearance(workspaceId: string, projectId: string, userId: string, raw: unknown) {
-  permit(workspaceId, false);
-  const confirmation = SolPosterConfirm.parse(raw);
-  await requireStudioMaterialProject(workspaceId, userId, projectId, true);
-  const scope = { kind, workspaceId, refId: projectId, inputJson: { path: ["userId"], equals: userId } };
-  const briefWhere = { ...scope, id: confirmation.briefId };
-  const brief = await prisma.asyncTask.findFirst({ where: briefWhere });
-  if (!brief) throw new ApiException(404, "找不到这份简报。");
-  const existing = receipt(brief).imageRequestId;
-  if (existing) return readStudioGeneration(workspaceId, userId, { projectId, requestId: existing });
-  permit(workspaceId, true);
-  if (!nativeDispatchEnabled(workspaceId)) throw new ApiException(503, "当前工作区仅开放简报，尚未开启生图。");
+/** All requested images and their quota reservations commit together. Queue recovery reads the same durable requests. */
+async function confirmPosterImages(workspaceId:string, projectId:string, userId:string, raw:unknown) {
+  permit(workspaceId,false);
+  const confirmation=SolPosterConfirm.parse(raw);
+  const roles:SolImageRole[]=confirmation.action==="confirm-set"?["appearance","scene","detail"]:["appearance"];
+  await requireStudioMaterialProject(workspaceId,userId,projectId,true);
+  const scope={kind,workspaceId,refId:projectId,inputJson:{path:["userId"],equals:userId}};
+  const briefWhere={...scope,id:confirmation.briefId};
+  function savedIds(row:Row|null){
+    if(!row)return null;
+    const view=receipt(row);
+    if(view.imageSet)return roles.map(role=>view.imageSet![role]);
+    return roles.length===1 && view.imageRequestId ? [view.imageRequestId] : null;
+  }
+  const read=(ids:string[])=>Promise.all(ids.map(requestId=>readStudioGeneration(workspaceId,userId,{projectId,requestId})));
+  const initial=await prisma.asyncTask.findFirst({where:briefWhere});
+  if(!initial)throw new ApiException(404,"找不到这份简报。");
+  const replay=savedIds(initial);
+  if(replay)return read(replay);
+  permit(workspaceId,true);
+  if(!nativeDispatchEnabled(workspaceId))throw new ApiException(503,"当前工作区仅开放简报，尚未开启生图。");
   await requireStudioGenerationServices();
   await expireStudioGenerations();
-  const accepted = await runStudioGenerationIntake(async tx => {
+  const accepted=await runStudioGenerationIntake(async tx=>{
     await tx.$queryRaw`SELECT pg_advisory_xact_lock(20261126, hashtext(${workspaceId}))::text`;
-    await lockStudioIntake(tx, 2);
-    await requireArtifactWrite(tx, workspaceId, projectId, userId);
-    const row = await tx.asyncTask.findFirst({ where: briefWhere });
-    if (!row) throw new ApiException(404, "找不到这份简报。");
-    const view = receipt(row);
-    if (view.imageRequestId) return { requestId: view.imageRequestId };
+    await lockStudioIntake(tx,2);
+    await requireArtifactWrite(tx,workspaceId,projectId,userId);
+    const row=await tx.asyncTask.findFirst({where:briefWhere});
+    if(!row)throw new ApiException(404,"找不到这份简报。");
+    const existing=savedIds(row);
+    if(existing)return {ids:existing,jobs:[]};
+    const view=receipt(row);
     const { input, assetId, facts, session, brandRulesHash, styleHash } = Stored.parse(row.inputJson);
     if (view.status !== "SUCCEEDED" || !view.result || !session?.audience || view.conversation?.question)
       throw new ApiException(409, "请先完成简报并确认受众。");
@@ -181,41 +214,59 @@ export async function confirmPosterAppearance(workspaceId: string, projectId: st
     if (brand.name !== facts.brand || material.fileName !== facts.product ||
         brandRulesHash !== hashBrandRules(currentRules))
       throw new ApiException(409, "商品或品牌规范已更新，请重新生成简报。");
-    const prompt = [
+    const source=await requireSelectedSource(tx,workspaceId,projectId,savedSources(row));
+    const workflow = await tx.workbenchProjectState.findUnique({ where: { projectId }, select: { workflowRevision: true } });
+    const ids:Partial<Record<SolImageRole,string>>={};
+    if(view.imageRequestId)ids.appearance=view.imageRequestId;
+    const jobs:{id:string;job:GenerateJobData}[]=[];
+    const copy=posterCopyPolicy(session.designNotes??input.conversation?.message??"",facts.approvedCopy);
+    const descriptors={appearance:["商品外观海报",view.result.choices.appearance],scene:["商品使用场景海报",view.result.choices.scene],detail:["商品卖点细节海报",view.result.choices.detail]};
+    for(const role of roles){
+      if(ids[role])continue;
+      const [label,composition]=descriptors[role];
+      const prompt = [
       "品牌：" + facts.brand, "商品：" + facts.product, "受众：" + session.audience,
       facts.goal && "项目目标：" + facts.goal,
-      "设计需求（按时间顺序，调整处以最后一次为准）：\n" + (session.designNotes ?? input.conversation?.message ?? ""),
+      "设计需求（按时间顺序，调整处以最后一次为准）：\n" + copy.designNotes,
       facts.visualRequirements && "视觉要求：" + facts.visualRequirements,
-      facts.approvedCopy ? "仅使用已确认文案：" + facts.approvedCopy : "不添加商品卖点文案。",
-      "本次仅生成一张商品外观海报。构图：" + view.result.choices.appearance + "。按选中原图保留商品颜色、形状与标识。",
+      copy.copy ? "画面文字仅限本次确认的文案，不添加历史活动口号：" + copy.copy : "画面不添加文字或旧口号。",
+      source && "参考来源的视觉标签（仅借用风格，禁止复制旧活动的口号、商品和标识）：" + source.style.join("、"),
+      "本次仅生成一张" + label + "。构图：" + composition + "。按选中原图保留商品颜色、形状与标识。",
       style && "第二张图片仅参考构图、用光与氛围。商品、商标和文案以第一张商品图和本次要求为准。",
     ].filter(Boolean).join("\n");
     if (prompt.length > 4000) throw new ApiException(422, "已确认内容超出单次生图容量，请精简项目资料后重新生成简报。");
-    const workflow = await tx.workbenchProjectState.findUnique({ where: { projectId }, select: { workflowRevision: true } });
     const sizeSelection = { ratioKey: "1:1", resolutionTier: "1K" } as const;
     const request = StudioGenerationInput.parse({ projectId, mutationId: randomUUID(), prompt, sizeSelection,
       documentRevision: doc.revision, workflowRevision: workflow?.workflowRevision ?? 0 });
     const native = await acceptStudioGeneration(tx, { workspaceId, userId, projectId, mutationId: request.mutationId }, request,
-      hashStudioPayload({ briefId: row.id, request }), { canvas: doc.canvas,
+      hashStudioPayload({ briefId: row.id, role, request }), { canvas: doc.canvas, ...(source && {solReference:asSourceKey(source)}),
         references: [{ referenceId: assetId, assetId, ...input.target, name: material.fileName,
           width: material.width, height: material.height, purpose: "ADAPTIVE" },
           ...(style ? [{referenceId: style.assetId, assetId: style.assetId, assetSha256: style.assetSha256, name: style.name,
             width: style.width, height: style.height, ...(style.versionId && {versionId: style.versionId}), purpose: "REFERENCE" as const}] : [])],
         intent: { action: "generate", referenceIds: style ? [assetId, style.assetId] : [assetId], targetReferenceId: null, requestedSize: null,
           prompt, clarification: null, sizeSource: "default", sizeSelection, parser: "safe-rules-v1" } });
-    await tx.asyncTask.update({ where: { id: row.id }, data: {
-      resultJson: { ...(row.resultJson as Prisma.JsonObject), imageRequestId: native.id } as Prisma.InputJsonValue } });
-    return { requestId: native.id, job: native.jobData as unknown as GenerateJobData };
-  }).catch(async error => {
-    // A concurrent confirmation or an interrupted commit can leave a valid receipt.
-    // Reconcile against the author's persisted link before reporting that acceptance failed.
-    const current = await prisma.asyncTask.findFirst({ where: briefWhere });
-    const requestId = current && receipt(current).imageRequestId;
-    if (requestId) return { requestId, job: undefined };
+      ids[role]=native.id;
+      jobs.push({id:native.id,job:native.jobData as unknown as GenerateJobData});
+    }
+    const imageSet=roles.length===3 ? SolImageSet.parse(ids) : undefined;
+    await tx.asyncTask.update({where:{id:row.id},data:{resultJson:{...(row.resultJson as Prisma.JsonObject),
+      imageRequestId:ids.appearance!,...(imageSet && {imageSet})} as Prisma.InputJsonValue}});
+    return {ids:roles.map(role=>ids[role]!),jobs};
+  }).catch(async error=>{
+    const persisted=savedIds(await prisma.asyncTask.findFirst({where:briefWhere}));
+    if(persisted)return {ids:persisted,jobs:[]};
     throw error;
   });
-  if (accepted.job) await enqueueStudioGeneration(accepted.requestId, accepted.job);
-  return readStudioGeneration(workspaceId, userId, { projectId, requestId: accepted.requestId });
+  await Promise.all(accepted.jobs.map(({id,job})=>enqueueStudioGeneration(id,job)));
+  return read(accepted.ids);
+}
+
+export async function confirmPosterAppearance(workspaceId:string,projectId:string,userId:string,raw:unknown) {
+  return (await confirmPosterImages(workspaceId,projectId,userId,raw))[0];
+}
+export async function confirmPosterSet(workspaceId:string,projectId:string,userId:string,raw:unknown) {
+  return {requests:await confirmPosterImages(workspaceId,projectId,userId,raw)};
 }
 
 export async function dispatchPosterBriefs() {
@@ -235,7 +286,7 @@ export async function runPosterBrief(id: string) {
   const claim = await prisma.asyncTask.updateMany({ where: { ...live, status: "PENDING" }, data: { status: "RUNNING" } });
   if (!claim.count) return;
   try {
-    const { userId, input, facts, assetId, session, planner = "dsh", styleHash } = Stored.parse(row.inputJson);
+    const { userId, input, facts, assetId, session, planner = "dsh", styleHash, inheritedSources } = Stored.parse(row.inputJson);
     const validate = async () => {
       permit(row.workspaceId, true);
       if (!(await prisma.user.findUnique({ where: { id: userId }, select: { isActive: true } }))?.isActive)
@@ -251,25 +302,42 @@ export async function runPosterBrief(id: string) {
     await validate();
     if (+expiresAt <= Date.now()) throw new Error("expired");
     const signal = AbortSignal.timeout(Math.max(1, Math.min(90_000, +expiresAt - Date.now())));
+    let sources=inheritedSources;
     let audit;
     let result;
     if (session && input.conversation) {
       if (posterPlanner(row.workspaceId) !== planner) throw new ApiException(503,"简报模型配置已变更，请重新核对。");
-      if (planner === "company") {
-        const request = SolPosterModelInput.parse({...facts, audience: session.audience, designNotes: session.designNotes});
-        result = SolPosterModelReply.parse(await ai.solPosterBrief(request, signal));
-        if (input.conversation.direction) result.choices = input.conversation.direction;
-        audit = {planner, nextStep: session.audience ? "ready" : "ask_audience"};
-      } else {
-        const response=await planSessionBrief(facts,input.conversation,session,Math.min(90_000,+expiresAt-Date.now()));
-        result=SolPosterModelReply.parse({choices:response.choices,model:response.model});
-        audit=response.audit;
+      const turn=input.conversation;
+      async function plan(referenceStyle:string[]|undefined, referencePlanning:boolean) {
+        const request=SolPosterModelInput.parse({...facts,audience:session!.audience,designNotes:session!.designNotes,
+          referencePlanning,referenceDate:row!.createdAt.toISOString().slice(0,10),referenceStyle});
+        if(planner==="company"){
+          const reply=SolPosterModelReply.parse(await ai.solPosterBrief(request,signal));
+          return {reply:{...reply,choices:turn.direction??reply.choices},audit:{planner,nextStep:session!.audience?"ready":"ask_audience"}};
+        }
+        const dsh=await planSessionBrief(request,turn,session!,Math.min(90_000,+expiresAt!-Date.now()));
+        return {reply:SolPosterModelReply.parse({choices:dsh.choices,model:dsh.model,search:dsh.search}),audit:dsh.audit};
       }
+      const chosen=sources?.selected ? await requireSelectedSource(prisma,row.workspaceId,projectId,sources) : null;
+      let pass=await plan(chosen?.style, !chosen && !sources?.currentOnly);
+      const modelSearch=!chosen && !sources?.currentOnly ? pass.reply.search : null;
+      if(modelSearch){
+        sources=await searchPosterSources(row.workspaceId,projectId,modelSearch,row.createdAt);
+        if(sources.selected){
+          await recordUsage({workspaceId:row.workspaceId,userId,kind,status:"SUCCEEDED",model:pass.reply.model,totalTokens:pass.reply.totalTokens});
+          await validate();
+          const found=await requireSelectedSource(prisma,row.workspaceId,projectId,sources);
+          pass=await plan(found!.style,false);
+        }
+      }
+      result=pass.reply;
+      audit={...pass.audit,...(modelSearch && {referenceSearch:modelSearch}),referenceDecision:modelSearch?"model-search":sources?"resumed":"draft"};
     } else { result=SolPosterModelReply.parse(await ai.solPosterBrief(facts,signal)); }
     await recordUsage({ workspaceId: row.workspaceId, userId, kind, status: "SUCCEEDED", model: result.model, totalTokens: result.totalTokens });
     await validate();
+    if(sources?.selected)await requireSelectedSource(prisma,row.workspaceId,projectId,sources);
     await prisma.asyncTask.updateMany({ where: { id, kind, status: "RUNNING", expiresAt: { gt: new Date() } },
-      data: { status: "SUCCEEDED", progress: 100, resultJson: {...result,...(audit && {audit})} as Prisma.InputJsonValue } });
+      data: { status: "SUCCEEDED", progress: 100, resultJson: {...result,...(audit && {audit}),...(sources && {sources})} as Prisma.InputJsonValue } });
   } catch (err) {
     await prisma.asyncTask.updateMany({ where: { id, kind, status: "RUNNING" }, data: { status: "FAILED",
       error: err instanceof ApiException ? err.message : err instanceof SolSessionReplyError

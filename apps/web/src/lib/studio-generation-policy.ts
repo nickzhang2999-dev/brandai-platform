@@ -18,7 +18,7 @@ import { assertStudioProjectContextSources } from "./studio-project-context";
 
 /** Only a server-persisted conversation may supply this snapshot. It is never
  * accepted as part of StudioGenerationInput or from browser JSON. */
-export type StudioConversationAcceptance = { canvas: string; references: StudioConversationReference[]; intent: StudioConversationIntent; imageTool?: StudioImageToolSpec; imageToolInputHash?: string; layerRepair?: StudioLayerRepairContext; projectContext?: StudioProjectContextSnapshot };
+export type StudioConversationAcceptance = { solReference?: import("@brandai/contracts").SolReferenceKey; canvas: string; references: StudioConversationReference[]; intent: StudioConversationIntent; imageTool?: StudioImageToolSpec; imageToolInputHash?: string; layerRepair?: StudioLayerRepairContext; projectContext?: StudioProjectContextSnapshot };
 
 function canonical(value: unknown): unknown {
   if (value instanceof Date) return value.toISOString();
@@ -110,7 +110,7 @@ export async function prepareStudioGeneration(db: Prisma.TransactionClient, ws: 
   if (usages.length > 8 || new Set(usages.map(item => item.assetId)).size !== usages.length) throw new ApiException(422, "改图参考与继承的严格保留素材重复或合计超过8张，请调整素材用途。");
   const prepared = await prepareGeneration(ws, { ...CreateGenerationInput.parse({ projectId: input.projectId, sceneType: "SOCIAL_POSTER", sellingPoint: input.prompt,
     scene: "", chatDisplayText: "", versionCount: 1, textMode: "direct", sizeSelection: input.sizeSelection, assetUsages: usages }), chatDisplayText: input.prompt }, { client: db, persistHardBlock: false });
-  const jobData = { ...prepared.jobData, ...(accepted ? { targets: [{ key: "conversation", label: "对话输出", width: size.width, height: size.height }],
+  const jobData = { ...prepared.jobData, ...(accepted?.solReference && {solReference:accepted.solReference}), ...(accepted ? { targets: [{ key: "conversation", label: "对话输出", width: size.width, height: size.height }],
     studioConversationSize: { requestedSize: { width: size.width, height: size.height }, sizeSource: accepted.intent.sizeSource, method: "deterministic-contain" } } : {}),
     ...generatedPsdIntent(input.psdLayerCount, input.psdLayerMode), ...(accepted?.imageTool ? { studioImageTool: accepted.imageTool, studioImageToolInputHash: accepted.imageToolInputHash } : {}),
     ...(accepted?.layerRepair ? { studioLayerRepair: accepted.layerRepair } : {}), ...(accepted?.projectContext ? { studioProjectContext: accepted.projectContext } : {}),

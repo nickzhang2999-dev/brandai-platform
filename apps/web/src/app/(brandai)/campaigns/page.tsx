@@ -850,6 +850,7 @@ function CreateDialog({
 }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [startDate, setStartDate] = useState("");
   const [channels, setChannels] = useState("");
 
   const mutation = useMutation({
@@ -859,6 +860,7 @@ function CreateDialog({
         body: JSON.stringify({
           name: name.trim(),
           description: description.trim() || undefined,
+          startDate:startDate || undefined,
           channels: channels
             .split(/[,，\s]+/)
             .map((s) => s.trim())
@@ -892,6 +894,7 @@ function CreateDialog({
               className="h-11 w-full rounded-2xl border border-border bg-background px-3 text-sm outline-none focus:border-primary/40 focus:shadow-[0_0_0_4px_rgba(124,92,255,0.08)]"
             />
           </Field>
+          <Field label="活动开始日期（选填）"><input type="date" value={startDate} onChange={e=>setStartDate(e.target.value)} className="rounded-xl border border-border p-2" /></Field>
           <Field label="项目简介">
             <textarea
               value={description}

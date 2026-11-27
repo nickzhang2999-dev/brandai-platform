@@ -1,5 +1,7 @@
 # 2.0 TODO 与开发节奏
 
+本轮任务与本地完成条件见[历史参考和三图交付](logs/2026-11-27-sol-reference-set.md)。
+
 ## 2026-11-20 · DF-2 Sol 原生派发
 
 - [x] 用独立 PostgreSQL schema 和真实 Redis 验证两条任务并发投递、重复扫描和迁移边界。

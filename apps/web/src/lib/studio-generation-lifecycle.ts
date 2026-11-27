@@ -87,6 +87,13 @@ export async function assertStudioGenerationReady(request: StudioRequest, signal
       current.contextHash !== request.contextHash || current.expiresAt.getTime() <= Date.now()) {
       throw new ApiException(409, "生成任务已结束、过期或执行身份已变更，未调用生成服务。请确认后重新提交。");
     }
+    if(current.jobData && typeof current.jobData==="object" && "solReference" in current.jobData){
+      const {SolReferenceKey}=await import("@brandai/contracts");
+      const key=SolReferenceKey.parse(current.jobData.solReference);
+      const {liveSourceCards}=await import("./sol-poster-references");
+      if(!(await liveSourceCards(tx,current.workspaceId,current.projectId,[key])).length)
+        throw new ApiException(409,"参考来源已更新或撤回，请重新确认简报。");
+    }
     let contextHash: string;
     try {
       contextHash = await studioGenerationContextHash(tx, current.workspaceId, current.projectId,

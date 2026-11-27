@@ -1,5 +1,7 @@
 # 2.0 验证记录
 
+2026-11-27 · [历史参考、三图确认和单图编辑验收记录](logs/2026-11-27-sol-reference-set.md)。
+
 ## 2026-11-20 · DF-2 Sol
 
 随后以真实 Redis 7.2.7 和独立 PostgreSQL schema 补验，两条任务成功投递，重复扫描未增加任务数。CDS 现用 Sol 预览仍共用 main 的库和 schema，产品端生图待预览切换。[现场核对与联测结果](logs/2026-11-20-sol-preview-isolation.md)

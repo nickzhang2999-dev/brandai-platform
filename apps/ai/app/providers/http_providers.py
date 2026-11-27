@@ -943,6 +943,7 @@ class HttpVLMProvider(VLMProvider):
     async def _chat_json(
         self, content: list[dict[str, Any]], *, system: str, max_tokens: int = 2048,
         diagnostics: dict[str, Any] | None = None, strict_text: bool = False,
+        output_schema: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         body = {
             "model": self.model,
@@ -950,7 +951,8 @@ class HttpVLMProvider(VLMProvider):
                 {"role": "system", "content": system},
                 {"role": "user", "content": content},
             ],
-            "response_format": {"type": "json_object"},
+            "response_format": ({"type": "json_schema", "json_schema": output_schema}
+                                if output_schema is not None else {"type": "json_object"}),
         }
         # Reasoning models reject the legacy max_tokens parameter. Do not
         # probe/fallback with another paid POST; select the wire shape up front.

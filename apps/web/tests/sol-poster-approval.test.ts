@@ -23,7 +23,7 @@ vi.mock("../src/lib/rules", () => ({ getConfirmedRules: f.rules }));
 vi.mock("../src/lib/studio-generation-queue", () => ({ enqueueStudioGeneration: f.enqueue }));
 vi.mock("../src/lib/studio-copywriting-queue", () => ({ enqueueStudioCopywriting: vi.fn() }));
 
-import { confirmPosterAppearance, createPosterBrief } from "../src/lib/sol-poster-brief";
+import { confirmPosterAppearance, confirmPosterSet, createPosterBrief } from "../src/lib/sol-poster-brief";
 const input = { mutationId: "11111111-1111-4111-8111-111111111111", documentRevision: 1, contextRevision: 1,
   target: { shapeId: "shape:shirt", assetSha256: "a".repeat(64) }, conversation: { message: "夏季海报" } };
 const rules = [{ id: "logo", summary: "固定品牌标志", evidence: [{ assetId: "logo-v1" }] },
@@ -102,6 +102,33 @@ describe("Sol approval binds the full rule set before reserving a generation", (
     await confirm();
     expect(f.read).toHaveBeenCalledWith("ws", "author", {projectId:"project",requestId:imageRequestId});
     expect(f.enqueue).not.toHaveBeenCalled();
+  });
+  it("accepts three distinct deliverables in one transaction and replays all three saved IDs", async()=>{
+    const {row}=await completedBrief();
+    const ids=["1","2","3"].map(x=>"sgr_"+x.repeat(32));
+    ids.forEach(id=>f.accept.mockResolvedValueOnce({id,jobData:{}}));
+    f.update.mockImplementationOnce(async({data})=>Object.assign(row,data));
+    const command={action:"confirm-set",briefId:row.id,target:input.target,contextRevision:1,documentRevision:1};
+    await confirmPosterSet("ws","project","author",command);
+    expect(f.accept.mock.calls.map(call=>call[2].prompt)).toEqual([
+      expect.stringContaining("商品外观海报"),expect.stringContaining("商品使用场景海报"),expect.stringContaining("商品卖点细节海报")]);
+    expect(row.resultJson.imageSet).toEqual({appearance:ids[0],scene:ids[1],detail:ids[2]});
+    await confirmPosterSet("ws","project","author",command);
+    expect(f.accept).toHaveBeenCalledTimes(3);expect(f.enqueue).toHaveBeenCalledTimes(3);
+    expect(f.read.mock.calls.slice(-3).map(x=>x[2].requestId)).toEqual(ids);
+  });
+  it("keeps a pre-existing appearance and enqueues nothing when quota rejects the last member",async()=>{
+    const {row}=await completedBrief();
+    row.resultJson.imageRequestId=imageRequestId;
+    f.accept.mockResolvedValueOnce({id:"sgr_"+"1".repeat(32),jobData:{}}).mockRejectedValueOnce(new Error("quota"));
+    await expect(confirmPosterSet("ws","project","author",{action:"confirm-set",briefId:row.id,target:input.target,contextRevision:1,documentRevision:1})).rejects.toThrow("quota");
+    expect(f.accept.mock.calls[0]![2].prompt).toContain("商品使用场景海报");expect(f.update).not.toHaveBeenCalled();expect(f.enqueue).not.toHaveBeenCalled();
+  });
+  it("blocks an unchosen past campaign before reserving quota",async()=>{
+    const {row,confirm}=await completedBrief();
+    row.resultJson.sources={search:{kind:"campaign",year:2025,query:"夏季"},candidates:[],currentOnly:false,selected:null};
+    await expect(confirm()).rejects.toMatchObject({status:409});
+    expect(f.accept).not.toHaveBeenCalled();
   });
   it("accepts unchanged reordered rules in the serializable quota transaction", async () => {
     const { confirm } = await completedBrief();

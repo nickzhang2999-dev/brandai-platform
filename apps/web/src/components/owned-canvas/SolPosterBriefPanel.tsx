@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { z } from "zod";
-import { SolPosterChoices, SolPosterConfirm, SolPosterInput, SolPosterReceipt, StudioGenerationView } from "@brandai/contracts";
+import { SolImageSet, SolPosterChoices, SolPosterConfirm, SolPosterInput, SolPosterReceipt, StudioGenerationView } from "@brandai/contracts";
 
 type Props = {
   workspaceId: string; projectId: string; userId: string; readOnly: boolean;
@@ -10,6 +10,7 @@ type Props = {
   styleOptions: {assetId: string; name: string}[];
   onOpenProjectMaterials: () => void;
   onGeneration: (task: z.infer<typeof StudioGenerationView>) => void;
+  onEditTask: (requestId:string) => Promise<void>;
   onOpenTask: (requestId: string) => void;
 };
 const list = z.array(SolPosterReceipt);
@@ -32,10 +33,12 @@ export function SolPosterBriefPanel(props: Props) {
   const [reuse,setReuse]=useState(false);
   const [startFresh,setStartFresh]=useState(false), [canGenerate,setCanGenerate]=useState(false);
   const [styleChoice, setStyleChoice] = useState<string | null>(null);
+  const [sourceChoice,setSourceChoice]=useState<NonNullable<SolPosterInput["conversation"]>["reference"]>();
+  const selectedSourceKey=sourceChoice==="current-only" ? sourceChoice : sourceChoice?.id;
   const lastForProduct = rows[0]?.target.shapeId === props.selectionId ? rows[0] : undefined;
   const selectedStyleId = styleChoice ?? (startFresh ? "" : lastForProduct?.styleReference?.assetId ?? "");
   const question=rows[0]?.target.shapeId===props.selectionId ? rows[0]?.conversation?.question : null;
-  useEffect(()=>{setAudience(""); setStyleChoice(null);},[props.selectionId]);
+  useEffect(()=>{setAudience(""); setStyleChoice(null); setSourceChoice(undefined);},[props.selectionId]);
   const styleKey="sol-composition/v1/"+props.userId;
   useEffect(()=>{
     try {const saved=SolPosterChoices.safeParse(JSON.parse(sessionStorage.getItem(styleKey) ?? "null"));
@@ -99,8 +102,8 @@ export function SolPosterBriefPanel(props: Props) {
       const carry=(reuse || /沿用|按刚才的方案|按上次的构图/.test(message)) && prior ? prior : undefined;
       const request = pending ?? SolPosterInput.parse({ ...await props.prepare(), mutationId: crypto.randomUUID(),
         ...(selectedStyleId && {styleAssetId: selectedStyleId}),
-        ...(sessionMode && {conversation:{message:message.trim() || "为选中的商品规划一张推广海报。",
-          parentId:startFresh ? undefined : last?.id, direction:carry, audience:question && !startFresh ? audience.trim() || undefined : undefined}}) });
+        ...(sessionMode && {conversation:{message:message.trim() || (sourceChoice ? "按选定的资料更新简报。" : "为选中的商品规划一张推广海报。"),
+          parentId:startFresh ? undefined : last?.id, reference:startFresh?undefined:sourceChoice, direction:carry, audience:question && !startFresh ? audience.trim() || undefined : undefined}}) });
       if (scope.signal.aborted) return;
       localStorage.setItem(journal,JSON.stringify(request)); setPending(request);
       const res = await fetch(endpoint, { method:"POST", headers:{ "Content-Type":"application/json","X-Novart-User":props.userId },
@@ -113,16 +116,16 @@ export function SolPosterBriefPanel(props: Props) {
       }
       const row = SolPosterReceipt.parse(data);
       revision.current++; setRows(old=>[row,...old.filter(r=>r.id!==row.id)]);
-      localStorage.removeItem(journal); setPending(null); setMessage(""); setAudience(""); setReuse(false); setStartFresh(false); setRefresh(v=>v+1);
+      localStorage.removeItem(journal); setPending(null); setMessage(""); setSourceChoice(undefined); setAudience(""); setReuse(false); setStartFresh(false); setRefresh(v=>v+1);
     } catch(e) { if (!scope.signal.aborted) setError(errorText(e)); }
     finally { locked.current=false; if (!scope.signal.aborted) setBusy(false); }
   }
-  async function confirmAppearance(row: SolPosterReceipt) {
+  async function confirmAppearance(row: SolPosterReceipt, set=false) {
     const scope = lifetime.current;
     if (!scope || scope.signal.aborted || locked.current || props.readOnly || !ready) return;
     locked.current = true; setBusy(true); setError("");
     try {
-      const input = SolPosterConfirm.parse({ ...await props.prepare(), action: "confirm-appearance", briefId: row.id });
+      const input = SolPosterConfirm.parse({ ...await props.prepare(), action: set ? "confirm-set" : "confirm-appearance", briefId: row.id });
       if (scope.signal.aborted) return;
       const response = await fetch(endpoint, { method: "POST", cache: "no-store",
         headers: { "Content-Type": "application/json", "X-Novart-User": props.userId },
@@ -130,13 +133,19 @@ export function SolPosterBriefPanel(props: Props) {
       const data = await response.json();
       if (scope.signal.aborted) return;
       if (!response.ok) throw new Error(data.error || "暂时无法确认，请刷新简报记录。");
-      const task = StudioGenerationView.parse(data);
+      const tasks=set ? z.object({requests:z.array(StudioGenerationView).length(3)}).parse(data).requests : [StudioGenerationView.parse(data)];
+      const imageSet=set ? SolImageSet.parse({appearance:tasks[0]!.requestId,scene:tasks[1]!.requestId,detail:tasks[2]!.requestId}) : undefined;
       revision.current++;
-      setRows(current => current.map(item => item.id === row.id ? { ...item, imageRequestId: task.requestId } : item));
-      props.onGeneration(task);
+      setRows(current=>current.map(item=>item.id===row.id ? {...item,imageRequestId:tasks[0]!.requestId,...(imageSet&&{imageSet})} : item));
+      tasks.forEach(task=>props.onGeneration(task));
     } catch (e) {
       if (!scope.signal.aborted) setError(e instanceof Error && e.name === "TimeoutError" ? "确认回执超时，请刷新记录核对。" : errorText(e));
     } finally { locked.current = false; if (!scope.signal.aborted) setBusy(false); }
+  }
+  function canConfirm(row:SolPosterReceipt){
+    return !props.readOnly && ready && !busy && !pending && !message.trim() && !reuse && !startFresh && !sourceChoice &&
+      props.selectionId===row.target.shapeId && selectedStyleId===(row.styleReference?.assetId??"") &&
+      (!row.references || row.references.currentOnly || !!row.references.selected);
   }
   return <details className="max-h-72 shrink-0 overflow-auto rounded-xl border border-border p-2 text-xs" onToggle={e=>setOpen(e.currentTarget.open)}>
     <summary className="cursor-pointer font-medium">Sol 海报简报</summary>
@@ -152,6 +161,17 @@ export function SolPosterBriefPanel(props: Props) {
         <button type="button" className="underline" onClick={props.onOpenProjectMaterials}>在项目资料中添加风格参考</button>
         <label className="block">设计需求<textarea className="block w-full rounded border p-2" maxLength={600}
           value={message} onChange={e=>setMessage(e.target.value)} placeholder="例如，为新品设计一张夏季海报，保留标志和商品颜色" /></label>
+        {lastForProduct?.references && !startFresh && <fieldset className="space-y-1"><legend>参考来源</legend>
+          <p>{lastForProduct.references.stale ? "原参考已更新或撤回，请重新查找或只用当前资料。" :
+            lastForProduct.references.currentOnly ? "本次采用当前品牌资料。" : lastForProduct.references.candidates.length ? "选择与本次需求相符的来源。" : "没有找到可用参考，可以换个线索或只用当前资料。"}</p>
+          {lastForProduct.references.candidates.map(c=><label key={c.id} className="flex items-center gap-2">
+            <input type="radio" name="sol-reference" checked={(selectedSourceKey??lastForProduct.references?.selected?.id)===c.id}
+              onChange={()=>setSourceChoice({kind:c.kind,id:c.id,version:c.version,libraryId:c.libraryId})}/>
+            {c.thumbnail && <img alt="" className="h-8 w-8 rounded object-cover" src={c.thumbnail}/>}
+            {c.title} · {c.kind==="campaign" ? c.date??"日期待确认" : "灵感案例"}</label>)}
+          <label className="flex gap-2"><input type="radio" name="sol-reference" checked={selectedSourceKey==="current-only" || (!selectedSourceKey && lastForProduct.references.currentOnly)}
+            onChange={()=>setSourceChoice("current-only")}/>仅用当前项目资料</label>
+        </fieldset>}
         {rows.length > 0 && <label className="flex items-center gap-2"><input type="checkbox" checked={startFresh}
           onChange={e=>setStartFresh(e.target.checked)}/>从新需求开始</label>}
         {question && !startFresh && <label className="block">{question}
@@ -166,6 +186,8 @@ export function SolPosterBriefPanel(props: Props) {
       {error && <p role="alert">{error}</p>}
       {rows.map(row=><article key={row.id} data-brief-id={row.id} className="space-y-1 border-t border-border pt-2">
         <h4 className="font-semibold">{row.product} · {row.brand}</h4>
+        {row.references?.selected && <p>风格依据 · <a className="text-primary underline" target="_blank" rel="noreferrer" href={row.references.selected.url}>{row.references.selected.title}</a>
+          {row.references.selected.style.length ? " · "+row.references.selected.style.join("、") : ""}。文案沿用当前项目。</p>}
         {row.styleReference && <p>风格参考 · {row.styleReference.name}</p>}
         {row.conversation?.designNotes && row.conversation.designNotes !== row.conversation.message &&
           <details><summary className="cursor-pointer">查看累计设计需求</summary><p className="whitespace-pre-wrap">{row.conversation.designNotes}</p></details>}
@@ -181,14 +203,20 @@ export function SolPosterBriefPanel(props: Props) {
           <p className="whitespace-pre-wrap">{row.result.approvedCopy
             ? "商品已确认文案 · " + row.result.approvedCopy
             : "商品卖点待确认。可在项目资料中指定一张商品素材并保存对应文案。"}</p>
+          {!!row.result.excludedCopy?.length && <p>本次禁用文案 · {row.result.excludedCopy.join("、")}</p>}
           {row.result.visualRequirements && <p>视觉要求 · {row.result.visualRequirements}</p>}
           {row.conversation?.reusedDirection && <p>已沿用构图，商品与品牌资料取自本次选区。</p>}
           {row.result.rules.map((rule,i)=><p key={i}>品牌规范 · {rule}</p>)}
-          {row.imageRequestId ? <button type="button" className="underline" onClick={() => props.onOpenTask(row.imageRequestId!)}>已提交外观图 · 查看任务记录</button>
-            : canGenerate && row.id === rows[0]?.id && row.conversation?.audience && !row.conversation.question && <button type="button"
+          {row.imageSet && <ol className="space-y-1">{(["appearance","scene","detail"] as const).map((role,index)=><li key={role}>
+            {["外观图","场景图","卖点图"][index]} · <button type="button" className="underline" onClick={()=>props.onOpenTask(row.imageSet![role])}>查看任务</button>
+            {!props.readOnly && <button type="button" className="ml-2 underline" onClick={()=>void props.onEditTask(row.imageSet![role]).catch(e=>setError(errorText(e)))}>修改这张图</button>}
+          </li>)}</ol>}
+          {!row.imageSet && row.imageRequestId ? <button type="button" className="underline" onClick={() => props.onOpenTask(row.imageRequestId!)}>已提交外观图 · 查看任务记录</button>
+            : !row.imageSet && canGenerate && row.id === rows[0]?.id && row.conversation?.audience && !row.conversation.question && <button type="button"
               className="rounded-xl bg-primary px-3 py-2 text-primary-foreground disabled:opacity-40"
-              disabled={props.readOnly || !ready || busy || !!pending || !!message.trim() || reuse || startFresh || props.selectionId !== row.target.shapeId || selectedStyleId !== (row.styleReference?.assetId ?? "")}
-              onClick={()=>void confirmAppearance(row)}>确认简报，生成一张外观图（1:1）</button>}</>
+              disabled={!canConfirm(row)}
+              onClick={()=>void confirmAppearance(row)}>确认简报，生成一张外观图（1:1）</button>}
+          {canGenerate && row.id===rows[0]?.id && !row.imageSet && row.conversation?.audience && !row.conversation.question && <button type="button" className="ml-2 rounded-xl border px-3 py-2 disabled:opacity-40" disabled={!canConfirm(row)} onClick={()=>void confirmAppearance(row,true)}>{row.imageRequestId?"补齐场景图和卖点图（2 张）":"确认生成一组三张（外观、场景、卖点）"}</button>}</>
         : <p role="status">{row.error ?? (row.status==="RUNNING" ? "正在规划…" : "已排队")}</p>}
       </article>)}
     </div>}

@@ -1040,6 +1040,19 @@ export function OwnedEditorClient({ workspaceId, projectId, userId, solBriefEnab
               setGenerations(current => mergeTask(current, task, value => value.requestId));
               generationPoll.resume(); setPollPaused(false);
             }}
+            onEditTask={async id=>{
+              const api=apiRef.current;
+              if(!api)throw new Error("画布尚未准备好。");
+              const task=await api.getGeneration(id);
+              if(!alive.current || api!==apiRef.current)return;
+              const asset=task.results[0];
+              if(!asset)throw new Error("图片尚未归档，请先查看这张图的任务。");
+              const shape=docRef.current?.items.find(item=>item.assetId===asset.assetId && item.assetSha256===asset.assetSha256);
+              if(!shape)throw new Error("请先在任务记录中把成品放入画布。");
+              setFocusImageId(undefined);
+              requestAnimationFrame(()=>setFocusImageId(shape.id));
+              await chooseCanvasTarget(shape.id);
+            }}
             styleOptions={projectContextState?.server?.materials.filter(item => item.role === "STYLE" && item.assetId !== briefImage?.assetId) ?? []}
             onOpenProjectMaterials={() => setProjectContentOpen(true)}
             selectionId={briefImage?.id} name={briefImage ? ownedImageName(briefImage) : undefined} prepare={preparePosterBrief} />}

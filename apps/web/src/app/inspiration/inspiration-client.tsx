@@ -43,7 +43,7 @@ function InspirationWorkspace({ wsId, workspaceName, canEdit }: { wsId: string; 
   const [filters, setFilters] = useState<Filters>(() => JSON.parse(urlFilters));
   const [applied, setApplied] = useState<Filters>(() => JSON.parse(urlFilters));
   useEffect(() => { const restored: Filters = JSON.parse(urlFilters); setFilters(restored); setApplied(restored); }, [urlFilters]);
-  const [selected, setSelected] = useState<CaseSelection | null>(null);
+  const [selected, setSelected] = useState<CaseSelection | null>(() => { const caseId=params.get("caseId"); return caseId ? {caseId, libraryId:params.get("libraryId")??undefined} : null; });
   const [view, setView] = useState<"cases" | "saved" | "feedback">("cases");
   const [conversationId, setConversationId] = useState<string | null>(params.get("conversationId"));
   const [question, setQuestion] = useState("");

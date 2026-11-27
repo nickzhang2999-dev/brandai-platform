@@ -55,6 +55,7 @@ export async function POST(
     const project = await prisma.project.create({
       data: {
         workspaceId: wsId,
+        ...(extra.startDate && {startDate:new Date(extra.startDate)}),
         name: input.name,
         campaign: input.campaign,
         product: input.product,
@@ -87,6 +88,7 @@ const BrandaiProjectFields = z.object({
   status: CampaignStatus.optional(),
   progress: z.number().int().min(0).max(100).optional(),
   description: z.string().max(2000).optional(),
+  startDate: z.string().date().optional(),
   tags: z.array(z.string()).max(20).optional(),
   channels: z.array(z.string()).max(20).optional(),
   aiSummary: z.string().max(4000).optional(),
@@ -118,9 +120,11 @@ export async function PATCH(
     if (!existing || existing.workspaceId !== wsId) {
       throw new ApiException(404, "Project not found");
     }
+    if(extra.startDate && existing.endDate && new Date(extra.startDate)>existing.endDate) throw new ApiException(422,"开始日期晚于已保存的结束日期。");
     const project = await prisma.project.update({
       where: { id: input.id },
       data: {
+        ...(extra.startDate && {startDate:new Date(extra.startDate)}),
         name: input.name,
         campaign: input.campaign ?? null,
         product: input.product ?? null,

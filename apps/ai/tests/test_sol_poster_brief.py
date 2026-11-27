@@ -11,13 +11,17 @@ from app.providers.http_providers import HttpVLMProvider
 
 
 @pytest.mark.parametrize("fault", ["none", "wrong_product", "tool", "truncated", "extra_copy", "rate_limit"])
-def test_selected_product_and_single_attempt(monkeypatch, fault):
+@pytest.mark.parametrize("history", [False, True])
+def test_selected_product_and_single_attempt(monkeypatch, fault, history):
     calls = []
     payload = {
         "product": "台灯.png", "brand": "本地灯具", "goal": "上新", "audience": "",
         "approvedCopy": "圆形底座", "visualRequirements": "保留深蓝色",
         "rules": ["使用白色标识"], "providerRetryPolicy": "never",
     }
+
+    if history:
+        payload.update(referencePlanning=True, referenceDate="2026-11-27", designNotes="参考去年夏季活动。")
 
     def upstream(request):
         wire = json.loads(request.content)
@@ -33,6 +37,8 @@ def test_selected_product_and_single_attempt(monkeypatch, fault):
             return httpx.Response(429)
         reply = {"productRef": "another" if fault == "wrong_product" else ref,
                  "appearance": "轮廓留白", "scene": "陈列台", "detail": "局部放大"}
+        if history:
+            reply["search"] = {"kind": "campaign", "query": "夏季", "year": 2025}
         if fault == "extra_copy":
             reply["copy"] = "未经确认的功能"
         msg = {"content": json.dumps(reply)}
@@ -51,7 +57,8 @@ def test_selected_product_and_single_attempt(monkeypatch, fault):
     if fault == "none":
         assert response.status_code == 200
         assert response.json() == {"choices": {"appearance": "轮廓留白", "scene": "陈列台", "detail": "局部放大"},
-                                   "model": "text-fixture", "totalTokens": 28}
+                                   "model": "text-fixture", "totalTokens": 28,
+                                   **({"search": {"kind": "campaign", "query": "夏季", "year": 2025}} if history else {})}
     else:
         assert response.status_code == 502
         assert "choices" not in response.json()

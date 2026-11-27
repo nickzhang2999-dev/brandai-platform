@@ -1,7 +1,7 @@
 import { ApiException, requireUser } from "@/lib/api";
 import { isWorkbenchSameOrigin } from "@/lib/workbench-origin";
 import { readWorkbenchJson } from "@/lib/workbench-request";
-import { listPosterBriefs, createPosterBrief, confirmPosterAppearance } from "@/lib/sol-poster-brief";
+import { listPosterBriefs, createPosterBrief, confirmPosterAppearance, confirmPosterSet } from "@/lib/sol-poster-brief";
 import { ZodError } from "zod";
 import { nativeDispatchEnabled, posterPlanner } from "@/lib/deepflare-v2/feature";
 type Context = { params: Promise<{ wsId: string; projectId: string }> };
@@ -17,6 +17,8 @@ async function handle(req: Request, ctx: Context) {
     const input = await readWorkbenchJson(req, 8192);
     if (typeof input === "object" && input !== null && "action" in input && input.action === "confirm-appearance")
       return Response.json(await confirmPosterAppearance(wsId, projectId, user.id, input), { status: 202 });
+    if (typeof input === "object" && input !== null && "action" in input && input.action === "confirm-set")
+      return Response.json(await confirmPosterSet(wsId, projectId, user.id, input), { status: 202 });
     return Response.json(await createPosterBrief(wsId, projectId, user.id, input), { status: 202 });
   } catch (e) {
     return Response.json({ error: e instanceof ApiException ? e.message : e instanceof ZodError ? "请重新选择已保存的商品图片。" : "暂时无法读取简报。" },
