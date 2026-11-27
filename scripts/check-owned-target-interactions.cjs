@@ -4,7 +4,7 @@
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const path=require('node:path');
-exports.runOwnedTargetChecks=async({page,surface,origin,check,fixtureSettled,setStage,state,delays,seed})=>{
+exports.runOwnedTargetChecks=async({page,surface,origin,check,fixtureSettled,setStage,state,delays,seed,fixture})=>{
   const input=()=>page.getByRole('textbox',{name:'对话设计需求',exact:true});
   const image=id=>page.locator('[data-owned-id="shape:target-'+id+'"]');
   const ready=async()=>{await page.waitForFunction(()=>document.querySelector('[data-testid="owned-conversation"]')?.dataset.conversationReady==='true');};
@@ -25,6 +25,45 @@ exports.runOwnedTargetChecks=async({page,surface,origin,check,fixtureSettled,set
   await image('b').click({modifiers:['Shift']});await page.waitForTimeout(1100);
   assert.equal(await page.locator('[data-owned-id][data-selected="true"]').count(),2);assert.equal(await input().isDisabled(),false);
   assert.equal(state().conversationDraft.quickEditTargetId,'shape:target-b');check('multiselection-cancels-pending-single-target-lookup');
+  setStage('sol-edit-selected-result');
+  await page.getByRole('button',{name:'项目内容',exact:true}).click();
+  const projectSide=page.getByTestId('owned-project-content');
+  await projectSide.locator('[data-image-id="shape:target-a"]').click(); await target('a');
+  await projectSide.getByRole('button',{name:'收起项目内容',exact:true}).click();
+  const product = state().conversationDraft.references.find(ref => ref.assetId === 'target-a');
+  const ids = ['1','2','3'].map(n => 'sgr_' + n.repeat(32));
+  const now = new Date().toISOString();
+  const brief = { id:'sol-target-fixture', mutationId:crypto.randomUUID(), product:'商品', brand:'品牌',
+    createdAt:now, target:{shapeId:product.shapeId,assetSha256:product.assetSha256}, contextRevision:1, documentRevision:1,
+    status:'SUCCEEDED', error:null, imageSet:{appearance:ids[0],scene:ids[1],detail:ids[2]},
+    result:{choices:{appearance:'正面主视',scene:'陈列台',detail:'局部放大'},approvedCopy:'',visualRequirements:'',rules:[]} };
+  await page.route('**/sol-poster-brief',route=>route.fulfill({json:[brief]}));
+  const opener=page.getByText('Sol 海报简报',{exact:true});
+  await opener.click();
+  let release;
+  const hold = new Promise(resolve => {release=resolve;});
+  const receiptUrl=url=>url.pathname.endsWith('/studio/generation') && url.searchParams.get('requestId')===ids[1];
+  await page.route(receiptUrl,async route=>{
+    await hold;
+    await route.fulfill({status:503,json:{error:'夹具延迟读取失败'}});
+  });
+  const selectScene=page.getByRole('button',{name:'修改这张图',exact:true}).nth(1);
+  await selectScene.click(); assert.equal(await input().isDisabled(),true);
+  await page.keyboard.press('Enter'); assert.equal(state().conversationPosts.length,0);
+  release();
+  const cancel=page.getByRole('button',{name:'取消切换并沿用输入框中的对象'});
+  await cancel.waitFor();assert.equal(await input().isDisabled(),true);
+  await page.unroute(receiptUrl);
+  const assetUrl='/api/workspaces/'+fixture.workspaceId+'/assets/target-b/raw';
+  await page.route(receiptUrl,route=>route.fulfill({json:{requestId:ids[1],mutationId:crypto.randomUUID(),projectId:fixture.projectId,
+    generationId:'generation-fixture',status:'SUCCEEDED',progress:null,expiresAt:now,archiveExpiresAt:null,
+    archiveProcessingExpiresAt:null,displayText:'场景图',resultState:'READY',results:[{versionId:'version-b',assetId:'target-b',
+      assetSha256:product.assetSha256,width:192,height:128,mimeType:"image/png",url:assetUrl}],error:null,archiveError:null,canRetryArchive:false}}));
+  await selectScene.click(); await target('b'); assert.equal(await input().isEnabled(),true);
+  assert.equal(await page.getByTestId('conversation-target').locator('img').getAttribute('src'),assetUrl);
+  assert.equal(state().conversationPosts.length,0);
+  await opener.click(); await page.unroute(receiptUrl);
+  check('sol-edit-locks-before-task-read-and-binds-the-selected-archived-image-after-recovery');
   setStage('programmatic-insertion-keeps-target');
   await page.getByRole('button',{name:'项目内容',exact:true}).click();const sidebar=page.getByTestId('owned-project-content');
   await sidebar.getByRole('tab',{name:'素材',exact:true}).click();
