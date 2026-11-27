@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 
 from .studio_image_receipts import initialize_receipts, read_receipt, receipt_revision, run_with_receipt
 from .config import settings
+from .sol_poster_brief import PosterInput, PosterReply, plan_poster
 from .ai_failure import ImageResponseError, failure_response
 from .ssrf import safe_get
 
@@ -197,6 +198,7 @@ async def health():
         "studioDecompositionQueueRevision": STUDIO_DECOMPOSITION_QUEUE_REVISION,
         "studioLayerPlanRevision": STUDIO_LAYER_PLAN_REVISION,
         "studioConversationIntentRevision": STUDIO_CONVERSATION_MODEL_REVISION,
+        "solPosterBriefRevision": "brand-poster/v1",
         "studioWritingParserRevision": STUDIO_WRITING_PARSER_REVISION,
     }
 
@@ -1010,6 +1012,12 @@ async def edit(
     return EditResponse(
         imageUrl=url, width=w, height=h, params={"op": req.op, **req.payload}
     )
+
+
+
+@app.post("/v1/studio/sol-poster-brief", response_model=PosterReply, response_model_exclude_none=True)
+async def studio_poster_brief(req: PosterInput, provider: VLMProvider = Depends(resolve_vlm_provider)):
+    return await plan_poster(req, provider)
 
 
 @app.post("/v1/studio/layer-plan", response_model=LayerPlanResponse)

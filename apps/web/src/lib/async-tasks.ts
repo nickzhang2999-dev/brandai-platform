@@ -115,9 +115,9 @@ export async function getTask(
   if (!t || t.workspaceId !== workspaceId) return null;
   // Service-only image analysis is polled through its fixed bearer scope.
   if (t.kind === "OMNI_INSPIRATION_ANALYSIS") return null;
-  // Inspiration conversations remain private even inside a shared workspace.
+  // Personal conversations and briefs remain private even inside a shared workspace.
   // Generic task polling must not bypass the dedicated conversation endpoint.
-  if (t.kind === "INSPIRATION_CHAT" || t.kind === "STUDIO_WRITING") {
+  if (t.kind === "INSPIRATION_CHAT" || t.kind === "STUDIO_WRITING" || t.kind === "SOL_POSTER_BRIEF_V1") {
     const input = t.inputJson as { userId?: unknown } | null;
     if (!userId || input?.userId !== userId) return null;
   }

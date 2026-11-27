@@ -52,3 +52,4 @@ export * from "./inspiration-receipts";
 export * from "./inspiration-snapshot";
 
 export * from "./deepflare-v2";
+export * from "./sol-poster-brief";

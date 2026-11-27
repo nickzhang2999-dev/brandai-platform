@@ -16,6 +16,7 @@ def test_health(client):
         "studioDecompositionQueueRevision": "studio-layer-queue-r2",
         "studioLayerPlanRevision": "semantic-layer-plan-r3",
         "studioConversationIntentRevision": "structured-conversation-intent-r2",
+        "solPosterBriefRevision": "brand-poster/v1",
         "studioWritingParserRevision": "studio-writing-text-v1",
     }
 

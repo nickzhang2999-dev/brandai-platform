@@ -942,7 +942,7 @@ class HttpVLMProvider(VLMProvider):
     @_retry
     async def _chat_json(
         self, content: list[dict[str, Any]], *, system: str, max_tokens: int = 2048,
-        diagnostics: dict[str, Any] | None = None,
+        diagnostics: dict[str, Any] | None = None, strict_text: bool = False,
     ) -> dict[str, Any]:
         body = {
             "model": self.model,
@@ -999,6 +999,11 @@ class HttpVLMProvider(VLMProvider):
                     if type(value) is int and 0 <= value <= 2147483647:
                         diagnostics["reasoningTokens"] = value
             choice = (data.get("choices") or [{}])[0]
+            if strict_text:
+                message = choice.get("message") or {}
+                if (len(data["choices"]) != 1 or choice.get("finish_reason") != "stop"
+                        or message.get("tool_calls") or message.get("function_call") or message.get("refusal")):
+                    raise ValueError("Expected one completed text response")
             if diagnostics is not None and choice.get("finish_reason") in ("stop", "length", "content_filter", "tool_calls", "function_call"):
                 diagnostics["finishReason"] = choice["finish_reason"]
             if choice.get("finish_reason") in ("length", "content_filter"):

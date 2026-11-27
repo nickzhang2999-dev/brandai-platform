@@ -88,6 +88,20 @@ export async function acceptStudioGeneration(tx: Prisma.TransactionClient,
     expiresAt: new Date(Date.now() + STUDIO_GENERATION_TTL_MS) } });
 }
 
+/** All quota reservations need the same isolation, including approvals from a saved brief. */
+export async function runStudioGenerationIntake<T>(accept: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await prisma.$transaction(accept, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 15_000 });
+    } catch (error) {
+      // Next can load separate Prisma runtime instances for the client and the route.
+      // A database error code survives that module boundary; instanceof does not.
+      const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+      if (attempt >= 3 || (code !== "P2034" && code !== "P2002")) throw error;
+    }
+  }
+}
+
 export async function submitStudioGeneration(workspaceId: string, userId: string, raw: unknown, accepted?: StudioConversationAcceptance, lease?: StudioGenerationLease) {
   await requireWorkspaceRole(workspaceId, userId, "EDITOR");
   const input = StudioGenerationInput.parse(raw);
@@ -101,19 +115,7 @@ export async function submitStudioGeneration(workspaceId: string, userId: string
   }
   await requireStudioGenerationServices();
   await expireStudioGenerations();
-  let row: Receipt | undefined;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      row = await prisma.$transaction(async tx => {
-        return acceptStudioGeneration(tx, identity, input, payloadHash, accepted, lease);
-      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 15_000 });
-      break;
-    } catch (error) {
-      if (attempt < 2 && error instanceof Prisma.PrismaClientKnownRequestError && ["P2034", "P2002"].includes(error.code)) continue;
-      throw error;
-    }
-  }
-  if (!row) throw new ApiException(503, "生成请求未完成受理，请稍后重试。");
+  const row = await runStudioGenerationIntake(tx => acceptStudioGeneration(tx, identity, input, payloadHash, accepted, lease));
   if (row.status === "PENDING") await enqueueStudioGeneration(row.id, row.jobData as unknown as GenerateJobData);
   return receipt(row);
 }

@@ -8,7 +8,7 @@ vi.mock("../src/lib/studio-generation-policy", () => ({ prepareStudioGeneration:
 vi.mock("../src/lib/quota", () => ({ reserveGenerationQuotaInTransaction: f.quota }));
 vi.mock("../src/lib/studio-generation-queue", () => ({ enqueueStudioGeneration: f.enqueue }));
 vi.mock("../src/lib/studio-generation-artifacts", () => ({ readStudioGenerationResults: f.results }));
-import { submitStudioGeneration, readStudioGeneration, expireStudioGenerations, dispatchStudioGenerations } from "../src/lib/studio-generation";
+import { submitStudioGeneration, readStudioGeneration, expireStudioGenerations, dispatchStudioGenerations, runStudioGenerationIntake } from "../src/lib/studio-generation";
 const input = { projectId: "p", mutationId: "831a0280-2cf1-41ba-ac94-621053c4a4c6", prompt: "tree", sizeSelection: { ratioKey: "1:1", resolutionTier: "1K" }, workflowRevision: 0, documentRevision: 0 };
 let tx: any, row: any;
 beforeEach(() => {
@@ -19,6 +19,15 @@ beforeEach(() => {
   f.tx.mockImplementation(fn => fn(tx)); f.results.mockResolvedValue({ resultState: "NOT_REQUESTED", results: [], archiveError: null, archiveExpiresAt: null, archiveProcessingExpiresAt: null, canRetryArchive: false });
 });
 describe("generation acceptance and DB outbox (transaction fixtures)", () => {
+  it.each(["P2034", "P2002"])("rechecks allocation in a fresh serializable transaction after %s", async code => {
+    const conflict = Object.assign(new Error("database write conflict from another module instance"), { code });
+    f.tx.mockRejectedValueOnce(conflict);
+    const allocate = vi.fn().mockResolvedValue("existing receipt");
+    await expect(runStudioGenerationIntake(allocate)).resolves.toBe("existing receipt");
+    expect(f.tx).toHaveBeenCalledTimes(2);
+    for (const [, options] of f.tx.mock.calls) expect(options.isolationLevel).toBe("Serializable");
+    expect(allocate).toHaveBeenCalledOnce();
+  });
   it("refuses a lost conversation lease before quota or generation creation", async () => {
     f.query.mockResolvedValue([]);
     await expect(submitStudioGeneration("w", "u", input, undefined, { messageId: "message", attemptToken: "expired-token" })).rejects.toMatchObject({ status: 409 });

@@ -94,4 +94,13 @@ describe('generic task HTTP membership boundary', () => {
     expect(db.member).toHaveBeenCalledWith('ws', 'member');
     db.user.mockResolvedValue({ id: 'author' }); expect((await GET(new Request('https://test.invalid'), params)).status).toBe(200);
   });
+  it('limits Sol poster brief metadata to the initiator', async () => {
+    db.legacy.mockResolvedValue(task('SOL_POSTER_BRIEF_V1'));
+    db.user.mockResolvedValue({ id: 'member' });
+    expect((await GET(new Request('https://test.invalid'), params)).status).toBe(404);
+    db.user.mockResolvedValue({ id: 'author' });
+    const response = await GET(new Request('https://test.invalid'), params);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ kind: 'SOL_POSTER_BRIEF_V1', status: 'SUCCEEDED' });
+  });
 });

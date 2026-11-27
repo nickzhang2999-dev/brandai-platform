@@ -11,6 +11,7 @@ export const REQUIRED_AI_STUDIO_DECOMPOSITION_QUEUE_REVISION = "studio-layer-que
 export const REQUIRED_AI_STUDIO_LAYER_PLAN_REVISION = "semantic-layer-plan-r3";
 export const REQUIRED_AI_STUDIO_CONVERSATION_INTENT_REVISION = "structured-conversation-intent-r2";
 export const REQUIRED_AI_STUDIO_WRITING_PARSER_REVISION = "studio-writing-text-v1";
+export const REQUIRED_SOL_POSTER_BRIEF_REVISION = "brand-poster/v1";
 
 const CONFIGURED_BASE =
   process.env.BRANDAI_AI_SERVICE_URL ??
@@ -33,10 +34,11 @@ export type AiServiceResolution = {
   studioLayerPlanRevision?: string;
   studioConversationIntentRevision?: string;
   studioWritingParserRevision?: string;
+  solPosterBriefRevision?: string;
   imageReceiptsAvailable?: boolean;
 };
 
-export type AiServiceRequirements = { preferImageReceipts?: boolean; requireVisualCheck?: boolean; requireSingleAttempt?: boolean; requireStudioEdit?: boolean; requireStudioDecomposition?: boolean; requireStudioDecompositionQueue?: boolean; requireStudioLayerPlan?: boolean; requireStudioImageTools?: boolean; requireStudioConversationIntent?: boolean; requireStudioWritingParser?: boolean };
+export type AiServiceRequirements = { preferImageReceipts?: boolean; requireVisualCheck?: boolean; requireSingleAttempt?: boolean; requireStudioEdit?: boolean; requireStudioDecomposition?: boolean; requireStudioDecompositionQueue?: boolean; requireStudioLayerPlan?: boolean; requireStudioImageTools?: boolean; requireStudioConversationIntent?: boolean; requireSolPosterBrief?: boolean; requireStudioWritingParser?: boolean };
 
 let cachedResolution: { value: AiServiceResolution; expiresAt: number; checkedForReceipts?: boolean } | null =
   null;
@@ -66,6 +68,7 @@ async function probe(base: string): Promise<AiServiceResolution | null> {
       studioLayerPlanRevision?: unknown;
       studioConversationIntentRevision?: unknown;
       studioWritingParserRevision?: unknown;
+      solPosterBriefRevision?: unknown;
       studioImageReceiptRevision?: unknown;
     };
     return {
@@ -91,6 +94,7 @@ async function probe(base: string): Promise<AiServiceResolution | null> {
       studioLayerPlanRevision: typeof body.studioLayerPlanRevision === "string" ? body.studioLayerPlanRevision : undefined,
       studioConversationIntentRevision: typeof body.studioConversationIntentRevision === "string" ? body.studioConversationIntentRevision : undefined,
       studioWritingParserRevision: typeof body.studioWritingParserRevision === "string" ? body.studioWritingParserRevision : undefined,
+      solPosterBriefRevision: typeof body.solPosterBriefRevision === "string" ? body.solPosterBriefRevision : undefined,
       imageReceiptsAvailable: body.studioImageReceiptRevision === "studio-private-image-receipt-r1",
     };
   } catch {
@@ -119,6 +123,7 @@ export async function resolveAiService(requirements: AiServiceRequirements = {})
   const requireStudioLayerPlan = requirements.requireStudioLayerPlan === true;
   const requireStudioConversationIntent = requirements.requireStudioConversationIntent === true;
   const requireStudioWritingParser = requirements.requireStudioWritingParser === true;
+  const requireSolPosterBrief = requirements.requireSolPosterBrief === true;
   const requireSingleAttempt = requirements.requireSingleAttempt === true || requireStudioEdit || requireStudioDecomposition || requireStudioDecompositionQueue || requireStudioLayerPlan || requireStudioImageTools || requireStudioConversationIntent;
   if (cachedResolution && cachedResolution.expiresAt > now &&
       (!requirements.preferImageReceipts || cachedResolution.checkedForReceipts || cachedResolution.value.imageReceiptsAvailable) &&
@@ -129,6 +134,7 @@ export async function resolveAiService(requirements: AiServiceRequirements = {})
       (!requireStudioLayerPlan || cachedResolution.value.studioLayerPlanRevision === REQUIRED_AI_STUDIO_LAYER_PLAN_REVISION) &&
       (!requireStudioConversationIntent || cachedResolution.value.studioConversationIntentRevision === REQUIRED_AI_STUDIO_CONVERSATION_INTENT_REVISION) &&
       (!requireStudioWritingParser || cachedResolution.value.studioWritingParserRevision === REQUIRED_AI_STUDIO_WRITING_PARSER_REVISION) &&
+      (!requireSolPosterBrief || cachedResolution.value.solPosterBriefRevision === REQUIRED_SOL_POSTER_BRIEF_REVISION) &&
       (!requireSingleAttempt || cachedResolution.value.providerRetryRevision === REQUIRED_AI_PROVIDER_RETRY_REVISION) &&
       (!requireVisualCheck || cachedResolution.value.visualCheckRevision === REQUIRED_AI_VISUAL_CHECK_REVISION)) {
     return cachedResolution.value;
@@ -140,7 +146,7 @@ export async function resolveAiService(requirements: AiServiceRequirements = {})
       base: CONFIGURED_BASE.replace(/\/$/, ""),
       source: "configured",
     };
-    if (requireVisualCheck || requireSingleAttempt || requireStudioWritingParser) {
+    if (requireVisualCheck || requireSingleAttempt || requireStudioWritingParser || requireSolPosterBrief) {
       const health = await probe(value.base);
       if (requireVisualCheck && health?.visualCheckRevision !== REQUIRED_AI_VISUAL_CHECK_REVISION) {
         throw new Error("Configured AI service does not support the required visual-check evidence revision");
@@ -163,6 +169,7 @@ export async function resolveAiService(requirements: AiServiceRequirements = {})
       }
       if (requireStudioConversationIntent && health?.studioConversationIntentRevision !== REQUIRED_AI_STUDIO_CONVERSATION_INTENT_REVISION) throw new Error("Configured AI service does not support structured conversation intent");
       if (requireStudioWritingParser && health?.studioWritingParserRevision !== REQUIRED_AI_STUDIO_WRITING_PARSER_REVISION) throw new Error("Configured AI service does not support bounded writing text parsing");
+      if (requireSolPosterBrief && health?.solPosterBriefRevision !== REQUIRED_SOL_POSTER_BRIEF_REVISION) throw new Error("Configured AI service does not support Sol poster briefs");
       Object.assign(value, health, { source: "configured" });
     }
     cachedResolution = { value, expiresAt: now + CACHE_MS, checkedForReceipts: true };
@@ -189,6 +196,7 @@ export async function resolveAiService(requirements: AiServiceRequirements = {})
         (!requireStudioLayerPlan || result.studioLayerPlanRevision === REQUIRED_AI_STUDIO_LAYER_PLAN_REVISION) &&
         (!requireStudioConversationIntent || result.studioConversationIntentRevision === REQUIRED_AI_STUDIO_CONVERSATION_INTENT_REVISION) &&
         (!requireStudioWritingParser || result.studioWritingParserRevision === REQUIRED_AI_STUDIO_WRITING_PARSER_REVISION) &&
+        (!requireSolPosterBrief || result.solPosterBriefRevision === REQUIRED_SOL_POSTER_BRIEF_REVISION) &&
         (!requireSingleAttempt || result.providerRetryRevision === REQUIRED_AI_PROVIDER_RETRY_REVISION) &&
         (!requireVisualCheck || result.visualCheckRevision === REQUIRED_AI_VISUAL_CHECK_REVISION),
     );

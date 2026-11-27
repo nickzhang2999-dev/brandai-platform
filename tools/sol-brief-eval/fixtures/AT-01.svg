@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 300" role="img" aria-label="窄岸短袖衫自制款式图">
+  <rect width="360" height="300" fill="#f5f2ea"/>
+  <path d="M132 54l-44 16-44 53 45 30 24-24v122h134V129l24 24 45-30-44-53-44-16q-48 28-96 0z" fill="#17635f" stroke="#134943" stroke-width="3"/>
+  <path d="M133 54q47 56 94 0" fill="none" stroke="#103e3c" stroke-width="6"/>
+  <path d="M202 120h32v33l-16 7-16-7z" fill="none" stroke="#d8ede4" stroke-width="2"/>
+  <path d="M207 130h11" stroke="#fff" stroke-width="3"/><g fill="#fff"><circle cx="222" cy="130" r="2"/><circle cx="229" cy="130" r="2"/></g>
+</svg>

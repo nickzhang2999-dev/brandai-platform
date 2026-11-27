@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 300" role="img" aria-label="方隅桌面风扇自制款式图">
+  <rect width="360" height="300" fill="#f4eae1"/>
+  <path d="M174 160h12v56h-12z" fill="#746256"/>
+  <rect x="113" y="212" width="134" height="36" rx="4" fill="#e0c8ad" stroke="#746256" stroke-width="3"/>
+  <circle cx="219" cy="230" r="9" fill="#bd542e"/><path d="M219 222v5" stroke="#fff" stroke-width="2"/>
+  <circle cx="180" cy="112" r="74" fill="#ece1ce" stroke="#746256" stroke-width="4"/>
+  <g fill="none" stroke="#8a7a68" stroke-width="2"><circle cx="180" cy="112" r="58"/><circle cx="180" cy="112" r="43"/><circle cx="180" cy="112" r="28"/><path d="M106 112h148m-74-74v148m-52-126 104 104m0-104L128 164"/></g>
+  <circle cx="180" cy="112" r="14" fill="#bd542e"/><path d="M172 112h16m-8-8v16" stroke="#fff" stroke-width="2"/>
+</svg>

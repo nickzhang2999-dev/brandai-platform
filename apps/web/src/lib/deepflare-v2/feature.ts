@@ -7,3 +7,9 @@ export function isDeepFlareV2Enabled(workspaceId: string, env: NodeJS.ProcessEnv
 export function nativeDispatchEnabled(workspaceId: string) {
   return process.env.DEEPFLARE_V2_NATIVE_DISPATCH === "1" && isDeepFlareV2Enabled(workspaceId);
 }
+
+export function posterPlanner(workspaceId: string): "dsh" | "company" | null {
+  if (!isDeepFlareV2Enabled(workspaceId)) return null;
+  if (process.env.SOL_DSH_ENABLED === "1") return "dsh";
+  return nativeDispatchEnabled(workspaceId) ? "company" : null;
+}

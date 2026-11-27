@@ -1,0 +1,22 @@
+{
+  "revision": 1,
+  "workspace": "ws-stone",
+  "project": "desk",
+  "sku": "ST-02",
+  "product": "方隅桌面风扇",
+  "brand": "方隅造物",
+  "mark": "圆内十字",
+  "color": "陶橙 #BD542E",
+  "typeface": "圆体",
+  "keep": [
+    "圆形护网",
+    "矩形底座",
+    "橙色圆内十字标识"
+  ],
+  "copy": "底座设有旋钮",
+  "unconfirmed": "静音",
+  "settings": [
+    "书桌",
+    "工作台"
+  ]
+}

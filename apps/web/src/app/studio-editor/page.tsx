@@ -6,6 +6,7 @@ import { readEditorDocument } from "@/lib/editor-documents";
 import { studioSession } from "@/lib/studio-session";
 import { studioTaskIntent } from "@/lib/studio-task-intent";
 import { OwnedEditorClient } from "@/components/owned-canvas/OwnedEditorClient";
+import { isDeepFlareV2Enabled } from "@/lib/deepflare-v2/feature";
 
 export const dynamic = "force-dynamic";
 
@@ -32,7 +33,7 @@ export default async function OwnedEditorPage({ searchParams }: {
     const previousWriting = !initialTask && !["canvas", "writing"].includes(query.get("surface") ?? "")
       ? await prisma.studioWritingDocument.findUnique({ where: { workspaceId_projectId_userId: { workspaceId, projectId, userId: user.id } }, select: { id: true } }) : null;
     const initialSurface = !initialTask && (query.get("surface") === "writing" || previousWriting) ? "writing" : "canvas";
-    return <OwnedEditorClient workspaceId={workspaceId} projectId={projectId} userId={user.id}
+    return <OwnedEditorClient key={JSON.stringify([workspaceId,projectId,user.id])} solBriefEnabled={isDeepFlareV2Enabled(workspaceId)} workspaceId={workspaceId} projectId={projectId} userId={user.id}
       readOnly={document.readOnly} projectName={project?.name ?? "项目画布"} initialTask={initialTask} initialSurface={initialSurface} writingTaskId={query.get("writingTaskId") ?? undefined} />;
   } catch (error) {
     if (error instanceof ApiException || error instanceof EditorDocumentError) {

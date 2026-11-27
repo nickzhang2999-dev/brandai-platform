@@ -9,9 +9,11 @@ import { generateStudioCopywriting } from "../studio-copywriting-provider";
 import { requireStudioMaterialProject } from "../studio-materials";
 import { artifactDeadline, inspectArtifactImage, readArtifactImageBytes, STUDIO_ARTIFACT_MAX_PIXELS } from "../studio-generation-artifacts-image";
 import { recordUsage } from "../usage";
+import { dispatchPosterBriefs, runPosterBrief } from "../sol-poster-brief";
 
 export async function runStudioCopywriting(job: Job<{ taskId: string }>) {
   const id = job.data.taskId;
+  if (job.name === "sol-poster-brief") return runPosterBrief(id);
   const task = await prisma.asyncTask.findUnique({ where: { id } });
   if (!task || task.kind !== COPYWRITING_KIND || task.status !== "PENDING" || !task.refId) return;
   const claim = await prisma.asyncTask.updateMany({ where: { id, kind: COPYWRITING_KIND, status: "PENDING", expiresAt: { gt: new Date() } }, data: { status: "RUNNING", progress: 10 } });
@@ -56,7 +58,14 @@ export async function runStudioCopywriting(job: Job<{ taskId: string }>) {
 export function createStudioCopywritingWorker() {
   const worker = new Worker("studio-copywriting", runStudioCopywriting, { connection, prefix: queuePrefix, concurrency: 2 });
   let busy = false;
-  const dispatch = () => { if (busy) return; busy = true; void dispatchCopywriting().catch(() => console.warn("[copywriting] outbox unavailable")).finally(() => { busy = false; }); };
+  const dispatch = async () => {
+    if (busy) return;
+    busy = true;
+    try {
+      const results = await Promise.allSettled([dispatchCopywriting(), dispatchPosterBriefs()]);
+      if (results.some(result => result.status === "rejected")) console.warn("[copywriting] outbox unavailable");
+    } finally { busy = false; }
+  };
   dispatch(); const timer = setInterval(dispatch, 3000); timer.unref();
   worker.on("closed", () => clearInterval(timer));
   worker.on("failed", () => console.warn("[copywriting] task interrupted; no automatic model retry"));

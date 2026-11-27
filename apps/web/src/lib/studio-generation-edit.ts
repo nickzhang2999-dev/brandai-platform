@@ -193,8 +193,8 @@ async function sourceRecord(db: Db, workspaceId: string, projectId: string, asse
   return { snapshot, postprocess: null, cleanBase: null, sourceProjectId: upload.projectId, asset };
 }
 
-/** Caller holds the project lock and has authorized the current editor. */
-export async function resolveStudioEditSource(db: Db, workspaceId: string, projectId: string, rawTarget: unknown, canvas: string, displayedFile = false) {
+/** Caller authorizes the project and locks the saved document before resolving its selected shape. */
+export async function resolveStudioSelectedMaterial(db: Db, workspaceId: string, projectId: string, rawTarget: unknown, canvas: string) {
   const target = StudioWorkflowTarget.parse(rawTarget);
   const materials = await listStudioProjectMaterials(db, workspaceId, projectId);
   const view = workflowAssets(projectId, canvas, materials);
@@ -203,7 +203,12 @@ export async function resolveStudioEditSource(db: Db, workspaceId: string, proje
   const url = object(object(store[target.shapeId]).props).url;
   const candidates = [...new Set(materials.filter(material => material.url === url && material.sha256 === target.assetSha256).map(material => material.assetId))];
   if (candidates.length !== 1) throw fail("TARGET_MATERIAL_AMBIGUOUS", "修改目标关联到多个素材，请重新插入目标图片。");
-  const source = await sourceRecord(db, workspaceId, projectId, candidates[0]!, target.shapeId, displayedFile);
+  return { assetId: candidates[0]!, target, store };
+}
+
+export async function resolveStudioEditSource(db: Db, workspaceId: string, projectId: string, rawTarget: unknown, canvas: string, displayedFile = false) {
+  const { assetId, target, store } = await resolveStudioSelectedMaterial(db, workspaceId, projectId, rawTarget, canvas);
+  const source = await sourceRecord(db, workspaceId, projectId, assetId, target.shapeId, displayedFile);
   if (source.snapshot.sha256 !== target.assetSha256) throw fail("TARGET_DIGEST_MISMATCH");
   wholeImageTarget(store, target.shapeId, source.snapshot.width, source.snapshot.height);
   return { snapshot: source.snapshot, postprocess: source.postprocess };

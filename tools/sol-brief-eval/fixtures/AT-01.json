@@ -1,0 +1,22 @@
+{
+  "revision": 1,
+  "workspace": "ws-atlas",
+  "project": "summer",
+  "sku": "AT-01",
+  "product": "窄岸短袖衫",
+  "brand": "窄岸线",
+  "mark": "横杠双点",
+  "color": "深青 #17635F",
+  "typeface": "等线体",
+  "keep": [
+    "圆领",
+    "左胸横杠双点标识",
+    "深青衣身"
+  ],
+  "copy": "左胸设有贴袋",
+  "unconfirmed": "速干",
+  "settings": [
+    "叠衣桌",
+    "衣架旁"
+  ]
+}

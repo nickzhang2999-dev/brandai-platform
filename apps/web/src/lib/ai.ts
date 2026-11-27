@@ -27,6 +27,7 @@ import type {
   StudioLayerPlanResponse,
   StudioConversationModelRequest,
   StudioConversationModelResponse,
+  SolPosterModelInput,
 } from "@brandai/contracts";
 import { randomBytes } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
@@ -77,7 +78,7 @@ export function readSubmittedStudioImage(base: string, requestId: string, recove
  * per-request headers (X-OV-{Image,Vlm}-*). Only sent when a key is configured;
  * absent → the AI service uses its own env/mock fallback.
  */
-async function providerHeaders(requireRealImageProvider = false, requireRealVlmProvider = false, requireRealLayerProvider = false): Promise<Record<string, string>> {
+async function providerHeaders(requireRealImageProvider = false, requireRealVlmProvider = false, requireRealLayerProvider = false, textOnly = false): Promise<Record<string, string>> {
   const s = await getEffectiveAiSettings();
   // Validate the same snapshot that produces the outgoing headers. A separate
   // intake/claim check cannot prevent configuration changing while queued.
@@ -93,13 +94,13 @@ async function providerHeaders(requireRealImageProvider = false, requireRealVlmP
   if (requireRealLayerProvider && (s.layer.provider?.trim().toLowerCase() !== "fal" || !s.layer.apiKey?.trim())) {
     throw new Error("真实图层分解服务配置已不可用，未调用演示模型。请联系管理员检查配置。");
   }
-  if (s.image.apiKey) {
+  if (!textOnly && s.image.apiKey) {
     h["X-OV-Image-Provider"] = s.image.provider;
     h["X-OV-Image-Key"] = s.image.apiKey;
     if (s.image.baseUrl) h["X-OV-Image-Base-Url"] = s.image.baseUrl;
     if (s.image.model) h["X-OV-Image-Model"] = s.image.model;
   }
-  if (s.layer.apiKey) {
+  if (!textOnly && s.layer.apiKey) {
     h["X-OV-Layer-Provider"] = s.layer.provider;
     h["X-OV-Layer-Key"] = s.layer.apiKey;
     if (s.layer.baseUrl) h["X-OV-Layer-Base-Url"] = s.layer.baseUrl;
@@ -136,10 +137,12 @@ async function call<TReq, TRes>(path: string, body: TReq, options?: AiCallOption
     ...(requireStudioDecompositionQueue ? { requireStudioDecompositionQueue: true } : {}),
     ...(requireStudioLayerPlan ? { requireStudioLayerPlan: true } : {}),
     ...(requireConversationIntent ? { requireStudioConversationIntent: true } : {}),
+    ...(path === "/v1/studio/sol-poster-brief" ? { requireSolPosterBrief: true } : {}),
   } : undefined), providerHeaders(
     requireStudioEdit || (path === "/v1/generate" && options?.requireRealImageProvider === true),
-    requireVisualCheck || requireStudioLayerPlan || requireConversationIntent,
+    requireVisualCheck || requireStudioLayerPlan || requireConversationIntent || path === "/v1/studio/sol-poster-brief",
     requireStudioDecomposition || requireStudioDecompositionQueue,
+    path === "/v1/studio/sol-poster-brief",
   )]);
   const [service, headers] = await withinAiDeadline(setup, signal);
   signal.throwIfAborted();
@@ -183,6 +186,8 @@ async function call<TReq, TRes>(path: string, body: TReq, options?: AiCallOption
 }
 
 export const ai = {
+  solPosterBrief: (body: SolPosterModelInput, signal: AbortSignal) =>
+    call<typeof body, unknown>("/v1/studio/sol-poster-brief", body, { signal, requireRealVlmProvider: true, maxResponseBytes: 8192 }),
   studioConversationIntent: (body: StudioConversationModelRequest, options?: AiCallOptions) =>
     call<StudioConversationModelRequest, StudioConversationModelResponse>("/v1/studio/conversation-intent", body, { ...options, requireRealVlmProvider: true }),
   studioLayerPlan: (b: StudioLayerPlanRequest, options?: AiCallOptions) =>
